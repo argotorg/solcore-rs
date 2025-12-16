@@ -1,6 +1,8 @@
 use chumsky::{input::ValueInput, prelude::*};
 
-use crate::{Ident, Lit, ParserErr, Span, Spanned, Type, ident_parser, lexer::Token, lit_parser, type_parser};
+use crate::{
+    Ident, Lit, ParserErr, Span, Spanned, Type, ident_parser, lexer::Token, lit_parser, type_parser,
+};
 
 /// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,6 +23,13 @@ pub enum BinOp {
     // Logical.
     And,
     Or,
+}
+
+/// Unary operators.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UnOp {
+    /// Logical NOT (`!`).
+    Not,
 }
 
 /// Expression.
@@ -49,6 +58,11 @@ pub enum Expr<'a> {
     TypeAnnot {
         expr: Box<Spanned<Expr<'a>>>,
         ty: Spanned<Type<'a>>,
+    },
+    /// Unary operation (e.g., `!x`).
+    UnaryOp {
+        op: Spanned<UnOp>,
+        expr: Box<Spanned<Expr<'a>>>,
     },
 }
 
@@ -117,6 +131,23 @@ where
             })
             .boxed();
 
+        // Unary: !.
+        let unary_op = just(Token::Bang)
+            .to(UnOp::Not)
+            .map_with(|op, e| (op, e.span()));
+        let unary = unary_op
+            .repeated()
+            .foldr_with(postfix, |op, expr, e| {
+                (
+                    Expr::UnaryOp {
+                        op,
+                        expr: Box::new(expr),
+                    },
+                    e.span(),
+                )
+            })
+            .boxed();
+
         // Multiplicative: *, /, %.
         let mul_op = select! {
             Token::Star => BinOp::Mul,
@@ -124,8 +155,8 @@ where
             Token::Percent => BinOp::Mod,
         }
         .map_with(|op, e| (op, e.span()));
-        let mul = postfix.clone().foldl_with(
-            mul_op.then(postfix.clone()).repeated(),
+        let mul = unary.clone().foldl_with(
+            mul_op.then(unary.clone()).repeated(),
             |lhs, (op, rhs), e| {
                 (
                     Expr::BinOp {
@@ -699,5 +730,80 @@ mod tests {
             _ => panic!("Expected TypeAnnot at top level"),
         }
     }
-}
 
+    #[test]
+    fn test_expr_unary_not() {
+        let result = expr_parser().parse(make_stream("!a"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::UnaryOp {
+                op: (UnOp::Not, _),
+                expr,
+            } => {
+                assert!(matches!(expr.0, Expr::Ident(Ident("a"))));
+            }
+            _ => panic!("Expected UnaryOp"),
+        }
+    }
+
+    #[test]
+    fn test_expr_unary_not_double() {
+        // !!a should parse as !(!a).
+        let result = expr_parser().parse(make_stream("!!a"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::UnaryOp {
+                op: (UnOp::Not, _),
+                expr,
+            } => {
+                assert!(matches!(
+                    expr.0,
+                    Expr::UnaryOp {
+                        op: (UnOp::Not, _),
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("Expected UnaryOp at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_unary_not_precedence() {
+        // !a * b should parse as (!a) * b.
+        let result = expr_parser().parse(make_stream("!a * b"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::BinOp {
+                op: (BinOp::Mul, _),
+                lhs,
+                ..
+            } => {
+                assert!(matches!(
+                    lhs.0,
+                    Expr::UnaryOp {
+                        op: (UnOp::Not, _),
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("Expected Mul at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_unary_not_with_postfix() {
+        // !a.b should parse as !(a.b).
+        let result = expr_parser().parse(make_stream("!a.b"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::UnaryOp {
+                op: (UnOp::Not, _),
+                expr,
+            } => {
+                assert!(matches!(expr.0, Expr::Field { .. }));
+            }
+            _ => panic!("Expected UnaryOp at top level"),
+        }
+    }
+}
