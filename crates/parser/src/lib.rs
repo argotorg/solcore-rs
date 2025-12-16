@@ -1,5 +1,6 @@
 pub mod expr;
 pub mod lexer;
+pub mod stmt;
 
 use chumsky::{input::ValueInput, prelude::*, span::SimpleSpan};
 
