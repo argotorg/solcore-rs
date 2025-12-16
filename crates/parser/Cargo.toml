@@ -4,6 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
+chumsky = "0.12"
 logos = "0.16"
 
 [dev-dependencies]
