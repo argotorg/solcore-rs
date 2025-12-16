@@ -3,8 +3,8 @@
 use chumsky::{input::ValueInput, prelude::*};
 
 use crate::{
-    expr::expr_parser, ident_parser, lexer::Token, type_parser, Expr, Ident, ParserErr, Span,
-    Spanned, Type,
+    expr::expr_parser, ident_parser, lexer::Token, pat::{Pat, pat_parser}, type_parser, Expr,
+    Ident, ParserErr, Span, Spanned, Type,
 };
 
 /// Statement.
@@ -35,6 +35,15 @@ pub enum Stmt<'a> {
         lhs: Spanned<Expr<'a>>,
         rhs: Spanned<Expr<'a>>,
     },
+}
+
+/// Match arm: `| pat1, pat2 => stmt*`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm<'a> {
+    /// Patterns (one per scrutinee in multi-scrutinee match).
+    pub pats: Vec<Spanned<Pat<'a>>>,
+    /// Body statements.
+    pub body: Vec<Spanned<Stmt<'a>>>,
 }
 
 /// Creates a parser for statements.
@@ -77,6 +86,24 @@ where
         .boxed();
 
     let_stmt.or(return_stmt).or(assign_or_expr)
+}
+
+/// Creates a parser for match arms: `| pat1, pat2 => stmt*`.
+pub fn match_arm_parser<'a, I>() -> impl Parser<'a, I, Spanned<MatchArm<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    just(Token::Pipe)
+        .ignore_then(
+            pat_parser()
+                .separated_by(just(Token::Comma))
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(just(Token::FatArrow))
+        .then(stmt_parser().repeated().collect::<Vec<_>>())
+        .map_with(|(pats, body), e| (MatchArm { pats, body }, e.span()))
+        .boxed()
 }
 
 #[derive(Clone, Copy)]
@@ -197,5 +224,29 @@ mod tests {
         let result = stmt_parser().parse(make_stream("x -= 1;"));
         let (stmt, _) = result.into_result().unwrap();
         assert!(matches!(stmt, Stmt::SubAssign { .. }));
+    }
+
+    #[test]
+    fn test_match_arm_single() {
+        let result = match_arm_parser().parse(make_stream("| x => return x;"));
+        let (arm, _) = result.into_result().unwrap();
+        assert_eq!(arm.pats.len(), 1);
+        assert_eq!(arm.body.len(), 1);
+    }
+
+    #[test]
+    fn test_match_arm_multi_pat() {
+        let result = match_arm_parser().parse(make_stream("| x, y => return x;"));
+        let (arm, _) = result.into_result().unwrap();
+        assert_eq!(arm.pats.len(), 2);
+        assert_eq!(arm.body.len(), 1);
+    }
+
+    #[test]
+    fn test_match_arm_multi_stmt() {
+        let result = match_arm_parser().parse(make_stream("| x => let y = x; return y;"));
+        let (arm, _) = result.into_result().unwrap();
+        assert_eq!(arm.pats.len(), 1);
+        assert_eq!(arm.body.len(), 2);
     }
 }

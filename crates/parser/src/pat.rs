@@ -2,7 +2,7 @@
 
 use chumsky::{input::ValueInput, prelude::*};
 
-use crate::{ident_parser, lexer::Token, lit_parser, Ident, Lit, ParserErr, Span, Spanned};
+use crate::{Ident, Lit, ParserErr, Span, Spanned, ident_parser, lexer::Token, lit_parser};
 
 /// Pattern.
 #[derive(Debug, Clone, PartialEq)]
