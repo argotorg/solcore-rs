@@ -1,7 +1,6 @@
 use chumsky::{input::ValueInput, prelude::*};
 
-use crate::lexer::Token;
-use crate::{ident_parser, lit_parser, Ident, Lit, ParserErr, Span, Spanned};
+use crate::{Ident, Lit, ParserErr, Span, Spanned, ident_parser, lexer::Token, lit_parser};
 
 /// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,12 +38,17 @@ pub enum Expr<'a> {
         callee: Box<Spanned<Expr<'a>>>,
         args: Vec<Spanned<Expr<'a>>>,
     },
+    Field {
+        base: Box<Spanned<Expr<'a>>>,
+        field: Spanned<Ident<'a>>,
+    },
 }
 
 /// Helper enum for postfix operators during parsing.
 enum PostfixOp<'a> {
     Index(Spanned<Expr<'a>>),
     Call(Vec<Spanned<Expr<'a>>>),
+    Field(Spanned<Ident<'a>>),
 }
 
 /// Creates a parser for expressions.
@@ -63,7 +67,7 @@ where
                 .map_with(|e: Spanned<Expr<'a>>, extra| (e.0, extra.span())))
             .boxed();
 
-        // Postfix: indexing with [] and function calls with ().
+        // Postfix: indexing with [], function calls with (), and field access with `.`.
         let index_op = expr
             .clone()
             .delimited_by(just(Token::LBracket), just(Token::RBracket))
@@ -75,23 +79,35 @@ where
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
             .map(PostfixOp::Call);
-        let postfix_op = index_op.or(call_op);
-        let postfix = atom.foldl_with(postfix_op.repeated(), |base, op, e| match op {
-            PostfixOp::Index(index) => (
-                Expr::Index {
-                    base: Box::new(base),
-                    index: Box::new(index),
-                },
-                e.span(),
-            ),
-            PostfixOp::Call(args) => (
-                Expr::Call {
-                    callee: Box::new(base),
-                    args,
-                },
-                e.span(),
-            ),
-        });
+        let field_op = just(Token::Dot)
+            .ignore_then(ident_parser())
+            .map(PostfixOp::Field);
+        let postfix_op = index_op.or(call_op).or(field_op).boxed();
+        let postfix = atom
+            .foldl_with(postfix_op.clone().repeated(), |base, op, e| match op {
+                PostfixOp::Index(index) => (
+                    Expr::Index {
+                        base: Box::new(base),
+                        index: Box::new(index),
+                    },
+                    e.span(),
+                ),
+                PostfixOp::Call(args) => (
+                    Expr::Call {
+                        callee: Box::new(base),
+                        args,
+                    },
+                    e.span(),
+                ),
+                PostfixOp::Field(field) => (
+                    Expr::Field {
+                        base: Box::new(base),
+                        field,
+                    },
+                    e.span(),
+                ),
+            })
+            .boxed();
 
         // Multiplicative: *, /, %.
         let mul_op = select! {
@@ -403,4 +419,85 @@ mod tests {
             _ => panic!("Expected Call at top level"),
         }
     }
+
+    #[test]
+    fn test_expr_field() {
+        let result = expr_parser().parse(make_stream("a.b"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Field { field, .. } => {
+                assert_eq!(field.0, Ident("b"));
+            }
+            _ => panic!("Expected Field"),
+        }
+    }
+
+    #[test]
+    fn test_expr_field_chained() {
+        // a.b.c should parse as ((a.b).c).
+        let result = expr_parser().parse(make_stream("a.b.c"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Field { base, field } => {
+                assert_eq!(field.0, Ident("c"));
+                assert!(matches!(base.0, Expr::Field { .. }));
+            }
+            _ => panic!("Expected Field at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_field_and_call() {
+        // a.b() should parse as (a.b)().
+        let result = expr_parser().parse(make_stream("a.b()"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Call { callee, .. } => {
+                assert!(matches!(callee.0, Expr::Field { .. }));
+            }
+            _ => panic!("Expected Call at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_call_and_field() {
+        // a().b should parse as (a()).b.
+        let result = expr_parser().parse(make_stream("a().b"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Field { base, field } => {
+                assert_eq!(field.0, Ident("b"));
+                assert!(matches!(base.0, Expr::Call { .. }));
+            }
+            _ => panic!("Expected Field at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_field_and_index() {
+        // a.b[0] should parse as (a.b)[0].
+        let result = expr_parser().parse(make_stream("a.b[0]"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Index { base, .. } => {
+                assert!(matches!(base.0, Expr::Field { .. }));
+            }
+            _ => panic!("Expected Index at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_index_and_field() {
+        // a[0].b should parse as (a[0]).b.
+        let result = expr_parser().parse(make_stream("a[0].b"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Field { base, field } => {
+                assert_eq!(field.0, Ident("b"));
+                assert!(matches!(base.0, Expr::Index { .. }));
+            }
+            _ => panic!("Expected Field at top level"),
+        }
+    }
 }
+
