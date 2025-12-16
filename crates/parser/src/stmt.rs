@@ -40,6 +40,12 @@ pub enum Stmt<'a> {
         scrutinees: Vec<Spanned<Expr<'a>>>,
         arms: Vec<Spanned<MatchArm<'a>>>,
     },
+    /// If statement: `if expr { stmts } else { stmts }`.
+    If {
+        cond: Spanned<Expr<'a>>,
+        then_body: Vec<Spanned<Stmt<'a>>>,
+        else_body: Option<Vec<Spanned<Stmt<'a>>>>,
+    },
 }
 
 /// Match arm: `| pat1, pat2 => stmt*`.
@@ -104,6 +110,30 @@ where
             .map_with(|(scrutinees, arms), e| (Stmt::Match { scrutinees, arms }, e.span()))
             .boxed();
 
+        // If statement: `if expr { stmts } else { stmts }`
+        let if_stmt = just(Token::If)
+            .ignore_then(expr_parser())
+            .then(
+                stmt.clone()
+                    .repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .then(
+                just(Token::Else)
+                    .ignore_then(
+                        stmt.clone()
+                            .repeated()
+                            .collect::<Vec<_>>()
+                            .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+                    )
+                    .or_not(),
+            )
+            .map_with(|((cond, then_body), else_body), e| {
+                (Stmt::If { cond, then_body, else_body }, e.span())
+            })
+            .boxed();
+
         // Assignment operator
         let assign_op = just(Token::Eq)
             .to(AssignOp::Eq)
@@ -125,6 +155,7 @@ where
         let_stmt
             .or(return_stmt)
             .or(match_stmt)
+            .or(if_stmt)
             .or(assign_or_expr)
     })
 }
@@ -354,6 +385,62 @@ mod tests {
                 assert_eq!(arms[1].0.body.len(), 1);
             }
             _ => panic!("Expected Match statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_if_simple() {
+        let result = stmt_parser().parse(make_stream("if x { return 1; }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::If { then_body, else_body, .. } => {
+                assert_eq!(then_body.len(), 1);
+                assert!(else_body.is_none());
+            }
+            _ => panic!("Expected If statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_if_else() {
+        let result = stmt_parser().parse(make_stream("if x { return 1; } else { return 0; }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::If { then_body, else_body, .. } => {
+                assert_eq!(then_body.len(), 1);
+                assert!(else_body.is_some());
+                assert_eq!(else_body.unwrap().len(), 1);
+            }
+            _ => panic!("Expected If statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_if_nested() {
+        let result = stmt_parser()
+            .parse(make_stream("if x { if y { return 1; } else { return 2; } }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::If { then_body, else_body, .. } => {
+                assert_eq!(then_body.len(), 1);
+                assert!(else_body.is_none());
+                assert!(matches!(&then_body[0].0, Stmt::If { .. }));
+            }
+            _ => panic!("Expected If statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_if_multi_stmt() {
+        let result =
+            stmt_parser().parse(make_stream("if x { let y = 1; y += 1; return y; }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::If { then_body, else_body, .. } => {
+                assert_eq!(then_body.len(), 3);
+                assert!(else_body.is_none());
+            }
+            _ => panic!("Expected If statement"),
         }
     }
 }
