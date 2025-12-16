@@ -25,6 +25,16 @@ pub enum Stmt<'a> {
         lhs: Spanned<Expr<'a>>,
         rhs: Spanned<Expr<'a>>,
     },
+    /// Add-assign: `lvalue += expr;`.
+    AddAssign {
+        lhs: Spanned<Expr<'a>>,
+        rhs: Spanned<Expr<'a>>,
+    },
+    /// Sub-assign: `lvalue -= expr;`.
+    SubAssign {
+        lhs: Spanned<Expr<'a>>,
+        rhs: Spanned<Expr<'a>>,
+    },
 }
 
 /// Creates a parser for statements.
@@ -48,17 +58,32 @@ where
         .map_with(|expr, e| (Stmt::Return(expr), e.span()))
         .boxed();
 
-    // Assignment or expression statement: `expr = expr ;` or `expr ;`
+    // Assignment operator
+    let assign_op = just(Token::Eq)
+        .to(AssignOp::Eq)
+        .or(just(Token::PlusEq).to(AssignOp::AddEq))
+        .or(just(Token::MinusEq).to(AssignOp::SubEq));
+
+    // Assignment or expression statement: `expr = expr ;` or `expr += expr ;` or `expr ;`
     let assign_or_expr = expr_parser()
-        .then(just(Token::Eq).ignore_then(expr_parser()).or_not())
+        .then(assign_op.then(expr_parser()).or_not())
         .then_ignore(just(Token::Semi))
         .map_with(|(lhs, rhs), e| match rhs {
-            Some(rhs) => (Stmt::Assign { lhs, rhs }, e.span()),
+            Some((AssignOp::Eq, rhs)) => (Stmt::Assign { lhs, rhs }, e.span()),
+            Some((AssignOp::AddEq, rhs)) => (Stmt::AddAssign { lhs, rhs }, e.span()),
+            Some((AssignOp::SubEq, rhs)) => (Stmt::SubAssign { lhs, rhs }, e.span()),
             None => (Stmt::Expr(lhs), e.span()),
         })
         .boxed();
 
     let_stmt.or(return_stmt).or(assign_or_expr)
+}
+
+#[derive(Clone, Copy)]
+enum AssignOp {
+    Eq,
+    AddEq,
+    SubEq,
 }
 
 #[cfg(test)]
@@ -158,5 +183,19 @@ mod tests {
         let result = stmt_parser().parse(make_stream("x = 42;"));
         let (stmt, _) = result.into_result().unwrap();
         assert!(matches!(stmt, Stmt::Assign { .. }));
+    }
+
+    #[test]
+    fn test_stmt_add_assign() {
+        let result = stmt_parser().parse(make_stream("x += 1;"));
+        let (stmt, _) = result.into_result().unwrap();
+        assert!(matches!(stmt, Stmt::AddAssign { .. }));
+    }
+
+    #[test]
+    fn test_stmt_sub_assign() {
+        let result = stmt_parser().parse(make_stream("x -= 1;"));
+        let (stmt, _) = result.into_result().unwrap();
+        assert!(matches!(stmt, Stmt::SubAssign { .. }));
     }
 }
