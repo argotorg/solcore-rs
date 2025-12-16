@@ -13,6 +13,8 @@ pub enum YulLit<'a> {
     Hex(&'a str),
     /// String: `"hello"`.
     String(&'a str),
+    /// Boolean: `true` or `false`.
+    Bool(bool),
 }
 
 /// Creates a parser for Yul literals.
@@ -24,6 +26,8 @@ where
         Token::Number(n) => YulLit::Number(n),
         Token::HexLit(h) => YulLit::Hex(h),
         Token::String(s) => YulLit::String(s),
+        Token::True => YulLit::Bool(true),
+        Token::False => YulLit::Bool(false),
     }
     .map_with(|lit, e| (lit, e.span()))
 }
@@ -62,5 +66,19 @@ mod tests {
         let result = yul_lit_parser().parse(make_stream(r#""hello""#));
         let (lit, _) = result.into_result().unwrap();
         assert_eq!(lit, YulLit::String(r#""hello""#));
+    }
+
+    #[test]
+    fn test_yul_lit_true() {
+        let result = yul_lit_parser().parse(make_stream("true"));
+        let (lit, _) = result.into_result().unwrap();
+        assert_eq!(lit, YulLit::Bool(true));
+    }
+
+    #[test]
+    fn test_yul_lit_false() {
+        let result = yul_lit_parser().parse(make_stream("false"));
+        let (lit, _) = result.into_result().unwrap();
+        assert_eq!(lit, YulLit::Bool(false));
     }
 }

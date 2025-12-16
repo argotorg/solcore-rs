@@ -54,6 +54,10 @@ pub enum Token<'a> {
     Pragma,
     #[token("then")]
     Then,
+    #[token("true")]
+    True,
+    #[token("false")]
+    False,
 
     // Multi-character operators (must be defined before single-character ones).
     #[token(":=")]
@@ -223,6 +227,8 @@ mod tests {
         assert_eq!(tokenize("assembly"), vec![Token::Assembly]);
         assert_eq!(tokenize("pragma"), vec![Token::Pragma]);
         assert_eq!(tokenize("then"), vec![Token::Then]);
+        assert_eq!(tokenize("true"), vec![Token::True]);
+        assert_eq!(tokenize("false"), vec![Token::False]);
     }
 
     #[test]
