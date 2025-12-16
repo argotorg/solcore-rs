@@ -18,6 +18,9 @@ pub enum BinOp {
     Gt,
     LtEq,
     GtEq,
+    // Logical.
+    And,
+    Or,
 }
 
 /// Expression.
@@ -177,9 +180,43 @@ where
                 )
             });
 
+        // Logical AND: &&.
+        let and_op = just(Token::AndAnd)
+            .to(BinOp::And)
+            .map_with(|op, e| (op, e.span()));
+        let and = cmp
+            .clone()
+            .foldl_with(and_op.then(cmp).repeated(), |lhs, (op, rhs), e| {
+                (
+                    Expr::BinOp {
+                        lhs: Box::new(lhs),
+                        op,
+                        rhs: Box::new(rhs),
+                    },
+                    e.span(),
+                )
+            });
+
+        // Logical OR: ||.
+        let or_op = just(Token::OrOr)
+            .to(BinOp::Or)
+            .map_with(|op, e| (op, e.span()));
+        let or = and
+            .clone()
+            .foldl_with(or_op.then(and).repeated(), |lhs, (op, rhs), e| {
+                (
+                    Expr::BinOp {
+                        lhs: Box::new(lhs),
+                        op,
+                        rhs: Box::new(rhs),
+                    },
+                    e.span(),
+                )
+            });
+
         // Type annotation: `expr : type`.
         let type_annot = just(Token::Colon).ignore_then(type_parser()).boxed();
-        cmp.then(type_annot.or_not())
+        or.then(type_annot.or_not())
             .map_with(|(expr, ty), e| match ty {
                 Some(ty) => (
                     Expr::TypeAnnot {
@@ -562,6 +599,104 @@ mod tests {
                 assert!(matches!(&ty.0, Type::Fn { .. }));
             }
             _ => panic!("Expected TypeAnnot"),
+        }
+    }
+
+    #[test]
+    fn test_expr_logical_and() {
+        let result = expr_parser().parse(make_stream("a && b"));
+        let (expr, _) = result.into_result().unwrap();
+        assert!(matches!(
+            expr,
+            Expr::BinOp {
+                op: (BinOp::And, _),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_expr_logical_or() {
+        let result = expr_parser().parse(make_stream("a || b"));
+        let (expr, _) = result.into_result().unwrap();
+        assert!(matches!(
+            expr,
+            Expr::BinOp {
+                op: (BinOp::Or, _),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_expr_logical_precedence() {
+        // a || b && c should parse as a || (b && c).
+        let result = expr_parser().parse(make_stream("a || b && c"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::BinOp {
+                op: (BinOp::Or, _),
+                rhs,
+                ..
+            } => {
+                assert!(matches!(
+                    rhs.0,
+                    Expr::BinOp {
+                        op: (BinOp::And, _),
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("Expected Or at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_logical_and_comparison_precedence() {
+        // a == b && c == d should parse as (a == b) && (c == d).
+        let result = expr_parser().parse(make_stream("a == b && c == d"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::BinOp {
+                op: (BinOp::And, _),
+                lhs,
+                rhs,
+            } => {
+                assert!(matches!(
+                    lhs.0,
+                    Expr::BinOp {
+                        op: (BinOp::Eq, _),
+                        ..
+                    }
+                ));
+                assert!(matches!(
+                    rhs.0,
+                    Expr::BinOp {
+                        op: (BinOp::Eq, _),
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("Expected And at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_logical_with_type_annot() {
+        // a && b : bool should parse as (a && b) : bool.
+        let result = expr_parser().parse(make_stream("a && b : bool"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::TypeAnnot { expr, .. } => {
+                assert!(matches!(
+                    expr.0,
+                    Expr::BinOp {
+                        op: (BinOp::And, _),
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("Expected TypeAnnot at top level"),
         }
     }
 }
