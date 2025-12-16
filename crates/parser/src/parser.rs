@@ -78,6 +78,10 @@ pub enum Expr<'a> {
         op: BinOp,
         rhs: Box<Spanned<Expr<'a>>>,
     },
+    Index {
+        base: Box<Spanned<Expr<'a>>>,
+        index: Box<Spanned<Expr<'a>>>,
+    },
 }
 
 /// Creates a parser for expressions.
@@ -91,9 +95,24 @@ where
             .map(|(lit, span)| (Expr::Lit(lit), span))
             .or(ident_parser().map(|(ident, span)| (Expr::Ident(ident), span)))
             .or(expr
+                .clone()
                 .delimited_by(just(Token::LParen), just(Token::RParen))
                 .map_with(|e: Spanned<Expr<'a>>, extra| (e.0, extra.span())))
             .boxed();
+
+        // Postfix: indexing with [].
+        let index_op = expr
+            .clone()
+            .delimited_by(just(Token::LBracket), just(Token::RBracket));
+        let postfix = atom.foldl_with(index_op.repeated(), |base, index, e| {
+            (
+                Expr::Index {
+                    base: Box::new(base),
+                    index: Box::new(index),
+                },
+                e.span(),
+            )
+        });
 
         // Multiplicative: *, /, %.
         let mul_op = select! {
@@ -101,9 +120,9 @@ where
             Token::Slash => BinOp::Div,
             Token::Percent => BinOp::Mod,
         };
-        let mul = atom
-            .clone()
-            .foldl_with(mul_op.then(atom).repeated(), |lhs, (op, rhs), e| {
+        let mul = postfix.clone().foldl_with(
+            mul_op.then(postfix.clone()).repeated(),
+            |lhs, (op, rhs), e| {
                 (
                     Expr::BinOp {
                         lhs: Box::new(lhs),
@@ -112,7 +131,8 @@ where
                     },
                     e.span(),
                 )
-            });
+            },
+        );
 
         // Additive: +, -.
         let add_op = select! {
@@ -277,13 +297,48 @@ mod tests {
         let (expr, _) = result.into_result().unwrap();
         match expr {
             Expr::BinOp {
-                op: BinOp::Eq,
-                lhs,
-                ..
+                op: BinOp::Eq, lhs, ..
             } => {
                 assert!(matches!(lhs.0, Expr::BinOp { op: BinOp::Add, .. }));
             }
             _ => panic!("Expected Eq at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_index() {
+        let result = expr_parser().parse(make_stream("a[0]"));
+        let (expr, _) = result.into_result().unwrap();
+        assert!(matches!(expr, Expr::Index { .. }));
+    }
+
+    #[test]
+    fn test_expr_index_chained() {
+        // a[0][1] should parse as (a[0])[1].
+        let result = expr_parser().parse(make_stream("a[0][1]"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Index { base, .. } => {
+                assert!(matches!(base.0, Expr::Index { .. }));
+            }
+            _ => panic!("Expected Index at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_index_precedence() {
+        // a[0] + b should parse as (a[0]) + b.
+        let result = expr_parser().parse(make_stream("a[0] + b"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::BinOp {
+                op: BinOp::Add,
+                lhs,
+                ..
+            } => {
+                assert!(matches!(lhs.0, Expr::Index { .. }));
+            }
+            _ => panic!("Expected Add at top level"),
         }
     }
 }
