@@ -64,6 +64,12 @@ pub enum Expr<'a> {
         op: Spanned<UnOp>,
         expr: Box<Spanned<Expr<'a>>>,
     },
+    /// Conditional expression (e.g., `if cond then e1 else e2`).
+    If {
+        cond: Box<Spanned<Expr<'a>>>,
+        then_expr: Box<Spanned<Expr<'a>>>,
+        else_expr: Box<Spanned<Expr<'a>>>,
+    },
 }
 
 /// Helper enum for postfix operators during parsing.
@@ -79,7 +85,26 @@ where
     I: ValueInput<'a, Token = Token<'a>, Span = Span>,
 {
     recursive(|expr| {
-        // Atom: literal, identifier, or parenthesized expression.
+        // If-then-else: `if cond then e1 else e2`.
+        let if_expr = just(Token::If)
+            .ignore_then(expr.clone())
+            .then_ignore(just(Token::Then))
+            .then(expr.clone())
+            .then_ignore(just(Token::Else))
+            .then(expr.clone())
+            .map_with(|((cond, then_expr), else_expr), e| {
+                (
+                    Expr::If {
+                        cond: Box::new(cond),
+                        then_expr: Box::new(then_expr),
+                        else_expr: Box::new(else_expr),
+                    },
+                    e.span(),
+                )
+            })
+            .boxed();
+
+        // Atom: literal, identifier, parenthesized expression, or if-then-else.
         let atom = lit_parser()
             .map(|(lit, span)| (Expr::Lit(lit), span))
             .or(ident_parser().map(|(ident, span)| (Expr::Ident(ident), span)))
@@ -87,6 +112,7 @@ where
                 .clone()
                 .delimited_by(just(Token::LParen), just(Token::RParen))
                 .map_with(|e: Spanned<Expr<'a>>, extra| (e.0, extra.span())))
+            .or(if_expr)
             .boxed();
 
         // Postfix: indexing with [], function calls with (), and field access with `.`.
@@ -804,6 +830,72 @@ mod tests {
                 assert!(matches!(expr.0, Expr::Field { .. }));
             }
             _ => panic!("Expected UnaryOp at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_if_simple() {
+        let result = expr_parser().parse(make_stream("if a then b else c"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
+                assert!(matches!(cond.0, Expr::Ident(Ident("a"))));
+                assert!(matches!(then_expr.0, Expr::Ident(Ident("b"))));
+                assert!(matches!(else_expr.0, Expr::Ident(Ident("c"))));
+            }
+            _ => panic!("Expected If"),
+        }
+    }
+
+    #[test]
+    fn test_expr_if_with_binop_cond() {
+        let result = expr_parser().parse(make_stream("if a == b then c else d"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::If { cond, .. } => {
+                assert!(matches!(
+                    cond.0,
+                    Expr::BinOp {
+                        op: (BinOp::Eq, _),
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("Expected If"),
+        }
+    }
+
+    #[test]
+    fn test_expr_if_nested() {
+        // if a then if b then c else d else e
+        let result = expr_parser().parse(make_stream("if a then if b then c else d else e"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::If { then_expr, .. } => {
+                assert!(matches!(then_expr.0, Expr::If { .. }));
+            }
+            _ => panic!("Expected If at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_if_in_binop() {
+        // (if a then b else c) + d
+        let result = expr_parser().parse(make_stream("(if a then b else c) + d"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::BinOp {
+                op: (BinOp::Add, _),
+                lhs,
+                ..
+            } => {
+                assert!(matches!(lhs.0, Expr::If { .. }));
+            }
+            _ => panic!("Expected Add at top level"),
         }
     }
 }
