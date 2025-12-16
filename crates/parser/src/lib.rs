@@ -48,6 +48,17 @@ pub enum Type<'a> {
     Tuple { elems: Vec<Spanned<Type<'a>>> },
 }
 
+/// Predicate/constraint (e.g., `a : Eq`, `a : Foo(b, c)`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pred<'a> {
+    /// The type being constrained (e.g., `a` in `a : Eq`).
+    pub ty: Spanned<Type<'a>>,
+    /// The class/constraint name (e.g., `Eq` in `a : Eq`).
+    pub class: Spanned<Ident<'a>>,
+    /// Type arguments to the class (e.g., `[b, c]` in `a : Foo(b, c)`).
+    pub args: Vec<Spanned<Type<'a>>>,
+}
+
 /// Creates a parser for identifiers.
 pub fn ident_parser<'a, I>() -> impl Parser<'a, I, Spanned<Ident<'a>>, ParserErr<'a>>
 where
@@ -126,6 +137,28 @@ where
 
         fn_type.or(tuple_type).or(named_type)
     })
+}
+
+/// Creates a parser for predicates/constraints (e.g., `a : Eq`, `a : Foo(b, c)`).
+pub fn pred_parser<'a, I>() -> impl Parser<'a, I, Spanned<Pred<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    let class_args = type_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .or_not()
+        .map(|args| args.unwrap_or_default())
+        .boxed();
+
+    type_parser()
+        .then_ignore(just(Token::Colon))
+        .then(ident_parser())
+        .then(class_args)
+        .map_with(|((ty, class), args), e| (Pred { ty, class, args }, e.span()))
+        .boxed()
 }
 
 #[cfg(test)]
@@ -333,5 +366,37 @@ mod tests {
             }
             _ => panic!("Expected Tuple type"),
         }
+    }
+
+    #[test]
+    fn test_parse_pred_simple() {
+        // a : Eq
+        let result = pred_parser().parse(make_stream("a : Eq"));
+        let (pred, _) = result.into_result().unwrap();
+        assert!(matches!(&pred.ty.0, Type::Named { name, .. } if name.0 == Ident("a")));
+        assert_eq!(pred.class.0, Ident("Eq"));
+        assert!(pred.args.is_empty());
+    }
+
+    #[test]
+    fn test_parse_pred_with_args() {
+        // a : Foo(b, c)
+        let result = pred_parser().parse(make_stream("a : Foo(b, c)"));
+        let (pred, _) = result.into_result().unwrap();
+        assert!(matches!(&pred.ty.0, Type::Named { name, .. } if name.0 == Ident("a")));
+        assert_eq!(pred.class.0, Ident("Foo"));
+        assert_eq!(pred.args.len(), 2);
+        assert!(matches!(&pred.args[0].0, Type::Named { name, .. } if name.0 == Ident("b")));
+        assert!(matches!(&pred.args[1].0, Type::Named { name, .. } if name.0 == Ident("c")));
+    }
+
+    #[test]
+    fn test_parse_pred_complex_type() {
+        // (a, b) : Eq
+        let result = pred_parser().parse(make_stream("(a, b) : Eq"));
+        let (pred, _) = result.into_result().unwrap();
+        assert!(matches!(&pred.ty.0, Type::Tuple { .. }));
+        assert_eq!(pred.class.0, Ident("Eq"));
+        assert!(pred.args.is_empty());
     }
 }
