@@ -2,6 +2,7 @@ pub mod expr;
 pub mod lexer;
 pub mod pat;
 pub mod stmt;
+pub mod yul;
 
 use chumsky::{input::ValueInput, prelude::*, span::SimpleSpan};
 
