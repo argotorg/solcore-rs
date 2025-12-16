@@ -31,6 +31,23 @@ pub enum Lit<'a> {
     String(&'a str),
 }
 
+/// Type expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Type<'a> {
+    /// Named type with optional type arguments (e.g., `uint256`, `mapping(address, uint256)`).
+    Named {
+        name: Spanned<Ident<'a>>,
+        args: Vec<Spanned<Type<'a>>>,
+    },
+    /// Function type (e.g., `(word, word) -> word`).
+    Fn {
+        params: Vec<Spanned<Type<'a>>>,
+        ret: Box<Spanned<Type<'a>>>,
+    },
+    /// Tuple type (e.g., `()`, `(a, b)`).
+    Tuple { elems: Vec<Spanned<Type<'a>>> },
+}
+
 /// Creates a parser for identifiers.
 pub fn ident_parser<'a, I>() -> impl Parser<'a, I, Spanned<Ident<'a>>, ParserErr<'a>>
 where
@@ -53,6 +70,62 @@ where
         Token::String(s) => Lit::String(s),
     }
     .map_with(|lit, e| (lit, e.span()))
+}
+
+/// Creates a parser for types.
+pub fn type_parser<'a, I>() -> impl Parser<'a, I, Spanned<Type<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    recursive(|ty| {
+        // Named type: `ident` optionally followed by `(type_args)`.
+        let type_args = ty
+            .clone()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .or_not()
+            .map(|args| args.unwrap_or_default())
+            .boxed();
+
+        let named_type = ident_parser()
+            .then(type_args)
+            .map_with(|(name, args), e| (Type::Named { name, args }, e.span()))
+            .boxed();
+
+        // Parenthesized types: function type or tuple type.
+        let paren_types = ty
+            .clone()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .boxed();
+
+        // Function type: `(param_types) -> return_type`.
+        let fn_type = paren_types
+            .clone()
+            .then_ignore(just(Token::Arrow))
+            .then(ty)
+            .map_with(|(params, ret), e| {
+                (
+                    Type::Fn {
+                        params,
+                        ret: Box::new(ret),
+                    },
+                    e.span(),
+                )
+            })
+            .boxed();
+
+        // Tuple type: `(types)` without `->`.
+        let tuple_type = paren_types
+            .map_with(|elems, e| (Type::Tuple { elems }, e.span()))
+            .boxed();
+
+        fn_type.or(tuple_type).or(named_type)
+    })
 }
 
 #[cfg(test)]
@@ -102,5 +175,163 @@ mod tests {
             result.into_result(),
             Ok((Lit::String(r#""hello""#), Span::from(0..7)))
         );
+    }
+
+    #[test]
+    fn test_parse_type_simple() {
+        let result = type_parser().parse(make_stream("uint256"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Named { name, args } => {
+                assert_eq!(name.0, Ident("uint256"));
+                assert!(args.is_empty());
+            }
+            _ => panic!("Expected Named type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_type_with_args() {
+        let result = type_parser().parse(make_stream("mapping(address, uint256)"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Named { name, args } => {
+                assert_eq!(name.0, Ident("mapping"));
+                assert_eq!(args.len(), 2);
+                assert!(matches!(&args[0].0, Type::Named { name, .. } if name.0 == Ident("address")));
+                assert!(matches!(&args[1].0, Type::Named { name, .. } if name.0 == Ident("uint256")));
+            }
+            _ => panic!("Expected Named type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_type_nested() {
+        let result = type_parser().parse(make_stream("mapping(address, Array(uint256))"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Named { name, args } => {
+                assert_eq!(name.0, Ident("mapping"));
+                assert_eq!(args.len(), 2);
+                match &args[1].0 {
+                    Type::Named { name, args } => {
+                        assert_eq!(name.0, Ident("Array"));
+                        assert_eq!(args.len(), 1);
+                    }
+                    _ => panic!("Expected nested Named type"),
+                }
+            }
+            _ => panic!("Expected Named type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_fn_type_simple() {
+        let result = type_parser().parse(make_stream("(word) -> word"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Fn { params, ret } => {
+                assert_eq!(params.len(), 1);
+                assert!(matches!(&params[0].0, Type::Named { name, .. } if name.0 == Ident("word")));
+                assert!(matches!(&ret.0, Type::Named { name, .. } if name.0 == Ident("word")));
+            }
+            _ => panic!("Expected Fn type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_fn_type_multiple_params() {
+        let result = type_parser().parse(make_stream("(word, word) -> word"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Fn { params, ret } => {
+                assert_eq!(params.len(), 2);
+                assert!(matches!(&params[0].0, Type::Named { name, .. } if name.0 == Ident("word")));
+                assert!(matches!(&params[1].0, Type::Named { name, .. } if name.0 == Ident("word")));
+                assert!(matches!(&ret.0, Type::Named { name, .. } if name.0 == Ident("word")));
+            }
+            _ => panic!("Expected Fn type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_fn_type_no_params() {
+        let result = type_parser().parse(make_stream("() -> word"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Fn { params, ret } => {
+                assert!(params.is_empty());
+                assert!(matches!(&ret.0, Type::Named { name, .. } if name.0 == Ident("word")));
+            }
+            _ => panic!("Expected Fn type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_fn_type_returning_fn() {
+        // (a) -> (b) -> c parses as (a) -> ((b) -> c) due to right-associativity.
+        let result = type_parser().parse(make_stream("(a) -> (b) -> c"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Fn { params, ret } => {
+                assert_eq!(params.len(), 1);
+                assert!(matches!(&ret.0, Type::Fn { .. }));
+            }
+            _ => panic!("Expected Fn type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_tuple_empty() {
+        let result = type_parser().parse(make_stream("()"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Tuple { elems } => {
+                assert!(elems.is_empty());
+            }
+            _ => panic!("Expected Tuple type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_tuple_single() {
+        let result = type_parser().parse(make_stream("(a)"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Tuple { elems } => {
+                assert_eq!(elems.len(), 1);
+                assert!(matches!(&elems[0].0, Type::Named { name, .. } if name.0 == Ident("a")));
+            }
+            _ => panic!("Expected Tuple type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_tuple_multiple() {
+        let result = type_parser().parse(make_stream("(a, b, c)"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Tuple { elems } => {
+                assert_eq!(elems.len(), 3);
+                assert!(matches!(&elems[0].0, Type::Named { name, .. } if name.0 == Ident("a")));
+                assert!(matches!(&elems[1].0, Type::Named { name, .. } if name.0 == Ident("b")));
+                assert!(matches!(&elems[2].0, Type::Named { name, .. } if name.0 == Ident("c")));
+            }
+            _ => panic!("Expected Tuple type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_tuple_nested() {
+        let result = type_parser().parse(make_stream("((a, b), c)"));
+        let (ty, _) = result.into_result().unwrap();
+        match ty {
+            Type::Tuple { elems } => {
+                assert_eq!(elems.len(), 2);
+                assert!(matches!(&elems[0].0, Type::Tuple { .. }));
+                assert!(matches!(&elems[1].0, Type::Named { name, .. } if name.0 == Ident("c")));
+            }
+            _ => panic!("Expected Tuple type"),
+        }
     }
 }
