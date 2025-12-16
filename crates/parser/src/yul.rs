@@ -73,6 +73,78 @@ where
     })
 }
 
+/// Yul statement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum YulStmt<'a> {
+    /// Block: `{ stmt* }`.
+    Block(Vec<Spanned<YulStmt<'a>>>),
+    /// Variable declaration: `let x := expr` or `let x, y := expr`.
+    Let {
+        names: Vec<Spanned<Ident<'a>>>,
+        init: Option<Spanned<YulExpr<'a>>>,
+    },
+    /// Assignment: `x := expr` or `x, y := expr`.
+    Assign {
+        names: Vec<Spanned<Ident<'a>>>,
+        value: Spanned<YulExpr<'a>>,
+    },
+    /// Expression statement (function call): `foo(a, b)`.
+    Expr(Spanned<YulExpr<'a>>),
+    /// Leave: `leave`.
+    Leave,
+    /// Break: `break`.
+    Break,
+    /// Continue: `continue`.
+    Continue,
+}
+
+/// Creates a parser for Yul statements.
+pub fn yul_stmt_parser<'a, I>() -> impl Parser<'a, I, Spanned<YulStmt<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    recursive(|stmt| {
+        let ident = select! { Token::Ident(s) => Ident(s) }.map_with(|id, e| (id, e.span()));
+
+        let block = stmt
+            .repeated()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace))
+            .map(YulStmt::Block)
+            .boxed();
+
+        let let_stmt = just(Token::Let)
+            .ignore_then(
+                ident
+                    .clone()
+                    .separated_by(just(Token::Comma))
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .then(just(Token::ColonEq).ignore_then(yul_expr_parser()).or_not())
+            .map(|(names, init)| YulStmt::Let { names, init })
+            .boxed();
+
+        let assign = ident
+            .separated_by(just(Token::Comma))
+            .at_least(1)
+            .collect::<Vec<_>>()
+            .then_ignore(just(Token::ColonEq))
+            .then(yul_expr_parser())
+            .map(|(names, value)| YulStmt::Assign { names, value })
+            .boxed();
+
+        let expr_stmt = yul_expr_parser().map(YulStmt::Expr).boxed();
+
+        let leave = just(Token::Leave).to(YulStmt::Leave).boxed();
+        let break_ = just(Token::Break).to(YulStmt::Break).boxed();
+        let continue_ = just(Token::Continue).to(YulStmt::Continue).boxed();
+
+        choice((block, let_stmt, assign, leave, break_, continue_, expr_stmt))
+            .map_with(|stmt, e| (stmt, e.span()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use chumsky::input::Stream;
@@ -174,6 +246,107 @@ mod tests {
                 assert!(matches!(args[0].0, YulExpr::Call { .. }));
             }
             _ => panic!("expected Call"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_let_simple() {
+        let result = yul_stmt_parser().parse(make_stream("let x := 42"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Let { names, init } => {
+                assert_eq!(names.len(), 1);
+                assert_eq!(names[0].0, Ident("x"));
+                assert!(init.is_some());
+            }
+            _ => panic!("expected Let"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_let_no_init() {
+        let result = yul_stmt_parser().parse(make_stream("let x"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Let { names, init } => {
+                assert_eq!(names.len(), 1);
+                assert!(init.is_none());
+            }
+            _ => panic!("expected Let"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_let_multi() {
+        let result = yul_stmt_parser().parse(make_stream("let x, y := foo()"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Let { names, init } => {
+                assert_eq!(names.len(), 2);
+                assert!(init.is_some());
+            }
+            _ => panic!("expected Let"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_assign() {
+        let result = yul_stmt_parser().parse(make_stream("x := 1"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Assign { names, .. } => {
+                assert_eq!(names.len(), 1);
+                assert_eq!(names[0].0, Ident("x"));
+            }
+            _ => panic!("expected Assign"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_expr() {
+        let result = yul_stmt_parser().parse(make_stream("foo()"));
+        let (stmt, _) = result.into_result().unwrap();
+        assert!(matches!(stmt, YulStmt::Expr(_)));
+    }
+
+    #[test]
+    fn test_yul_stmt_leave() {
+        let result = yul_stmt_parser().parse(make_stream("leave"));
+        let (stmt, _) = result.into_result().unwrap();
+        assert!(matches!(stmt, YulStmt::Leave));
+    }
+
+    #[test]
+    fn test_yul_stmt_break() {
+        let result = yul_stmt_parser().parse(make_stream("break"));
+        let (stmt, _) = result.into_result().unwrap();
+        assert!(matches!(stmt, YulStmt::Break));
+    }
+
+    #[test]
+    fn test_yul_stmt_continue() {
+        let result = yul_stmt_parser().parse(make_stream("continue"));
+        let (stmt, _) = result.into_result().unwrap();
+        assert!(matches!(stmt, YulStmt::Continue));
+    }
+
+    #[test]
+    fn test_yul_stmt_block_empty() {
+        let result = yul_stmt_parser().parse(make_stream("{}"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Block(stmts) => assert!(stmts.is_empty()),
+            _ => panic!("expected Block"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_block_with_stmts() {
+        let result = yul_stmt_parser().parse(make_stream("{ let x := 1 foo() }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Block(stmts) => assert_eq!(stmts.len(), 2),
+            _ => panic!("expected Block"),
         }
     }
 }
