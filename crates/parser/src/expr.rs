@@ -1,6 +1,6 @@
 use chumsky::{input::ValueInput, prelude::*};
 
-use crate::{Ident, Lit, ParserErr, Span, Spanned, ident_parser, lexer::Token, lit_parser};
+use crate::{Ident, Lit, ParserErr, Span, Spanned, Type, ident_parser, lexer::Token, lit_parser, type_parser};
 
 /// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -41,6 +41,11 @@ pub enum Expr<'a> {
     Field {
         base: Box<Spanned<Expr<'a>>>,
         field: Spanned<Ident<'a>>,
+    },
+    /// Type annotated expression (e.g., `expr : type`).
+    TypeAnnot {
+        expr: Box<Spanned<Expr<'a>>>,
+        ty: Spanned<Type<'a>>,
     },
 }
 
@@ -159,7 +164,8 @@ where
             Token::GreaterEq => BinOp::GtEq,
         }
         .map_with(|op, e| (op, e.span()));
-        add.clone()
+        let cmp = add
+            .clone()
             .foldl_with(cmp_op.then(add).repeated(), |lhs, (op, rhs), e| {
                 (
                     Expr::BinOp {
@@ -169,6 +175,20 @@ where
                     },
                     e.span(),
                 )
+            });
+
+        // Type annotation: `expr : type`.
+        let type_annot = just(Token::Colon).ignore_then(type_parser()).boxed();
+        cmp.then(type_annot.or_not())
+            .map_with(|(expr, ty), e| match ty {
+                Some(ty) => (
+                    Expr::TypeAnnot {
+                        expr: Box::new(expr),
+                        ty,
+                    },
+                    e.span(),
+                ),
+                None => expr,
             })
     })
 }
@@ -497,6 +517,51 @@ mod tests {
                 assert!(matches!(base.0, Expr::Index { .. }));
             }
             _ => panic!("Expected Field at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_type_annot_simple() {
+        let result = expr_parser().parse(make_stream("x : word"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::TypeAnnot { expr, ty } => {
+                assert!(matches!(expr.0, Expr::Ident(Ident("x"))));
+                assert!(matches!(&ty.0, Type::Named { name, .. } if name.0 == Ident("word")));
+            }
+            _ => panic!("Expected TypeAnnot"),
+        }
+    }
+
+    #[test]
+    fn test_expr_type_annot_with_binop() {
+        // a + b : word should parse as (a + b) : word.
+        let result = expr_parser().parse(make_stream("a + b : word"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::TypeAnnot { expr, .. } => {
+                assert!(matches!(
+                    expr.0,
+                    Expr::BinOp {
+                        op: (BinOp::Add, _),
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("Expected TypeAnnot at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_type_annot_fn_type() {
+        let result = expr_parser().parse(make_stream("f : (a) -> b"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::TypeAnnot { expr, ty } => {
+                assert!(matches!(expr.0, Expr::Ident(Ident("f"))));
+                assert!(matches!(&ty.0, Type::Fn { .. }));
+            }
+            _ => panic!("Expected TypeAnnot"),
         }
     }
 }
