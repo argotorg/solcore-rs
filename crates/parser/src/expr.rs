@@ -35,6 +35,16 @@ pub enum Expr<'a> {
         base: Box<Spanned<Expr<'a>>>,
         index: Box<Spanned<Expr<'a>>>,
     },
+    Call {
+        callee: Box<Spanned<Expr<'a>>>,
+        args: Vec<Spanned<Expr<'a>>>,
+    },
+}
+
+/// Helper enum for postfix operators during parsing.
+enum PostfixOp<'a> {
+    Index(Spanned<Expr<'a>>),
+    Call(Vec<Spanned<Expr<'a>>>),
 }
 
 /// Creates a parser for expressions.
@@ -53,18 +63,34 @@ where
                 .map_with(|e: Spanned<Expr<'a>>, extra| (e.0, extra.span())))
             .boxed();
 
-        // Postfix: indexing with [].
+        // Postfix: indexing with [] and function calls with ().
         let index_op = expr
             .clone()
-            .delimited_by(just(Token::LBracket), just(Token::RBracket));
-        let postfix = atom.foldl_with(index_op.repeated(), |base, index, e| {
-            (
+            .delimited_by(just(Token::LBracket), just(Token::RBracket))
+            .map(PostfixOp::Index);
+        let call_op = expr
+            .clone()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map(PostfixOp::Call);
+        let postfix_op = index_op.or(call_op);
+        let postfix = atom.foldl_with(postfix_op.repeated(), |base, op, e| match op {
+            PostfixOp::Index(index) => (
                 Expr::Index {
                     base: Box::new(base),
                     index: Box::new(index),
                 },
                 e.span(),
-            )
+            ),
+            PostfixOp::Call(args) => (
+                Expr::Call {
+                    callee: Box::new(base),
+                    args,
+                },
+                e.span(),
+            ),
         });
 
         // Multiplicative: *, /, %.
@@ -300,6 +326,81 @@ mod tests {
                 assert!(matches!(lhs.0, Expr::Index { .. }));
             }
             _ => panic!("Expected Add at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_call_no_args() {
+        let result = expr_parser().parse(make_stream("foo()"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Call { args, .. } => {
+                assert!(args.is_empty());
+            }
+            _ => panic!("Expected Call"),
+        }
+    }
+
+    #[test]
+    fn test_expr_call_single_arg() {
+        let result = expr_parser().parse(make_stream("foo(1)"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Call { args, .. } => {
+                assert_eq!(args.len(), 1);
+            }
+            _ => panic!("Expected Call"),
+        }
+    }
+
+    #[test]
+    fn test_expr_call_multiple_args() {
+        let result = expr_parser().parse(make_stream("foo(1, 2, 3)"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Call { args, .. } => {
+                assert_eq!(args.len(), 3);
+            }
+            _ => panic!("Expected Call"),
+        }
+    }
+
+    #[test]
+    fn test_expr_call_chained() {
+        // foo()() should parse as (foo())().
+        let result = expr_parser().parse(make_stream("foo()()"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Call { callee, .. } => {
+                assert!(matches!(callee.0, Expr::Call { .. }));
+            }
+            _ => panic!("Expected Call at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_call_and_index() {
+        // foo()[0] should parse as (foo())[0].
+        let result = expr_parser().parse(make_stream("foo()[0]"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Index { base, .. } => {
+                assert!(matches!(base.0, Expr::Call { .. }));
+            }
+            _ => panic!("Expected Index at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_index_and_call() {
+        // a[0]() should parse as (a[0])().
+        let result = expr_parser().parse(make_stream("a[0]()"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::Call { callee, .. } => {
+                assert!(matches!(callee.0, Expr::Index { .. }));
+            }
+            _ => panic!("Expected Call at top level"),
         }
     }
 }
