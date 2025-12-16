@@ -53,11 +53,19 @@ where
 /// Binary operators.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
+    // Arithmetic.
     Add,
     Sub,
     Mul,
     Div,
     Mod,
+    // Comparison.
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
 }
 
 /// Expression.
@@ -111,8 +119,30 @@ where
             Token::Plus => BinOp::Add,
             Token::Minus => BinOp::Sub,
         };
-        mul.clone()
+        let add = mul
+            .clone()
             .foldl_with(add_op.then(mul).repeated(), |lhs, (op, rhs), e| {
+                (
+                    Expr::BinOp {
+                        lhs: Box::new(lhs),
+                        op,
+                        rhs: Box::new(rhs),
+                    },
+                    e.span(),
+                )
+            });
+
+        // Comparison: ==, !=, <, >, <=, >=.
+        let cmp_op = select! {
+            Token::EqEq => BinOp::Eq,
+            Token::NotEq => BinOp::NotEq,
+            Token::Less => BinOp::Lt,
+            Token::Greater => BinOp::Gt,
+            Token::LessEq => BinOp::LtEq,
+            Token::GreaterEq => BinOp::GtEq,
+        };
+        add.clone()
+            .foldl_with(cmp_op.then(add).repeated(), |lhs, (op, rhs), e| {
                 (
                     Expr::BinOp {
                         lhs: Box::new(lhs),
@@ -226,6 +256,34 @@ mod tests {
                 assert!(matches!(lhs.0, Expr::BinOp { op: BinOp::Add, .. }));
             }
             _ => panic!("Expected Mul at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_comparison() {
+        let result = expr_parser().parse(make_stream("a == b"));
+        let (expr, _) = result.into_result().unwrap();
+        assert!(matches!(expr, Expr::BinOp { op: BinOp::Eq, .. }));
+
+        let result = expr_parser().parse(make_stream("x < y"));
+        let (expr, _) = result.into_result().unwrap();
+        assert!(matches!(expr, Expr::BinOp { op: BinOp::Lt, .. }));
+    }
+
+    #[test]
+    fn test_expr_comparison_precedence() {
+        // 1 + 2 == 3 should parse as (1 + 2) == 3.
+        let result = expr_parser().parse(make_stream("1 + 2 == 3"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::BinOp {
+                op: BinOp::Eq,
+                lhs,
+                ..
+            } => {
+                assert!(matches!(lhs.0, Expr::BinOp { op: BinOp::Add, .. }));
+            }
+            _ => panic!("Expected Eq at top level"),
         }
     }
 }
