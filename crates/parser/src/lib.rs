@@ -59,6 +59,33 @@ pub struct Pred<'a> {
     pub args: Vec<Spanned<Type<'a>>>,
 }
 
+/// Function parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Param<'a> {
+    /// Parameter with explicit type annotation (e.g., `x : Int`).
+    Typed {
+        name: Spanned<Ident<'a>>,
+        ty: Spanned<Type<'a>>,
+    },
+    /// Parameter without type annotation (e.g., `x`).
+    Untyped { name: Spanned<Ident<'a>> },
+}
+
+/// Function signature.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Signature<'a> {
+    /// Type variables (from `forall a b.`).
+    pub type_vars: Vec<Spanned<Ident<'a>>>,
+    /// Predicates/constraints (from `a : Eq, b : Ord =>`).
+    pub preds: Vec<Spanned<Pred<'a>>>,
+    /// Function name.
+    pub name: Spanned<Ident<'a>>,
+    /// Function parameters.
+    pub params: Vec<Spanned<Param<'a>>>,
+    /// Return type (optional).
+    pub ret: Option<Spanned<Type<'a>>>,
+}
+
 /// Creates a parser for identifiers.
 pub fn ident_parser<'a, I>() -> impl Parser<'a, I, Spanned<Ident<'a>>, ParserErr<'a>>
 where
@@ -158,6 +185,88 @@ where
         .then(ident_parser())
         .then(class_args)
         .map_with(|((ty, class), args), e| (Pred { ty, class, args }, e.span()))
+        .boxed()
+}
+
+/// Creates a parser for function parameters (e.g., `x : Int` or `x`).
+pub fn param_parser<'a, I>() -> impl Parser<'a, I, Spanned<Param<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    // Typed param: `name : Type`
+    let typed = ident_parser()
+        .then_ignore(just(Token::Colon))
+        .then(type_parser())
+        .map_with(|(name, ty), e| (Param::Typed { name, ty }, e.span()))
+        .boxed();
+
+    // Untyped param: `name`
+    let untyped = ident_parser()
+        .map_with(|name, e| (Param::Untyped { name }, e.span()))
+        .boxed();
+
+    // Try typed first (more specific), then untyped
+    typed.or(untyped)
+}
+
+/// Creates a parser for function signatures.
+/// Syntax: `forall a b. pred1, pred2 => function name(params) -> RetType`
+/// The `forall` and predicate parts are optional.
+pub fn signature_parser<'a, I>() -> impl Parser<'a, I, Spanned<Signature<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    // Type variables: `forall a b.` (whitespace-separated)
+    let type_vars = just(Token::Forall)
+        .ignore_then(ident_parser().repeated().collect::<Vec<_>>())
+        .then_ignore(just(Token::Dot))
+        .or_not()
+        .map(|vars| vars.unwrap_or_default())
+        .boxed();
+
+    // Predicates: `pred1, pred2 =>`
+    let preds = pred_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .then_ignore(just(Token::FatArrow))
+        .or_not()
+        .map(|preds| preds.unwrap_or_default())
+        .boxed();
+
+    // Parameter list: `(param1, param2)`
+    let params = param_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .boxed();
+
+    // Return type: `-> Type`
+    let ret = just(Token::Arrow)
+        .ignore_then(type_parser())
+        .or_not()
+        .boxed();
+
+    // Full signature
+    type_vars
+        .then(preds)
+        .then_ignore(just(Token::Function))
+        .then(ident_parser())
+        .then(params)
+        .then(ret)
+        .map_with(|((((type_vars, preds), name), params), ret), e| {
+            (
+                Signature {
+                    type_vars,
+                    preds,
+                    name,
+                    params,
+                    ret,
+                },
+                e.span(),
+            )
+        })
         .boxed()
 }
 
@@ -398,5 +507,110 @@ mod tests {
         assert!(matches!(&pred.ty.0, Type::Tuple { .. }));
         assert_eq!(pred.class.0, Ident("Eq"));
         assert!(pred.args.is_empty());
+    }
+
+    #[test]
+    fn test_parse_param_typed() {
+        let result = param_parser().parse(make_stream("x : Int"));
+        let (param, _) = result.into_result().unwrap();
+        match param {
+            Param::Typed { name, ty } => {
+                assert_eq!(name.0, Ident("x"));
+                assert!(matches!(&ty.0, Type::Named { name, .. } if name.0 == Ident("Int")));
+            }
+            _ => panic!("Expected Typed param"),
+        }
+    }
+
+    #[test]
+    fn test_parse_param_untyped() {
+        let result = param_parser().parse(make_stream("x"));
+        let (param, _) = result.into_result().unwrap();
+        match param {
+            Param::Untyped { name } => {
+                assert_eq!(name.0, Ident("x"));
+            }
+            _ => panic!("Expected Untyped param"),
+        }
+    }
+
+    #[test]
+    fn test_parse_signature_simple() {
+        // function foo()
+        let result = signature_parser().parse(make_stream("function foo()"));
+        let (sig, _) = result.into_result().unwrap();
+        assert!(sig.type_vars.is_empty());
+        assert!(sig.preds.is_empty());
+        assert_eq!(sig.name.0, Ident("foo"));
+        assert!(sig.params.is_empty());
+        assert!(sig.ret.is_none());
+    }
+
+    #[test]
+    fn test_parse_signature_with_params() {
+        // function foo(x : Int, y)
+        let result = signature_parser().parse(make_stream("function foo(x : Int, y)"));
+        let (sig, _) = result.into_result().unwrap();
+        assert_eq!(sig.name.0, Ident("foo"));
+        assert_eq!(sig.params.len(), 2);
+        assert!(matches!(&sig.params[0].0, Param::Typed { name, .. } if name.0 == Ident("x")));
+        assert!(matches!(&sig.params[1].0, Param::Untyped { name } if name.0 == Ident("y")));
+    }
+
+    #[test]
+    fn test_parse_signature_with_return() {
+        // function foo() -> Int
+        let result = signature_parser().parse(make_stream("function foo() -> Int"));
+        let (sig, _) = result.into_result().unwrap();
+        assert_eq!(sig.name.0, Ident("foo"));
+        assert!(sig.params.is_empty());
+        assert!(sig.ret.is_some());
+        assert!(matches!(&sig.ret.unwrap().0, Type::Named { name, .. } if name.0 == Ident("Int")));
+    }
+
+    #[test]
+    fn test_parse_signature_with_forall() {
+        // forall a b. function foo(x : a) -> b
+        let result =
+            signature_parser().parse(make_stream("forall a b. function foo(x : a) -> b"));
+        let (sig, _) = result.into_result().unwrap();
+        assert_eq!(sig.type_vars.len(), 2);
+        assert_eq!(sig.type_vars[0].0, Ident("a"));
+        assert_eq!(sig.type_vars[1].0, Ident("b"));
+        assert_eq!(sig.name.0, Ident("foo"));
+        assert_eq!(sig.params.len(), 1);
+        assert!(sig.ret.is_some());
+    }
+
+    #[test]
+    fn test_parse_signature_with_preds() {
+        // a : Eq => function foo(x : a)
+        let result = signature_parser().parse(make_stream("a : Eq => function foo(x : a)"));
+        let (sig, _) = result.into_result().unwrap();
+        assert!(sig.type_vars.is_empty());
+        assert_eq!(sig.preds.len(), 1);
+        assert_eq!(sig.preds[0].0.class.0, Ident("Eq"));
+        assert_eq!(sig.name.0, Ident("foo"));
+    }
+
+    #[test]
+    fn test_parse_signature_full() {
+        // forall a b. a : Eq, b : Ord => function compare(x : a, y : b) -> Bool
+        let result = signature_parser().parse(make_stream(
+            "forall a b. a : Eq, b : Ord => function compare(x : a, y : b) -> Bool",
+        ));
+        let (sig, _) = result.into_result().unwrap();
+        assert_eq!(sig.type_vars.len(), 2);
+        assert_eq!(sig.type_vars[0].0, Ident("a"));
+        assert_eq!(sig.type_vars[1].0, Ident("b"));
+        assert_eq!(sig.preds.len(), 2);
+        assert_eq!(sig.preds[0].0.class.0, Ident("Eq"));
+        assert_eq!(sig.preds[1].0.class.0, Ident("Ord"));
+        assert_eq!(sig.name.0, Ident("compare"));
+        assert_eq!(sig.params.len(), 2);
+        assert!(matches!(&sig.params[0].0, Param::Typed { name, .. } if name.0 == Ident("x")));
+        assert!(matches!(&sig.params[1].0, Param::Typed { name, .. } if name.0 == Ident("y")));
+        assert!(sig.ret.is_some());
+        assert!(matches!(&sig.ret.unwrap().0, Type::Named { name, .. } if name.0 == Ident("Bool")));
     }
 }
