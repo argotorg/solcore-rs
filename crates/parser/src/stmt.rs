@@ -35,6 +35,11 @@ pub enum Stmt<'a> {
         lhs: Spanned<Expr<'a>>,
         rhs: Spanned<Expr<'a>>,
     },
+    /// Match statement: `match expr, expr { arms }`.
+    Match {
+        scrutinees: Vec<Spanned<Expr<'a>>>,
+        arms: Vec<Spanned<MatchArm<'a>>>,
+    },
 }
 
 /// Match arm: `| pat1, pat2 => stmt*`.
@@ -51,41 +56,77 @@ pub fn stmt_parser<'a, I>() -> impl Parser<'a, I, Spanned<Stmt<'a>>, ParserErr<'
 where
     I: ValueInput<'a, Token = Token<'a>, Span = Span>,
 {
-    // Let statement: `let name : Type = expr ;`
-    let let_stmt = just(Token::Let)
-        .ignore_then(ident_parser())
-        .then(just(Token::Colon).ignore_then(type_parser()).or_not())
-        .then(just(Token::Eq).ignore_then(expr_parser()).or_not())
-        .then_ignore(just(Token::Semi))
-        .map_with(|((name, ty), init), e| (Stmt::Let { name, ty, init }, e.span()))
-        .boxed();
+    recursive(|stmt| {
+        // Let statement: `let name : Type = expr ;`
+        let let_stmt = just(Token::Let)
+            .ignore_then(ident_parser())
+            .then(just(Token::Colon).ignore_then(type_parser()).or_not())
+            .then(just(Token::Eq).ignore_then(expr_parser()).or_not())
+            .then_ignore(just(Token::Semi))
+            .map_with(|((name, ty), init), e| (Stmt::Let { name, ty, init }, e.span()))
+            .boxed();
 
-    // Return statement: `return expr ;` or `return ;`
-    let return_stmt = just(Token::Return)
-        .ignore_then(expr_parser().or_not())
-        .then_ignore(just(Token::Semi))
-        .map_with(|expr, e| (Stmt::Return(expr), e.span()))
-        .boxed();
+        // Return statement: `return expr ;` or `return ;`
+        let return_stmt = just(Token::Return)
+            .ignore_then(expr_parser().or_not())
+            .then_ignore(just(Token::Semi))
+            .map_with(|expr, e| (Stmt::Return(expr), e.span()))
+            .boxed();
 
-    // Assignment operator
-    let assign_op = just(Token::Eq)
-        .to(AssignOp::Eq)
-        .or(just(Token::PlusEq).to(AssignOp::AddEq))
-        .or(just(Token::MinusEq).to(AssignOp::SubEq));
+        // Match arm: `| pat1, pat2 => stmt*`
+        let match_arm = just(Token::Pipe)
+            .ignore_then(
+                pat_parser()
+                    .separated_by(just(Token::Comma))
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .then_ignore(just(Token::FatArrow))
+            .then(stmt.clone().repeated().collect::<Vec<_>>())
+            .map_with(|(pats, body), e| (MatchArm { pats, body }, e.span()))
+            .boxed();
 
-    // Assignment or expression statement: `expr = expr ;` or `expr += expr ;` or `expr ;`
-    let assign_or_expr = expr_parser()
-        .then(assign_op.then(expr_parser()).or_not())
-        .then_ignore(just(Token::Semi))
-        .map_with(|(lhs, rhs), e| match rhs {
-            Some((AssignOp::Eq, rhs)) => (Stmt::Assign { lhs, rhs }, e.span()),
-            Some((AssignOp::AddEq, rhs)) => (Stmt::AddAssign { lhs, rhs }, e.span()),
-            Some((AssignOp::SubEq, rhs)) => (Stmt::SubAssign { lhs, rhs }, e.span()),
-            None => (Stmt::Expr(lhs), e.span()),
-        })
-        .boxed();
+        // Match statement: `match expr, expr { arms }`
+        let match_stmt = just(Token::Match)
+            .ignore_then(
+                expr_parser()
+                    .separated_by(just(Token::Comma))
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .then(
+                match_arm
+                    .repeated()
+                    .at_least(1)
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map_with(|(scrutinees, arms), e| (Stmt::Match { scrutinees, arms }, e.span()))
+            .boxed();
 
-    let_stmt.or(return_stmt).or(assign_or_expr)
+        // Assignment operator
+        let assign_op = just(Token::Eq)
+            .to(AssignOp::Eq)
+            .or(just(Token::PlusEq).to(AssignOp::AddEq))
+            .or(just(Token::MinusEq).to(AssignOp::SubEq));
+
+        // Assignment or expression statement: `expr = expr ;` or `expr += expr ;` or `expr ;`
+        let assign_or_expr = expr_parser()
+            .then(assign_op.then(expr_parser()).or_not())
+            .then_ignore(just(Token::Semi))
+            .map_with(|(lhs, rhs), e| match rhs {
+                Some((AssignOp::Eq, rhs)) => (Stmt::Assign { lhs, rhs }, e.span()),
+                Some((AssignOp::AddEq, rhs)) => (Stmt::AddAssign { lhs, rhs }, e.span()),
+                Some((AssignOp::SubEq, rhs)) => (Stmt::SubAssign { lhs, rhs }, e.span()),
+                None => (Stmt::Expr(lhs), e.span()),
+            })
+            .boxed();
+
+        let_stmt
+            .or(return_stmt)
+            .or(match_stmt)
+            .or(assign_or_expr)
+    })
 }
 
 /// Creates a parser for match arms: `| pat1, pat2 => stmt*`.
@@ -248,5 +289,71 @@ mod tests {
         let (arm, _) = result.into_result().unwrap();
         assert_eq!(arm.pats.len(), 1);
         assert_eq!(arm.body.len(), 2);
+    }
+
+    #[test]
+    fn test_stmt_match_simple() {
+        let result = stmt_parser().parse(make_stream(
+            "match x { | True => return 1; | False => return 0; }",
+        ));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::Match { scrutinees, arms } => {
+                assert_eq!(scrutinees.len(), 1);
+                assert_eq!(arms.len(), 2);
+            }
+            _ => panic!("Expected Match statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_match_multi_scrutinee() {
+        let result = stmt_parser().parse(make_stream("match x, y { | a, b => return a; }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::Match { scrutinees, arms } => {
+                assert_eq!(scrutinees.len(), 2);
+                assert_eq!(arms.len(), 1);
+                assert_eq!(arms[0].0.pats.len(), 2);
+            }
+            _ => panic!("Expected Match statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_match_nested() {
+        let result = stmt_parser().parse(make_stream(
+            "match x { | Some(y) => match y { | True => return 1; | False => return 0; } }",
+        ));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::Match { scrutinees, arms } => {
+                assert_eq!(scrutinees.len(), 1);
+                assert_eq!(arms.len(), 1);
+                // The arm body should contain a nested match
+                assert_eq!(arms[0].0.body.len(), 1);
+                assert!(matches!(&arms[0].0.body[0].0, Stmt::Match { .. }));
+            }
+            _ => panic!("Expected Match statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_match_arm_multi_stmt() {
+        let result = stmt_parser().parse(make_stream(
+            "match x { | Some(y) => let z = y; z += 1; return z; | None => return 0; }",
+        ));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::Match { scrutinees, arms } => {
+                assert_eq!(scrutinees.len(), 1);
+                assert_eq!(arms.len(), 2);
+                // First arm has 3 statements
+                assert_eq!(arms[0].0.body.len(), 3);
+                // Second arm has 1 statement
+                assert_eq!(arms[1].0.body.len(), 1);
+            }
+            _ => panic!("Expected Match statement"),
+        }
     }
 }
