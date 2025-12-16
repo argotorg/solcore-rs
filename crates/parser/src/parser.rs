@@ -50,6 +50,81 @@ where
     .map_with(|lit, e| (lit, e.span()))
 }
 
+/// Binary operators.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+}
+
+/// Expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr<'a> {
+    Lit(Lit<'a>),
+    Ident(Ident<'a>),
+    BinOp {
+        lhs: Box<Spanned<Expr<'a>>>,
+        op: BinOp,
+        rhs: Box<Spanned<Expr<'a>>>,
+    },
+}
+
+/// Creates a parser for expressions.
+pub fn expr_parser<'a, I>() -> impl Parser<'a, I, Spanned<Expr<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    recursive(|expr| {
+        // Atom: literal, identifier, or parenthesized expression.
+        let atom = lit_parser()
+            .map(|(lit, span)| (Expr::Lit(lit), span))
+            .or(ident_parser().map(|(ident, span)| (Expr::Ident(ident), span)))
+            .or(expr
+                .delimited_by(just(Token::LParen), just(Token::RParen))
+                .map_with(|e: Spanned<Expr<'a>>, extra| (e.0, extra.span())))
+            .boxed();
+
+        // Multiplicative: *, /, %.
+        let mul_op = select! {
+            Token::Star => BinOp::Mul,
+            Token::Slash => BinOp::Div,
+            Token::Percent => BinOp::Mod,
+        };
+        let mul = atom
+            .clone()
+            .foldl_with(mul_op.then(atom).repeated(), |lhs, (op, rhs), e| {
+                (
+                    Expr::BinOp {
+                        lhs: Box::new(lhs),
+                        op,
+                        rhs: Box::new(rhs),
+                    },
+                    e.span(),
+                )
+            });
+
+        // Additive: +, -.
+        let add_op = select! {
+            Token::Plus => BinOp::Add,
+            Token::Minus => BinOp::Sub,
+        };
+        mul.clone()
+            .foldl_with(add_op.then(mul).repeated(), |lhs, (op, rhs), e| {
+                (
+                    Expr::BinOp {
+                        lhs: Box::new(lhs),
+                        op,
+                        rhs: Box::new(rhs),
+                    },
+                    e.span(),
+                )
+            })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use chumsky::input::Stream;
@@ -97,5 +172,60 @@ mod tests {
             result.into_result(),
             Ok((Lit::String(r#""hello""#), Span::from(0..7)))
         );
+    }
+
+    #[test]
+    fn test_expr_literal() {
+        let result = expr_parser().parse(make_stream("42"));
+        let (expr, _) = result.into_result().unwrap();
+        assert_eq!(expr, Expr::Lit(Lit::Number("42")));
+    }
+
+    #[test]
+    fn test_expr_ident() {
+        let result = expr_parser().parse(make_stream("foo"));
+        let (expr, _) = result.into_result().unwrap();
+        assert_eq!(expr, Expr::Ident(Ident("foo")));
+    }
+
+    #[test]
+    fn test_expr_add() {
+        let result = expr_parser().parse(make_stream("1 + 2"));
+        let (expr, _) = result.into_result().unwrap();
+        assert!(matches!(expr, Expr::BinOp { op: BinOp::Add, .. }));
+    }
+
+    #[test]
+    fn test_expr_precedence() {
+        // 1 + 2 * 3 should parse as 1 + (2 * 3).
+        let result = expr_parser().parse(make_stream("1 + 2 * 3"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::BinOp {
+                op: BinOp::Add,
+                rhs,
+                ..
+            } => {
+                assert!(matches!(rhs.0, Expr::BinOp { op: BinOp::Mul, .. }));
+            }
+            _ => panic!("Expected Add at top level"),
+        }
+    }
+
+    #[test]
+    fn test_expr_parens() {
+        // (1 + 2) * 3 should parse as (1 + 2) * 3.
+        let result = expr_parser().parse(make_stream("(1 + 2) * 3"));
+        let (expr, _) = result.into_result().unwrap();
+        match expr {
+            Expr::BinOp {
+                op: BinOp::Mul,
+                lhs,
+                ..
+            } => {
+                assert!(matches!(lhs.0, Expr::BinOp { op: BinOp::Add, .. }));
+            }
+            _ => panic!("Expected Mul at top level"),
+        }
     }
 }
