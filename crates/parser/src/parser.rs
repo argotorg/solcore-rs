@@ -75,7 +75,7 @@ pub enum Expr<'a> {
     Ident(Ident<'a>),
     BinOp {
         lhs: Box<Spanned<Expr<'a>>>,
-        op: BinOp,
+        op: Spanned<BinOp>,
         rhs: Box<Spanned<Expr<'a>>>,
     },
     Index {
@@ -119,7 +119,8 @@ where
             Token::Star => BinOp::Mul,
             Token::Slash => BinOp::Div,
             Token::Percent => BinOp::Mod,
-        };
+        }
+        .map_with(|op, e| (op, e.span()));
         let mul = postfix.clone().foldl_with(
             mul_op.then(postfix.clone()).repeated(),
             |lhs, (op, rhs), e| {
@@ -138,7 +139,8 @@ where
         let add_op = select! {
             Token::Plus => BinOp::Add,
             Token::Minus => BinOp::Sub,
-        };
+        }
+        .map_with(|op, e| (op, e.span()));
         let add = mul
             .clone()
             .foldl_with(add_op.then(mul).repeated(), |lhs, (op, rhs), e| {
@@ -160,7 +162,8 @@ where
             Token::Greater => BinOp::Gt,
             Token::LessEq => BinOp::LtEq,
             Token::GreaterEq => BinOp::GtEq,
-        };
+        }
+        .map_with(|op, e| (op, e.span()));
         add.clone()
             .foldl_with(cmp_op.then(add).repeated(), |lhs, (op, rhs), e| {
                 (
@@ -242,7 +245,13 @@ mod tests {
     fn test_expr_add() {
         let result = expr_parser().parse(make_stream("1 + 2"));
         let (expr, _) = result.into_result().unwrap();
-        assert!(matches!(expr, Expr::BinOp { op: BinOp::Add, .. }));
+        assert!(matches!(
+            expr,
+            Expr::BinOp {
+                op: (BinOp::Add, _),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -252,11 +261,17 @@ mod tests {
         let (expr, _) = result.into_result().unwrap();
         match expr {
             Expr::BinOp {
-                op: BinOp::Add,
+                op: (BinOp::Add, _),
                 rhs,
                 ..
             } => {
-                assert!(matches!(rhs.0, Expr::BinOp { op: BinOp::Mul, .. }));
+                assert!(matches!(
+                    rhs.0,
+                    Expr::BinOp {
+                        op: (BinOp::Mul, _),
+                        ..
+                    }
+                ));
             }
             _ => panic!("Expected Add at top level"),
         }
@@ -269,11 +284,17 @@ mod tests {
         let (expr, _) = result.into_result().unwrap();
         match expr {
             Expr::BinOp {
-                op: BinOp::Mul,
+                op: (BinOp::Mul, _),
                 lhs,
                 ..
             } => {
-                assert!(matches!(lhs.0, Expr::BinOp { op: BinOp::Add, .. }));
+                assert!(matches!(
+                    lhs.0,
+                    Expr::BinOp {
+                        op: (BinOp::Add, _),
+                        ..
+                    }
+                ));
             }
             _ => panic!("Expected Mul at top level"),
         }
@@ -283,11 +304,23 @@ mod tests {
     fn test_expr_comparison() {
         let result = expr_parser().parse(make_stream("a == b"));
         let (expr, _) = result.into_result().unwrap();
-        assert!(matches!(expr, Expr::BinOp { op: BinOp::Eq, .. }));
+        assert!(matches!(
+            expr,
+            Expr::BinOp {
+                op: (BinOp::Eq, _),
+                ..
+            }
+        ));
 
         let result = expr_parser().parse(make_stream("x < y"));
         let (expr, _) = result.into_result().unwrap();
-        assert!(matches!(expr, Expr::BinOp { op: BinOp::Lt, .. }));
+        assert!(matches!(
+            expr,
+            Expr::BinOp {
+                op: (BinOp::Lt, _),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -297,9 +330,17 @@ mod tests {
         let (expr, _) = result.into_result().unwrap();
         match expr {
             Expr::BinOp {
-                op: BinOp::Eq, lhs, ..
+                op: (BinOp::Eq, _),
+                lhs,
+                ..
             } => {
-                assert!(matches!(lhs.0, Expr::BinOp { op: BinOp::Add, .. }));
+                assert!(matches!(
+                    lhs.0,
+                    Expr::BinOp {
+                        op: (BinOp::Add, _),
+                        ..
+                    }
+                ));
             }
             _ => panic!("Expected Eq at top level"),
         }
@@ -332,7 +373,7 @@ mod tests {
         let (expr, _) = result.into_result().unwrap();
         match expr {
             Expr::BinOp {
-                op: BinOp::Add,
+                op: (BinOp::Add, _),
                 lhs,
                 ..
             } => {
