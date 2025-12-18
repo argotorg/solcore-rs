@@ -7,6 +7,7 @@ use crate::{
     lexer::Token,
     signature_parser,
     stmt::{Stmt, stmt_parser},
+    type_parser,
 };
 
 /// Function definition: `function name(params) -> RetType { body }`.
@@ -16,10 +17,18 @@ pub struct FunctionDef<'a> {
     pub body: Vec<Spanned<Stmt<'a>>>,
 }
 
+/// Type alias: `type Name = Type`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeAlias<'a> {
+    pub name: Spanned<Ident<'a>>,
+    pub ty: Spanned<Type<'a>>,
+}
+
 /// Top-level item.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item<'a> {
     FunctionDef(FunctionDef<'a>),
+    TypeAlias(TypeAlias<'a>),
 }
 
 /// Creates a parser for function definitions.
@@ -38,6 +47,19 @@ where
         .boxed()
 }
 
+/// Creates a parser for type aliases: `type Name = Type`.
+pub fn type_alias_parser<'a, I>() -> impl Parser<'a, I, Spanned<TypeAlias<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    just(Token::Type)
+        .ignore_then(ident_parser())
+        .then_ignore(just(Token::Eq))
+        .then(type_parser())
+        .map_with(|(name, ty), e| (TypeAlias { name, ty }, e.span()))
+        .boxed()
+}
+
 /// Creates a parser for top-level items.
 pub fn item_parser<'a, I>() -> impl Parser<'a, I, Spanned<Item<'a>>, ParserErr<'a>>
 where
@@ -47,7 +69,11 @@ where
         .map_with(|(def, _), e| (Item::FunctionDef(def), e.span()))
         .boxed();
 
-    function_def
+    let type_alias = type_alias_parser()
+        .map_with(|(alias, _), e| (Item::TypeAlias(alias), e.span()))
+        .boxed();
+
+    choice((function_def, type_alias))
 }
 
 #[cfg(test)]
@@ -103,5 +129,46 @@ mod tests {
         assert_eq!(def.sig.0.preds.len(), 1);
         assert_eq!(def.sig.0.name.0, Ident("eq"));
         assert_eq!(def.body.len(), 1);
+    }
+
+    #[test]
+    fn test_type_alias_simple() {
+        let result = type_alias_parser().parse(make_stream("type Address = word"));
+        let (alias, _) = result.into_result().unwrap();
+        assert_eq!(alias.name.0, Ident("Address"));
+        assert!(matches!(&alias.ty.0, Type::Named { name, .. } if name.0 == Ident("word")));
+    }
+
+    #[test]
+    fn test_type_alias_with_args() {
+        let result = type_alias_parser().parse(make_stream("type Balance = mapping(Address, word)"));
+        let (alias, _) = result.into_result().unwrap();
+        assert_eq!(alias.name.0, Ident("Balance"));
+        match &alias.ty.0 {
+            Type::Named { name, args } => {
+                assert_eq!(name.0, Ident("mapping"));
+                assert_eq!(args.len(), 2);
+            }
+            _ => panic!("Expected Named type"),
+        }
+    }
+
+    #[test]
+    fn test_type_alias_fn_type() {
+        let result = type_alias_parser().parse(make_stream("type Handler = (word) -> word"));
+        let (alias, _) = result.into_result().unwrap();
+        assert_eq!(alias.name.0, Ident("Handler"));
+        assert!(matches!(&alias.ty.0, Type::Fn { .. }));
+    }
+
+    #[test]
+    fn test_type_alias_tuple() {
+        let result = type_alias_parser().parse(make_stream("type Pair = (word, word)"));
+        let (alias, _) = result.into_result().unwrap();
+        assert_eq!(alias.name.0, Ident("Pair"));
+        match &alias.ty.0 {
+            Type::Tuple { elems } => assert_eq!(elems.len(), 2),
+            _ => panic!("Expected Tuple type"),
+        }
     }
 }
