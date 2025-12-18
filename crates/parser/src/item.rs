@@ -3,9 +3,9 @@
 use chumsky::{input::ValueInput, prelude::*};
 
 use crate::{
-    Ident, ParserErr, Signature, Span, Spanned, Type, ident_parser,
+    Ident, ParserErr, Pred, Signature, Span, Spanned, Type, ident_parser,
     lexer::Token,
-    signature_parser,
+    pred_parser, signature_parser,
     stmt::{Stmt, stmt_parser},
     type_parser,
 };
@@ -39,12 +39,26 @@ pub struct AdtDef<'a> {
     pub ctors: Vec<Spanned<DataCtor<'a>>>,
 }
 
+/// Class definition: `forall ty_vars. preds => class ty:ClassName(args) { methods }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassDef<'a> {
+    /// Type variables (from `forall a b.`).
+    pub type_vars: Vec<Spanned<Ident<'a>>>,
+    /// Superclass constraints (from `a : Eq =>`).
+    pub super_preds: Vec<Spanned<Pred<'a>>>,
+    /// Class head predicate (e.g., `a : Ord`).
+    pub head: Spanned<Pred<'a>>,
+    /// Method signatures (without bodies, just declarations).
+    pub methods: Vec<Spanned<Signature<'a>>>,
+}
+
 /// Top-level item.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item<'a> {
     FunctionDef(FunctionDef<'a>),
     TypeAlias(TypeAlias<'a>),
     AdtDef(AdtDef<'a>),
+    ClassDef(ClassDef<'a>),
 }
 
 /// Creates a parser for function definitions.
@@ -137,6 +151,67 @@ where
         .boxed()
 }
 
+/// Creates a parser for method signatures inside class definitions.
+/// Syntax: `function name(params) -> RetType;` (without body).
+fn method_sig_parser<'a, I>() -> impl Parser<'a, I, Spanned<Signature<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    signature_parser()
+        .then_ignore(just(Token::Semi))
+        .boxed()
+}
+
+/// Creates a parser for class definitions.
+/// Syntax: `forall ty_vars. preds => class ty:ClassName(args) { methods }`.
+pub fn class_def_parser<'a, I>() -> impl Parser<'a, I, Spanned<ClassDef<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    // Type variables: `forall a b.` (whitespace-separated)
+    let type_vars = just(Token::Forall)
+        .ignore_then(ident_parser().repeated().collect::<Vec<_>>())
+        .then_ignore(just(Token::Dot))
+        .or_not()
+        .map(|vars| vars.unwrap_or_default())
+        .boxed();
+
+    // Superclass predicates: `pred1, pred2 =>`
+    let super_preds = pred_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .then_ignore(just(Token::FatArrow))
+        .or_not()
+        .map(|preds| preds.unwrap_or_default())
+        .boxed();
+
+    // Method signatures inside braces
+    let methods = method_sig_parser()
+        .repeated()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LBrace), just(Token::RBrace))
+        .boxed();
+
+    type_vars
+        .then(super_preds)
+        .then_ignore(just(Token::Class))
+        .then(pred_parser())
+        .then(methods)
+        .map_with(|(((type_vars, super_preds), head), methods), e| {
+            (
+                ClassDef {
+                    type_vars,
+                    super_preds,
+                    head,
+                    methods,
+                },
+                e.span(),
+            )
+        })
+        .boxed()
+}
+
 /// Creates a parser for top-level items.
 pub fn item_parser<'a, I>() -> impl Parser<'a, I, Spanned<Item<'a>>, ParserErr<'a>>
 where
@@ -154,7 +229,11 @@ where
         .map_with(|(d, _), e| (Item::AdtDef(d), e.span()))
         .boxed();
 
-    choice((function_def, type_alias, adt_def))
+    let class_def = class_def_parser()
+        .map_with(|(d, _), e| (Item::ClassDef(d), e.span()))
+        .boxed();
+
+    choice((function_def, type_alias, adt_def, class_def))
 }
 
 #[cfg(test)]
@@ -316,5 +395,71 @@ mod tests {
         assert_eq!(adt.name.0, Ident("Void"));
         assert!(adt.ty_params.is_empty());
         assert!(adt.ctors.is_empty());
+    }
+
+    #[test]
+    fn test_class_def_simple() {
+        let result = class_def_parser().parse(make_stream("class a : Eq {}"));
+        let (class, _) = result.into_result().unwrap();
+        assert!(class.type_vars.is_empty());
+        assert!(class.super_preds.is_empty());
+        assert_eq!(class.head.0.class.0, Ident("Eq"));
+        assert!(class.methods.is_empty());
+    }
+
+    #[test]
+    fn test_class_def_with_forall() {
+        let result = class_def_parser().parse(make_stream(
+            "forall self fieldType offsetType. class self : StructField(fieldType, offsetType) {}",
+        ));
+        let (class, _) = result.into_result().unwrap();
+        assert_eq!(class.type_vars.len(), 3);
+        assert_eq!(class.type_vars[0].0, Ident("self"));
+        assert_eq!(class.type_vars[1].0, Ident("fieldType"));
+        assert_eq!(class.type_vars[2].0, Ident("offsetType"));
+        assert!(class.super_preds.is_empty());
+        assert_eq!(class.head.0.class.0, Ident("StructField"));
+        assert_eq!(class.head.0.args.len(), 2);
+        assert!(class.methods.is_empty());
+    }
+
+    #[test]
+    fn test_class_def_with_super_pred() {
+        let result = class_def_parser().parse(make_stream("forall a. a : Eq => class a : Ord {}"));
+        let (class, _) = result.into_result().unwrap();
+        assert_eq!(class.type_vars.len(), 1);
+        assert_eq!(class.type_vars[0].0, Ident("a"));
+        assert_eq!(class.super_preds.len(), 1);
+        assert_eq!(class.super_preds[0].0.class.0, Ident("Eq"));
+        assert_eq!(class.head.0.class.0, Ident("Ord"));
+        assert!(class.methods.is_empty());
+    }
+
+    #[test]
+    fn test_class_def_with_methods() {
+        let result = class_def_parser().parse(make_stream(
+            "forall a. a : Eq => class a : Ord { function gt(x : a, y : a) -> bool; }",
+        ));
+        let (class, _) = result.into_result().unwrap();
+        assert_eq!(class.type_vars.len(), 1);
+        assert_eq!(class.super_preds.len(), 1);
+        assert_eq!(class.head.0.class.0, Ident("Ord"));
+        assert_eq!(class.methods.len(), 1);
+        assert_eq!(class.methods[0].0.name.0, Ident("gt"));
+        assert_eq!(class.methods[0].0.params.len(), 2);
+    }
+
+    #[test]
+    fn test_class_def_multiple_methods() {
+        let result = class_def_parser().parse(make_stream(
+            "forall a. class a : Eq { function eq(x : a, y : a) -> bool; function ne(x : a, y : a) -> bool; }",
+        ));
+        let (class, _) = result.into_result().unwrap();
+        assert_eq!(class.type_vars.len(), 1);
+        assert!(class.super_preds.is_empty());
+        assert_eq!(class.head.0.class.0, Ident("Eq"));
+        assert_eq!(class.methods.len(), 2);
+        assert_eq!(class.methods[0].0.name.0, Ident("eq"));
+        assert_eq!(class.methods[1].0.name.0, Ident("ne"));
     }
 }
