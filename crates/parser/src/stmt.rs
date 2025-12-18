@@ -9,6 +9,7 @@ use crate::{
     lexer::Token,
     pat::{Pat, pat_parser},
     type_parser,
+    yul::{YulStmt, yul_stmt_parser},
 };
 
 /// Statement.
@@ -50,6 +51,8 @@ pub enum Stmt<'a> {
         then_body: Vec<Spanned<Stmt<'a>>>,
         else_body: Option<Vec<Spanned<Stmt<'a>>>>,
     },
+    /// Assembly block: `assembly { yul_stmts }`.
+    Assembly { body: Vec<Spanned<YulStmt<'a>>> },
 }
 
 /// Match arm: `| pat1, pat2 => stmt*`.
@@ -145,6 +148,17 @@ where
             })
             .boxed();
 
+        // Assembly block: `assembly { yul_stmts }`
+        let assembly_stmt = just(Token::Assembly)
+            .ignore_then(
+                yul_stmt_parser()
+                    .repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map_with(|body, e| (Stmt::Assembly { body }, e.span()))
+            .boxed();
+
         // Assignment operator
         let assign_op = just(Token::Eq)
             .to(AssignOp::Eq)
@@ -167,6 +181,7 @@ where
             .or(return_stmt)
             .or(match_stmt)
             .or(if_stmt)
+            .or(assembly_stmt)
             .or(assign_or_expr)
     })
 }
@@ -468,6 +483,56 @@ mod tests {
                 assert!(else_body.is_none());
             }
             _ => panic!("Expected If statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_assembly_empty() {
+        let result = stmt_parser().parse(make_stream("assembly {}"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::Assembly { body } => {
+                assert!(body.is_empty());
+            }
+            _ => panic!("Expected Assembly statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_assembly_simple() {
+        let result = stmt_parser().parse(make_stream("assembly { let x := 42 }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::Assembly { body } => {
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("Expected Assembly statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_assembly_multi_stmt() {
+        let result = stmt_parser().parse(make_stream("assembly { let x := 1 x := add(x, 1) }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::Assembly { body } => {
+                assert_eq!(body.len(), 2);
+            }
+            _ => panic!("Expected Assembly statement"),
+        }
+    }
+
+    #[test]
+    fn test_stmt_assembly_with_func() {
+        let result = stmt_parser().parse(make_stream(
+            "assembly { function add(x, y) -> result { result := foo() } }",
+        ));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            Stmt::Assembly { body } => {
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("Expected Assembly statement"),
         }
     }
 }
