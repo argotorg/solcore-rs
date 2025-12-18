@@ -114,6 +114,13 @@ pub enum YulStmt<'a> {
         cases: Vec<Spanned<YulCase<'a>>>,
         default: Option<Vec<Spanned<YulStmt<'a>>>>,
     },
+    /// Function definition: `function name(params) -> rets { body }`.
+    FunctionDef {
+        name: Spanned<Ident<'a>>,
+        params: Vec<Spanned<Ident<'a>>>,
+        rets: Vec<Spanned<Ident<'a>>>,
+        body: Vec<Spanned<YulStmt<'a>>>,
+    },
     /// Leave: `leave`.
     Leave,
     /// Break: `break`.
@@ -195,7 +202,7 @@ where
             .then(stmt_block.clone())
             .map_with(|(lit, body), e| (YulCase { lit, body }, e.span()));
 
-        let default = just(Token::Default).ignore_then(stmt_block);
+        let default = just(Token::Default).ignore_then(stmt_block.clone());
 
         let switch_stmt = just(Token::Switch)
             .ignore_then(yul_expr_parser())
@@ -205,6 +212,36 @@ where
                 expr,
                 cases,
                 default,
+            })
+            .boxed();
+
+        let ident_list = ident
+            .clone()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LParen), just(Token::RParen));
+
+        let rets = just(Token::Arrow)
+            .ignore_then(
+                ident
+                    .separated_by(just(Token::Comma))
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .or_not()
+            .map(|r| r.unwrap_or_default());
+
+        let function_def = just(Token::Function)
+            .ignore_then(ident)
+            .then(ident_list)
+            .then(rets)
+            .then(stmt_block)
+            .map(|(((name, params), rets), body)| YulStmt::FunctionDef {
+                name,
+                params,
+                rets,
+                body,
             })
             .boxed();
 
@@ -218,6 +255,7 @@ where
             if_stmt,
             for_stmt,
             switch_stmt,
+            function_def,
             assign,
             leave,
             break_,
@@ -579,6 +617,75 @@ mod tests {
                 assert!(default.is_some());
             }
             _ => panic!("expected Switch"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_function_no_params_no_ret() {
+        let result = yul_stmt_parser().parse(make_stream("function foo() { bar() }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::FunctionDef {
+                name,
+                params,
+                rets,
+                body,
+            } => {
+                assert_eq!(name.0, Ident("foo"));
+                assert!(params.is_empty());
+                assert!(rets.is_empty());
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected FunctionDef"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_function_with_params() {
+        let result = yul_stmt_parser().parse(make_stream("function add(x, y) { }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::FunctionDef { params, rets, .. } => {
+                assert_eq!(params.len(), 2);
+                assert!(rets.is_empty());
+            }
+            _ => panic!("expected FunctionDef"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_function_with_ret() {
+        let result = yul_stmt_parser().parse(make_stream("function get() -> result { }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::FunctionDef { params, rets, .. } => {
+                assert!(params.is_empty());
+                assert_eq!(rets.len(), 1);
+                assert_eq!(rets[0].0, Ident("result"));
+            }
+            _ => panic!("expected FunctionDef"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_function_full() {
+        let result = yul_stmt_parser().parse(make_stream(
+            "function add(x, y) -> result { result := foo() }",
+        ));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::FunctionDef {
+                name,
+                params,
+                rets,
+                body,
+            } => {
+                assert_eq!(name.0, Ident("add"));
+                assert_eq!(params.len(), 2);
+                assert_eq!(rets.len(), 1);
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected FunctionDef"),
         }
     }
 }
