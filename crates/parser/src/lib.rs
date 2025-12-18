@@ -1,4 +1,5 @@
 pub mod expr;
+pub mod item;
 pub mod lexer;
 pub mod pat;
 pub mod stmt;
