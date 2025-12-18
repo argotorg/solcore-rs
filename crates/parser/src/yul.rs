@@ -94,6 +94,13 @@ pub enum YulStmt<'a> {
         cond: Spanned<YulExpr<'a>>,
         body: Vec<Spanned<YulStmt<'a>>>,
     },
+    /// For loop: `for { init } cond { post } { body }`.
+    For {
+        init: Vec<Spanned<YulStmt<'a>>>,
+        cond: Spanned<YulExpr<'a>>,
+        post: Vec<Spanned<YulStmt<'a>>>,
+        body: Vec<Spanned<YulStmt<'a>>>,
+    },
     /// Leave: `leave`.
     Leave,
     /// Break: `break`.
@@ -151,12 +158,31 @@ where
             .map(|(cond, body)| YulStmt::If { cond, body })
             .boxed();
 
+        let stmt_block = stmt
+            .clone()
+            .repeated()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace));
+
+        let for_stmt = just(Token::For)
+            .ignore_then(stmt_block.clone())
+            .then(yul_expr_parser())
+            .then(stmt_block.clone())
+            .then(stmt_block)
+            .map(|(((init, cond), post), body)| YulStmt::For {
+                init,
+                cond,
+                post,
+                body,
+            })
+            .boxed();
+
         let leave = just(Token::Leave).to(YulStmt::Leave).boxed();
         let break_ = just(Token::Break).to(YulStmt::Break).boxed();
         let continue_ = just(Token::Continue).to(YulStmt::Continue).boxed();
 
         choice((
-            block, let_stmt, if_stmt, assign, leave, break_, continue_, expr_stmt,
+            block, let_stmt, if_stmt, for_stmt, assign, leave, break_, continue_, expr_stmt,
         ))
         .map_with(|stmt, e| (stmt, e.span()))
     })
@@ -403,6 +429,57 @@ mod tests {
                 assert!(matches!(body[0].0, YulStmt::If { .. }));
             }
             _ => panic!("expected If"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_for_simple() {
+        let result = yul_stmt_parser().parse(make_stream(
+            "for { let i := 0 } lt(i, 10) { i := add(i, 1) } { foo() }",
+        ));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::For {
+                init,
+                cond,
+                post,
+                body,
+            } => {
+                assert_eq!(init.len(), 1);
+                assert!(matches!(cond.0, YulExpr::Call { .. }));
+                assert_eq!(post.len(), 1);
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected For"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_for_empty_init() {
+        let result = yul_stmt_parser().parse(make_stream("for {} x {} { foo() }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::For {
+                init, post, body, ..
+            } => {
+                assert!(init.is_empty());
+                assert!(post.is_empty());
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected For"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_for_with_break() {
+        let result = yul_stmt_parser().parse(make_stream("for {} true {} { break }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::For { body, .. } => {
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0].0, YulStmt::Break));
+            }
+            _ => panic!("expected For"),
         }
     }
 }
