@@ -57,7 +57,6 @@ where
         let lit = yul_lit_parser().map(YulExpr::Lit).boxed();
 
         let call = ident
-            .clone()
             .then(
                 expr.separated_by(just(Token::Comma))
                     .allow_trailing()
@@ -90,6 +89,11 @@ pub enum YulStmt<'a> {
     },
     /// Expression statement (function call): `foo(a, b)`.
     Expr(Spanned<YulExpr<'a>>),
+    /// If statement: `if cond { body }`.
+    If {
+        cond: Spanned<YulExpr<'a>>,
+        body: Vec<Spanned<YulStmt<'a>>>,
+    },
     /// Leave: `leave`.
     Leave,
     /// Break: `break`.
@@ -107,6 +111,7 @@ where
         let ident = select! { Token::Ident(s) => Ident(s) }.map_with(|id, e| (id, e.span()));
 
         let block = stmt
+            .clone()
             .repeated()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LBrace), just(Token::RBrace))
@@ -116,7 +121,6 @@ where
         let let_stmt = just(Token::Let)
             .ignore_then(
                 ident
-                    .clone()
                     .separated_by(just(Token::Comma))
                     .at_least(1)
                     .collect::<Vec<_>>(),
@@ -136,12 +140,25 @@ where
 
         let expr_stmt = yul_expr_parser().map(YulStmt::Expr).boxed();
 
+        let if_stmt = just(Token::If)
+            .ignore_then(yul_expr_parser())
+            .then(
+                stmt.clone()
+                    .repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map(|(cond, body)| YulStmt::If { cond, body })
+            .boxed();
+
         let leave = just(Token::Leave).to(YulStmt::Leave).boxed();
         let break_ = just(Token::Break).to(YulStmt::Break).boxed();
         let continue_ = just(Token::Continue).to(YulStmt::Continue).boxed();
 
-        choice((block, let_stmt, assign, leave, break_, continue_, expr_stmt))
-            .map_with(|stmt, e| (stmt, e.span()))
+        choice((
+            block, let_stmt, if_stmt, assign, leave, break_, continue_, expr_stmt,
+        ))
+        .map_with(|stmt, e| (stmt, e.span()))
     })
 }
 
@@ -347,6 +364,45 @@ mod tests {
         match stmt {
             YulStmt::Block(stmts) => assert_eq!(stmts.len(), 2),
             _ => panic!("expected Block"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_if_simple() {
+        let result = yul_stmt_parser().parse(make_stream("if x { foo() }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::If { cond, body } => {
+                assert!(matches!(cond.0, YulExpr::Ident(_)));
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected If"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_if_call_cond() {
+        let result = yul_stmt_parser().parse(make_stream("if iszero(x) { leave }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::If { cond, body } => {
+                assert!(matches!(cond.0, YulExpr::Call { .. }));
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("expected If"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_if_nested() {
+        let result = yul_stmt_parser().parse(make_stream("if x { if y { foo() } }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::If { body, .. } => {
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0].0, YulStmt::If { .. }));
+            }
+            _ => panic!("expected If"),
         }
     }
 }

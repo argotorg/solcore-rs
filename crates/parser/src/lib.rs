@@ -5,10 +5,8 @@ pub mod stmt;
 pub mod yul;
 
 use chumsky::{input::ValueInput, prelude::*, span::SimpleSpan};
-
+pub use expr::{BinOp, Expr, expr_parser};
 use lexer::Token;
-
-pub use expr::{expr_parser, BinOp, Expr};
 
 /// Span type.
 pub type Span = SimpleSpan;
@@ -343,8 +341,12 @@ mod tests {
             Type::Named { name, args } => {
                 assert_eq!(name.0, Ident("mapping"));
                 assert_eq!(args.len(), 2);
-                assert!(matches!(&args[0].0, Type::Named { name, .. } if name.0 == Ident("address")));
-                assert!(matches!(&args[1].0, Type::Named { name, .. } if name.0 == Ident("uint256")));
+                assert!(
+                    matches!(&args[0].0, Type::Named { name, .. } if name.0 == Ident("address"))
+                );
+                assert!(
+                    matches!(&args[1].0, Type::Named { name, .. } if name.0 == Ident("uint256"))
+                );
             }
             _ => panic!("Expected Named type"),
         }
@@ -377,7 +379,9 @@ mod tests {
         match ty {
             Type::Fn { params, ret } => {
                 assert_eq!(params.len(), 1);
-                assert!(matches!(&params[0].0, Type::Named { name, .. } if name.0 == Ident("word")));
+                assert!(
+                    matches!(&params[0].0, Type::Named { name, .. } if name.0 == Ident("word"))
+                );
                 assert!(matches!(&ret.0, Type::Named { name, .. } if name.0 == Ident("word")));
             }
             _ => panic!("Expected Fn type"),
@@ -391,8 +395,12 @@ mod tests {
         match ty {
             Type::Fn { params, ret } => {
                 assert_eq!(params.len(), 2);
-                assert!(matches!(&params[0].0, Type::Named { name, .. } if name.0 == Ident("word")));
-                assert!(matches!(&params[1].0, Type::Named { name, .. } if name.0 == Ident("word")));
+                assert!(
+                    matches!(&params[0].0, Type::Named { name, .. } if name.0 == Ident("word"))
+                );
+                assert!(
+                    matches!(&params[1].0, Type::Named { name, .. } if name.0 == Ident("word"))
+                );
                 assert!(matches!(&ret.0, Type::Named { name, .. } if name.0 == Ident("word")));
             }
             _ => panic!("Expected Fn type"),
@@ -574,8 +582,7 @@ mod tests {
     #[test]
     fn test_parse_signature_with_forall() {
         // forall a b. function foo(x : a) -> b
-        let result =
-            signature_parser().parse(make_stream("forall a b. function foo(x : a) -> b"));
+        let result = signature_parser().parse(make_stream("forall a b. function foo(x : a) -> b"));
         let (sig, _) = result.into_result().unwrap();
         assert_eq!(sig.type_vars.len(), 2);
         assert_eq!(sig.type_vars[0].0, Ident("a"));

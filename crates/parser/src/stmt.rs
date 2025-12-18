@@ -3,8 +3,12 @@
 use chumsky::{input::ValueInput, prelude::*};
 
 use crate::{
-    expr::expr_parser, ident_parser, lexer::Token, pat::{Pat, pat_parser}, type_parser, Expr,
-    Ident, ParserErr, Span, Spanned, Type,
+    Expr, Ident, ParserErr, Span, Spanned, Type,
+    expr::expr_parser,
+    ident_parser,
+    lexer::Token,
+    pat::{Pat, pat_parser},
+    type_parser,
 };
 
 /// Statement.
@@ -130,7 +134,14 @@ where
                     .or_not(),
             )
             .map_with(|((cond, then_body), else_body), e| {
-                (Stmt::If { cond, then_body, else_body }, e.span())
+                (
+                    Stmt::If {
+                        cond,
+                        then_body,
+                        else_body,
+                    },
+                    e.span(),
+                )
             })
             .boxed();
 
@@ -393,7 +404,11 @@ mod tests {
         let result = stmt_parser().parse(make_stream("if x { return 1; }"));
         let (stmt, _) = result.into_result().unwrap();
         match stmt {
-            Stmt::If { then_body, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 assert_eq!(then_body.len(), 1);
                 assert!(else_body.is_none());
             }
@@ -406,7 +421,11 @@ mod tests {
         let result = stmt_parser().parse(make_stream("if x { return 1; } else { return 0; }"));
         let (stmt, _) = result.into_result().unwrap();
         match stmt {
-            Stmt::If { then_body, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 assert_eq!(then_body.len(), 1);
                 assert!(else_body.is_some());
                 assert_eq!(else_body.unwrap().len(), 1);
@@ -417,11 +436,16 @@ mod tests {
 
     #[test]
     fn test_stmt_if_nested() {
-        let result = stmt_parser()
-            .parse(make_stream("if x { if y { return 1; } else { return 2; } }"));
+        let result = stmt_parser().parse(make_stream(
+            "if x { if y { return 1; } else { return 2; } }",
+        ));
         let (stmt, _) = result.into_result().unwrap();
         match stmt {
-            Stmt::If { then_body, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 assert_eq!(then_body.len(), 1);
                 assert!(else_body.is_none());
                 assert!(matches!(&then_body[0].0, Stmt::If { .. }));
@@ -432,11 +456,14 @@ mod tests {
 
     #[test]
     fn test_stmt_if_multi_stmt() {
-        let result =
-            stmt_parser().parse(make_stream("if x { let y = 1; y += 1; return y; }"));
+        let result = stmt_parser().parse(make_stream("if x { let y = 1; y += 1; return y; }"));
         let (stmt, _) = result.into_result().unwrap();
         match stmt {
-            Stmt::If { then_body, else_body, .. } => {
+            Stmt::If {
+                then_body,
+                else_body,
+                ..
+            } => {
                 assert_eq!(then_body.len(), 3);
                 assert!(else_body.is_none());
             }
