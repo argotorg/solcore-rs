@@ -72,6 +72,13 @@ where
     })
 }
 
+/// Yul switch case: `case lit { body }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct YulCase<'a> {
+    pub lit: Spanned<YulLit<'a>>,
+    pub body: Vec<Spanned<YulStmt<'a>>>,
+}
+
 /// Yul statement.
 #[derive(Debug, Clone, PartialEq)]
 pub enum YulStmt<'a> {
@@ -100,6 +107,12 @@ pub enum YulStmt<'a> {
         cond: Spanned<YulExpr<'a>>,
         post: Vec<Spanned<YulStmt<'a>>>,
         body: Vec<Spanned<YulStmt<'a>>>,
+    },
+    /// Switch statement: `switch expr case lit { body } ... default { body }`.
+    Switch {
+        expr: Spanned<YulExpr<'a>>,
+        cases: Vec<Spanned<YulCase<'a>>>,
+        default: Option<Vec<Spanned<YulStmt<'a>>>>,
     },
     /// Leave: `leave`.
     Leave,
@@ -168,7 +181,7 @@ where
             .ignore_then(stmt_block.clone())
             .then(yul_expr_parser())
             .then(stmt_block.clone())
-            .then(stmt_block)
+            .then(stmt_block.clone())
             .map(|(((init, cond), post), body)| YulStmt::For {
                 init,
                 cond,
@@ -177,12 +190,39 @@ where
             })
             .boxed();
 
+        let case = just(Token::Case)
+            .ignore_then(yul_lit_parser())
+            .then(stmt_block.clone())
+            .map_with(|(lit, body), e| (YulCase { lit, body }, e.span()));
+
+        let default = just(Token::Default).ignore_then(stmt_block);
+
+        let switch_stmt = just(Token::Switch)
+            .ignore_then(yul_expr_parser())
+            .then(case.repeated().collect::<Vec<_>>())
+            .then(default.or_not())
+            .map(|((expr, cases), default)| YulStmt::Switch {
+                expr,
+                cases,
+                default,
+            })
+            .boxed();
+
         let leave = just(Token::Leave).to(YulStmt::Leave).boxed();
         let break_ = just(Token::Break).to(YulStmt::Break).boxed();
         let continue_ = just(Token::Continue).to(YulStmt::Continue).boxed();
 
         choice((
-            block, let_stmt, if_stmt, for_stmt, assign, leave, break_, continue_, expr_stmt,
+            block,
+            let_stmt,
+            if_stmt,
+            for_stmt,
+            switch_stmt,
+            assign,
+            leave,
+            break_,
+            continue_,
+            expr_stmt,
         ))
         .map_with(|stmt, e| (stmt, e.span()))
     })
@@ -480,6 +520,65 @@ mod tests {
                 assert!(matches!(body[0].0, YulStmt::Break));
             }
             _ => panic!("expected For"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_switch_single_case() {
+        let result = yul_stmt_parser().parse(make_stream("switch x case 0 { foo() }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Switch {
+                expr,
+                cases,
+                default,
+            } => {
+                assert!(matches!(expr.0, YulExpr::Ident(_)));
+                assert_eq!(cases.len(), 1);
+                assert!(default.is_none());
+            }
+            _ => panic!("expected Switch"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_switch_multi_case() {
+        let result =
+            yul_stmt_parser().parse(make_stream("switch x case 0 { foo() } case 1 { bar() }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Switch { cases, default, .. } => {
+                assert_eq!(cases.len(), 2);
+                assert!(default.is_none());
+            }
+            _ => panic!("expected Switch"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_switch_with_default() {
+        let result =
+            yul_stmt_parser().parse(make_stream("switch x case 0 { foo() } default { bar() }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Switch { cases, default, .. } => {
+                assert_eq!(cases.len(), 1);
+                assert!(default.is_some());
+            }
+            _ => panic!("expected Switch"),
+        }
+    }
+
+    #[test]
+    fn test_yul_stmt_switch_default_only() {
+        let result = yul_stmt_parser().parse(make_stream("switch x default { foo() }"));
+        let (stmt, _) = result.into_result().unwrap();
+        match stmt {
+            YulStmt::Switch { cases, default, .. } => {
+                assert!(cases.is_empty());
+                assert!(default.is_some());
+            }
+            _ => panic!("expected Switch"),
         }
     }
 }
