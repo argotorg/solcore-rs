@@ -52,6 +52,21 @@ pub struct ClassDef<'a> {
     pub methods: Vec<Spanned<Signature<'a>>>,
 }
 
+/// Instance definition: `forall ty_vars. preds => [default] instance ty:ClassName(args) { methods }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InstanceDef<'a> {
+    /// Type variables (from `forall a b.`).
+    pub type_vars: Vec<Spanned<Ident<'a>>>,
+    /// Instance constraints (from `a : Eq =>`).
+    pub preds: Vec<Spanned<Pred<'a>>>,
+    /// The `default` keyword with span, if present.
+    pub default_kw: Option<Spanned<()>>,
+    /// Instance head predicate (e.g., `word : Ord`).
+    pub head: Spanned<Pred<'a>>,
+    /// Method implementations (with bodies).
+    pub methods: Vec<Spanned<FunctionDef<'a>>>,
+}
+
 /// Top-level item.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item<'a> {
@@ -59,6 +74,7 @@ pub enum Item<'a> {
     TypeAlias(TypeAlias<'a>),
     AdtDef(AdtDef<'a>),
     ClassDef(ClassDef<'a>),
+    InstanceDef(InstanceDef<'a>),
 }
 
 /// Creates a parser for function definitions.
@@ -157,9 +173,7 @@ fn method_sig_parser<'a, I>() -> impl Parser<'a, I, Spanned<Signature<'a>>, Pars
 where
     I: ValueInput<'a, Token = Token<'a>, Span = Span>,
 {
-    signature_parser()
-        .then_ignore(just(Token::Semi))
-        .boxed()
+    signature_parser().then_ignore(just(Token::Semi)).boxed()
 }
 
 /// Creates a parser for class definitions.
@@ -212,6 +226,64 @@ where
         .boxed()
 }
 
+/// Creates a parser for instance definitions.
+/// Syntax: `forall ty_vars. preds => [default] instance ty:ClassName(args) { methods }`.
+pub fn instance_def_parser<'a, I>() -> impl Parser<'a, I, Spanned<InstanceDef<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    // Type variables: `forall a b.` (whitespace-separated)
+    let type_vars = just(Token::Forall)
+        .ignore_then(ident_parser().repeated().collect::<Vec<_>>())
+        .then_ignore(just(Token::Dot))
+        .or_not()
+        .map(|vars| vars.unwrap_or_default())
+        .boxed();
+
+    // Instance predicates: `pred1, pred2 =>`
+    let preds = pred_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .then_ignore(just(Token::FatArrow))
+        .or_not()
+        .map(|preds| preds.unwrap_or_default())
+        .boxed();
+
+    // Optional `default` keyword with span
+    let default_kw = just(Token::Default)
+        .map_with(|_, e| ((), e.span()))
+        .or_not()
+        .boxed();
+
+    // Method implementations inside braces
+    let methods = function_def_parser()
+        .repeated()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LBrace), just(Token::RBrace))
+        .boxed();
+
+    type_vars
+        .then(preds)
+        .then(default_kw)
+        .then_ignore(just(Token::Instance))
+        .then(pred_parser())
+        .then(methods)
+        .map_with(|((((type_vars, preds), default_kw), head), methods), e| {
+            (
+                InstanceDef {
+                    type_vars,
+                    preds,
+                    default_kw,
+                    head,
+                    methods,
+                },
+                e.span(),
+            )
+        })
+        .boxed()
+}
+
 /// Creates a parser for top-level items.
 pub fn item_parser<'a, I>() -> impl Parser<'a, I, Spanned<Item<'a>>, ParserErr<'a>>
 where
@@ -233,7 +305,11 @@ where
         .map_with(|(d, _), e| (Item::ClassDef(d), e.span()))
         .boxed();
 
-    choice((function_def, type_alias, adt_def, class_def))
+    let instance_def = instance_def_parser()
+        .map_with(|(d, _), e| (Item::InstanceDef(d), e.span()))
+        .boxed();
+
+    choice((function_def, type_alias, adt_def, class_def, instance_def))
 }
 
 #[cfg(test)]
@@ -461,5 +537,55 @@ mod tests {
         assert_eq!(class.methods.len(), 2);
         assert_eq!(class.methods[0].0.name.0, Ident("eq"));
         assert_eq!(class.methods[1].0.name.0, Ident("ne"));
+    }
+
+    #[test]
+    fn test_instance_def_simple() {
+        let result = instance_def_parser().parse(make_stream("instance word : Eq {}"));
+        let (inst, _) = result.into_result().unwrap();
+        assert!(inst.type_vars.is_empty());
+        assert!(inst.preds.is_empty());
+        assert!(inst.default_kw.is_none());
+        assert_eq!(inst.head.0.class.0, Ident("Eq"));
+        assert!(inst.methods.is_empty());
+    }
+
+    #[test]
+    fn test_instance_def_with_method() {
+        let result = instance_def_parser().parse(make_stream(
+            "instance word : Eq { function eq(x : word, y : word) -> bool { return x; } }",
+        ));
+        let (inst, _) = result.into_result().unwrap();
+        assert!(inst.default_kw.is_none());
+        assert_eq!(inst.head.0.class.0, Ident("Eq"));
+        assert_eq!(inst.methods.len(), 1);
+        assert_eq!(inst.methods[0].0.sig.0.name.0, Ident("eq"));
+    }
+
+    #[test]
+    fn test_instance_def_default() {
+        let result = instance_def_parser().parse(make_stream(
+            "forall a. a : Add, a : Sub => default instance a : Num {}",
+        ));
+        let (inst, _) = result.into_result().unwrap();
+        assert_eq!(inst.type_vars.len(), 1);
+        assert_eq!(inst.preds.len(), 2);
+        assert!(inst.default_kw.is_some());
+        assert_eq!(inst.head.0.class.0, Ident("Num"));
+        assert!(inst.methods.is_empty());
+    }
+
+    #[test]
+    fn test_instance_def_with_forall_and_preds() {
+        let result = instance_def_parser().parse(make_stream(
+            "forall a. a : Eq => instance Option(a) : Eq {}",
+        ));
+        let (inst, _) = result.into_result().unwrap();
+        assert_eq!(inst.type_vars.len(), 1);
+        assert_eq!(inst.type_vars[0].0, Ident("a"));
+        assert_eq!(inst.preds.len(), 1);
+        assert_eq!(inst.preds[0].0.class.0, Ident("Eq"));
+        assert!(inst.default_kw.is_none());
+        assert_eq!(inst.head.0.class.0, Ident("Eq"));
     }
 }
