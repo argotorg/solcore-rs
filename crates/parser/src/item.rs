@@ -67,6 +67,33 @@ pub struct InstanceDef<'a> {
     pub methods: Vec<Spanned<FunctionDef<'a>>>,
 }
 
+/// Field definition inside a contract: `name : Type;`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldDef<'a> {
+    pub name: Spanned<Ident<'a>>,
+    pub ty: Spanned<Type<'a>>,
+}
+
+/// Contract definition: `contract Name(ty_params) { fields; items }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContractDef<'a> {
+    pub name: Spanned<Ident<'a>>,
+    /// Type parameters (e.g., `contract Foo(a, b) { ... }`).
+    pub ty_params: Vec<Spanned<Ident<'a>>>,
+    /// Field definitions (e.g., `balance : word;`).
+    pub fields: Vec<Spanned<FieldDef<'a>>>,
+    /// Items inside the contract (functions, data, type aliases).
+    pub items: Vec<Spanned<ContractItem<'a>>>,
+}
+
+/// Items that can appear inside a contract body.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContractItem<'a> {
+    FunctionDef(FunctionDef<'a>),
+    TypeAlias(TypeAlias<'a>),
+    AdtDef(AdtDef<'a>),
+}
+
 /// Top-level item.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item<'a> {
@@ -75,6 +102,7 @@ pub enum Item<'a> {
     AdtDef(AdtDef<'a>),
     ClassDef(ClassDef<'a>),
     InstanceDef(InstanceDef<'a>),
+    ContractDef(ContractDef<'a>),
 }
 
 /// Creates a parser for function definitions.
@@ -284,6 +312,88 @@ where
         .boxed()
 }
 
+/// Creates a parser for field definitions: `name : Type;`.
+pub fn field_def_parser<'a, I>() -> impl Parser<'a, I, Spanned<FieldDef<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    ident_parser()
+        .then_ignore(just(Token::Colon))
+        .then(type_parser())
+        .then_ignore(just(Token::Semi))
+        .map_with(|(name, ty), e| (FieldDef { name, ty }, e.span()))
+        .boxed()
+}
+
+/// Creates a parser for contract items (functions, data, type aliases).
+fn contract_item_parser<'a, I>() -> impl Parser<'a, I, Spanned<ContractItem<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    let function_def = function_def_parser()
+        .map_with(|(def, _), e| (ContractItem::FunctionDef(def), e.span()))
+        .boxed();
+
+    let type_alias = type_alias_parser()
+        .map_with(|(alias, _), e| (ContractItem::TypeAlias(alias), e.span()))
+        .boxed();
+
+    let adt_def = adt_def_parser()
+        .map_with(|(d, _), e| (ContractItem::AdtDef(d), e.span()))
+        .boxed();
+
+    choice((function_def, type_alias, adt_def))
+}
+
+/// Creates a parser for contract definitions.
+/// Syntax: `contract Name(ty_params) { fields; items }`.
+pub fn contract_def_parser<'a, I>() -> impl Parser<'a, I, Spanned<ContractDef<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    // Type parameters: `(a, b)`
+    let ty_params = ident_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .or_not()
+        .map(|p| p.unwrap_or_default())
+        .boxed();
+
+    // Fields: `name : Type;` (repeated)
+    let fields = field_def_parser().repeated().collect::<Vec<_>>().boxed();
+
+    // Items: functions, data, type aliases (repeated)
+    let items = contract_item_parser()
+        .repeated()
+        .collect::<Vec<_>>()
+        .boxed();
+
+    // Contract body: fields followed by items
+    let body = fields
+        .then(items)
+        .delimited_by(just(Token::LBrace), just(Token::RBrace))
+        .boxed();
+
+    just(Token::Contract)
+        .ignore_then(ident_parser())
+        .then(ty_params)
+        .then(body)
+        .map_with(|((name, ty_params), (fields, items)), e| {
+            (
+                ContractDef {
+                    name,
+                    ty_params,
+                    fields,
+                    items,
+                },
+                e.span(),
+            )
+        })
+        .boxed()
+}
+
 /// Creates a parser for top-level items.
 pub fn item_parser<'a, I>() -> impl Parser<'a, I, Spanned<Item<'a>>, ParserErr<'a>>
 where
@@ -309,7 +419,18 @@ where
         .map_with(|(d, _), e| (Item::InstanceDef(d), e.span()))
         .boxed();
 
-    choice((function_def, type_alias, adt_def, class_def, instance_def))
+    let contract_def = contract_def_parser()
+        .map_with(|(d, _), e| (Item::ContractDef(d), e.span()))
+        .boxed();
+
+    choice((
+        function_def,
+        type_alias,
+        adt_def,
+        class_def,
+        instance_def,
+        contract_def,
+    ))
 }
 
 #[cfg(test)]
@@ -587,5 +708,78 @@ mod tests {
         assert_eq!(inst.preds[0].0.class.0, Ident("Eq"));
         assert!(inst.default_kw.is_none());
         assert_eq!(inst.head.0.class.0, Ident("Eq"));
+    }
+
+    #[test]
+    fn test_contract_def_empty() {
+        let result = contract_def_parser().parse(make_stream("contract Foo {}"));
+        let (contract, _) = result.into_result().unwrap();
+        assert_eq!(contract.name.0, Ident("Foo"));
+        assert!(contract.ty_params.is_empty());
+        assert!(contract.fields.is_empty());
+        assert!(contract.items.is_empty());
+    }
+
+    #[test]
+    fn test_contract_def_with_ty_param() {
+        let result = contract_def_parser().parse(make_stream("contract Foo(a) {}"));
+        let (contract, _) = result.into_result().unwrap();
+        assert_eq!(contract.name.0, Ident("Foo"));
+        assert_eq!(contract.ty_params.len(), 1);
+        assert_eq!(contract.ty_params[0].0, Ident("a"));
+        assert!(contract.fields.is_empty());
+        assert!(contract.items.is_empty());
+    }
+
+    #[test]
+    fn test_contract_def_with_field() {
+        let result = contract_def_parser().parse(make_stream("contract Foo { balance : word; }"));
+        let (contract, _) = result.into_result().unwrap();
+        assert_eq!(contract.name.0, Ident("Foo"));
+        assert_eq!(contract.fields.len(), 1);
+        assert_eq!(contract.fields[0].0.name.0, Ident("balance"));
+        assert!(contract.items.is_empty());
+    }
+
+    #[test]
+    fn test_contract_def_with_function() {
+        let result = contract_def_parser().parse(make_stream("contract Foo { function bar() {} }"));
+        let (contract, _) = result.into_result().unwrap();
+        assert_eq!(contract.name.0, Ident("Foo"));
+        assert!(contract.fields.is_empty());
+        assert_eq!(contract.items.len(), 1);
+        match &contract.items[0].0 {
+            ContractItem::FunctionDef(f) => {
+                assert_eq!(f.sig.0.name.0, Ident("bar"));
+            }
+            _ => panic!("Expected FunctionDef"),
+        }
+    }
+
+    #[test]
+    fn test_contract_def_full() {
+        let src = r#"
+            contract Contract(a, b) {
+                x : word;
+                z : MyB;
+                fa : a;
+                fb : b;
+
+                data MyB = False | True;
+                type MyT = MyB;
+
+                function my_fun(src: word) {
+                    x = src;
+                }
+            }
+        "#;
+        let result = contract_def_parser().parse(make_stream(src));
+        let (contract, _) = result.into_result().unwrap();
+        assert_eq!(contract.name.0, Ident("Contract"));
+        assert_eq!(contract.ty_params.len(), 2);
+        assert_eq!(contract.ty_params[0].0, Ident("a"));
+        assert_eq!(contract.ty_params[1].0, Ident("b"));
+        assert_eq!(contract.fields.len(), 4);
+        assert_eq!(contract.items.len(), 3);
     }
 }
