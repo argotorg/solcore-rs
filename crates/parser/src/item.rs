@@ -94,6 +94,13 @@ pub enum ContractItem<'a> {
     AdtDef(AdtDef<'a>),
 }
 
+/// Import statement: `import std.vec;`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Import<'a> {
+    /// The path as dot-separated identifiers (e.g., `std.vec` -> [std, vec]).
+    pub path: Vec<Spanned<Ident<'a>>>,
+}
+
 /// Top-level item.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item<'a> {
@@ -103,6 +110,7 @@ pub enum Item<'a> {
     ClassDef(ClassDef<'a>),
     InstanceDef(InstanceDef<'a>),
     ContractDef(ContractDef<'a>),
+    Import(Import<'a>),
 }
 
 /// Creates a parser for function definitions.
@@ -394,6 +402,23 @@ where
         .boxed()
 }
 
+/// Creates a parser for import statements: `import std.vec;`.
+pub fn import_parser<'a, I>() -> impl Parser<'a, I, Spanned<Import<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    just(Token::Import)
+        .ignore_then(
+            ident_parser()
+                .separated_by(just(Token::Dot))
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(just(Token::Semi))
+        .map_with(|path, e| (Import { path }, e.span()))
+        .boxed()
+}
+
 /// Creates a parser for top-level items.
 pub fn item_parser<'a, I>() -> impl Parser<'a, I, Spanned<Item<'a>>, ParserErr<'a>>
 where
@@ -423,6 +448,10 @@ where
         .map_with(|(d, _), e| (Item::ContractDef(d), e.span()))
         .boxed();
 
+    let import = import_parser()
+        .map_with(|(i, _), e| (Item::Import(i), e.span()))
+        .boxed();
+
     choice((
         function_def,
         type_alias,
@@ -430,6 +459,7 @@ where
         class_def,
         instance_def,
         contract_def,
+        import,
     ))
 }
 
@@ -781,5 +811,23 @@ mod tests {
         assert_eq!(contract.ty_params[1].0, Ident("b"));
         assert_eq!(contract.fields.len(), 4);
         assert_eq!(contract.items.len(), 3);
+    }
+
+    #[test]
+    fn test_import_simple() {
+        let result = import_parser().parse(make_stream("import std;"));
+        let (import, _) = result.into_result().unwrap();
+        assert_eq!(import.path.len(), 1);
+        assert_eq!(import.path[0].0, Ident("std"));
+    }
+
+    #[test]
+    fn test_import_with_path() {
+        let result = import_parser().parse(make_stream("import std.vec.erc20;"));
+        let (import, _) = result.into_result().unwrap();
+        assert_eq!(import.path.len(), 3);
+        assert_eq!(import.path[0].0, Ident("std"));
+        assert_eq!(import.path[1].0, Ident("vec"));
+        assert_eq!(import.path[2].0, Ident("erc20"));
     }
 }
