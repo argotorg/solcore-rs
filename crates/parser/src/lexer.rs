@@ -139,8 +139,8 @@ pub enum Token<'a> {
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice())]
     String(&'a str),
 
-    // Identifier.
-    #[regex(r"[a-zA-Z][a-zA-Z0-9_]*", |lex| lex.slice())]
+    // Identifier (allows hyphens for pragma names like `no-bounded-variable-condition`).
+    #[regex(r"[a-zA-Z][a-zA-Z0-9_]*(-[a-zA-Z][a-zA-Z0-9_]*)*", |lex| lex.slice())]
     Ident(&'a str),
 
     // Comments (skipped).
@@ -323,6 +323,24 @@ mod tests {
         assert_eq!(tokenize("xif"), vec![Token::Ident("xif")]);
         assert_eq!(tokenize("letx"), vec![Token::Ident("letx")]);
         assert_eq!(tokenize("returnValue"), vec![Token::Ident("returnValue")]);
+    }
+
+    #[test]
+    fn test_hyphenated_identifiers() {
+        // Hyphenated identifiers (used for pragma names).
+        assert_eq!(
+            tokenize("no-bounded-variable-condition"),
+            vec![Token::Ident("no-bounded-variable-condition")]
+        );
+        assert_eq!(
+            tokenize("no-patterson-condition"),
+            vec![Token::Ident("no-patterson-condition")]
+        );
+        assert_eq!(tokenize("foo-bar"), vec![Token::Ident("foo-bar")]);
+        // Regular identifiers with underscores.
+        assert_eq!(tokenize("foo_bar"), vec![Token::Ident("foo_bar")]);
+        // Mixed underscores and hyphens.
+        assert_eq!(tokenize("foo_bar-baz"), vec![Token::Ident("foo_bar-baz")]);
     }
 
     #[test]

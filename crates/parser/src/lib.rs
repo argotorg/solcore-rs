@@ -15,8 +15,8 @@ pub type Span = SimpleSpan;
 /// Spanned wrapper for AST nodes.
 pub type Spanned<T> = (T, Span);
 
-/// Parser extra type with simple error and no context.
-pub type ParserErr<'a> = extra::Err<Simple<'a, Token<'a>>>;
+/// Parser extra type with rich error for custom error messages.
+pub type ParserErr<'a> = extra::Err<Rich<'a, Token<'a>>>;
 
 /// Identifier.
 #[derive(Debug, Clone, PartialEq)]
@@ -88,15 +88,28 @@ pub struct Signature<'a> {
     pub ret: Option<Spanned<Type<'a>>>,
 }
 
-/// Creates a parser for identifiers.
+/// Creates a parser for identifiers (rejects hyphens).
 pub fn ident_parser<'a, I>() -> impl Parser<'a, I, Spanned<Ident<'a>>, ParserErr<'a>>
 where
     I: ValueInput<'a, Token = Token<'a>, Span = Span>,
 {
-    select! {
-        Token::Ident(name) => Ident(name),
-    }
-    .map_with(|ident, e| (ident, e.span()))
+    select! { Token::Ident(name) => name }.validate(|name, e, emitter| {
+        if name.contains('-') {
+            emitter.emit(Rich::custom(
+                e.span(),
+                format!("identifier `{}` cannot contain hyphens", name),
+            ));
+        }
+        (Ident(name), e.span())
+    })
+}
+
+/// Creates a parser for pragma identifiers (allows hyphens).
+pub fn pragma_ident_parser<'a, I>() -> impl Parser<'a, I, Spanned<&'a str>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    select! { Token::Ident(name) => name }.map_with(|name, e| (name, e.span()))
 }
 
 /// Creates a parser for literals.

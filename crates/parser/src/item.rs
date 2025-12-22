@@ -5,7 +5,7 @@ use chumsky::{input::ValueInput, prelude::*};
 use crate::{
     Ident, ParserErr, Pred, Signature, Span, Spanned, Type, ident_parser,
     lexer::Token,
-    pred_parser, signature_parser,
+    pragma_ident_parser, pred_parser, signature_parser,
     stmt::{Stmt, stmt_parser},
     type_parser,
 };
@@ -101,6 +101,15 @@ pub struct Import<'a> {
     pub path: Vec<Spanned<Ident<'a>>>,
 }
 
+/// Pragma statement: `pragma name-with-hyphens Item1, Item2;`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pragma<'a> {
+    /// The pragma name (e.g., `no-bounded-variable-condition`).
+    pub name: Spanned<&'a str>,
+    /// The items this pragma applies to.
+    pub items: Vec<Spanned<Ident<'a>>>,
+}
+
 /// Top-level item.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item<'a> {
@@ -111,6 +120,7 @@ pub enum Item<'a> {
     InstanceDef(InstanceDef<'a>),
     ContractDef(ContractDef<'a>),
     Import(Import<'a>),
+    Pragma(Pragma<'a>),
 }
 
 /// Creates a parser for function definitions.
@@ -419,6 +429,26 @@ where
         .boxed()
 }
 
+/// Creates a parser for pragma statements: `pragma name Item1, Item2;`.
+pub fn pragma_parser<'a, I>() -> impl Parser<'a, I, Spanned<Pragma<'a>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    // Items: comma-separated identifiers (no hyphens allowed)
+    let items = ident_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .boxed();
+
+    just(Token::Pragma)
+        .ignore_then(pragma_ident_parser())
+        .then(items)
+        .then_ignore(just(Token::Semi))
+        .map_with(|(name, items), e| (Pragma { name, items }, e.span()))
+        .boxed()
+}
+
 /// Creates a parser for top-level items.
 pub fn item_parser<'a, I>() -> impl Parser<'a, I, Spanned<Item<'a>>, ParserErr<'a>>
 where
@@ -452,6 +482,10 @@ where
         .map_with(|(i, _), e| (Item::Import(i), e.span()))
         .boxed();
 
+    let pragma = pragma_parser()
+        .map_with(|(p, _), e| (Item::Pragma(p), e.span()))
+        .boxed();
+
     choice((
         function_def,
         type_alias,
@@ -460,6 +494,7 @@ where
         instance_def,
         contract_def,
         import,
+        pragma,
     ))
 }
 
@@ -829,5 +864,45 @@ mod tests {
         assert_eq!(import.path[0].0, Ident("std"));
         assert_eq!(import.path[1].0, Ident("vec"));
         assert_eq!(import.path[2].0, Ident("erc20"));
+    }
+
+    #[test]
+    fn test_pragma_with_hyphenated_name() {
+        let result = pragma_parser().parse(make_stream(
+            "pragma no-bounded-variable-condition ABIEncode, GenerateDispatch, Storable;",
+        ));
+        let (pragma, _) = result.into_result().unwrap();
+        assert_eq!(pragma.name.0, "no-bounded-variable-condition");
+        assert_eq!(pragma.items.len(), 3);
+        assert_eq!(pragma.items[0].0, Ident("ABIEncode"));
+        assert_eq!(pragma.items[1].0, Ident("GenerateDispatch"));
+        assert_eq!(pragma.items[2].0, Ident("Storable"));
+    }
+
+    #[test]
+    fn test_pragma_with_simple_name() {
+        let result = pragma_parser().parse(make_stream("pragma optimize Foo, Bar;"));
+        let (pragma, _) = result.into_result().unwrap();
+        assert_eq!(pragma.name.0, "optimize");
+        assert_eq!(pragma.items.len(), 2);
+        assert_eq!(pragma.items[0].0, Ident("Foo"));
+        assert_eq!(pragma.items[1].0, Ident("Bar"));
+    }
+
+    #[test]
+    fn test_pragma_single_item() {
+        let result = pragma_parser().parse(make_stream("pragma no-patterson-condition ABIEncode;"));
+        let (pragma, _) = result.into_result().unwrap();
+        assert_eq!(pragma.name.0, "no-patterson-condition");
+        assert_eq!(pragma.items.len(), 1);
+        assert_eq!(pragma.items[0].0, Ident("ABIEncode"));
+    }
+
+    #[test]
+    fn test_pragma_no_items() {
+        let result = pragma_parser().parse(make_stream("pragma debug;"));
+        let (pragma, _) = result.into_result().unwrap();
+        assert_eq!(pragma.name.0, "debug");
+        assert!(pragma.items.is_empty());
     }
 }
