@@ -121,6 +121,8 @@ pub enum Item<'a> {
     ContractDef(ContractDef<'a>),
     Import(Import<'a>),
     Pragma(Pragma<'a>),
+    /// Error placeholder for recovered parse errors.
+    Error,
 }
 
 /// Creates a parser for function definitions.

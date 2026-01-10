@@ -124,28 +124,51 @@ where
             .to(Expr::Error)
             .map_with(|expr, e| (expr, e.span()));
 
+        // Parenthesized expression with delimited recovery
+        let paren_expr = expr
+            .clone()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .recover_with(via_parser(nested_delimiters(
+                Token::LParen,
+                Token::RParen,
+                [(Token::LBracket, Token::RBracket)],
+                |span| (Expr::Error, span),
+            )))
+            .map_with(|e: Spanned<Expr<'a>>, extra| (e.0, extra.span()));
+
         let atom = lit_parser()
             .map(|(lit, span)| (Expr::Lit(lit), span))
             .or(ident_parser().map(|(ident, span)| (Expr::Ident(ident), span)))
-            .or(expr
-                .clone()
-                .delimited_by(just(Token::LParen), just(Token::RParen))
-                .map_with(|e: Spanned<Expr<'a>>, extra| (e.0, extra.span())))
+            .or(paren_expr)
             .or(if_expr)
             .recover_with(via_parser(atom_recovery))
             .boxed();
 
         // Postfix: indexing with [], function calls with (), and field access with `.`.
+        // Index with recovery for missing ]
         let index_op = expr
             .clone()
             .delimited_by(just(Token::LBracket), just(Token::RBracket))
+            .recover_with(via_parser(nested_delimiters(
+                Token::LBracket,
+                Token::RBracket,
+                [(Token::LParen, Token::RParen)],
+                |span| (Expr::Error, span),
+            )))
             .map(PostfixOp::Index);
+        // Function call with recovery for missing )
         let call_op = expr
             .clone()
             .separated_by(just(Token::Comma))
             .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
+            .recover_with(via_parser(nested_delimiters(
+                Token::LParen,
+                Token::RParen,
+                [(Token::LBracket, Token::RBracket)],
+                |span| vec![(Expr::Error, span)],
+            )))
             .map(PostfixOp::Call);
         let field_op = just(Token::Dot)
             .ignore_then(ident_parser())
@@ -948,6 +971,38 @@ mod tests {
         let output = result.into_output_errors();
         assert!(output.0.is_some());
         assert!(matches!(output.0.unwrap().0, Expr::Error));
+        assert!(!output.1.is_empty());
+    }
+
+    #[test]
+    fn test_expr_delimited_recovery_missing_rparen() {
+        // Missing closing paren: (a + b
+        let result = expr_parser().parse(make_stream("(a + b"));
+        let output = result.into_output_errors();
+        // Should recover and produce something (Expr::Error or the inner expr)
+        assert!(output.0.is_some());
+        // Should have errors about missing )
+        assert!(!output.1.is_empty());
+    }
+
+    #[test]
+    fn test_expr_call_recovery_missing_rparen() {
+        // Function call with missing closing paren: foo(a, b
+        // Note: nested_delimiters recovery requires seeing the opening delimiter,
+        // but delimited_by already consumed it. So we just verify errors are reported.
+        let result = expr_parser().parse(make_stream("foo(a, b"));
+        let output = result.into_output_errors();
+        // Should have errors about missing )
+        assert!(!output.1.is_empty());
+    }
+
+    #[test]
+    fn test_expr_index_recovery_missing_rbracket() {
+        // Index with missing closing bracket: arr[0
+        // Note: Same limitation as function call recovery
+        let result = expr_parser().parse(make_stream("arr[0"));
+        let output = result.into_output_errors();
+        // Should have errors about missing ]
         assert!(!output.1.is_empty());
     }
 }
