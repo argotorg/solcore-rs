@@ -145,30 +145,16 @@ where
             .boxed();
 
         // Postfix: indexing with [], function calls with (), and field access with `.`.
-        // Index with recovery for missing ]
         let index_op = expr
             .clone()
             .delimited_by(just(Token::LBracket), just(Token::RBracket))
-            .recover_with(via_parser(nested_delimiters(
-                Token::LBracket,
-                Token::RBracket,
-                [(Token::LParen, Token::RParen)],
-                |span| (Expr::Error, span),
-            )))
             .map(PostfixOp::Index);
-        // Function call with recovery for missing )
         let call_op = expr
             .clone()
             .separated_by(just(Token::Comma))
             .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
-            .recover_with(via_parser(nested_delimiters(
-                Token::LParen,
-                Token::RParen,
-                [(Token::LBracket, Token::RBracket)],
-                |span| vec![(Expr::Error, span)],
-            )))
             .map(PostfixOp::Call);
         let field_op = just(Token::Dot)
             .ignore_then(ident_parser())

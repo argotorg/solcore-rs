@@ -488,6 +488,24 @@ where
         .map_with(|(p, _), e| (Item::Pragma(p), e.span()))
         .boxed();
 
+    // Recovery: skip tokens until we hit an item-starting keyword
+    let item_start = just(Token::Function)
+        .or(just(Token::Type))
+        .or(just(Token::Data))
+        .or(just(Token::Class))
+        .or(just(Token::Instance))
+        .or(just(Token::Contract))
+        .or(just(Token::Import))
+        .or(just(Token::Pragma))
+        .or(just(Token::Forall))
+        .or(just(Token::Default));
+    let recovery = any()
+        .and_is(item_start.not())
+        .repeated()
+        .at_least(1)
+        .to(Item::Error)
+        .map_with(|item, e| (item, e.span()));
+
     choice((
         function_def,
         type_alias,
@@ -498,6 +516,7 @@ where
         import,
         pragma,
     ))
+    .recover_with(via_parser(recovery))
 }
 
 #[cfg(test)]
@@ -906,5 +925,22 @@ mod tests {
         let (pragma, _) = result.into_result().unwrap();
         assert_eq!(pragma.name.0, "debug");
         assert!(pragma.items.is_empty());
+    }
+
+    #[test]
+    fn test_item_error_recovery_continues_parsing() {
+        // Parse multiple items where one is invalid
+        let items_parser = item_parser().repeated().collect::<Vec<_>>();
+        // Invalid item (garbage) followed by valid function
+        let result = items_parser.parse(make_stream("garbage here function foo() {}"));
+        let output = result.into_output_errors();
+
+        // Should have parsed 2 items (error + valid function)
+        let items = output.0.unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0].0, Item::Error));
+        assert!(matches!(items[1].0, Item::FunctionDef(_)));
+        // Should have errors from the invalid item
+        assert!(!output.1.is_empty());
     }
 }
