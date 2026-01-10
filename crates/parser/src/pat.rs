@@ -20,6 +20,8 @@ pub enum Pat<'a> {
     },
     /// Tuple pattern: `(p1, p2)`.
     Tuple(Vec<Spanned<Pat<'a>>>),
+    /// Error placeholder for recovered parse errors.
+    Error,
 }
 
 /// Creates a parser for patterns.
@@ -65,7 +67,24 @@ where
             })
             .boxed();
 
-        wildcard.or(lit_pat).or(tuple_pat).or(ctor_or_var)
+        // Recovery: skip tokens until pattern boundary, then produce Pat::Error
+        let boundary = just(Token::Comma)
+            .or(just(Token::RParen))
+            .or(just(Token::FatArrow))
+            .or(just(Token::Pipe))
+            .or(just(Token::RBrace));
+        let recovery = any()
+            .and_is(boundary.not())
+            .repeated()
+            .at_least(1)
+            .to(Pat::Error)
+            .map_with(|pat, e| (pat, e.span()));
+
+        wildcard
+            .or(lit_pat)
+            .or(tuple_pat)
+            .or(ctor_or_var)
+            .recover_with(via_parser(recovery))
     })
 }
 
@@ -160,5 +179,15 @@ mod tests {
             }
             _ => panic!("Expected Ctor pattern"),
         }
+    }
+
+    #[test]
+    fn test_pat_error_recovery() {
+        // Invalid pattern: keyword in pattern context
+        let result = pat_parser().parse(make_stream("let"));
+        let output = result.into_output_errors();
+        assert!(output.0.is_some());
+        assert!(matches!(output.0.unwrap().0, Pat::Error));
+        assert!(!output.1.is_empty());
     }
 }

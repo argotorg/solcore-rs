@@ -590,4 +590,27 @@ mod tests {
         // Should have errors from the invalid statement
         assert!(!output.1.is_empty());
     }
+
+    #[test]
+    fn test_match_arm_pattern_recovery() {
+        // Match with invalid pattern in one arm
+        let result = stmt_parser().parse(make_stream(
+            "match x { | let => return 1; | y => return 2; }",
+        ));
+        let output = result.into_output_errors();
+        // Should parse the match statement despite invalid pattern
+        assert!(output.0.is_some());
+        let stmt = output.0.unwrap().0;
+        match stmt {
+            Stmt::Match { arms, .. } => {
+                assert_eq!(arms.len(), 2);
+                // First arm has Pat::Error, second arm is valid
+                assert!(matches!(arms[0].0.pats[0].0, Pat::Error));
+                assert!(matches!(arms[1].0.pats[0].0, Pat::Var(_)));
+            }
+            _ => panic!("Expected Match statement, got {:?}", stmt),
+        }
+        // Should have errors from invalid pattern
+        assert!(!output.1.is_empty());
+    }
 }
