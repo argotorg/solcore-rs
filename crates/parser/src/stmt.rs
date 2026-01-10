@@ -53,6 +53,8 @@ pub enum Stmt<'a> {
     },
     /// Assembly block: `assembly { yul_stmts }`.
     Assembly { body: Vec<Spanned<YulStmt<'a>>> },
+    /// Error placeholder for recovered parse errors.
+    Error,
 }
 
 /// Match arm: `| pat1, pat2 => stmt*`.
@@ -177,12 +179,27 @@ where
             })
             .boxed();
 
+        // Recovery: skip tokens until semicolon, avoiding block delimiters and match arms
+        let skip_token = any().and_is(
+            just(Token::Semi)
+                .or(just(Token::RBrace))
+                .or(just(Token::Pipe))
+                .not(),
+        );
+        let recovery = skip_token
+            .repeated()
+            .at_least(1)
+            .then_ignore(just(Token::Semi))
+            .to(Stmt::Error)
+            .map_with(|stmt, e| (stmt, e.span()));
+
         let_stmt
             .or(return_stmt)
             .or(match_stmt)
             .or(if_stmt)
             .or(assembly_stmt)
             .or(assign_or_expr)
+            .recover_with(via_parser(recovery))
     })
 }
 
@@ -534,5 +551,34 @@ mod tests {
             }
             _ => panic!("Expected Assembly statement"),
         }
+    }
+
+    #[test]
+    fn test_stmt_error_recovery_single() {
+        // Invalid statement: `let` without identifier, followed by garbage then semicolon
+        let result = stmt_parser().parse(make_stream("let 123 bad;"));
+        let output = result.into_output_errors();
+        // Should recover and produce Stmt::Error
+        assert!(output.0.is_some());
+        assert!(matches!(output.0.unwrap().0, Stmt::Error));
+        // Should have errors
+        assert!(!output.1.is_empty());
+    }
+
+    #[test]
+    fn test_stmt_error_recovery_continues_parsing() {
+        // Parse multiple statements where one is invalid
+        let stmts_parser = stmt_parser().repeated().collect::<Vec<_>>();
+        let result = stmts_parser.parse(make_stream("let x = 1; let 123 bad; let y = 2;"));
+        let output = result.into_output_errors();
+
+        // Should have parsed 3 statements (first valid, second error, third valid)
+        let stmts = output.0.unwrap();
+        assert_eq!(stmts.len(), 3);
+        assert!(matches!(stmts[0].0, Stmt::Let { .. }));
+        assert!(matches!(stmts[1].0, Stmt::Error));
+        assert!(matches!(stmts[2].0, Stmt::Let { .. }));
+        // Should have errors from the invalid statement
+        assert!(!output.1.is_empty());
     }
 }
