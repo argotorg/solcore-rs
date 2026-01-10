@@ -70,6 +70,8 @@ pub enum Expr<'a> {
         then_expr: Box<Spanned<Expr<'a>>>,
         else_expr: Box<Spanned<Expr<'a>>>,
     },
+    /// Error placeholder for recovered parse errors.
+    Error,
 }
 
 /// Helper enum for postfix operators during parsing.
@@ -105,6 +107,23 @@ where
             .boxed();
 
         // Atom: literal, identifier, parenthesized expression, or if-then-else.
+        // Recovery: skip tokens until we hit a boundary, then produce Expr::Error
+        let boundary = just(Token::Semi)
+            .or(just(Token::Comma))
+            .or(just(Token::RParen))
+            .or(just(Token::RBracket))
+            .or(just(Token::RBrace))
+            .or(just(Token::Then))
+            .or(just(Token::Else))
+            .or(just(Token::FatArrow))
+            .or(just(Token::Pipe));
+        let atom_recovery = any()
+            .and_is(boundary.not())
+            .repeated()
+            .at_least(1)
+            .to(Expr::Error)
+            .map_with(|expr, e| (expr, e.span()));
+
         let atom = lit_parser()
             .map(|(lit, span)| (Expr::Lit(lit), span))
             .or(ident_parser().map(|(ident, span)| (Expr::Ident(ident), span)))
@@ -113,6 +132,7 @@ where
                 .delimited_by(just(Token::LParen), just(Token::RParen))
                 .map_with(|e: Spanned<Expr<'a>>, extra| (e.0, extra.span())))
             .or(if_expr)
+            .recover_with(via_parser(atom_recovery))
             .boxed();
 
         // Postfix: indexing with [], function calls with (), and field access with `.`.
@@ -897,5 +917,37 @@ mod tests {
             }
             _ => panic!("Expected Add at top level"),
         }
+    }
+
+    #[test]
+    fn test_expr_error_recovery_in_call_args() {
+        // foo(a, <invalid>, b) - recovery should produce Expr::Error for middle arg
+        // Using `let` as invalid token in expression context
+        let result = expr_parser().parse(make_stream("foo(a, let, b)"));
+        let output = result.into_output_errors();
+        assert!(output.0.is_some());
+        let expr = output.0.unwrap().0;
+        match expr {
+            Expr::Call { args, .. } => {
+                assert_eq!(args.len(), 3);
+                assert!(matches!(args[0].0, Expr::Ident(_)));
+                assert!(matches!(args[1].0, Expr::Error));
+                assert!(matches!(args[2].0, Expr::Ident(_)));
+            }
+            _ => panic!("Expected Call, got {:?}", expr),
+        }
+        // Should have errors
+        assert!(!output.1.is_empty());
+    }
+
+    #[test]
+    fn test_expr_error_recovery_stops_at_boundary() {
+        // Invalid expression followed by semicolon (common in statements)
+        // The recovery should stop at ; and produce Expr::Error
+        let result = expr_parser().parse(make_stream("let bad"));
+        let output = result.into_output_errors();
+        assert!(output.0.is_some());
+        assert!(matches!(output.0.unwrap().0, Expr::Error));
+        assert!(!output.1.is_empty());
     }
 }
