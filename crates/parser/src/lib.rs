@@ -7,7 +7,9 @@ pub mod yul;
 
 use chumsky::{input::ValueInput, prelude::*, span::SimpleSpan};
 pub use expr::{BinOp, Expr, expr_parser};
+pub use item::{Item, item_parser};
 use lexer::Token;
+use logos::Logos;
 
 /// Span type.
 pub type Span = SimpleSpan;
@@ -17,6 +19,44 @@ pub type Spanned<T> = (T, Span);
 
 /// Parser extra type with rich error for custom error messages.
 pub type ParserErr<'a> = extra::Err<Rich<'a, Token<'a>>>;
+
+/// Output of parsing a source file.
+#[derive(Debug)]
+pub struct ParseOutput<'a> {
+    /// Parsed top-level items, if parsing produced an AST output.
+    pub items: Option<Vec<Spanned<Item<'a>>>>,
+    /// Combined lexer/parser errors.
+    pub errors: Vec<Rich<'a, Token<'a>>>,
+}
+
+/// Creates the main parser entry for a whole source file.
+pub fn parser<'a, I>() -> impl Parser<'a, I, Vec<Spanned<Item<'a>>>, ParserErr<'a>>
+where
+    I: ValueInput<'a, Token = Token<'a>, Span = Span>,
+{
+    item::item_parser().repeated().collect::<Vec<_>>().then_ignore(end())
+}
+
+/// Lexes and parses a full source file.
+pub fn parse<'a>(src: &'a str) -> ParseOutput<'a> {
+    let mut errors = Vec::new();
+    let mut tokens = Vec::new();
+
+    for (tok, span) in Token::lexer(src).spanned() {
+        match tok {
+            Ok(tok) => tokens.push((tok, Span::from(span))),
+            Err(()) => errors.push(Rich::custom(Span::from(span), "invalid token")),
+        }
+    }
+
+    let stream = chumsky::input::Stream::from_iter(tokens)
+        .map((0..src.len()).into(), |(t, s): (_, _)| (t, s));
+
+    let (items, parse_errors) = parser().parse(stream).into_output_errors();
+    errors.extend(parse_errors);
+
+    ParseOutput { items, errors }
+}
 
 /// Identifier.
 #[derive(Debug, Clone, PartialEq)]
@@ -636,5 +676,22 @@ mod tests {
         assert!(matches!(&sig.params[1].0, Param::Typed { name, .. } if name.0 == Ident("y")));
         assert!(sig.ret.is_some());
         assert!(matches!(&sig.ret.unwrap().0, Type::Named { name, .. } if name.0 == Ident("Bool")));
+    }
+
+    #[test]
+    fn test_main_parser_entry() {
+        let output = parse("import std.vec; function foo() {}");
+        assert!(output.errors.is_empty());
+
+        let items = output.items.unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0].0, Item::Import(_)));
+        assert!(matches!(items[1].0, Item::FunctionDef(_)));
+    }
+
+    #[test]
+    fn test_main_parser_reports_lexer_error() {
+        let output = parse("function foo() { @ }");
+        assert!(!output.errors.is_empty());
     }
 }
