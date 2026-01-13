@@ -1,3 +1,5 @@
+use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
+
 use crate::input::SourceFile;
 
 /// A diagnostic emitted during compilation.
@@ -179,6 +181,76 @@ impl Diagnostic {
         self.notes.push(note.into());
         self
     }
+
+    /// Converts this diagnostic into an `annotate_snippets` report.
+    pub fn to_annotate_report<'db>(&self, db: &'db dyn crate::Db) -> Vec<Group<'db>> {
+        let mut title = self
+            .level
+            .to_annotate_level()
+            .primary_title(self.message.clone());
+        if let Some(code) = &self.code {
+            title = title.id(code.clone());
+        }
+
+        let mut group = Group::with_title(title);
+
+        let mut by_file: Vec<(SourceFile, Vec<&DiagnosticLabel>)> = Vec::new();
+        for label in &self.labels {
+            if let Some((_, labels)) = by_file
+                .iter_mut()
+                .find(|(file, _)| *file == label.span.file)
+            {
+                labels.push(label);
+            } else {
+                by_file.push((label.span.file, vec![label]));
+            }
+        }
+
+        for (file, labels) in by_file {
+            let url = file.url(db);
+            let Some(content) = file.content(db) else {
+                continue;
+            };
+
+            let source_len = content.len();
+            let mut snippet = Snippet::source(content).path(url.path()).fold(false);
+
+            for label in labels {
+                let span = clamp_span(
+                    label.span.start.as_usize(),
+                    label.span.end.as_usize(),
+                    source_len,
+                );
+                let mut annotation = label.style.to_annotate_kind().span(span);
+                if let Some(message) = &label.message {
+                    annotation = annotation.label(message.clone());
+                }
+                if matches!(label.style, LabelStyle::Primary) {
+                    annotation = annotation.highlight_source(true);
+                }
+                snippet = snippet.annotation(annotation);
+            }
+
+            group = group.element(snippet);
+        }
+
+        for note in &self.notes {
+            group = group.element(Level::NOTE.message(note.clone()));
+        }
+
+        vec![group]
+    }
+
+    /// Renders this diagnostic using the default styled renderer.
+    pub fn render(&self, db: &dyn crate::Db) -> String {
+        self.render_with(db, &Renderer::styled())
+    }
+
+    /// Renders this diagnostic using the provided `annotate_snippets` renderer.
+    pub fn render_with(&self, db: &dyn crate::Db, renderer: &Renderer) -> String {
+        let report = self.to_annotate_report(db);
+        renderer.render(&report)
+    }
 }
 
 impl DiagnosticLabel {
@@ -200,4 +272,30 @@ impl DiagnosticLabel {
     pub fn secondary(span: AbsoluteSpan, message: Option<impl Into<String>>) -> Self {
         Self::new(span, LabelStyle::Secondary, message)
     }
+}
+
+impl DiagnosticLevel {
+    fn to_annotate_level(self) -> Level<'static> {
+        match self {
+            DiagnosticLevel::Error => Level::ERROR,
+            DiagnosticLevel::Warning => Level::WARNING,
+            DiagnosticLevel::Note => Level::NOTE,
+            DiagnosticLevel::Help => Level::HELP,
+        }
+    }
+}
+
+impl LabelStyle {
+    fn to_annotate_kind(self) -> AnnotationKind {
+        match self {
+            LabelStyle::Primary => AnnotationKind::Primary,
+            LabelStyle::Secondary => AnnotationKind::Context,
+        }
+    }
+}
+
+fn clamp_span(start: usize, end: usize, source_len: usize) -> core::ops::Range<usize> {
+    let start = start.min(source_len);
+    let end = end.min(source_len);
+    if start <= end { start..end } else { end..start }
 }

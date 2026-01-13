@@ -5,6 +5,7 @@ resolver = "3"
 [workspace.dependencies]
 salsa = "0.25"
 url = "2.5"
+annotate-snippets = "0.12"
 
 [workspace.package]
 edition = "2024"

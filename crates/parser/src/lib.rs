@@ -34,7 +34,10 @@ pub fn parser<'a, I>() -> impl Parser<'a, I, Vec<Spanned<Item<'a>>>, ParserErr<'
 where
     I: ValueInput<'a, Token = Token<'a>, Span = Span>,
 {
-    item::item_parser().repeated().collect::<Vec<_>>().then_ignore(end())
+    item::item_parser()
+        .repeated()
+        .collect::<Vec<_>>()
+        .then_ignore(end())
 }
 
 /// Lexes and parses a full source file.
