@@ -690,6 +690,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "solcore-hull"
+version = "0.1.0"
+dependencies = [
+ "salsa",
+ "solcore-common",
+]
+
+[[package]]
 name = "solcore-parser"
 version = "0.1.0"
 dependencies = [

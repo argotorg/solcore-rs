@@ -54,7 +54,7 @@ pub enum LabelStyle {
 }
 
 /// Byte offset into a source file.
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, salsa::Update)]
 pub struct Offset(u32);
 
 impl Offset {
