@@ -1,6 +1,11 @@
+use std::ops::Add;
+
 use common::diag::Offset;
 
-use crate::ast::item::{AdtDef, ClassDef, Import, Pragma, TypeAlias};
+use crate::{
+    Db,
+    ast::item::{AdtDef, ClassDef, Import, Pragma, TypeAlias},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Anchor<'db> {
@@ -18,18 +23,33 @@ pub struct Span<'db> {
     end: Offset,
 }
 
+impl<'db> Add for Span<'db> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self {
+        debug_assert_eq!(self.anchor, rhs.anchor);
+        let begin = std::cmp::min(self.begin, rhs.begin);
+        let end = std::cmp::max(self.end, rhs.end);
+        Self {
+            anchor: self.anchor,
+            begin,
+            end,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
-pub struct SpannedAtom<'db, T: salsa::Update> {
+pub struct SpannedElem<'db, T: salsa::Update> {
     atom: T,
     span: Span<'db>,
 }
 
-impl<'db, T: salsa::Update> SpannedAtom<'db, T> {
-    fn span(&self) -> Span<'db> {
+impl<'db, T: salsa::Update> Spanned<'db> for SpannedElem<'db, T> {
+    fn span(&self, _db: &'db dyn Db) -> Span<'db> {
         self.span
     }
 }
 
-pub trait Spanned {
-    fn span(&self) -> Span;
+pub trait Spanned<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db>;
 }

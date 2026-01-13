@@ -1,10 +1,11 @@
 use crate::{
+    Db,
     ast::{
         Ident,
         function::FuncSig,
         ty::{PredRef, TypeRef},
     },
-    span::{Span, SpannedAtom},
+    span::{Span, Spanned, SpannedElem},
 };
 
 #[salsa::tracked(debug)]
@@ -14,11 +15,11 @@ pub struct AdtDef<'db> {
     span: Span<'db>,
 
     #[tracked]
-    name: SpannedAtom<'db, Ident<'db>>,
+    name: SpannedElem<'db, Ident<'db>>,
 
     #[tracked]
     #[returns(ref)]
-    ty_params: Vec<SpannedAtom<'db, Ident<'db>>>,
+    ty_params: Vec<SpannedElem<'db, Ident<'db>>>,
 
     /// Data constructors declared for this ADT.
     #[tracked]
@@ -26,10 +27,22 @@ pub struct AdtDef<'db> {
     ctors: Vec<AdtCtor<'db>>,
 }
 
+impl<'db> Spanned<'db> for AdtDef<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        AdtDef::span(*self, db)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct AdtCtor<'db> {
-    pub name: SpannedAtom<'db, Ident<'db>>,
-    pub fields: Vec<TypeRef<'db>>,
+    pub name: SpannedElem<'db, Ident<'db>>,
+    pub fields: SpannedElem<'db, TypeRef<'db>>,
+}
+
+impl<'db> Spanned<'db> for AdtCtor<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        self.name.span(db) + self.fields.span(db)
+    }
 }
 
 /// Type alias definition: `type Name = Type`.
@@ -40,11 +53,17 @@ pub struct TypeAlias<'db> {
     span: Span<'db>,
 
     #[tracked]
-    name: SpannedAtom<'db, Ident<'db>>,
+    name: SpannedElem<'db, Ident<'db>>,
 
     /// Aliased type.
     #[tracked]
     ty: TypeRef<'db>,
+}
+
+impl<'db> Spanned<'db> for TypeAlias<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        TypeAlias::span(*self, db)
+    }
 }
 
 /// Type class definition.
@@ -56,7 +75,7 @@ pub struct ClassDef<'db> {
 
     #[tracked]
     #[returns(ref)]
-    type_vars: Vec<SpannedAtom<'db, Ident<'db>>>,
+    type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
 
     #[tracked]
     #[returns(ref)]
@@ -70,6 +89,12 @@ pub struct ClassDef<'db> {
     methods: Vec<FuncSig<'db>>,
 }
 
+impl<'db> Spanned<'db> for ClassDef<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        ClassDef::span(*self, db)
+    }
+}
+
 #[salsa::tracked(debug)]
 pub struct Import<'db> {
     #[tracked]
@@ -78,7 +103,13 @@ pub struct Import<'db> {
 
     #[tracked]
     #[returns(ref)]
-    path: Vec<SpannedAtom<'db, Ident<'db>>>,
+    path: Vec<SpannedElem<'db, Ident<'db>>>,
+}
+
+impl<'db> Spanned<'db> for Import<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        Import::span(*self, db)
+    }
 }
 
 #[salsa::tracked(debug)]
@@ -88,9 +119,15 @@ pub struct Pragma<'db> {
     span: Span<'db>,
 
     #[tracked]
-    name: SpannedAtom<'db, Ident<'db>>,
+    name: SpannedElem<'db, Ident<'db>>,
 
     #[tracked]
     #[returns(ref)]
-    items: Vec<SpannedAtom<'db, Ident<'db>>>,
+    items: Vec<SpannedElem<'db, Ident<'db>>>,
+}
+
+impl<'db> Spanned<'db> for Pragma<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        Pragma::span(*self, db)
+    }
 }
