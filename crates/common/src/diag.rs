@@ -1,4 +1,5 @@
 use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
+use salsa::Accumulator;
 
 use crate::input::SourceFile;
 
@@ -36,6 +37,13 @@ pub struct DiagnosticLabel {
     pub message: Option<String>,
     /// Label style used by renderers (primary/secondary).
     pub style: LabelStyle,
+}
+
+/// Proof token that a diagnostic has been accumulated.
+#[must_use]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AccumulatedProof {
+    _private: (),
 }
 
 /// Style of a diagnostic label.
@@ -180,6 +188,12 @@ impl Diagnostic {
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
+    }
+
+    /// Accumulate this diagnostic and returns proof that reporting happened.
+    pub fn accumulate(self, db: &dyn crate::Db) -> AccumulatedProof {
+        <Self as Accumulator>::accumulate(self, db);
+        AccumulatedProof { _private: () }
     }
 
     /// Converts this diagnostic into an `annotate_snippets` report.
