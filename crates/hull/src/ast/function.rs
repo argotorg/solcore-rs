@@ -1,3 +1,5 @@
+use common::arena::{Arena, Id};
+
 use crate::{
     Db,
     ast::{
@@ -12,11 +14,8 @@ pub struct FuncSig<'db> {
     pub span: Span<'db>,
     pub type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
     pub preds: Vec<PredRef<'db>>,
-    /// Method name.
     pub name: SpannedElem<'db, Ident<'db>>,
-    /// Parameter types.
     pub params: SpannedElem<'db, Vec<FuncParam<'db>>>,
-    /// Return type (optional).
     pub ret: Option<TypeRef<'db>>,
 }
 
@@ -24,6 +23,231 @@ impl<'db> Spanned<'db> for FuncSig<'db> {
     fn span(&self, _db: &'db dyn Db) -> Span<'db> {
         self.span
     }
+}
+
+#[salsa::tracked]
+pub struct FuncBody<'db> {
+    pub span: Span<'db>,
+    pub stmts: Arena<Stmt<'db>>,
+    pub exprs: Arena<Expr<'db>>,
+    pub pats: Arena<Pat<'db>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct Stmt<'db> {
+    pub span: Span<'db>,
+    pub kind: StmtKind<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum StmtKind<'db> {
+    Let {
+        name: SpannedElem<'db, Ident<'db>>,
+        ty: Option<TypeRef<'db>>,
+        init: Option<Id<Expr<'db>>>,
+    },
+    Return(Option<Id<Expr<'db>>>),
+    Expr(Id<Expr<'db>>),
+    Assign {
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    },
+    AddAssign {
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    },
+    SubAssign {
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    },
+    Match {
+        scrutinees: Vec<Id<Expr<'db>>>,
+        arms: Vec<MatchArm<'db>>,
+    },
+    If {
+        cond: Id<Expr<'db>>,
+        then_body: Vec<Id<Stmt<'db>>>,
+        else_body: Option<Vec<Id<Stmt<'db>>>>,
+    },
+    Assembly {
+        body: Vec<YulStmt<'db>>,
+    },
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct Expr<'db> {
+    pub span: Span<'db>,
+    pub kind: ExprKind<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ExprKind<'db> {
+    Lit(LitKind),
+    Ident(SpannedElem<'db, Ident<'db>>),
+    BinOp {
+        lhs: Id<Expr<'db>>,
+        op: SpannedElem<'db, BinOp>,
+        rhs: Id<Expr<'db>>,
+    },
+    Index {
+        base: Id<Expr<'db>>,
+        index: Id<Expr<'db>>,
+    },
+    Call {
+        callee: Id<Expr<'db>>,
+        args: Vec<Id<Expr<'db>>>,
+    },
+    Field {
+        base: Id<Expr<'db>>,
+        field: SpannedElem<'db, Ident<'db>>,
+    },
+    TypeAnnot {
+        expr: Id<Expr<'db>>,
+        ty: TypeRef<'db>,
+    },
+    UnaryOp {
+        op: SpannedElem<'db, UnOp>,
+        expr: Id<Expr<'db>>,
+    },
+    If {
+        cond: Id<Expr<'db>>,
+        then_expr: Id<Expr<'db>>,
+        else_expr: Id<Expr<'db>>,
+    },
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct MatchArm<'db> {
+    pub span: Span<'db>,
+    pub pats: Vec<Id<Pat<'db>>>,
+    pub body: Vec<Id<Stmt<'db>>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct Pat<'db> {
+    pub span: Span<'db>,
+    pub kind: PatKind<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum PatKind<'db> {
+    Wildcard,
+    Var(SpannedElem<'db, Ident<'db>>),
+    Lit(LitKind),
+    Ctor {
+        name: SpannedElem<'db, Ident<'db>>,
+        args: Vec<Id<Pat<'db>>>,
+    },
+    Tuple {
+        elems: Vec<Id<Pat<'db>>>,
+    },
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum LitKind {
+    Number(String),
+    Hex(String),
+    String(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum UnOp {
+    Not,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct YulStmt<'db> {
+    pub span: Span<'db>,
+    pub kind: YulStmtKind<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum YulStmtKind<'db> {
+    Block(Vec<YulStmt<'db>>),
+    Let {
+        names: Vec<SpannedElem<'db, Ident<'db>>>,
+        init: Option<YulExpr<'db>>,
+    },
+    Assign {
+        names: Vec<SpannedElem<'db, Ident<'db>>>,
+        value: YulExpr<'db>,
+    },
+    Expr(YulExpr<'db>),
+    If {
+        cond: YulExpr<'db>,
+        body: Vec<YulStmt<'db>>,
+    },
+    For {
+        init: Vec<YulStmt<'db>>,
+        cond: YulExpr<'db>,
+        post: Vec<YulStmt<'db>>,
+        body: Vec<YulStmt<'db>>,
+    },
+    Switch {
+        expr: YulExpr<'db>,
+        cases: Vec<YulCase<'db>>,
+        default: Option<Vec<YulStmt<'db>>>,
+    },
+    FunctionDef {
+        name: SpannedElem<'db, Ident<'db>>,
+        params: Vec<SpannedElem<'db, Ident<'db>>>,
+        rets: Vec<SpannedElem<'db, Ident<'db>>>,
+        body: Vec<YulStmt<'db>>,
+    },
+    Leave,
+    Break,
+    Continue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct YulExpr<'db> {
+    pub span: Span<'db>,
+    pub kind: YulExprKind<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum YulExprKind<'db> {
+    Lit(YulLitKind),
+    Ident(SpannedElem<'db, Ident<'db>>),
+    Call {
+        name: SpannedElem<'db, Ident<'db>>,
+        args: Vec<YulExpr<'db>>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum YulLitKind {
+    Number(String),
+    Hex(String),
+    String(String),
+    Bool(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct YulCase<'db> {
+    pub span: Span<'db>,
+    pub lit: YulLitKind,
+    pub body: Vec<YulStmt<'db>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
