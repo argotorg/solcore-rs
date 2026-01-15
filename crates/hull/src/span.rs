@@ -4,12 +4,14 @@ use common::diag::Offset;
 
 use crate::{
     Db,
-    ast::item::{AdtDef, ClassDef, Import, Pragma, TypeAlias},
+    ast::item::{AdtDef, ClassDef, FunctionDef, Import, InstanceDef, Pragma, TypeAlias},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Anchor<'db> {
     Adt(AdtDef<'db>),
+    Function(FunctionDef<'db>),
+    Instance(InstanceDef<'db>),
     TypeAlias(TypeAlias<'db>),
     ClassDef(ClassDef<'db>),
     Import(Import<'db>),

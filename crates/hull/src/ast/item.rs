@@ -45,6 +45,28 @@ impl<'db> Spanned<'db> for AdtCtor<'db> {
     }
 }
 
+/// Function definition.
+#[salsa::tracked(debug)]
+pub struct FunctionDef<'db> {
+    #[tracked]
+    #[returns(copy)]
+    span: Span<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    sig: FuncSig<'db>,
+
+    #[tracked]
+    #[returns(copy)]
+    body_span: Option<Span<'db>>,
+}
+
+impl<'db> Spanned<'db> for FunctionDef<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        FunctionDef::span(*self, db)
+    }
+}
+
 /// Type alias definition: `type Name = Type`.
 #[salsa::tracked(debug)]
 pub struct TypeAlias<'db> {
@@ -92,6 +114,38 @@ pub struct ClassDef<'db> {
 impl<'db> Spanned<'db> for ClassDef<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         ClassDef::span(*self, db)
+    }
+}
+
+#[salsa::tracked(debug)]
+pub struct InstanceDef<'db> {
+    #[tracked]
+    #[returns(copy)]
+    span: Span<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
+
+    #[tracked]
+    #[returns(ref)]
+    preds: Vec<PredRef<'db>>,
+
+    #[tracked]
+    #[returns(copy)]
+    default_kw: Option<Span<'db>>,
+
+    #[tracked]
+    head: PredRef<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    methods: Vec<FunctionDef<'db>>,
+}
+
+impl<'db> Spanned<'db> for InstanceDef<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        InstanceDef::span(*self, db)
     }
 }
 
