@@ -250,6 +250,48 @@ pub struct YulCase<'db> {
     pub body: Vec<YulStmt<'db>>,
 }
 
+impl<'db> Spanned<'db> for Stmt<'db> {
+    fn span(&self, _db: &'db dyn Db) -> Span<'db> {
+        self.span
+    }
+}
+
+impl<'db> Spanned<'db> for Expr<'db> {
+    fn span(&self, _db: &'db dyn Db) -> Span<'db> {
+        self.span
+    }
+}
+
+impl<'db> Spanned<'db> for MatchArm<'db> {
+    fn span(&self, _db: &'db dyn Db) -> Span<'db> {
+        self.span
+    }
+}
+
+impl<'db> Spanned<'db> for Pat<'db> {
+    fn span(&self, _db: &'db dyn Db) -> Span<'db> {
+        self.span
+    }
+}
+
+impl<'db> Spanned<'db> for YulStmt<'db> {
+    fn span(&self, _db: &'db dyn Db) -> Span<'db> {
+        self.span
+    }
+}
+
+impl<'db> Spanned<'db> for YulExpr<'db> {
+    fn span(&self, _db: &'db dyn Db) -> Span<'db> {
+        self.span
+    }
+}
+
+impl<'db> Spanned<'db> for YulCase<'db> {
+    fn span(&self, _db: &'db dyn Db) -> Span<'db> {
+        self.span
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum FuncParam<'db> {
     Typed {
