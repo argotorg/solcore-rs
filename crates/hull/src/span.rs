@@ -8,47 +8,91 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
-pub enum Anchor<'db> {
+pub enum AnchorKind<'db> {
     Root(SourceFile),
     Item(Item<'db>),
     FuncBody(FuncBody<'db>),
 }
 
+#[salsa::interned(debug)]
+pub struct AnchorId<'db> {
+    #[returns(ref)]
+    kind: AnchorKind<'db>,
+}
+
+impl<'db> AnchorId<'db> {
+    pub fn root(db: &'db dyn Db, file: SourceFile) -> Self {
+        Self::new(db, AnchorKind::Root(file))
+    }
+
+    pub fn item(db: &'db dyn Db, item: Item<'db>) -> Self {
+        Self::new(db, AnchorKind::Item(item))
+    }
+
+    pub fn func_body(db: &'db dyn Db, body: FuncBody<'db>) -> Self {
+        Self::new(db, AnchorKind::FuncBody(body))
+    }
+
+    pub fn source_file(self, db: &'db dyn Db) -> SourceFile {
+        match *self.kind(db) {
+            AnchorKind::Root(file) => file,
+            AnchorKind::Item(item) => item.span(db).source_file(db),
+            AnchorKind::FuncBody(body) => body.span(db).source_file(db),
+        }
+    }
+
+    pub fn base_offset(self, db: &'db dyn Db) -> Offset {
+        match *self.kind(db) {
+            AnchorKind::Root(_) => Offset::new(0),
+            AnchorKind::Item(item) => item.span(db).resolve_to_absolute(db).start(),
+            AnchorKind::FuncBody(body) => body.span(db).resolve_to_absolute(db).start(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub struct Span<'db> {
-    anchor: Anchor<'db>,
+    anchor: AnchorId<'db>,
     begin: Offset,
     end: Offset,
 }
 
 impl<'db> Span<'db> {
+    pub fn new(anchor: AnchorId<'db>, begin: Offset, end: Offset) -> Self {
+        assert!(begin <= end, "span start must be <= end");
+        Self { anchor, begin, end }
+    }
+
+    pub fn anchor(self) -> AnchorId<'db> {
+        self.anchor
+    }
+
+    pub fn begin(self) -> Offset {
+        self.begin
+    }
+
+    pub fn end(self) -> Offset {
+        self.end
+    }
+
     pub fn source_file(self, db: &'db dyn Db) -> SourceFile {
-        match self.anchor {
-            Anchor::Root(file) => file,
-            Anchor::Item(item) => item.span(db).source_file(db),
-            Anchor::FuncBody(body) => body.span(db).source_file(db),
-        }
+        self.anchor.source_file(db)
     }
 
     pub fn resolve_to_absolute(self, db: &'db dyn Db) -> AbsoluteSpan {
-        let add_offset = |base: Offset, rel: Offset| Offset::new(base.as_u32() + rel.as_u32());
-
-        match self.anchor {
-            Anchor::Root(file) => AbsoluteSpan::new(file, self.begin, self.end),
-            Anchor::Item(item) => {
-                let base = item.span(db).resolve_to_absolute(db);
-                let start = add_offset(base.start(), self.begin);
-                let end = add_offset(base.start(), self.end);
-                AbsoluteSpan::new(base.file(), start, end)
-            }
-            Anchor::FuncBody(body) => {
-                let base = body.span(db).resolve_to_absolute(db);
-                let start = add_offset(base.start(), self.begin);
-                let end = add_offset(base.start(), self.end);
-                AbsoluteSpan::new(base.file(), start, end)
-            }
-        }
+        let file = self.anchor.source_file(db);
+        let base = self.anchor.base_offset(db);
+        let start = add_offset(base, self.begin);
+        let end = add_offset(base, self.end);
+        AbsoluteSpan::new(file, start, end)
     }
+}
+
+fn add_offset(base: Offset, rel: Offset) -> Offset {
+    let Some(raw) = base.as_u32().checked_add(rel.as_u32()) else {
+        panic!("offset overflow while resolving span");
+    };
+    Offset::new(raw)
 }
 
 impl<'db> Add for Span<'db> {
