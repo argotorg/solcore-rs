@@ -25,7 +25,7 @@ impl<'db> Spanned<'db> for FuncSig<'db> {
     }
 }
 
-#[salsa::tracked]
+#[salsa::tracked(debug)]
 pub struct FuncBody<'db> {
     pub span: Span<'db>,
     pub stmts: Arena<Stmt<'db>>,

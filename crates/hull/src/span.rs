@@ -4,22 +4,14 @@ use common::{diag::Offset, input::SourceFile};
 
 use crate::{
     Db,
-    ast::item::{
-        AdtDef, ClassDef, ContractDef, FunctionDef, Import, InstanceDef, Pragma, TypeAlias,
-    },
+    ast::{function::FuncBody, item::Item},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Anchor<'db> {
     Root(SourceFile),
-    Adt(AdtDef<'db>),
-    Function(FunctionDef<'db>),
-    Instance(InstanceDef<'db>),
-    Contract(ContractDef<'db>),
-    TypeAlias(TypeAlias<'db>),
-    ClassDef(ClassDef<'db>),
-    Import(Import<'db>),
-    Pragma(Pragma<'db>),
+    Item(Item<'db>),
+    FuncBody(FuncBody<'db>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]

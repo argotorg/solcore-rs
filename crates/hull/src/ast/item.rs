@@ -243,3 +243,49 @@ impl<'db> Spanned<'db> for Pragma<'db> {
         Pragma::span(*self, db)
     }
 }
+
+/// Top-level item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum Item<'db> {
+    FunctionDef(FunctionDef<'db>),
+    TypeAlias(TypeAlias<'db>),
+    AdtDef(AdtDef<'db>),
+    ClassDef(ClassDef<'db>),
+    InstanceDef(InstanceDef<'db>),
+    ContractDef(ContractDef<'db>),
+    Import(Import<'db>),
+    Pragma(Pragma<'db>),
+}
+
+impl<'db> Spanned<'db> for Item<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        match self {
+            Self::FunctionDef(def) => def.span(db),
+            Self::TypeAlias(def) => def.span(db),
+            Self::AdtDef(def) => def.span(db),
+            Self::ClassDef(def) => def.span(db),
+            Self::InstanceDef(def) => def.span(db),
+            Self::ContractDef(def) => def.span(db),
+            Self::Import(def) => def.span(db),
+            Self::Pragma(def) => def.span(db),
+        }
+    }
+}
+
+/// A module/source file after lowering into Hull.
+#[salsa::tracked(debug)]
+pub struct Module<'db> {
+    #[tracked]
+    #[returns(copy)]
+    span: Span<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    items: Vec<Item<'db>>,
+}
+
+impl<'db> Spanned<'db> for Module<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        Module::span(*self, db)
+    }
+}
