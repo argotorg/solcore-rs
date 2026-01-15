@@ -5,4 +5,5 @@ edition.workspace = true
 
 [dependencies]
 salsa = { workspace = true }
-common.workspace = true
+annotate-snippets = { workspace = true }
+url = { workspace = true }

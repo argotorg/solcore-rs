@@ -1,6 +1,6 @@
 use std::ops::Add;
 
-use common::{diag::Offset, input::SourceFile};
+use crate::{diag::Offset, input::SourceFile};
 
 use crate::{
     Db,

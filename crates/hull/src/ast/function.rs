@@ -1,4 +1,4 @@
-use common::arena::{Arena, Id};
+use crate::arena::{Arena, Id};
 
 use crate::{
     Db,

@@ -6,7 +6,6 @@ resolver = "3"
 salsa = "0.25"
 url = "2.5"
 annotate-snippets = "0.12"
-common = { path = "crates/common", package = "solcore-common" }
 parser = { path = "crates/parser", package = "solcore-parser" }
 hull = { path = "crates/hull", package = "solcore-hull" }
 
