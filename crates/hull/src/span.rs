@@ -1,17 +1,17 @@
 use std::ops::Add;
 
-use common::diag::Offset;
+use common::{diag::Offset, input::SourceFile};
 
 use crate::{
     Db,
     ast::item::{
-        AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FunctionDef, Import, InstanceDef,
-        Pragma, TypeAlias,
+        AdtDef, ClassDef, ContractDef, FunctionDef, Import, InstanceDef, Pragma, TypeAlias,
     },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Anchor<'db> {
+    Root(SourceFile),
     Adt(AdtDef<'db>),
     Function(FunctionDef<'db>),
     Instance(InstanceDef<'db>),
