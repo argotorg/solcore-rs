@@ -149,6 +149,64 @@ impl<'db> Spanned<'db> for InstanceDef<'db> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub struct FieldDef<'db> {
+    name: SpannedElem<'db, Ident<'db>>,
+    ty: TypeRef<'db>,
+}
+
+impl<'db> Spanned<'db> for FieldDef<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        self.name.span(db) + self.ty.span(db)
+    }
+}
+
+/// Items that can appear inside a contract body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ContractItem<'db> {
+    FunctionDef(FunctionDef<'db>),
+    TypeAlias(TypeAlias<'db>),
+    AdtDef(AdtDef<'db>),
+}
+
+impl<'db> Spanned<'db> for ContractItem<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        match self {
+            Self::FunctionDef(def) => def.span(db),
+            Self::TypeAlias(def) => def.span(db),
+            Self::AdtDef(def) => def.span(db),
+        }
+    }
+}
+
+#[salsa::tracked(debug)]
+pub struct ContractDef<'db> {
+    #[tracked]
+    #[returns(copy)]
+    span: Span<'db>,
+
+    #[tracked]
+    name: SpannedElem<'db, Ident<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
+    ty_params: Vec<SpannedElem<'db, Ident<'db>>>,
+
+    #[tracked]
+    #[returns(ref)]
+    fields: Vec<FieldDef<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
+    items: Vec<ContractItem<'db>>,
+}
+
+impl<'db> Spanned<'db> for ContractDef<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        ContractDef::span(*self, db)
+    }
+}
+
 #[salsa::tracked(debug)]
 pub struct Import<'db> {
     #[tracked]
