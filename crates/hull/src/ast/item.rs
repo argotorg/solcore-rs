@@ -1,5 +1,6 @@
 use crate::{
     Db,
+    anchor::DefId,
     ast::{
         Ident,
         function::{FuncBody, FuncSig},
@@ -10,6 +11,10 @@ use crate::{
 
 #[salsa::tracked(debug)]
 pub struct AdtDef<'db> {
+    #[tracked]
+    #[returns(copy)]
+    def_id: DefId<'db>,
+
     #[tracked]
     #[returns(copy)]
     span: Span<'db>,
@@ -50,6 +55,10 @@ impl<'db> Spanned<'db> for AdtCtor<'db> {
 pub struct FunctionDef<'db> {
     #[tracked]
     #[returns(copy)]
+    def_id: DefId<'db>,
+
+    #[tracked]
+    #[returns(copy)]
     span: Span<'db>,
 
     #[tracked]
@@ -72,6 +81,10 @@ impl<'db> Spanned<'db> for FunctionDef<'db> {
 pub struct TypeAlias<'db> {
     #[tracked]
     #[returns(copy)]
+    def_id: DefId<'db>,
+
+    #[tracked]
+    #[returns(copy)]
     span: Span<'db>,
 
     #[tracked]
@@ -91,6 +104,10 @@ impl<'db> Spanned<'db> for TypeAlias<'db> {
 /// Type class definition.
 #[salsa::tracked(debug)]
 pub struct ClassDef<'db> {
+    #[tracked]
+    #[returns(copy)]
+    def_id: DefId<'db>,
+
     #[tracked]
     #[returns(copy)]
     span: Span<'db>,
@@ -119,6 +136,10 @@ impl<'db> Spanned<'db> for ClassDef<'db> {
 
 #[salsa::tracked(debug)]
 pub struct InstanceDef<'db> {
+    #[tracked]
+    #[returns(copy)]
+    def_id: DefId<'db>,
+
     #[tracked]
     #[returns(copy)]
     span: Span<'db>,
@@ -183,6 +204,10 @@ impl<'db> Spanned<'db> for ContractItem<'db> {
 pub struct ContractDef<'db> {
     #[tracked]
     #[returns(copy)]
+    def_id: DefId<'db>,
+
+    #[tracked]
+    #[returns(copy)]
     span: Span<'db>,
 
     #[tracked]
@@ -211,6 +236,10 @@ impl<'db> Spanned<'db> for ContractDef<'db> {
 pub struct Import<'db> {
     #[tracked]
     #[returns(copy)]
+    def_id: DefId<'db>,
+
+    #[tracked]
+    #[returns(copy)]
     span: Span<'db>,
 
     #[tracked]
@@ -226,6 +255,10 @@ impl<'db> Spanned<'db> for Import<'db> {
 
 #[salsa::tracked(debug)]
 pub struct Pragma<'db> {
+    #[tracked]
+    #[returns(copy)]
+    def_id: DefId<'db>,
+
     #[tracked]
     #[returns(copy)]
     span: Span<'db>,
@@ -275,6 +308,10 @@ impl<'db> Spanned<'db> for Item<'db> {
 /// A module/source file after lowering into Hull.
 #[salsa::tracked(debug)]
 pub struct Module<'db> {
+    #[tracked]
+    #[returns(copy)]
+    def_id: DefId<'db>,
+
     #[tracked]
     #[returns(copy)]
     span: Span<'db>,

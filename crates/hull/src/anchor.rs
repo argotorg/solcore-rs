@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::input::SourceFile;
+use crate::{diag::Offset, input::SourceFile};
 
 /// Disambiguator for defs/bodies sharing the same canonical base key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, salsa::Update)]
@@ -35,36 +35,54 @@ pub enum DefKind {
 }
 
 /// Canonical definition key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub struct DefKey<'db> {
+#[salsa::interned(debug)]
+pub struct DefId<'db> {
     pub file: SourceFile,
-    pub parent: Option<DefId<'db>>,
     pub kind: DefKind,
     pub name: Option<String>,
     pub disambiguator: Disambiguator,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub struct DefLocation {
+    pub file: SourceFile,
+    pub base_offset: Offset,
+}
+
 #[salsa::interned(debug)]
-pub struct DefId<'db> {
+pub struct DefLocationTable<'db> {
     #[returns(ref)]
-    key: DefKey<'db>,
+    pub entries: Vec<(DefId<'db>, DefLocation)>,
+}
+
+pub fn resolve_def_location<'db>(
+    db: &'db dyn crate::Db,
+    table: DefLocationTable<'db>,
+    def: DefId<'db>,
+) -> Option<DefLocation> {
+    table.entries(db).iter().find_map(|(candidate, location)| {
+        if *candidate == def {
+            Some(*location)
+        } else {
+            None
+        }
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct DefBaseKey<'db> {
+struct DefBaseKey {
     file: SourceFile,
-    parent: Option<DefId<'db>>,
     kind: DefKind,
     name: Option<String>,
 }
 
 /// Stateful allocator for deterministic disambiguators during lowering/parsing.
 #[derive(Debug, Default)]
-pub struct KeyCanonicalizer<'db> {
-    def_counts: HashMap<DefBaseKey<'db>, u32>,
+pub struct KeyCanonicalizer {
+    def_counts: HashMap<DefBaseKey, u32>,
 }
 
-impl<'db> KeyCanonicalizer<'db> {
+impl KeyCanonicalizer {
     pub fn new() -> Self {
         Self::default()
     }
@@ -72,13 +90,11 @@ impl<'db> KeyCanonicalizer<'db> {
     pub fn next_def_disambiguator(
         &mut self,
         file: SourceFile,
-        parent: Option<DefId<'db>>,
         kind: DefKind,
         name: Option<&str>,
     ) -> Disambiguator {
         let base = DefBaseKey {
             file,
-            parent,
             kind,
             name: name.map(ToOwned::to_owned),
         };
@@ -88,24 +104,14 @@ impl<'db> KeyCanonicalizer<'db> {
         disambiguator
     }
 
-    pub fn alloc_def(
+    pub fn alloc_def<'db>(
         &mut self,
         db: &'db dyn crate::Db,
         file: SourceFile,
-        parent: Option<DefId<'db>>,
         kind: DefKind,
         name: Option<&str>,
     ) -> DefId<'db> {
-        let disambiguator = self.next_def_disambiguator(file, parent, kind, name);
-        DefId::new(
-            db,
-            DefKey {
-                file,
-                parent,
-                kind,
-                name: name.map(ToOwned::to_owned),
-                disambiguator,
-            },
-        )
+        let disambiguator = self.next_def_disambiguator(file, kind, name);
+        DefId::new(db, file, kind, name.map(ToOwned::to_owned), disambiguator)
     }
 }

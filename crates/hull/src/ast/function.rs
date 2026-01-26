@@ -1,5 +1,6 @@
 use crate::{
     Db,
+    anchor::DefId,
     arena::{Arena, Id},
     ast::{
         Ident,
@@ -28,11 +29,15 @@ impl<'db> Spanned<'db> for FuncSig<'db> {
 pub struct FuncBody<'db> {
     #[tracked]
     #[returns(copy)]
+    pub def_id: DefId<'db>,
+
+    #[tracked]
+    #[returns(copy)]
     pub span: Span<'db>,
 
     #[tracked]
     #[returns(ref)]
-    pub roots: Vec<Id<Stmt<'db>>>,
+    pub top_level_stmts: Vec<Id<Stmt<'db>>>,
 
     #[tracked]
     #[returns(ref)]

@@ -2,7 +2,7 @@ use std::ops::Add;
 
 use crate::{
     Db,
-    ast::{function::FuncBody, item::Item},
+    anchor::{DefId, DefLocationTable, resolve_def_location},
     diag::{AbsoluteSpan, Offset},
     input::SourceFile,
 };
@@ -10,8 +10,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub enum AnchorKind<'db> {
     Root(SourceFile),
-    Item(Item<'db>),
-    FuncBody(FuncBody<'db>),
+    Def(DefId<'db>),
 }
 
 #[salsa::interned(debug)]
@@ -25,27 +24,29 @@ impl<'db> AnchorId<'db> {
         Self::new(db, AnchorKind::Root(file))
     }
 
-    pub fn item(db: &'db dyn Db, item: Item<'db>) -> Self {
-        Self::new(db, AnchorKind::Item(item))
+    pub fn def(db: &'db dyn Db, def: DefId<'db>) -> Self {
+        Self::new(db, AnchorKind::Def(def))
     }
 
-    pub fn func_body(db: &'db dyn Db, body: FuncBody<'db>) -> Self {
-        Self::new(db, AnchorKind::FuncBody(body))
-    }
-
-    pub fn source_file(self, db: &'db dyn Db) -> SourceFile {
+    pub fn source_file(self, db: &'db dyn Db, locations: DefLocationTable<'db>) -> SourceFile {
         match *self.kind(db) {
             AnchorKind::Root(file) => file,
-            AnchorKind::Item(item) => item.span(db).source_file(db),
-            AnchorKind::FuncBody(body) => body.span(db).source_file(db),
+            AnchorKind::Def(def) => {
+                resolve_def_location(db, locations, def)
+                    .unwrap_or_else(|| panic!("missing DefLocation for def anchor: {:?}", def))
+                    .file
+            }
         }
     }
 
-    pub fn base_offset(self, db: &'db dyn Db) -> Offset {
+    pub fn base_offset(self, db: &'db dyn Db, locations: DefLocationTable<'db>) -> Offset {
         match *self.kind(db) {
             AnchorKind::Root(_) => Offset::new(0),
-            AnchorKind::Item(item) => item.span(db).resolve_to_absolute(db).start(),
-            AnchorKind::FuncBody(body) => body.span(db).resolve_to_absolute(db).start(),
+            AnchorKind::Def(def) => {
+                resolve_def_location(db, locations, def)
+                    .unwrap_or_else(|| panic!("missing DefLocation for def anchor: {:?}", def))
+                    .base_offset
+            }
         }
     }
 }
@@ -75,13 +76,17 @@ impl<'db> Span<'db> {
         self.end
     }
 
-    pub fn source_file(self, db: &'db dyn Db) -> SourceFile {
-        self.anchor.source_file(db)
+    pub fn source_file(self, db: &'db dyn Db, locations: DefLocationTable<'db>) -> SourceFile {
+        self.anchor.source_file(db, locations)
     }
 
-    pub fn resolve_to_absolute(self, db: &'db dyn Db) -> AbsoluteSpan {
-        let file = self.anchor.source_file(db);
-        let base = self.anchor.base_offset(db);
+    pub fn resolve_to_absolute(
+        self,
+        db: &'db dyn Db,
+        locations: DefLocationTable<'db>,
+    ) -> AbsoluteSpan {
+        let file = self.anchor.source_file(db, locations);
+        let base = self.anchor.base_offset(db, locations);
         let start = add_offset(base, self.begin);
         let end = add_offset(base, self.end);
         AbsoluteSpan::new(file, start, end)
