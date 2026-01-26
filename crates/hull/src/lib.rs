@@ -1,3 +1,4 @@
+pub mod anchor;
 pub mod arena;
 pub mod ast;
 pub mod diag;
