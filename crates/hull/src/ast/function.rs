@@ -1,7 +1,6 @@
-use crate::arena::{Arena, Id};
-
 use crate::{
     Db,
+    arena::{Arena, Id},
     ast::{
         Ident,
         ty::{PredRef, TypeRef},
@@ -27,9 +26,24 @@ impl<'db> Spanned<'db> for FuncSig<'db> {
 
 #[salsa::tracked(debug)]
 pub struct FuncBody<'db> {
+    #[tracked]
+    #[returns(copy)]
     pub span: Span<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    pub roots: Vec<Id<Stmt<'db>>>,
+
+    #[tracked]
+    #[returns(ref)]
     pub stmts: Arena<Stmt<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
     pub exprs: Arena<Expr<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
     pub pats: Arena<Pat<'db>>,
 }
 
@@ -253,6 +267,12 @@ pub struct YulCase<'db> {
 impl<'db> Spanned<'db> for Stmt<'db> {
     fn span(&self, _db: &'db dyn Db) -> Span<'db> {
         self.span
+    }
+}
+
+impl<'db> Spanned<'db> for FuncBody<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        FuncBody::span(*self, db)
     }
 }
 

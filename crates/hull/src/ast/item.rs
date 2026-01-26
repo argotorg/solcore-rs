@@ -2,7 +2,7 @@ use crate::{
     Db,
     ast::{
         Ident,
-        function::FuncSig,
+        function::{FuncBody, FuncSig},
         ty::{PredRef, TypeRef},
     },
     span::{Span, Spanned, SpannedElem},
@@ -58,7 +58,7 @@ pub struct FunctionDef<'db> {
 
     #[tracked]
     #[returns(copy)]
-    body_span: Option<Span<'db>>,
+    body: Option<FuncBody<'db>>,
 }
 
 impl<'db> Spanned<'db> for FunctionDef<'db> {
