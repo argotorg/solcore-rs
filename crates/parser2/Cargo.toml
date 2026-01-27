@@ -6,3 +6,5 @@ edition.workspace = true
 [dependencies]
 salsa = { workspace = true }
 hull = { workspace = true }
+chumsky = "0.12"
+logos = "0.16"

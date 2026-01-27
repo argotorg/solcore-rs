@@ -119,6 +119,16 @@ pub struct SpannedElem<'db, T: salsa::Update> {
     span: Span<'db>,
 }
 
+impl<'db, T: salsa::Update> SpannedElem<'db, T> {
+    pub fn new(atom: T, span: Span<'db>) -> Self {
+        Self { atom, span }
+    }
+
+    pub fn atom(&self) -> &T {
+        &self.atom
+    }
+}
+
 impl<'db, T: salsa::Update> Spanned<'db> for SpannedElem<'db, T> {
     fn span(&self, _db: &'db dyn Db) -> Span<'db> {
         self.span

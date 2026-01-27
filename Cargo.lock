@@ -701,6 +701,8 @@ dependencies = [
 name = "solcore-parser2"
 version = "0.1.0"
 dependencies = [
+ "chumsky",
+ "logos",
  "salsa",
  "solcore-hull",
 ]
