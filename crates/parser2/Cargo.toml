@@ -1,0 +1,8 @@
+[package]
+name = "solcore-parser2"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+salsa = { workspace = true }
+hull = { workspace = true }
