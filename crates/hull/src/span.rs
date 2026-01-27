@@ -2,7 +2,7 @@ use std::ops::Add;
 
 use crate::{
     Db,
-    anchor::{DefId, DefLocationTable, resolve_def_location},
+    anchor::{DefId, def_locations_for_file, resolve_def_location},
     diag::{AbsoluteSpan, Offset},
     input::SourceFile,
 };
@@ -28,22 +28,24 @@ impl<'db> AnchorId<'db> {
         Self::new(db, AnchorKind::Def(def))
     }
 
-    pub fn source_file(self, db: &'db dyn Db, locations: DefLocationTable<'db>) -> SourceFile {
+    pub fn source_file(self, db: &'db dyn Db) -> SourceFile {
         match *self.kind(db) {
             AnchorKind::Root(file) => file,
             AnchorKind::Def(def) => {
-                resolve_def_location(db, locations, def)
+                let locations = def_locations_for_file(db, def.file(db));
+                resolve_def_location(locations, def)
                     .unwrap_or_else(|| panic!("missing DefLocation for def anchor: {:?}", def))
                     .file
             }
         }
     }
 
-    pub fn base_offset(self, db: &'db dyn Db, locations: DefLocationTable<'db>) -> Offset {
+    pub fn base_offset(self, db: &'db dyn Db) -> Offset {
         match *self.kind(db) {
             AnchorKind::Root(_) => Offset::new(0),
             AnchorKind::Def(def) => {
-                resolve_def_location(db, locations, def)
+                let locations = def_locations_for_file(db, def.file(db));
+                resolve_def_location(locations, def)
                     .unwrap_or_else(|| panic!("missing DefLocation for def anchor: {:?}", def))
                     .base_offset
             }
@@ -76,17 +78,13 @@ impl<'db> Span<'db> {
         self.end
     }
 
-    pub fn source_file(self, db: &'db dyn Db, locations: DefLocationTable<'db>) -> SourceFile {
-        self.anchor.source_file(db, locations)
+    pub fn source_file(self, db: &'db dyn Db) -> SourceFile {
+        self.anchor.source_file(db)
     }
 
-    pub fn resolve_to_absolute(
-        self,
-        db: &'db dyn Db,
-        locations: DefLocationTable<'db>,
-    ) -> AbsoluteSpan {
-        let file = self.anchor.source_file(db, locations);
-        let base = self.anchor.base_offset(db, locations);
+    pub fn resolve_to_absolute(self, db: &'db dyn Db) -> AbsoluteSpan {
+        let file = self.anchor.source_file(db);
+        let base = self.anchor.base_offset(db);
         let start = add_offset(base, self.begin);
         let end = add_offset(base, self.end);
         AbsoluteSpan::new(file, start, end)

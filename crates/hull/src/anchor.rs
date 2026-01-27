@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 use crate::{diag::Offset, input::SourceFile};
 
@@ -49,24 +52,76 @@ pub struct DefLocation {
     pub base_offset: Offset,
 }
 
-#[salsa::interned(debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub struct DefLocationEntry<'db> {
+    pub hash: u64,
+    pub def_id: DefId<'db>,
+    pub location: DefLocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, salsa::Update)]
 pub struct DefLocationTable<'db> {
-    #[returns(ref)]
-    pub entries: Vec<(DefId<'db>, DefLocation)>,
+    /// Entries sorted by `DefLocationEntry::hash` ascending.
+    pub entries: Box<[DefLocationEntry<'db>]>,
+}
+
+impl<'db> DefLocationTable<'db> {
+    pub fn from_def_locations(
+        entries: impl IntoIterator<Item = (DefId<'db>, DefLocation)>,
+    ) -> Self {
+        let mut indexed: Vec<_> = entries
+            .into_iter()
+            .map(|(def_id, location)| DefLocationEntry {
+                hash: def_id_hash(def_id),
+                def_id,
+                location,
+            })
+            .collect();
+        indexed.sort_unstable_by_key(|entry| entry.hash);
+
+        for pair in indexed.windows(2) {
+            assert_ne!(
+                pair[0].def_id, pair[1].def_id,
+                "duplicate DefLocation entry for a single DefId"
+            );
+        }
+
+        Self {
+            entries: indexed.into_boxed_slice(),
+        }
+    }
+}
+
+#[salsa::tracked(returns(ref))]
+pub fn def_locations_for_file<'db>(
+    _db: &'db dyn crate::Db,
+    _file: SourceFile,
+) -> DefLocationTable<'db> {
+    todo!()
 }
 
 pub fn resolve_def_location<'db>(
-    db: &'db dyn crate::Db,
-    table: DefLocationTable<'db>,
+    table: &DefLocationTable<'db>,
     def: DefId<'db>,
 ) -> Option<DefLocation> {
-    table.entries(db).iter().find_map(|(candidate, location)| {
-        if *candidate == def {
-            Some(*location)
-        } else {
-            None
-        }
-    })
+    let entries = &table.entries;
+    debug_assert!(
+        entries.windows(2).all(|w| w[0].hash <= w[1].hash),
+        "DefLocationTable entries must be sorted by hash; build with DefLocationTable::from_def_locations"
+    );
+    let target_hash = def_id_hash(def);
+    let start = entries.partition_point(|entry| entry.hash < target_hash);
+    let end = start + entries[start..].partition_point(|entry| entry.hash == target_hash);
+    entries[start..end]
+        .iter()
+        .find(|entry| entry.def_id == def)
+        .map(|entry| entry.location)
+}
+
+fn def_id_hash<'db>(def: DefId<'db>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    def.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
