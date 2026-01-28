@@ -170,6 +170,7 @@ pub enum LitKind {
     Number(String),
     Hex(String),
     String(String),
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
@@ -187,11 +188,13 @@ pub enum BinOp {
     GtEq,
     And,
     Or,
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub enum UnOp {
     Not,
+    Error,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -236,6 +239,7 @@ pub enum YulStmtKind<'db> {
     Leave,
     Break,
     Continue,
+    Error,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -252,6 +256,7 @@ pub enum YulExprKind<'db> {
         name: SpannedElem<'db, Ident<'db>>,
         args: Vec<YulExpr<'db>>,
     },
+    Error,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -260,6 +265,7 @@ pub enum YulLitKind {
     Hex(String),
     String(String),
     Bool(bool),
+    Error,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -327,6 +333,8 @@ pub enum FuncParam<'db> {
     Untyped {
         name: SpannedElem<'db, Ident<'db>>,
     },
+
+    Error,
 }
 
 impl<'db> Spanned<'db> for FuncParam<'db> {
@@ -334,6 +342,7 @@ impl<'db> Spanned<'db> for FuncParam<'db> {
         match self {
             Self::Typed { name, ty } => name.span(db) + ty.span(db),
             Self::Untyped { name } => name.span(db),
+            Self::Error => panic!("FuncParam::Error has no span"),
         }
     }
 }

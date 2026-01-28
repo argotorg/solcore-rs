@@ -30,6 +30,7 @@ pub enum TypeRefKind<'db> {
     Tuple {
         elems: SpannedElem<'db, TypeRef<'db>>,
     },
+    Error,
 }
 
 impl<'db> Spanned<'db> for TypeRefKind<'db> {
@@ -38,6 +39,7 @@ impl<'db> Spanned<'db> for TypeRefKind<'db> {
             Self::Named { name, args } => name.span(db) + args.span(db),
             Self::Fn { params, ret } => params.span(db) + ret.span(db),
             Self::Tuple { elems } => elems.span(db),
+            Self::Error => panic!("TypeRefKind::Error has no span"),
         }
     }
 }

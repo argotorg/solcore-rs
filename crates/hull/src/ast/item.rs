@@ -188,6 +188,7 @@ pub enum ContractItem<'db> {
     FunctionDef(FunctionDef<'db>),
     TypeAlias(TypeAlias<'db>),
     AdtDef(AdtDef<'db>),
+    Error,
 }
 
 impl<'db> Spanned<'db> for ContractItem<'db> {
@@ -196,6 +197,7 @@ impl<'db> Spanned<'db> for ContractItem<'db> {
             Self::FunctionDef(def) => def.span(db),
             Self::TypeAlias(def) => def.span(db),
             Self::AdtDef(def) => def.span(db),
+            Self::Error => panic!("ContractItem::Error has no span"),
         }
     }
 }
@@ -288,6 +290,7 @@ pub enum Item<'db> {
     ContractDef(ContractDef<'db>),
     Import(Import<'db>),
     Pragma(Pragma<'db>),
+    Error,
 }
 
 impl<'db> Spanned<'db> for Item<'db> {
@@ -301,6 +304,7 @@ impl<'db> Spanned<'db> for Item<'db> {
             Self::ContractDef(def) => def.span(db),
             Self::Import(def) => def.span(db),
             Self::Pragma(def) => def.span(db),
+            Self::Error => panic!("Item::Error has no span"),
         }
     }
 }
