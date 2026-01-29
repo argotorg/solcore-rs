@@ -44,6 +44,12 @@ pub struct AdtCtor<'db> {
     pub fields: SpannedElem<'db, TypeRef<'db>>,
 }
 
+impl<'db> AdtCtor<'db> {
+    pub fn new(name: SpannedElem<'db, Ident<'db>>, fields: SpannedElem<'db, TypeRef<'db>>) -> Self {
+        Self { name, fields }
+    }
+}
+
 impl<'db> Spanned<'db> for AdtCtor<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         self.name.span(db) + self.fields.span(db)
@@ -174,6 +180,20 @@ impl<'db> Spanned<'db> for InstanceDef<'db> {
 pub struct FieldDef<'db> {
     name: SpannedElem<'db, Ident<'db>>,
     ty: TypeRef<'db>,
+}
+
+impl<'db> FieldDef<'db> {
+    pub fn new(name: SpannedElem<'db, Ident<'db>>, ty: TypeRef<'db>) -> Self {
+        Self { name, ty }
+    }
+
+    pub fn name(&self) -> &SpannedElem<'db, Ident<'db>> {
+        &self.name
+    }
+
+    pub fn ty(&self) -> TypeRef<'db> {
+        self.ty
+    }
 }
 
 impl<'db> Spanned<'db> for FieldDef<'db> {
