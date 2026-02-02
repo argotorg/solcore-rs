@@ -1,7 +1,11 @@
 use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
 use salsa::Accumulator;
 
-use crate::input::SourceFile;
+use crate::{
+    anchor::{def_locations_for_file, resolve_def_location, DefId, DefKey},
+    input::SourceFile,
+    span::{AnchorKind, Span},
+};
 
 /// A diagnostic emitted during compilation.
 #[salsa::accumulator]
@@ -28,15 +32,63 @@ pub enum DiagnosticLevel {
     Help,
 }
 
+/// Lifetime-free anchor used by diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+enum LabelAnchor {
+    Root(SourceFile),
+    Def(DefKey),
+}
+
+/// Lifetime-free span snapshot stored in diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+struct LabelSpan {
+    anchor: LabelAnchor,
+    begin: Offset,
+    end: Offset,
+}
+
+impl LabelSpan {
+    fn new(anchor: LabelAnchor, begin: Offset, end: Offset) -> Self {
+        assert!(begin <= end, "span start must be <= end");
+        Self { anchor, begin, end }
+    }
+
+    fn from_span<'db>(db: &'db dyn crate::Db, span: Span<'db>) -> Self {
+        let anchor = match span.anchor().kind_value(db) {
+            AnchorKind::Root(file) => LabelAnchor::Root(file),
+            AnchorKind::Def(def) => LabelAnchor::Def(def.key(db)),
+        };
+        Self::new(anchor, span.begin(), span.end())
+    }
+
+    fn resolve_to_absolute(&self, db: &dyn crate::Db) -> AbsoluteSpan {
+        let (file, base) = match &self.anchor {
+            LabelAnchor::Root(file) => (*file, Offset::new(0)),
+            LabelAnchor::Def(key) => {
+                let table = def_locations_for_file(db, key.file);
+                let def = DefId::from_key(db, key);
+                let loc = resolve_def_location(table, def)
+                    .unwrap_or_else(|| panic!("missing DefLocation for def key: {:?}", key));
+                (loc.file, loc.base_offset)
+            }
+        };
+        AbsoluteSpan::new(
+            file,
+            add_offset(base, self.begin),
+            add_offset(base, self.end),
+        )
+    }
+}
+
 /// Span label attached to a diagnostic.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DiagnosticLabel {
     /// Where this label points to in source.
-    pub span: AbsoluteSpan,
+    span: LabelSpan,
     /// Optional message displayed for this label.
-    pub message: Option<String>,
+    message: Option<String>,
     /// Label style used by renderers (primary/secondary).
-    pub style: LabelStyle,
+    style: LabelStyle,
 }
 
 /// Proof token that a diagnostic has been accumulated.
@@ -167,21 +219,37 @@ impl Diagnostic {
     }
 
     /// Appends a primary label.
-    pub fn with_primary_label(
-        self,
-        span: AbsoluteSpan,
-        message: Option<impl Into<String>>,
-    ) -> Self {
+    fn with_primary_label_span(self, span: LabelSpan, message: Option<impl Into<String>>) -> Self {
         self.with_label(DiagnosticLabel::primary(span, message))
     }
 
-    /// Appends a secondary label.
-    pub fn with_secondary_label(
+    /// Appends a primary label.
+    pub fn with_primary_label<'db>(
         self,
-        span: AbsoluteSpan,
+        db: &'db dyn crate::Db,
+        span: Span<'db>,
+        message: Option<impl Into<String>>,
+    ) -> Self {
+        self.with_primary_label_span(LabelSpan::from_span(db, span), message)
+    }
+
+    /// Appends a secondary label.
+    fn with_secondary_label_span(
+        self,
+        span: LabelSpan,
         message: Option<impl Into<String>>,
     ) -> Self {
         self.with_label(DiagnosticLabel::secondary(span, message))
+    }
+
+    /// Appends a secondary label.
+    pub fn with_secondary_label<'db>(
+        self,
+        db: &'db dyn crate::Db,
+        span: Span<'db>,
+        message: Option<impl Into<String>>,
+    ) -> Self {
+        self.with_secondary_label_span(LabelSpan::from_span(db, span), message)
     }
 
     /// Appends a note/help text line.
@@ -208,15 +276,17 @@ impl Diagnostic {
 
         let mut group = Group::with_title(title);
 
-        let mut by_file: Vec<(SourceFile, Vec<&DiagnosticLabel>)> = Vec::new();
+        let mut by_file: Vec<(SourceFile, Vec<(&DiagnosticLabel, AbsoluteSpan)>)> = Vec::new();
         for label in &self.labels {
+            let absolute = label.span.resolve_to_absolute(db);
+            let file = absolute.file();
             if let Some((_, labels)) = by_file
                 .iter_mut()
-                .find(|(file, _)| *file == label.span.file)
+                .find(|(existing_file, _)| *existing_file == file)
             {
-                labels.push(label);
+                labels.push((label, absolute));
             } else {
-                by_file.push((label.span.file, vec![label]));
+                by_file.push((file, vec![(label, absolute)]));
             }
         }
 
@@ -229,10 +299,10 @@ impl Diagnostic {
             let source_len = content.len();
             let mut snippet = Snippet::source(content).path(url.path()).fold(false);
 
-            for label in labels {
+            for (label, absolute) in labels {
                 let span = clamp_span(
-                    label.span.start.as_usize(),
-                    label.span.end.as_usize(),
+                    absolute.start().as_usize(),
+                    absolute.end().as_usize(),
                     source_len,
                 );
                 let mut annotation = label.style.to_annotate_kind().span(span);
@@ -269,7 +339,7 @@ impl Diagnostic {
 
 impl DiagnosticLabel {
     /// Creates a new diagnostic label.
-    pub fn new(span: AbsoluteSpan, style: LabelStyle, message: Option<impl Into<String>>) -> Self {
+    fn new(span: LabelSpan, style: LabelStyle, message: Option<impl Into<String>>) -> Self {
         Self {
             span,
             style,
@@ -278,12 +348,12 @@ impl DiagnosticLabel {
     }
 
     /// Creates a primary label.
-    pub fn primary(span: AbsoluteSpan, message: Option<impl Into<String>>) -> Self {
+    fn primary(span: LabelSpan, message: Option<impl Into<String>>) -> Self {
         Self::new(span, LabelStyle::Primary, message)
     }
 
     /// Creates a secondary label.
-    pub fn secondary(span: AbsoluteSpan, message: Option<impl Into<String>>) -> Self {
+    fn secondary(span: LabelSpan, message: Option<impl Into<String>>) -> Self {
         Self::new(span, LabelStyle::Secondary, message)
     }
 }
@@ -311,5 +381,16 @@ impl LabelStyle {
 fn clamp_span(start: usize, end: usize, source_len: usize) -> core::ops::Range<usize> {
     let start = start.min(source_len);
     let end = end.min(source_len);
-    if start <= end { start..end } else { end..start }
+    if start <= end {
+        start..end
+    } else {
+        end..start
+    }
+}
+
+fn add_offset(base: Offset, rel: Offset) -> Offset {
+    let Some(raw) = base.as_u32().checked_add(rel.as_u32()) else {
+        panic!("offset overflow while resolving diagnostic span");
+    };
+    Offset::new(raw)
 }

@@ -1,16 +1,16 @@
 use hull::{
     anchor::{DefId, DefKind, DefLocation, DefLocationTable, KeyCanonicalizer},
     arena::Arena,
-    ast::{function, item, ty, Ident},
-    diag::{AbsoluteSpan, Diagnostic, Offset},
+    ast::{Ident, function, item, ty},
+    diag::{Diagnostic, Offset},
     input::SourceFile,
     span::{AnchorId, Span, Spanned, SpannedElem},
 };
 
 use crate::{
+    Db, ParseHullOutput,
     parse::{parse_body_statements, parse_supported_items},
     types::*,
-    Db, ParseHullOutput,
 };
 
 fn offset_from_usize(raw: usize) -> Offset {
@@ -33,9 +33,9 @@ fn span_from_absolute<'db>(anchor: AnchorId<'db>, abs: LexSpan, base_start: usiz
     )
 }
 
-fn absolute_span_from_lex(file: SourceFile, span: LexSpan) -> AbsoluteSpan {
-    AbsoluteSpan::new(
-        file,
+fn root_span_from_lex<'db>(db: &'db dyn Db, file: SourceFile, span: LexSpan) -> Span<'db> {
+    Span::new(
+        AnchorId::root(db, file),
         offset_from_usize(span.start),
         offset_from_usize(span.end),
     )
@@ -44,7 +44,7 @@ fn absolute_span_from_lex(file: SourceFile, span: LexSpan) -> AbsoluteSpan {
 fn accumulate_parse_errors(db: &dyn Db, file: SourceFile, errors: Vec<ParsedError>) {
     for error in errors {
         let _ = Diagnostic::error(error.message)
-            .with_primary_label(absolute_span_from_lex(file, error.span), None::<String>)
+            .with_primary_label(db, root_span_from_lex(db, file, error.span), None::<String>)
             .accumulate(db);
     }
 }

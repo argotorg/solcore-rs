@@ -1,10 +1,10 @@
 use std::ops::Add;
 
 use crate::{
-    Db,
-    anchor::{DefId, def_locations_for_file, resolve_def_location},
+    anchor::{def_locations_for_file, resolve_def_location, DefId},
     diag::{AbsoluteSpan, Offset},
     input::SourceFile,
+    Db,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
@@ -26,6 +26,10 @@ impl<'db> AnchorId<'db> {
 
     pub fn def(db: &'db dyn Db, def: DefId<'db>) -> Self {
         Self::new(db, AnchorKind::Def(def))
+    }
+
+    pub fn kind_value(self, db: &'db dyn Db) -> AnchorKind<'db> {
+        *self.kind(db)
     }
 
     pub fn source_file(self, db: &'db dyn Db) -> SourceFile {

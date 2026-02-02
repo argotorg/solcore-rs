@@ -37,6 +37,15 @@ pub enum DefKind {
     Pragma,
 }
 
+/// Lifetime-free canonical def key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub(crate) struct DefKey {
+    pub(crate) file: SourceFile,
+    pub(crate) kind: DefKind,
+    pub(crate) name: Option<String>,
+    pub(crate) disambiguator: Disambiguator,
+}
+
 /// Canonical definition key.
 #[salsa::interned(debug)]
 pub struct DefId<'db> {
@@ -44,6 +53,21 @@ pub struct DefId<'db> {
     pub kind: DefKind,
     pub name: Option<String>,
     pub disambiguator: Disambiguator,
+}
+
+impl<'db> DefId<'db> {
+    pub(crate) fn key(self, db: &'db dyn crate::Db) -> DefKey {
+        DefKey {
+            file: self.file(db),
+            kind: self.kind(db),
+            name: self.name(db),
+            disambiguator: self.disambiguator(db),
+        }
+    }
+
+    pub(crate) fn from_key(db: &'db dyn crate::Db, key: &DefKey) -> Self {
+        DefId::new(db, key.file, key.kind, key.name.clone(), key.disambiguator)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
