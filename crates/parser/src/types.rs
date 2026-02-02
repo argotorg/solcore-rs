@@ -8,6 +8,18 @@ pub(crate) type SpannedStr<'src> = (&'src str, LexSpan);
 pub(crate) type ParserErr<'src> = extra::Err<Rich<'src, Token<'src>>>;
 
 #[derive(Debug, Clone)]
+pub(crate) struct ParsedError {
+    pub(crate) span: LexSpan,
+    pub(crate) message: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ParseOutput<T> {
+    pub(crate) output: Vec<T>,
+    pub(crate) errors: Vec<ParsedError>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum ParsedTopItem<'src> {
     Import {
         span: LexSpan,

@@ -1,16 +1,16 @@
 use hull::{
     anchor::{DefId, DefKind, DefLocation, DefLocationTable, KeyCanonicalizer},
     arena::Arena,
-    ast::{Ident, function, item, ty},
-    diag::Offset,
+    ast::{function, item, ty, Ident},
+    diag::{AbsoluteSpan, Diagnostic, Offset},
     input::SourceFile,
     span::{AnchorId, Span, Spanned, SpannedElem},
 };
 
 use crate::{
-    Db, ParseHullOutput,
     parse::{parse_body_statements, parse_supported_items},
     types::*,
+    Db, ParseHullOutput,
 };
 
 fn offset_from_usize(raw: usize) -> Offset {
@@ -31,6 +31,22 @@ fn span_from_absolute<'db>(anchor: AnchorId<'db>, abs: LexSpan, base_start: usiz
         offset_from_usize(rel_start),
         offset_from_usize(rel_end),
     )
+}
+
+fn absolute_span_from_lex(file: SourceFile, span: LexSpan) -> AbsoluteSpan {
+    AbsoluteSpan::new(
+        file,
+        offset_from_usize(span.start),
+        offset_from_usize(span.end),
+    )
+}
+
+fn accumulate_parse_errors(db: &dyn Db, file: SourceFile, errors: Vec<ParsedError>) {
+    for error in errors {
+        let _ = Diagnostic::error(error.message)
+            .with_primary_label(absolute_span_from_lex(file, error.span), None::<String>)
+            .accumulate(db);
+    }
 }
 
 fn lower_spanned_ident<'db>(
@@ -697,12 +713,15 @@ fn lower_body_statements<'db>(
     anchor: AnchorId<'db>,
     body_span: LexSpan,
     source: &str,
+    parse_errors: &mut Vec<ParsedError>,
     stmts: &mut Arena<function::Stmt<'db>>,
     exprs: &mut Arena<function::Expr<'db>>,
     pats: &mut Arena<function::Pat<'db>>,
 ) -> Vec<hull::arena::Id<function::Stmt<'db>>> {
     let parsed = parse_body_statements(source, body_span);
+    parse_errors.extend(parsed.errors);
     parsed
+        .output
         .into_iter()
         .map(|stmt| lower_parsed_stmt(db, anchor, body_span.start, stmt, stmts, exprs, pats))
         .collect()
@@ -717,6 +736,7 @@ fn lower_function<'db>(
     sig: ParsedFuncSig<'_>,
     body_span: LexSpan,
     source: &str,
+    parse_errors: &mut Vec<ParsedError>,
 ) -> item::FunctionDef<'db> {
     let func_name = sig.name.0;
     let func_def = keys.alloc_def(db, file, DefKind::Function, Some(func_name));
@@ -752,6 +772,7 @@ fn lower_function<'db>(
         body_anchor,
         body_span,
         source,
+        parse_errors,
         &mut stmts,
         &mut exprs,
         &mut pats,
@@ -789,6 +810,7 @@ fn lower_instance<'db>(
     head: ParsedPred<'_>,
     methods: Vec<ParsedFunctionDef<'_>>,
     source: &str,
+    parse_errors: &mut Vec<ParsedError>,
 ) -> item::InstanceDef<'db> {
     let instance_name = head.class.0;
     let instance_def = keys.alloc_def(db, file, DefKind::Instance, Some(instance_name));
@@ -823,6 +845,7 @@ fn lower_instance<'db>(
                 method.sig,
                 method.body_span,
                 source,
+                parse_errors,
             )
         })
         .collect::<Vec<_>>();
@@ -847,6 +870,7 @@ fn lower_contract_item<'db>(
     def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
     item: ParsedContractItem<'_>,
     source: &str,
+    parse_errors: &mut Vec<ParsedError>,
 ) -> item::ContractItem<'db> {
     match item {
         ParsedContractItem::Function(function) => item::ContractItem::FunctionDef(lower_function(
@@ -858,6 +882,7 @@ fn lower_contract_item<'db>(
             function.sig,
             function.body_span,
             source,
+            parse_errors,
         )),
         ParsedContractItem::TypeAlias { span, name, ty } => item::ContractItem::TypeAlias(
             lower_type_alias(db, file, keys, def_locations, span, name, ty),
@@ -895,6 +920,7 @@ fn lower_contract<'db>(
     fields: Vec<ParsedFieldDef<'_>>,
     items: Vec<ParsedContractItem<'_>>,
     source: &str,
+    parse_errors: &mut Vec<ParsedError>,
 ) -> item::ContractDef<'db> {
     let contract_def = keys.alloc_def(db, file, DefKind::Contract, Some(name.0));
     def_locations.push((
@@ -922,7 +948,7 @@ fn lower_contract<'db>(
         .collect::<Vec<_>>();
     let items = items
         .into_iter()
-        .map(|item| lower_contract_item(db, file, keys, def_locations, item, source))
+        .map(|item| lower_contract_item(db, file, keys, def_locations, item, source, parse_errors))
         .collect::<Vec<_>>();
     let span = span_from_absolute(anchor, span, span.start);
 
@@ -961,7 +987,10 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
         },
     )];
 
-    for parsed in parse_supported_items(source) {
+    let parsed_items = parse_supported_items(source);
+    let mut parse_errors = parsed_items.errors;
+
+    for parsed in parsed_items.output {
         match parsed {
             ParsedTopItem::Import { span, path } => {
                 let import = lower_import(db, file, &mut keys, &mut def_locations, span, path);
@@ -1046,6 +1075,7 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
                     head,
                     methods,
                     source,
+                    &mut parse_errors,
                 );
                 items.push(item::Item::InstanceDef(instance));
             }
@@ -1067,6 +1097,7 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
                     fields,
                     contract_items,
                     source,
+                    &mut parse_errors,
                 );
                 items.push(item::Item::ContractDef(contract));
             }
@@ -1084,6 +1115,7 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
                     sig,
                     body_span,
                     source,
+                    &mut parse_errors,
                 );
                 items.push(item::Item::FunctionDef(function));
             }
@@ -1096,6 +1128,7 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
 
     let module = item::Module::new(db, module_def, module_span, items);
     let def_locations = DefLocationTable::from_def_locations(def_locations);
+    accumulate_parse_errors(db, file, parse_errors);
 
     ParseHullOutput::new(db, module, def_locations)
 }

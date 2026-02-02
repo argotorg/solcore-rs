@@ -991,8 +991,8 @@ where
         .boxed()
 }
 
-fn type_alias_payload_parser<'src, I>()
--> impl Parser<'src, I, (SpannedStr<'src>, ParsedTy<'src>), ParserErr<'src>>
+fn type_alias_payload_parser<'src, I>(
+) -> impl Parser<'src, I, (SpannedStr<'src>, ParsedTy<'src>), ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
@@ -1328,65 +1328,112 @@ where
     .recover_with(via_parser(recovery))
 }
 
-fn tokenize<'src>(src: &'src str) -> Vec<(Token<'src>, LexSpan)> {
-    Token::lexer(src)
-        .spanned()
-        .filter_map(|(tok, span)| tok.ok().map(|tok| (tok, LexSpan::from(span))))
-        .collect()
+fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedError>) {
+    let mut tokens = Vec::new();
+    let mut errors = Vec::new();
+
+    for (tok, span) in Token::lexer(src).spanned() {
+        let span = LexSpan::from(span);
+        match tok {
+            Ok(tok) => tokens.push((tok, span)),
+            Err(()) => errors.push(ParsedError {
+                span,
+                message: "invalid token".to_owned(),
+            }),
+        }
+    }
+
+    (tokens, errors)
 }
 
-pub(crate) fn parse_supported_items<'src>(src: &'src str) -> Vec<ParsedTopItem<'src>> {
-    let tokens = tokenize(src);
+fn parse_error_from_rich<'src>(error: Rich<'src, Token<'src>, LexSpan>) -> ParsedError {
+    let message = match error.reason() {
+        chumsky::error::RichReason::Custom(msg) => msg.clone(),
+        chumsky::error::RichReason::ExpectedFound { .. } => "syntax error".to_owned(),
+    };
+    ParsedError {
+        span: *error.span(),
+        message,
+    }
+}
+
+pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedTopItem<'src>> {
+    let (tokens, mut errors) = tokenize(src);
     let stream = chumsky::input::Stream::from_iter(tokens)
         .map((0..src.len()).into(), |(tok, span): (_, _)| (tok, span));
 
-    let (output, _errors) = top_item_parser()
+    let (output, parse_errors) = top_item_parser()
         .repeated()
         .collect::<Vec<_>>()
         .parse(stream)
         .into_output_errors();
-    output.unwrap_or_default()
+    errors.extend(parse_errors.into_iter().map(parse_error_from_rich));
+
+    ParseOutput {
+        output: output.unwrap_or_default(),
+        errors,
+    }
 }
 
-fn tokenize_with_base<'src>(src: &'src str, base_offset: usize) -> Vec<(Token<'src>, LexSpan)> {
-    Token::lexer(src)
-        .spanned()
-        .filter_map(|(tok, span)| {
-            tok.ok().map(|tok| {
-                (
-                    tok,
-                    LexSpan::from((span.start + base_offset)..(span.end + base_offset)),
-                )
-            })
-        })
-        .collect()
+fn tokenize_with_base<'src>(
+    src: &'src str,
+    base_offset: usize,
+) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedError>) {
+    let mut tokens = Vec::new();
+    let mut errors = Vec::new();
+
+    for (tok, span) in Token::lexer(src).spanned() {
+        let span = LexSpan::from((span.start + base_offset)..(span.end + base_offset));
+        match tok {
+            Ok(tok) => tokens.push((tok, span)),
+            Err(()) => errors.push(ParsedError {
+                span,
+                message: "invalid token".to_owned(),
+            }),
+        }
+    }
+
+    (tokens, errors)
 }
 
 pub(crate) fn parse_body_statements<'src>(
     source: &'src str,
     body_span: LexSpan,
-) -> Vec<ParsedStmt<'src>> {
+) -> ParseOutput<ParsedStmt<'src>> {
     if body_span.end <= body_span.start + 2 {
-        return Vec::new();
+        return ParseOutput {
+            output: Vec::new(),
+            errors: Vec::new(),
+        };
     }
 
     let inner_start = body_span.start + 1;
     let inner_end = body_span.end - 1;
     let Some(inner_source) = source.get(inner_start..inner_end) else {
-        return vec![ParsedStmt {
-            span: body_span,
-            kind: ParsedStmtKind::Error,
-        }];
+        return ParseOutput {
+            output: vec![ParsedStmt {
+                span: body_span,
+                kind: ParsedStmtKind::Error,
+            }],
+            errors: vec![ParsedError {
+                span: body_span,
+                message: "invalid function body span".to_owned(),
+            }],
+        };
     };
 
-    let tokens = tokenize_with_base(inner_source, inner_start);
+    let (tokens, mut errors) = tokenize_with_base(inner_source, inner_start);
     let stream = chumsky::input::Stream::from_iter(tokens)
         .map((0..source.len()).into(), |(tok, span): (_, _)| (tok, span));
-    let (output, _errors) = parsed_stmt_parser()
+    let (output, parse_errors) = parsed_stmt_parser()
         .repeated()
         .collect::<Vec<_>>()
         .parse(stream)
         .into_output_errors();
+    errors.extend(parse_errors.into_iter().map(parse_error_from_rich));
 
-    output.unwrap_or_default()
+    ParseOutput {
+        output: output.unwrap_or_default(),
+        errors,
+    }
 }
