@@ -8,3 +8,8 @@ salsa = { workspace = true }
 hull = { workspace = true }
 chumsky = "0.12"
 logos = "0.16"
+
+[dev-dependencies]
+dir-test = "0.4.1"
+insta = "1.43.2"
+annotate-snippets = { workspace = true }

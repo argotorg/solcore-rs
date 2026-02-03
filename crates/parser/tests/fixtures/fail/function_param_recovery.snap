@@ -1,0 +1,12 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/fail/function_param_recovery.solc
+---
+error: syntax error
+ --> /function_param_recovery.solc:1:16
+  |
+1 | function bad(x:, y: U) {}
+  |                ^
+2 | function ok() {}
+  |

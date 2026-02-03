@@ -1,0 +1,10 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/fail/missing_semicolon.solc
+---
+error: syntax error
+ --> /missing_semicolon.solc:1:18
+  |
+1 | import core.math
+  |                 ^

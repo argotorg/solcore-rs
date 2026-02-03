@@ -1357,6 +1357,10 @@ fn parse_error_from_rich<'src>(error: Rich<'src, Token<'src>, LexSpan>) -> Parse
     }
 }
 
+fn span_contains(outer: LexSpan, inner: LexSpan) -> bool {
+    outer.start <= inner.start && inner.end <= outer.end
+}
+
 pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedTopItem<'src>> {
     let (tokens, mut errors) = tokenize(src);
     let stream = chumsky::input::Stream::from_iter(tokens)
@@ -1367,10 +1371,33 @@ pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedT
         .collect::<Vec<_>>()
         .parse(stream)
         .into_output_errors();
-    errors.extend(parse_errors.into_iter().map(parse_error_from_rich));
+
+    let output = output.unwrap_or_default();
+    let recovery_spans = output
+        .iter()
+        .filter_map(|item| match item {
+            ParsedTopItem::Error { span } => Some(*span),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    errors.extend(
+        parse_errors
+            .into_iter()
+            .map(parse_error_from_rich)
+            .filter(|err| {
+                !recovery_spans
+                    .iter()
+                    .any(|recovery| span_contains(*recovery, err.span))
+            }),
+    );
+    errors.extend(recovery_spans.into_iter().map(|span| ParsedError {
+        span,
+        message: "syntax error".to_owned(),
+    }));
 
     ParseOutput {
-        output: output.unwrap_or_default(),
+        output,
         errors,
     }
 }

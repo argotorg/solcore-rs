@@ -1,0 +1,13 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/fail/top_level_recovery.solc
+---
+error: syntax error
+ --> /top_level_recovery.solc:2:1
+  |
+1 | function first() {}
+2 | unknown nonsense tokens
+  | ^^^^^^^^^^^^^^^^^^^^^^^
+3 | function second() {}
+  |
