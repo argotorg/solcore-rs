@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/fail/top_level_recovery.solc
 ---
-error: syntax error
+error: could not parse top-level item near `unknown nonsense tokens`; expected a declaration starting with `import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`
  --> /top_level_recovery.solc:2:1
   |
 1 | function first() {}

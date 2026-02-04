@@ -42,6 +42,8 @@ where
             span: e.span(),
             path,
         })
+        .labelled("import declaration")
+        .as_context()
         .boxed()
 }
 
@@ -63,6 +65,8 @@ where
             name,
             items,
         })
+        .labelled("pragma declaration")
+        .as_context()
         .boxed()
 }
 
@@ -119,6 +123,8 @@ where
 
         fn_type.or(tuple_type).or(named_type)
     })
+    .labelled("type")
+    .as_context()
 }
 
 fn pred_parser<'src, I>() -> impl Parser<'src, I, ParsedPred<'src>, ParserErr<'src>>
@@ -139,6 +145,8 @@ where
         .then(ident_parser())
         .then(class_args)
         .map(|((ty, class), args)| ParsedPred { ty, class, args })
+        .labelled("predicate")
+        .as_context()
         .boxed()
 }
 
@@ -380,6 +388,8 @@ where
             })
             .boxed()
     })
+    .labelled("expression")
+    .as_context()
 }
 
 fn parsed_pat_parser<'src, I>() -> impl Parser<'src, I, ParsedPat<'src>, ParserErr<'src>>
@@ -453,6 +463,8 @@ where
             .or(ctor_or_var)
             .recover_with(via_parser(recovery))
     })
+    .labelled("pattern")
+    .as_context()
 }
 
 fn parsed_yul_lit_parser<'src, I>() -> impl Parser<'src, I, ParsedYulLitKind<'src>, ParserErr<'src>>
@@ -523,6 +535,8 @@ where
 
         choice((lit, call, ident_expr)).recover_with(via_parser(recovery))
     })
+    .labelled("assembly expression")
+    .as_context()
 }
 
 fn parsed_yul_stmt_parser<'src, I>() -> impl Parser<'src, I, ParsedYulStmt<'src>, ParserErr<'src>>
@@ -704,6 +718,8 @@ where
         ))
         .recover_with(via_parser(recovery))
     })
+    .labelled("assembly statement")
+    .as_context()
 }
 
 fn parsed_match_arm_parser<'src, I>() -> impl Parser<'src, I, ParsedMatchArm<'src>, ParserErr<'src>>
@@ -861,6 +877,8 @@ where
         ))
         .recover_with(via_parser(recovery))
     })
+    .labelled("statement")
+    .as_context()
 }
 
 fn param_parser<'src, I>() -> impl Parser<'src, I, ParsedFuncParam<'src>, ParserErr<'src>>
@@ -884,7 +902,10 @@ where
         .at_least(1)
         .to(ParsedFuncParam::Error);
 
-    choice((typed, untyped)).recover_with(via_parser(recovery))
+    choice((typed, untyped))
+        .recover_with(via_parser(recovery))
+        .labelled("function parameter")
+        .as_context()
 }
 
 fn signature_parser<'src, I>() -> impl Parser<'src, I, ParsedFuncSig<'src>, ParserErr<'src>>
@@ -937,6 +958,8 @@ where
                 ret,
             },
         )
+        .labelled("function signature")
+        .as_context()
         .boxed()
 }
 
@@ -975,6 +998,8 @@ where
             sig,
             body_span,
         })
+        .labelled("function definition")
+        .as_context()
         .boxed()
 }
 
@@ -988,6 +1013,8 @@ where
             sig: def.sig,
             body_span: def.body_span,
         })
+        .labelled("function declaration")
+        .as_context()
         .boxed()
 }
 
@@ -1022,6 +1049,8 @@ where
             name,
             ty,
         })
+        .labelled("type alias declaration")
+        .as_context()
         .boxed()
 }
 
@@ -1099,6 +1128,8 @@ where
             ty_params,
             ctors,
         })
+        .labelled("data declaration")
+        .as_context()
         .boxed()
 }
 
@@ -1149,6 +1180,8 @@ where
                 methods,
             },
         )
+        .labelled("class declaration")
+        .as_context()
         .boxed()
 }
 
@@ -1199,6 +1232,8 @@ where
                 methods,
             }
         })
+        .labelled("instance declaration")
+        .as_context()
         .boxed()
 }
 
@@ -1215,6 +1250,8 @@ where
             name,
             ty,
         })
+        .labelled("contract field")
+        .as_context()
         .boxed()
 }
 
@@ -1253,7 +1290,10 @@ where
         .at_least(1)
         .map_with(|_, e| ParsedContractItem::Error { span: e.span() });
 
-    choice((function_def, type_alias, adt_def)).recover_with(via_parser(recovery))
+    choice((function_def, type_alias, adt_def))
+        .recover_with(via_parser(recovery))
+        .labelled("contract member")
+        .as_context()
 }
 
 fn contract_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
@@ -1292,6 +1332,8 @@ where
                 items,
             },
         )
+        .labelled("contract declaration")
+        .as_context()
         .boxed()
 }
 
@@ -1326,6 +1368,8 @@ where
         function_parser(),
     ))
     .recover_with(via_parser(recovery))
+    .labelled("top-level item")
+    .as_context()
 }
 
 fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedError>) {
@@ -1333,12 +1377,13 @@ fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedErr
     let mut errors = Vec::new();
 
     for (tok, span) in Token::lexer(src).spanned() {
+        let message = invalid_token_message(src, span.start, span.end);
         let span = LexSpan::from(span);
         match tok {
             Ok(tok) => tokens.push((tok, span)),
             Err(()) => errors.push(ParsedError {
                 span,
-                message: "invalid token".to_owned(),
+                message,
             }),
         }
     }
@@ -1346,14 +1391,211 @@ fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedErr
     (tokens, errors)
 }
 
+fn invalid_token_message(source: &str, start: usize, end: usize) -> String {
+    let snippet = source.get(start..end).unwrap_or("");
+    if snippet.is_empty() {
+        "invalid token".to_owned()
+    } else {
+        format!("invalid token `{snippet}`")
+    }
+}
+
+fn token_spelling(token: &Token<'_>) -> &'static str {
+    match token {
+        Token::Contract => "contract",
+        Token::Import => "import",
+        Token::Let => "let",
+        Token::Data => "data",
+        Token::Class => "class",
+        Token::Forall => "forall",
+        Token::Instance => "instance",
+        Token::If => "if",
+        Token::Else => "else",
+        Token::For => "for",
+        Token::Switch => "switch",
+        Token::Type => "type",
+        Token::Case => "case",
+        Token::Default => "default",
+        Token::Match => "match",
+        Token::Function => "function",
+        Token::Constructor => "constructor",
+        Token::Return => "return",
+        Token::Leave => "leave",
+        Token::Continue => "continue",
+        Token::Break => "break",
+        Token::Lam => "lam",
+        Token::Assembly => "assembly",
+        Token::Pragma => "pragma",
+        Token::Then => "then",
+        Token::True => "true",
+        Token::False => "false",
+        Token::ColonEq => ":=",
+        Token::Arrow => "->",
+        Token::FatArrow => "=>",
+        Token::EqEq => "==",
+        Token::NotEq => "!=",
+        Token::GreaterEq => ">=",
+        Token::LessEq => "<=",
+        Token::AndAnd => "&&",
+        Token::OrOr => "||",
+        Token::PlusEq => "+=",
+        Token::MinusEq => "-=",
+        Token::Plus => "+",
+        Token::Minus => "-",
+        Token::Star => "*",
+        Token::Slash => "/",
+        Token::Percent => "%",
+        Token::Bang => "!",
+        Token::Less => "<",
+        Token::Greater => ">",
+        Token::Eq => "=",
+        Token::Pipe => "|",
+        Token::Dot => ".",
+        Token::Colon => ":",
+        Token::Semi => ";",
+        Token::Comma => ",",
+        Token::LParen => "(",
+        Token::RParen => ")",
+        Token::LBrace => "{",
+        Token::RBrace => "}",
+        Token::LBracket => "[",
+        Token::RBracket => "]",
+        Token::Underscore => "_",
+        Token::LineComment => "//",
+        Token::BlockComment => "/* */",
+        Token::Ident(_) => "identifier",
+        Token::HexLit(_) => "hex literal",
+        Token::Number(_) => "number literal",
+        Token::String(_) => "string literal",
+    }
+}
+
+fn token_found_description(token: &Token<'_>) -> String {
+    match token {
+        Token::Ident(name) => format!("identifier `{name}`"),
+        Token::Number(value) => format!("number literal `{value}`"),
+        Token::HexLit(value) => format!("hex literal `{value}`"),
+        Token::String(value) => format!("string literal {value}"),
+        _ => format!("`{}`", token_spelling(token)),
+    }
+}
+
+fn token_expected_description(token: &Token<'_>) -> String {
+    match token {
+        Token::Ident(_) => "identifier".to_owned(),
+        Token::Number(_) => "number literal".to_owned(),
+        Token::HexLit(_) => "hex literal".to_owned(),
+        Token::String(_) => "string literal".to_owned(),
+        _ => format!("`{}`", token_spelling(token)),
+    }
+}
+
+fn expected_pattern_description(
+    pattern: &chumsky::error::RichPattern<'_, Token<'_>>,
+) -> String {
+    match pattern {
+        chumsky::error::RichPattern::Token(token) => token_expected_description(&**token),
+        chumsky::error::RichPattern::Label(label) => label.to_string(),
+        chumsky::error::RichPattern::Identifier(name) => {
+            format!("identifier `{}`", name.trim_matches('"'))
+        }
+        chumsky::error::RichPattern::Any => "token".to_owned(),
+        chumsky::error::RichPattern::SomethingElse => "different token".to_owned(),
+        chumsky::error::RichPattern::EndOfInput => "end of input".to_owned(),
+        _ => "token".to_owned(),
+    }
+}
+
+fn format_expected_list(expected: &[chumsky::error::RichPattern<'_, Token<'_>>]) -> String {
+    let mut items = expected
+        .iter()
+        .map(expected_pattern_description)
+        .collect::<Vec<_>>();
+    let has_specific = items
+        .iter()
+        .any(|item| item != "token" && item != "different token");
+    if has_specific {
+        items.retain(|item| item != "token" && item != "different token");
+    }
+    items.sort_unstable();
+    items.dedup();
+
+    match items.as_slice() {
+        [] => "something else".to_owned(),
+        [single] => single.clone(),
+        _ => {
+            let last = items.pop().expect("non-empty list has a last element");
+            format!("{}, or {last}", items.join(", "))
+        }
+    }
+}
+
+fn expected_found_message(
+    expected: &[chumsky::error::RichPattern<'_, Token<'_>>],
+    found: Option<&Token<'_>>,
+) -> String {
+    let expected_text = format_expected_list(expected);
+    match found {
+        Some(found) => format!(
+            "unexpected {}; expected {expected_text}",
+            token_found_description(found)
+        ),
+        None => format!("unexpected end of input; expected {expected_text}"),
+    }
+}
+
+fn parser_context(error: &Rich<'_, Token<'_>, LexSpan>) -> Option<String> {
+    error.contexts().find_map(|(pattern, _)| match pattern {
+        chumsky::error::RichPattern::Label(label) => Some(label.to_string()),
+        _ => None,
+    })
+}
+
 fn parse_error_from_rich<'src>(error: Rich<'src, Token<'src>, LexSpan>) -> ParsedError {
-    let message = match error.reason() {
+    let base_message = match error.reason() {
         chumsky::error::RichReason::Custom(msg) => msg.clone(),
-        chumsky::error::RichReason::ExpectedFound { .. } => "syntax error".to_owned(),
+        chumsky::error::RichReason::ExpectedFound { expected, found } => {
+            expected_found_message(expected, found.as_deref())
+        }
+    };
+    let message = match parser_context(&error) {
+        Some(ctx) => format!("{base_message} while parsing {ctx}"),
+        None => base_message,
     };
     ParsedError {
         span: *error.span(),
         message,
+    }
+}
+
+fn preview_span_source(source: &str, span: LexSpan, max_chars: usize) -> Option<String> {
+    let snippet = source.get(span.start..span.end)?.trim();
+    if snippet.is_empty() {
+        return None;
+    }
+
+    let single_line = snippet.replace('\n', " ");
+    let compact = single_line.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.is_empty() {
+        return None;
+    }
+
+    let mut preview = compact.chars().take(max_chars).collect::<String>();
+    if compact.chars().count() > max_chars {
+        preview.push_str("...");
+    }
+    Some(preview)
+}
+
+fn top_level_recovery_message(source: &str, span: LexSpan) -> String {
+    let expected = "`import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`";
+    match preview_span_source(source, span, 48) {
+        Some(preview) => format!(
+            "could not parse top-level item near `{preview}`; expected a declaration starting with {expected}"
+        ),
+        None => format!(
+            "could not parse top-level item; expected a declaration starting with {expected}"
+        ),
     }
 }
 
@@ -1393,7 +1635,7 @@ pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedT
     );
     errors.extend(recovery_spans.into_iter().map(|span| ParsedError {
         span,
-        message: "syntax error".to_owned(),
+        message: top_level_recovery_message(src, span),
     }));
 
     ParseOutput {
@@ -1410,12 +1652,13 @@ fn tokenize_with_base<'src>(
     let mut errors = Vec::new();
 
     for (tok, span) in Token::lexer(src).spanned() {
+        let message = invalid_token_message(src, span.start, span.end);
         let span = LexSpan::from((span.start + base_offset)..(span.end + base_offset));
         match tok {
             Ok(tok) => tokens.push((tok, span)),
             Err(()) => errors.push(ParsedError {
                 span,
-                message: "invalid token".to_owned(),
+                message,
             }),
         }
     }

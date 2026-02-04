@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/fail/multiple_emitted_errors.solc
 ---
-error: invalid token
+error: invalid token `@`
  --> /multiple_emitted_errors.solc:1:1
   |
 1 | @
@@ -12,7 +12,7 @@ error: invalid token
   |
 ---
 
-error: invalid token
+error: invalid token `#`
  --> /multiple_emitted_errors.solc:2:1
   |
 1 | @

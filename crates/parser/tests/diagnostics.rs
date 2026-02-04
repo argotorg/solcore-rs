@@ -25,7 +25,7 @@ impl solcore_parser::Db for TestDb {}
     glob: "*.solc"
 )]
 fn parser_fail_diagnostics(fixture: Fixture<&str>) {
-    // Keep this module touched when changing fixtures because dir-test expands lists at compile time.
+    // Keep this module touched when changing fixtures because dir-test expands lists at compile time. (fixture refresh)
     let db = TestDb::default();
     let file = fixture_source_file(&db, &fixture);
     let _ = parse_file_to_hull(&db, file);
