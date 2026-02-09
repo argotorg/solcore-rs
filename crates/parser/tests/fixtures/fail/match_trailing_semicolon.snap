@@ -1,0 +1,16 @@
+---
+source: crates/parser/tests/diagnostics.rs
+assertion_line: 108
+expression: value
+input_file: crates/parser/tests/fixtures/fail/match_trailing_semicolon.solc
+---
+error: unexpected `;`; expected end of input, or statement
+ --> /match_trailing_semicolon.solc:4:4
+  |
+1 | function f() {
+2 |   match 0 {
+3 |   | _ => return ();
+4 |   };
+  |    ^
+5 | }
+  |

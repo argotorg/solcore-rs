@@ -1,0 +1,46 @@
+function toBool(x) {
+  match x {
+  | 0 => return false;
+  | _ => return true;
+  }
+}
+
+function gt(x,y) {
+  let res : word;
+  assembly {
+    res := gt(x,y)
+  }
+  return toBool(res);
+}
+
+function max(x,y) {
+  let res : word;
+  if (gt(x,y)) {
+    res = x;
+  } else {
+    res = y;
+  }
+  return res;
+}
+
+function not(x:bool) -> bool {
+  if (x) { return false; }  else { return true; }
+}
+
+function foo () /* -> (word) -> bool */ {
+  return lam (x) {
+            if (gt(x,0)) {
+                return true;
+            } else {
+                return false;
+            }
+         };
+}
+
+
+contract IfExamples {
+	 function main() -> word {
+	    let f = foo();
+	   return (if not(f(42)) then 0 else 1);
+	 }
+}

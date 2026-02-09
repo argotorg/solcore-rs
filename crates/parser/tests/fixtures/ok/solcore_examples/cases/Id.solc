@@ -1,0 +1,12 @@
+function id() {
+    return lam (x) { return x; } ;
+}
+
+contract Id {
+  function main () {
+    let f = id();
+    return f(0);
+  }
+}
+
+

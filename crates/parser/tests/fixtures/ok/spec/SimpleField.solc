@@ -1,0 +1,13 @@
+import std;
+
+contract Simple {
+  myval : word ;
+
+  function getVal () -> word {
+    return myval ;
+  }
+
+  function main () -> word {
+    return getVal();
+  }
+}

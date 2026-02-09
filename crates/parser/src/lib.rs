@@ -15,6 +15,7 @@ pub struct ParseHullOutput<'db> {
     pub module: item::Module<'db>,
 
     #[tracked]
+    #[returns(ref)]
     pub def_locations: DefLocationTable<'db>,
 }
 

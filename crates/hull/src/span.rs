@@ -1,10 +1,10 @@
 use std::ops::Add;
 
 use crate::{
-    anchor::{def_locations_for_file, resolve_def_location, DefId},
+    Db,
+    anchor::{DefId, def_locations_for_file, resolve_def_location},
     diag::{AbsoluteSpan, Offset},
     input::SourceFile,
-    Db,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]

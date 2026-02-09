@@ -25,7 +25,6 @@ impl solcore_parser::Db for TestDb {}
     glob: "*.solc"
 )]
 fn parser_fail_diagnostics(fixture: Fixture<&str>) {
-    // Keep this module touched when changing fixtures because dir-test expands lists at compile time. (fixture refresh)
     let db = TestDb::default();
     let file = fixture_source_file(&db, &fixture);
     let _ = parse_file_to_hull(&db, file);
@@ -49,18 +48,17 @@ fn parser_fail_diagnostics(fixture: Fixture<&str>) {
 
 #[dir_test(
     dir: "$CARGO_MANIFEST_DIR/tests/fixtures/ok",
-    glob: "*.solc"
+    glob: "**/*.solc"
 )]
 fn parser_ok_no_diagnostics(fixture: Fixture<&str>) {
     let db = TestDb::default();
     let file = fixture_source_file(&db, &fixture);
 
     let _ = parse_file_to_hull(&db, file).module(&db);
-
     let diagnostics = parse_file_to_hull::accumulated::<Diagnostic>(&db, file);
     assert!(
         diagnostics.is_empty(),
-        "expected no diagnostics for ok fixture `{}`:\n{}",
+        "expected no diagnostics for ok fixture `{}`\n{}",
         fixture.path(),
         render_diagnostics(&db, &diagnostics)
     );

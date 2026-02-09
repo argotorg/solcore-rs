@@ -82,7 +82,7 @@ impl<'db> Spanned<'db> for FunctionDef<'db> {
     }
 }
 
-/// Type alias definition: `type Name = Type`.
+/// Type alias definition: `type Name(T, U) = Type`.
 #[salsa::tracked(debug)]
 pub struct TypeAlias<'db> {
     #[tracked]
@@ -95,6 +95,11 @@ pub struct TypeAlias<'db> {
 
     #[tracked]
     name: SpannedElem<'db, Ident<'db>>,
+
+    /// Type parameters declared by this alias.
+    #[tracked]
+    #[returns(ref)]
+    ty_params: Vec<SpannedElem<'db, Ident<'db>>>,
 
     /// Aliased type.
     #[tracked]

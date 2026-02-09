@@ -33,6 +33,7 @@ pub(crate) enum ParsedTopItem<'src> {
     TypeAlias {
         span: LexSpan,
         name: SpannedStr<'src>,
+        ty_params: Vec<SpannedStr<'src>>,
         ty: ParsedTy<'src>,
     },
     Adt {
@@ -152,6 +153,7 @@ pub(crate) enum ParsedContractItem<'src> {
     TypeAlias {
         span: LexSpan,
         name: SpannedStr<'src>,
+        ty_params: Vec<SpannedStr<'src>>,
         ty: ParsedTy<'src>,
     },
     Adt {
@@ -289,7 +291,6 @@ pub(crate) enum ParsedYulLitKind<'src> {
     Hex(&'src str),
     String(&'src str),
     Bool(bool),
-    Error,
 }
 
 #[derive(Debug, Clone)]

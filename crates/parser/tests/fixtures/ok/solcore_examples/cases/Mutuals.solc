@@ -1,0 +1,8 @@
+contract Mutual {
+   function main () {
+      return f();
+   }
+   function f () {
+      return 42;
+   }
+}

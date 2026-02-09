@@ -198,6 +198,7 @@ fn lower_type_alias<'db>(
     def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
     span: LexSpan,
     name: SpannedStr<'_>,
+    ty_params: Vec<SpannedStr<'_>>,
     parsed_ty: ParsedTy<'_>,
 ) -> item::TypeAlias<'db> {
     let alias_def = keys.alloc_def(db, file, DefKind::TypeAlias, Some(name.0));
@@ -211,9 +212,13 @@ fn lower_type_alias<'db>(
 
     let anchor = AnchorId::def(db, alias_def);
     let name = lower_spanned_ident(db, anchor, span.start, name);
+    let ty_params = ty_params
+        .into_iter()
+        .map(|param| lower_spanned_ident(db, anchor, span.start, param))
+        .collect::<Vec<_>>();
     let ty = lower_type_ref(db, anchor, span.start, parsed_ty);
     let span = span_from_absolute(anchor, span, span.start);
-    item::TypeAlias::new(db, alias_def, span, name, ty)
+    item::TypeAlias::new(db, alias_def, span, name, ty_params, ty)
 }
 
 fn lower_adt_ctor<'db>(
@@ -377,7 +382,6 @@ fn lower_parsed_yul_lit(lit: ParsedYulLitKind<'_>) -> function::YulLitKind {
         ParsedYulLitKind::Hex(h) => function::YulLitKind::Hex(h.to_owned()),
         ParsedYulLitKind::String(s) => function::YulLitKind::String(s.to_owned()),
         ParsedYulLitKind::Bool(b) => function::YulLitKind::Bool(b),
-        ParsedYulLitKind::Error => function::YulLitKind::Error,
     }
 }
 
@@ -760,14 +764,12 @@ fn lower_function<'db>(
             base_offset: offset_from_usize(body_span.start),
         },
     ));
-
     let body_anchor = AnchorId::def(db, body_def);
-    let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
 
     let mut stmts = Arena::new();
     let mut exprs = Arena::new();
     let mut pats = Arena::new();
-    let mut top_level_stmts = lower_body_statements(
+    let top_level_stmts = lower_body_statements(
         db,
         body_anchor,
         body_span,
@@ -777,14 +779,7 @@ fn lower_function<'db>(
         &mut exprs,
         &mut pats,
     );
-    if top_level_stmts.is_empty() && body_inner_has_content(source, body_span) {
-        let stmt_id = stmts.alloc(function::Stmt {
-            span: lowered_body_span,
-            kind: function::StmtKind::Error,
-        });
-        top_level_stmts.push(stmt_id);
-    }
-
+    let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
     let body = function::FuncBody::new(
         db,
         body_def,
@@ -884,9 +879,21 @@ fn lower_contract_item<'db>(
             source,
             parse_errors,
         )),
-        ParsedContractItem::TypeAlias { span, name, ty } => item::ContractItem::TypeAlias(
-            lower_type_alias(db, file, keys, def_locations, span, name, ty),
-        ),
+        ParsedContractItem::TypeAlias {
+            span,
+            name,
+            ty_params,
+            ty,
+        } => item::ContractItem::TypeAlias(lower_type_alias(
+            db,
+            file,
+            keys,
+            def_locations,
+            span,
+            name,
+            ty_params,
+            ty,
+        )),
         ParsedContractItem::Adt {
             span,
             name,
@@ -955,18 +962,6 @@ fn lower_contract<'db>(
     item::ContractDef::new(db, contract_def, span, name, ty_params, fields, items)
 }
 
-fn body_inner_has_content(source: &str, body_span: LexSpan) -> bool {
-    if body_span.end <= body_span.start + 2 {
-        return false;
-    }
-    let inner_start = body_span.start + 1;
-    let inner_end = body_span.end - 1;
-    source
-        .get(inner_start..inner_end)
-        .map(|text| !text.trim().is_empty())
-        .unwrap_or(true)
-}
-
 pub(crate) fn parse_file_to_hull_impl<'db>(
     db: &'db dyn Db,
     file: SourceFile,
@@ -1012,9 +1007,22 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
                 );
                 items.push(item::Item::Pragma(pragma));
             }
-            ParsedTopItem::TypeAlias { span, name, ty } => {
-                let alias =
-                    lower_type_alias(db, file, &mut keys, &mut def_locations, span, name, ty);
+            ParsedTopItem::TypeAlias {
+                span,
+                name,
+                ty_params,
+                ty,
+            } => {
+                let alias = lower_type_alias(
+                    db,
+                    file,
+                    &mut keys,
+                    &mut def_locations,
+                    span,
+                    name,
+                    ty_params,
+                    ty,
+                );
                 items.push(item::Item::TypeAlias(alias));
             }
             ParsedTopItem::Adt {

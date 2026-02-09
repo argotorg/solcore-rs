@@ -8,7 +8,12 @@ fn ident_parser<'src, I>() -> impl Parser<'src, I, SpannedStr<'src>, ParserErr<'
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    select! { Token::Ident(name) => name }.validate(|name, e, emitter| {
+    select! {
+        Token::Ident(name) => name,
+        Token::True => "true",
+        Token::False => "false",
+    }
+    .validate(|name, e, emitter| {
         if name.contains('-') {
             emitter.emit(Rich::custom(
                 e.span(),
@@ -150,6 +155,107 @@ where
         .boxed()
 }
 
+fn pred_list_parser<'src, I>() -> impl Parser<'src, I, Vec<ParsedPred<'src>>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let bare = pred_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .boxed();
+    bare.clone()
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .or(bare)
+}
+
+#[derive(Debug, Clone)]
+enum ParsedForallBinder<'src> {
+    Var(SpannedStr<'src>),
+    Bound {
+        var: SpannedStr<'src>,
+        pred: ParsedPred<'src>,
+    },
+}
+
+fn forall_binder_parser<'src, I>() -> impl Parser<'src, I, ParsedForallBinder<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let class_args = type_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .or_not()
+        .map(|args| args.unwrap_or_default())
+        .boxed();
+
+    let bounded = ident_parser()
+        .then_ignore(just(Token::Colon))
+        .then(ident_parser())
+        .then(class_args)
+        .map(|((var, class), args)| {
+            let ty = ParsedTy {
+                span: var.1,
+                kind: ParsedTyKind::Named {
+                    name: var,
+                    args: Vec::new(),
+                },
+            };
+            let pred = ParsedPred { ty, class, args };
+            ParsedForallBinder::Bound { var, pred }
+        });
+
+    let bare = ident_parser().map(ParsedForallBinder::Var);
+
+    choice((bounded, bare))
+}
+
+fn forall_clause_parser<'src, I>()
+-> impl Parser<'src, I, (Vec<SpannedStr<'src>>, Vec<ParsedPred<'src>>), ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let binder = forall_binder_parser().boxed();
+    let binders = binder
+        .clone()
+        .then(
+            just(Token::Comma)
+                .or_not()
+                .ignore_then(binder)
+                .repeated()
+                .collect::<Vec<_>>(),
+        )
+        .map(|(first, mut rest)| {
+            let mut all = Vec::with_capacity(rest.len() + 1);
+            all.push(first);
+            all.append(&mut rest);
+            all
+        });
+
+    just(Token::Forall)
+        .ignore_then(binders)
+        .then_ignore(just(Token::Dot))
+        .or_not()
+        .map(|binders| {
+            let mut type_vars = Vec::new();
+            let mut preds = Vec::new();
+            if let Some(binders) = binders {
+                for binder in binders {
+                    match binder {
+                        ParsedForallBinder::Var(var) => type_vars.push(var),
+                        ParsedForallBinder::Bound { var, pred } => {
+                            type_vars.push(var);
+                            preds.push(pred);
+                        }
+                    }
+                }
+            }
+            (type_vars, preds)
+        })
+}
+
 #[derive(Debug, Clone)]
 enum ParsedPostfixOp<'src> {
     Index(ParsedExpr<'src>),
@@ -181,6 +287,46 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     recursive(|expr| {
+        let lambda_body = recursive(|lambda_body| {
+            let nested = lambda_body
+                .clone()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace))
+                .ignored();
+
+            choice((
+                nested,
+                any()
+                    .and_is(just(Token::LBrace).not())
+                    .and_is(just(Token::RBrace).not())
+                    .ignored(),
+            ))
+            .repeated()
+            .ignored()
+        });
+
+        let lambda_param = ident_parser()
+            .then(just(Token::Colon).ignore_then(type_parser()).or_not())
+            .map(|(name, _)| name)
+            .boxed();
+
+        let lambda_expr = just(Token::Lam)
+            .ignore_then(
+                lambda_param
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LParen), just(Token::RParen)),
+            )
+            .then(just(Token::Arrow).ignore_then(type_parser()).or_not())
+            .then_ignore(just(Token::LBrace))
+            .then_ignore(lambda_body)
+            .then_ignore(just(Token::RBrace))
+            .map_with(|_, e| ParsedExpr {
+                span: e.span(),
+                kind: ParsedExprKind::Error,
+            })
+            .boxed();
+
         let if_expr = just(Token::If)
             .ignore_then(expr.clone())
             .then_ignore(just(Token::Then))
@@ -215,9 +361,22 @@ where
                 kind: ParsedExprKind::Error,
             });
 
-        let paren_expr = expr
+        let tuple_or_paren_expr = expr
             .clone()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map_with(|elems, e| {
+                if elems.len() == 1 {
+                    elems.into_iter().next().expect("len == 1")
+                } else {
+                    ParsedExpr {
+                        span: e.span(),
+                        kind: ParsedExprKind::Error,
+                    }
+                }
+            })
             .boxed();
 
         let atom = parsed_lit_parser()
@@ -229,7 +388,8 @@ where
                 span: ident.1,
                 kind: ParsedExprKind::Ident(ident),
             }))
-            .or(paren_expr)
+            .or(tuple_or_paren_expr)
+            .or(lambda_expr)
             .or(if_expr)
             .recover_with(via_parser(atom_recovery))
             .boxed();
@@ -389,7 +549,6 @@ where
             .boxed()
     })
     .labelled("expression")
-    .as_context()
 }
 
 fn parsed_pat_parser<'src, I>() -> impl Parser<'src, I, ParsedPat<'src>, ParserErr<'src>>
@@ -464,26 +623,20 @@ where
             .recover_with(via_parser(recovery))
     })
     .labelled("pattern")
-    .as_context()
 }
 
 fn parsed_yul_lit_parser<'src, I>() -> impl Parser<'src, I, ParsedYulLitKind<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let lit = select! {
+    select! {
         Token::Number(n) => ParsedYulLitKind::Number(n),
         Token::HexLit(h) => ParsedYulLitKind::Hex(h),
         Token::String(s) => ParsedYulLitKind::String(s),
         Token::True => ParsedYulLitKind::Bool(true),
         Token::False => ParsedYulLitKind::Bool(false),
-    };
-    let recovery = any()
-        .and_is(just(Token::RBrace).or(just(Token::LBrace)).not())
-        .repeated()
-        .at_least(1)
-        .to(ParsedYulLitKind::Error);
-    lit.recover_with(via_parser(recovery)).boxed()
+    }
+    .boxed()
 }
 
 fn parsed_yul_expr_parser<'src, I>() -> impl Parser<'src, I, ParsedYulExpr<'src>, ParserErr<'src>>
@@ -498,24 +651,21 @@ where
             })
             .boxed();
 
-        let call = ident_parser()
+        let ident_or_call = ident_parser()
             .then(
                 expr.clone()
                     .separated_by(just(Token::Comma))
                     .allow_trailing()
                     .collect::<Vec<_>>()
-                    .delimited_by(just(Token::LParen), just(Token::RParen)),
+                    .delimited_by(just(Token::LParen), just(Token::RParen))
+                    .or_not(),
             )
             .map_with(|(name, args), e| ParsedYulExpr {
                 span: e.span(),
-                kind: ParsedYulExprKind::Call { name, args },
-            })
-            .boxed();
-
-        let ident_expr = ident_parser()
-            .map(|name| ParsedYulExpr {
-                span: name.1,
-                kind: ParsedYulExprKind::Ident(name),
+                kind: match args {
+                    Some(args) => ParsedYulExprKind::Call { name, args },
+                    None => ParsedYulExprKind::Ident(name),
+                },
             })
             .boxed();
 
@@ -533,10 +683,9 @@ where
                 kind: ParsedYulExprKind::Error,
             });
 
-        choice((lit, call, ident_expr)).recover_with(via_parser(recovery))
+        choice((lit, ident_or_call)).recover_with(via_parser(recovery))
     })
     .labelled("assembly expression")
-    .as_context()
 }
 
 fn parsed_yul_stmt_parser<'src, I>() -> impl Parser<'src, I, ParsedYulStmt<'src>, ParserErr<'src>>
@@ -589,6 +738,24 @@ where
             .map_with(|expr, e| ParsedYulStmt {
                 span: e.span(),
                 kind: ParsedYulStmtKind::Expr(expr),
+            })
+            .boxed();
+
+        let return_builtin = just(Token::Return)
+            .map_with(|_, e| ("return", e.span()))
+            .then(
+                parsed_yul_expr_parser()
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LParen), just(Token::RParen)),
+            )
+            .map_with(|(name, args), e| ParsedYulStmt {
+                span: e.span(),
+                kind: ParsedYulStmtKind::Expr(ParsedYulExpr {
+                    span: e.span(),
+                    kind: ParsedYulExprKind::Call { name, args },
+                }),
             })
             .boxed();
 
@@ -711,36 +878,16 @@ where
             switch_stmt,
             function_def,
             assign,
+            return_builtin,
             leave,
             break_,
             continue_,
             expr_stmt,
         ))
+        .then_ignore(just(Token::Semi).or_not())
         .recover_with(via_parser(recovery))
     })
     .labelled("assembly statement")
-    .as_context()
-}
-
-fn parsed_match_arm_parser<'src, I>() -> impl Parser<'src, I, ParsedMatchArm<'src>, ParserErr<'src>>
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
-{
-    just(Token::Pipe)
-        .ignore_then(
-            parsed_pat_parser()
-                .separated_by(just(Token::Comma))
-                .at_least(1)
-                .collect::<Vec<_>>(),
-        )
-        .then_ignore(just(Token::FatArrow))
-        .then(parsed_stmt_parser().repeated().collect::<Vec<_>>())
-        .map_with(|(pats, body), e| ParsedMatchArm {
-            span: e.span(),
-            pats,
-            body,
-        })
-        .boxed()
 }
 
 fn parsed_stmt_parser<'src, I>() -> impl Parser<'src, I, ParsedStmt<'src>, ParserErr<'src>>
@@ -748,6 +895,22 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     recursive(|stmt| {
+        let match_arm = just(Token::Pipe)
+            .ignore_then(
+                parsed_pat_parser()
+                    .separated_by(just(Token::Comma))
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .then_ignore(just(Token::FatArrow))
+            .then(stmt.clone().repeated().collect::<Vec<_>>())
+            .map_with(|(pats, body), e| ParsedMatchArm {
+                span: e.span(),
+                pats,
+                body,
+            })
+            .boxed();
+
         let let_stmt = just(Token::Let)
             .ignore_then(ident_parser())
             .then(just(Token::Colon).ignore_then(type_parser()).or_not())
@@ -781,7 +944,7 @@ where
                     .collect::<Vec<_>>(),
             )
             .then(
-                parsed_match_arm_parser()
+                match_arm
                     .repeated()
                     .at_least(1)
                     .collect::<Vec<_>>()
@@ -852,21 +1015,6 @@ where
             })
             .boxed();
 
-        let recovery = any()
-            .and_is(
-                just(Token::Semi)
-                    .or(just(Token::RBrace))
-                    .or(just(Token::Pipe))
-                    .not(),
-            )
-            .repeated()
-            .at_least(1)
-            .then_ignore(just(Token::Semi))
-            .map_with(|_, e| ParsedStmt {
-                span: e.span(),
-                kind: ParsedStmtKind::Error,
-            });
-
         choice((
             let_stmt,
             return_stmt,
@@ -875,10 +1023,8 @@ where
             assembly_stmt,
             assign_or_expr,
         ))
-        .recover_with(via_parser(recovery))
     })
     .labelled("statement")
-    .as_context()
 }
 
 fn param_parser<'src, I>() -> impl Parser<'src, I, ParsedFuncParam<'src>, ParserErr<'src>>
@@ -912,17 +1058,9 @@ fn signature_parser<'src, I>() -> impl Parser<'src, I, ParsedFuncSig<'src>, Pars
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let type_vars = just(Token::Forall)
-        .ignore_then(ident_parser().repeated().collect::<Vec<_>>())
-        .then_ignore(just(Token::Dot))
-        .or_not()
-        .map(|vars| vars.unwrap_or_default())
-        .boxed();
+    let forall = forall_clause_parser().boxed();
 
-    let preds = pred_parser()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .collect::<Vec<_>>()
+    let preds = pred_list_parser()
         .then_ignore(just(Token::FatArrow))
         .or_not()
         .map(|preds| preds.unwrap_or_default())
@@ -941,21 +1079,25 @@ where
         .or_not()
         .boxed();
 
-    type_vars
+    forall
         .then(preds)
         .then_ignore(just(Token::Function))
         .then(ident_parser())
         .then(params)
         .then(ret)
         .map_with(
-            |((((type_vars, preds), name), (params, params_span)), ret), e| ParsedFuncSig {
-                span: e.span(),
-                type_vars,
-                preds,
-                name,
-                params,
-                params_span,
-                ret,
+            |((((forall_info, mut preds), name), (params, params_span)), ret), e| {
+                let (type_vars, mut forall_preds) = forall_info;
+                forall_preds.append(&mut preds);
+                ParsedFuncSig {
+                    span: e.span(),
+                    type_vars,
+                    preds: forall_preds,
+                    name,
+                    params,
+                    params_span,
+                    ret,
+                }
             },
         )
         .labelled("function signature")
@@ -967,8 +1109,8 @@ fn body_span_parser<'src, I>() -> impl Parser<'src, I, LexSpan, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    recursive(|body| {
-        let nested = body
+    let body_contents = recursive(|body_contents| {
+        let nested = body_contents
             .clone()
             .delimited_by(just(Token::LBrace), just(Token::RBrace))
             .ignored();
@@ -982,9 +1124,12 @@ where
         ))
         .repeated()
         .ignored()
-        .delimited_by(just(Token::LBrace), just(Token::RBrace))
+    });
+
+    just(Token::LBrace)
+        .ignore_then(body_contents)
+        .then_ignore(just(Token::RBrace))
         .map_with(|_, e| e.span())
-    })
 }
 
 fn function_def_parser<'src, I>() -> impl Parser<'src, I, ParsedFunctionDef<'src>, ParserErr<'src>>
@@ -999,6 +1144,49 @@ where
             body_span,
         })
         .labelled("function definition")
+        .as_context()
+        .boxed()
+}
+
+fn constructor_def_parser<'src, I>()
+-> impl Parser<'src, I, ParsedFunctionDef<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let params = param_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .map_with(|params, e| (params, e.span()))
+        .boxed();
+
+    let ret = just(Token::Arrow)
+        .ignore_then(type_parser())
+        .or_not()
+        .boxed();
+
+    just(Token::Constructor)
+        .map_with(|_, e| e.span())
+        .then(params)
+        .then(ret)
+        .then(body_span_parser())
+        .map_with(
+            |(((name_span, (params, params_span)), ret), body_span), e| ParsedFunctionDef {
+                span: e.span(),
+                sig: ParsedFuncSig {
+                    span: e.span(),
+                    type_vars: Vec::new(),
+                    preds: Vec::new(),
+                    name: ("constructor", name_span),
+                    params,
+                    params_span,
+                    ret,
+                },
+                body_span,
+            },
+        )
+        .labelled("constructor definition")
         .as_context()
         .boxed()
 }
@@ -1018,11 +1206,20 @@ where
         .boxed()
 }
 
-fn type_alias_payload_parser<'src, I>(
-) -> impl Parser<'src, I, (SpannedStr<'src>, ParsedTy<'src>), ParserErr<'src>>
+fn type_alias_payload_parser<'src, I>()
+-> impl Parser<'src, I, (SpannedStr<'src>, Vec<SpannedStr<'src>>, ParsedTy<'src>), ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
+    let ty_params = ident_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .or_not()
+        .map(|params| params.unwrap_or_default())
+        .boxed();
+
     let type_recovery = any()
         .and_is(just(Token::Semi).not())
         .repeated()
@@ -1034,9 +1231,11 @@ where
 
     just(Token::Type)
         .ignore_then(ident_parser())
+        .then(ty_params)
         .then_ignore(just(Token::Eq))
         .then(type_parser().recover_with(via_parser(type_recovery)))
         .then_ignore(just(Token::Semi))
+        .map(|((name, ty_params), ty)| (name, ty_params, ty))
 }
 
 fn type_alias_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
@@ -1044,9 +1243,10 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     type_alias_payload_parser()
-        .map_with(|(name, ty), e| ParsedTopItem::TypeAlias {
+        .map_with(|(name, ty_params, ty), e| ParsedTopItem::TypeAlias {
             span: e.span(),
             name,
+            ty_params,
             ty,
         })
         .labelled("type alias declaration")
@@ -1144,17 +1344,9 @@ fn class_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserEr
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let type_vars = just(Token::Forall)
-        .ignore_then(ident_parser().repeated().collect::<Vec<_>>())
-        .then_ignore(just(Token::Dot))
-        .or_not()
-        .map(|vars| vars.unwrap_or_default())
-        .boxed();
+    let forall = forall_clause_parser().boxed();
 
-    let super_preds = pred_parser()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .collect::<Vec<_>>()
+    let super_preds = pred_list_parser()
         .then_ignore(just(Token::FatArrow))
         .or_not()
         .map(|preds| preds.unwrap_or_default())
@@ -1166,20 +1358,22 @@ where
         .delimited_by(just(Token::LBrace), just(Token::RBrace))
         .boxed();
 
-    type_vars
+    forall
         .then(super_preds)
         .then_ignore(just(Token::Class))
         .then(pred_parser())
         .then(methods)
-        .map_with(
-            |(((type_vars, super_preds), head), methods), e| ParsedTopItem::Class {
+        .map_with(|(((forall_info, mut super_preds), head), methods), e| {
+            let (type_vars, mut forall_preds) = forall_info;
+            forall_preds.append(&mut super_preds);
+            ParsedTopItem::Class {
                 span: e.span(),
                 type_vars,
-                super_preds,
+                super_preds: forall_preds,
                 head,
                 methods,
-            },
-        )
+            }
+        })
         .labelled("class declaration")
         .as_context()
         .boxed()
@@ -1189,17 +1383,9 @@ fn instance_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, Parse
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let type_vars = just(Token::Forall)
-        .ignore_then(ident_parser().repeated().collect::<Vec<_>>())
-        .then_ignore(just(Token::Dot))
-        .or_not()
-        .map(|vars| vars.unwrap_or_default())
-        .boxed();
+    let forall = forall_clause_parser().boxed();
 
-    let preds = pred_parser()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .collect::<Vec<_>>()
+    let preds = pred_list_parser()
         .then_ignore(just(Token::FatArrow))
         .or_not()
         .map(|preds| preds.unwrap_or_default())
@@ -1216,22 +1402,52 @@ where
         .delimited_by(just(Token::LBrace), just(Token::RBrace))
         .boxed();
 
-    type_vars
-        .then(preds)
-        .then(default_kw)
+    let pre_instance_preds = forall
+        .clone()
+        .then(preds.clone())
+        .then(default_kw.clone())
         .then_ignore(just(Token::Instance))
         .then(pred_parser())
+        .then(methods.clone())
+        .map_with(
+            |((((forall_info, mut preds), default_kw), head), methods), e| {
+                let (type_vars, mut forall_preds) = forall_info;
+                forall_preds.append(&mut preds);
+                ParsedTopItem::Instance {
+                    span: e.span(),
+                    type_vars,
+                    preds: forall_preds,
+                    default_kw,
+                    head,
+                    methods,
+                }
+            },
+        )
+        .boxed();
+
+    let post_instance_preds = forall
+        .then(default_kw)
+        .then_ignore(just(Token::Instance))
+        .then(preds)
+        .then(pred_parser())
         .then(methods)
-        .map_with(|((((type_vars, preds), default_kw), head), methods), e| {
-            ParsedTopItem::Instance {
-                span: e.span(),
-                type_vars,
-                preds,
-                default_kw,
-                head,
-                methods,
-            }
-        })
+        .map_with(
+            |((((forall_info, default_kw), mut preds), head), methods), e| {
+                let (type_vars, mut forall_preds) = forall_info;
+                forall_preds.append(&mut preds);
+                ParsedTopItem::Instance {
+                    span: e.span(),
+                    type_vars,
+                    preds: forall_preds,
+                    default_kw,
+                    head,
+                    methods,
+                }
+            },
+        )
+        .boxed();
+
+    choice((pre_instance_preds, post_instance_preds))
         .labelled("instance declaration")
         .as_context()
         .boxed()
@@ -1262,11 +1478,15 @@ where
     let function_def = function_def_parser()
         .map(ParsedContractItem::Function)
         .boxed();
+    let constructor_def = constructor_def_parser()
+        .map(ParsedContractItem::Function)
+        .boxed();
 
     let type_alias = type_alias_payload_parser()
-        .map_with(|(name, ty), e| ParsedContractItem::TypeAlias {
+        .map_with(|(name, ty_params, ty), e| ParsedContractItem::TypeAlias {
             span: e.span(),
             name,
+            ty_params,
             ty,
         })
         .boxed();
@@ -1281,6 +1501,7 @@ where
         .boxed();
 
     let item_start = just(Token::Function)
+        .or(just(Token::Constructor))
         .or(just(Token::Type))
         .or(just(Token::Data))
         .or(just(Token::RBrace));
@@ -1290,7 +1511,7 @@ where
         .at_least(1)
         .map_with(|_, e| ParsedContractItem::Error { span: e.span() });
 
-    choice((function_def, type_alias, adt_def))
+    choice((function_def, constructor_def, type_alias, adt_def))
         .recover_with(via_parser(recovery))
         .labelled("contract member")
         .as_context()
@@ -1381,10 +1602,7 @@ fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedErr
         let span = LexSpan::from(span);
         match tok {
             Ok(tok) => tokens.push((tok, span)),
-            Err(()) => errors.push(ParsedError {
-                span,
-                message,
-            }),
+            Err(()) => errors.push(ParsedError { span, message }),
         }
     }
 
@@ -1490,9 +1708,7 @@ fn token_expected_description(token: &Token<'_>) -> String {
     }
 }
 
-fn expected_pattern_description(
-    pattern: &chumsky::error::RichPattern<'_, Token<'_>>,
-) -> String {
+fn expected_pattern_description(pattern: &chumsky::error::RichPattern<'_, Token<'_>>) -> String {
     match pattern {
         chumsky::error::RichPattern::Token(token) => token_expected_description(&**token),
         chumsky::error::RichPattern::Label(label) => label.to_string(),
@@ -1588,7 +1804,8 @@ fn preview_span_source(source: &str, span: LexSpan, max_chars: usize) -> Option<
 }
 
 fn top_level_recovery_message(source: &str, span: LexSpan) -> String {
-    let expected = "`import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`";
+    let expected =
+        "`import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`";
     match preview_span_source(source, span, 48) {
         Some(preview) => format!(
             "could not parse top-level item near `{preview}`; expected a declaration starting with {expected}"
@@ -1638,10 +1855,7 @@ pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedT
         message: top_level_recovery_message(src, span),
     }));
 
-    ParseOutput {
-        output,
-        errors,
-    }
+    ParseOutput { output, errors }
 }
 
 fn tokenize_with_base<'src>(
@@ -1656,10 +1870,7 @@ fn tokenize_with_base<'src>(
         let span = LexSpan::from((span.start + base_offset)..(span.end + base_offset));
         match tok {
             Ok(tok) => tokens.push((tok, span)),
-            Err(()) => errors.push(ParsedError {
-                span,
-                message,
-            }),
+            Err(()) => errors.push(ParsedError { span, message }),
         }
     }
 
@@ -1705,5 +1916,54 @@ pub(crate) fn parse_body_statements<'src>(
     ParseOutput {
         output: output.unwrap_or_default(),
         errors,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn yul_call_in_assignment_parses() {
+        let source = "function f() { assembly { res := add(x, y) } }";
+        let parsed = parse_supported_items(source);
+        assert!(
+            parsed.errors.is_empty(),
+            "top-level errors: {:?}",
+            parsed.errors
+        );
+        let body_span = match parsed.output.as_slice() {
+            [ParsedTopItem::Function { body_span, .. }] => *body_span,
+            other => panic!("unexpected parse output: {other:?}"),
+        };
+        let body = parse_body_statements(source, body_span);
+        assert!(body.errors.is_empty(), "body errors: {:?}", body.errors);
+    }
+
+    #[test]
+    fn yul_call_expression_parses() {
+        let source = "add(x, y)";
+        let (tokens, errors) = tokenize(source);
+        assert!(errors.is_empty(), "token errors: {:?}", errors);
+        assert!(
+            matches!(
+                tokens.first().map(|(tok, _)| tok),
+                Some(Token::Ident(name)) if *name == "add"
+            ),
+            "unexpected first token: {:?}",
+            tokens.first().map(|(tok, _)| tok)
+        );
+        let stream = chumsky::input::Stream::from_iter(tokens)
+            .map((0..source.len()).into(), |(tok, span): (_, _)| (tok, span));
+        let (output, parse_errors) = parsed_yul_expr_parser().parse(stream).into_output_errors();
+        assert!(
+            parse_errors.is_empty(),
+            "parse errors: {:?}",
+            parse_errors
+                .into_iter()
+                .map(parse_error_from_rich)
+                .collect::<Vec<_>>()
+        );
+        assert!(output.is_some(), "expected parsed output");
     }
 }

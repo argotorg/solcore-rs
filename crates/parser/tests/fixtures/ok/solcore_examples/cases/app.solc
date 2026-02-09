@@ -1,0 +1,18 @@
+function app () {
+  return lam (f, x) {return f(x);};
+}
+
+function id (x) {
+  return x;
+}
+
+function foo() -> word {
+  let f = app();
+  return f(id,0);
+}
+
+contract C {
+  function main () -> word {
+    return foo();
+  }
+}

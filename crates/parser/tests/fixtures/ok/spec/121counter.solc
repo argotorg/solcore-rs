@@ -1,0 +1,11 @@
+// test single contract field
+import std;
+
+contract Counter {
+  counter : word;
+
+  function main() -> word {
+    counter = Num.add(counter, 1);
+    return counter;
+  }
+}

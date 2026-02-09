@@ -2,7 +2,7 @@ use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
 use salsa::Accumulator;
 
 use crate::{
-    anchor::{def_locations_for_file, resolve_def_location, DefId, DefKey},
+    anchor::{DefId, DefKey, def_locations_for_file, resolve_def_location},
     input::SourceFile,
     span::{AnchorKind, Span},
 };
@@ -381,11 +381,7 @@ impl LabelStyle {
 fn clamp_span(start: usize, end: usize, source_len: usize) -> core::ops::Range<usize> {
     let start = start.min(source_len);
     let end = end.min(source_len);
-    if start <= end {
-        start..end
-    } else {
-        end..start
-    }
+    if start <= end { start..end } else { end..start }
 }
 
 fn add_offset(base: Offset, rel: Offset) -> Offset {
