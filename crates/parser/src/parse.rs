@@ -287,43 +287,34 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     recursive(|expr| {
-        let lambda_body = recursive(|lambda_body| {
-            let nested = lambda_body
-                .clone()
-                .delimited_by(just(Token::LBrace), just(Token::RBrace))
-                .ignored();
-
-            choice((
-                nested,
-                any()
-                    .and_is(just(Token::LBrace).not())
-                    .and_is(just(Token::RBrace).not())
-                    .ignored(),
-            ))
-            .repeated()
-            .ignored()
-        });
-
         let lambda_param = ident_parser()
             .then(just(Token::Colon).ignore_then(type_parser()).or_not())
-            .map(|(name, _)| name)
+            .map(|(name, ty)| match ty {
+                Some(ty) => ParsedFuncParam::Typed { name, ty },
+                None => ParsedFuncParam::Untyped { name },
+            })
+            .boxed();
+
+        let lambda_params = lambda_param
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map_with(|params, e| (params, e.span()))
             .boxed();
 
         let lambda_expr = just(Token::Lam)
-            .ignore_then(
-                lambda_param
-                    .separated_by(just(Token::Comma))
-                    .allow_trailing()
-                    .collect::<Vec<_>>()
-                    .delimited_by(just(Token::LParen), just(Token::RParen)),
-            )
+            .ignore_then(lambda_params)
             .then(just(Token::Arrow).ignore_then(type_parser()).or_not())
-            .then_ignore(just(Token::LBrace))
-            .then_ignore(lambda_body)
-            .then_ignore(just(Token::RBrace))
-            .map_with(|_, e| ParsedExpr {
+            .then(body_span_parser())
+            .map_with(|(((params, params_span), ret), body_span), e| ParsedExpr {
                 span: e.span(),
-                kind: ParsedExprKind::Error,
+                kind: ParsedExprKind::Lambda {
+                    params,
+                    params_span,
+                    ret,
+                    body_span,
+                },
             })
             .boxed();
 

@@ -387,10 +387,17 @@ fn lower_parsed_yul_lit(lit: ParsedYulLitKind<'_>) -> function::YulLitKind {
 
 fn lower_parsed_expr<'db>(
     db: &'db dyn Db,
+    file: SourceFile,
+    keys: &mut KeyCanonicalizer,
+    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
     anchor: AnchorId<'db>,
     base_start: usize,
     expr: ParsedExpr<'_>,
+    source: &str,
+    parse_errors: &mut Vec<ParsedError>,
+    stmts: &mut Arena<function::Stmt<'db>>,
     exprs: &mut Arena<function::Expr<'db>>,
+    pats: &mut Arena<function::Pat<'db>>,
 ) -> hull::arena::Id<function::Expr<'db>> {
     let span = span_from_absolute(anchor, expr.span, base_start);
     let kind = match expr.kind {
@@ -398,38 +405,227 @@ fn lower_parsed_expr<'db>(
         ParsedExprKind::Ident(name) => {
             function::ExprKind::Ident(lower_spanned_ident(db, anchor, base_start, name))
         }
+        ParsedExprKind::Lambda {
+            params,
+            params_span,
+            ret,
+            body_span,
+        } => {
+            let params = params
+                .into_iter()
+                .map(|param| match param {
+                    ParsedFuncParam::Typed { name, ty } => function::FuncParam::Typed {
+                        name: lower_spanned_ident(db, anchor, base_start, name),
+                        ty: lower_type_ref(db, anchor, base_start, ty),
+                    },
+                    ParsedFuncParam::Untyped { name } => function::FuncParam::Untyped {
+                        name: lower_spanned_ident(db, anchor, base_start, name),
+                    },
+                    ParsedFuncParam::Error => function::FuncParam::Error,
+                })
+                .collect::<Vec<_>>();
+            let params_span = span_from_absolute(anchor, params_span, base_start);
+            let params = SpannedElem::new(params, params_span);
+            let ret = ret.map(|ret_ty| lower_type_ref(db, anchor, base_start, ret_ty));
+
+            let lambda_body_def = keys.alloc_def(db, file, DefKind::FuncBody, Some("lambda"));
+            def_locations.push((
+                lambda_body_def,
+                DefLocation {
+                    file,
+                    base_offset: offset_from_usize(body_span.start),
+                },
+            ));
+            let lambda_anchor = AnchorId::def(db, lambda_body_def);
+
+            let parsed_body = parse_body_statements(source, body_span);
+            parse_errors.extend(parsed_body.errors);
+
+            let mut lambda_stmts = Arena::new();
+            let mut lambda_exprs = Arena::new();
+            let mut lambda_pats = Arena::new();
+            let mut body = Vec::with_capacity(parsed_body.output.len());
+            for stmt in parsed_body.output {
+                body.push(lower_parsed_stmt(
+                    db,
+                    file,
+                    keys,
+                    def_locations,
+                    lambda_anchor,
+                    body_span.start,
+                    stmt,
+                    source,
+                    parse_errors,
+                    &mut lambda_stmts,
+                    &mut lambda_exprs,
+                    &mut lambda_pats,
+                ));
+            }
+
+            let lowered_body_span = span_from_absolute(lambda_anchor, body_span, body_span.start);
+            let body = function::FuncBody::new(
+                db,
+                lambda_body_def,
+                lowered_body_span,
+                body,
+                lambda_stmts,
+                lambda_exprs,
+                lambda_pats,
+            );
+
+            function::ExprKind::Lambda { params, ret, body }
+        }
         ParsedExprKind::BinOp { lhs, op, rhs } => {
-            let lhs = lower_parsed_expr(db, anchor, base_start, *lhs, exprs);
-            let rhs = lower_parsed_expr(db, anchor, base_start, *rhs, exprs);
+            let lhs = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *lhs,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
+            let rhs = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *rhs,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
             let op_span = span_from_absolute(anchor, op.span, base_start);
             let op = SpannedElem::new(op.elem, op_span);
             function::ExprKind::BinOp { lhs, op, rhs }
         }
         ParsedExprKind::Index { base, index } => {
-            let base = lower_parsed_expr(db, anchor, base_start, *base, exprs);
-            let index = lower_parsed_expr(db, anchor, base_start, *index, exprs);
+            let base = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *base,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
+            let index = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *index,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
             function::ExprKind::Index { base, index }
         }
         ParsedExprKind::Call { callee, args } => {
-            let callee = lower_parsed_expr(db, anchor, base_start, *callee, exprs);
+            let callee = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *callee,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
             let args = args
                 .into_iter()
-                .map(|arg| lower_parsed_expr(db, anchor, base_start, arg, exprs))
+                .map(|arg| {
+                    lower_parsed_expr(
+                        db,
+                        file,
+                        keys,
+                        def_locations,
+                        anchor,
+                        base_start,
+                        arg,
+                        source,
+                        parse_errors,
+                        stmts,
+                        exprs,
+                        pats,
+                    )
+                })
                 .collect();
             function::ExprKind::Call { callee, args }
         }
         ParsedExprKind::Field { base, field } => {
-            let base = lower_parsed_expr(db, anchor, base_start, *base, exprs);
+            let base = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *base,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
             let field = lower_spanned_ident(db, anchor, base_start, field);
             function::ExprKind::Field { base, field }
         }
         ParsedExprKind::TypeAnnot { expr, ty } => {
-            let expr = lower_parsed_expr(db, anchor, base_start, *expr, exprs);
+            let expr = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *expr,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
             let ty = lower_type_ref(db, anchor, base_start, ty);
             function::ExprKind::TypeAnnot { expr, ty }
         }
         ParsedExprKind::UnaryOp { op, expr } => {
-            let expr = lower_parsed_expr(db, anchor, base_start, *expr, exprs);
+            let expr = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *expr,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
             let op_span = span_from_absolute(anchor, op.span, base_start);
             let op = SpannedElem::new(op.elem, op_span);
             function::ExprKind::UnaryOp { op, expr }
@@ -439,9 +635,48 @@ fn lower_parsed_expr<'db>(
             then_expr,
             else_expr,
         } => {
-            let cond = lower_parsed_expr(db, anchor, base_start, *cond, exprs);
-            let then_expr = lower_parsed_expr(db, anchor, base_start, *then_expr, exprs);
-            let else_expr = lower_parsed_expr(db, anchor, base_start, *else_expr, exprs);
+            let cond = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *cond,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
+            let then_expr = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *then_expr,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
+            let else_expr = lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                *else_expr,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            );
             function::ExprKind::If {
                 cond,
                 then_expr,
@@ -623,9 +858,14 @@ fn lower_parsed_yul_stmt<'db>(
 
 fn lower_parsed_stmt<'db>(
     db: &'db dyn Db,
+    file: SourceFile,
+    keys: &mut KeyCanonicalizer,
+    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
     anchor: AnchorId<'db>,
     base_start: usize,
     stmt: ParsedStmt<'_>,
+    source: &str,
+    parse_errors: &mut Vec<ParsedError>,
     stmts: &mut Arena<function::Stmt<'db>>,
     exprs: &mut Arena<function::Expr<'db>>,
     pats: &mut Arena<function::Pat<'db>>,
@@ -635,30 +875,162 @@ fn lower_parsed_stmt<'db>(
         ParsedStmtKind::Let { name, ty, init } => function::StmtKind::Let {
             name: lower_spanned_ident(db, anchor, base_start, name),
             ty: ty.map(|ty| lower_type_ref(db, anchor, base_start, ty)),
-            init: init.map(|expr| lower_parsed_expr(db, anchor, base_start, expr, exprs)),
+            init: init.map(|expr| {
+                lower_parsed_expr(
+                    db,
+                    file,
+                    keys,
+                    def_locations,
+                    anchor,
+                    base_start,
+                    expr,
+                    source,
+                    parse_errors,
+                    stmts,
+                    exprs,
+                    pats,
+                )
+            }),
         },
-        ParsedStmtKind::Return(expr) => function::StmtKind::Return(
-            expr.map(|expr| lower_parsed_expr(db, anchor, base_start, expr, exprs)),
-        ),
-        ParsedStmtKind::Expr(expr) => {
-            function::StmtKind::Expr(lower_parsed_expr(db, anchor, base_start, expr, exprs))
-        }
+        ParsedStmtKind::Return(expr) => function::StmtKind::Return(expr.map(|expr| {
+            lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                expr,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            )
+        })),
+        ParsedStmtKind::Expr(expr) => function::StmtKind::Expr(lower_parsed_expr(
+            db,
+            file,
+            keys,
+            def_locations,
+            anchor,
+            base_start,
+            expr,
+            source,
+            parse_errors,
+            stmts,
+            exprs,
+            pats,
+        )),
         ParsedStmtKind::Assign { lhs, rhs } => function::StmtKind::Assign {
-            lhs: lower_parsed_expr(db, anchor, base_start, lhs, exprs),
-            rhs: lower_parsed_expr(db, anchor, base_start, rhs, exprs),
+            lhs: lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                lhs,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            ),
+            rhs: lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                rhs,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            ),
         },
         ParsedStmtKind::AddAssign { lhs, rhs } => function::StmtKind::AddAssign {
-            lhs: lower_parsed_expr(db, anchor, base_start, lhs, exprs),
-            rhs: lower_parsed_expr(db, anchor, base_start, rhs, exprs),
+            lhs: lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                lhs,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            ),
+            rhs: lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                rhs,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            ),
         },
         ParsedStmtKind::SubAssign { lhs, rhs } => function::StmtKind::SubAssign {
-            lhs: lower_parsed_expr(db, anchor, base_start, lhs, exprs),
-            rhs: lower_parsed_expr(db, anchor, base_start, rhs, exprs),
+            lhs: lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                lhs,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            ),
+            rhs: lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                rhs,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            ),
         },
         ParsedStmtKind::Match { scrutinees, arms } => function::StmtKind::Match {
             scrutinees: scrutinees
                 .into_iter()
-                .map(|expr| lower_parsed_expr(db, anchor, base_start, expr, exprs))
+                .map(|expr| {
+                    lower_parsed_expr(
+                        db,
+                        file,
+                        keys,
+                        def_locations,
+                        anchor,
+                        base_start,
+                        expr,
+                        source,
+                        parse_errors,
+                        stmts,
+                        exprs,
+                        pats,
+                    )
+                })
                 .collect(),
             arms: arms
                 .into_iter()
@@ -673,7 +1045,20 @@ fn lower_parsed_stmt<'db>(
                         .body
                         .into_iter()
                         .map(|stmt| {
-                            lower_parsed_stmt(db, anchor, base_start, stmt, stmts, exprs, pats)
+                            lower_parsed_stmt(
+                                db,
+                                file,
+                                keys,
+                                def_locations,
+                                anchor,
+                                base_start,
+                                stmt,
+                                source,
+                                parse_errors,
+                                stmts,
+                                exprs,
+                                pats,
+                            )
                         })
                         .collect();
                     function::MatchArm {
@@ -689,14 +1074,57 @@ fn lower_parsed_stmt<'db>(
             then_body,
             else_body,
         } => function::StmtKind::If {
-            cond: lower_parsed_expr(db, anchor, base_start, cond, exprs),
+            cond: lower_parsed_expr(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                base_start,
+                cond,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            ),
             then_body: then_body
                 .into_iter()
-                .map(|stmt| lower_parsed_stmt(db, anchor, base_start, stmt, stmts, exprs, pats))
+                .map(|stmt| {
+                    lower_parsed_stmt(
+                        db,
+                        file,
+                        keys,
+                        def_locations,
+                        anchor,
+                        base_start,
+                        stmt,
+                        source,
+                        parse_errors,
+                        stmts,
+                        exprs,
+                        pats,
+                    )
+                })
                 .collect(),
             else_body: else_body.map(|body| {
                 body.into_iter()
-                    .map(|stmt| lower_parsed_stmt(db, anchor, base_start, stmt, stmts, exprs, pats))
+                    .map(|stmt| {
+                        lower_parsed_stmt(
+                            db,
+                            file,
+                            keys,
+                            def_locations,
+                            anchor,
+                            base_start,
+                            stmt,
+                            source,
+                            parse_errors,
+                            stmts,
+                            exprs,
+                            pats,
+                        )
+                    })
                     .collect()
             }),
         },
@@ -714,6 +1142,9 @@ fn lower_parsed_stmt<'db>(
 
 fn lower_body_statements<'db>(
     db: &'db dyn Db,
+    file: SourceFile,
+    keys: &mut KeyCanonicalizer,
+    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
     anchor: AnchorId<'db>,
     body_span: LexSpan,
     source: &str,
@@ -727,7 +1158,22 @@ fn lower_body_statements<'db>(
     parsed
         .output
         .into_iter()
-        .map(|stmt| lower_parsed_stmt(db, anchor, body_span.start, stmt, stmts, exprs, pats))
+        .map(|stmt| {
+            lower_parsed_stmt(
+                db,
+                file,
+                keys,
+                def_locations,
+                anchor,
+                body_span.start,
+                stmt,
+                source,
+                parse_errors,
+                stmts,
+                exprs,
+                pats,
+            )
+        })
         .collect()
 }
 
@@ -771,6 +1217,9 @@ fn lower_function<'db>(
     let mut pats = Arena::new();
     let top_level_stmts = lower_body_statements(
         db,
+        file,
+        keys,
+        def_locations,
         body_anchor,
         body_span,
         source,

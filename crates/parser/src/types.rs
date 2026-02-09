@@ -184,6 +184,12 @@ pub(crate) struct ParsedExpr<'src> {
 pub(crate) enum ParsedExprKind<'src> {
     Lit(ParsedLitKind<'src>),
     Ident(SpannedStr<'src>),
+    Lambda {
+        params: Vec<ParsedFuncParam<'src>>,
+        params_span: LexSpan,
+        ret: Option<ParsedTy<'src>>,
+        body_span: LexSpan,
+    },
     BinOp {
         lhs: Box<ParsedExpr<'src>>,
         op: ParsedSpanned<'src, function::BinOp>,

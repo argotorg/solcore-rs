@@ -104,6 +104,11 @@ pub struct Expr<'db> {
 pub enum ExprKind<'db> {
     Lit(LitKind),
     Ident(SpannedElem<'db, Ident<'db>>),
+    Lambda {
+        params: SpannedElem<'db, Vec<FuncParam<'db>>>,
+        ret: Option<TypeRef<'db>>,
+        body: FuncBody<'db>,
+    },
     BinOp {
         lhs: Id<Expr<'db>>,
         op: SpannedElem<'db, BinOp>,
