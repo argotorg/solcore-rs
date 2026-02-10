@@ -1,4 +1,4 @@
-use annotate_snippets::{AnnotationKind, Group, Level, Renderer, Snippet};
+use annotate_snippets::{Annotation, AnnotationKind, Group, Level, Renderer, Snippet};
 use salsa::Accumulator;
 
 use crate::{
@@ -297,7 +297,8 @@ impl Diagnostic {
             };
 
             let source_len = content.len();
-            let mut snippet = Snippet::source(content).path(url.path()).fold(false);
+            let mut annotations: Vec<Annotation<'_>> = Vec::with_capacity(labels.len());
+            let mut visible_ranges = Vec::with_capacity(labels.len());
 
             for (label, absolute) in labels {
                 let span = clamp_span(
@@ -305,6 +306,7 @@ impl Diagnostic {
                     absolute.end().as_usize(),
                     source_len,
                 );
+                visible_ranges.push(context_window_span(content.as_str(), &span, 1, 1));
                 let mut annotation = label.style.to_annotate_kind().span(span);
                 if let Some(message) = &label.message {
                     annotation = annotation.label(message.clone());
@@ -312,8 +314,14 @@ impl Diagnostic {
                 if matches!(label.style, LabelStyle::Primary) {
                     annotation = annotation.highlight_source(true);
                 }
-                snippet = snippet.annotation(annotation);
+                annotations.push(annotation);
             }
+
+            let mut snippet = Snippet::source(content).path(url.path());
+            for range in merge_ranges(visible_ranges) {
+                snippet = snippet.annotation(AnnotationKind::Visible.span(range));
+            }
+            snippet = snippet.annotations(annotations);
 
             group = group.element(snippet);
         }
@@ -382,6 +390,122 @@ fn clamp_span(start: usize, end: usize, source_len: usize) -> core::ops::Range<u
     let start = start.min(source_len);
     let end = end.min(source_len);
     if start <= end { start..end } else { end..start }
+}
+
+fn context_window_span(
+    source: &str,
+    focus: &core::ops::Range<usize>,
+    lines_before: usize,
+    lines_after: usize,
+) -> core::ops::Range<usize> {
+    if source.is_empty() {
+        return 0..0;
+    }
+
+    let focus_start = normalize_line_lookup_offset(source, focus.start);
+    let focus_end = normalize_line_lookup_offset(source, focus.end);
+
+    let mut start = line_start_at_or_before(source, focus_start);
+    for _ in 0..lines_before {
+        if start == 0 {
+            break;
+        }
+        start = line_start_at_or_before(source, start.saturating_sub(1));
+    }
+
+    let mut end = line_end_at_or_after(source, focus_end);
+    for _ in 0..lines_after {
+        if end >= source.len() {
+            break;
+        }
+        end = line_end_at_or_after(source, (end + 1).min(source.len()));
+    }
+
+    let target_lines = lines_before + lines_after + 1;
+    while count_lines_in_span(source, start, end) < target_lines {
+        if start > 0 {
+            start = line_start_at_or_before(source, start.saturating_sub(1));
+            continue;
+        }
+        if end < source.len() {
+            end = line_end_at_or_after(source, (end + 1).min(source.len()));
+        } else {
+            break;
+        }
+    }
+
+    if start == end && !source.is_empty() {
+        start..(end + 1).min(source.len())
+    } else {
+        start..end
+    }
+}
+
+fn normalize_line_lookup_offset(source: &str, offset: usize) -> usize {
+    let mut offset = offset.min(source.len());
+    if offset == source.len() {
+        offset = offset.saturating_sub(1);
+    }
+    let bytes = source.as_bytes();
+    if bytes.get(offset).copied() == Some(b'\n') && offset > 0 {
+        offset -= 1;
+    }
+    offset
+}
+
+fn line_start_at_or_before(source: &str, offset: usize) -> usize {
+    let offset = offset.min(source.len());
+    source[..offset].rfind('\n').map_or(0, |idx| idx + 1)
+}
+
+fn line_end_at_or_after(source: &str, offset: usize) -> usize {
+    let offset = offset.min(source.len());
+    source[offset..]
+        .find('\n')
+        .map_or(source.len(), |idx| offset + idx)
+}
+
+fn merge_ranges(mut ranges: Vec<core::ops::Range<usize>>) -> Vec<core::ops::Range<usize>> {
+    if ranges.len() <= 1 {
+        return ranges;
+    }
+
+    ranges.sort_by_key(|range| (range.start, range.end));
+    let mut merged: Vec<core::ops::Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        if let Some(last) = merged.last_mut() {
+            if range.start <= last.end {
+                if range.end > last.end {
+                    last.end = range.end;
+                }
+            } else {
+                merged.push(range);
+            }
+        } else {
+            merged.push(range);
+        }
+    }
+    merged
+}
+
+fn count_lines_in_span(source: &str, start: usize, end: usize) -> usize {
+    if source.is_empty() {
+        return 0;
+    }
+    let start = start.min(source.len());
+    let end = end.min(source.len());
+    if start >= end {
+        return 1;
+    }
+    let mut count = source[start..end]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    if end == source.len() && source.ends_with('\n') && count > 0 {
+        count -= 1;
+    }
+    count
 }
 
 fn add_offset(base: Offset, rel: Offset) -> Offset {

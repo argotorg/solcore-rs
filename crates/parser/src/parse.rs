@@ -1896,7 +1896,9 @@ pub(crate) fn parse_body_statements<'src>(
 
     let (tokens, mut errors) = tokenize_with_base(inner_source, inner_start);
     let stream = chumsky::input::Stream::from_iter(tokens)
-        .map((0..source.len()).into(), |(tok, span): (_, _)| (tok, span));
+        .map((inner_start..inner_end).into(), |(tok, span): (_, _)| {
+            (tok, span)
+        });
     let (output, parse_errors) = parsed_stmt_parser()
         .repeated()
         .collect::<Vec<_>>()
