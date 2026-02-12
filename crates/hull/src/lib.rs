@@ -3,6 +3,7 @@ pub mod arena;
 pub mod ast;
 pub mod diag;
 pub mod input;
+pub mod sema;
 pub mod span;
 
 #[salsa::db]
