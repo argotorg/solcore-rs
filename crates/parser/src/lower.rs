@@ -62,57 +62,38 @@ fn lower_spanned_ident<'db>(
 }
 
 fn lower_import<'db>(
-    db: &'db dyn Db,
-    file: SourceFile,
-    keys: &mut KeyCanonicalizer,
-    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
+    ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     path: Vec<SpannedStr<'_>>,
 ) -> item::Import<'db> {
-    let import_def = keys.alloc_def(db, file, DefKind::Import, None);
-    def_locations.push((
-        import_def,
-        DefLocation {
-            file,
-            base_offset: offset_from_usize(span.start),
-        },
-    ));
+    let import_def = ctx.alloc_def_with_location(DefKind::Import, None, span.start);
 
-    let anchor = AnchorId::def(db, import_def);
+    let anchor = AnchorId::def(ctx.db, import_def);
     let path = path
         .into_iter()
-        .map(|segment| lower_spanned_ident(db, anchor, span.start, segment))
+        .map(|segment| lower_spanned_ident(ctx.db, anchor, span.start, segment))
         .collect();
     let span = span_from_absolute(anchor, span, span.start);
-    item::Import::new(db, import_def, span, path)
+    item::Import::new(ctx.db, import_def, span, path)
 }
 
 fn lower_pragma<'db>(
-    db: &'db dyn Db,
-    file: SourceFile,
-    keys: &mut KeyCanonicalizer,
-    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
+    ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     name: SpannedStr<'_>,
     items: Vec<SpannedStr<'_>>,
 ) -> item::Pragma<'db> {
-    let pragma_def = keys.alloc_def(db, file, DefKind::Pragma, Some(name.0));
-    def_locations.push((
-        pragma_def,
-        DefLocation {
-            file,
-            base_offset: offset_from_usize(span.start),
-        },
-    ));
+    let pragma_def =
+        ctx.alloc_def_with_location(DefKind::Pragma, Some(name.0), span.start);
 
-    let anchor = AnchorId::def(db, pragma_def);
-    let name = lower_spanned_ident(db, anchor, span.start, name);
+    let anchor = AnchorId::def(ctx.db, pragma_def);
+    let name = lower_spanned_ident(ctx.db, anchor, span.start, name);
     let items = items
         .into_iter()
-        .map(|segment| lower_spanned_ident(db, anchor, span.start, segment))
+        .map(|segment| lower_spanned_ident(ctx.db, anchor, span.start, segment))
         .collect();
     let span = span_from_absolute(anchor, span, span.start);
-    item::Pragma::new(db, pragma_def, span, name, items)
+    item::Pragma::new(ctx.db, pragma_def, span, name, items)
 }
 
 fn lower_type_ref<'db>(
@@ -191,35 +172,25 @@ fn lower_pred_ref<'db>(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn lower_type_alias<'db>(
-    db: &'db dyn Db,
-    file: SourceFile,
-    keys: &mut KeyCanonicalizer,
-    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
+    ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     name: SpannedStr<'_>,
     ty_params: Vec<SpannedStr<'_>>,
     parsed_ty: ParsedTy<'_>,
 ) -> item::TypeAlias<'db> {
-    let alias_def = keys.alloc_def(db, file, DefKind::TypeAlias, Some(name.0));
-    def_locations.push((
-        alias_def,
-        DefLocation {
-            file,
-            base_offset: offset_from_usize(span.start),
-        },
-    ));
+    let alias_def =
+        ctx.alloc_def_with_location(DefKind::TypeAlias, Some(name.0), span.start);
 
-    let anchor = AnchorId::def(db, alias_def);
-    let name = lower_spanned_ident(db, anchor, span.start, name);
+    let anchor = AnchorId::def(ctx.db, alias_def);
+    let name = lower_spanned_ident(ctx.db, anchor, span.start, name);
     let ty_params = ty_params
         .into_iter()
-        .map(|param| lower_spanned_ident(db, anchor, span.start, param))
+        .map(|param| lower_spanned_ident(ctx.db, anchor, span.start, param))
         .collect::<Vec<_>>();
-    let ty = lower_type_ref(db, anchor, span.start, parsed_ty);
+    let ty = lower_type_ref(ctx.db, anchor, span.start, parsed_ty);
     let span = span_from_absolute(anchor, span, span.start);
-    item::TypeAlias::new(db, alias_def, span, name, ty_params, ty)
+    item::TypeAlias::new(ctx.db, alias_def, span, name, ty_params, ty)
 }
 
 fn lower_adt_ctor<'db>(
@@ -243,39 +214,28 @@ fn lower_adt_ctor<'db>(
     item::AdtCtor::new(name, SpannedElem::new(fields_ty, fields_span))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn lower_adt<'db>(
-    db: &'db dyn Db,
-    file: SourceFile,
-    keys: &mut KeyCanonicalizer,
-    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
+    ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     name: SpannedStr<'_>,
     ty_params: Vec<SpannedStr<'_>>,
     ctors: Vec<ParsedAdtCtor<'_>>,
 ) -> item::AdtDef<'db> {
-    let adt_def = keys.alloc_def(db, file, DefKind::Adt, Some(name.0));
-    def_locations.push((
-        adt_def,
-        DefLocation {
-            file,
-            base_offset: offset_from_usize(span.start),
-        },
-    ));
+    let adt_def = ctx.alloc_def_with_location(DefKind::Adt, Some(name.0), span.start);
 
-    let anchor = AnchorId::def(db, adt_def);
-    let name = lower_spanned_ident(db, anchor, span.start, name);
+    let anchor = AnchorId::def(ctx.db, adt_def);
+    let name = lower_spanned_ident(ctx.db, anchor, span.start, name);
     let ty_params = ty_params
         .into_iter()
-        .map(|param| lower_spanned_ident(db, anchor, span.start, param))
+        .map(|param| lower_spanned_ident(ctx.db, anchor, span.start, param))
         .collect::<Vec<_>>();
     let ctors = ctors
         .into_iter()
-        .map(|ctor| lower_adt_ctor(db, anchor, span.start, ctor))
+        .map(|ctor| lower_adt_ctor(ctx.db, anchor, span.start, ctor))
         .collect::<Vec<_>>();
     let span = span_from_absolute(anchor, span, span.start);
 
-    item::AdtDef::new(db, adt_def, span, name, ty_params, ctors)
+    item::AdtDef::new(ctx.db, adt_def, span, name, ty_params, ctors)
 }
 
 fn lower_func_sig<'db>(
@@ -330,12 +290,8 @@ fn lower_func_sig<'db>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn lower_class<'db>(
-    db: &'db dyn Db,
-    file: SourceFile,
-    keys: &mut KeyCanonicalizer,
-    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
+    ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     type_vars: Vec<SpannedStr<'_>>,
     super_preds: Vec<ParsedPred<'_>>,
@@ -343,32 +299,34 @@ fn lower_class<'db>(
     methods: Vec<ParsedFuncSig<'_>>,
 ) -> item::ClassDef<'db> {
     let class_name = head.class.0;
-    let class_def = keys.alloc_def(db, file, DefKind::Class, Some(class_name));
-    def_locations.push((
-        class_def,
-        DefLocation {
-            file,
-            base_offset: offset_from_usize(span.start),
-        },
-    ));
+    let class_def =
+        ctx.alloc_def_with_location(DefKind::Class, Some(class_name), span.start);
 
-    let anchor = AnchorId::def(db, class_def);
+    let anchor = AnchorId::def(ctx.db, class_def);
     let type_vars = type_vars
         .into_iter()
-        .map(|var| lower_spanned_ident(db, anchor, span.start, var))
+        .map(|var| lower_spanned_ident(ctx.db, anchor, span.start, var))
         .collect::<Vec<_>>();
     let super_preds = super_preds
         .into_iter()
-        .map(|pred| lower_pred_ref(db, anchor, span.start, pred))
+        .map(|pred| lower_pred_ref(ctx.db, anchor, span.start, pred))
         .collect::<Vec<_>>();
-    let head = lower_pred_ref(db, anchor, span.start, head);
+    let head = lower_pred_ref(ctx.db, anchor, span.start, head);
     let methods = methods
         .into_iter()
-        .map(|sig| lower_func_sig(db, anchor, span.start, sig))
+        .map(|sig| lower_func_sig(ctx.db, anchor, span.start, sig))
         .collect::<Vec<_>>();
     let span = span_from_absolute(anchor, span, span.start);
 
-    item::ClassDef::new(db, class_def, span, type_vars, super_preds, head, methods)
+    item::ClassDef::new(
+        ctx.db,
+        class_def,
+        span,
+        type_vars,
+        super_preds,
+        head,
+        methods,
+    )
 }
 
 fn lower_parsed_lit(lit: ParsedLitKind<'_>) -> function::LitKind {
@@ -415,7 +373,7 @@ impl<'db> BodyArenas<'db> {
     }
 }
 
-struct LoweringCtxt<'db, 'a> {
+struct LoweringCtx<'db, 'a> {
     db: &'db dyn Db,
     file: SourceFile,
     keys: &'a mut KeyCanonicalizer,
@@ -424,7 +382,7 @@ struct LoweringCtxt<'db, 'a> {
     parse_errors: &'a mut Vec<ParsedError>,
 }
 
-impl<'db, 'a> LoweringCtxt<'db, 'a> {
+impl<'db, 'a> LoweringCtx<'db, 'a> {
     fn new(
         db: &'db dyn Db,
         file: SourceFile,
@@ -1008,51 +966,33 @@ fn lower_parsed_yul_stmt<'db>(
     function::YulStmt { span, kind }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn lower_function<'db>(
-    db: &'db dyn Db,
-    file: SourceFile,
-    keys: &mut KeyCanonicalizer,
-    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
+    ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     sig: ParsedFuncSig<'_>,
     body_span: LexSpan,
-    source: &str,
-    parse_errors: &mut Vec<ParsedError>,
 ) -> item::FunctionDef<'db> {
     let func_name = sig.name.0;
-    let func_def = keys.alloc_def(db, file, DefKind::Function, Some(func_name));
-    def_locations.push((
-        func_def,
-        DefLocation {
-            file,
-            base_offset: offset_from_usize(span.start),
-        },
-    ));
+    let func_def =
+        ctx.alloc_def_with_location(DefKind::Function, Some(func_name), span.start);
 
-    let func_anchor = AnchorId::def(db, func_def);
-    let lowered_sig = lower_func_sig(db, func_anchor, span.start, sig);
+    let func_anchor = AnchorId::def(ctx.db, func_def);
+    let lowered_sig = lower_func_sig(ctx.db, func_anchor, span.start, sig);
     let func_span = span_from_absolute(func_anchor, span, span.start);
 
-    let body_def = keys.alloc_def(db, file, DefKind::FuncBody, Some(func_name));
-    def_locations.push((
-        body_def,
-        DefLocation {
-            file,
-            base_offset: offset_from_usize(body_span.start),
-        },
-    ));
-    let body_anchor = AnchorId::def(db, body_def);
+    let body_def = ctx.alloc_def_with_location(
+        DefKind::FuncBody,
+        Some(func_name),
+        body_span.start,
+    );
+    let body_anchor = AnchorId::def(ctx.db, body_def);
 
     let mut arenas = BodyArenas::new();
-    let top_level_stmts = {
-        let mut lowering = LoweringCtxt::new(db, file, keys, def_locations, source, parse_errors);
-        lowering.lower_body_statements(body_anchor, body_span, &mut arenas)
-    };
+    let top_level_stmts = ctx.lower_body_statements(body_anchor, body_span, &mut arenas);
     let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
     let (stmts, exprs, pats) = arenas.into_parts();
     let body = function::FuncBody::new(
-        db,
+        ctx.db,
         body_def,
         lowered_body_span,
         top_level_stmts,
@@ -1061,65 +1001,41 @@ fn lower_function<'db>(
         pats,
     );
 
-    item::FunctionDef::new(db, func_def, func_span, lowered_sig, Some(body))
+    item::FunctionDef::new(ctx.db, func_def, func_span, lowered_sig, Some(body))
 }
 
-#[allow(clippy::too_many_arguments)]
 fn lower_instance<'db>(
-    db: &'db dyn Db,
-    file: SourceFile,
-    keys: &mut KeyCanonicalizer,
-    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
+    ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     type_vars: Vec<SpannedStr<'_>>,
     preds: Vec<ParsedPred<'_>>,
     default_kw: Option<LexSpan>,
     head: ParsedPred<'_>,
     methods: Vec<ParsedFunctionDef<'_>>,
-    source: &str,
-    parse_errors: &mut Vec<ParsedError>,
 ) -> item::InstanceDef<'db> {
     let instance_name = head.class.0;
-    let instance_def = keys.alloc_def(db, file, DefKind::Instance, Some(instance_name));
-    def_locations.push((
-        instance_def,
-        DefLocation {
-            file,
-            base_offset: offset_from_usize(span.start),
-        },
-    ));
+    let instance_def =
+        ctx.alloc_def_with_location(DefKind::Instance, Some(instance_name), span.start);
 
-    let anchor = AnchorId::def(db, instance_def);
+    let anchor = AnchorId::def(ctx.db, instance_def);
     let type_vars = type_vars
         .into_iter()
-        .map(|var| lower_spanned_ident(db, anchor, span.start, var))
+        .map(|var| lower_spanned_ident(ctx.db, anchor, span.start, var))
         .collect::<Vec<_>>();
     let preds = preds
         .into_iter()
-        .map(|pred| lower_pred_ref(db, anchor, span.start, pred))
+        .map(|pred| lower_pred_ref(ctx.db, anchor, span.start, pred))
         .collect::<Vec<_>>();
     let default_kw = default_kw.map(|kw_span| span_from_absolute(anchor, kw_span, span.start));
-    let head = lower_pred_ref(db, anchor, span.start, head);
+    let head = lower_pred_ref(ctx.db, anchor, span.start, head);
     let methods = methods
         .into_iter()
-        .map(|method| {
-            lower_function(
-                db,
-                file,
-                keys,
-                def_locations,
-                method.span,
-                method.sig,
-                method.body_span,
-                source,
-                parse_errors,
-            )
-        })
+        .map(|method| lower_function(ctx, method.span, method.sig, method.body_span))
         .collect::<Vec<_>>();
     let span = span_from_absolute(anchor, span, span.start);
 
     item::InstanceDef::new(
-        db,
+        ctx.db,
         instance_def,
         span,
         type_vars,
@@ -1131,56 +1047,28 @@ fn lower_instance<'db>(
 }
 
 fn lower_contract_item<'db>(
-    db: &'db dyn Db,
-    file: SourceFile,
-    keys: &mut KeyCanonicalizer,
-    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
+    ctx: &mut LoweringCtx<'db, '_>,
     item: ParsedContractItem<'_>,
-    source: &str,
-    parse_errors: &mut Vec<ParsedError>,
 ) -> item::ContractItem<'db> {
     match item {
         ParsedContractItem::Function(function) => item::ContractItem::FunctionDef(lower_function(
-            db,
-            file,
-            keys,
-            def_locations,
+            ctx,
             function.span,
             function.sig,
             function.body_span,
-            source,
-            parse_errors,
         )),
         ParsedContractItem::TypeAlias {
             span,
             name,
             ty_params,
             ty,
-        } => item::ContractItem::TypeAlias(lower_type_alias(
-            db,
-            file,
-            keys,
-            def_locations,
-            span,
-            name,
-            ty_params,
-            ty,
-        )),
+        } => item::ContractItem::TypeAlias(lower_type_alias(ctx, span, name, ty_params, ty)),
         ParsedContractItem::Adt {
             span,
             name,
             ty_params,
             ctors,
-        } => item::ContractItem::AdtDef(lower_adt(
-            db,
-            file,
-            keys,
-            def_locations,
-            span,
-            name,
-            ty_params,
-            ctors,
-        )),
+        } => item::ContractItem::AdtDef(lower_adt(ctx, span, name, ty_params, ctors)),
         ParsedContractItem::Error { span } => {
             let _ = span;
             item::ContractItem::Error
@@ -1188,51 +1076,39 @@ fn lower_contract_item<'db>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn lower_contract<'db>(
-    db: &'db dyn Db,
-    file: SourceFile,
-    keys: &mut KeyCanonicalizer,
-    def_locations: &mut Vec<(DefId<'db>, DefLocation)>,
+    ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     name: SpannedStr<'_>,
     ty_params: Vec<SpannedStr<'_>>,
     fields: Vec<ParsedFieldDef<'_>>,
     items: Vec<ParsedContractItem<'_>>,
-    source: &str,
-    parse_errors: &mut Vec<ParsedError>,
 ) -> item::ContractDef<'db> {
-    let contract_def = keys.alloc_def(db, file, DefKind::Contract, Some(name.0));
-    def_locations.push((
-        contract_def,
-        DefLocation {
-            file,
-            base_offset: offset_from_usize(span.start),
-        },
-    ));
+    let contract_def =
+        ctx.alloc_def_with_location(DefKind::Contract, Some(name.0), span.start);
 
-    let anchor = AnchorId::def(db, contract_def);
-    let name = lower_spanned_ident(db, anchor, span.start, name);
+    let anchor = AnchorId::def(ctx.db, contract_def);
+    let name = lower_spanned_ident(ctx.db, anchor, span.start, name);
     let ty_params = ty_params
         .into_iter()
-        .map(|param| lower_spanned_ident(db, anchor, span.start, param))
+        .map(|param| lower_spanned_ident(ctx.db, anchor, span.start, param))
         .collect::<Vec<_>>();
     let fields = fields
         .into_iter()
         .map(|field| {
             let _ = field.span;
-            let name = lower_spanned_ident(db, anchor, span.start, field.name);
-            let ty = lower_type_ref(db, anchor, span.start, field.ty);
+            let name = lower_spanned_ident(ctx.db, anchor, span.start, field.name);
+            let ty = lower_type_ref(ctx.db, anchor, span.start, field.ty);
             item::FieldDef::new(name, ty)
         })
         .collect::<Vec<_>>();
     let items = items
         .into_iter()
-        .map(|item| lower_contract_item(db, file, keys, def_locations, item, source, parse_errors))
+        .map(|item| lower_contract_item(ctx, item))
         .collect::<Vec<_>>();
     let span = span_from_absolute(anchor, span, span.start);
 
-    item::ContractDef::new(db, contract_def, span, name, ty_params, fields, items)
+    item::ContractDef::new(ctx.db, contract_def, span, name, ty_params, fields, items)
 }
 
 pub(crate) fn parse_file_to_hull_impl<'db>(
@@ -1258,151 +1134,95 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
     let parsed_items = parse_supported_items(source);
     let mut parse_errors = parsed_items.errors;
 
-    for parsed in parsed_items.output {
-        match parsed {
-            ParsedTopItem::Import { span, path } => {
-                let import = lower_import(db, file, &mut keys, &mut def_locations, span, path);
-                items.push(item::Item::Import(import));
-            }
-            ParsedTopItem::Pragma {
-                span,
-                name,
-                items: pragma_items,
-            } => {
-                let pragma = lower_pragma(
-                    db,
-                    file,
-                    &mut keys,
-                    &mut def_locations,
+    {
+        let mut ctx =
+            LoweringCtx::new(db, file, &mut keys, &mut def_locations, source, &mut parse_errors);
+
+        for parsed in parsed_items.output {
+            match parsed {
+                ParsedTopItem::Import { span, path } => {
+                    let import = lower_import(&mut ctx, span, path);
+                    items.push(item::Item::Import(import));
+                }
+                ParsedTopItem::Pragma {
                     span,
                     name,
-                    pragma_items,
-                );
-                items.push(item::Item::Pragma(pragma));
-            }
-            ParsedTopItem::TypeAlias {
-                span,
-                name,
-                ty_params,
-                ty,
-            } => {
-                let alias = lower_type_alias(
-                    db,
-                    file,
-                    &mut keys,
-                    &mut def_locations,
+                    items: pragma_items,
+                } => {
+                    let pragma = lower_pragma(&mut ctx, span, name, pragma_items);
+                    items.push(item::Item::Pragma(pragma));
+                }
+                ParsedTopItem::TypeAlias {
                     span,
                     name,
                     ty_params,
                     ty,
-                );
-                items.push(item::Item::TypeAlias(alias));
-            }
-            ParsedTopItem::Adt {
-                span,
-                name,
-                ty_params,
-                ctors,
-            } => {
-                let adt = lower_adt(
-                    db,
-                    file,
-                    &mut keys,
-                    &mut def_locations,
+                } => {
+                    let alias = lower_type_alias(&mut ctx, span, name, ty_params, ty);
+                    items.push(item::Item::TypeAlias(alias));
+                }
+                ParsedTopItem::Adt {
                     span,
                     name,
                     ty_params,
                     ctors,
-                );
-                items.push(item::Item::AdtDef(adt));
-            }
-            ParsedTopItem::Class {
-                span,
-                type_vars,
-                super_preds,
-                head,
-                methods,
-            } => {
-                let class = lower_class(
-                    db,
-                    file,
-                    &mut keys,
-                    &mut def_locations,
+                } => {
+                    let adt = lower_adt(&mut ctx, span, name, ty_params, ctors);
+                    items.push(item::Item::AdtDef(adt));
+                }
+                ParsedTopItem::Class {
                     span,
                     type_vars,
                     super_preds,
                     head,
                     methods,
-                );
-                items.push(item::Item::ClassDef(class));
-            }
-            ParsedTopItem::Instance {
-                span,
-                type_vars,
-                preds,
-                default_kw,
-                head,
-                methods,
-            } => {
-                let instance = lower_instance(
-                    db,
-                    file,
-                    &mut keys,
-                    &mut def_locations,
+                } => {
+                    let class =
+                        lower_class(&mut ctx, span, type_vars, super_preds, head, methods);
+                    items.push(item::Item::ClassDef(class));
+                }
+                ParsedTopItem::Instance {
                     span,
                     type_vars,
                     preds,
                     default_kw,
                     head,
                     methods,
-                    source,
-                    &mut parse_errors,
-                );
-                items.push(item::Item::InstanceDef(instance));
-            }
-            ParsedTopItem::Contract {
-                span,
-                name,
-                ty_params,
-                fields,
-                items: contract_items,
-            } => {
-                let contract = lower_contract(
-                    db,
-                    file,
-                    &mut keys,
-                    &mut def_locations,
+                } => {
+                    let instance = lower_instance(
+                        &mut ctx,
+                        span,
+                        type_vars,
+                        preds,
+                        default_kw,
+                        head,
+                        methods,
+                    );
+                    items.push(item::Item::InstanceDef(instance));
+                }
+                ParsedTopItem::Contract {
                     span,
                     name,
                     ty_params,
                     fields,
-                    contract_items,
-                    source,
-                    &mut parse_errors,
-                );
-                items.push(item::Item::ContractDef(contract));
-            }
-            ParsedTopItem::Function {
-                span,
-                sig,
-                body_span,
-            } => {
-                let function = lower_function(
-                    db,
-                    file,
-                    &mut keys,
-                    &mut def_locations,
+                    items: contract_items,
+                } => {
+                    let contract =
+                        lower_contract(&mut ctx, span, name, ty_params, fields, contract_items);
+                    items.push(item::Item::ContractDef(contract));
+                }
+                ParsedTopItem::Function {
                     span,
                     sig,
                     body_span,
-                    source,
-                    &mut parse_errors,
-                );
-                items.push(item::Item::FunctionDef(function));
-            }
-            ParsedTopItem::Error { span } => {
-                let _ = span;
-                items.push(item::Item::Error);
+                } => {
+                    let function = lower_function(&mut ctx, span, sig, body_span);
+                    items.push(item::Item::FunctionDef(function));
+                }
+                ParsedTopItem::Error { span } => {
+                    let _ = span;
+                    items.push(item::Item::Error);
+                }
             }
         }
     }
