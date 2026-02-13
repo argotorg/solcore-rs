@@ -11,7 +11,8 @@ pub struct CompilationRoot {
 
 /// A single source file input.
 ///
-/// The file is identified by `url`, and may optionally carry in-memory `content`.
+/// The file is identified by `url`, and may optionally carry in-memory
+/// `content`.
 #[salsa::input(debug)]
 pub struct SourceFile {
     /// Location of the source file.

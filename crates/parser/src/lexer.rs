@@ -151,7 +151,8 @@ pub enum Token<'a> {
     BlockComment,
 }
 
-/// Skips a line comment starting with `//` by consuming all characters until the next newline.
+/// Skips a line comment starting with `//` by consuming all characters until
+/// the next newline.
 fn line_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip {
     let remainder = lex.remainder();
     let len = remainder.find('\n').unwrap_or(remainder.len());
@@ -159,8 +160,8 @@ fn line_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip {
     logos::Skip
 }
 
-/// Skips a block comment starting with `/*` by consuming all characters until the matching `*/`.
-/// Supports nested block comments by tracking depth.
+/// Skips a block comment starting with `/*` by consuming all characters until
+/// the matching `*/`. Supports nested block comments by tracking depth.
 fn block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip {
     let remainder = lex.remainder();
     let mut depth = 1;

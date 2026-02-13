@@ -83,8 +83,7 @@ fn lower_pragma<'db>(
     name: SpannedStr<'_>,
     items: Vec<SpannedStr<'_>>,
 ) -> item::Pragma<'db> {
-    let pragma_def =
-        ctx.alloc_def_with_location(DefKind::Pragma, Some(name.0), span.start);
+    let pragma_def = ctx.alloc_def_with_location(DefKind::Pragma, Some(name.0), span.start);
 
     let anchor = AnchorId::def(ctx.db, pragma_def);
     let name = lower_spanned_ident(ctx.db, anchor, span.start, name);
@@ -179,8 +178,7 @@ fn lower_type_alias<'db>(
     ty_params: Vec<SpannedStr<'_>>,
     parsed_ty: ParsedTy<'_>,
 ) -> item::TypeAlias<'db> {
-    let alias_def =
-        ctx.alloc_def_with_location(DefKind::TypeAlias, Some(name.0), span.start);
+    let alias_def = ctx.alloc_def_with_location(DefKind::TypeAlias, Some(name.0), span.start);
 
     let anchor = AnchorId::def(ctx.db, alias_def);
     let name = lower_spanned_ident(ctx.db, anchor, span.start, name);
@@ -299,8 +297,7 @@ fn lower_class<'db>(
     methods: Vec<ParsedFuncSig<'_>>,
 ) -> item::ClassDef<'db> {
     let class_name = head.class.0;
-    let class_def =
-        ctx.alloc_def_with_location(DefKind::Class, Some(class_name), span.start);
+    let class_def = ctx.alloc_def_with_location(DefKind::Class, Some(class_name), span.start);
 
     let anchor = AnchorId::def(ctx.db, class_def);
     let type_vars = type_vars
@@ -973,18 +970,13 @@ fn lower_function<'db>(
     body_span: LexSpan,
 ) -> item::FunctionDef<'db> {
     let func_name = sig.name.0;
-    let func_def =
-        ctx.alloc_def_with_location(DefKind::Function, Some(func_name), span.start);
+    let func_def = ctx.alloc_def_with_location(DefKind::Function, Some(func_name), span.start);
 
     let func_anchor = AnchorId::def(ctx.db, func_def);
     let lowered_sig = lower_func_sig(ctx.db, func_anchor, span.start, sig);
     let func_span = span_from_absolute(func_anchor, span, span.start);
 
-    let body_def = ctx.alloc_def_with_location(
-        DefKind::FuncBody,
-        Some(func_name),
-        body_span.start,
-    );
+    let body_def = ctx.alloc_def_with_location(DefKind::FuncBody, Some(func_name), body_span.start);
     let body_anchor = AnchorId::def(ctx.db, body_def);
 
     let mut arenas = BodyArenas::new();
@@ -1084,8 +1076,7 @@ fn lower_contract<'db>(
     fields: Vec<ParsedFieldDef<'_>>,
     items: Vec<ParsedContractItem<'_>>,
 ) -> item::ContractDef<'db> {
-    let contract_def =
-        ctx.alloc_def_with_location(DefKind::Contract, Some(name.0), span.start);
+    let contract_def = ctx.alloc_def_with_location(DefKind::Contract, Some(name.0), span.start);
 
     let anchor = AnchorId::def(ctx.db, contract_def);
     let name = lower_spanned_ident(ctx.db, anchor, span.start, name);
@@ -1135,8 +1126,14 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
     let mut parse_errors = parsed_items.errors;
 
     {
-        let mut ctx =
-            LoweringCtx::new(db, file, &mut keys, &mut def_locations, source, &mut parse_errors);
+        let mut ctx = LoweringCtx::new(
+            db,
+            file,
+            &mut keys,
+            &mut def_locations,
+            source,
+            &mut parse_errors,
+        );
 
         for parsed in parsed_items.output {
             match parsed {
@@ -1177,8 +1174,7 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
                     head,
                     methods,
                 } => {
-                    let class =
-                        lower_class(&mut ctx, span, type_vars, super_preds, head, methods);
+                    let class = lower_class(&mut ctx, span, type_vars, super_preds, head, methods);
                     items.push(item::Item::ClassDef(class));
                 }
                 ParsedTopItem::Instance {
@@ -1189,15 +1185,8 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
                     head,
                     methods,
                 } => {
-                    let instance = lower_instance(
-                        &mut ctx,
-                        span,
-                        type_vars,
-                        preds,
-                        default_kw,
-                        head,
-                        methods,
-                    );
+                    let instance =
+                        lower_instance(&mut ctx, span, type_vars, preds, default_kw, head, methods);
                     items.push(item::Item::InstanceDef(instance));
                 }
                 ParsedTopItem::Contract {
