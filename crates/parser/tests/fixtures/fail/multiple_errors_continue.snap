@@ -10,7 +10,4 @@ error: unexpected `function`; expected `.`, or `;` while parsing import declarat
 2 | function bad() {
   | ^^^^^^^^
 3 |     let x = ;
-4 |     return 1;
-5 | }
-6 | function good() {}
   |

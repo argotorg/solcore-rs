@@ -1,14 +1,11 @@
 ---
 source: crates/parser/tests/diagnostics.rs
-assertion_line: 108
 expression: value
 input_file: crates/parser/tests/fixtures/fail/assembly_trailing_semicolon.solc
 ---
 error: unexpected `;`; expected end of input, or statement
  --> /assembly_trailing_semicolon.solc:4:4
   |
-1 | function f() {
-2 |   assembly {
 3 |     mstore(0, 0)
 4 |   };
   |    ^

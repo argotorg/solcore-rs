@@ -1701,7 +1701,7 @@ fn token_expected_description(token: &Token<'_>) -> String {
 
 fn expected_pattern_description(pattern: &chumsky::error::RichPattern<'_, Token<'_>>) -> String {
     match pattern {
-        chumsky::error::RichPattern::Token(token) => token_expected_description(&**token),
+        chumsky::error::RichPattern::Token(token) => token_expected_description(token),
         chumsky::error::RichPattern::Label(label) => label.to_string(),
         chumsky::error::RichPattern::Identifier(name) => {
             format!("identifier `{}`", name.trim_matches('"'))

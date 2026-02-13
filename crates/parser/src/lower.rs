@@ -191,6 +191,7 @@ fn lower_pred_ref<'db>(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_type_alias<'db>(
     db: &'db dyn Db,
     file: SourceFile,
@@ -242,6 +243,7 @@ fn lower_adt_ctor<'db>(
     item::AdtCtor::new(name, SpannedElem::new(fields_ty, fields_span))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_adt<'db>(
     db: &'db dyn Db,
     file: SourceFile,
@@ -328,6 +330,7 @@ fn lower_func_sig<'db>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_class<'db>(
     db: &'db dyn Db,
     file: SourceFile,
@@ -1005,6 +1008,7 @@ fn lower_parsed_yul_stmt<'db>(
     function::YulStmt { span, kind }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_function<'db>(
     db: &'db dyn Db,
     file: SourceFile,
@@ -1060,6 +1064,7 @@ fn lower_function<'db>(
     item::FunctionDef::new(db, func_def, func_span, lowered_sig, Some(body))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_instance<'db>(
     db: &'db dyn Db,
     file: SourceFile,
@@ -1183,6 +1188,7 @@ fn lower_contract_item<'db>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_contract<'db>(
     db: &'db dyn Db,
     file: SourceFile,
