@@ -2,8 +2,8 @@ use std::path::Path;
 
 use annotate_snippets::Renderer;
 use dir_test::{Fixture, dir_test};
-use hull::{diag::Diagnostic, input::SourceFile};
-use solcore_parser::parse_file_to_hull;
+use hir::{diag::Diagnostic, input::SourceFile};
+use solcore_parser::parse_file_to_hir;
 
 #[salsa::db]
 #[derive(Default, Clone)]
@@ -15,7 +15,7 @@ struct TestDb {
 impl salsa::Database for TestDb {}
 
 #[salsa::db]
-impl hull::Db for TestDb {}
+impl hir::Db for TestDb {}
 
 #[salsa::db]
 impl solcore_parser::Db for TestDb {}
@@ -27,8 +27,8 @@ impl solcore_parser::Db for TestDb {}
 fn parser_fail_diagnostics(fixture: Fixture<&str>) {
     let db = TestDb::default();
     let file = fixture_source_file(&db, &fixture);
-    let _ = parse_file_to_hull(&db, file);
-    let diagnostics = parse_file_to_hull::accumulated::<Diagnostic>(&db, file);
+    let _ = parse_file_to_hir(&db, file);
+    let diagnostics = parse_file_to_hir::accumulated::<Diagnostic>(&db, file);
     assert!(
         !diagnostics.is_empty(),
         "expected diagnostics for fail fixture `{}`",
@@ -54,8 +54,8 @@ fn parser_ok_no_diagnostics(fixture: Fixture<&str>) {
     let db = TestDb::default();
     let file = fixture_source_file(&db, &fixture);
 
-    let _ = parse_file_to_hull(&db, file).module(&db);
-    let diagnostics = parse_file_to_hull::accumulated::<Diagnostic>(&db, file);
+    let _ = parse_file_to_hir(&db, file).module(&db);
+    let diagnostics = parse_file_to_hir::accumulated::<Diagnostic>(&db, file);
     assert!(
         diagnostics.is_empty(),
         "expected no diagnostics for ok fixture `{}`\n{}",
@@ -76,7 +76,7 @@ fn fixture_source_file(db: &TestDb, fixture: &Fixture<&str>) -> SourceFile {
     SourceFile::new(db, url, Some(fixture.content().to_string()))
 }
 
-fn render_diagnostics(db: &dyn hull::Db, diagnostics: &[&Diagnostic]) -> String {
+fn render_diagnostics(db: &dyn hir::Db, diagnostics: &[&Diagnostic]) -> String {
     if diagnostics.is_empty() {
         return "no diagnostics\n".to_owned();
     }

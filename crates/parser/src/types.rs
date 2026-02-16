@@ -1,5 +1,5 @@
 use chumsky::{extra, prelude::Rich};
-use hull::ast::function;
+use hir::ast::function;
 
 use crate::lexer::Token;
 

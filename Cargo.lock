@@ -863,13 +863,13 @@ name = "solcore-driver"
 version = "0.1.0"
 dependencies = [
  "salsa",
- "solcore-hull",
+ "solcore-hir",
  "solcore-parser",
  "url",
 ]
 
 [[package]]
-name = "solcore-hull"
+name = "solcore-hir"
 version = "0.1.0"
 dependencies = [
  "annotate-snippets",
@@ -887,7 +887,7 @@ dependencies = [
  "insta",
  "logos",
  "salsa",
- "solcore-hull",
+ "solcore-hir",
 ]
 
 [[package]]

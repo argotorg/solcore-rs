@@ -1,4 +1,4 @@
-use hull::{Db as HullDb, anchor::DefLocationTable, ast::item, input::SourceFile};
+use hir::{Db as HirDb, anchor::DefLocationTable, ast::item, input::SourceFile};
 
 pub mod lexer;
 mod lower;
@@ -6,10 +6,10 @@ mod parse;
 mod types;
 
 #[salsa::db]
-pub trait Db: salsa::Database + HullDb {}
+pub trait Db: salsa::Database + HirDb {}
 
 #[salsa::tracked(debug)]
-pub struct ParseHullOutput<'db> {
+pub struct ParseHirOutput<'db> {
     #[tracked]
     #[returns(copy)]
     pub module: item::Module<'db>,
@@ -19,8 +19,8 @@ pub struct ParseHullOutput<'db> {
     pub def_locations: DefLocationTable<'db>,
 }
 
-/// Parses one source file into Hull IR in a single pass.
+/// Parses one source file into HIR in a single pass.
 #[salsa::tracked]
-pub fn parse_file_to_hull<'db>(db: &'db dyn Db, file: SourceFile) -> ParseHullOutput<'db> {
-    lower::parse_file_to_hull_impl(db, file)
+pub fn parse_file_to_hir<'db>(db: &'db dyn Db, file: SourceFile) -> ParseHirOutput<'db> {
+    lower::parse_file_to_hir_impl(db, file)
 }

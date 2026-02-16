@@ -1,5 +1,5 @@
 use chumsky::{input::ValueInput, prelude::*};
-use hull::ast::function;
+use hir::ast::function;
 use logos::Logos;
 
 use crate::{lexer::Token, types::*};

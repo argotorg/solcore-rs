@@ -1,7 +1,7 @@
 use std::{env, fs, path::Path};
 
-use hull::{diag::Diagnostic, input::SourceFile};
-use parser::parse_file_to_hull;
+use hir::{diag::Diagnostic, input::SourceFile};
+use parser::parse_file_to_hir;
 use url::Url;
 
 #[salsa::db]
@@ -14,7 +14,7 @@ struct DriverDb {
 impl salsa::Database for DriverDb {}
 
 #[salsa::db]
-impl hull::Db for DriverDb {}
+impl hir::Db for DriverDb {}
 
 #[salsa::db]
 impl parser::Db for DriverDb {}
@@ -61,9 +61,9 @@ fn main() {
 
     let db = DriverDb::default();
     let file = SourceFile::new(&db, url, Some(source));
-    let _ = parse_file_to_hull(&db, file).module(&db);
+    let _ = parse_file_to_hir(&db, file).module(&db);
 
-    let diagnostics = parse_file_to_hull::accumulated::<Diagnostic>(&db, file);
+    let diagnostics = parse_file_to_hir::accumulated::<Diagnostic>(&db, file);
     if diagnostics.is_empty() {
         return;
     }

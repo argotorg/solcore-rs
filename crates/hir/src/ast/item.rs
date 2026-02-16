@@ -334,7 +334,7 @@ impl<'db> Spanned<'db> for Item<'db> {
     }
 }
 
-/// A module/source file after lowering into Hull.
+/// A module/source file after lowering into HIR.
 #[salsa::tracked(debug)]
 pub struct Module<'db> {
     #[tracked]

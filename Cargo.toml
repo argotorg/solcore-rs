@@ -7,7 +7,7 @@ salsa = "0.25"
 url = "2.5"
 annotate-snippets = "0.12"
 parser = { path = "crates/parser", package = "solcore-parser" }
-hull = { path = "crates/hull", package = "solcore-hull" }
+hir = { path = "crates/hir", package = "solcore-hir" }
 
 [workspace.package]
 edition = "2024"

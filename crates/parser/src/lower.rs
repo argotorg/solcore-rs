@@ -1,4 +1,4 @@
-use hull::{
+use hir::{
     anchor::{DefId, DefKind, DefLocation, DefLocationTable, KeyCanonicalizer},
     arena::Arena,
     ast::{Ident, function, item, ty},
@@ -8,7 +8,7 @@ use hull::{
 };
 
 use crate::{
-    Db, ParseHullOutput,
+    Db, ParseHirOutput,
     parse::{parse_body_statements, parse_supported_items},
     types::*,
 };
@@ -421,7 +421,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         base_start: usize,
         expr: ParsedExpr<'_>,
         arenas: &mut BodyArenas<'db>,
-    ) -> hull::arena::Id<function::Expr<'db>> {
+    ) -> hir::arena::Id<function::Expr<'db>> {
         let span = span_from_absolute(anchor, expr.span, base_start);
         let kind = self.lower_expr_kind(anchor, base_start, expr.kind, arenas);
         arenas.exprs.alloc(function::Expr { span, kind })
@@ -478,7 +478,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         base_start: usize,
         exprs: Vec<ParsedExpr<'_>>,
         arenas: &mut BodyArenas<'db>,
-    ) -> Vec<hull::arena::Id<function::Expr<'db>>> {
+    ) -> Vec<hir::arena::Id<function::Expr<'db>>> {
         exprs
             .into_iter()
             .map(|expr| self.lower_expr(anchor, base_start, expr, arenas))
@@ -665,7 +665,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         base_start: usize,
         stmt: ParsedStmt<'_>,
         arenas: &mut BodyArenas<'db>,
-    ) -> hull::arena::Id<function::Stmt<'db>> {
+    ) -> hir::arena::Id<function::Stmt<'db>> {
         let span = span_from_absolute(anchor, stmt.span, base_start);
         let kind = self.lower_stmt_kind(anchor, base_start, stmt.kind, arenas);
         arenas.stmts.alloc(function::Stmt { span, kind })
@@ -726,7 +726,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         base_start: usize,
         stmts: Vec<ParsedStmt<'_>>,
         arenas: &mut BodyArenas<'db>,
-    ) -> Vec<hull::arena::Id<function::Stmt<'db>>> {
+    ) -> Vec<hir::arena::Id<function::Stmt<'db>>> {
         stmts
             .into_iter()
             .map(|stmt| self.lower_stmt(anchor, base_start, stmt, arenas))
@@ -783,7 +783,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         anchor: AnchorId<'db>,
         body_span: LexSpan,
         arenas: &mut BodyArenas<'db>,
-    ) -> Vec<hull::arena::Id<function::Stmt<'db>>> {
+    ) -> Vec<hir::arena::Id<function::Stmt<'db>>> {
         let parsed = parse_body_statements(self.source, body_span);
         self.parse_errors.extend(parsed.errors);
 
@@ -801,7 +801,7 @@ fn lower_parsed_pat<'db>(
     base_start: usize,
     pat: ParsedPat<'_>,
     pats: &mut Arena<function::Pat<'db>>,
-) -> hull::arena::Id<function::Pat<'db>> {
+) -> hir::arena::Id<function::Pat<'db>> {
     let span = span_from_absolute(anchor, pat.span, base_start);
     let kind = match pat.kind {
         ParsedPatKind::Wildcard => function::PatKind::Wildcard,
@@ -1102,10 +1102,10 @@ fn lower_contract<'db>(
     item::ContractDef::new(ctx.db, contract_def, span, name, ty_params, fields, items)
 }
 
-pub(crate) fn parse_file_to_hull_impl<'db>(
+pub(crate) fn parse_file_to_hir_impl<'db>(
     db: &'db dyn Db,
     file: SourceFile,
-) -> ParseHullOutput<'db> {
+) -> ParseHirOutput<'db> {
     let mut keys = KeyCanonicalizer::new();
     let module_def = keys.alloc_def(db, file, DefKind::Module, None);
 
@@ -1220,5 +1220,5 @@ pub(crate) fn parse_file_to_hull_impl<'db>(
     let def_locations = DefLocationTable::from_def_locations(def_locations);
     accumulate_parse_errors(db, file, parse_errors);
 
-    ParseHullOutput::new(db, module, def_locations)
+    ParseHirOutput::new(db, module, def_locations)
 }
