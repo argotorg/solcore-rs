@@ -65,6 +65,8 @@ fn lower_import<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     path: Vec<SpannedStr<'_>>,
+    alias: Option<SpannedStr<'_>>,
+    selected: Vec<SpannedStr<'_>>,
 ) -> item::Import<'db> {
     let import_def = ctx.alloc_def_with_location(DefKind::Import, None, span.start);
 
@@ -73,8 +75,13 @@ fn lower_import<'db>(
         .into_iter()
         .map(|segment| lower_spanned_ident(ctx.db, anchor, span.start, segment))
         .collect();
+    let alias = alias.map(|it| lower_spanned_ident(ctx.db, anchor, span.start, it));
+    let selected = selected
+        .into_iter()
+        .map(|it| lower_spanned_ident(ctx.db, anchor, span.start, it))
+        .collect();
     let span = span_from_absolute(anchor, span, span.start);
-    item::Import::new(ctx.db, import_def, span, path)
+    item::Import::new(ctx.db, import_def, span, path, alias, selected)
 }
 
 fn lower_pragma<'db>(
@@ -1137,8 +1144,13 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
 
         for parsed in parsed_items.output {
             match parsed {
-                ParsedTopItem::Import { span, path } => {
-                    let import = lower_import(&mut ctx, span, path);
+                ParsedTopItem::Import {
+                    span,
+                    path,
+                    alias,
+                    selected,
+                } => {
+                    let import = lower_import(&mut ctx, span, path, alias, selected);
                     items.push(item::Item::Import(import));
                 }
                 ParsedTopItem::Pragma {

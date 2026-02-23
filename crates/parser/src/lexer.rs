@@ -8,6 +8,8 @@ pub enum Token<'a> {
     Contract,
     #[token("import")]
     Import,
+    #[token("as")]
+    As,
     #[token("let")]
     Let,
     #[token("data")]
@@ -205,6 +207,7 @@ mod tests {
     fn test_keywords() {
         assert_eq!(tokenize("contract"), vec![Token::Contract]);
         assert_eq!(tokenize("import"), vec![Token::Import]);
+        assert_eq!(tokenize("as"), vec![Token::As]);
         assert_eq!(tokenize("let"), vec![Token::Let]);
         assert_eq!(tokenize("data"), vec![Token::Data]);
         assert_eq!(tokenize("class"), vec![Token::Class]);

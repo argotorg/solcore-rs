@@ -35,18 +35,64 @@ fn import_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserE
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    just(Token::Import)
-        .ignore_then(
-            ident_parser()
-                .separated_by(just(Token::Dot))
-                .at_least(1)
-                .collect::<Vec<_>>(),
-        )
+    let path = ident_parser()
+        .separated_by(just(Token::Dot))
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .boxed();
+
+    let path_for_selective = ident_parser()
+        .separated_by(just(Token::Dot))
+        .at_least(1)
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .boxed();
+
+    let selected_items = ident_parser()
+        .separated_by(just(Token::Comma))
+        .at_least(1)
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LBrace), just(Token::RBrace))
+        .boxed();
+
+    let selective = just(Token::Import)
+        .ignore_then(path_for_selective)
+        .then(selected_items)
+        .then_ignore(just(Token::Semi))
+        .map_with(|(path, selected), e| ParsedTopItem::Import {
+            span: e.span(),
+            path,
+            alias: None,
+            selected,
+        })
+        .boxed();
+
+    let with_alias = just(Token::Import)
+        .ignore_then(path.clone())
+        .then_ignore(just(Token::As))
+        .then(ident_parser())
+        .then_ignore(just(Token::Semi))
+        .map_with(|(path, alias), e| ParsedTopItem::Import {
+            span: e.span(),
+            path,
+            alias: Some(alias),
+            selected: Vec::new(),
+        })
+        .boxed();
+
+    let plain = just(Token::Import)
+        .ignore_then(path)
         .then_ignore(just(Token::Semi))
         .map_with(|path, e| ParsedTopItem::Import {
             span: e.span(),
             path,
+            alias: None,
+            selected: Vec::new(),
         })
+        .boxed();
+
+    choice((selective, with_alias, plain))
         .labelled("import declaration")
         .as_context()
         .boxed()
@@ -1613,6 +1659,7 @@ fn token_spelling(token: &Token<'_>) -> &'static str {
     match token {
         Token::Contract => "contract",
         Token::Import => "import",
+        Token::As => "as",
         Token::Let => "let",
         Token::Data => "data",
         Token::Class => "class",
@@ -1958,5 +2005,63 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert!(output.is_some(), "expected parsed output");
+    }
+
+    #[test]
+    fn import_with_alias_parses() {
+        let parsed = parse_supported_items("import math.bits as Bits;");
+        assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
+
+        match parsed.output.as_slice() {
+            [ParsedTopItem::Import {
+                path,
+                alias,
+                selected,
+                ..
+            }] => {
+                assert_eq!(
+                    path.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+                    vec!["math", "bits"]
+                );
+                assert_eq!(alias.as_ref().map(|(name, _)| *name), Some("Bits"));
+                assert!(selected.is_empty(), "expected no selected items");
+            }
+            other => panic!("unexpected parse output: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn import_with_selected_items_parses() {
+        let parsed = parse_supported_items("import math.words.{addWord, subWord};");
+        assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
+
+        match parsed.output.as_slice() {
+            [ParsedTopItem::Import {
+                path,
+                alias,
+                selected,
+                ..
+            }] => {
+                assert_eq!(
+                    path.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+                    vec!["math", "words"]
+                );
+                assert!(alias.is_none(), "expected no alias");
+                assert_eq!(
+                    selected.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+                    vec!["addWord", "subWord"]
+                );
+            }
+            other => panic!("unexpected parse output: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn import_with_trailing_dot_is_rejected() {
+        let parsed = parse_supported_items("import foo.;");
+        assert!(
+            !parsed.errors.is_empty(),
+            "expected parse errors for invalid import"
+        );
     }
 }

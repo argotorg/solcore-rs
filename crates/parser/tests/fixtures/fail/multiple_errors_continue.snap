@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/fail/multiple_errors_continue.solc
 ---
-error: unexpected `function`; expected `.`, or `;` while parsing import declaration
+error: unexpected `function`; expected `.`, `;`, `as`, or `{` while parsing import declaration
  --> /multiple_errors_continue.solc:2:1
   |
 1 | import core.math

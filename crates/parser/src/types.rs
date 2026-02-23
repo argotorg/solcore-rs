@@ -24,6 +24,8 @@ pub(crate) enum ParsedTopItem<'src> {
     Import {
         span: LexSpan,
         path: Vec<SpannedStr<'src>>,
+        alias: Option<SpannedStr<'src>>,
+        selected: Vec<SpannedStr<'src>>,
     },
     Pragma {
         span: LexSpan,

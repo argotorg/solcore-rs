@@ -272,6 +272,13 @@ pub struct Import<'db> {
     #[tracked]
     #[returns(ref)]
     path: Vec<SpannedElem<'db, Ident<'db>>>,
+
+    #[tracked]
+    alias: Option<SpannedElem<'db, Ident<'db>>>,
+
+    #[tracked]
+    #[returns(ref)]
+    selected: Vec<SpannedElem<'db, Ident<'db>>>,
 }
 
 impl<'db> Spanned<'db> for Import<'db> {
