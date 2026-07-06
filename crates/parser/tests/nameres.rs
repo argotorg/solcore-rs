@@ -6,8 +6,8 @@ use hir::{
     diag::Diagnostic,
     input::SourceFile,
     nameres::{
-        EmptyImportedNames, NameresDiagnosticPolicy, Resolution, item_scope, resolve_module,
-        resolve_module_with_imports_and_policy,
+        DefResolutionKind, EmptyImportedNames, NameresDiagnosticPolicy, Resolution, item_scope,
+        resolve_module, resolve_module_with_imports_and_policy,
     },
 };
 use solcore_parser::{parse_diagnostics, parse_file_to_hir};
@@ -305,6 +305,47 @@ fn contract_fields_beat_top_level_functions_and_params_shadow_fields() {
     let param_map = body_map(&db, module, param_body);
     let param_events = ident_resolutions(&db, param_body, &param_map);
     assert!(matches!(param_events[0].1, Resolution::Param(_)));
+}
+
+#[test]
+fn unqualified_call_callee_prefers_contract_function_over_same_name_field() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "contract C {
+           balance: word;
+           function balance() -> word { return 7; }
+           function call() -> word { return balance(); }
+           function bare() -> word { return balance; }
+         }",
+    );
+    assert!(diagnostic_codes(&db, module).is_empty());
+
+    let call_function = contract_function(&db, module, "C", "call");
+    let call_body = call_function.body(&db).expect("body");
+    let call_map = body_map(&db, module, call_body);
+    let call_events = ident_resolutions(&db, call_body, &call_map);
+    let callee = call_events
+        .iter()
+        .find(|(name, _)| *name == "balance")
+        .expect("call callee");
+    assert!(matches!(
+        callee.1,
+        Resolution::Def {
+            kind: DefResolutionKind::Function,
+            ..
+        }
+    ));
+
+    let bare_function = contract_function(&db, module, "C", "bare");
+    let bare_body = bare_function.body(&db).expect("body");
+    let bare_map = body_map(&db, module, bare_body);
+    let bare_events = ident_resolutions(&db, bare_body, &bare_map);
+    let bare = bare_events
+        .iter()
+        .find(|(name, _)| *name == "balance")
+        .expect("bare reference");
+    assert!(matches!(bare.1, Resolution::Field(_)));
 }
 
 #[test]

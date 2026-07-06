@@ -10,7 +10,10 @@ use chumsky::{input::ValueInput, prelude::*};
 use hir::ast::{function, item::FuncKind};
 use logos::Logos;
 
-use crate::{lexer::Token, types::*};
+use crate::{
+    lexer::{LexError, Token},
+    types::*,
+};
 
 fn ident_parser<'src, I>() -> impl Parser<'src, I, SpannedStr<'src>, ParserErr<'src>>
 where
@@ -69,6 +72,36 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     select! { Token::Ident(name) if name == "then" => () }.labelled("then")
+}
+
+fn top_level_item_start_token_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    select! {
+        Token::Import | Token::Export | Token::Pragma | Token::Type | Token::Data
+        | Token::Class | Token::Instance | Token::Contract | Token::Public
+        | Token::Payable | Token::Function | Token::Constructor | Token::Fallback
+        | Token::Forall | Token::Default => (),
+    }
+}
+
+fn top_level_semicolon_parser<'src, I>(
+    context: &'static str,
+) -> impl Parser<'src, I, (), ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    just(Token::Semi)
+        .ignored()
+        .or(top_level_item_start_token_parser()
+            .validate(move |_, e, emitter| {
+                emitter.emit(Rich::custom(
+                    e.span(),
+                    format!("{context} requires trailing `;`"),
+                ));
+            })
+            .rewind())
 }
 
 fn operator_part_parser<'src, I>() -> impl Parser<'src, I, &'static str, ParserErr<'src>>
@@ -247,7 +280,7 @@ where
         .then_ignore(just(Token::Dot))
         .then(selector)
         .then(hiding)
-        .then_ignore(just(Token::Semi))
+        .then_ignore(top_level_semicolon_parser("import declaration"))
         .map_with(
             |(((external, path), selector), hiding), e| ParsedTopItem::Import {
                 span: e.span(),
@@ -264,7 +297,7 @@ where
         .ignore_then(path.clone())
         .then_ignore(just(Token::As))
         .then(ident_parser())
-        .then_ignore(just(Token::Semi))
+        .then_ignore(top_level_semicolon_parser("import declaration"))
         .map_with(|((external, path), alias), e| ParsedTopItem::Import {
             span: e.span(),
             external,
@@ -277,7 +310,7 @@ where
 
     let plain = just(Token::Import)
         .ignore_then(path)
-        .then_ignore(just(Token::Semi))
+        .then_ignore(top_level_semicolon_parser("import declaration"))
         .map_with(|(external, path), e| ParsedTopItem::Import {
             span: e.span(),
             external,
@@ -412,20 +445,24 @@ where
             .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map_with(|args, e| (args, e.span()))
             .or_not()
-            .map(|args| args.unwrap_or_default())
             .boxed();
 
         let named_type = qualified_ident_parser()
             .then(args)
             .map_with(|(mut path, args), e| {
                 let name = path.pop().expect("qualified path has at least one segment");
+                let (args, args_span) = args
+                    .map(|(args, span)| (args, Some(span)))
+                    .unwrap_or_else(|| (Vec::new(), None));
                 ParsedTy {
                     span: e.span(),
                     kind: ParsedTyKind::Named {
                         qualifiers: path,
                         name,
                         args,
+                        args_span,
                     },
                 }
             })
@@ -437,19 +474,7 @@ where
             .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
-            .boxed();
-
-        let fn_type = paren_types
-            .clone()
-            .then_ignore(just(Token::Arrow))
-            .then(ty.clone())
-            .map_with(|(params, ret), e| ParsedTy {
-                span: e.span(),
-                kind: ParsedTyKind::Fn {
-                    params,
-                    ret: Box::new(ret),
-                },
-            })
+            .map_with(|elems, e| (elems, e.span()))
             .boxed();
 
         let comptime_type = comptime_kw_parser()
@@ -464,8 +489,8 @@ where
             .boxed();
 
         let tuple_type = paren_types
-            .map_with(|elems, e| ParsedTy {
-                span: e.span(),
+            .map(|(elems, paren_span)| ParsedTy {
+                span: paren_span,
                 kind: ParsedTyKind::Tuple { elems },
             })
             .boxed();
@@ -487,7 +512,25 @@ where
         })
         .boxed();
 
-        comptime_type.or(fn_type).or(atom_type)
+        let atom_type = comptime_type.or(atom_type).boxed();
+
+        atom_type
+            .clone()
+            .then(just(Token::Arrow).ignore_then(ty.clone()).or_not())
+            .map_with(|(domain, ret), e| match ret {
+                Some(ret) => ParsedTy {
+                    span: e.span(),
+                    // Arrow types are right-associative over atom domains.
+                    // A parenthesized tuple domain remains one unary domain,
+                    // matching the Haskell reference parser.
+                    kind: ParsedTyKind::Fn {
+                        params_span: domain.span,
+                        params: vec![domain],
+                        ret: Box::new(ret),
+                    },
+                },
+                None => domain,
+            })
     })
     .labelled("type")
     .as_context()
@@ -509,15 +552,25 @@ where
         .allow_trailing()
         .collect::<Vec<_>>()
         .delimited_by(just(Token::LParen), just(Token::RParen))
+        .map_with(|args, e| (args, e.span()))
         .or_not()
-        .map(|args| args.unwrap_or_default())
         .boxed();
 
     type_parser()
         .then_ignore(just(Token::Colon))
         .then(ident_parser())
         .then(class_args)
-        .map(|((ty, class), args)| ParsedPred { ty, class, args })
+        .map(|((ty, class), args)| {
+            let (args, args_span) = args
+                .map(|(args, span)| (args, Some(span)))
+                .unwrap_or_else(|| (Vec::new(), None));
+            ParsedPred {
+                ty,
+                class,
+                args,
+                args_span,
+            }
+        })
         .labelled("predicate")
         .as_context()
         .boxed()
@@ -555,8 +608,8 @@ where
         .allow_trailing()
         .collect::<Vec<_>>()
         .delimited_by(just(Token::LParen), just(Token::RParen))
+        .map_with(|args, e| (args, e.span()))
         .or_not()
-        .map(|args| args.unwrap_or_default())
         .boxed();
 
     let bounded = ident_parser()
@@ -564,15 +617,24 @@ where
         .then(ident_parser())
         .then(class_args)
         .map(|((var, class), args)| {
+            let (args, args_span) = args
+                .map(|(args, span)| (args, Some(span)))
+                .unwrap_or_else(|| (Vec::new(), None));
             let ty = ParsedTy {
                 span: var.1,
                 kind: ParsedTyKind::Named {
                     qualifiers: Vec::new(),
                     name: var,
                     args: Vec::new(),
+                    args_span: None,
                 },
             };
-            let pred = ParsedPred { ty, class, args };
+            let pred = ParsedPred {
+                ty,
+                class,
+                args,
+                args_span,
+            };
             ParsedForallBinder::Bound { var, pred }
         });
 
@@ -816,6 +878,8 @@ where
             just(Token::RBrace).ignored(),
             then_kw_parser(),
             just(Token::Else).ignored(),
+            just(Token::Question).ignored(),
+            just(Token::Colon).ignored(),
             just(Token::FatArrow).ignored(),
             just(Token::Pipe).ignored(),
         ));
@@ -1050,8 +1114,32 @@ where
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
             });
 
+        let ternary = recursive(|ternary| {
+            or.clone()
+                .then(
+                    just(Token::Question)
+                        .ignore_then(ternary.clone())
+                        .then_ignore(just(Token::Colon))
+                        .then(ternary)
+                        .or_not(),
+                )
+                .map_with(|(cond, arms), e| match arms {
+                    Some((then_expr, else_expr)) => ParsedExpr {
+                        span: e.span(),
+                        kind: ParsedExprKind::If {
+                            cond: Box::new(cond),
+                            then_expr: Box::new(then_expr),
+                            else_expr: Box::new(else_expr),
+                        },
+                    },
+                    None => cond,
+                })
+        })
+        .boxed();
+
         let type_annot = just(Token::Colon).ignore_then(type_parser()).or_not();
-        or.then(type_annot)
+        ternary
+            .then(type_annot)
             .map_with(|(expr, ty), e| match ty {
                 Some(ty) => ParsedExpr {
                     span: e.span(),
@@ -2320,16 +2408,27 @@ where
 {
     ident_parser()
         .then_ignore(just(Token::Colon))
+        .rewind()
+        .ignore_then(ident_parser())
+        .then_ignore(just(Token::Colon))
         .then(type_parser())
+        .then(just(Token::Eq).ignore_then(parsed_expr_parser()).or_not())
         .then_ignore(just(Token::Semi))
-        .map_with(|(name, ty), e| ParsedFieldDef {
+        .map_with(|((name, ty), init), e| ParsedFieldDef {
             span: e.span(),
             name,
             ty,
+            init,
         })
         .labelled("contract field")
         .as_context()
         .boxed()
+}
+
+#[derive(Debug, Clone)]
+enum ParsedContractMember<'src> {
+    Field(ParsedFieldDef<'src>),
+    Item(ParsedContractItem<'src>),
 }
 
 fn contract_item_parser<'src, I>() -> impl Parser<'src, I, ParsedContractItem<'src>, ParserErr<'src>>
@@ -2390,6 +2489,17 @@ where
     .as_context()
 }
 
+fn contract_member_parser<'src, I>()
+-> impl Parser<'src, I, ParsedContractMember<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    field_def_parser()
+        .map(ParsedContractMember::Field)
+        .or(contract_item_parser().map(ParsedContractMember::Item))
+        .boxed()
+}
+
 fn contract_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -2403,29 +2513,33 @@ where
         .map(|params| params.unwrap_or_default())
         .boxed();
 
-    let fields = field_def_parser().repeated().collect::<Vec<_>>().boxed();
-    let items = contract_item_parser()
+    let members = contract_member_parser()
         .repeated()
         .collect::<Vec<_>>()
         .boxed();
-    let body = fields
-        .then(items)
-        .delimited_by(just(Token::LBrace), just(Token::RBrace))
-        .boxed();
+    let body = members.delimited_by(just(Token::LBrace), just(Token::RBrace));
 
     just(Token::Contract)
         .ignore_then(ident_parser())
         .then(ty_params)
         .then(body)
-        .map_with(
-            |((name, ty_params), (fields, items)), e| ParsedTopItem::Contract {
+        .map_with(|((name, ty_params), members), e| {
+            let mut fields = Vec::new();
+            let mut items = Vec::new();
+            for member in members {
+                match member {
+                    ParsedContractMember::Field(field) => fields.push(field),
+                    ParsedContractMember::Item(item) => items.push(item),
+                }
+            }
+            ParsedTopItem::Contract {
                 span: e.span(),
                 name,
                 ty_params,
                 fields,
                 items,
-            },
-        )
+            }
+        })
         .labelled("contract declaration")
         .as_context()
         .boxed()
@@ -2475,15 +2589,25 @@ fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedErr
     let mut errors = Vec::new();
 
     for (tok, span) in Token::lexer(src).spanned() {
-        let message = invalid_token_message(src, span.start, span.end);
+        let raw_span = span.clone();
         let span = LexSpan::from(span);
         match tok {
             Ok(tok) => tokens.push((tok, span)),
-            Err(()) => errors.push(ParsedError { span, message }),
+            Err(err) => errors.push(ParsedError {
+                span,
+                message: lex_error_message(src, raw_span.start, raw_span.end, err),
+            }),
         }
     }
 
     (tokens, errors)
+}
+
+fn lex_error_message(source: &str, start: usize, end: usize, error: LexError) -> String {
+    match error {
+        LexError::Invalid => invalid_token_message(source, start, end),
+        LexError::UnterminatedBlockComment => "unterminated block comment".to_owned(),
+    }
 }
 
 fn invalid_token_message(source: &str, start: usize, end: usize) -> String {
@@ -2556,6 +2680,7 @@ fn token_spelling(token: &Token<'_>) -> &'static str {
         Token::Amp => "&",
         Token::Caret => "^",
         Token::At => "@",
+        Token::Question => "?",
         Token::Dot => ".",
         Token::Colon => ":",
         Token::Semi => ";",
@@ -2759,11 +2884,14 @@ fn tokenize_with_base<'src>(
     let mut errors = Vec::new();
 
     for (tok, span) in Token::lexer(src).spanned() {
-        let message = invalid_token_message(src, span.start, span.end);
+        let raw_span = span.clone();
         let span = LexSpan::from((span.start + base_offset)..(span.end + base_offset));
         match tok {
             Ok(tok) => tokens.push((tok, span)),
-            Err(()) => errors.push(ParsedError { span, message }),
+            Err(err) => errors.push(ParsedError {
+                span,
+                message: lex_error_message(src, raw_span.start, raw_span.end, err),
+            }),
         }
     }
 

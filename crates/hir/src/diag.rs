@@ -14,7 +14,7 @@
 use annotate_snippets::{Annotation, AnnotationKind, Group, Level, Renderer, Snippet};
 
 use crate::{
-    anchor::{DefId, DefKey, resolve_def_location},
+    anchor::{resolve_def_location, DefId, DefKey},
     input::SourceFile,
     span::{AnchorKind, Span},
 };
@@ -58,9 +58,9 @@ pub enum AnyDiagnostic {
 
 /// Stable identity used to deduplicate diagnostics.
 ///
-/// The value is computed from the diagnostic code, headline message, and labels.
-/// Notes and suggestions are intentionally excluded so presentation-only detail
-/// does not split otherwise identical diagnostics.
+/// The value is computed from the diagnostic level, code, headline message,
+/// labels, and quick-fix suggestions. Notes are intentionally excluded so
+/// presentation-only detail does not split otherwise identical diagnostics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DiagnosticId(u64);
 
@@ -78,6 +78,8 @@ pub struct DiagnosticSortKey {
     pub code: Option<String>,
     /// Human-readable headline message.
     pub message: String,
+    /// Stable identity tie-breaker for diagnostics that share the visible edge key.
+    pub id: DiagnosticId,
 }
 
 /// Deterministic non-absolute sort key for cached diagnostic query values.
@@ -458,12 +460,14 @@ impl Diagnostic {
             primary_start: primary.map(|span| span.start()),
             code: self.code.clone(),
             message: self.message.clone(),
+            id: self.diagnostic_id(db),
         }
     }
 
     /// Returns this diagnostic's stable deduplication identity.
     pub fn diagnostic_id(&self, db: &dyn crate::Db) -> DiagnosticId {
         let mut state = FNV_OFFSET;
+        hash_diagnostic_level(&mut state, self.level);
         hash_option_str(&mut state, self.code.as_deref());
         hash_str(&mut state, &self.message);
         hash_u64(&mut state, self.labels.len() as u64);
@@ -471,6 +475,10 @@ impl Diagnostic {
             hash_label_span(db, &mut state, &label.span);
             hash_label_style(&mut state, label.style);
             hash_option_str(&mut state, label.message.as_deref());
+        }
+        hash_u64(&mut state, self.suggestions.len() as u64);
+        for suggestion in &self.suggestions {
+            hash_suggestion(db, &mut state, suggestion);
         }
         DiagnosticId(state)
     }
@@ -504,6 +512,9 @@ impl Diagnostic {
 
         let mut by_file: Vec<(SourceFile, Vec<(&DiagnosticLabel, AbsoluteSpan)>)> = Vec::new();
         for label in &self.labels {
+            if label.span.file().content(db).is_none() {
+                continue;
+            }
             let absolute = label.span.resolve_to_absolute(db);
             let file = absolute.file();
             if let Some((_, labels)) = by_file
@@ -566,8 +577,9 @@ impl Diagnostic {
 
     /// Renders this diagnostic using the provided `annotate_snippets` renderer.
     ///
-    /// This performs absolute span resolution and may panic if a def-relative
-    /// label no longer has a location table entry.
+    /// This performs absolute span resolution for labels whose files still have
+    /// content, and may panic if such a def-relative label no longer has a
+    /// location table entry.
     pub fn render_with(&self, db: &dyn crate::Db, renderer: &Renderer) -> String {
         let report = self.to_annotate_report(db);
         renderer.render(&report)
@@ -647,7 +659,11 @@ impl LabelStyle {
 fn clamp_span(start: usize, end: usize, source_len: usize) -> core::ops::Range<usize> {
     let start = start.min(source_len);
     let end = end.min(source_len);
-    if start <= end { start..end } else { end..start }
+    if start <= end {
+        start..end
+    } else {
+        end..start
+    }
 }
 
 fn context_window_span(
@@ -844,6 +860,15 @@ fn hash_def_key(db: &dyn crate::Db, state: &mut u64, key: &DefKey) {
     hash_u32(state, key.disambiguator.as_u32());
 }
 
+fn hash_diagnostic_level(state: &mut u64, level: DiagnosticLevel) {
+    match level {
+        DiagnosticLevel::Error => hash_u8(state, 0),
+        DiagnosticLevel::Warning => hash_u8(state, 1),
+        DiagnosticLevel::Note => hash_u8(state, 2),
+        DiagnosticLevel::Help => hash_u8(state, 3),
+    }
+}
+
 fn def_kind_name(kind: crate::anchor::DefKind) -> &'static str {
     match kind {
         crate::anchor::DefKind::Module => "module",
@@ -866,5 +891,178 @@ fn hash_label_style(state: &mut u64, style: LabelStyle) {
     match style {
         LabelStyle::Primary => hash_u8(state, 0),
         LabelStyle::Secondary => hash_u8(state, 1),
+    }
+}
+
+fn hash_suggestion(db: &dyn crate::Db, state: &mut u64, suggestion: &Suggestion) {
+    hash_str(state, &suggestion.title);
+    hash_applicability(state, suggestion.applicability);
+    hash_u64(state, suggestion.edits.len() as u64);
+    for edit in &suggestion.edits {
+        hash_label_span(db, state, &edit.span);
+        hash_str(state, &edit.replacement);
+    }
+}
+
+fn hash_applicability(state: &mut u64, applicability: Applicability) {
+    match applicability {
+        Applicability::MachineApplicable => hash_u8(state, 0),
+        Applicability::MaybeIncorrect => hash_u8(state, 1),
+        Applicability::HasPlaceholders => hash_u8(state, 2),
+        Applicability::Unspecified => hash_u8(state, 3),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use annotate_snippets::Renderer;
+
+    use super::*;
+    use crate::anchor::{DefId, DefKind, DefLocationTable, Disambiguator};
+
+    #[salsa::db]
+    #[derive(Default, Clone)]
+    struct TestDb {
+        storage: salsa::Storage<Self>,
+    }
+
+    #[salsa::db]
+    impl salsa::Database for TestDb {}
+
+    #[salsa::tracked(returns(ref))]
+    fn empty_def_location_table<'db>(
+        db: &'db dyn crate::Db,
+        file: SourceFile,
+    ) -> DefLocationTable<'db> {
+        let _ = (db, file);
+        DefLocationTable::default()
+    }
+
+    #[salsa::db]
+    impl crate::Db for TestDb {
+        fn def_location_table<'db>(&'db self, file: SourceFile) -> &'db DefLocationTable<'db> {
+            empty_def_location_table(self, file)
+        }
+    }
+
+    fn source_file(db: &TestDb, name: &str, content: Option<&str>) -> SourceFile {
+        let url = format!("memory:///{name}.solc").parse().expect("valid url");
+        SourceFile::new(db, url, content.map(ToOwned::to_owned))
+    }
+
+    fn root_span(file: SourceFile, start: u32, end: u32) -> LabelSpan {
+        LabelSpan::new(
+            LabelAnchor::Root(file),
+            Offset::new(start),
+            Offset::new(end),
+        )
+    }
+
+    #[test]
+    fn diagnostic_id_includes_level_and_suggestions() {
+        let db = TestDb::default();
+        let file = source_file(&db, "ids", Some("let x = 1;\n"));
+        let primary = root_span(file, 0, 3);
+        let edit = root_span(file, 4, 5);
+
+        let error = Diagnostic::error("same headline")
+            .with_code("SC9999")
+            .with_primary_label_span(primary.clone(), Some("same label"));
+        let warning = Diagnostic::warning("same headline")
+            .with_code("SC9999")
+            .with_primary_label_span(primary.clone(), Some("same label"));
+
+        assert_ne!(error.diagnostic_id(&db), warning.diagnostic_id(&db));
+
+        let with_machine_fix = error.clone().with_suggestion(Suggestion {
+            title: "rename".to_owned(),
+            applicability: Applicability::MachineApplicable,
+            edits: vec![AnchoredTextEdit {
+                span: edit.clone(),
+                replacement: "y".to_owned(),
+            }],
+        });
+        let with_review_fix = error.with_suggestion(Suggestion {
+            title: "rename".to_owned(),
+            applicability: Applicability::MaybeIncorrect,
+            edits: vec![AnchoredTextEdit {
+                span: edit,
+                replacement: "z".to_owned(),
+            }],
+        });
+
+        assert_ne!(
+            with_machine_fix.diagnostic_id(&db),
+            with_review_fix.diagnostic_id(&db)
+        );
+    }
+
+    #[test]
+    fn diagnostic_sort_key_uses_diagnostic_id_tiebreaker() {
+        let db = TestDb::default();
+        let file = source_file(&db, "sort", Some("alpha beta gamma\n"));
+        let primary = root_span(file, 0, 5);
+
+        let first = Diagnostic::error("same headline")
+            .with_code("SC9999")
+            .with_primary_label_span(primary.clone(), None::<String>)
+            .with_secondary_label_span(root_span(file, 6, 10), Some("first secondary"));
+        let second = Diagnostic::error("same headline")
+            .with_code("SC9999")
+            .with_primary_label_span(primary, None::<String>)
+            .with_secondary_label_span(root_span(file, 11, 16), Some("second secondary"));
+
+        let first_key = first.sort_key(&db);
+        let second_key = second.sort_key(&db);
+        assert_eq!(first_key.file, second_key.file);
+        assert_eq!(first_key.primary_start, second_key.primary_start);
+        assert_eq!(first_key.code, second_key.code);
+        assert_eq!(first_key.message, second_key.message);
+        assert_ne!(first_key.id, second_key.id);
+        assert_ne!(first_key, second_key);
+
+        let mut original_order = [first.clone(), second.clone()];
+        original_order.sort_by_key(|diagnostic| diagnostic.sort_key(&db));
+        let mut reversed_order = [second, first];
+        reversed_order.sort_by_key(|diagnostic| diagnostic.sort_key(&db));
+
+        let original_ids = original_order
+            .iter()
+            .map(|diagnostic| diagnostic.diagnostic_id(&db))
+            .collect::<Vec<_>>();
+        let reversed_ids = reversed_order
+            .iter()
+            .map(|diagnostic| diagnostic.diagnostic_id(&db))
+            .collect::<Vec<_>>();
+        assert_eq!(original_ids, reversed_ids);
+    }
+
+    #[test]
+    fn render_skips_contentless_def_labels_before_absolute_resolution() {
+        let db = TestDb::default();
+        let file = source_file(&db, "missing", None);
+        let def = DefId::new(
+            &db,
+            file,
+            None,
+            DefKind::Function,
+            Some("f".to_owned()),
+            None,
+            Disambiguator::ZERO,
+        );
+        let stale_def_span = LabelSpan::new(
+            LabelAnchor::Def(def.key(&db)),
+            Offset::new(0),
+            Offset::new(1),
+        );
+        let diagnostic = Diagnostic::error("stale diagnostic")
+            .with_code("SC9998")
+            .with_primary_label_span(stale_def_span, Some("stale label"))
+            .with_note("note still renders");
+
+        let rendered = diagnostic.render_with(&db, &Renderer::plain());
+        assert!(rendered.contains("stale diagnostic"));
+        assert!(rendered.contains("note still renders"));
+        assert!(!rendered.contains("stale label"));
     }
 }

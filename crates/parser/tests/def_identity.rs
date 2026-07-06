@@ -84,6 +84,23 @@ fn defs_by_fingerprint<'db>(
         .collect()
 }
 
+fn lambda_body_identities(db: &TestDb, file: SourceFile) -> Vec<(String, DefIdentity)> {
+    let mut bodies = all_defs(db, file)
+        .into_iter()
+        .filter(|def| {
+            def.kind(db) == DefKind::FuncBody && def.name(db).as_deref() == Some("lambda")
+        })
+        .map(|def| {
+            (
+                def.fingerprint(db).expect("lambda body fingerprint"),
+                def_identity(db, def),
+            )
+        })
+        .collect::<Vec<_>>();
+    bodies.sort_by(|a, b| a.0.cmp(&b.0));
+    bodies
+}
+
 #[test]
 fn same_named_contract_methods_have_container_relative_def_ids() {
     let db = TestDb::default();
@@ -244,6 +261,43 @@ fn import_constructor_selector_fingerprints_are_structural() {
     fingerprints.sort();
     fingerprints.dedup();
     assert_eq!(fingerprints.len(), 3);
+}
+
+#[test]
+fn inserting_preceding_lambda_keeps_existing_lambda_body_identities_stable() {
+    let mut db = TestDb::default();
+    let before_src = "function f(z: word) -> word {
+        let n = lam (x: word) { return x; };
+        let m = lam (y: word) { return y; };
+        return m(n(z));
+    }";
+    let file = source_file(&db, "lambda-bodies-stable", before_src);
+
+    let before = lambda_body_identities(&db, file);
+    assert_eq!(before.len(), 2);
+
+    file.set_content(&mut db).to(Some(
+        "function f(z: word) -> word {
+            let ignored = lam (q: word) { return q + 1; };
+            let n = lam (x: word) { return x; };
+            let m = lam (y: word) { return y; };
+            return m(n(z));
+        }"
+        .to_owned(),
+    ));
+
+    let after = lambda_body_identities(&db, file);
+    assert_eq!(after.len(), 3);
+
+    for (fingerprint, identity) in before {
+        let after_identity = after
+            .iter()
+            .find_map(|(after_fingerprint, after_identity)| {
+                (after_fingerprint == &fingerprint).then_some(after_identity)
+            })
+            .expect("original lambda fingerprint after insertion");
+        assert_eq!(after_identity, &identity);
+    }
 }
 
 #[test]

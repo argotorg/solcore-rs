@@ -11,7 +11,7 @@ use hir::{
     ast::{Ident, function, item, ty},
     diag::{AnyDiagnostic, Diagnostic, Offset},
     input::SourceFile,
-    span::{AnchorId, Span, Spanned, SpannedElem},
+    span::{AnchorId, Span, SpannedElem},
 };
 
 use crate::{
@@ -400,6 +400,43 @@ fn sorted_fingerprints<T>(items: &[T], fingerprint: fn(&T) -> String) -> String 
     fingerprints.join(",")
 }
 
+fn source_snippet_fingerprint(source: &str, span: LexSpan) -> String {
+    source.get(span.start..span.end).unwrap_or("").to_owned()
+}
+
+fn optional_ty_snippet_fingerprint(source: &str, ty: Option<&ParsedTy<'_>>) -> String {
+    ty.map(|ty| source_snippet_fingerprint(source, ty.span))
+        .unwrap_or_else(|| "<none>".to_owned())
+}
+
+fn lambda_fingerprint(
+    source: &str,
+    params_span: LexSpan,
+    ret: Option<&ParsedTy<'_>>,
+    body_span: LexSpan,
+) -> String {
+    structural_fingerprint(
+        "lambda",
+        &[
+            source_snippet_fingerprint(source, params_span),
+            optional_ty_snippet_fingerprint(source, ret),
+            source_snippet_fingerprint(source, body_span),
+        ],
+    )
+}
+
+fn apply_implicit_return(stmts: &mut Vec<ParsedStmt<'_>>) {
+    let [stmt] = stmts.as_mut_slice() else {
+        return;
+    };
+
+    let kind = std::mem::replace(&mut stmt.kind, ParsedStmtKind::Error);
+    stmt.kind = match kind {
+        ParsedStmtKind::Expr(expr) => ParsedStmtKind::Return(Some(expr)),
+        other => other,
+    };
+}
+
 fn lower_pragma<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
@@ -430,14 +467,16 @@ fn lower_type_ref<'db>(
             qualifiers,
             name,
             args,
+            args_span,
         } => {
             let qualifier = lower_qualifier_path(db, anchor, base_start, qualifiers);
+            let args_span = args_span.unwrap_or_else(|| LexSpan::from(name.1.end..name.1.end));
             let name = lower_spanned_ident(db, anchor, base_start, name);
             let args = args
                 .into_iter()
                 .map(|arg| lower_type_ref(db, anchor, base_start, arg))
                 .collect::<Vec<_>>();
-            let args_span = span_from_absolute(anchor, ty_span, base_start);
+            let args_span = span_from_absolute(anchor, args_span, base_start);
             ty::TypeRefKind::Named {
                 qualifier,
                 name,
@@ -458,12 +497,16 @@ fn lower_type_ref<'db>(
                 ),
             }
         }
-        ParsedTyKind::Fn { params, ret } => {
+        ParsedTyKind::Fn {
+            params,
+            params_span,
+            ret,
+        } => {
             let params = params
                 .into_iter()
                 .map(|param| lower_type_ref(db, anchor, base_start, param))
                 .collect::<Vec<_>>();
-            let params_span = span_from_absolute(anchor, ty_span, base_start);
+            let params_span = span_from_absolute(anchor, params_span, base_start);
             let ret = lower_type_ref(db, anchor, base_start, *ret);
             ty::TypeRefKind::Fn {
                 params: SpannedElem::new(params, params_span),
@@ -520,13 +563,16 @@ fn lower_pred_ref<'db>(
     pred: ParsedPred<'_>,
 ) -> ty::PredRef<'db> {
     let ty = lower_type_ref(db, anchor, base_start, pred.ty);
+    let args_span = pred
+        .args_span
+        .unwrap_or_else(|| LexSpan::from(pred.class.1.end..pred.class.1.end));
     let class = lower_spanned_ident(db, anchor, base_start, pred.class);
     let args = pred
         .args
         .into_iter()
         .map(|arg| lower_type_ref(db, anchor, base_start, arg))
         .collect::<Vec<_>>();
-    let args_span = class.span(db);
+    let args_span = span_from_absolute(anchor, args_span, base_start);
     ty::PredRef::new(
         db,
         ty::PredRefKind {
@@ -574,6 +620,7 @@ fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> O
             qualifiers,
             name,
             args,
+            args_span: _,
         } => {
             let name = if args.is_empty() && qualifiers.is_empty() {
                 // Instance identity is alpha-equivalent over its declared type
@@ -602,7 +649,11 @@ fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> O
         ParsedTyKind::Proxy { inner, .. } => {
             canonical_ty_fingerprint(inner, type_vars).map(|inner| format!("Proxy({inner})"))
         }
-        ParsedTyKind::Fn { params, ret } => {
+        ParsedTyKind::Fn {
+            params,
+            params_span: _,
+            ret,
+        } => {
             let params = params
                 .iter()
                 .map(|param| canonical_ty_fingerprint(param, type_vars))
@@ -1102,6 +1153,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         ret: Option<ParsedTy<'_>>,
         body_span: LexSpan,
     ) -> function::ExprKind<'db> {
+        let fingerprint = lambda_fingerprint(self.source, params_span, ret.as_ref(), body_span);
         let params = params
             .into_iter()
             .map(|param| self.lower_func_param(anchor, base_start, param))
@@ -1110,8 +1162,12 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         let params = SpannedElem::new(params, params_span);
         let ret = ret.map(|ret_ty| lower_type_ref(self.db, anchor, base_start, ret_ty));
 
-        let body_def =
-            self.alloc_def_with_location(DefKind::FuncBody, Some("lambda"), body_span.start);
+        let body_def = self.alloc_def_with_fingerprint(
+            DefKind::FuncBody,
+            Some("lambda"),
+            Some(&fingerprint),
+            body_span.start,
+        );
         let body_anchor = AnchorId::def(self.db, body_def);
 
         let parsed_body = parse_body_statements(self.source, body_span);
@@ -1334,9 +1390,14 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         anchor: AnchorId<'db>,
         body_span: LexSpan,
         arenas: &mut BodyArenas<'db>,
+        implicit_return: bool,
     ) -> Vec<hir::arena::Id<function::Stmt<'db>>> {
-        let parsed = parse_body_statements(self.source, body_span);
+        let mut parsed = parse_body_statements(self.source, body_span);
         self.parse_errors.extend(parsed.errors);
+
+        if implicit_return {
+            apply_implicit_return(&mut parsed.output);
+        }
 
         let mut lowered = Vec::with_capacity(parsed.output.len());
         for stmt in parsed.output {
@@ -1560,8 +1621,9 @@ fn lower_function<'db>(
     let body_anchor = AnchorId::def(ctx.db, body_def);
 
     let mut arenas = BodyArenas::new();
+    let implicit_return = matches!(kind, item::FuncKind::Function | item::FuncKind::Fallback);
     let top_level_stmts = ctx.with_owner(body_def, |ctx| {
-        ctx.lower_body_statements(body_anchor, body_span, &mut arenas)
+        ctx.lower_body_statements(body_anchor, body_span, &mut arenas, implicit_return)
     });
     let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
     let (stmts, exprs, pats) = arenas.into_parts();
@@ -1659,6 +1721,25 @@ fn lower_contract_item<'db>(
     }
 }
 
+fn lower_field<'db>(
+    ctx: &mut LoweringCtx<'db, '_>,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    field: ParsedFieldDef<'_>,
+) -> item::FieldDef<'db> {
+    let _field_span = field.span;
+    let name = lower_spanned_ident(ctx.db, anchor, base_start, field.name);
+    let ty = lower_type_ref(ctx.db, anchor, base_start, field.ty);
+    let init = field.init.map(|expr| {
+        let span = span_from_absolute(anchor, expr.span, base_start);
+        let mut arenas = BodyArenas::new();
+        let root = ctx.lower_expr(anchor, base_start, expr, &mut arenas);
+        let (_, exprs, _) = arenas.into_parts();
+        item::FieldInit::new(span, root, exprs)
+    });
+    item::FieldDef::new(name, ty, init)
+}
+
 fn lower_contract<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
@@ -1675,20 +1756,16 @@ fn lower_contract<'db>(
         .into_iter()
         .map(|param| lower_spanned_ident(ctx.db, anchor, span.start, param))
         .collect::<Vec<_>>();
-    let fields = fields
-        .into_iter()
-        .map(|field| {
-            let _ = field.span;
-            let name = lower_spanned_ident(ctx.db, anchor, span.start, field.name);
-            let ty = lower_type_ref(ctx.db, anchor, span.start, field.ty);
-            item::FieldDef::new(name, ty)
-        })
-        .collect::<Vec<_>>();
-    let items = ctx.with_owner(contract_def, |ctx| {
-        items
+    let (fields, items) = ctx.with_owner(contract_def, |ctx| {
+        let fields = fields
+            .into_iter()
+            .map(|field| lower_field(ctx, anchor, span.start, field))
+            .collect::<Vec<_>>();
+        let items = items
             .into_iter()
             .map(|item| lower_contract_item(ctx, item))
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        (fields, items)
     });
     let span = span_from_absolute(anchor, span, span.start);
 

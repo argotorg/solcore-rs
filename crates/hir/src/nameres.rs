@@ -20,9 +20,8 @@
 //! - `for` statements do not introduce their own lexical scope; their
 //!   initializer, condition, post statements, and body share the surrounding
 //!   scope.
-//! - Inside a contract, fields beat same-name functions during term lookup.
-//!   This matches field access/reference semantics and is encoded by checking
-//!   local bindings, then fields, then qualified terms.
+//! - Inside a contract, fields beat same-name functions for bare references,
+//!   while unqualified call callees resolve callable terms before fields.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -1969,7 +1968,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 self.expr(body, *index);
             }
             ExprKind::Call { callee, args } => {
-                self.expr(body, *callee);
+                self.call_callee(body, *callee);
                 for arg in args {
                     self.expr(body, *arg);
                 }
@@ -2196,6 +2195,25 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 }
                 Resolution::Err
             })
+    }
+
+    fn call_callee(&mut self, body: FuncBody<'db>, expr_id: Id<Expr<'db>>) {
+        let expr = body.exprs(self.db).get(expr_id);
+        match &expr.kind {
+            ExprKind::Ident(name) => {
+                let resolution = self.resolve_call_ident(name);
+                self.map.record_expr(body, expr_id, resolution);
+            }
+            _ => self.expr(body, expr_id),
+        }
+    }
+
+    fn resolve_call_ident(&mut self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
+        let text = ident_text(self.db, name);
+        self.lookup_local(text)
+            .or_else(|| self.lookup_qualified_term(text))
+            .or_else(|| self.lookup_field(text))
+            .unwrap_or_else(|| self.resolve_ident(name))
     }
 
     fn expr_as_qualifier(&mut self, body: FuncBody<'db>, expr_id: Id<Expr<'db>>) {

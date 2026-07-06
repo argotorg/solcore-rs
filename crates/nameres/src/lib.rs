@@ -33,10 +33,10 @@ use hir::{
             SelectedName, TypeAlias,
         },
     },
-    diag::{AnyDiagnostic, Diagnostic, DiagnosticId, LabelSpan},
+    diag::{AnyDiagnostic, Diagnostic, DiagnosticId, LabelSpan, Offset},
     input::SourceFile,
     nameres as hir_nameres,
-    span::{Span, Spanned, SpannedElem},
+    span::{AnchorId, Span, Spanned, SpannedElem},
 };
 use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -388,14 +388,14 @@ pub enum ModuleDiagnostic<'db> {
     DuplicateExportedItemName {
         /// Duplicated exported item name.
         name: String,
-        /// Optional module span used when the source file is loaded.
+        /// Optional export declaration/name span.
         span: Option<LabelSpan>,
     },
     /// `SC0112`: two exported module aliases expose the same public name.
     DuplicateExportedModuleName {
         /// Duplicated exported module alias.
         name: String,
-        /// Optional module span used when the source file is loaded.
+        /// Optional export declaration/name span.
         span: Option<LabelSpan>,
     },
     /// `SC0113`: a local export names no local or selected import item.
@@ -457,6 +457,8 @@ pub enum ModuleDiagnostic<'db> {
     },
     /// `SC0120`: the same selected name is imported from multiple modules.
     AmbiguousSelectedImport {
+        /// Namespace context that made the selected public name ambiguous.
+        namespaces: Vec<Namespace>,
         /// Ambiguous selected name.
         name: String,
         /// Span of the import that introduced the ambiguity.
@@ -581,6 +583,7 @@ impl<'db> ModuleDiagnostic<'db> {
                     .with_note("configure the external library root")
             }
             ModuleDiagnostic::AmbiguousSelectedImport {
+                namespaces,
                 name,
                 span,
                 modules,
@@ -590,10 +593,12 @@ impl<'db> ModuleDiagnostic<'db> {
                     .map(|module| module_id_display(db, *module))
                     .collect::<Vec<_>>()
                     .join(", ");
-                Diagnostic::error(format!("ambiguous selected import `{name}`"))
+                let context = namespace_context(namespaces);
+                let label = format!("ambiguous selected import {context}");
+                Diagnostic::error(format!("ambiguous selected import `{name}` {context}"))
                     .with_code("SC0120")
-                    .with_primary_label_span(span.clone(), Some("ambiguous selected import"))
-                    .with_note(format!("`{name}` is imported from {module_list}"))
+                    .with_primary_label_span(span.clone(), Some(label))
+                    .with_note(format!("`{name}` is imported from {module_list} {context}"))
                     .with_note("use an explicit module qualifier or narrow the selected imports")
             }
             ModuleDiagnostic::ConflictingUnqualifiedName {
@@ -611,8 +616,44 @@ impl<'db> ModuleDiagnostic<'db> {
 
 #[derive(Default)]
 struct RawInterface<'db> {
-    item_refs: Vec<ItemRef<'db>>,
-    module_aliases: Vec<ModuleAlias<'db>>,
+    item_refs: Vec<RawItemRef<'db>>,
+    module_aliases: Vec<RawModuleAlias<'db>>,
+}
+
+struct RawItemRef<'db> {
+    item_ref: ItemRef<'db>,
+    export_span: Option<Span<'db>>,
+}
+
+struct RawModuleAlias<'db> {
+    alias: ModuleAlias<'db>,
+    export_span: Option<Span<'db>>,
+}
+
+impl<'db> RawInterface<'db> {
+    fn push_item_ref(&mut self, item_ref: ItemRef<'db>, export_span: Option<Span<'db>>) {
+        self.item_refs.push(RawItemRef {
+            item_ref,
+            export_span,
+        });
+    }
+
+    fn extend_item_refs(
+        &mut self,
+        item_refs: impl IntoIterator<Item = ItemRef<'db>>,
+        export_span: Option<Span<'db>>,
+    ) {
+        self.item_refs
+            .extend(item_refs.into_iter().map(|item_ref| RawItemRef {
+                item_ref,
+                export_span,
+            }));
+    }
+
+    fn push_module_alias(&mut self, alias: ModuleAlias<'db>, export_span: Option<Span<'db>>) {
+        self.module_aliases
+            .push(RawModuleAlias { alias, export_span });
+    }
 }
 
 /// Formats a logical module ID as user-facing text.
@@ -1713,19 +1754,30 @@ fn expand_export<'db>(
         ExportKind::Module(path) => {
             let path_ref = path_ref_from_segments(db, export.span(db), path.clone());
             if let Some(target) = resolve_for_export(db, module, &path_ref, strict, diagnostics) {
-                raw.module_aliases.push(ModuleAlias {
-                    public_name: default_module_binding_name(db, &path_ref),
-                    target,
-                });
+                let span = path_ref
+                    .segments
+                    .last()
+                    .map(|segment| segment.span(db))
+                    .unwrap_or(export.span(db));
+                raw.push_module_alias(
+                    ModuleAlias {
+                        public_name: default_module_binding_name(db, &path_ref),
+                        target,
+                    },
+                    Some(span),
+                );
             }
         }
         ExportKind::ModuleAs(path, alias) => {
             let path_ref = path_ref_from_segments(db, export.span(db), path.clone());
             if let Some(target) = resolve_for_export(db, module, &path_ref, strict, diagnostics) {
-                raw.module_aliases.push(ModuleAlias {
-                    public_name: spanned_name_text(db, alias),
-                    target,
-                });
+                raw.push_module_alias(
+                    ModuleAlias {
+                        public_name: spanned_name_text(db, alias),
+                        target,
+                    },
+                    Some(alias.span(db)),
+                );
             }
         }
         ExportKind::ItemsFrom(path, names) => {
@@ -1745,8 +1797,9 @@ fn expand_exported_name<'db>(
     raw: &mut RawInterface<'db>,
 ) {
     let text = spanned_name_text(db, &name.name);
+    let export_span = Some(name.name.span(db));
     if text == "*" {
-        raw.item_refs.extend(local_importable_refs(db, module));
+        raw.extend_item_refs(local_importable_refs(db, module), export_span);
         return;
     }
     if let Some(module_text) = text.strip_suffix(".*") {
@@ -1794,7 +1847,7 @@ fn expand_exported_name<'db>(
                 )
             });
             if let Some(item_ref) = refs {
-                raw.item_refs.push(item_ref);
+                raw.push_item_ref(item_ref, export_span);
             } else if strict && !may_be_unknown {
                 diagnostics.push(unknown_local_export_diag(db, name.name.span(db), &text));
             }
@@ -1812,8 +1865,10 @@ fn expand_exported_name<'db>(
                     diagnostics.push(unknown_local_export_diag(db, name.name.span(db), &text));
                 }
             } else {
-                raw.item_refs
-                    .extend(refs.into_iter().map(strip_constructor_visibility));
+                raw.extend_item_refs(
+                    refs.into_iter().map(strip_constructor_visibility),
+                    export_span,
+                );
             }
         }
     }
@@ -1872,8 +1927,9 @@ fn expand_reexport_items<'db>(
 
     for name in names {
         let text = spanned_name_text(db, &name.name);
+        let export_span = Some(name.name.span(db));
         if text == "*" {
-            raw.item_refs.extend(interface.item_refs.iter().cloned());
+            raw.extend_item_refs(interface.item_refs.iter().cloned(), export_span);
             continue;
         }
 
@@ -1890,7 +1946,7 @@ fn expand_reexport_items<'db>(
                     diagnostic: ConstructorDiagnostic::ReExport,
                 },
             ) {
-                Some(item_ref) => raw.item_refs.push(item_ref),
+                Some(item_ref) => raw.push_item_ref(item_ref, export_span),
                 None if strict && !target_has_parse_errors => {
                     diagnostics.push(unknown_reexport_diag(db, name.name.span(db), &text));
                 }
@@ -1909,7 +1965,7 @@ fn expand_reexport_items<'db>(
                         diagnostics.push(unknown_reexport_diag(db, name.name.span(db), &text));
                     }
                 } else {
-                    raw.item_refs.extend(matching);
+                    raw.extend_item_refs(matching, export_span);
                 }
             }
         }
@@ -1936,7 +1992,8 @@ fn resolve_for_export<'db>(
 
 fn interface_from_raw<'db>(raw: RawInterface<'db>) -> Interface<'db> {
     let mut interface = Interface::default();
-    for item_ref in normalize_item_refs(raw.item_refs) {
+    let item_refs = raw.item_refs.into_iter().map(|raw| raw.item_ref).collect();
+    for item_ref in normalize_item_refs(item_refs) {
         match item_ref.namespace {
             Namespace::Term => {
                 interface
@@ -1967,7 +2024,8 @@ fn interface_from_raw<'db>(raw: RawInterface<'db>) -> Interface<'db> {
         interface.item_refs.push(item_ref);
     }
 
-    for alias in raw.module_aliases {
+    for raw_alias in raw.module_aliases {
+        let alias = raw_alias.alias;
         interface
             .module_aliases
             .entry(alias.public_name)
@@ -2693,8 +2751,13 @@ fn validate_ambiguous_selected_imports<'db>(
     imports: &[Import<'db>],
     diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) {
-    let mut imported: FxHashMap<(Namespace, String), Vec<ModuleId<'db>>> = FxHashMap::default();
-    let mut spans: FxHashMap<(Namespace, String), Span<'db>> = FxHashMap::default();
+    struct SelectedOccurrence<'db> {
+        namespace: Namespace,
+        target: ModuleId<'db>,
+        span: Span<'db>,
+    }
+
+    let mut imported: FxHashMap<String, Vec<SelectedOccurrence<'db>>> = FxHashMap::default();
     for import in imports {
         let Some(selector) = import.selector(db) else {
             continue;
@@ -2705,33 +2768,70 @@ fn validate_ambiguous_selected_imports<'db>(
         };
         let interface = public_interface(db, target);
         for item_ref in select_import_refs(db, &interface.item_refs, selector, import.hiding(db)) {
-            let key = (item_ref.namespace, item_ref.public_name.clone());
-            spans.entry(key.clone()).or_insert(import.span(db));
-            let targets = imported.entry(key).or_default();
-            if !targets.contains(&target) {
-                targets.push(target);
-            }
+            imported
+                .entry(item_ref.public_name)
+                .or_default()
+                .push(SelectedOccurrence {
+                    namespace: item_ref.namespace,
+                    target,
+                    span: import.span(db),
+                });
         }
     }
 
     let mut imported = imported.into_iter().collect::<Vec<_>>();
-    imported.sort_by(
-        |((left_namespace, left_name), _), ((right_namespace, right_name), _)| {
-            (namespace_sort_key(*left_namespace), left_name)
-                .cmp(&(namespace_sort_key(*right_namespace), right_name))
-        },
-    );
+    imported.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
 
-    for (key, targets) in imported {
-        let name = &key.1;
-        if targets.len() > 1 {
-            let span = spans.get(&key).copied().unwrap_or_else(|| {
-                db.module_file(module).map_or_else(
-                    || panic!("validated module missing file"),
-                    |file| parse_file_to_hir(db, file).module(db).span(db),
-                )
-            });
-            diagnostics.push(ambiguous_import_diag(db, span, name, targets));
+    for (name, occurrences) in imported {
+        let all_targets = unique_modules(occurrences.iter().map(|occurrence| occurrence.target));
+        if all_targets.len() <= 1 {
+            continue;
+        }
+
+        let mut by_namespace: FxHashMap<Namespace, Vec<&SelectedOccurrence<'db>>> =
+            FxHashMap::default();
+        for occurrence in &occurrences {
+            by_namespace
+                .entry(occurrence.namespace)
+                .or_default()
+                .push(occurrence);
+        }
+        let mut namespace_groups = by_namespace.into_iter().collect::<Vec<_>>();
+        namespace_groups.sort_by_key(|(namespace, _)| namespace_sort_key(*namespace));
+
+        let mut emitted_namespace_specific = false;
+        for (namespace, occurrences) in namespace_groups {
+            let targets = unique_modules(occurrences.iter().map(|occurrence| occurrence.target));
+            if targets.len() > 1 {
+                let span = occurrences
+                    .first()
+                    .map(|occurrence| occurrence.span)
+                    .unwrap_or_else(|| module_root_span(db, module));
+                diagnostics.push(ambiguous_import_diag(
+                    db,
+                    span,
+                    &[namespace],
+                    &name,
+                    targets,
+                ));
+                emitted_namespace_specific = true;
+            }
+        }
+
+        if !emitted_namespace_specific {
+            let namespaces =
+                sorted_namespaces(occurrences.iter().map(|occurrence| occurrence.namespace));
+            let span = occurrences
+                .first()
+                .map(|occurrence| occurrence.span)
+                .unwrap_or_else(|| module_root_span(db, module));
+            diagnostics.push(ambiguous_import_diag(
+                db,
+                span,
+                &namespaces,
+                &name,
+                all_targets,
+            ));
         }
     }
 }
@@ -2742,53 +2842,67 @@ fn validate_duplicate_exports<'db>(
     raw: &RawInterface<'db>,
     diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) {
-    let module_span = db
-        .module_file(module)
-        .map(|file| parse_file_to_hir(db, file).module(db).span(db));
-    let mut items: FxHashMap<(Namespace, String), Vec<&ItemRef<'db>>> = FxHashMap::default();
+    let mut items: FxHashMap<String, Vec<&RawItemRef<'db>>> = FxHashMap::default();
     for item_ref in &raw.item_refs {
         items
-            .entry((item_ref.namespace, item_ref.public_name.clone()))
+            .entry(item_ref.item_ref.public_name.clone())
             .or_default()
             .push(item_ref);
     }
     let mut items = items.into_iter().collect::<Vec<_>>();
-    items.sort_by(
-        |((left_namespace, left_name), _), ((right_namespace, right_name), _)| {
-            (namespace_sort_key(*left_namespace), left_name)
-                .cmp(&(namespace_sort_key(*right_namespace), right_name))
-        },
-    );
+    items.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
 
-    for ((_, name), refs) in items {
-        let mut unique = Vec::<(&Origin<'db>, &str)>::new();
-        for item_ref in refs {
-            let key = (&item_ref.origin, item_ref.source_name.as_str());
+    for (name, refs) in items {
+        let mut unique = Vec::<(ModuleId<'db>, &str)>::new();
+        let mut duplicate_span = None;
+        for raw_ref in &refs {
+            let item_ref = &raw_ref.item_ref;
+            let key = (item_ref.origin.module, item_ref.source_name.as_str());
             if !unique
                 .iter()
                 .any(|(origin, source_name)| *origin == key.0 && *source_name == key.1)
             {
+                if !unique.is_empty() && duplicate_span.is_none() {
+                    duplicate_span = raw_ref.export_span;
+                }
                 unique.push(key);
             }
         }
         if unique.len() > 1 {
-            diagnostics.push(duplicate_export_item_diag(db, module_span, &name));
+            let span = duplicate_span
+                .or_else(|| refs.first().and_then(|raw_ref| raw_ref.export_span))
+                .unwrap_or_else(|| module_root_span(db, module));
+            diagnostics.push(duplicate_export_item_diag(db, Some(span), &name));
         }
     }
 
-    let mut modules: FxHashMap<String, Vec<ModuleId<'db>>> = FxHashMap::default();
+    let mut modules: FxHashMap<String, Vec<&RawModuleAlias<'db>>> = FxHashMap::default();
     for alias in &raw.module_aliases {
-        let targets = modules.entry(alias.public_name.clone()).or_default();
-        if !targets.contains(&alias.target) {
-            targets.push(alias.target);
-        }
+        modules
+            .entry(alias.alias.public_name.clone())
+            .or_default()
+            .push(alias);
     }
     let mut modules = modules.into_iter().collect::<Vec<_>>();
     modules.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
 
-    for (name, targets) in modules {
+    for (name, aliases) in modules {
+        let mut targets = Vec::<ModuleId<'db>>::new();
+        let mut duplicate_span = None;
+        for raw_alias in &aliases {
+            let target = raw_alias.alias.target;
+            if !targets.contains(&target) {
+                if !targets.is_empty() && duplicate_span.is_none() {
+                    duplicate_span = raw_alias.export_span;
+                }
+                targets.push(target);
+            }
+        }
         if targets.len() > 1 {
-            diagnostics.push(duplicate_export_module_diag(db, module_span, &name));
+            let span = duplicate_span
+                .or_else(|| aliases.first().and_then(|raw_alias| raw_alias.export_span))
+                .unwrap_or_else(|| module_root_span(db, module));
+            diagnostics.push(duplicate_export_module_diag(db, Some(span), &name));
         }
     }
 }
@@ -2842,6 +2956,17 @@ fn unique_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
     result
 }
 
+fn unique_modules<'db>(values: impl IntoIterator<Item = ModuleId<'db>>) -> Vec<ModuleId<'db>> {
+    let mut seen = FxHashSet::default();
+    let mut result = Vec::new();
+    for value in values {
+        if seen.insert(value) {
+            result.push(value);
+        }
+    }
+    result
+}
+
 fn unique_origins<'db>(values: impl IntoIterator<Item = Origin<'db>>) -> Vec<Origin<'db>> {
     let mut seen = FxHashSet::default();
     let mut result = Vec::new();
@@ -2851,6 +2976,47 @@ fn unique_origins<'db>(values: impl IntoIterator<Item = Origin<'db>>) -> Vec<Ori
         }
     }
     result
+}
+
+fn sorted_namespaces(values: impl IntoIterator<Item = Namespace>) -> Vec<Namespace> {
+    let mut seen = FxHashSet::default();
+    let mut result = Vec::new();
+    for value in values {
+        if seen.insert(value) {
+            result.push(value);
+        }
+    }
+    result.sort_by_key(|namespace| namespace_sort_key(*namespace));
+    result
+}
+
+fn namespace_name(namespace: Namespace) -> &'static str {
+    match namespace {
+        Namespace::Term => "term",
+        Namespace::Type => "type",
+        Namespace::Class => "class",
+    }
+}
+
+fn namespace_context(namespaces: &[Namespace]) -> String {
+    let names = namespaces
+        .iter()
+        .map(|namespace| namespace_name(*namespace))
+        .collect::<Vec<_>>()
+        .join("/");
+    if namespaces.len() == 1 {
+        format!("in {names} namespace")
+    } else {
+        format!("across {names} namespaces")
+    }
+}
+
+fn module_root_span<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Span<'db> {
+    let file = db
+        .module_file(module)
+        .unwrap_or_else(|| panic!("validated module missing file"));
+    let anchor = AnchorId::root(db, file);
+    Span::new(anchor, Offset::new(0), Offset::new(0))
 }
 
 fn module_not_found_diag<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> ModuleDiagnostic<'db> {
@@ -2911,10 +3077,12 @@ fn duplicate_selector_diag<'db>(
 fn ambiguous_import_diag<'db>(
     db: &'db dyn Db,
     span: Span<'db>,
+    namespaces: &[Namespace],
     name: &str,
     modules: Vec<ModuleId<'db>>,
 ) -> ModuleDiagnostic<'db> {
     ModuleDiagnostic::AmbiguousSelectedImport {
+        namespaces: namespaces.to_vec(),
         name: name.to_owned(),
         span: LabelSpan::from_span(db, span),
         modules,

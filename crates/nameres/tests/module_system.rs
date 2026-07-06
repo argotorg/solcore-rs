@@ -214,6 +214,97 @@ fn parse_broken_module_diagnostics_publish_only_parse_errors() {
 }
 
 #[test]
+fn selected_import_ambiguity_is_validated_by_public_name_across_namespaces() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "import a.{T};
+             import b.{T};
+             function main() -> word { return 0; }",
+        ),
+        (vec!["a"], "data T = A; export { T };"),
+        (
+            vec!["b"],
+            "function T() -> word { return 0; }
+             export { T };",
+        ),
+    ]);
+    let main = module_id_from_key(&db, &entry);
+    let diagnostics = lowered_module_diagnostics(&db, main);
+    let rendered = render_diagnostics(&db, &diagnostics);
+
+    assert_eq!(code_count(&diagnostics, "SC0120"), 1, "{rendered}");
+    assert!(
+        rendered.contains("ambiguous selected import `T` across term/type namespaces"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn duplicate_exported_items_are_validated_by_public_name_across_namespaces() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "export a.{T};
+             export b.{T};
+             function main() -> word { return 0; }",
+        ),
+        (vec!["a"], "data T = A; export { T };"),
+        (
+            vec!["b"],
+            "function T() -> word { return 0; }
+             export { T };",
+        ),
+    ]);
+    let main = module_id_from_key(&db, &entry);
+    let diagnostics = lowered_module_diagnostics(&db, main);
+    let rendered = render_diagnostics(&db, &diagnostics);
+
+    assert_eq!(code_count(&diagnostics, "SC0111"), 1, "{rendered}");
+    assert!(
+        rendered.contains("duplicate exported item name `T`"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn selected_import_ambiguity_keeps_namespace_identity() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "import a.{T};
+             import b.{T};
+             function main() -> word { return 0; }",
+        ),
+        (
+            vec!["a"],
+            "data T = A;
+             function T() -> word { return 0; }
+             export { T };",
+        ),
+        (
+            vec!["b"],
+            "data T = A;
+             function T() -> word { return 0; }
+             export { T };",
+        ),
+    ]);
+    let main = module_id_from_key(&db, &entry);
+    let diagnostics = lowered_module_diagnostics(&db, main);
+    let rendered = render_diagnostics(&db, &diagnostics);
+
+    assert_eq!(code_count(&diagnostics, "SC0120"), 2, "{rendered}");
+    assert!(
+        rendered.contains("ambiguous selected import `T` in term namespace"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("ambiguous selected import `T` in type namespace"),
+        "{rendered}"
+    );
+}
+
+#[test]
 fn imports_corpus_matches_reference_expectations() {
     std::thread::Builder::new()
         .name("imports-corpus-validation".to_owned())
@@ -385,6 +476,13 @@ fn diagnostic_codes(diagnostics: &[Diagnostic]) -> Vec<String> {
         .iter()
         .filter_map(|diagnostic| diagnostic.code.clone())
         .collect()
+}
+
+fn code_count(diagnostics: &[Diagnostic], code: &str) -> usize {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code.as_deref() == Some(code))
+        .count()
 }
 
 fn load_entry(

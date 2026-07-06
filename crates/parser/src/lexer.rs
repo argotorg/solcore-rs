@@ -6,6 +6,16 @@
 
 use logos::Logos;
 
+/// Lexer error kind.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum LexError {
+    /// Generic invalid token.
+    #[default]
+    Invalid,
+    /// A block comment reached end of file before its matching terminator.
+    UnterminatedBlockComment,
+}
+
 /// Token recognized by the Solcore lexer.
 ///
 /// Literal and identifier variants borrow slices from the input source. Token
@@ -13,6 +23,7 @@ use logos::Logos;
 /// defined before their single-character prefixes.
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
+#[logos(error = LexError)]
 pub enum Token<'a> {
     /// `contract`.
     #[token("contract")]
@@ -193,6 +204,9 @@ pub enum Token<'a> {
     /// `@`.
     #[token("@")]
     At,
+    /// `?`.
+    #[token("?")]
+    Question,
 
     /// `.`.
     #[token(".")]
@@ -268,34 +282,32 @@ fn line_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip {
 
 /// Skips a block comment starting with `/*` by consuming all characters until
 /// the matching `*/`. Supports nested block comments by tracking depth.
-fn block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip {
+fn block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<logos::Skip, LexError> {
     let remainder = lex.remainder();
     let mut depth = 1;
-    let mut chars = remainder.char_indices();
+    let bytes = remainder.as_bytes();
+    let mut i = 0;
 
-    while let Some((i, c)) = chars.next() {
-        match c {
-            '*' => {
-                if let Some((_, '/')) = chars.next() {
-                    depth -= 1;
-                    if depth == 0 {
-                        lex.bump(i + 2);
-                        return logos::Skip;
-                    }
+    while i + 1 < bytes.len() {
+        match (bytes[i], bytes[i + 1]) {
+            (b'/', b'*') => {
+                depth += 1;
+                i += 2;
+            }
+            (b'*', b'/') => {
+                depth -= 1;
+                i += 2;
+                if depth == 0 {
+                    lex.bump(i);
+                    return Ok(logos::Skip);
                 }
             }
-            '/' => {
-                if let Some((_, '*')) = chars.next() {
-                    depth += 1;
-                }
-            }
-            _ => {}
+            _ => i += 1,
         }
     }
 
-    // Unclosed comment, consume the rest.
     lex.bump(remainder.len());
-    logos::Skip
+    Err(LexError::UnterminatedBlockComment)
 }
 
 #[cfg(test)]

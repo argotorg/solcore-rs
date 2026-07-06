@@ -6,14 +6,15 @@
 //! identities while still reading fields incrementally.
 
 use crate::{
+    Db,
     anchor::DefId,
+    arena::{Arena, Id},
     ast::{
-        function::{FuncBody, FuncSig},
-        ty::{PredRef, TypeRef},
         Ident,
+        function::{Expr, FuncBody, FuncSig},
+        ty::{PredRef, TypeRef},
     },
     span::{Span, Spanned, SpannedElem},
-    Db,
 };
 
 /// Algebraic data type declaration.
@@ -319,16 +320,44 @@ impl<'db> InstanceDef<'db> {
 ///
 /// Fields are private to their containing contract scope and are represented by
 /// declaration order during name resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct FieldInit<'db> {
+    /// Span covering the initializer expression.
+    pub span: Span<'db>,
+    /// Root expression ID in `exprs`.
+    pub root: Id<Expr<'db>>,
+    /// Arena containing the initializer expression tree.
+    pub exprs: Arena<Expr<'db>>,
+}
+
+impl<'db> FieldInit<'db> {
+    /// Creates a contract field initializer.
+    pub fn new(span: Span<'db>, root: Id<Expr<'db>>, exprs: Arena<Expr<'db>>) -> Self {
+        Self { span, root, exprs }
+    }
+}
+
+impl<'db> Spanned<'db> for FieldInit<'db> {
+    fn span(&self, _db: &'db dyn Db) -> Span<'db> {
+        self.span
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct FieldDef<'db> {
     name: SpannedElem<'db, Ident<'db>>,
     ty: TypeRef<'db>,
+    init: Option<FieldInit<'db>>,
 }
 
 impl<'db> FieldDef<'db> {
     /// Creates a contract field declaration.
-    pub fn new(name: SpannedElem<'db, Ident<'db>>, ty: TypeRef<'db>) -> Self {
-        Self { name, ty }
+    pub fn new(
+        name: SpannedElem<'db, Ident<'db>>,
+        ty: TypeRef<'db>,
+        init: Option<FieldInit<'db>>,
+    ) -> Self {
+        Self { name, ty, init }
     }
 
     /// Returns the field name with its binder span.
@@ -340,11 +369,17 @@ impl<'db> FieldDef<'db> {
     pub fn ty(&self) -> TypeRef<'db> {
         self.ty
     }
+
+    /// Returns the optional field initializer expression.
+    pub fn init(&self) -> Option<&FieldInit<'db>> {
+        self.init.as_ref()
+    }
 }
 
 impl<'db> Spanned<'db> for FieldDef<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
-        self.name.span(db) + self.ty.span(db)
+        let span = self.name.span(db) + self.ty.span(db);
+        self.init.as_ref().map_or(span, |init| span + init.span(db))
     }
 }
 

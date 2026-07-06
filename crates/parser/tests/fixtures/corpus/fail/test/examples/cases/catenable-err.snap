@@ -1,9 +1,10 @@
 ---
 source: crates/parser/tests/diagnostics.rs
+assertion_line: 188
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/catenable-err.solc
 ---
-error: unexpected `}`; expected `;` while parsing class declaration
+error: unexpected `}`; expected `->`, or `;` while parsing type
  --> /catenable-err.solc:3:1
   |
 1 | forall t.class t:Catenable {

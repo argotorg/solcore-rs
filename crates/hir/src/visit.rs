@@ -91,6 +91,9 @@ impl<'db> ErrorCollector<'db> {
             Item::ContractDef(def) => {
                 for field in def.fields(self.db) {
                     self.ty(field.ty());
+                    if let Some(init) = field.init() {
+                        self.field_init(init);
+                    }
                 }
                 for item in def.items(self.db) {
                     self.contract_item(*item);
@@ -179,6 +182,12 @@ impl<'db> ErrorCollector<'db> {
         }
         for (_, pat) in body.pats(self.db).iter() {
             self.pat(pat);
+        }
+    }
+
+    fn field_init(&mut self, init: &crate::ast::item::FieldInit<'db>) {
+        for (_, expr) in init.exprs.iter() {
+            self.expr(expr);
         }
     }
 

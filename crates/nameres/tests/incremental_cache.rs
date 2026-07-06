@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use hir::input::SourceFile;
+use hir::{diag::DiagnosticId, input::SourceFile};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
@@ -119,6 +119,37 @@ fn module_diagnostics_backdates_after_same_module_body_literal_edit() {
     }
 }
 
+#[test]
+fn duplicate_export_diagnostics_backdate_after_unrelated_body_length_edit() {
+    let before = "export a.{f};\nexport b.{f};\n\nfunction unrelated() -> word {\n  return 1;\n}\n";
+    let after =
+        "export a.{f};\nexport b.{f};\n\nfunction unrelated() -> word {\n  return 123456789;\n}\n";
+    let (mut db, file, key) = db_with_duplicate_export_main(before);
+
+    let before_ids = {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        let ids = diagnostic_ids_for_code(&db, module, "SC0111");
+        assert_eq!(ids.len(), 1);
+        ids
+    };
+
+    file.set_content(&mut db).to(Some(after.to_owned()));
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        let after_ids = diagnostic_ids_for_code(&db, module, "SC0111");
+        assert_eq!(after_ids, before_ids);
+        let executed = db.take_executed();
+        assert_eq!(
+            query_executions(&executed, "module_diagnostics"),
+            0,
+            "{executed:#?}"
+        );
+    }
+}
+
 fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
@@ -138,6 +169,60 @@ fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
     };
     db.module_files.insert(key.clone(), file);
     (db, file, key)
+}
+
+fn db_with_duplicate_export_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
+    let mut db = TestDb::default();
+    db.module_tree = Some(ModuleTree::new(
+        &db,
+        PathBuf::from("/memory"),
+        PathBuf::from("/memory/std"),
+        BTreeMap::new(),
+    ));
+    for (path, source) in [
+        (
+            vec!["a"],
+            "function f() -> word { return 0; }\nexport { f };\n",
+        ),
+        (
+            vec!["b"],
+            "function f() -> word { return 0; }\nexport { f };\n",
+        ),
+    ] {
+        let key = ModuleKey {
+            library: LibraryId::Main,
+            logical_path: path.into_iter().map(str::to_owned).collect(),
+        };
+        let file = source_file(&db, &key, source);
+        db.module_files.insert(key, file);
+    }
+
+    let file = SourceFile::new(
+        &db,
+        "memory:///main.solc".parse().expect("valid URL"),
+        Some(content.to_owned()),
+    );
+    let key = ModuleKey {
+        library: LibraryId::Main,
+        logical_path: vec!["main".to_owned()],
+    };
+    db.module_files.insert(key.clone(), file);
+    (db, file, key)
+}
+
+fn source_file(db: &TestDb, key: &ModuleKey, content: &str) -> SourceFile {
+    let url = format!("memory:///{}.solc", key.logical_path.join("/"))
+        .parse()
+        .expect("valid URL");
+    SourceFile::new(db, url, Some(content.to_owned()))
+}
+
+fn diagnostic_ids_for_code(db: &TestDb, module: ModuleId<'_>, code: &str) -> Vec<DiagnosticId> {
+    module_diagnostics(db, module)
+        .iter()
+        .filter(|diagnostic| diagnostic.lower(db).code.as_deref() == Some(code))
+        .map(|diagnostic| diagnostic.diagnostic_id(db))
+        .collect()
 }
 
 fn query_executions(events: &[String], query: &str) -> usize {

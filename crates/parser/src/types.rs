@@ -230,6 +230,8 @@ pub(crate) enum ParsedTyKind<'src> {
         name: SpannedStr<'src>,
         /// Type arguments.
         args: Vec<ParsedTy<'src>>,
+        /// Span of the parenthesized argument list, if present.
+        args_span: Option<LexSpan>,
     },
     /// Proxy type sugar introduced by `@`.
     Proxy {
@@ -242,6 +244,8 @@ pub(crate) enum ParsedTyKind<'src> {
     Fn {
         /// Parameter types.
         params: Vec<ParsedTy<'src>>,
+        /// Span of the source domain type or parameter group.
+        params_span: LexSpan,
         /// Return type.
         ret: Box<ParsedTy<'src>>,
     },
@@ -270,6 +274,8 @@ pub(crate) struct ParsedPred<'src> {
     pub(crate) class: SpannedStr<'src>,
     /// Additional class arguments.
     pub(crate) args: Vec<ParsedTy<'src>>,
+    /// Span of the parenthesized class-argument list, if present.
+    pub(crate) args_span: Option<LexSpan>,
 }
 
 /// Parsed ADT constructor.
@@ -354,6 +360,8 @@ pub(crate) struct ParsedFieldDef<'src> {
     pub(crate) name: SpannedStr<'src>,
     /// Field type.
     pub(crate) ty: ParsedTy<'src>,
+    /// Optional field initializer expression.
+    pub(crate) init: Option<ParsedExpr<'src>>,
 }
 
 /// Parsed item inside a contract body.

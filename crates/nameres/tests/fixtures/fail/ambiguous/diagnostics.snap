@@ -3,12 +3,12 @@ source: crates/nameres/tests/module_system.rs
 expression: rendered
 input_file: crates/nameres/tests/fixtures/fail/ambiguous/main.solc
 ---
-error[SC0120]: ambiguous selected import `value`
+error[SC0120]: ambiguous selected import `value` in term namespace
  --> /main/main.solc:1:1
   |
 1 | import a.{value};
-  | ^^^^^^^^^^^^^^^^^ ambiguous selected import
+  | ^^^^^^^^^^^^^^^^^ ambiguous selected import in term namespace
 2 | import b.{value};
   |
-  = note: `value` is imported from a, b
+  = note: `value` is imported from a, b in term namespace
   = note: use an explicit module qualifier or narrow the selected imports
