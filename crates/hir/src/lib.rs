@@ -3,6 +3,7 @@ pub mod arena;
 pub mod ast;
 pub mod diag;
 pub mod input;
+pub mod nameres;
 pub mod sema;
 pub mod span;
 pub mod visit;

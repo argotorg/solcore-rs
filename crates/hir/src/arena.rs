@@ -3,11 +3,19 @@ use std::{
     ops::{Index, IndexMut},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct Id<T> {
     raw: u32,
     _marker: PhantomData<fn() -> T>,
 }
+
+impl<T> Clone for Id<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Id<T> {}
 
 impl<T> Id<T> {
     pub fn as_usize(self) -> usize {

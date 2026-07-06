@@ -1,9 +1,9 @@
 use crate::{
-    Db,
     ast::{
-        Ident,
         item::{AdtDef, ClassDef, ContractDef, TypeAlias},
+        Ident,
     },
+    Db,
 };
 
 #[salsa::interned(debug)]
@@ -63,6 +63,7 @@ pub enum BuiltinTyCtor {
     Unit,
     Bool,
     String,
+    Integer,
     Pair,
     Sum,
 }
@@ -113,7 +114,7 @@ pub struct TyScheme<'db> {
 impl BuiltinTyCtor {
     pub const fn arity(self) -> usize {
         match self {
-            Self::Word | Self::Unit | Self::Bool | Self::String => 0,
+            Self::Word | Self::Unit | Self::Bool | Self::String | Self::Integer => 0,
             Self::Pair | Self::Sum => 2,
         }
     }
@@ -124,6 +125,7 @@ impl BuiltinTyCtor {
             "()" => Some(Self::Unit),
             "bool" => Some(Self::Bool),
             "string" => Some(Self::String),
+            "integer" => Some(Self::Integer),
             "pair" => Some(Self::Pair),
             "sum" => Some(Self::Sum),
             _ => None,
@@ -192,6 +194,10 @@ impl<'db> Ty<'db> {
 
     pub fn string(db: &'db dyn Db) -> Self {
         Self::builtin(db, BuiltinTyCtor::String)
+    }
+
+    pub fn integer(db: &'db dyn Db) -> Self {
+        Self::builtin(db, BuiltinTyCtor::Integer)
     }
 
     pub fn measure(self, db: &'db dyn Db) -> usize {

@@ -1,12 +1,12 @@
 use crate::{
-    Db,
     anchor::DefId,
     ast::{
-        Ident,
         function::{FuncBody, FuncSig},
         ty::{PredRef, TypeRef},
+        Ident,
     },
     span::{Span, Spanned, SpannedElem},
+    Db,
 };
 
 #[salsa::tracked(debug)]
@@ -35,6 +35,20 @@ pub struct AdtDef<'db> {
 impl<'db> Spanned<'db> for AdtDef<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         AdtDef::span(*self, db)
+    }
+}
+
+impl<'db> AdtDef<'db> {
+    pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
+        AdtDef::def_id(*self, db)
+    }
+
+    pub fn name_elem(&self, db: &'db dyn Db) -> SpannedElem<'db, Ident<'db>> {
+        AdtDef::name(*self, db)
+    }
+
+    pub fn ty_param_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
+        AdtDef::ty_params(*self, db)
     }
 }
 
@@ -93,6 +107,12 @@ impl<'db> Spanned<'db> for FunctionDef<'db> {
     }
 }
 
+impl<'db> FunctionDef<'db> {
+    pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
+        FunctionDef::def_id(*self, db)
+    }
+}
+
 /// Type alias definition: `type Name(T, U) = Type`.
 #[salsa::tracked(debug)]
 pub struct TypeAlias<'db> {
@@ -120,6 +140,20 @@ pub struct TypeAlias<'db> {
 impl<'db> Spanned<'db> for TypeAlias<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         TypeAlias::span(*self, db)
+    }
+}
+
+impl<'db> TypeAlias<'db> {
+    pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
+        TypeAlias::def_id(*self, db)
+    }
+
+    pub fn name_elem(&self, db: &'db dyn Db) -> SpannedElem<'db, Ident<'db>> {
+        TypeAlias::name(*self, db)
+    }
+
+    pub fn ty_param_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
+        TypeAlias::ty_params(*self, db)
     }
 }
 
@@ -156,6 +190,16 @@ impl<'db> Spanned<'db> for ClassDef<'db> {
     }
 }
 
+impl<'db> ClassDef<'db> {
+    pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
+        ClassDef::def_id(*self, db)
+    }
+
+    pub fn type_var_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
+        ClassDef::type_vars(*self, db)
+    }
+}
+
 #[salsa::tracked(debug)]
 pub struct InstanceDef<'db> {
     #[tracked]
@@ -189,6 +233,16 @@ pub struct InstanceDef<'db> {
 impl<'db> Spanned<'db> for InstanceDef<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         InstanceDef::span(*self, db)
+    }
+}
+
+impl<'db> InstanceDef<'db> {
+    pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
+        InstanceDef::def_id(*self, db)
+    }
+
+    pub fn type_var_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
+        InstanceDef::type_vars(*self, db)
     }
 }
 
@@ -267,6 +321,30 @@ pub struct ContractDef<'db> {
 impl<'db> Spanned<'db> for ContractDef<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         ContractDef::span(*self, db)
+    }
+}
+
+impl<'db> ContractDef<'db> {
+    pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
+        ContractDef::def_id(*self, db)
+    }
+
+    pub fn name_elem(&self, db: &'db dyn Db) -> SpannedElem<'db, Ident<'db>> {
+        ContractDef::name(*self, db)
+    }
+
+    pub fn ty_param_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
+        ContractDef::ty_params(*self, db)
+    }
+}
+
+impl<'db> Import<'db> {
+    pub fn path_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
+        Import::path(*self, db)
+    }
+
+    pub fn alias_elem(&self, db: &'db dyn Db) -> Option<SpannedElem<'db, Ident<'db>>> {
+        Import::alias(*self, db)
     }
 }
 
@@ -446,5 +524,11 @@ pub struct Module<'db> {
 impl<'db> Spanned<'db> for Module<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         Module::span(*self, db)
+    }
+}
+
+impl<'db> Module<'db> {
+    pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
+        Module::def_id(*self, db)
     }
 }
