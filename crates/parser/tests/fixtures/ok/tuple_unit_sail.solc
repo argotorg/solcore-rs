@@ -1,0 +1,25 @@
+data Pair(a, b) = Pair(a, b);
+
+forall a b . function fst(p : (a, b)) -> a {
+  match p {
+    | (x, y) => return x;
+  }
+}
+
+function tupleValue() -> (word, word) {
+  return (1, 0);
+}
+
+function unitValue() -> () {
+  return ();
+}
+
+function nestedTupleUnitPattern(p) {
+  match p {
+    | ((), (x, y)) => return x;
+  }
+}
+
+function pairData(x : word, y : word) -> Pair(word, word) {
+  return Pair(x, y);
+}

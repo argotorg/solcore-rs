@@ -257,6 +257,7 @@ pub(crate) enum ParsedExprKind<'src> {
         then_expr: Box<ParsedExpr<'src>>,
         else_expr: Box<ParsedExpr<'src>>,
     },
+    Tuple(Vec<ParsedExpr<'src>>),
     Error,
 }
 

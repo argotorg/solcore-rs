@@ -272,26 +272,42 @@ fn lower_type_ref<'db>(
             inner: lower_type_ref(db, anchor, base_start, *inner),
         },
         ParsedTyKind::Tuple { elems } => {
-            let span = span_from_absolute(anchor, parsed_ty.span, base_start);
-            let tuple_ty = if elems.len() == 1 {
-                lower_type_ref(
-                    db,
-                    anchor,
-                    base_start,
-                    elems.into_iter().next().expect("len == 1"),
-                )
-            } else {
-                ty::TypeRef::new(db, ty::TypeRefKind::Error { span })
-            };
-            ty::TypeRefKind::Tuple {
-                elems: SpannedElem::new(tuple_ty, span),
-            }
+            return lower_type_list_ref(db, anchor, base_start, parsed_ty.span, elems);
         }
         ParsedTyKind::Error => ty::TypeRefKind::Error {
             span: span_from_absolute(anchor, parsed_ty.span, base_start),
         },
     };
     ty::TypeRef::new(db, kind)
+}
+
+fn lower_type_list_ref<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    span: LexSpan,
+    elems: Vec<ParsedTy<'_>>,
+) -> ty::TypeRef<'db> {
+    if elems.len() == 1 {
+        return lower_type_ref(
+            db,
+            anchor,
+            base_start,
+            elems.into_iter().next().expect("len == 1"),
+        );
+    }
+
+    let span = span_from_absolute(anchor, span, base_start);
+    let elems = elems
+        .into_iter()
+        .map(|elem| lower_type_ref(db, anchor, base_start, elem))
+        .collect::<Vec<_>>();
+    ty::TypeRef::new(
+        db,
+        ty::TypeRefKind::Tuple {
+            elems: SpannedElem::new(elems, span),
+        },
+    )
 }
 
 fn lower_pred_ref<'db>(
@@ -419,16 +435,7 @@ fn lower_adt_ctor<'db>(
 ) -> item::AdtCtor<'db> {
     let name = lower_spanned_ident(db, anchor, base_start, ctor.name);
     let fields_span = span_from_absolute(anchor, ctor.span, base_start);
-    let fields_ty = if ctor.fields.len() == 1 {
-        lower_type_ref(
-            db,
-            anchor,
-            base_start,
-            ctor.fields.into_iter().next().expect("len == 1"),
-        )
-    } else {
-        ty::TypeRef::new(db, ty::TypeRefKind::Error { span: fields_span })
-    };
+    let fields_ty = lower_type_list_ref(db, anchor, base_start, ctor.span, ctor.fields);
     item::AdtCtor::new(name, SpannedElem::new(fields_ty, fields_span))
 }
 
@@ -722,6 +729,9 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
                 then_expr,
                 else_expr,
             } => self.lower_if_expr(anchor, base_start, *cond, *then_expr, *else_expr, arenas),
+            ParsedExprKind::Tuple(elems) => {
+                self.lower_tuple_expr(anchor, base_start, elems, arenas)
+            }
             ParsedExprKind::Error => function::ExprKind::Error,
         }
     }
@@ -843,6 +853,17 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             then_expr,
             else_expr,
         }
+    }
+
+    fn lower_tuple_expr(
+        &mut self,
+        anchor: AnchorId<'db>,
+        base_start: usize,
+        elems: Vec<ParsedExpr<'_>>,
+        arenas: &mut BodyArenas<'db>,
+    ) -> function::ExprKind<'db> {
+        let elems = self.lower_exprs(anchor, base_start, elems, arenas);
+        function::ExprKind::Tuple(elems)
     }
 
     fn lower_lambda_expr(

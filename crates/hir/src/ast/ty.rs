@@ -32,7 +32,7 @@ pub enum TypeRefKind<'db> {
         inner: TypeRef<'db>,
     },
     Tuple {
-        elems: SpannedElem<'db, TypeRef<'db>>,
+        elems: SpannedElem<'db, Vec<TypeRef<'db>>>,
     },
     Error { span: Span<'db> },
 }

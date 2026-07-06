@@ -142,6 +142,7 @@ pub enum ExprKind<'db> {
         then_expr: Id<Expr<'db>>,
         else_expr: Id<Expr<'db>>,
     },
+    Tuple(Vec<Id<Expr<'db>>>),
     Error,
 }
 

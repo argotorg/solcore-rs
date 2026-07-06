@@ -587,7 +587,7 @@ where
                 } else {
                     ParsedExpr {
                         span: e.span(),
-                        kind: ParsedExprKind::Error,
+                        kind: ParsedExprKind::Tuple(elems),
                     }
                 }
             })
