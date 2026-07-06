@@ -150,7 +150,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!("cases/DupFun.solc", "reference-fails-before-typeck"),
     known!("cases/Enum.solc", "missing-negative-typecheck"),
     known!("cases/Filter.solc", "missing-negative-typecheck"),
-    known!("cases/GetSet.solc", "missing-negative-typecheck"),
     known!("cases/GoodInstance.solc", "missing-negative-typecheck"),
     known!("cases/KindTest.solc", "missing-negative-typecheck"),
     known!("cases/ListModule.solc", "needs-tuple-call-lowering"),

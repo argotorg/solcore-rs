@@ -195,6 +195,107 @@ contract Token {
 }
 
 #[test]
+fn abi_json_preserves_source_declaration_order() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+contract Order {
+  public function a() -> word { return 1; }
+  constructor(seed: word) {}
+  payable fallback() -> () {}
+  public function b(x: word) -> word { return x; }
+}
+"#,
+    );
+    let contract = contract_named(&db, module, "Order");
+
+    let abi = contract_abi_json(&db, module, contract).expect("ABI JSON");
+    let a = abi.find("\"name\": \"a\"").expect("a entry");
+    let constructor = abi
+        .find("\"type\": \"constructor\"")
+        .expect("constructor entry");
+    let fallback = abi.find("\"type\": \"fallback\"").expect("fallback entry");
+    let b = abi.find("\"name\": \"b\"").expect("b entry");
+    assert!(
+        a < constructor && constructor < fallback && fallback < b,
+        "{abi}"
+    );
+}
+
+#[test]
+fn constructor_and_fallback_abi_lowering_normalizes_aliases() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+type U = word;
+type UnitAlias = ();
+
+contract AliasDispatch {
+  constructor(seed: U) {}
+  fallback() -> UnitAlias {}
+}
+"#,
+    );
+    let contract = contract_named(&db, module, "AliasDispatch");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert_eq!(surface.constructor.inputs[0].ty, "uint256");
+    assert!(
+        surface.fallback.outputs.is_empty(),
+        "{:?}",
+        surface.fallback.outputs
+    );
+    assert!(
+        surface
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_deref() != Some("SC0231")),
+        "{:?}",
+        surface.diagnostics
+    );
+}
+
+#[test]
+fn dispatch_signature_spelling_matches_reference_sigstring_shape() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+type U = word;
+data address;
+data bytes;
+data bytes32;
+data memory(t) = memory(word);
+data Token;
+
+contract Signatures {
+  public function spell(
+    a: word,
+    b: (word, bool),
+    c: memory(string),
+    d: memory(bytes),
+    e: bytes32,
+    f: address,
+    g: U,
+    h: Token
+  ) -> word {
+    return a;
+  }
+}
+"#,
+    );
+    let contract = contract_named(&db, module, "Signatures");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert_eq!(
+        surface.methods[0].signature,
+        "spell(uint256,uint256,bool,string,bytes,bytes32,address,uint256,Token)"
+    );
+}
+
+#[test]
 fn parameterized_abi_type_fails_loudly_and_duplicate_signatures_are_diagnosed() {
     let db = TestDb::default();
     let module = parse_module(
@@ -221,6 +322,19 @@ contract Store {
         contract_abi_json(&db, module, contract)
             .expect_err("unsupported ABI type")
             .contains("cannot represent type")
+    );
+    assert!(
+        diagnostics(
+            r#"
+data Mapping(a, b) = Mapping;
+
+contract Store {
+  public function put(m: Mapping(word, word)) -> word { return 0; }
+}
+"#
+        )
+        .iter()
+        .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0231"))
     );
 
     let module = parse_module(

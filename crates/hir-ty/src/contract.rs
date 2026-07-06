@@ -23,7 +23,10 @@ use hir::{
 };
 use rustc_hash::FxHashMap;
 
-use crate::{AliasNormalizer, BinderEnv, BuiltinTyCtor, Db, Ty, TyCtor, TyKind, TypeLowering};
+use crate::{
+    AliasNormalizer, BinderEnv, BuiltinTyCtor, Db, LoweredFunction, Ty, TyCtor, TyKind,
+    TypeLowering,
+};
 
 const PLACEHOLDER_SELECTOR: &str = "<keccak256[0..4] pending>";
 
@@ -51,6 +54,8 @@ pub struct DispatchSurface<'db> {
 pub struct DispatchMethod<'db> {
     /// Function definition.
     pub def: DefId<'db>,
+    /// Source declaration index within the contract.
+    pub source_index: usize,
     /// Source method name.
     pub name: String,
     /// Whether the method is payable.
@@ -71,6 +76,8 @@ pub struct DispatchMethod<'db> {
 pub struct DispatchConstructor {
     /// Whether the constructor was present in source.
     pub explicit: bool,
+    /// Source declaration index within the contract, when explicit.
+    pub source_index: Option<usize>,
     /// Whether deployment may receive value.
     pub payable: bool,
     /// ABI input parameters.
@@ -84,6 +91,8 @@ pub struct DispatchFallback<'db> {
     pub def: Option<DefId<'db>>,
     /// Whether the fallback was present in source.
     pub explicit: bool,
+    /// Source declaration index within the contract, when explicit.
+    pub source_index: Option<usize>,
     /// Whether fallback calls may receive value.
     pub payable: bool,
     /// ABI input parameters. Valid Solcore fallbacks are unit.
@@ -209,14 +218,18 @@ pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) ->
             _ => None,
         })
         .flat_map(|contract| {
+            let dispatch_generated = contract_generates_dispatch(db, contract);
             contract_dispatch_surface(db, module, contract)
                 .diagnostics
                 .into_iter()
+                .filter(move |diagnostic| {
+                    diagnostic.code.as_deref() != Some("SC0231") || dispatch_generated
+                })
         })
         .filter(|diagnostic| {
             matches!(
                 diagnostic.code.as_deref(),
-                Some("SC0230" | "SC0232" | "SC0233")
+                Some("SC0230" | "SC0231" | "SC0232" | "SC0233")
             )
         })
         .collect()
@@ -248,25 +261,48 @@ pub fn contract_abi_json<'db>(
     let surface = contract_dispatch_surface(db, module, contract);
     let mut entries = Vec::new();
     if surface.constructor.explicit {
-        entries.push(AbiJsonEntry::Constructor {
-            inputs: surface.constructor.inputs,
-            payable: surface.constructor.payable,
-        });
+        entries.push((
+            surface.constructor.source_index.unwrap_or(usize::MAX),
+            AbiJsonEntry::Constructor {
+                inputs: surface.constructor.inputs,
+                payable: surface.constructor.payable,
+            },
+        ));
     }
     for method in surface.methods {
-        entries.push(AbiJsonEntry::Function {
-            name: method.name,
-            inputs: method.inputs,
-            outputs: method.outputs,
-            payable: method.payable,
-        });
+        entries.push((
+            method.source_index,
+            AbiJsonEntry::Function {
+                name: method.name,
+                inputs: method.inputs,
+                outputs: method.outputs,
+                payable: method.payable,
+            },
+        ));
     }
     if surface.fallback.explicit {
-        entries.push(AbiJsonEntry::Fallback {
-            payable: surface.fallback.payable,
-        });
+        entries.push((
+            surface.fallback.source_index.unwrap_or(usize::MAX),
+            AbiJsonEntry::Fallback {
+                payable: surface.fallback.payable,
+            },
+        ));
     }
+    entries.sort_by_key(|(source_index, _)| *source_index);
+    let entries = entries
+        .into_iter()
+        .map(|(_, entry)| entry)
+        .collect::<Vec<_>>();
     render_abi_json(&entries)
+}
+
+fn contract_generates_dispatch<'db>(db: &'db dyn Db, contract: ContractDef<'db>) -> bool {
+    !contract.items(db).iter().any(|item| {
+        let ContractItem::FunctionDef(function) = item else {
+            return false;
+        };
+        ident_text(db, &function.sig(db).name) == "main"
+    })
 }
 
 fn contract_dispatch_surface_with_resolutions<'db>(
@@ -283,7 +319,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
     let mut constructor: Option<DispatchConstructor> = None;
     let mut fallback: Option<DispatchFallback<'db>> = None;
 
-    for item in contract.items(db) {
+    for (source_index, item) in contract.items(db).iter().enumerate() {
         let ContractItem::FunctionDef(function) = *item else {
             continue;
         };
@@ -295,30 +331,31 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 }
                 let type_vars =
                     function_type_vars(db, &contract_type_vars, function.def_id_value(db), sig);
-                let lowerer = TypeLowering::from_item_resolutions(
-                    db,
-                    item_resolutions,
-                    BinderEnv::from_type_vars(&type_vars),
-                );
-                let lowered = AliasNormalizer::new(db, module, item_resolutions)
-                    .normalize_scheme(lowerer.lower_function(function).scheme);
-                let body = lowered.body(db).ty(db);
-                let (params, ret) = split_function_ty(db, body);
+                let lowered =
+                    lower_normalized_function(db, module, item_resolutions, function, &type_vars);
                 let param_names = param_names(db, sig.params.atom());
-                let inputs = abi_params(db, &param_names, &params, &mut diagnostics, sig.span);
-                let outputs = abi_outputs(db, ret, &mut diagnostics, sig.span);
-                let signature = method_signature_string(db, &ident_text(db, &sig.name), &params)
-                    .unwrap_or_else(|err| {
-                        diagnostics.push(contract_diag_unsupported_abi_type(
-                            db,
-                            sig.span,
-                            &ident_text(db, &sig.name),
-                            &err,
-                        ));
-                        format!("{}(<unsupported>)", ident_text(db, &sig.name))
-                    });
+                let inputs = abi_params(
+                    db,
+                    &param_names,
+                    &lowered.params,
+                    &mut diagnostics,
+                    sig.span,
+                );
+                let outputs = abi_outputs(db, lowered.ret, &mut diagnostics, sig.span);
+                let signature =
+                    method_signature_string(db, &ident_text(db, &sig.name), &lowered.params)
+                        .unwrap_or_else(|err| {
+                            diagnostics.push(contract_diag_unsupported_abi_type(
+                                db,
+                                sig.span,
+                                &ident_text(db, &sig.name),
+                                &err,
+                            ));
+                            format!("{}(<unsupported>)", ident_text(db, &sig.name))
+                        });
                 methods.push(DispatchMethod {
                     def: function.def_id_value(db),
+                    source_index,
                     name: ident_text(db, &sig.name),
                     payable: sig.payable.is_some(),
                     signature,
@@ -335,12 +372,8 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 let sig = function.sig(db);
                 let type_vars =
                     function_type_vars(db, &contract_type_vars, function.def_id_value(db), sig);
-                let lowerer = TypeLowering::from_item_resolutions(
-                    db,
-                    item_resolutions,
-                    BinderEnv::from_type_vars(&type_vars),
-                );
-                let lowered = lowerer.lower_function(function);
+                let lowered =
+                    lower_normalized_function(db, module, item_resolutions, function, &type_vars);
                 let inputs = abi_params(
                     db,
                     &param_names(db, sig.params.atom()),
@@ -350,6 +383,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 );
                 constructor = Some(DispatchConstructor {
                     explicit: true,
+                    source_index: Some(source_index),
                     payable: sig.payable.is_some(),
                     inputs,
                 });
@@ -362,15 +396,12 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 let sig = function.sig(db);
                 let type_vars =
                     function_type_vars(db, &contract_type_vars, function.def_id_value(db), sig);
-                let lowerer = TypeLowering::from_item_resolutions(
-                    db,
-                    item_resolutions,
-                    BinderEnv::from_type_vars(&type_vars),
-                );
-                let lowered = lowerer.lower_function(function);
+                let lowered =
+                    lower_normalized_function(db, module, item_resolutions, function, &type_vars);
                 fallback = Some(DispatchFallback {
                     def: Some(function.def_id_value(db)),
                     explicit: true,
+                    source_index: Some(source_index),
                     payable: sig.payable.is_some(),
                     inputs: abi_params(
                         db,
@@ -387,12 +418,14 @@ fn contract_dispatch_surface_with_resolutions<'db>(
 
     let constructor = constructor.unwrap_or(DispatchConstructor {
         explicit: false,
+        source_index: None,
         payable: false,
         inputs: Vec::new(),
     });
     let fallback = fallback.unwrap_or(DispatchFallback {
         def: None,
         explicit: false,
+        source_index: None,
         payable: false,
         inputs: Vec::new(),
         outputs: Vec::new(),
@@ -424,11 +457,28 @@ fn contract_dispatch_surface_with_resolutions<'db>(
     }
 }
 
-fn split_function_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> (Vec<Ty<'db>>, Ty<'db>) {
-    match ty.kind(db) {
-        TyKind::Function { params, ret } => (params.clone(), *ret),
-        _ => (Vec::new(), Ty::unknown(db)),
-    }
+fn lower_normalized_function<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    function: FunctionDef<'db>,
+    type_vars: &[hir_nameres::TypeVarBinding<'db>],
+) -> LoweredFunction<'db> {
+    let lowerer = TypeLowering::from_item_resolutions(
+        db,
+        item_resolutions,
+        BinderEnv::from_type_vars(type_vars),
+    );
+    let mut lowered = lowerer.lower_function(function);
+    let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
+    lowered.scheme = normalizer.normalize_scheme(lowered.scheme);
+    lowered.params = lowered
+        .params
+        .into_iter()
+        .map(|param| normalizer.normalize_ty(param))
+        .collect();
+    lowered.ret = normalizer.normalize_ty(lowered.ret);
+    lowered
 }
 
 fn method_signature_string<'db>(
