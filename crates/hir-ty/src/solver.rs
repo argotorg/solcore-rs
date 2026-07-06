@@ -10,16 +10,18 @@ use hir::{
     anchor::DefId,
     ast::{
         Ident,
-        item::{ClassDef, InstanceDef, Item, Module},
+        item::{ClassDef, ContractItem, InstanceDef, Item, Module, TypeAlias},
     },
     nameres as hir_nameres,
     span::SpannedElem,
 };
 use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path};
+use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TypeLowering,
+    TypeckDiagnostic,
 };
 
 const DEFAULT_SOLVER_FUEL: usize = 256;
@@ -238,6 +240,538 @@ pub fn canonical_goal<'db>(db: &'db dyn Db, pred: Pred<'db>) -> CanonicalGoal<'d
     CanonicalGoal::new(db, pred)
 }
 
+/// Returns local instance soundness diagnostics for one module.
+#[salsa::tracked(returns(ref))]
+pub fn instance_soundness_diagnostics<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+) -> Vec<TypeckDiagnostic> {
+    let Some(file) = db.module_file(module) else {
+        return Vec::new();
+    };
+    if !parse_diagnostics(db, file).is_empty() {
+        return Vec::new();
+    }
+    let hir_module = parse_file_to_hir(db, file).module(db);
+    let env = nameres::module_env(db, module);
+    let Some(item_scope) = env.item_scope.clone() else {
+        return Vec::new();
+    };
+    let item_resolutions =
+        hir_nameres::resolve_item_types_with_imports(db, hir_module, &item_scope, &env);
+    if !item_resolutions.diagnostics.is_empty() {
+        return Vec::new();
+    }
+
+    let pragmas = InstanceSoundnessPragmas::from_module(db, hir_module);
+    let mut diagnostics = Vec::new();
+    for item in hir_module.items(db) {
+        if let Item::InstanceDef(instance) = item {
+            check_instance_soundness(
+                db,
+                hir_module,
+                *instance,
+                &item_resolutions,
+                &pragmas,
+                &mut diagnostics,
+            );
+        }
+    }
+    diagnostics
+}
+
+#[derive(Default)]
+struct InstanceSoundnessPragmas {
+    coverage: PragmaEscape,
+    patterson: PragmaEscape,
+    bounded_variable: PragmaEscape,
+}
+
+#[derive(Default)]
+struct PragmaEscape {
+    all: bool,
+    classes: FxHashSet<String>,
+}
+
+impl InstanceSoundnessPragmas {
+    fn from_module<'db>(db: &'db dyn Db, module: Module<'db>) -> Self {
+        let mut pragmas = Self::default();
+        for item in module.items(db) {
+            let Item::Pragma(pragma) = item else {
+                continue;
+            };
+            let name = (*pragma.name(db).atom()).text(db);
+            match name {
+                "no-coverage-condition" => {
+                    pragmas.coverage.add_items(db, pragma.items(db));
+                }
+                "no-patterson-condition" => {
+                    pragmas.patterson.add_items(db, pragma.items(db));
+                }
+                "no-bounded-variable-condition" => {
+                    pragmas.bounded_variable.add_items(db, pragma.items(db));
+                }
+                _ => {}
+            }
+        }
+        pragmas
+    }
+}
+
+impl PragmaEscape {
+    fn add_items<'db>(&mut self, db: &'db dyn Db, items: &[SpannedElem<'db, Ident<'db>>]) {
+        if items.is_empty() {
+            self.all = true;
+            return;
+        }
+        self.classes
+            .extend(items.iter().map(|item| (*item.atom()).text(db).to_owned()));
+    }
+
+    fn disables(&self, class_name: &str) -> bool {
+        self.all || self.classes.contains(class_name)
+    }
+}
+
+fn check_instance_soundness<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    instance: InstanceDef<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    pragmas: &InstanceSoundnessPragmas,
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    let type_vars = type_var_bindings(instance.def_id_value(db), instance.type_var_elems(db));
+    let type_var_names = type_var_names(db, &type_vars);
+    let lowerer = TypeLowering::from_item_resolutions(
+        db,
+        item_resolutions,
+        BinderEnv::from_type_vars(&type_vars),
+    );
+    let head_ref = instance.head(db);
+    let class_name = head_ref_class_name(db, head_ref);
+    let head = expand_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(head_ref));
+    if matches!(head.kind(db), PredKind::Error) {
+        return;
+    }
+    let conditions = instance
+        .preds(db)
+        .iter()
+        .map(|pred| expand_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(*pred)))
+        .collect::<Vec<_>>();
+
+    if !pragmas.coverage.disables(&class_name) {
+        check_coverage_condition(db, head, &class_name, &type_var_names, diagnostics);
+    }
+    if !pragmas.patterson.disables(&class_name) {
+        check_patterson_condition(db, head, &conditions, &type_var_names, diagnostics);
+    }
+    if !pragmas.bounded_variable.disables(&class_name) {
+        check_bounded_variable_condition(db, head, &conditions, diagnostics);
+    }
+}
+
+fn check_coverage_condition<'db>(
+    db: &'db dyn Db,
+    head: Pred<'db>,
+    class_name: &str,
+    type_var_names: &[String],
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    let PredKind::InClass { main, args, .. } = head.kind(db) else {
+        return;
+    };
+    let mut main_vars = FxHashSet::default();
+    collect_ty_vars(db, *main, &mut main_vars);
+    let mut weak_vars = FxHashSet::default();
+    for arg in args {
+        collect_ty_vars(db, *arg, &mut weak_vars);
+    }
+    let undetermined = vars_difference_sorted(&weak_vars, &main_vars);
+    if undetermined.is_empty() {
+        return;
+    }
+    diagnostics.push(TypeckDiagnostic::CoverageCondition {
+        class: class_name.to_owned(),
+        main: display_ty_source(db, *main, type_var_names),
+        undetermined: display_vars(&undetermined, type_var_names),
+    });
+}
+
+fn check_patterson_condition<'db>(
+    db: &'db dyn Db,
+    head: Pred<'db>,
+    conditions: &[Pred<'db>],
+    type_var_names: &[String],
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    if conditions
+        .iter()
+        .all(|condition| condition.measure(db) < head.measure(db))
+    {
+        return;
+    }
+    diagnostics.push(TypeckDiagnostic::PattersonCondition {
+        head: display_pred_source(db, head, type_var_names),
+    });
+}
+
+fn check_bounded_variable_condition<'db>(
+    db: &'db dyn Db,
+    head: Pred<'db>,
+    conditions: &[Pred<'db>],
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    let mut head_vars = FxHashSet::default();
+    collect_pred_vars(db, head, &mut head_vars);
+    for condition in conditions {
+        let mut condition_vars = FxHashSet::default();
+        collect_pred_vars(db, *condition, &mut condition_vars);
+        if condition_vars.iter().any(|var| !head_vars.contains(var)) {
+            diagnostics.push(TypeckDiagnostic::BoundedVariableCondition);
+            return;
+        }
+    }
+}
+
+fn head_ref_class_name<'db>(db: &'db dyn Db, pred: hir::ast::ty::PredRef<'db>) -> String {
+    (*pred.kind(db).class.atom()).text(db).to_owned()
+}
+
+fn type_var_names<'db>(db: &'db dyn Db, vars: &[hir_nameres::TypeVarBinding<'db>]) -> Vec<String> {
+    vars.iter()
+        .map(|var| (*var.name.atom()).text(db).to_owned())
+        .collect()
+}
+
+fn vars_difference_sorted(left: &FxHashSet<u32>, right: &FxHashSet<u32>) -> Vec<u32> {
+    let mut vars = left
+        .iter()
+        .copied()
+        .filter(|var| !right.contains(var))
+        .collect::<Vec<_>>();
+    vars.sort_unstable();
+    vars
+}
+
+fn display_vars(vars: &[u32], names: &[String]) -> Vec<String> {
+    vars.iter()
+        .map(|var| display_var(*var, names))
+        .collect::<Vec<_>>()
+}
+
+fn display_var(var: u32, names: &[String]) -> String {
+    names
+        .get(var as usize)
+        .cloned()
+        .unwrap_or_else(|| format!("${var}"))
+}
+
+fn display_pred_source<'db>(db: &'db dyn Db, pred: Pred<'db>, names: &[String]) -> String {
+    match pred.kind(db) {
+        PredKind::InClass { class, main, args } => {
+            let main = display_ty_source(db, *main, names);
+            let class = display_class_source(db, *class);
+            if args.is_empty() {
+                format!("{main} : {class}")
+            } else {
+                let args = args
+                    .iter()
+                    .map(|arg| display_ty_source(db, *arg, names))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{main} : {class}({args})")
+            }
+        }
+        PredKind::Eq { lhs, rhs } => format!(
+            "{} ~ {}",
+            display_ty_source(db, *lhs, names),
+            display_ty_source(db, *rhs, names)
+        ),
+        PredKind::Error => "<error predicate>".to_owned(),
+    }
+}
+
+fn display_ty_source<'db>(db: &'db dyn Db, ty: Ty<'db>, names: &[String]) -> String {
+    match ty.kind(db) {
+        TyKind::Error => "<error>".to_owned(),
+        TyKind::Unknown => "<unknown>".to_owned(),
+        TyKind::BoundVar(var) => display_var(var.index, names),
+        TyKind::Named { ctor, args } => {
+            let name = display_ty_ctor_source(db, *ctor);
+            if args.is_empty() {
+                name
+            } else {
+                format!(
+                    "{name}({})",
+                    args.iter()
+                        .map(|arg| display_ty_source(db, *arg, names))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+        TyKind::Function { params, ret } => {
+            let params = params
+                .iter()
+                .map(|param| display_ty_source(db, *param, names))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({params}) -> {}", display_ty_source(db, *ret, names))
+        }
+        TyKind::Tuple(elems) => {
+            if elems.is_empty() {
+                "()".to_owned()
+            } else {
+                format!(
+                    "({})",
+                    elems
+                        .iter()
+                        .map(|elem| display_ty_source(db, *elem, names))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+        TyKind::Comptime(inner) => format!("comptime {}", display_ty_source(db, *inner, names)),
+    }
+}
+
+fn display_ty_ctor_source<'db>(db: &'db dyn Db, ctor: TyCtor<'db>) -> String {
+    match ctor {
+        TyCtor::Builtin(ctor) => ctor.name().to_owned(),
+        TyCtor::User(user) => user
+            .def
+            .name(db)
+            .unwrap_or_else(|| format!("{:?}", user.def.kind(db))),
+    }
+}
+
+fn display_class_source<'db>(db: &'db dyn Db, class: ClassId<'db>) -> String {
+    match class {
+        ClassId::Builtin(class) => class.name().to_owned(),
+        ClassId::User(def) => def
+            .name(db)
+            .unwrap_or_else(|| format!("{:?}", def.kind(db))),
+    }
+}
+
+fn expand_pred_aliases<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    pred: Pred<'db>,
+) -> Pred<'db> {
+    match pred.kind(db) {
+        PredKind::InClass { class, main, args } => Pred::in_class(
+            db,
+            *class,
+            expand_ty_aliases(
+                db,
+                module,
+                item_resolutions,
+                *main,
+                &mut FxHashSet::default(),
+            ),
+            args.iter()
+                .map(|arg| {
+                    expand_ty_aliases(
+                        db,
+                        module,
+                        item_resolutions,
+                        *arg,
+                        &mut FxHashSet::default(),
+                    )
+                })
+                .collect(),
+        ),
+        PredKind::Eq { lhs, rhs } => Pred::eq(
+            db,
+            expand_ty_aliases(
+                db,
+                module,
+                item_resolutions,
+                *lhs,
+                &mut FxHashSet::default(),
+            ),
+            expand_ty_aliases(
+                db,
+                module,
+                item_resolutions,
+                *rhs,
+                &mut FxHashSet::default(),
+            ),
+        ),
+        PredKind::Error => pred,
+    }
+}
+
+fn expand_ty_aliases<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    ty: Ty<'db>,
+    expanding: &mut FxHashSet<DefId<'db>>,
+) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::Named { ctor, args } => {
+            let args = args
+                .iter()
+                .map(|arg| expand_ty_aliases(db, module, item_resolutions, *arg, expanding))
+                .collect::<Vec<_>>();
+            let TyCtor::User(user) = ctor else {
+                return Ty::named(db, *ctor, args);
+            };
+            if !matches!(user.kind, crate::UserTyCtorKind::Alias) {
+                return Ty::named(db, *ctor, args);
+            }
+            if !expanding.insert(user.def) {
+                return Ty::named(db, *ctor, args);
+            }
+            let expanded = lower_type_alias_body(db, module, item_resolutions, user.def)
+                .map(|body| substitute_alias_args(db, body, &args))
+                .map(|body| expand_ty_aliases(db, module, item_resolutions, body, expanding))
+                .unwrap_or_else(|| Ty::named(db, *ctor, args));
+            expanding.remove(&user.def);
+            expanded
+        }
+        TyKind::Function { params, ret } => Ty::function(
+            db,
+            params
+                .iter()
+                .map(|param| expand_ty_aliases(db, module, item_resolutions, *param, expanding))
+                .collect(),
+            expand_ty_aliases(db, module, item_resolutions, *ret, expanding),
+        ),
+        TyKind::Tuple(elems) => Ty::tuple(
+            db,
+            elems
+                .iter()
+                .map(|elem| expand_ty_aliases(db, module, item_resolutions, *elem, expanding))
+                .collect(),
+        ),
+        TyKind::Comptime(inner) => Ty::comptime(
+            db,
+            expand_ty_aliases(db, module, item_resolutions, *inner, expanding),
+        ),
+        TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => ty,
+    }
+}
+
+fn lower_type_alias_body<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    def: DefId<'db>,
+) -> Option<Ty<'db>> {
+    if let Some(info) = find_type_alias_info(db, module, def, &[]) {
+        return Some(
+            TypeLowering::from_item_resolutions(
+                db,
+                item_resolutions,
+                BinderEnv::from_type_vars(&info.type_vars),
+            )
+            .lower_type_alias(info.alias)
+            .ty,
+        );
+    }
+
+    let module = module_for_def(db, def)?;
+    let (scope, item_resolutions) = scope_resolution_for_module_id(db, module)?;
+    let info = find_type_alias_info(db, scope.module, def, &[])?;
+    Some(
+        TypeLowering::from_item_resolutions(
+            db,
+            &item_resolutions,
+            BinderEnv::from_type_vars(&info.type_vars),
+        )
+        .lower_type_alias(info.alias)
+        .ty,
+    )
+}
+
+fn substitute_alias_args<'db>(db: &'db dyn Db, ty: Ty<'db>, args: &[Ty<'db>]) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::BoundVar(var) => args.get(var.index as usize).copied().unwrap_or(ty),
+        TyKind::Named { ctor, args: inner } => Ty::named(
+            db,
+            *ctor,
+            inner
+                .iter()
+                .map(|arg| substitute_alias_args(db, *arg, args))
+                .collect(),
+        ),
+        TyKind::Function { params, ret } => Ty::function(
+            db,
+            params
+                .iter()
+                .map(|param| substitute_alias_args(db, *param, args))
+                .collect(),
+            substitute_alias_args(db, *ret, args),
+        ),
+        TyKind::Tuple(elems) => Ty::tuple(
+            db,
+            elems
+                .iter()
+                .map(|elem| substitute_alias_args(db, *elem, args))
+                .collect(),
+        ),
+        TyKind::Comptime(inner) => Ty::comptime(db, substitute_alias_args(db, *inner, args)),
+        TyKind::Error | TyKind::Unknown => ty,
+    }
+}
+
+struct TypeAliasInfo<'db> {
+    alias: TypeAlias<'db>,
+    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+}
+
+fn find_type_alias_info<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    def: DefId<'db>,
+    inherited: &[hir_nameres::TypeVarBinding<'db>],
+) -> Option<TypeAliasInfo<'db>> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| find_type_alias_in_item(db, *item, def, inherited))
+}
+
+fn find_type_alias_in_item<'db>(
+    db: &'db dyn Db,
+    item: Item<'db>,
+    def: DefId<'db>,
+    inherited: &[hir_nameres::TypeVarBinding<'db>],
+) -> Option<TypeAliasInfo<'db>> {
+    match item {
+        Item::TypeAlias(alias) if alias.def_id_value(db) == def => {
+            let mut type_vars = inherited.to_vec();
+            type_vars.extend(type_var_bindings(
+                alias.def_id_value(db),
+                alias.ty_param_elems(db),
+            ));
+            Some(TypeAliasInfo { alias, type_vars })
+        }
+        Item::ContractDef(contract) => {
+            let mut inherited = inherited.to_vec();
+            inherited.extend(type_var_bindings(
+                contract.def_id_value(db),
+                contract.ty_param_elems(db),
+            ));
+            contract.items(db).iter().find_map(|item| match *item {
+                ContractItem::TypeAlias(alias) => {
+                    find_type_alias_in_item(db, Item::TypeAlias(alias), def, &inherited)
+                }
+                ContractItem::FunctionDef(_)
+                | ContractItem::AdtDef(_)
+                | ContractItem::Error { .. } => None,
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Tracked solver query required by the trait-solving interface.
 #[salsa::tracked]
 pub fn solve<'db>(
@@ -421,8 +955,8 @@ impl<'db> TraitEnvBuilder<'db> {
             .map(|pred| lowerer.lower_pred(*pred))
             .collect();
 
-        // P5 hook: enforce coverage, Patterson, and bounded-variable
-        // conditions here, honoring pragma escapes before the clause is added.
+        // Instance soundness checks are intentionally run by the module-level
+        // `instance_soundness_diagnostics` query, not while building clauses.
         self.clauses.push(ProgramClause {
             binder_count: type_vars.len() as u32,
             head,

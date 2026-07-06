@@ -27,7 +27,7 @@ use tracing::field;
 use crate::{
     BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TyScheme,
     TypeLowering, builtin_scheme, canonical_goal,
-    solver::{Evidence, Solution, TraitEnvId, solve_report},
+    solver::{Evidence, Solution, TraitEnvId, instance_soundness_diagnostics, solve_report},
     trait_env_with_givens,
 };
 
@@ -429,6 +429,22 @@ pub enum TypeckDiagnostic {
         /// Referenced Yul name.
         name: String,
     },
+    /// `SC0212`: weak instance-head variables are not determined by the main type.
+    CoverageCondition {
+        /// Class whose instance violates coverage.
+        class: String,
+        /// Main instance-head type snapshot.
+        main: String,
+        /// Type variables that appear only in weak class arguments.
+        undetermined: Vec<String>,
+    },
+    /// `SC0213`: an instance context predicate is not smaller than the head.
+    PattersonCondition {
+        /// Instance-head predicate snapshot.
+        head: String,
+    },
+    /// `SC0214`: an instance context mentions variables absent from the head.
+    BoundedVariableCondition,
     /// `SC0224`: shorthand constructor lookup failed.
     ShorthandConstructor {
         /// Constructor leaf name.
@@ -579,6 +595,22 @@ impl TypeckDiagnostic {
             TypeckDiagnostic::UnknownYulName { name } => {
                 Diagnostic::error(format!("unknown Yul identifier or function: {name}"))
                     .with_code("SC0211")
+            }
+            TypeckDiagnostic::CoverageCondition {
+                class,
+                main,
+                undetermined,
+            } => Diagnostic::error(format!(
+                "Coverage condition fails for class:\n{class}\n- the type:\n{main}\ndoes not determine:\n{}",
+                undetermined.join(", ")
+            ))
+            .with_code("SC0212"),
+            TypeckDiagnostic::PattersonCondition { head } => Diagnostic::error(format!(
+                "Instance\n{head}\ndoes not satisfy the Patterson conditions."
+            ))
+            .with_code("SC0213"),
+            TypeckDiagnostic::BoundedVariableCondition => {
+                Diagnostic::error("Bounded variable condition fails!").with_code("SC0214")
             }
             TypeckDiagnostic::ShorthandConstructor { name, reason } => Diagnostic::error(format!(
                 "cannot resolve shorthand constructor `.{name}`: {reason}"
@@ -3244,7 +3276,10 @@ pub fn module_typeck_diagnostics<'db>(
         hir_module,
         env,
         item_resolutions,
-        diagnostics: Vec::new(),
+        diagnostics: instance_soundness_diagnostics(db, module)
+            .iter()
+            .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower()))
+            .collect(),
     };
     for item in hir_module.items(db) {
         collector.item(*item, None, &[]);
@@ -3736,6 +3771,44 @@ mod tests {
         let url = url::Url::from_file_path(path).expect("file url");
         let file = SourceFile::new(db, url, Some(src));
         (file, parse_file_to_hir(db, file).module(db))
+    }
+
+    fn module_key(path: &[&str]) -> ModuleKey {
+        ModuleKey {
+            library: LibraryId::Main,
+            logical_path: path.iter().map(|segment| (*segment).to_owned()).collect(),
+        }
+    }
+
+    fn insert_module_source(db: &mut TestDb, path: &[&str], src: &str) -> ModuleKey {
+        let key = module_key(path);
+        let url = format!("memory:///{}.solc", path.join("/"))
+            .parse()
+            .expect("valid url");
+        let file = SourceFile::new(&*db, url, Some(src.to_owned()));
+        db.module_files.insert(key.clone(), file);
+        key
+    }
+
+    fn db_with_main_typeck(src: &str) -> (TestDb, ModuleKey) {
+        let mut db = TestDb::default();
+        let key = insert_module_source(&mut db, &["main"], src);
+        (db, key)
+    }
+
+    fn soundness_diagnostics(src: &str) -> Vec<TypeckDiagnostic> {
+        let (db, key) = db_with_main_typeck(src);
+        let module = module_id_from_key(&db, &key);
+        crate::solver::instance_soundness_diagnostics(&db, module).clone()
+    }
+
+    fn lowered_module_typeck_diagnostics(src: &str) -> Vec<Diagnostic> {
+        let (db, key) = db_with_main_typeck(src);
+        let module = module_id_from_key(&db, &key);
+        module_typeck_diagnostics(&db, module)
+            .iter()
+            .map(|diagnostic| diagnostic.lower(&db))
+            .collect()
     }
 
     fn function_name<'db>(db: &'db TestDb, function: FunctionDef<'db>) -> &'db str {
@@ -4999,6 +5072,241 @@ function f() -> () {
     }
 
     #[test]
+    fn instance_soundness_reports_coverage_condition() {
+        let diagnostics = soundness_diagnostics(
+            r#"
+data Box(a) = Box(word);
+forall a b . class a:MyClass(b) {}
+
+forall a b . instance Box(a):MyClass(b) {}
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::CoverageCondition {
+                    class,
+                    main,
+                    undetermined
+                } if class == "MyClass"
+                    && main == "Box(a)"
+                    && undetermined.len() == 1
+                    && undetermined[0] == "b"
+            )),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn instance_soundness_respects_global_coverage_pragma() {
+        let diagnostics = soundness_diagnostics(
+            r#"
+pragma no-coverage-condition;
+
+data Box(a) = Box(word);
+forall a b . class a:MyClass(b) {}
+
+forall a b . instance Box(a):MyClass(b) {}
+"#,
+        );
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| matches!(diagnostic, TypeckDiagnostic::CoverageCondition { .. })),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn instance_soundness_expands_type_aliases_for_coverage() {
+        let diagnostics = soundness_diagnostics(
+            r#"
+type Phantom(a) = word;
+forall a b . class a:MyClass(b) {}
+
+forall a . instance Phantom(a):MyClass(a) {}
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::CoverageCondition {
+                    class,
+                    main,
+                    undetermined
+                } if class == "MyClass"
+                    && main == "word"
+                    && undetermined.len() == 1
+                    && undetermined[0] == "a"
+            )),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn instance_soundness_reports_patterson_condition() {
+        let diagnostics = soundness_diagnostics(
+            r#"
+forall a . class a:C1 {}
+forall a . class a:C2 {}
+
+forall U . U:C1, U:C2 => instance U:C1 {}
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::PattersonCondition { head } if head == "U : C1"
+            )),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn instance_soundness_respects_class_scoped_patterson_pragma() {
+        let diagnostics = soundness_diagnostics(
+            r#"
+pragma no-patterson-condition C1;
+
+forall a . class a:C1 {}
+forall a . class a:C2 {}
+
+forall U . U:C1, U:C2 => instance U:C1 {}
+"#,
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::PattersonCondition { .. }
+            )),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn instance_soundness_reports_bounded_variable_condition() {
+        let diagnostics = soundness_diagnostics(
+            r#"
+data Box(a) = Box(word);
+forall a . class a:Eq {}
+forall a b . class a:Container(b) {}
+
+forall a c . c:Eq => instance Box(a):Container(a) {}
+"#,
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| matches!(diagnostic, TypeckDiagnostic::BoundedVariableCondition)),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn instance_soundness_respects_class_scoped_bounded_variable_pragma() {
+        let diagnostics = soundness_diagnostics(
+            r#"
+pragma no-bounded-variable-condition Container;
+
+data Box(a) = Box(word);
+forall a . class a:Eq {}
+forall a b . class a:Container(b) {}
+
+forall a c . c:Eq => instance Box(a):Container(a) {}
+"#,
+        );
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|diagnostic| matches!(diagnostic, TypeckDiagnostic::BoundedVariableCondition)),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn module_typeck_diagnostics_pull_instance_soundness_query() {
+        let diagnostics = lowered_module_typeck_diagnostics(
+            r#"
+data Box(a) = Box(word);
+forall a b . class a:MyClass(b) {}
+
+forall a b . instance Box(a):MyClass(b) {}
+"#,
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0212")),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn imported_pragmas_do_not_suppress_local_instance_soundness() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let imports = manifest.join("../parser/tests/fixtures/corpus/ok/test/imports");
+        let main_src = std::fs::read_to_string(imports.join("pragma_scope_main.solc"))
+            .expect("pragma_scope_main fixture");
+        let lib_src = std::fs::read_to_string(imports.join("pragma_scope_lib.solc"))
+            .expect("pragma_scope_lib fixture");
+        let main_src =
+            format!("{main_src}\nforall x . x:C(word, word) => instance x:C(word, word) {{}}\n");
+
+        let mut db = TestDb::default();
+        let main_key = insert_module_source(&mut db, &["main"], &main_src);
+        insert_module_source(&mut db, &["pragma_scope_lib"], &lib_src);
+        let module = module_id_from_key(&db, &main_key);
+        let diagnostics = crate::solver::instance_soundness_diagnostics(&db, module).clone();
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::PattersonCondition { head } if head == "x : C(word, word)"
+            )),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn pragma_corpus_files_have_no_instance_soundness_diagnostics() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let corpus = manifest.join("../parser/tests/fixtures/corpus/ok/test/examples");
+        let files = [
+            "pragmas/coverage.solc",
+            "cases/array.solc",
+            "cases/bound-with-pragma.solc",
+            "cases/tabled-left-recursive-fail.solc",
+            "cases/tabled-cycle-fail.solc",
+            "cases/mptc-partial-instance.solc",
+        ];
+
+        for file in files {
+            let path = corpus.join(file);
+            let src = std::fs::read_to_string(path).expect("fixture source");
+            let (db, key) = db_with_main_typeck(&src);
+            let source = *db.module_files.get(&key).expect("main source");
+            assert!(
+                parser::parse_diagnostics(&db, source).is_empty(),
+                "{file} should parse cleanly"
+            );
+            let module_id = module_id_from_key(&db, &key);
+            let diagnostics = crate::solver::instance_soundness_diagnostics(&db, module_id).clone();
+            assert!(
+                diagnostics.is_empty(),
+                "{file} produced instance soundness diagnostics: {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
     fn word_only_spec_scoreboard_has_no_typeck_diagnostics() {
         let db = TestDb::default();
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -5049,7 +5357,13 @@ function f() -> () {
         let db = TestDb::default();
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let fixtures = manifest.join("../parser/tests/fixtures/corpus/ok/test/examples/cases");
-        let files = ["p4-local-instance.solc", "p4-default-instance.solc"];
+        let files = [
+            "p4-local-instance.solc",
+            "p4-default-instance.solc",
+            "tabled-answer-reuse.solc",
+            "tabled-given-order.solc",
+            "tabled-residual-given.solc",
+        ];
 
         for file in files {
             let path = fixtures.join(file);

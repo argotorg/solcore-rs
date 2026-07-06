@@ -24,8 +24,9 @@ pub use lower::{
 };
 pub use solver::{
     BaseTraitEnvId, Candidate, CanonicalGoal, ClauseOrigin, Evidence, LocalGivensId, ProgramClause,
-    Solution, SolverReport, Substitution, TraitEnvId, canonical_goal, solve, solve_report,
-    trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens,
+    Solution, SolverReport, Substitution, TraitEnvId, canonical_goal,
+    instance_soundness_diagnostics, solve, solve_report, trait_env_for_module,
+    trait_env_from_module_resolution, trait_env_with_givens,
 };
 
 /// Database contract required by HIR type queries.
