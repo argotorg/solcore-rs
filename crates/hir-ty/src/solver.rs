@@ -86,7 +86,7 @@ pub enum ClauseOrigin<'db> {
     /// Compiler-defined fact.
     Builtin,
     /// Compiler-synthesized instance-like clause.
-    Derived(DerivedClauseKind),
+    Derived(DerivedClauseKind<'db>),
     /// Local given predicate from a checked body.
     Given,
     /// Superclass projection clause.
@@ -95,11 +95,57 @@ pub enum ClauseOrigin<'db> {
 
 /// Family of compiler-synthesized clauses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
-pub enum DerivedClauseKind {
+pub enum DerivedClauseKind<'db> {
     /// Automatically derived `Generic` instance.
-    Generic,
+    Generic {
+        /// ADT whose `Generic` instance was synthesized.
+        adt: DefId<'db>,
+    },
     /// Lambda closure `invokable` instance.
     Closure,
+}
+
+/// Queryable plan for an automatically derived `Generic` instance.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct DerivedGenericPlan<'db> {
+    /// ADT whose instance is synthesized.
+    pub adt: DefId<'db>,
+    /// SOP representation type used by `Generic(rep)`.
+    pub rep: Ty<'db>,
+    /// Match arms for the synthesized `Generic.from` method.
+    pub from_arms: Vec<DerivedGenericFromArm<'db>>,
+    /// Match arms for the synthesized `Generic.to` method.
+    pub to_arms: Vec<DerivedGenericToArm<'db>>,
+}
+
+/// One constructor arm in a synthesized `Generic.from` body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct DerivedGenericFromArm<'db> {
+    /// Constructor ordinal in source declaration order.
+    pub ctor_index: u32,
+    /// Constructor name.
+    pub ctor_name: String,
+    /// Product payload representation before sum wrapping.
+    pub product_rep: Ty<'db>,
+    /// Number of `inr` wrappers before this case.
+    pub inr_depth: u32,
+    /// Whether this non-final case is wrapped in `inl`.
+    pub wraps_inl: bool,
+}
+
+/// One representation arm in a synthesized `Generic.to` body.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct DerivedGenericToArm<'db> {
+    /// Constructor ordinal in source declaration order.
+    pub ctor_index: u32,
+    /// Constructor name.
+    pub ctor_name: String,
+    /// Product payload representation after sum unwrapping.
+    pub product_rep: Ty<'db>,
+    /// Number of `inr` pattern wrappers before this case.
+    pub inr_depth: u32,
+    /// Whether this non-final case is matched through `inl`.
+    pub wraps_inl: bool,
 }
 
 /// Lifetime-free evidence tree for a solved obligation.
@@ -133,7 +179,7 @@ pub enum Evidence<'db> {
     /// Evidence from a compiler-synthesized clause.
     Derived {
         /// Derived clause family.
-        kind: DerivedClauseKind,
+        kind: DerivedClauseKind<'db>,
         /// Predicate discharged directly.
         pred: Pred<'db>,
         /// Evidence for synthesized clause context predicates.
@@ -1197,28 +1243,96 @@ fn adt_name<'db>(db: &'db dyn HirDb, adt: AdtDef<'db>) -> String {
     ident_text(db, &adt.name_elem(db))
 }
 
-fn generic_rep_ty<'db>(
+/// Returns the synthesized `Generic` instance plan for `adt` in `module`.
+#[salsa::tracked]
+pub fn derived_generic_plan<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    adt: AdtDef<'db>,
+) -> Option<DerivedGenericPlan<'db>> {
+    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    let info = local_adt_infos(db, module)
+        .into_iter()
+        .find(|info| info.adt.def_id_value(db) == adt.def_id_value(db))?;
+    if info.adt.ctors(db).is_empty() {
+        return None;
+    }
+    Some(derived_generic_plan_with_resolutions(
+        db,
+        module,
+        &item_resolutions,
+        &info,
+    ))
+}
+
+fn derived_generic_plan_with_resolutions<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
     info: &AdtDeriveInfo<'db>,
-) -> Ty<'db> {
+) -> DerivedGenericPlan<'db> {
     let lowerer = TypeLowering::from_item_resolutions(
         db,
         item_resolutions,
         BinderEnv::from_type_vars(&info.type_vars),
     );
     let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
-    let reps = info
-        .adt
-        .ctors(db)
+    let ctors = info.adt.ctors(db);
+    let total = ctors.len();
+    let product_reps = ctors
         .iter()
         .map(|ctor| {
             let fields = normalizer.normalize_ty(lowerer.lower_type(*ctor.fields.atom()));
             constructor_rep_ty(db, fields)
         })
         .collect::<Vec<_>>();
-    sum_rep_ty(db, reps)
+    let from_arms = ctors
+        .iter()
+        .zip(product_reps.iter())
+        .enumerate()
+        .map(|(index, (ctor, product_rep))| {
+            let (inr_depth, wraps_inl) = generic_sum_wrapping(index, total);
+            DerivedGenericFromArm {
+                ctor_index: index as u32,
+                ctor_name: ident_text(db, &ctor.name),
+                product_rep: *product_rep,
+                inr_depth,
+                wraps_inl,
+            }
+        })
+        .collect();
+    let to_arms = ctors
+        .iter()
+        .zip(product_reps.iter())
+        .enumerate()
+        .map(|(index, (ctor, product_rep))| {
+            let (inr_depth, wraps_inl) = generic_sum_wrapping(index, total);
+            DerivedGenericToArm {
+                ctor_index: index as u32,
+                ctor_name: ident_text(db, &ctor.name),
+                product_rep: *product_rep,
+                inr_depth,
+                wraps_inl,
+            }
+        })
+        .collect();
+    DerivedGenericPlan {
+        adt: info.adt.def_id_value(db),
+        rep: sum_rep_ty(db, product_reps),
+        from_arms,
+        to_arms,
+    }
+}
+
+fn generic_sum_wrapping(index: usize, total: usize) -> (u32, bool) {
+    if total <= 1 {
+        return (0, false);
+    }
+    if index + 1 == total {
+        ((total - 1) as u32, false)
+    } else {
+        (index as u32, true)
+    }
 }
 
 fn constructor_rep_ty<'db>(db: &'db dyn Db, fields: Ty<'db>) -> Ty<'db> {
@@ -1233,10 +1347,19 @@ fn constructor_rep_ty<'db>(db: &'db dyn Db, fields: Ty<'db>) -> Ty<'db> {
 }
 
 fn product_rep_ty<'db>(db: &'db dyn Db, fields: Vec<Ty<'db>>) -> Ty<'db> {
-    match fields.as_slice() {
-        [] => Ty::unit(db),
-        [field] => *field,
-        _ => Ty::tuple(db, fields),
+    let mut fields = fields.into_iter();
+    let Some(first) = fields.next() else {
+        return Ty::unit(db);
+    };
+    let rest = fields.collect::<Vec<_>>();
+    if rest.is_empty() {
+        first
+    } else {
+        Ty::named(
+            db,
+            TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+            vec![first, product_rep_ty(db, rest)],
+        )
     }
 }
 
@@ -1780,10 +1903,20 @@ impl<'db> TraitEnvBuilder<'db> {
                     self.db,
                     ClassId::User(generic),
                     main,
-                    vec![generic_rep_ty(self.db, module, item_resolutions, &info)],
+                    vec![
+                        derived_generic_plan_with_resolutions(
+                            self.db,
+                            module,
+                            item_resolutions,
+                            &info,
+                        )
+                        .rep,
+                    ],
                 ),
                 conditions: Vec::new(),
-                origin: ClauseOrigin::Derived(DerivedClauseKind::Generic),
+                origin: ClauseOrigin::Derived(DerivedClauseKind::Generic {
+                    adt: info.adt.def_id_value(self.db),
+                }),
                 is_default: false,
             });
         }
@@ -2662,10 +2795,19 @@ fn ty_equal<'db>(db: &'db dyn Db, lhs: Ty<'db>, rhs: Ty<'db>) -> bool {
 }
 
 fn invokable_arg_ty<'db>(db: &'db dyn Db, params: Vec<Ty<'db>>) -> Ty<'db> {
-    match params.as_slice() {
-        [] => Ty::unit(db),
-        [param] => *param,
-        _ => Ty::tuple(db, params),
+    let mut params = params.into_iter();
+    let Some(first) = params.next() else {
+        return Ty::unit(db);
+    };
+    let rest = params.collect::<Vec<_>>();
+    if rest.is_empty() {
+        first
+    } else {
+        Ty::named(
+            db,
+            TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+            vec![first, invokable_arg_ty(db, rest)],
+        )
     }
 }
 

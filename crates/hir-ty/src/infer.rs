@@ -322,6 +322,10 @@ pub enum ObligationSource<'db> {
 pub enum CallSiteCallee<'db> {
     /// User function or method.
     Function(DefId<'db>),
+    /// Lambda closure value synthesized by inference.
+    Closure(DefId<'db>),
+    /// Callable value invoked through the builtin `invokable` class.
+    Invokable,
     /// Contract field used as a callable value.
     Field(hir_nameres::FieldId<'db>),
     /// Algebraic data constructor.
@@ -1829,14 +1833,20 @@ impl<'db> InferCtx<'db> {
     ) -> InferTy<'db> {
         let callee_ty = self.infer_callee_expr(body, call_expr, callee_expr);
         let normalized = self.normalize_aliases(callee_ty.clone());
-        match self.engine.resolve(normalized.clone()) {
-            InferTy::Function { params, .. } => {
+        let resolved = self.engine.resolve(normalized);
+        if self.is_direct_call_callee(body, callee_expr) {
+            if let InferTy::Function { params, .. } = resolved {
                 self.infer_direct_call(body, callee_ty, Some(params), args, expected)
-            }
-            InferTy::Error | InferTy::Unknown | InferTy::Var(_) => {
+            } else {
                 self.infer_direct_call(body, callee_ty, None, args, expected)
             }
-            _ => self.infer_indirect_call(body, callee_ty, args, expected),
+        } else if matches!(
+            resolved,
+            InferTy::Error | InferTy::Unknown | InferTy::Var(_)
+        ) {
+            self.infer_direct_call(body, callee_ty, None, args, expected)
+        } else {
+            self.infer_indirect_call(body, call_expr, callee_expr, callee_ty, args, expected)
         }
     }
 
@@ -1884,12 +1894,14 @@ impl<'db> InferCtx<'db> {
     fn infer_indirect_call(
         &mut self,
         body: FuncBody<'db>,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
         callee_ty: InferTy<'db>,
         args: &[Id<Expr<'db>>],
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
-        let closure_sig = self.closure_sig_for_ty(callee_ty.clone());
-        if let Some(sig) = &closure_sig
+        let callable_sig = self.callable_sig_for_ty(callee_ty.clone());
+        if let Some(sig) = &callable_sig
             && sig.params.len() != args.len()
         {
             self.diagnostics.push(TypeckDiagnostic::WrongArity {
@@ -1905,21 +1917,23 @@ impl<'db> InferCtx<'db> {
                 self.infer_expr_expected(
                     body,
                     *arg,
-                    closure_sig
+                    callable_sig
                         .as_ref()
                         .and_then(|sig| sig.params.get(index).cloned()),
                 )
             })
             .collect::<Vec<_>>();
         let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
-        if let Some(sig) = closure_sig {
+        if let Some(sig) = callable_sig {
             self.unify(sig.ret, ret.clone());
         }
+        let source =
+            self.indirect_call_site_source(body, call_expr, callee_expr, callee_ty.clone());
         self.pending.push(PendingObligation {
             class: ClassId::Builtin(BuiltinClassId::Invokable),
             main: callee_ty,
             args: vec![invokable_arg_infer(inferred_args), ret.clone()],
-            source: ObligationSource::Scheme,
+            source,
         });
         ret
     }
@@ -2002,6 +2016,62 @@ impl<'db> InferCtx<'db> {
             callee_expr,
             callee,
         })
+    }
+
+    fn indirect_call_site_source(
+        &mut self,
+        body: FuncBody<'db>,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+        callee_ty: InferTy<'db>,
+    ) -> ObligationSource<'db> {
+        let callee = self
+            .closure_def_for_ty(callee_ty)
+            .map(CallSiteCallee::Closure)
+            .unwrap_or(CallSiteCallee::Invokable);
+        ObligationSource::CallSite {
+            body,
+            call_expr,
+            callee_expr,
+            callee,
+        }
+    }
+
+    fn is_direct_call_callee(&self, body: FuncBody<'db>, callee_expr: Id<Expr<'db>>) -> bool {
+        self.expr_resolutions
+            .get(&(body, callee_expr))
+            .is_some_and(is_direct_call_resolution)
+    }
+
+    fn callable_sig_for_ty(&mut self, ty: InferTy<'db>) -> Option<ClosureSig<'db>> {
+        if let Some(sig) = self.closure_sig_for_ty(ty.clone()) {
+            return Some(sig);
+        }
+        let ty = self.normalize_aliases(ty);
+        match self.engine.resolve(ty) {
+            InferTy::Function { params, ret } => Some(ClosureSig { params, ret: *ret }),
+            _ => None,
+        }
+    }
+
+    fn closure_def_for_ty(&mut self, ty: InferTy<'db>) -> Option<DefId<'db>> {
+        let ty = self.normalize_aliases(ty);
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+            args,
+        } = self.engine.resolve(ty)
+        else {
+            return None;
+        };
+        if args.is_empty() && self.closure_sigs.contains_key(&def) {
+            Some(def)
+        } else {
+            None
+        }
     }
 
     fn closure_sig_for_ty(&mut self, ty: InferTy<'db>) -> Option<ClosureSig<'db>> {
@@ -3588,8 +3658,24 @@ impl<'db> InferCtx<'db> {
             if let Some(proof) = self.solve_local_closure_obligation(&pending) {
                 evidence.push(ObligationEvidence {
                     obligation: index,
-                    evidence: proof,
+                    evidence: proof.clone(),
                 });
+                if let ObligationSource::CallSite {
+                    body,
+                    call_expr,
+                    callee_expr,
+                    callee,
+                } = &pending.source
+                {
+                    call_site_evidence.push(CallSiteEvidence {
+                        body: *body,
+                        call_expr: *call_expr,
+                        callee_expr: *callee_expr,
+                        callee: callee.clone(),
+                        obligation: index,
+                        evidence: proof,
+                    });
+                }
                 continue;
             }
             let pred = self.pending_obligation_pred(&pending);
@@ -5994,6 +6080,22 @@ fn ident_text<'db>(db: &'db dyn HirDb, ident: &SpannedElem<'db, Ident<'db>>) -> 
     (*ident.atom()).text(db).to_owned()
 }
 
+fn is_direct_call_resolution(resolution: &hir_nameres::Resolution<'_>) -> bool {
+    matches!(
+        resolution,
+        hir_nameres::Resolution::Def {
+            kind: hir_nameres::DefResolutionKind::Function,
+            ..
+        } | hir_nameres::Resolution::Ctor { .. }
+            | hir_nameres::Resolution::ClassMethod { .. }
+            | hir_nameres::Resolution::Builtin(
+                hir_nameres::BuiltinKind::Constructor(_)
+                    | hir_nameres::BuiltinKind::Function(_)
+                    | hir_nameres::BuiltinKind::ClassMethod(_)
+            )
+    )
+}
+
 fn closure_def_id<'db>(db: &'db dyn Db, body: FuncBody<'db>) -> DefId<'db> {
     let body_def = body.def_id(db);
     DefId::new(
@@ -6008,13 +6110,21 @@ fn closure_def_id<'db>(db: &'db dyn Db, body: FuncBody<'db>) -> DefId<'db> {
 }
 
 fn invokable_arg_infer<'db>(args: Vec<InferTy<'db>>) -> InferTy<'db> {
-    match args.as_slice() {
-        [] => InferTy::Named {
+    let mut args = args.into_iter();
+    let Some(first) = args.next() else {
+        return InferTy::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
             args: Vec::new(),
-        },
-        [arg] => arg.clone(),
-        _ => InferTy::Tuple(args),
+        };
+    };
+    let rest = args.collect::<Vec<_>>();
+    if rest.is_empty() {
+        first
+    } else {
+        InferTy::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args: vec![first, invokable_arg_infer(rest)],
+        }
     }
 }
 

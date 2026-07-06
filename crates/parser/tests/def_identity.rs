@@ -301,6 +301,31 @@ fn inserting_preceding_lambda_keeps_existing_lambda_body_identities_stable() {
 }
 
 #[test]
+fn lambda_body_edit_keeps_lambda_body_identity_stable() {
+    let mut db = TestDb::default();
+    let before_src = "function f(z: word) -> word {
+        let n = lam (x: word) { return x + 1; };
+        return n(z);
+    }";
+    let file = source_file(&db, "lambda-body-edit-stable", before_src);
+
+    let before = lambda_body_identities(&db, file);
+    assert_eq!(before.len(), 1);
+
+    file.set_content(&mut db).to(Some(
+        "function f(z: word) -> word {
+            let n = lam (x: word) { return x + 2; };
+            return n(z);
+        }"
+        .to_owned(),
+    ));
+
+    let after = lambda_body_identities(&db, file);
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].1, before[0].1);
+}
+
+#[test]
 fn inserting_unrelated_item_above_def_keeps_identity_stable() {
     let mut db = TestDb::default();
     let file = source_file(&db, "stable-def", "\nfunction target() {}\n");

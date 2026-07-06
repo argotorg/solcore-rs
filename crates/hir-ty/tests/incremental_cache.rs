@@ -4,12 +4,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use hir::input::SourceFile;
+use hir::{
+    ast::item::{ContractDef, Item, Module},
+    input::SourceFile,
+};
 use nameres::{LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
-use solcore_hir_ty::infer::module_typeck_diagnostics;
+use solcore_hir_ty::{contract_dispatch_surface, infer::module_typeck_diagnostics};
 
 #[salsa::db]
 #[derive(Clone)]
@@ -218,6 +221,50 @@ forall a . instance Box(a):C(word) {}
     }
 }
 
+#[test]
+fn contract_body_edit_does_not_rerun_dispatch_surface_query() {
+    let before = r#"
+contract C {
+  public function get() -> word { return 1; }
+}
+"#;
+    let after = r#"
+contract C {
+  public function get() -> word { return 2; }
+}
+"#;
+    let (mut db, file, _key) = db_with_main(before);
+
+    {
+        let module = parse_file_to_hir(&db, file).module(&db);
+        let contract = contract_named(&db, module, "C");
+        let _ = db.take_executed();
+        let surface = contract_dispatch_surface(&db, module, contract);
+        assert_eq!(surface.methods.len(), 1);
+        let executed = db.take_executed();
+        assert!(
+            query_executions(&executed, "contract_dispatch_surface") > 0,
+            "{executed:#?}"
+        );
+    }
+
+    file.set_content(&mut db).to(Some(after.to_owned()));
+
+    {
+        let module = parse_file_to_hir(&db, file).module(&db);
+        let contract = contract_named(&db, module, "C");
+        let _ = db.take_executed();
+        let surface = contract_dispatch_surface(&db, module, contract);
+        assert_eq!(surface.methods.len(), 1);
+        let executed = db.take_executed();
+        assert_eq!(
+            query_executions(&executed, "contract_dispatch_surface"),
+            0,
+            "{executed:#?}"
+        );
+    }
+}
+
 fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
@@ -237,6 +284,21 @@ fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
     };
     db.module_files.insert(key.clone(), file);
     (db, file, key)
+}
+
+fn contract_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> ContractDef<'db> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ContractDef(contract)
+                if contract.def_id_value(db).name(db).as_deref() == Some(name) =>
+            {
+                Some(*contract)
+            }
+            _ => None,
+        })
+        .expect("contract")
 }
 
 fn query_executions(events: &[String], query: &str) -> usize {

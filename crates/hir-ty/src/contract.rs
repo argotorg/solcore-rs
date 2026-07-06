@@ -21,11 +21,13 @@ use hir::{
     nameres as hir_nameres,
     span::SpannedElem,
 };
+use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 
 use crate::{
-    AliasNormalizer, BinderEnv, BuiltinTyCtor, Db, LoweredFunction, Ty, TyCtor, TyKind,
-    TypeLowering,
+    AliasNormalizer, BinderEnv, BodyTyContext, BuiltinTyCtor, CallSiteCallee, CallSiteEvidence, Db,
+    LoweredFunction, Ty, TyCtor, TyKind, TypeLowering, infer_body,
+    trait_env_from_module_resolution, trait_env_with_givens,
 };
 
 const PLACEHOLDER_SELECTOR: &str = "<keccak256[0..4] pending>";
@@ -186,6 +188,21 @@ pub enum FrontendTransform<'db> {
         /// Storage access hook for Hull/storage layout.
         hook: String,
     },
+    /// Non-direct call rewritten to `invokable.invoke(callee, indirectArgs(args))`.
+    IndirectCall {
+        /// Body containing the call.
+        body: FuncBody<'db>,
+        /// Call expression being rewritten.
+        call_expr: Id<Expr<'db>>,
+        /// Expression used as the callee.
+        callee_expr: Id<Expr<'db>>,
+        /// Callee identity used for evidence replay.
+        callee: CallSiteCallee<'db>,
+        /// Unit, single-argument, or right-nested pair payload shape.
+        args: IndirectArgShape<'db>,
+        /// Solved call-site evidence for the invokable obligation.
+        evidence: Option<CallSiteEvidence<'db>>,
+    },
 }
 
 /// Category of bool node in a frontend transform.
@@ -197,13 +214,62 @@ pub enum BoolNode<'db> {
     Pat(Id<Pat<'db>>),
 }
 
+/// Payload shape for an indirect-call argument tuple.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum IndirectArgShape<'db> {
+    /// No arguments, represented as unit.
+    Unit,
+    /// One argument, represented without a pair wrapper.
+    Single(Id<Expr<'db>>),
+    /// Two or more arguments, represented as a right-nested `pair`.
+    Pair {
+        /// First argument at this level.
+        head: Id<Expr<'db>>,
+        /// Remaining argument payload.
+        tail: Box<IndirectArgShape<'db>>,
+    },
+}
+
 /// Returns the typed dispatch surface for one contract in `module`.
-#[salsa::tracked]
 pub fn contract_dispatch_surface<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     contract: ContractDef<'db>,
 ) -> DispatchSurface<'db> {
+    let _ = module;
+    contract_dispatch_surface_by_def(db, contract.def_id_value(db))
+}
+
+#[salsa::tracked]
+fn contract_dispatch_surface_by_def<'db>(
+    db: &'db dyn Db,
+    contract_def: DefId<'db>,
+) -> DispatchSurface<'db> {
+    let module = parse_file_to_hir(db, contract_def.file(db)).module(db);
+    let Some(contract) = find_contract_by_def(db, module, contract_def) else {
+        return DispatchSurface {
+            contract: contract_def,
+            name: contract_def
+                .name(db)
+                .unwrap_or_else(|| "Contract".to_owned()),
+            methods: Vec::new(),
+            constructor: DispatchConstructor {
+                explicit: false,
+                payable: false,
+                inputs: Vec::new(),
+                source_index: None,
+            },
+            fallback: DispatchFallback {
+                def: None,
+                explicit: false,
+                payable: false,
+                inputs: Vec::new(),
+                outputs: Vec::new(),
+                source_index: None,
+            },
+            diagnostics: Vec::new(),
+        };
+    };
     let item_resolutions = hir_nameres::resolve_item_types(db, module);
     contract_dispatch_surface_with_resolutions(db, module, &item_resolutions, contract)
 }
@@ -245,7 +311,7 @@ pub fn frontend_desugar_plan<'db>(
     let resolution = hir_nameres::resolve_module(db, module);
     let mut bodies = Vec::new();
     for item in module.items(db) {
-        collect_desugar_plans(db, *item, &resolution, &mut bodies);
+        collect_desugar_plans(db, module, *item, &resolution, &[], &mut bodies);
     }
     FrontendDesugarPlan { bodies }
 }
@@ -479,6 +545,24 @@ fn lower_normalized_function<'db>(
         .collect();
     lowered.ret = normalizer.normalize_ty(lowered.ret);
     lowered
+}
+
+fn find_contract_by_def<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<ContractDef<'db>> {
+    module.items(db).iter().find_map(|item| match item {
+        Item::ContractDef(contract) if contract.def_id_value(db) == def => Some(*contract),
+        _ => None,
+    })
+}
+
+fn split_function_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> (Vec<Ty<'db>>, Ty<'db>) {
+    match ty.kind(db) {
+        TyKind::Function { params, ret } => (params.clone(), *ret),
+        _ => (Vec::new(), Ty::unknown(db)),
+    }
 }
 
 fn method_signature_string<'db>(
@@ -943,24 +1027,45 @@ fn json_string(value: &str) -> String {
 
 fn collect_desugar_plans<'db>(
     db: &'db dyn Db,
+    module: Module<'db>,
     item: Item<'db>,
     resolution: &hir_nameres::ModuleResolutionMap<'db>,
+    inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
     out: &mut Vec<BodyDesugarPlan<'db>>,
 ) {
     match item {
         Item::FunctionDef(function) => {
-            collect_function_desugar_plan(db, function, resolution, out);
+            collect_function_desugar_plan(
+                db,
+                module,
+                function,
+                resolution,
+                inherited_type_vars,
+                out,
+            );
         }
         Item::ContractDef(contract) => {
+            let mut inherited = inherited_type_vars.to_vec();
+            inherited.extend(type_var_bindings(
+                contract.def_id_value(db),
+                contract.ty_param_elems(db),
+            ));
             for item in contract.items(db) {
                 if let ContractItem::FunctionDef(function) = *item {
-                    collect_function_desugar_plan(db, function, resolution, out);
+                    collect_function_desugar_plan(
+                        db, module, function, resolution, &inherited, out,
+                    );
                 }
             }
         }
         Item::InstanceDef(instance) => {
+            let mut inherited = inherited_type_vars.to_vec();
+            inherited.extend(type_var_bindings(
+                instance.def_id_value(db),
+                instance.type_var_elems(db),
+            ));
             for method in instance.methods(db) {
-                collect_function_desugar_plan(db, *method, resolution, out);
+                collect_function_desugar_plan(db, module, *method, resolution, &inherited, out);
             }
         }
         Item::TypeAlias(_)
@@ -975,8 +1080,10 @@ fn collect_desugar_plans<'db>(
 
 fn collect_function_desugar_plan<'db>(
     db: &'db dyn Db,
+    module: Module<'db>,
     function: FunctionDef<'db>,
     resolution: &hir_nameres::ModuleResolutionMap<'db>,
+    inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
     out: &mut Vec<BodyDesugarPlan<'db>>,
 ) {
     let Some(body) = function.body(db) else {
@@ -995,11 +1102,33 @@ fn collect_function_desugar_plan<'db>(
         .iter()
         .map(|entry| ((entry.body, entry.pat), entry.resolution.clone()))
         .collect::<FxHashMap<_, _>>();
+    let call_site_evidence = desugar_inference_result(
+        db,
+        module,
+        function,
+        resolution,
+        body_map,
+        inherited_type_vars,
+    )
+    .map(|result| {
+        result
+            .call_site_evidence
+            .into_iter()
+            .map(|evidence| {
+                (
+                    (evidence.body, evidence.call_expr, evidence.callee_expr),
+                    evidence,
+                )
+            })
+            .collect::<FxHashMap<_, _>>()
+    })
+    .unwrap_or_default();
     let mut collector = DesugarCollector {
         db,
         body,
         expr_resolutions,
         pat_resolutions,
+        call_site_evidence,
         transforms: Vec::new(),
     };
     for stmt in body.top_level_stmts(db) {
@@ -1014,11 +1143,60 @@ fn collect_function_desugar_plan<'db>(
     }
 }
 
+fn desugar_inference_result<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    function: FunctionDef<'db>,
+    resolution: &hir_nameres::ModuleResolutionMap<'db>,
+    body_map: &hir_nameres::BodyResolutionMap<'db>,
+    inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+) -> Option<crate::InferenceResult<'db>> {
+    if !body_map.diagnostics.is_empty() {
+        return None;
+    }
+    let body = function.body(db)?;
+    let sig = function.sig(db);
+    let mut type_vars = inherited_type_vars.to_vec();
+    type_vars.extend(function_type_vars(db, &[], function.def_id_value(db), sig));
+    let lowerer = TypeLowering::from_item_resolutions(
+        db,
+        &resolution.item_resolutions,
+        BinderEnv::from_type_vars(&type_vars),
+    );
+    let mut normalizer = AliasNormalizer::new(db, module, &resolution.item_resolutions);
+    let mut lowered = lowerer.lower_function(function);
+    lowered.scheme = normalizer.normalize_scheme(lowered.scheme);
+    lowered.params = lowered
+        .params
+        .into_iter()
+        .map(|param| normalizer.normalize_ty(param))
+        .collect();
+    lowered.ret = normalizer.normalize_ty(lowered.ret);
+    let base_trait_env = trait_env_from_module_resolution(db, module, resolution);
+    let trait_env = trait_env_with_givens(
+        db,
+        base_trait_env,
+        lowered.scheme.body(db).preds(db).clone(),
+    );
+    let ctx = BodyTyContext::new(
+        module,
+        body_map.clone(),
+        type_vars,
+        lowered.params,
+        Some(lowered.ret),
+    )
+    .with_param_names(param_names(db, sig.params.atom()))
+    .with_trait_env(trait_env);
+    Some(infer_body(db, body, ctx))
+}
+
 struct DesugarCollector<'db> {
     db: &'db dyn Db,
     body: FuncBody<'db>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
+    call_site_evidence:
+        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), CallSiteEvidence<'db>>,
     transforms: Vec<FrontendTransform<'db>>,
 }
 
@@ -1150,6 +1328,7 @@ impl<'db> DesugarCollector<'db> {
                         body: *body,
                         expr_resolutions: self.expr_resolutions.clone(),
                         pat_resolutions: self.pat_resolutions.clone(),
+                        call_site_evidence: self.call_site_evidence.clone(),
                         transforms: Vec::new(),
                     };
                     nested.stmt(*stmt);
@@ -1165,6 +1344,24 @@ impl<'db> DesugarCollector<'db> {
                 self.expr(*index);
             }
             ExprKind::Call { callee, args } => {
+                if !self.is_direct_call(*callee) {
+                    let evidence = self
+                        .call_site_evidence
+                        .get(&(self.body, expr_id, *callee))
+                        .cloned();
+                    let callee_identity = evidence
+                        .as_ref()
+                        .map(|evidence| evidence.callee.clone())
+                        .unwrap_or(CallSiteCallee::Invokable);
+                    self.transforms.push(FrontendTransform::IndirectCall {
+                        body: self.body,
+                        call_expr: expr_id,
+                        callee_expr: *callee,
+                        callee: callee_identity,
+                        args: indirect_arg_shape(args),
+                        evidence,
+                    });
+                }
                 self.expr(*callee);
                 for arg in args {
                     self.expr(*arg);
@@ -1248,6 +1445,42 @@ impl<'db> DesugarCollector<'db> {
             self.expr(lhs);
         }
     }
+
+    fn is_direct_call(&self, callee: Id<Expr<'db>>) -> bool {
+        self.expr_resolutions
+            .get(&(self.body, callee))
+            .is_some_and(is_direct_call_resolution)
+    }
+}
+
+fn indirect_arg_shape<'db>(args: &[Id<Expr<'db>>]) -> IndirectArgShape<'db> {
+    let Some((head, tail)) = args.split_first() else {
+        return IndirectArgShape::Unit;
+    };
+    if tail.is_empty() {
+        IndirectArgShape::Single(*head)
+    } else {
+        IndirectArgShape::Pair {
+            head: *head,
+            tail: Box::new(indirect_arg_shape(tail)),
+        }
+    }
+}
+
+fn is_direct_call_resolution(resolution: &hir_nameres::Resolution<'_>) -> bool {
+    matches!(
+        resolution,
+        hir_nameres::Resolution::Def {
+            kind: hir_nameres::DefResolutionKind::Function,
+            ..
+        } | hir_nameres::Resolution::Ctor { .. }
+            | hir_nameres::Resolution::ClassMethod { .. }
+            | hir_nameres::Resolution::Builtin(
+                hir_nameres::BuiltinKind::Constructor(_)
+                    | hir_nameres::BuiltinKind::Function(_)
+                    | hir_nameres::BuiltinKind::ClassMethod(_)
+            )
+    )
 }
 
 fn body_resolution_for<'a, 'db>(

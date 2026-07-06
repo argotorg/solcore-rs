@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use hir::{
     anchor::DefLocationTable,
-    ast::item::{ContractDef, Item, Module},
+    ast::item::{AdtDef, ContractDef, Item, Module},
     diag::Diagnostic,
     input::SourceFile,
 };
@@ -10,7 +10,8 @@ use nameres::{LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use solcore_hir_ty::{
-    FrontendTransform, contract_abi_json, contract_dispatch_surface, frontend_desugar_plan,
+    BuiltinTyCtor, CallSiteCallee, FrontendTransform, IndirectArgShape, Ty, TyCtor, TyKind,
+    contract_abi_json, contract_dispatch_surface, derived_generic_plan, frontend_desugar_plan,
     infer::module_typeck_diagnostics,
 };
 
@@ -86,6 +87,29 @@ fn contract_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> Cont
             _ => None,
         })
         .expect("contract")
+}
+
+fn adt_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> AdtDef<'db> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::AdtDef(adt) if adt.def_id_value(db).name(db).as_deref() == Some(name) => {
+                Some(*adt)
+            }
+            _ => None,
+        })
+        .expect("adt")
+}
+
+fn pair_args<'db>(db: &'db TestDb, ty: Ty<'db>) -> Option<&'db Vec<Ty<'db>>> {
+    match ty.kind(db) {
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } if args.len() == 2 => Some(args),
+        _ => None,
+    }
 }
 
 fn diagnostics(src: &str) -> Vec<Diagnostic> {
@@ -421,4 +445,170 @@ contract C {
             .any(|transform| matches!(transform, FrontendTransform::FieldRead { hook, .. } if hook.contains("RVA.acc"))),
         "{transforms:?}"
     );
+}
+
+#[test]
+fn frontend_desugar_plan_records_indirect_call_shape_and_evidence() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+forall c . c : invokable(pair(word, word), word) =>
+function apply2(f : c, a : word, b : word) -> word {
+  return f(a, b);
+}
+"#,
+    );
+    let plan = frontend_desugar_plan(&db, module);
+    let transforms = plan
+        .bodies
+        .iter()
+        .flat_map(|body| body.transforms.iter())
+        .collect::<Vec<_>>();
+
+    let indirect = transforms
+        .iter()
+        .find_map(|transform| match transform {
+            FrontendTransform::IndirectCall {
+                callee,
+                args,
+                evidence,
+                ..
+            } if matches!(callee, CallSiteCallee::Invokable) && evidence.is_some() => Some(args),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("indirect call transform with evidence: {transforms:?}"));
+
+    assert!(
+        matches!(
+            indirect,
+            IndirectArgShape::Pair {
+                tail,
+                ..
+            } if matches!(tail.as_ref(), IndirectArgShape::Single(_))
+        ),
+        "{indirect:?}"
+    );
+}
+
+#[test]
+fn frontend_desugar_plan_records_compose3_indirect_call() {
+    let src =
+        include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/cases/Compose3.solc");
+    assert!(diagnostics(src).is_empty());
+
+    let db = TestDb::default();
+    let module = parse_module(&db, src);
+    let plan = frontend_desugar_plan(&db, module);
+    let transforms = plan
+        .bodies
+        .iter()
+        .flat_map(|body| body.transforms.iter())
+        .collect::<Vec<_>>();
+
+    assert!(
+        transforms.iter().any(|transform| matches!(
+            transform,
+            FrontendTransform::IndirectCall {
+                callee: CallSiteCallee::Invokable,
+                args: IndirectArgShape::Single(_),
+                evidence: Some(_),
+                ..
+            }
+        )),
+        "{transforms:?}"
+    );
+}
+
+#[test]
+fn frontend_desugar_plan_records_simple_lambda_pair_arg_call() {
+    let src =
+        include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/cases/SimpleLambda.solc");
+    assert!(diagnostics(src).is_empty());
+
+    let db = TestDb::default();
+    let module = parse_module(&db, src);
+    let plan = frontend_desugar_plan(&db, module);
+    let transforms = plan
+        .bodies
+        .iter()
+        .flat_map(|body| body.transforms.iter())
+        .collect::<Vec<_>>();
+
+    assert!(
+        transforms.iter().any(|transform| matches!(
+            transform,
+            FrontendTransform::IndirectCall {
+                callee: CallSiteCallee::Closure(_),
+                args: IndirectArgShape::Pair { tail, .. },
+                evidence: Some(_),
+                ..
+            } if matches!(tail.as_ref(), IndirectArgShape::Single(_))
+        )),
+        "{transforms:?}"
+    );
+}
+
+#[test]
+fn frontend_desugar_plan_records_captured_zero_arg_closure_call() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+function inc(x : word) -> word {
+  let f = lam () { return x; };
+  return f();
+}
+"#,
+    );
+    let plan = frontend_desugar_plan(&db, module);
+    let transforms = plan
+        .bodies
+        .iter()
+        .flat_map(|body| body.transforms.iter())
+        .collect::<Vec<_>>();
+
+    assert!(
+        transforms.iter().any(|transform| matches!(
+            transform,
+            FrontendTransform::IndirectCall {
+                callee: CallSiteCallee::Closure(_),
+                args: IndirectArgShape::Unit,
+                evidence: Some(_),
+                ..
+            }
+        )),
+        "{transforms:?}"
+    );
+}
+
+#[test]
+fn derived_generic_plan_uses_right_nested_product_rep_for_tree() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+data Tree(a) = Leaf | Node(Tree(a), a, Tree(a));
+"#,
+    );
+    let tree = adt_named(&db, module, "Tree");
+    let plan = derived_generic_plan(&db, module, tree).expect("derived Generic plan");
+
+    let TyKind::Named {
+        ctor: TyCtor::Builtin(BuiltinTyCtor::Sum),
+        args: sum_args,
+    } = plan.rep.kind(&db)
+    else {
+        panic!("expected sum rep, got {}", plan.rep.display(&db));
+    };
+    assert_eq!(sum_args.len(), 2);
+    let node_rep = sum_args[1];
+    let outer_pair = pair_args(&db, node_rep).expect("Node rep is pair");
+    let inner_pair = pair_args(&db, outer_pair[1]).expect("Node rep tail is pair");
+
+    assert!(matches!(outer_pair[0].kind(&db), TyKind::Named { .. }));
+    assert!(matches!(inner_pair[0].kind(&db), TyKind::BoundVar(_)));
+    assert!(matches!(inner_pair[1].kind(&db), TyKind::Named { .. }));
+    assert_eq!(plan.from_arms.len(), 2);
+    assert_eq!(plan.to_arms.len(), 2);
 }

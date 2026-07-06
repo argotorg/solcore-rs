@@ -16,7 +16,7 @@ pub use alias::{
 };
 pub use contract::{
     AbiParam, BodyDesugarPlan, BoolNode, DispatchConstructor, DispatchFallback, DispatchMethod,
-    DispatchSurface, FrontendDesugarPlan, FrontendTransform, contract_abi_json,
+    DispatchSurface, FrontendDesugarPlan, FrontendTransform, IndirectArgShape, contract_abi_json,
     contract_dispatch_surface, frontend_desugar_plan, module_contract_diagnostics,
 };
 pub use hir::sema::ty::{
@@ -34,10 +34,11 @@ pub use lower::{
     builtin_scheme,
 };
 pub use solver::{
-    BaseTraitEnvId, Candidate, CanonicalGoal, ClauseOrigin, Evidence, LocalGivensId, ProgramClause,
-    Solution, SolverReport, Substitution, TraitEnvId, canonical_goal, canonical_goal_with_allowed,
-    instance_soundness_diagnostics, solve, solve_report, trait_env_for_module,
-    trait_env_from_module_resolution, trait_env_with_givens,
+    BaseTraitEnvId, Candidate, CanonicalGoal, ClauseOrigin, DerivedGenericFromArm,
+    DerivedGenericPlan, DerivedGenericToArm, Evidence, LocalGivensId, ProgramClause, Solution,
+    SolverReport, Substitution, TraitEnvId, canonical_goal, canonical_goal_with_allowed,
+    derived_generic_plan, instance_soundness_diagnostics, solve, solve_report,
+    trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens,
 };
 
 /// Database contract required by HIR type queries.

@@ -409,18 +409,12 @@ fn optional_ty_snippet_fingerprint(source: &str, ty: Option<&ParsedTy<'_>>) -> S
         .unwrap_or_else(|| "<none>".to_owned())
 }
 
-fn lambda_fingerprint(
-    source: &str,
-    params_span: LexSpan,
-    ret: Option<&ParsedTy<'_>>,
-    body_span: LexSpan,
-) -> String {
+fn lambda_fingerprint(source: &str, params_span: LexSpan, ret: Option<&ParsedTy<'_>>) -> String {
     structural_fingerprint(
         "lambda",
         &[
             source_snippet_fingerprint(source, params_span),
             optional_ty_snippet_fingerprint(source, ret),
-            source_snippet_fingerprint(source, body_span),
         ],
     )
 }
@@ -1183,7 +1177,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         ret: Option<ParsedTy<'_>>,
         body_span: LexSpan,
     ) -> function::ExprKind<'db> {
-        let fingerprint = lambda_fingerprint(self.source, params_span, ret.as_ref(), body_span);
+        let fingerprint = lambda_fingerprint(self.source, params_span, ret.as_ref());
         let params = params
             .into_iter()
             .map(|param| self.lower_func_param(anchor, base_start, param))
