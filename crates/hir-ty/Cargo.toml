@@ -7,10 +7,10 @@ edition.workspace = true
 ena = { workspace = true }
 hir = { workspace = true }
 nameres = { workspace = true }
+parser = { workspace = true }
 rustc-hash = { workspace = true }
 salsa = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-parser = { workspace = true }
 url = { workspace = true }

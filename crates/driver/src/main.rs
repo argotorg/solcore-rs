@@ -97,6 +97,9 @@ impl nameres::Db for DriverDb {
     }
 }
 
+#[salsa::db]
+impl hir_ty::Db for DriverDb {}
+
 /// Entry point for the CLI driver.
 fn main() {
     let program = env::args()
@@ -185,6 +188,11 @@ fn main() {
         .iter()
         .map(|diagnostic| diagnostic.lower(&db))
         .collect::<Vec<_>>();
+    diagnostics.extend(
+        hir_ty::infer::reachable_typeck_diagnostics(&db, entry)
+            .iter()
+            .map(|diagnostic| diagnostic.lower(&db)),
+    );
     sort_dedup_diagnostics(&db, &mut diagnostics);
     if diagnostics.is_empty() {
         return;

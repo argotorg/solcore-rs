@@ -52,6 +52,8 @@ pub enum AnyDiagnostic {
     Parse(Diagnostic),
     /// HIR local name-resolution diagnostic.
     Nameres(crate::nameres::NameresDiagnostic),
+    /// Type-checking diagnostic lowered at the type-checking crate edge.
+    Typeck(Diagnostic),
     /// Inter-module loader/import/export diagnostic lowered at the crate edge.
     Module(Diagnostic),
 }
@@ -599,9 +601,9 @@ impl AnyDiagnostic {
     /// Lowers this typed or generic diagnostic to the user-facing diagnostic.
     pub fn lower(&self, db: &dyn crate::Db) -> Diagnostic {
         match self {
-            AnyDiagnostic::Parse(diagnostic) | AnyDiagnostic::Module(diagnostic) => {
-                diagnostic.clone()
-            }
+            AnyDiagnostic::Parse(diagnostic)
+            | AnyDiagnostic::Typeck(diagnostic)
+            | AnyDiagnostic::Module(diagnostic) => diagnostic.clone(),
             AnyDiagnostic::Nameres(diagnostic) => diagnostic.lower(db),
         }
     }

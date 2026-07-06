@@ -7,20 +7,28 @@ use hir::{
     Db as HirDb,
     anchor::DefId,
     arena::Id,
-    ast::function::{
-        BinOp, Expr, ExprKind, FuncBody, FuncParam, LitKind, MatchArm, Pat, PatKind, Stmt,
-        StmtKind, UnOp, YulCase, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
+    ast::{
+        Ident,
+        function::{
+            BinOp, Expr, ExprKind, FuncBody, FuncParam, LitKind, MatchArm, Pat, PatKind, Stmt,
+            StmtKind, UnOp, YulCase, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
+        },
+        item::{AdtDef, ClassDef, ContractItem, FieldDef, FunctionDef, Item, Module},
     },
-    diag::Diagnostic,
+    diag::{AnyDiagnostic, Diagnostic},
     nameres as hir_nameres,
+    span::SpannedElem,
 };
+use nameres::{LibraryId, ModuleId};
+use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::field;
 
 use crate::{
     BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TyScheme,
-    TypeLowering, builtin_scheme,
-    solver::{Evidence, Solution, TraitEnvId, solve_goal},
+    TypeLowering, builtin_scheme, canonical_goal,
+    solver::{Evidence, Solution, TraitEnvId, solve_report},
+    trait_env_with_givens,
 };
 
 /// Ephemeral inference variable identifier.
@@ -157,6 +165,10 @@ pub struct InferTable<'db> {
 /// Type-checking context for one body inference query.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct BodyTyContext<'db> {
+    /// HIR module containing the root body.
+    pub module: Module<'db>,
+    /// Driver module id used to resolve imported definition schemes.
+    pub entry_module: Option<ModuleId<'db>>,
     /// Nameres result for the body and any lambdas nested inside it.
     pub name_resolution: hir_nameres::BodyResolutionMap<'db>,
     /// Type variables visible in this body.
@@ -167,45 +179,8 @@ pub struct BodyTyContext<'db> {
     pub params: Vec<Ty<'db>>,
     /// Expected return type for the root body, when known from a signature.
     pub ret: Option<Ty<'db>>,
-    /// Semantic schemes for resolved items visible to this body.
-    pub catalog: BodyTyCatalog<'db>,
     /// Trait environment used to solve deferred class obligations.
     pub trait_env: Option<TraitEnvId<'db>>,
-}
-
-/// Semantic typing data needed to interpret body name-resolution results.
-///
-/// The catalog stores already-lowered schemes keyed by stable definition IDs.
-/// It deliberately contains no source spans and can safely cross Salsa query
-/// boundaries.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
-pub struct BodyTyCatalog<'db> {
-    /// Callable user definitions.
-    pub functions: Vec<FunctionScheme<'db>>,
-    /// Contract field schemes.
-    pub fields: Vec<FieldScheme<'db>>,
-    /// Algebraic data constructor schemes.
-    pub adt_ctors: Vec<AdtCtorScheme<'db>>,
-    /// User-defined class method schemes.
-    pub class_methods: Vec<ClassMethodScheme<'db>>,
-}
-
-/// Scheme for a resolved function-like definition.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub struct FunctionScheme<'db> {
-    /// Resolved function definition.
-    pub def: DefId<'db>,
-    /// Polymorphic function scheme.
-    pub scheme: TyScheme<'db>,
-}
-
-/// Scheme for a resolved contract field.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub struct FieldScheme<'db> {
-    /// Resolved field.
-    pub field: hir_nameres::FieldId<'db>,
-    /// Polymorphic field scheme.
-    pub scheme: TyScheme<'db>,
 }
 
 /// Scheme for a resolved ADT constructor.
@@ -218,17 +193,6 @@ pub struct AdtCtorScheme<'db> {
     /// Constructor leaf name.
     pub name: String,
     /// Polymorphic constructor scheme.
-    pub scheme: TyScheme<'db>,
-}
-
-/// Scheme for a resolved type-class method.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub struct ClassMethodScheme<'db> {
-    /// Owning class definition.
-    pub class: DefId<'db>,
-    /// Method leaf name.
-    pub name: String,
-    /// Polymorphic method scheme qualified by the class head.
     pub scheme: TyScheme<'db>,
 }
 
@@ -266,6 +230,17 @@ pub enum ObligationSource<'db> {
     },
     /// Obligation instantiated from a scheme.
     Scheme,
+    /// Obligation instantiated while typing a call callee.
+    CallSite {
+        /// Body containing the call.
+        body: FuncBody<'db>,
+        /// Call expression.
+        call_expr: Id<Expr<'db>>,
+        /// Expression used as the callee.
+        callee_expr: Id<Expr<'db>>,
+        /// Resolved callee identity.
+        callee: CallSiteCallee<'db>,
+    },
     /// Obligation instantiated from a class-method expression.
     ClassMethod {
         /// Body containing the class-method expression.
@@ -280,6 +255,31 @@ pub enum ObligationSource<'db> {
         /// Literal pattern.
         pat: Id<Pat<'db>>,
     },
+}
+
+/// Resolved callable identity attached to a call-site obligation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum CallSiteCallee<'db> {
+    /// User function or method.
+    Function(DefId<'db>),
+    /// Contract field used as a callable value.
+    Field(hir_nameres::FieldId<'db>),
+    /// Algebraic data constructor.
+    AdtCtor {
+        /// Owning ADT.
+        ty: DefId<'db>,
+        /// Constructor index.
+        index: u32,
+    },
+    /// Class method.
+    ClassMethod {
+        /// Owning class.
+        class: DefId<'db>,
+        /// Method name.
+        name: String,
+    },
+    /// Builtin callable.
+    Builtin(hir_nameres::BuiltinKind),
 }
 
 /// Deferred class obligation published by inference.
@@ -300,6 +300,23 @@ pub struct ObligationEvidence<'db> {
     pub evidence: Evidence<'db>,
 }
 
+/// Evidence addressable by the expression that triggered a constrained call.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct CallSiteEvidence<'db> {
+    /// Body containing the call.
+    pub body: FuncBody<'db>,
+    /// Call expression.
+    pub call_expr: Id<Expr<'db>>,
+    /// Expression used as the callee.
+    pub callee_expr: Id<Expr<'db>>,
+    /// Resolved callee identity.
+    pub callee: CallSiteCallee<'db>,
+    /// Index into [`InferenceResult::obligations`].
+    pub obligation: usize,
+    /// Solver evidence for the call-site obligation.
+    pub evidence: Evidence<'db>,
+}
+
 /// Body inference result.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct InferenceResult<'db> {
@@ -311,6 +328,8 @@ pub struct InferenceResult<'db> {
     pub obligations: Vec<DeferredObligation<'db>>,
     /// Evidence for obligations solved by the trait solver.
     pub obligation_evidence: Vec<ObligationEvidence<'db>>,
+    /// Evidence indexed by constrained call expression.
+    pub call_site_evidence: Vec<CallSiteEvidence<'db>>,
     /// Type-checking diagnostics found while inferring this body.
     pub diagnostics: Vec<TypeckDiagnostic>,
 }
@@ -450,7 +469,8 @@ struct InferCtx<'db> {
     db: &'db dyn Db,
     lowerer: TypeLowering<'db>,
     engine: InferTable<'db>,
-    catalog: BodyTyCatalog<'db>,
+    module: Module<'db>,
+    entry_module: Option<ModuleId<'db>>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
     param_tys: FxHashMap<(FuncBody<'db>, u32), InferTy<'db>>,
@@ -469,18 +489,20 @@ struct InferCtx<'db> {
 impl<'db> BodyTyContext<'db> {
     /// Creates a body type-checking context.
     pub fn new(
+        module: Module<'db>,
         name_resolution: hir_nameres::BodyResolutionMap<'db>,
         type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
         params: Vec<Ty<'db>>,
         ret: Option<Ty<'db>>,
     ) -> Self {
         Self {
+            module,
+            entry_module: None,
             name_resolution,
             type_vars,
             param_names: Vec::new(),
             params,
             ret,
-            catalog: BodyTyCatalog::default(),
             trait_env: None,
         }
     }
@@ -491,9 +513,9 @@ impl<'db> BodyTyContext<'db> {
         self
     }
 
-    /// Adds semantic item schemes to the context.
-    pub fn with_catalog(mut self, catalog: BodyTyCatalog<'db>) -> Self {
-        self.catalog = catalog;
+    /// Adds the driver module id used for imported scheme lookup.
+    pub fn with_entry_module(mut self, module: ModuleId<'db>) -> Self {
+        self.entry_module = Some(module);
         self
     }
 
@@ -991,7 +1013,8 @@ impl<'db> InferCtx<'db> {
             db,
             lowerer,
             engine,
-            catalog: ctx.catalog,
+            module: ctx.module,
+            entry_module: ctx.entry_module,
             expr_resolutions,
             pat_resolutions,
             param_tys,
@@ -1049,11 +1072,13 @@ impl<'db> InferCtx<'db> {
             pat_tys,
             obligations,
             obligation_evidence: Vec::new(),
+            call_site_evidence: Vec::new(),
             diagnostics: self.diagnostics,
         };
         if let Some(trait_env) = self.trait_env {
             let solved = solve_deferred_obligations(self.db, trait_env, &result.obligations);
             result.obligation_evidence = solved.evidence;
+            result.call_site_evidence = solved.call_site_evidence;
             result.diagnostics.extend(solved.diagnostics);
         }
         result
@@ -1281,7 +1306,7 @@ impl<'db> InferCtx<'db> {
                 ret
             }
             ExprKind::Call { callee, args } => {
-                let callee_ty = self.infer_expr(body, *callee);
+                let callee_ty = self.infer_callee_expr(body, expr_id, *callee);
                 let params = self.call_param_expectations(callee_ty.clone(), args.len());
                 let args = args
                     .iter()
@@ -1349,6 +1374,78 @@ impl<'db> InferCtx<'db> {
         }
         self.expr_tys.push((body, expr_id, ty.clone()));
         ty
+    }
+
+    fn infer_callee_expr(
+        &mut self,
+        body: FuncBody<'db>,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+    ) -> InferTy<'db> {
+        match &body.exprs(self.db).get(callee_expr).kind {
+            ExprKind::Ident(_) => {
+                let resolution = self
+                    .expr_resolutions
+                    .get(&(body, callee_expr))
+                    .cloned()
+                    .unwrap_or(hir_nameres::Resolution::Err);
+                let source = self.call_site_source(body, call_expr, callee_expr, &resolution);
+                self.infer_resolution_with_source(body, callee_expr, resolution, source)
+            }
+            ExprKind::Field { base, .. } => {
+                if !self.is_namespace_expr(body, *base) {
+                    self.infer_expr(body, *base);
+                }
+                let resolution = self.expr_resolutions.get(&(body, callee_expr)).cloned();
+                let resolution = if let Some(resolution) = resolution {
+                    resolution
+                } else {
+                    self.diagnostics.push(TypeckDiagnostic::UnknownField {
+                        field: self.field_name(body, callee_expr),
+                    });
+                    hir_nameres::Resolution::Err
+                };
+                let source = self.call_site_source(body, call_expr, callee_expr, &resolution);
+                self.infer_resolution_with_source(body, callee_expr, resolution, source)
+            }
+            _ => self.infer_expr(body, callee_expr),
+        }
+    }
+
+    fn call_site_source(
+        &self,
+        body: FuncBody<'db>,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+        resolution: &hir_nameres::Resolution<'db>,
+    ) -> Option<ObligationSource<'db>> {
+        let callee = match resolution {
+            hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Function,
+            } => CallSiteCallee::Function(*def),
+            hir_nameres::Resolution::Field(field) => CallSiteCallee::Field(*field),
+            hir_nameres::Resolution::Ctor { ty, index } => CallSiteCallee::AdtCtor {
+                ty: *ty,
+                index: *index,
+            },
+            hir_nameres::Resolution::ClassMethod { class, name } => CallSiteCallee::ClassMethod {
+                class: *class,
+                name: name.clone(),
+            },
+            hir_nameres::Resolution::Builtin(
+                kind @ (hir_nameres::BuiltinKind::Constructor(_)
+                | hir_nameres::BuiltinKind::Function(_)
+                | hir_nameres::BuiltinKind::ClassMethod(_)),
+            ) => CallSiteCallee::Builtin(*kind),
+            _ => return None,
+        };
+        Some(ObligationSource::CallSite {
+            body,
+            call_expr,
+            callee_expr,
+            callee,
+        })
     }
 
     fn infer_lit(
@@ -1620,6 +1717,16 @@ impl<'db> InferCtx<'db> {
         expr: Id<Expr<'db>>,
         resolution: hir_nameres::Resolution<'db>,
     ) -> InferTy<'db> {
+        self.infer_resolution_with_source(body, expr, resolution, None)
+    }
+
+    fn infer_resolution_with_source(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        resolution: hir_nameres::Resolution<'db>,
+        source: Option<ObligationSource<'db>>,
+    ) -> InferTy<'db> {
         match resolution {
             hir_nameres::Resolution::Param(param) => self.param_ty(param.body, param.index),
             hir_nameres::Resolution::Local(hir_nameres::LocalBinding::Let { body, stmt }) => {
@@ -1630,12 +1737,12 @@ impl<'db> InferCtx<'db> {
             }
             hir_nameres::Resolution::Builtin(kind) => {
                 if let Some(scheme) = builtin_scheme(self.db, kind) {
-                    let source = match kind {
+                    let source = source.unwrap_or(match kind {
                         hir_nameres::BuiltinKind::ClassMethod(_) => {
                             ObligationSource::ClassMethod { body, expr }
                         }
                         _ => ObligationSource::Scheme,
-                    };
+                    });
                     let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
                     self.pending.extend(instantiated.obligations);
                     instantiated.ty
@@ -1646,15 +1753,19 @@ impl<'db> InferCtx<'db> {
             hir_nameres::Resolution::Def {
                 def,
                 kind: hir_nameres::DefResolutionKind::Function,
-            } => self.instantiate_function(def),
-            hir_nameres::Resolution::Field(field) => self.instantiate_field(field),
-            hir_nameres::Resolution::Ctor { ty, index } => {
-                self.instantiate_adt_ctor_value(ty, index)
+            } => self.instantiate_function(def, source.unwrap_or(ObligationSource::Scheme)),
+            hir_nameres::Resolution::Field(field) => {
+                self.instantiate_field(field, source.unwrap_or(ObligationSource::Scheme))
             }
+            hir_nameres::Resolution::Ctor { ty, index } => self.instantiate_adt_ctor_value(
+                ty,
+                index,
+                source.unwrap_or(ObligationSource::Scheme),
+            ),
             hir_nameres::Resolution::ClassMethod { class, name } => self.instantiate_class_method(
                 class,
                 &name,
-                ObligationSource::ClassMethod { body, expr },
+                source.unwrap_or(ObligationSource::ClassMethod { body, expr }),
             ),
             hir_nameres::Resolution::Err => InferTy::Error,
             hir_nameres::Resolution::Def { .. }
@@ -1666,9 +1777,13 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn instantiate_function(&mut self, def: DefId<'db>) -> InferTy<'db> {
-        if let Some(entry) = self.catalog.functions.iter().find(|entry| entry.def == def) {
-            let instantiated = self.engine.instantiate_scheme(entry.scheme);
+    fn instantiate_function(
+        &mut self,
+        def: DefId<'db>,
+        source: ObligationSource<'db>,
+    ) -> InferTy<'db> {
+        if let Some(scheme) = self.lookup_function_scheme(def) {
+            let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
             self.pending.extend(instantiated.obligations);
             instantiated.ty
         } else {
@@ -1676,14 +1791,13 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn instantiate_field(&mut self, field: hir_nameres::FieldId<'db>) -> InferTy<'db> {
-        if let Some(entry) = self
-            .catalog
-            .fields
-            .iter()
-            .find(|entry| entry.field == field)
-        {
-            let instantiated = self.engine.instantiate_scheme(entry.scheme);
+    fn instantiate_field(
+        &mut self,
+        field: hir_nameres::FieldId<'db>,
+        source: ObligationSource<'db>,
+    ) -> InferTy<'db> {
+        if let Some(scheme) = self.lookup_field_scheme(field) {
+            let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
             self.pending.extend(instantiated.obligations);
             instantiated.ty
         } else {
@@ -1691,14 +1805,14 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn instantiate_adt_ctor(&mut self, ty: DefId<'db>, index: u32) -> InferTy<'db> {
-        if let Some(entry) = self
-            .catalog
-            .adt_ctors
-            .iter()
-            .find(|entry| entry.ty == ty && entry.index == index)
-        {
-            let instantiated = self.engine.instantiate_scheme(entry.scheme);
+    fn instantiate_adt_ctor(
+        &mut self,
+        ty: DefId<'db>,
+        index: u32,
+        source: ObligationSource<'db>,
+    ) -> InferTy<'db> {
+        if let Some(scheme) = self.lookup_adt_ctor_scheme(ty, index) {
+            let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
             self.pending.extend(instantiated.obligations);
             instantiated.ty
         } else {
@@ -1706,8 +1820,13 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn instantiate_adt_ctor_value(&mut self, ty: DefId<'db>, index: u32) -> InferTy<'db> {
-        let ctor_ty = self.instantiate_adt_ctor(ty, index);
+    fn instantiate_adt_ctor_value(
+        &mut self,
+        ty: DefId<'db>,
+        index: u32,
+        source: ObligationSource<'db>,
+    ) -> InferTy<'db> {
+        let ctor_ty = self.instantiate_adt_ctor(ty, index, source);
         match self.engine.resolve(ctor_ty.clone()) {
             InferTy::Function { params, ret } if params.is_empty() => *ret,
             _ => ctor_ty,
@@ -1720,19 +1839,44 @@ impl<'db> InferCtx<'db> {
         name: &str,
         source: ObligationSource<'db>,
     ) -> InferTy<'db> {
-        if let Some(entry) = self
-            .catalog
-            .class_methods
-            .iter()
-            .find(|entry| entry.class == class && entry.name == name)
-        {
-            let instantiated = self
-                .engine
-                .instantiate_scheme_with_source(entry.scheme, source);
+        if let Some(scheme) = self.lookup_class_method_scheme(class, name) {
+            let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
             self.pending.extend(instantiated.obligations);
             instantiated.ty
         } else {
             self.engine.fresh_var()
+        }
+    }
+
+    fn lookup_function_scheme(&self, def: DefId<'db>) -> Option<TyScheme<'db>> {
+        if let Some(entry_module) = self.entry_module {
+            function_scheme_for_entry(self.db, entry_module, def)
+        } else {
+            function_scheme_in_hir_module(self.db, self.module, def)
+        }
+    }
+
+    fn lookup_field_scheme(&self, field: hir_nameres::FieldId<'db>) -> Option<TyScheme<'db>> {
+        if let Some(entry_module) = self.entry_module {
+            field_scheme_for_entry(self.db, entry_module, field)
+        } else {
+            field_scheme_in_hir_module(self.db, self.module, field)
+        }
+    }
+
+    fn lookup_adt_ctor_scheme(&self, ty: DefId<'db>, index: u32) -> Option<TyScheme<'db>> {
+        if let Some(entry_module) = self.entry_module {
+            adt_ctor_scheme_for_entry(self.db, entry_module, ty, index)
+        } else {
+            adt_ctor_scheme_in_hir_module(self.db, self.module, ty, index)
+        }
+    }
+
+    fn lookup_class_method_scheme(&self, class: DefId<'db>, name: &str) -> Option<TyScheme<'db>> {
+        if let Some(entry_module) = self.entry_module {
+            class_method_scheme_for_entry(self.db, entry_module, class, name.to_owned())
+        } else {
+            class_method_scheme_in_hir_module(self.db, self.module, class, name.to_owned())
         }
     }
 
@@ -1878,13 +2022,7 @@ impl<'db> InferCtx<'db> {
         else {
             return DotCtorLookup::NoExpected;
         };
-        let matches = self
-            .catalog
-            .adt_ctors
-            .iter()
-            .filter(|entry| entry.ty == def && entry.name == name)
-            .cloned()
-            .collect::<Vec<_>>();
+        let matches = self.lookup_adt_ctor_schemes_by_name(def, name);
         match matches.as_slice() {
             [] => DotCtorLookup::NoMatch,
             [entry] => {
@@ -1898,6 +2036,18 @@ impl<'db> InferCtx<'db> {
                     .map(|entry| entry.name.clone())
                     .collect::<Vec<_>>(),
             ),
+        }
+    }
+
+    fn lookup_adt_ctor_schemes_by_name(
+        &self,
+        ty: DefId<'db>,
+        name: &str,
+    ) -> Vec<AdtCtorScheme<'db>> {
+        if let Some(entry_module) = self.entry_module {
+            adt_ctor_schemes_by_name_for_entry(self.db, entry_module, ty, name.to_owned())
+        } else {
+            adt_ctor_schemes_by_name_in_hir_module(self.db, self.module, ty, name.to_owned())
         }
     }
 
@@ -2020,7 +2170,7 @@ impl<'db> InferCtx<'db> {
                 ty
             }
             hir_nameres::Resolution::Ctor { ty, index } => {
-                let ctor_ty = self.instantiate_adt_ctor(ty, index);
+                let ctor_ty = self.instantiate_adt_ctor(ty, index, ObligationSource::Scheme);
                 let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
                 self.apply_ctor_pat_scheme(body, args, ctor_ty, ret)
             }
@@ -2665,6 +2815,7 @@ impl<'db> InferCtx<'db> {
 
 struct ObligationSolveOutput<'db> {
     evidence: Vec<ObligationEvidence<'db>>,
+    call_site_evidence: Vec<CallSiteEvidence<'db>>,
     diagnostics: Vec<TypeckDiagnostic>,
 }
 
@@ -2674,12 +2825,13 @@ fn solve_deferred_obligations<'db>(
     obligations: &[DeferredObligation<'db>],
 ) -> ObligationSolveOutput<'db> {
     let mut evidence = Vec::new();
+    let mut call_site_evidence = Vec::new();
     let mut diagnostics = Vec::new();
     for (index, obligation) in obligations.iter().enumerate() {
         if matches!(obligation.pred.kind(db), PredKind::Error) {
             continue;
         }
-        let report = solve_goal(db, trait_env, obligation.pred);
+        let report = solve_report(db, trait_env, canonical_goal(db, obligation.pred));
         if report.exhausted {
             diagnostics.push(TypeckDiagnostic::SolverFuelExhausted {
                 pred: obligation.pred.display(db),
@@ -2689,10 +2841,28 @@ fn solve_deferred_obligations<'db>(
         match report.solution {
             Solution::Unique {
                 evidence: proof, ..
-            } => evidence.push(ObligationEvidence {
-                obligation: index,
-                evidence: proof,
-            }),
+            } => {
+                evidence.push(ObligationEvidence {
+                    obligation: index,
+                    evidence: proof.clone(),
+                });
+                if let ObligationSource::CallSite {
+                    body,
+                    call_expr,
+                    callee_expr,
+                    callee,
+                } = &obligation.source
+                {
+                    call_site_evidence.push(CallSiteEvidence {
+                        body: *body,
+                        call_expr: *call_expr,
+                        callee_expr: *callee_expr,
+                        callee: callee.clone(),
+                        obligation: index,
+                        evidence: proof,
+                    });
+                }
+            }
             Solution::Ambiguous { candidates } => {
                 diagnostics.push(TypeckDiagnostic::AmbiguousConstraint {
                     pred: obligation.pred.display(db),
@@ -2709,8 +2879,701 @@ fn solve_deferred_obligations<'db>(
     }
     ObligationSolveOutput {
         evidence,
+        call_site_evidence,
         diagnostics,
     }
+}
+
+/// Lowers the scheme for one function-like definition in `module`.
+#[salsa::tracked]
+pub fn function_scheme<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    def: DefId<'db>,
+) -> Option<TyScheme<'db>> {
+    let hir_module = module_hir(db, module)?;
+    let item_resolutions = item_resolutions_for_module(db, module)?;
+    function_scheme_in_module(db, hir_module, &item_resolutions, def)
+}
+
+/// Lowers the scheme for one contract field in `module`.
+#[salsa::tracked]
+pub fn field_scheme<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    field: hir_nameres::FieldId<'db>,
+) -> Option<TyScheme<'db>> {
+    let hir_module = module_hir(db, module)?;
+    let item_resolutions = item_resolutions_for_module(db, module)?;
+    field_scheme_in_module(db, hir_module, &item_resolutions, field)
+}
+
+/// Lowers the scheme for one ADT constructor in `module`.
+#[salsa::tracked]
+pub fn adt_ctor_scheme<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    ty: DefId<'db>,
+    index: u32,
+) -> Option<TyScheme<'db>> {
+    let hir_module = module_hir(db, module)?;
+    let item_resolutions = item_resolutions_for_module(db, module)?;
+    adt_ctor_scheme_in_module(db, hir_module, &item_resolutions, ty, index)
+}
+
+/// Lowers the scheme for one type-class method in `module`.
+#[salsa::tracked]
+pub fn class_method_scheme<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    class: DefId<'db>,
+    name: String,
+) -> Option<TyScheme<'db>> {
+    let hir_module = module_hir(db, module)?;
+    let item_resolutions = item_resolutions_for_module(db, module)?;
+    class_method_scheme_in_module(db, hir_module, &item_resolutions, class, &name)
+}
+
+fn function_scheme_for_entry<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    def: DefId<'db>,
+) -> Option<TyScheme<'db>> {
+    function_scheme(db, module_for_def(db, entry, def)?, def)
+}
+
+fn field_scheme_for_entry<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    field: hir_nameres::FieldId<'db>,
+) -> Option<TyScheme<'db>> {
+    field_scheme(db, module_for_def(db, entry, field.contract)?, field)
+}
+
+fn adt_ctor_scheme_for_entry<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    ty: DefId<'db>,
+    index: u32,
+) -> Option<TyScheme<'db>> {
+    adt_ctor_scheme(db, module_for_def(db, entry, ty)?, ty, index)
+}
+
+fn class_method_scheme_for_entry<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    class: DefId<'db>,
+    name: String,
+) -> Option<TyScheme<'db>> {
+    class_method_scheme(db, module_for_def(db, entry, class)?, class, name)
+}
+
+fn adt_ctor_schemes_by_name_for_entry<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    ty: DefId<'db>,
+    name: String,
+) -> Vec<AdtCtorScheme<'db>> {
+    let Some(module) = module_for_def(db, entry, ty) else {
+        return Vec::new();
+    };
+    adt_ctor_indices_by_name(db, module, ty, name)
+        .into_iter()
+        .filter_map(|(index, ctor_name)| {
+            adt_ctor_scheme(db, module, ty, index).map(|scheme| AdtCtorScheme {
+                ty,
+                index,
+                name: ctor_name,
+                scheme,
+            })
+        })
+        .collect()
+}
+
+#[salsa::tracked]
+fn module_for_def<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    def: DefId<'db>,
+) -> Option<ModuleId<'db>> {
+    let file = def.file(db);
+    nameres::module_graph(db, entry)
+        .modules
+        .into_iter()
+        .find(|module| db.module_file(*module) == Some(file))
+}
+
+#[salsa::tracked]
+fn module_hir<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Option<Module<'db>> {
+    let file = db.module_file(module)?;
+    Some(parse_file_to_hir(db, file).module(db))
+}
+
+#[salsa::tracked]
+fn item_resolutions_for_module<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+) -> Option<hir_nameres::ItemResolutionMap<'db>> {
+    let hir_module = module_hir(db, module)?;
+    let env = nameres::module_env(db, module);
+    let scope = env.item_scope.clone()?;
+    Some(hir_nameres::resolve_item_types_with_imports(
+        db, hir_module, &scope, &env,
+    ))
+}
+
+#[salsa::tracked]
+fn function_scheme_in_hir_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<TyScheme<'db>> {
+    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    function_scheme_in_module(db, module, &item_resolutions, def)
+}
+
+#[salsa::tracked]
+fn field_scheme_in_hir_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    field: hir_nameres::FieldId<'db>,
+) -> Option<TyScheme<'db>> {
+    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    field_scheme_in_module(db, module, &item_resolutions, field)
+}
+
+#[salsa::tracked]
+fn adt_ctor_scheme_in_hir_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    ty: DefId<'db>,
+    index: u32,
+) -> Option<TyScheme<'db>> {
+    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    adt_ctor_scheme_in_module(db, module, &item_resolutions, ty, index)
+}
+
+#[salsa::tracked]
+fn class_method_scheme_in_hir_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    class: DefId<'db>,
+    name: String,
+) -> Option<TyScheme<'db>> {
+    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    class_method_scheme_in_module(db, module, &item_resolutions, class, &name)
+}
+
+#[salsa::tracked]
+fn adt_ctor_schemes_by_name_in_hir_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    ty: DefId<'db>,
+    name: String,
+) -> Vec<AdtCtorScheme<'db>> {
+    adt_ctor_indices_by_name_in_hir_module(db, module, ty, name)
+        .into_iter()
+        .filter_map(|(index, ctor_name)| {
+            adt_ctor_scheme_in_hir_module(db, module, ty, index).map(|scheme| AdtCtorScheme {
+                ty,
+                index,
+                name: ctor_name,
+                scheme,
+            })
+        })
+        .collect()
+}
+
+#[salsa::tracked]
+fn adt_ctor_indices_by_name<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    ty: DefId<'db>,
+    name: String,
+) -> Vec<(u32, String)> {
+    let Some(hir_module) = module_hir(db, module) else {
+        return Vec::new();
+    };
+    adt_ctor_indices_by_name_in_module(db, hir_module, ty, &name)
+}
+
+#[salsa::tracked]
+fn adt_ctor_indices_by_name_in_hir_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    ty: DefId<'db>,
+    name: String,
+) -> Vec<(u32, String)> {
+    adt_ctor_indices_by_name_in_module(db, module, ty, &name)
+}
+
+fn function_scheme_in_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    def: DefId<'db>,
+) -> Option<TyScheme<'db>> {
+    let info = find_function_info(db, module, def)?;
+    let lowered = TypeLowering::from_item_resolutions(
+        db,
+        item_resolutions,
+        BinderEnv::from_type_vars(&info.type_vars),
+    )
+    .lower_function(info.function);
+    Some(lowered.scheme)
+}
+
+fn field_scheme_in_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    field: hir_nameres::FieldId<'db>,
+) -> Option<TyScheme<'db>> {
+    let info = find_field_info(db, module, field)?;
+    let lowered = TypeLowering::from_item_resolutions(
+        db,
+        item_resolutions,
+        BinderEnv::from_type_vars(&info.type_vars),
+    )
+    .lower_field(&info.field);
+    Some(lowered.scheme)
+}
+
+fn adt_ctor_scheme_in_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    ty: DefId<'db>,
+    index: u32,
+) -> Option<TyScheme<'db>> {
+    let info = find_adt_info(db, module, ty)?;
+    let ctor = info.adt.ctors(db).get(index as usize)?;
+    let lowered = TypeLowering::from_item_resolutions(
+        db,
+        item_resolutions,
+        BinderEnv::from_type_vars(&info.type_vars),
+    )
+    .lower_adt_ctor(info.adt, ctor);
+    Some(lowered.scheme)
+}
+
+fn class_method_scheme_in_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    class: DefId<'db>,
+    name: &str,
+) -> Option<TyScheme<'db>> {
+    let info = find_class_info(db, module, class)?;
+    let method = info
+        .class
+        .methods(db)
+        .iter()
+        .find(|method| ident_text(db, &method.name) == name)?;
+    let scheme = TypeLowering::from_item_resolutions(
+        db,
+        item_resolutions,
+        BinderEnv::from_type_vars(&info.type_vars),
+    )
+    .lower_class_method(info.class, method);
+    Some(scheme)
+}
+
+fn adt_ctor_indices_by_name_in_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    ty: DefId<'db>,
+    name: &str,
+) -> Vec<(u32, String)> {
+    let Some(info) = find_adt_info(db, module, ty) else {
+        return Vec::new();
+    };
+    info.adt
+        .ctors(db)
+        .iter()
+        .enumerate()
+        .filter_map(|(index, ctor)| {
+            let ctor_name = ident_text(db, &ctor.name);
+            (ctor_name == name).then_some((index as u32, ctor_name))
+        })
+        .collect()
+}
+
+/// Returns type-checking diagnostics for every module reachable from `entry`.
+#[salsa::tracked(returns(ref))]
+pub fn reachable_typeck_diagnostics<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+) -> Vec<AnyDiagnostic> {
+    let graph = nameres::module_graph(db, entry);
+    let mut diagnostics = Vec::new();
+    for module in graph.modules {
+        diagnostics.extend(module_typeck_diagnostics(db, module).iter().cloned());
+    }
+    sort_dedup_typeck_diagnostics(db, &mut diagnostics);
+    diagnostics
+}
+
+/// Returns type-checking diagnostics for one module.
+#[salsa::tracked(returns(ref))]
+pub fn module_typeck_diagnostics<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+) -> Vec<AnyDiagnostic> {
+    if matches!(module.library(db), LibraryId::Std) {
+        return Vec::new();
+    }
+    let Some(file) = db.module_file(module) else {
+        return Vec::new();
+    };
+    if !parse_diagnostics(db, file).is_empty() {
+        return Vec::new();
+    }
+    let Some(hir_module) = module_hir(db, module) else {
+        return Vec::new();
+    };
+    let env = nameres::module_env(db, module);
+    let Some(item_scope) = env.item_scope.clone() else {
+        return Vec::new();
+    };
+    let item_resolutions =
+        hir_nameres::resolve_item_types_with_imports(db, hir_module, &item_scope, &env);
+    let mut collector = TypeckDiagnosticCollector {
+        db,
+        module,
+        hir_module,
+        env,
+        item_resolutions,
+        diagnostics: Vec::new(),
+    };
+    for item in hir_module.items(db) {
+        collector.item(*item, None, &[]);
+    }
+    sort_dedup_typeck_diagnostics(db, &mut collector.diagnostics);
+    collector.diagnostics
+}
+
+struct TypeckDiagnosticCollector<'db> {
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    hir_module: Module<'db>,
+    env: nameres::ModuleEnv<'db>,
+    item_resolutions: hir_nameres::ItemResolutionMap<'db>,
+    diagnostics: Vec<AnyDiagnostic>,
+}
+
+impl<'db> TypeckDiagnosticCollector<'db> {
+    fn item(
+        &mut self,
+        item: Item<'db>,
+        enclosing_contract: Option<DefId<'db>>,
+        inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    ) {
+        match item {
+            Item::FunctionDef(function) => {
+                self.function(function, enclosing_contract, inherited_type_vars);
+            }
+            Item::InstanceDef(instance) => {
+                let mut inherited = inherited_type_vars.to_vec();
+                inherited.extend(type_var_bindings(
+                    instance.def_id_value(self.db),
+                    instance.type_var_elems(self.db),
+                ));
+                for method in instance.methods(self.db) {
+                    self.function(*method, enclosing_contract, &inherited);
+                }
+            }
+            Item::ContractDef(contract) => {
+                let mut inherited = inherited_type_vars.to_vec();
+                inherited.extend(type_var_bindings(
+                    contract.def_id_value(self.db),
+                    contract.ty_param_elems(self.db),
+                ));
+                for item in contract.items(self.db) {
+                    match *item {
+                        ContractItem::FunctionDef(function) => self.function(
+                            function,
+                            Some(contract.def_id_value(self.db)),
+                            &inherited,
+                        ),
+                        ContractItem::TypeAlias(_)
+                        | ContractItem::AdtDef(_)
+                        | ContractItem::Error { .. } => {}
+                    }
+                }
+            }
+            Item::TypeAlias(_)
+            | Item::AdtDef(_)
+            | Item::ClassDef(_)
+            | Item::Import(_)
+            | Item::Export(_)
+            | Item::Pragma(_)
+            | Item::Error { .. } => {}
+        }
+    }
+
+    fn function(
+        &mut self,
+        function: FunctionDef<'db>,
+        enclosing_contract: Option<DefId<'db>>,
+        inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    ) {
+        let Some(body) = function.body(self.db) else {
+            return;
+        };
+        let sig = function.sig(self.db);
+        let mut type_vars = inherited_type_vars.to_vec();
+        type_vars.extend(sig_type_vars(function.def_id_value(self.db), sig));
+        let lowerer = TypeLowering::from_item_resolutions(
+            self.db,
+            &self.item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        let lowered = lowerer.lower_function(function);
+        let context = hir_nameres::BodyResolutionContext {
+            module: self.hir_module,
+            enclosing_contract,
+            params: param_bindings(sig.params.atom()),
+            type_vars: type_vars.clone(),
+        };
+        let body_map = hir_nameres::resolve_body_with_imports_and_policy(
+            self.db,
+            body,
+            &context,
+            &self.env,
+            hir_nameres::NameresDiagnosticPolicy::Emit,
+        );
+        if !body_map.diagnostics.is_empty() {
+            return;
+        }
+        let trait_env = trait_env_with_givens(
+            self.db,
+            crate::solver::trait_env_for_module(self.db, self.module),
+            lowered.scheme.body(self.db).preds(self.db).clone(),
+        );
+        let ctx = BodyTyContext::new(
+            self.hir_module,
+            body_map,
+            type_vars,
+            lowered.params,
+            Some(lowered.ret),
+        )
+        .with_param_names(param_names(self.db, sig.params.atom()))
+        .with_entry_module(self.module)
+        .with_trait_env(trait_env);
+        self.diagnostics.extend(
+            body_ty_diagnostics(self.db, body, ctx)
+                .iter()
+                .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+        );
+    }
+}
+
+fn sort_dedup_typeck_diagnostics(db: &dyn Db, diagnostics: &mut Vec<AnyDiagnostic>) {
+    diagnostics.sort_by_key(|diagnostic| diagnostic.query_sort_key(db));
+    let mut seen = FxHashSet::default();
+    diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
+}
+
+struct FunctionLookup<'db> {
+    function: FunctionDef<'db>,
+    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+}
+
+struct FieldLookup<'db> {
+    field: FieldDef<'db>,
+    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+}
+
+struct AdtLookup<'db> {
+    adt: AdtDef<'db>,
+    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+}
+
+struct ClassLookup<'db> {
+    class: ClassDef<'db>,
+    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+}
+
+fn find_function_info<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<FunctionLookup<'db>> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| find_function_in_item(db, *item, def, &[]))
+}
+
+fn find_function_in_item<'db>(
+    db: &'db dyn HirDb,
+    item: Item<'db>,
+    def: DefId<'db>,
+    inherited: &[hir_nameres::TypeVarBinding<'db>],
+) -> Option<FunctionLookup<'db>> {
+    match item {
+        Item::FunctionDef(function) if function.def_id_value(db) == def => {
+            let mut type_vars = inherited.to_vec();
+            type_vars.extend(sig_type_vars(function.def_id_value(db), function.sig(db)));
+            Some(FunctionLookup {
+                function,
+                type_vars,
+            })
+        }
+        Item::InstanceDef(instance) => {
+            let mut inherited = inherited.to_vec();
+            inherited.extend(type_var_bindings(
+                instance.def_id_value(db),
+                instance.type_var_elems(db),
+            ));
+            instance.methods(db).iter().find_map(|method| {
+                find_function_in_item(db, Item::FunctionDef(*method), def, &inherited)
+            })
+        }
+        Item::ContractDef(contract) => {
+            let mut inherited = inherited.to_vec();
+            inherited.extend(type_var_bindings(
+                contract.def_id_value(db),
+                contract.ty_param_elems(db),
+            ));
+            contract.items(db).iter().find_map(|item| match *item {
+                ContractItem::FunctionDef(function) => {
+                    find_function_in_item(db, Item::FunctionDef(function), def, &inherited)
+                }
+                ContractItem::TypeAlias(_)
+                | ContractItem::AdtDef(_)
+                | ContractItem::Error { .. } => None,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn find_field_info<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    field: hir_nameres::FieldId<'db>,
+) -> Option<FieldLookup<'db>> {
+    module.items(db).iter().find_map(|item| {
+        let Item::ContractDef(contract) = item else {
+            return None;
+        };
+        if contract.def_id_value(db) != field.contract {
+            return None;
+        }
+        let type_vars = type_var_bindings(contract.def_id_value(db), contract.ty_param_elems(db));
+        let field = contract.fields(db).get(field.index as usize)?.clone();
+        Some(FieldLookup { field, type_vars })
+    })
+}
+
+fn find_adt_info<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<AdtLookup<'db>> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| find_adt_in_item(db, *item, def, &[]))
+}
+
+fn find_adt_in_item<'db>(
+    db: &'db dyn HirDb,
+    item: Item<'db>,
+    def: DefId<'db>,
+    inherited: &[hir_nameres::TypeVarBinding<'db>],
+) -> Option<AdtLookup<'db>> {
+    match item {
+        Item::AdtDef(adt) if adt.def_id_value(db) == def => {
+            let mut type_vars = inherited.to_vec();
+            type_vars.extend(type_var_bindings(
+                adt.def_id_value(db),
+                adt.ty_param_elems(db),
+            ));
+            Some(AdtLookup { adt, type_vars })
+        }
+        Item::ContractDef(contract) => {
+            let mut inherited = inherited.to_vec();
+            inherited.extend(type_var_bindings(
+                contract.def_id_value(db),
+                contract.ty_param_elems(db),
+            ));
+            contract.items(db).iter().find_map(|item| match *item {
+                ContractItem::AdtDef(adt) => {
+                    find_adt_in_item(db, Item::AdtDef(adt), def, &inherited)
+                }
+                ContractItem::FunctionDef(_)
+                | ContractItem::TypeAlias(_)
+                | ContractItem::Error { .. } => None,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn find_class_info<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<ClassLookup<'db>> {
+    module.items(db).iter().find_map(|item| {
+        let Item::ClassDef(class) = item else {
+            return None;
+        };
+        if class.def_id_value(db) != def {
+            return None;
+        }
+        Some(ClassLookup {
+            class: *class,
+            type_vars: type_var_bindings(class.def_id_value(db), class.type_var_elems(db)),
+        })
+    })
+}
+
+fn type_var_bindings<'db>(
+    owner: DefId<'db>,
+    vars: &[SpannedElem<'db, Ident<'db>>],
+) -> Vec<hir_nameres::TypeVarBinding<'db>> {
+    vars.iter()
+        .enumerate()
+        .map(|(index, name)| hir_nameres::TypeVarBinding {
+            owner,
+            name: *name,
+            index: index as u32,
+        })
+        .collect()
+}
+
+fn sig_type_vars<'db>(
+    owner: DefId<'db>,
+    sig: &hir::ast::function::FuncSig<'db>,
+) -> Vec<hir_nameres::TypeVarBinding<'db>> {
+    type_var_bindings(owner, &sig.type_vars)
+}
+
+fn param_bindings<'db>(params: &[FuncParam<'db>]) -> Vec<hir_nameres::ParamBinding<'db>> {
+    params
+        .iter()
+        .filter_map(|param| match param {
+            FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => {
+                Some(hir_nameres::ParamBinding { name: *name })
+            }
+            FuncParam::Error { .. } => None,
+        })
+        .collect()
+}
+
+fn param_names<'db>(db: &'db dyn HirDb, params: &[FuncParam<'db>]) -> Vec<String> {
+    params
+        .iter()
+        .filter_map(|param| param_name(db, param).map(str::to_owned))
+        .collect()
+}
+
+fn ident_text<'db>(db: &'db dyn HirDb, ident: &SpannedElem<'db, Ident<'db>>) -> String {
+    (*ident.atom()).text(db).to_owned()
 }
 
 /// Infers expression and pattern types for one body.
@@ -2795,10 +3658,7 @@ mod tests {
         ast::{
             Ident,
             function::{ExprKind, FuncParam, FuncSig, StmtKind},
-            item::{
-                AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FunctionDef, InstanceDef,
-                Item, Module,
-            },
+            item::{ContractItem, FunctionDef, Item, Module},
         },
         input::SourceFile,
         nameres as hir_nameres,
@@ -3014,193 +3874,12 @@ mod tests {
             })
     }
 
-    fn catalog<'db>(
-        db: &'db TestDb,
-        module: Module<'db>,
-        module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
-    ) -> BodyTyCatalog<'db> {
-        let mut catalog = BodyTyCatalog::default();
-        for item in module.items(db) {
-            collect_catalog_item(db, module_resolution, *item, &[], &mut catalog);
-        }
-        catalog
-    }
-
     fn trait_env<'db>(
         db: &'db TestDb,
         module: Module<'db>,
         module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
     ) -> TraitEnvId<'db> {
         trait_env_from_module_resolution(db, module, module_resolution)
-    }
-
-    fn collect_catalog_item<'db>(
-        db: &'db TestDb,
-        module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
-        item: Item<'db>,
-        inherited: &[hir_nameres::TypeVarBinding<'db>],
-        catalog: &mut BodyTyCatalog<'db>,
-    ) {
-        match item {
-            Item::FunctionDef(function) => {
-                add_function_scheme(db, module_resolution, function, inherited, catalog)
-            }
-            Item::AdtDef(adt) => add_adt_schemes(db, module_resolution, adt, inherited, catalog),
-            Item::ClassDef(class) => {
-                add_class_method_schemes(db, module_resolution, class, inherited, catalog)
-            }
-            Item::InstanceDef(instance) => {
-                add_instance_function_schemes(db, module_resolution, instance, inherited, catalog)
-            }
-            Item::ContractDef(contract) => {
-                add_contract_schemes(db, module_resolution, contract, inherited, catalog)
-            }
-            Item::TypeAlias(_)
-            | Item::Import(_)
-            | Item::Export(_)
-            | Item::Pragma(_)
-            | Item::Error { .. } => {}
-        }
-    }
-
-    fn lowerer_for<'db>(
-        db: &'db TestDb,
-        module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
-        type_vars: &[hir_nameres::TypeVarBinding<'db>],
-    ) -> TypeLowering<'db> {
-        TypeLowering::from_item_resolutions(
-            db,
-            &module_resolution.item_resolutions,
-            BinderEnv::from_type_vars(type_vars),
-        )
-    }
-
-    fn add_function_scheme<'db>(
-        db: &'db TestDb,
-        module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
-        function: FunctionDef<'db>,
-        inherited: &[hir_nameres::TypeVarBinding<'db>],
-        catalog: &mut BodyTyCatalog<'db>,
-    ) {
-        let mut type_vars = inherited.to_vec();
-        type_vars.extend(sig_type_vars(function.def_id_value(db), function.sig(db)));
-        let lowered = lowerer_for(db, module_resolution, &type_vars).lower_function(function);
-        catalog.functions.push(FunctionScheme {
-            def: function.def_id_value(db),
-            scheme: lowered.scheme,
-        });
-    }
-
-    fn add_adt_schemes<'db>(
-        db: &'db TestDb,
-        module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
-        adt: AdtDef<'db>,
-        inherited: &[hir_nameres::TypeVarBinding<'db>],
-        catalog: &mut BodyTyCatalog<'db>,
-    ) {
-        let mut type_vars = inherited.to_vec();
-        type_vars.extend(type_var_bindings(
-            adt.def_id_value(db),
-            adt.ty_param_elems(db),
-        ));
-        let lowerer = lowerer_for(db, module_resolution, &type_vars);
-        for (index, ctor) in adt.ctors(db).iter().enumerate() {
-            let lowered = lowerer.lower_adt_ctor(adt, ctor);
-            catalog.adt_ctors.push(AdtCtorScheme {
-                ty: adt.def_id_value(db),
-                index: index as u32,
-                name: ident_text(db, &ctor.name),
-                scheme: lowered.scheme,
-            });
-        }
-    }
-
-    fn add_class_method_schemes<'db>(
-        db: &'db TestDb,
-        module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
-        class: ClassDef<'db>,
-        inherited: &[hir_nameres::TypeVarBinding<'db>],
-        catalog: &mut BodyTyCatalog<'db>,
-    ) {
-        let mut type_vars = inherited.to_vec();
-        type_vars.extend(type_var_bindings(
-            class.def_id_value(db),
-            class.type_var_elems(db),
-        ));
-        let lowerer = lowerer_for(db, module_resolution, &type_vars);
-        for method in class.methods(db) {
-            catalog.class_methods.push(ClassMethodScheme {
-                class: class.def_id_value(db),
-                name: ident_text(db, &method.name),
-                scheme: lowerer.lower_class_method(class, method),
-            });
-        }
-    }
-
-    fn add_instance_function_schemes<'db>(
-        db: &'db TestDb,
-        module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
-        instance: InstanceDef<'db>,
-        inherited: &[hir_nameres::TypeVarBinding<'db>],
-        catalog: &mut BodyTyCatalog<'db>,
-    ) {
-        let mut inherited = inherited.to_vec();
-        inherited.extend(type_var_bindings(
-            instance.def_id_value(db),
-            instance.type_var_elems(db),
-        ));
-        for method in instance.methods(db) {
-            add_function_scheme(db, module_resolution, *method, &inherited, catalog);
-        }
-    }
-
-    fn add_contract_schemes<'db>(
-        db: &'db TestDb,
-        module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
-        contract: ContractDef<'db>,
-        inherited: &[hir_nameres::TypeVarBinding<'db>],
-        catalog: &mut BodyTyCatalog<'db>,
-    ) {
-        let mut inherited = inherited.to_vec();
-        inherited.extend(type_var_bindings(
-            contract.def_id_value(db),
-            contract.ty_param_elems(db),
-        ));
-        let lowerer = lowerer_for(db, module_resolution, &inherited);
-        for (index, field) in contract.fields(db).iter().enumerate() {
-            add_field_scheme(
-                field,
-                contract.def_id_value(db),
-                index as u32,
-                &lowerer,
-                catalog,
-            );
-        }
-        for item in contract.items(db) {
-            match *item {
-                ContractItem::FunctionDef(function) => {
-                    add_function_scheme(db, module_resolution, function, &inherited, catalog)
-                }
-                ContractItem::AdtDef(adt) => {
-                    add_adt_schemes(db, module_resolution, adt, &inherited, catalog)
-                }
-                ContractItem::TypeAlias(_) | ContractItem::Error { .. } => {}
-            }
-        }
-    }
-
-    fn add_field_scheme<'db>(
-        field: &FieldDef<'db>,
-        contract: DefId<'db>,
-        index: u32,
-        lowerer: &TypeLowering<'db>,
-        catalog: &mut BodyTyCatalog<'db>,
-    ) {
-        let lowered = lowerer.lower_field(field);
-        catalog.fields.push(FieldScheme {
-            field: hir_nameres::FieldId { contract, index },
-            scheme: lowered.scheme,
-        });
     }
 
     fn infer_function<'db>(
@@ -3222,9 +3901,14 @@ mod tests {
         )
         .lower_function(function);
         let body_map = body_map(db, &module_resolution, body);
-        let ctx = BodyTyContext::new(body_map, info.type_vars, lowered.params, Some(lowered.ret))
-            .with_param_names(param_names(db, function.sig(db).params.atom()))
-            .with_catalog(catalog(db, module, &module_resolution));
+        let ctx = BodyTyContext::new(
+            module,
+            body_map,
+            info.type_vars,
+            lowered.params,
+            Some(lowered.ret),
+        )
+        .with_param_names(param_names(db, function.sig(db).params.atom()));
         (body, infer_body(db, body, ctx))
     }
 
@@ -3233,7 +3917,6 @@ mod tests {
         module: Module<'db>,
     ) -> Vec<(String, InferenceResult<'db>)> {
         let module_resolution = hir_nameres::resolve_module(db, module);
-        let catalog = catalog(db, module, &module_resolution);
         function_infos(db, module)
             .into_iter()
             .filter_map(|info| {
@@ -3245,10 +3928,14 @@ mod tests {
                 )
                 .lower_function(info.function);
                 let body_map = body_map(db, &module_resolution, body);
-                let ctx =
-                    BodyTyContext::new(body_map, info.type_vars, lowered.params, Some(lowered.ret))
-                        .with_param_names(param_names(db, info.function.sig(db).params.atom()))
-                        .with_catalog(catalog.clone());
+                let ctx = BodyTyContext::new(
+                    module,
+                    body_map,
+                    info.type_vars,
+                    lowered.params,
+                    Some(lowered.ret),
+                )
+                .with_param_names(param_names(db, info.function.sig(db).params.atom()));
                 Some((
                     function_name(db, info.function).to_owned(),
                     infer_body(db, body, ctx),
@@ -3262,7 +3949,6 @@ mod tests {
         module: Module<'db>,
     ) -> Vec<(String, InferenceResult<'db>)> {
         let module_resolution = hir_nameres::resolve_module(db, module);
-        let catalog = catalog(db, module, &module_resolution);
         let base_trait_env = trait_env(db, module, &module_resolution);
         function_infos(db, module)
             .into_iter()
@@ -3280,11 +3966,15 @@ mod tests {
                     base_trait_env,
                     lowered.scheme.body(db).preds(db).clone(),
                 );
-                let ctx =
-                    BodyTyContext::new(body_map, info.type_vars, lowered.params, Some(lowered.ret))
-                        .with_param_names(param_names(db, info.function.sig(db).params.atom()))
-                        .with_catalog(catalog.clone())
-                        .with_trait_env(trait_env);
+                let ctx = BodyTyContext::new(
+                    module,
+                    body_map,
+                    info.type_vars,
+                    lowered.params,
+                    Some(lowered.ret),
+                )
+                .with_param_names(param_names(db, info.function.sig(db).params.atom()))
+                .with_trait_env(trait_env);
                 Some((
                     function_name(db, info.function).to_owned(),
                     infer_body(db, body, ctx),
@@ -3623,6 +4313,56 @@ function main() -> word {
                 .any(|obligation| obligation.pred.display(&db).contains(":Enum")),
             "expected Enum obligation, got {:?}",
             result.obligations
+        );
+    }
+
+    #[test]
+    fn constrained_function_call_records_call_site_evidence() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+data T = T;
+
+forall a . class a:C {}
+instance T:C {}
+
+forall a . a:C => function use(x: a) -> word { return 0; }
+
+function main(t: T) -> word {
+  return use(t);
+}
+"#,
+        );
+        let info = function_infos(&db, module)
+            .into_iter()
+            .find(|info| function_name(&db, info.function) == "main")
+            .expect("main function");
+        let body = info.function.body(&db).expect("main body");
+        let call_expr = return_expr(&db, body);
+        assert!(matches!(
+            body.exprs(&db).get(call_expr).kind,
+            ExprKind::Call { .. }
+        ));
+
+        let result = infer_all_functions_with_solver(&db, module)
+            .into_iter()
+            .find(|(name, _)| name == "main")
+            .map(|(_, result)| result)
+            .expect("main result");
+
+        assert!(
+            result.call_site_evidence.iter().any(|evidence| {
+                evidence.body == body
+                    && evidence.call_expr == call_expr
+                    && matches!(
+                        evidence.callee,
+                        CallSiteCallee::Function(def)
+                            if def.name(&db).as_deref() == Some("use")
+                    )
+            }),
+            "expected call-site evidence for use(t), got {:?}",
+            result.call_site_evidence
         );
     }
 

@@ -840,6 +840,7 @@ dependencies = [
  "rustc-hash",
  "salsa",
  "solcore-hir",
+ "solcore-hir-ty",
  "solcore-nameres",
  "solcore-parser",
  "tracing",

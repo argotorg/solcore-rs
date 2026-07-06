@@ -13,19 +13,19 @@ pub use hir::sema::ty::{
     TyScheme, UserTyCtor, UserTyCtorKind,
 };
 pub use infer::{
-    AdtCtorScheme, BodyTyCatalog, BodyTyContext, ClassMethodScheme, DeferredObligation, ExprTy,
-    FieldScheme, FunctionScheme, InferResultExt, InferTable, InferTy, InferenceResult,
-    Instantiated, ObligationEvidence, ObligationSource, PatTy, TyVid, TypeckDiagnostic, UnifyError,
-    VarValue, body_ty_diagnostics, infer_body,
+    AdtCtorScheme, BodyTyContext, CallSiteCallee, CallSiteEvidence, DeferredObligation, ExprTy,
+    InferResultExt, InferTable, InferTy, InferenceResult, Instantiated, ObligationEvidence,
+    ObligationSource, PatTy, TyVid, TypeckDiagnostic, UnifyError, VarValue, body_ty_diagnostics,
+    infer_body,
 };
 pub use lower::{
     BinderEnv, LoweredAdtCtor, LoweredField, LoweredFunction, LoweredTypeAlias, TypeLowering,
     builtin_scheme,
 };
 pub use solver::{
-    Candidate, CanonicalGoal, ClauseOrigin, Evidence, ProgramClause, Solution, Substitution,
-    TraitEnvId, canonical_goal, solve, trait_env_for_module, trait_env_from_module_resolution,
-    trait_env_with_givens,
+    BaseTraitEnvId, Candidate, CanonicalGoal, ClauseOrigin, Evidence, LocalGivensId, ProgramClause,
+    Solution, SolverReport, Substitution, TraitEnvId, canonical_goal, solve, solve_report,
+    trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens,
 };
 
 /// Database contract required by HIR type queries.

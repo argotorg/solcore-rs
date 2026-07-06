@@ -31,15 +31,29 @@ pub struct CanonicalGoal<'db> {
     pub pred: Pred<'db>,
 }
 
-/// Interned trait environment for one solving context.
+/// Interned base trait environment for one module.
 #[salsa::interned(debug)]
-pub struct TraitEnvId<'db> {
+pub struct BaseTraitEnvId<'db> {
     /// Visible instance, superclass, and builtin clauses.
     #[returns(ref)]
     pub clauses: Vec<ProgramClause<'db>>,
+}
+
+/// Interned local assumptions layered on top of a base trait environment.
+#[salsa::interned(debug)]
+pub struct LocalGivensId<'db> {
     /// Local assumptions available while checking a polymorphic body.
     #[returns(ref)]
-    pub local_givens: Vec<Pred<'db>>,
+    pub preds: Vec<Pred<'db>>,
+}
+
+/// Interned trait environment for one solving context.
+#[salsa::interned(debug)]
+pub struct TraitEnvId<'db> {
+    /// Module-level instance, superclass, and builtin clauses.
+    pub base: BaseTraitEnvId<'db>,
+    /// Local assumptions available while checking a polymorphic body.
+    pub givens: LocalGivensId<'db>,
 }
 
 /// One type-class program clause: `head :- conditions`.
@@ -136,10 +150,14 @@ pub enum Solution<'db> {
 }
 
 /// Internal solver report used to surface fuel exhaustion.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SolverReport<'db> {
-    pub(crate) solution: Solution<'db>,
-    pub(crate) exhausted: bool,
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct SolverReport<'db> {
+    /// Solver answer.
+    pub solution: Solution<'db>,
+    /// Whether the solver exhausted its fuel before proving the goal.
+    pub exhausted: bool,
+    /// Fuel remaining after the top-level solve finished.
+    pub fuel_remaining: usize,
 }
 
 /// Builds the trait environment visible from `module`.
@@ -208,7 +226,11 @@ pub fn trait_env_with_givens<'db>(
 ) -> TraitEnvId<'db> {
     let mut local_givens = env.local_givens(db).clone();
     local_givens.extend(givens);
-    TraitEnvId::new(db, env.clauses(db).clone(), unique_preds(local_givens))
+    TraitEnvId::new(
+        db,
+        env.base(db),
+        LocalGivensId::new(db, unique_preds(local_givens)),
+    )
 }
 
 /// Wraps a predicate as a solver goal.
@@ -223,16 +245,46 @@ pub fn solve<'db>(
     env: TraitEnvId<'db>,
     goal: CanonicalGoal<'db>,
 ) -> Solution<'db> {
-    solve_goal(db, env, goal.pred(db)).solution
+    solve_report(db, env, goal).solution
 }
 
-pub(crate) fn solve_goal<'db>(
+/// Tracked solver query that includes fuel exhaustion details.
+#[salsa::tracked]
+pub fn solve_report<'db>(
     db: &'db dyn Db,
     env: TraitEnvId<'db>,
-    goal: Pred<'db>,
+    goal: CanonicalGoal<'db>,
 ) -> SolverReport<'db> {
+    solve_goal(db, env, goal.pred(db))
+}
+
+fn solve_goal<'db>(db: &'db dyn Db, env: TraitEnvId<'db>, goal: Pred<'db>) -> SolverReport<'db> {
     let mut solver = Solver::new(db, env, DEFAULT_SOLVER_FUEL);
-    solver.solve_pred(goal)
+    let mut report = solver.solve_pred(goal);
+    report.fuel_remaining = solver.fuel;
+    report
+}
+
+impl<'db> SolverReport<'db> {
+    fn new(solution: Solution<'db>, exhausted: bool) -> Self {
+        Self {
+            solution,
+            exhausted,
+            fuel_remaining: 0,
+        }
+    }
+}
+
+impl<'db> TraitEnvId<'db> {
+    /// Returns the base program clauses visible to this environment.
+    pub fn clauses(self, db: &'db dyn Db) -> &'db Vec<ProgramClause<'db>> {
+        self.base(db).clauses(db)
+    }
+
+    /// Returns local given predicates layered over the base environment.
+    pub fn local_givens(self, db: &'db dyn Db) -> &'db Vec<Pred<'db>> {
+        self.givens(db).preds(db)
+    }
 }
 
 impl<'db> Evidence<'db> {
@@ -292,7 +344,11 @@ impl<'db> TraitEnvBuilder<'db> {
     }
 
     fn finish(self, local_givens: Vec<Pred<'db>>) -> TraitEnvId<'db> {
-        TraitEnvId::new(self.db, self.clauses, unique_preds(local_givens))
+        TraitEnvId::new(
+            self.db,
+            BaseTraitEnvId::new(self.db, self.clauses),
+            LocalGivensId::new(self.db, unique_preds(local_givens)),
+        )
     }
 
     fn add_builtin_instances(&mut self) {
@@ -418,17 +474,11 @@ impl<'db> Solver<'db> {
             return report.clone();
         }
         if self.fuel == 0 {
-            return SolverReport {
-                solution: Solution::NoSolution,
-                exhausted: true,
-            };
+            return SolverReport::new(Solution::NoSolution, true);
         }
         self.fuel -= 1;
         if self.active.contains(&key) {
-            return SolverReport {
-                solution: Solution::NoSolution,
-                exhausted: false,
-            };
+            return SolverReport::new(Solution::NoSolution, false);
         }
 
         self.active.insert(key);
@@ -449,33 +499,27 @@ impl<'db> Solver<'db> {
         let (given_candidates, given_exhausted) =
             self.solve_from_local_assumptions(goal, allowed_goal_vars);
         if !given_candidates.is_empty() || mode == SolveMode::GivensOnly {
-            return SolverReport {
-                solution: solution_from_candidates(given_candidates),
-                exhausted: given_exhausted,
-            };
+            return SolverReport::new(solution_from_candidates(given_candidates), given_exhausted);
         }
 
         let (normal_candidates, normal_matched, normal_exhausted) =
             self.solve_with_clause_set(goal, false, allowed_goal_vars, SolveMode::Normal);
         if !normal_candidates.is_empty() {
-            return SolverReport {
-                solution: solution_from_candidates(normal_candidates),
-                exhausted: normal_exhausted,
-            };
+            return SolverReport::new(
+                solution_from_candidates(normal_candidates),
+                normal_exhausted,
+            );
         }
         if normal_matched || self.has_non_default_unifying_head(goal, allowed_goal_vars) {
-            return SolverReport {
-                solution: Solution::NoSolution,
-                exhausted: normal_exhausted,
-            };
+            return SolverReport::new(Solution::NoSolution, normal_exhausted);
         }
 
         let (default_candidates, _, default_exhausted) =
             self.solve_with_clause_set(goal, true, allowed_goal_vars, SolveMode::Normal);
-        SolverReport {
-            solution: solution_from_candidates(default_candidates),
-            exhausted: normal_exhausted || default_exhausted,
-        }
+        SolverReport::new(
+            solution_from_candidates(default_candidates),
+            normal_exhausted || default_exhausted,
+        )
     }
 
     fn solve_from_local_assumptions(
