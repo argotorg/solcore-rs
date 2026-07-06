@@ -41,8 +41,10 @@ pub enum DefKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub(crate) struct DefKey {
     pub(crate) file: SourceFile,
+    pub(crate) owner: Option<Box<DefKey>>,
     pub(crate) kind: DefKind,
     pub(crate) name: Option<String>,
+    pub(crate) fingerprint: Option<String>,
     pub(crate) disambiguator: Disambiguator,
 }
 
@@ -50,8 +52,10 @@ pub(crate) struct DefKey {
 #[salsa::interned(debug)]
 pub struct DefId<'db> {
     pub file: SourceFile,
+    pub owner: Option<DefId<'db>>,
     pub kind: DefKind,
     pub name: Option<String>,
+    pub fingerprint: Option<String>,
     pub disambiguator: Disambiguator,
 }
 
@@ -59,14 +63,25 @@ impl<'db> DefId<'db> {
     pub(crate) fn key(self, db: &'db dyn crate::Db) -> DefKey {
         DefKey {
             file: self.file(db),
+            owner: self.owner(db).map(|owner| Box::new(owner.key(db))),
             kind: self.kind(db),
             name: self.name(db),
+            fingerprint: self.fingerprint(db),
             disambiguator: self.disambiguator(db),
         }
     }
 
     pub(crate) fn from_key(db: &'db dyn crate::Db, key: &DefKey) -> Self {
-        DefId::new(db, key.file, key.kind, key.name.clone(), key.disambiguator)
+        let owner = key.owner.as_deref().map(|owner| DefId::from_key(db, owner));
+        DefId::new(
+            db,
+            key.file,
+            owner,
+            key.kind,
+            key.name.clone(),
+            key.fingerprint.clone(),
+            key.disambiguator,
+        )
     }
 }
 
@@ -143,8 +158,10 @@ fn def_id_hash<'db>(def: DefId<'db>) -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct DefBaseKey {
     file: SourceFile,
+    owner: Option<Box<DefKey>>,
     kind: DefKind,
     name: Option<String>,
+    fingerprint: Option<String>,
 }
 
 /// Stateful allocator for deterministic disambiguators during lowering/parsing.
@@ -158,16 +175,21 @@ impl KeyCanonicalizer {
         Self::default()
     }
 
-    pub fn next_def_disambiguator(
+    pub fn next_def_disambiguator<'db>(
         &mut self,
+        db: &'db dyn crate::Db,
         file: SourceFile,
+        owner: Option<DefId<'db>>,
         kind: DefKind,
         name: Option<&str>,
+        fingerprint: Option<&str>,
     ) -> Disambiguator {
         let base = DefBaseKey {
             file,
+            owner: owner.map(|owner| Box::new(owner.key(db))),
             kind,
             name: name.map(ToOwned::to_owned),
+            fingerprint: fingerprint.map(ToOwned::to_owned),
         };
         let count = self.def_counts.entry(base).or_insert(0);
         let disambiguator = Disambiguator::new(*count);
@@ -179,10 +201,20 @@ impl KeyCanonicalizer {
         &mut self,
         db: &'db dyn crate::Db,
         file: SourceFile,
+        owner: Option<DefId<'db>>,
         kind: DefKind,
         name: Option<&str>,
+        fingerprint: Option<&str>,
     ) -> DefId<'db> {
-        let disambiguator = self.next_def_disambiguator(file, kind, name);
-        DefId::new(db, file, kind, name.map(ToOwned::to_owned), disambiguator)
+        let disambiguator = self.next_def_disambiguator(db, file, owner, kind, name, fingerprint);
+        DefId::new(
+            db,
+            file,
+            owner,
+            kind,
+            name.map(ToOwned::to_owned),
+            fingerprint.map(ToOwned::to_owned),
+            disambiguator,
+        )
     }
 }

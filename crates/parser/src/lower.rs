@@ -180,6 +180,56 @@ fn lower_pred_ref<'db>(
     )
 }
 
+fn instance_head_fingerprint(type_vars: &[SpannedStr<'_>], ty: &ParsedTy<'_>) -> Option<String> {
+    let type_vars = type_vars
+        .iter()
+        .enumerate()
+        .map(|(index, (name, _))| (*name, index))
+        .collect::<Vec<_>>();
+    canonical_ty_fingerprint(ty, &type_vars)
+}
+
+fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> Option<String> {
+    match &ty.kind {
+        ParsedTyKind::Named { name, args } => {
+            let name = if args.is_empty() {
+                type_vars
+                    .iter()
+                    .find_map(|(var, index)| (*var == name.0).then_some(format!("${index}")))
+                    .unwrap_or_else(|| name.0.to_owned())
+            } else {
+                name.0.to_owned()
+            };
+
+            if args.is_empty() {
+                Some(name)
+            } else {
+                let args = args
+                    .iter()
+                    .map(|arg| canonical_ty_fingerprint(arg, type_vars))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(format!("{name}({})", args.join(",")))
+            }
+        }
+        ParsedTyKind::Fn { params, ret } => {
+            let params = params
+                .iter()
+                .map(|param| canonical_ty_fingerprint(param, type_vars))
+                .collect::<Option<Vec<_>>>()?;
+            let ret = canonical_ty_fingerprint(ret, type_vars)?;
+            Some(format!("fn({})->{ret}", params.join(",")))
+        }
+        ParsedTyKind::Tuple { elems } => {
+            let elems = elems
+                .iter()
+                .map(|elem| canonical_ty_fingerprint(elem, type_vars))
+                .collect::<Option<Vec<_>>>()?;
+            Some(format!("({})", elems.join(",")))
+        }
+        ParsedTyKind::Error => None,
+    }
+}
+
 fn lower_type_alias<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
@@ -384,6 +434,7 @@ impl<'db> BodyArenas<'db> {
 struct LoweringCtx<'db, 'a> {
     db: &'db dyn Db,
     file: SourceFile,
+    owner: Option<DefId<'db>>,
     keys: &'a mut KeyCanonicalizer,
     def_locations: &'a mut Vec<(DefId<'db>, DefLocation)>,
     source: &'a str,
@@ -394,6 +445,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
     fn new(
         db: &'db dyn Db,
         file: SourceFile,
+        owner: Option<DefId<'db>>,
         keys: &'a mut KeyCanonicalizer,
         def_locations: &'a mut Vec<(DefId<'db>, DefLocation)>,
         source: &'a str,
@@ -402,11 +454,19 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         Self {
             db,
             file,
+            owner,
             keys,
             def_locations,
             source,
             parse_errors,
         }
+    }
+
+    fn with_owner<T>(&mut self, owner: DefId<'db>, f: impl FnOnce(&mut Self) -> T) -> T {
+        let previous = self.owner.replace(owner);
+        let result = f(self);
+        self.owner = previous;
+        result
     }
 
     fn alloc_def_with_location(
@@ -415,7 +475,19 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         name: Option<&str>,
         base_start: usize,
     ) -> DefId<'db> {
-        let def = self.keys.alloc_def(self.db, self.file, kind, name);
+        self.alloc_def_with_fingerprint(kind, name, None, base_start)
+    }
+
+    fn alloc_def_with_fingerprint(
+        &mut self,
+        kind: DefKind,
+        name: Option<&str>,
+        fingerprint: Option<&str>,
+        base_start: usize,
+    ) -> DefId<'db> {
+        let def = self
+            .keys
+            .alloc_def(self.db, self.file, self.owner, kind, name, fingerprint);
         self.def_locations.push((
             def,
             DefLocation {
@@ -628,14 +700,16 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
 
         let mut lambda_arenas = BodyArenas::new();
         let mut top_level_stmts = Vec::with_capacity(parsed_body.output.len());
-        for stmt in parsed_body.output {
-            top_level_stmts.push(self.lower_stmt(
-                body_anchor,
-                body_span.start,
-                stmt,
-                &mut lambda_arenas,
-            ));
-        }
+        self.with_owner(body_def, |ctx| {
+            for stmt in parsed_body.output {
+                top_level_stmts.push(ctx.lower_stmt(
+                    body_anchor,
+                    body_span.start,
+                    stmt,
+                    &mut lambda_arenas,
+                ));
+            }
+        });
 
         let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
         let (stmts, exprs, pats) = lambda_arenas.into_parts();
@@ -989,11 +1063,15 @@ fn lower_function<'db>(
     let lowered_sig = lower_func_sig(ctx.db, func_anchor, span.start, sig);
     let func_span = span_from_absolute(func_anchor, span, span.start);
 
-    let body_def = ctx.alloc_def_with_location(DefKind::FuncBody, Some(func_name), body_span.start);
+    let body_def = ctx.with_owner(func_def, |ctx| {
+        ctx.alloc_def_with_location(DefKind::FuncBody, Some(func_name), body_span.start)
+    });
     let body_anchor = AnchorId::def(ctx.db, body_def);
 
     let mut arenas = BodyArenas::new();
-    let top_level_stmts = ctx.lower_body_statements(body_anchor, body_span, &mut arenas);
+    let top_level_stmts = ctx.with_owner(body_def, |ctx| {
+        ctx.lower_body_statements(body_anchor, body_span, &mut arenas)
+    });
     let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
     let (stmts, exprs, pats) = arenas.into_parts();
     let body = function::FuncBody::new(
@@ -1019,8 +1097,13 @@ fn lower_instance<'db>(
     methods: Vec<ParsedFunctionDef<'_>>,
 ) -> item::InstanceDef<'db> {
     let instance_name = head.class.0;
-    let instance_def =
-        ctx.alloc_def_with_location(DefKind::Instance, Some(instance_name), span.start);
+    let fingerprint = instance_head_fingerprint(&type_vars, &head.ty);
+    let instance_def = ctx.alloc_def_with_fingerprint(
+        DefKind::Instance,
+        Some(instance_name),
+        fingerprint.as_deref(),
+        span.start,
+    );
 
     let anchor = AnchorId::def(ctx.db, instance_def);
     let type_vars = type_vars
@@ -1033,10 +1116,12 @@ fn lower_instance<'db>(
         .collect::<Vec<_>>();
     let default_kw = default_kw.map(|kw_span| span_from_absolute(anchor, kw_span, span.start));
     let head = lower_pred_ref(ctx.db, anchor, span.start, head);
-    let methods = methods
-        .into_iter()
-        .map(|method| lower_function(ctx, method.span, method.sig, method.body_span))
-        .collect::<Vec<_>>();
+    let methods = ctx.with_owner(instance_def, |ctx| {
+        methods
+            .into_iter()
+            .map(|method| lower_function(ctx, method.span, method.sig, method.body_span))
+            .collect::<Vec<_>>()
+    });
     let span = span_from_absolute(anchor, span, span.start);
 
     item::InstanceDef::new(
@@ -1105,10 +1190,12 @@ fn lower_contract<'db>(
             item::FieldDef::new(name, ty)
         })
         .collect::<Vec<_>>();
-    let items = items
-        .into_iter()
-        .map(|item| lower_contract_item(ctx, item))
-        .collect::<Vec<_>>();
+    let items = ctx.with_owner(contract_def, |ctx| {
+        items
+            .into_iter()
+            .map(|item| lower_contract_item(ctx, item))
+            .collect::<Vec<_>>()
+    });
     let span = span_from_absolute(anchor, span, span.start);
 
     item::ContractDef::new(ctx.db, contract_def, span, name, ty_params, fields, items)
@@ -1119,7 +1206,7 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
     file: SourceFile,
 ) -> ParseHirOutput<'db> {
     let mut keys = KeyCanonicalizer::new();
-    let module_def = keys.alloc_def(db, file, DefKind::Module, None);
+    let module_def = keys.alloc_def(db, file, None, DefKind::Module, None, None);
 
     let source = file.content(db).as_deref().unwrap_or("");
     let end = offset_from_usize(source.len());
@@ -1141,6 +1228,7 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
         let mut ctx = LoweringCtx::new(
             db,
             file,
+            Some(module_def),
             &mut keys,
             &mut def_locations,
             source,
