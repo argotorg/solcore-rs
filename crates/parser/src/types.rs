@@ -31,7 +31,7 @@ pub(crate) enum ParsedTopItem<'src> {
     },
     Export {
         span: LexSpan,
-        names: Vec<ParsedImportName>,
+        kind: ParsedExportKind<'src>,
     },
     Pragma {
         span: LexSpan,
@@ -93,12 +93,33 @@ pub(crate) struct ParsedImportName {
 pub(crate) struct ParsedSelectedName<'src> {
     pub(crate) name: ParsedImportName,
     pub(crate) alias: Option<SpannedStr<'src>>,
+    pub(crate) constructors: Option<ParsedConstructorSelector<'src>>,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum ParsedImportSelector<'src> {
     Wildcard,
     Names(Vec<ParsedSelectedName<'src>>),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ParsedConstructorSelector<'src> {
+    All,
+    Named(Vec<SpannedStr<'src>>),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedExportName<'src> {
+    pub(crate) name: ParsedImportName,
+    pub(crate) constructors: Option<ParsedConstructorSelector<'src>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ParsedExportKind<'src> {
+    List(Vec<ParsedExportName<'src>>),
+    Module(Vec<SpannedStr<'src>>),
+    ModuleAs(Vec<SpannedStr<'src>>, SpannedStr<'src>),
+    ItemsFrom(Vec<SpannedStr<'src>>, Vec<ParsedExportName<'src>>),
 }
 
 #[derive(Debug, Clone)]

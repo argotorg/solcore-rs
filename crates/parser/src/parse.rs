@@ -110,37 +110,61 @@ where
         .as_context()
 }
 
-fn export_name_parser<'src, I>() -> impl Parser<'src, I, ParsedImportName, ParserErr<'src>>
+fn constructor_selector_parser<'src, I>()
+-> impl Parser<'src, I, ParsedConstructorSelector<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let ctor_names = ident_parser()
+    let names = ident_parser()
         .separated_by(just(Token::Comma))
         .at_least(1)
         .allow_trailing()
         .collect::<Vec<_>>()
-        .ignored();
-    let ctor_selector = just(Token::LParen)
-        .ignore_then(just(Token::Star).ignored().or(ctor_names))
-        .then_ignore(just(Token::RParen));
+        .map(ParsedConstructorSelector::Named);
+    let wildcard = just(Token::Star).to(ParsedConstructorSelector::All);
 
-    let wildcard = just(Token::Star).map_with(|_, e| ParsedImportName {
-        name: "*".to_owned(),
-        span: e.span(),
-        is_operator: false,
-    });
-    let ident = ident_parser()
-        .then(ctor_selector.or_not())
-        .map(|((name, span), _)| ParsedImportName {
-            name: name.to_owned(),
-            span,
+    choice((wildcard, names))
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .labelled("constructor selector")
+        .as_context()
+}
+
+fn export_wildcard_parser<'src, I>() -> impl Parser<'src, I, ParsedExportName<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    just(Token::Star).map_with(|_, e| ParsedExportName {
+        name: ParsedImportName {
+            name: "*".to_owned(),
+            span: e.span(),
             is_operator: false,
+        },
+        constructors: None,
+    })
+}
+
+fn export_name_parser<'src, I>() -> impl Parser<'src, I, ParsedExportName<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let ident = ident_parser()
+        .then(constructor_selector_parser().or_not())
+        .map(|((name, span), constructors)| ParsedExportName {
+            name: ParsedImportName {
+                name: name.to_owned(),
+                span,
+                is_operator: false,
+            },
+            constructors,
         });
     let operator = import_name_parser()
         .filter(|name| name.is_operator)
-        .map(|name| name);
+        .map(|name| ParsedExportName {
+            name,
+            constructors: None,
+        });
 
-    choice((wildcard, operator, ident))
+    choice((export_wildcard_parser(), operator, ident))
         .labelled("export name")
         .as_context()
 }
@@ -161,8 +185,13 @@ where
         .boxed();
 
     let selected_item = import_name_parser()
+        .then(constructor_selector_parser().or_not())
         .then(just(Token::As).ignore_then(ident_parser()).or_not())
-        .map(|(name, alias)| ParsedSelectedName { name, alias });
+        .map(|((name, constructors), alias)| ParsedSelectedName {
+            name,
+            alias,
+            constructors,
+        });
     let named_selector = selected_item
         .separated_by(just(Token::Comma))
         .at_least(1)
@@ -259,22 +288,62 @@ where
                 + ".*",
             span: e.span(),
             is_operator: false,
+        })
+        .map(|name| ParsedExportName {
+            name,
+            constructors: None,
         });
     let export_item = choice((module_wildcard, export_name_parser()));
-    let export_items = export_item
+    let export_list_items = export_item
         .separated_by(just(Token::Comma))
         .allow_trailing()
         .collect::<Vec<_>>()
         .delimited_by(just(Token::LBrace), just(Token::RBrace))
         .boxed();
+    let export_selector_items = choice((
+        export_wildcard_parser().map(|name| vec![name]),
+        export_name_parser()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+    ))
+    .boxed();
 
-    just(Token::Export)
-        .ignore_then(export_items)
+    let export_list = just(Token::Export)
+        .ignore_then(export_list_items)
         .then_ignore(just(Token::Semi))
         .map_with(|names, e| ParsedTopItem::Export {
             span: e.span(),
-            names,
-        })
+            kind: ParsedExportKind::List(names),
+        });
+    let items_from = just(Token::Export)
+        .ignore_then(path.clone())
+        .then_ignore(just(Token::Dot))
+        .then(export_selector_items)
+        .then_ignore(just(Token::Semi))
+        .map_with(|(path, names), e| ParsedTopItem::Export {
+            span: e.span(),
+            kind: ParsedExportKind::ItemsFrom(path, names),
+        });
+    let module_as = just(Token::Export)
+        .ignore_then(path.clone())
+        .then_ignore(just(Token::As))
+        .then(ident_parser())
+        .then_ignore(just(Token::Semi))
+        .map_with(|(path, alias), e| ParsedTopItem::Export {
+            span: e.span(),
+            kind: ParsedExportKind::ModuleAs(path, alias),
+        });
+    let module = just(Token::Export)
+        .ignore_then(path)
+        .then_ignore(just(Token::Semi))
+        .map_with(|path, e| ParsedTopItem::Export {
+            span: e.span(),
+            kind: ParsedExportKind::Module(path),
+        });
+
+    choice((export_list, items_from, module_as, module))
         .labelled("export declaration")
         .as_context()
         .boxed()
@@ -1934,6 +2003,24 @@ where
         .boxed()
 }
 
+fn data_terminator_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let declaration_boundary = select! {
+        Token::Import | Token::Export | Token::Pragma | Token::Type | Token::Data
+        | Token::Class | Token::Instance | Token::Contract | Token::Public
+        | Token::Payable | Token::Function | Token::Constructor | Token::Fallback
+        | Token::Forall | Token::Default | Token::RBrace => (),
+    }
+    .rewind();
+
+    just(Token::Semi)
+        .ignored()
+        .or(declaration_boundary)
+        .or(end())
+}
+
 fn adt_payload_parser<'src, I>() -> impl Parser<
     'src,
     I,
@@ -1971,7 +2058,7 @@ where
         .ignore_then(ident_parser())
         .then(ty_params)
         .then(ctors)
-        .then_ignore(just(Token::Semi))
+        .then_ignore(data_terminator_parser())
         .map(|((name, ty_params), ctors)| (name, ty_params, ctors))
 }
 

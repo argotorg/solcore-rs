@@ -1,0 +1,9 @@
+data First = First(word)
+data Second = Second
+
+export mod;
+export mod as M;
+export mod.{a};
+export { T(*) };
+
+import m.{T(A, B)};

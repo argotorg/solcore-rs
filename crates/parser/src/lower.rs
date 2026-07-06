@@ -91,10 +91,7 @@ fn lower_import<'db>(
     let anchor = AnchorId::def(ctx.db, import_def);
     let base_start = span.start;
     let external = external.map(|span| span_from_absolute(anchor, span, base_start));
-    let path = path
-        .into_iter()
-        .map(|segment| lower_spanned_ident(ctx.db, anchor, base_start, segment))
-        .collect();
+    let path = lower_path(ctx.db, anchor, base_start, path);
     let alias = alias.map(|it| lower_spanned_ident(ctx.db, anchor, base_start, it));
     let selector =
         selector.map(|selector| lower_import_selector(ctx.db, anchor, base_start, selector));
@@ -109,6 +106,17 @@ fn lower_import<'db>(
     item::Import::new(
         ctx.db, import_def, span, external, path, alias, selector, hiding,
     )
+}
+
+fn lower_path<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    path: Vec<SpannedStr<'_>>,
+) -> Vec<SpannedElem<'db, Ident<'db>>> {
+    path.into_iter()
+        .map(|segment| lower_spanned_ident(db, anchor, base_start, segment))
+        .collect()
 }
 
 fn lower_import_selector<'db>(
@@ -127,8 +135,28 @@ fn lower_import_selector<'db>(
                     alias: it
                         .alias
                         .map(|alias| lower_spanned_ident(db, anchor, base_start, alias)),
+                    constructors: it.constructors.map(|constructors| {
+                        lower_constructor_selector(db, anchor, base_start, constructors)
+                    }),
                     is_operator: it.name.is_operator,
                 })
+                .collect(),
+        ),
+    }
+}
+
+fn lower_constructor_selector<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    selector: ParsedConstructorSelector<'_>,
+) -> item::ConstructorSelector<'db> {
+    match selector {
+        ParsedConstructorSelector::All => item::ConstructorSelector::All,
+        ParsedConstructorSelector::Named(names) => item::ConstructorSelector::Named(
+            names
+                .into_iter()
+                .map(|name| lower_spanned_ident(db, anchor, base_start, name))
                 .collect(),
         ),
     }
@@ -163,23 +191,16 @@ fn import_fingerprint(
         match selector {
             ParsedImportSelector::Wildcard => fingerprint.push_str(".{*}"),
             ParsedImportSelector::Names(names) => {
-                let mut names = names.iter().map(selected_fingerprint).collect::<Vec<_>>();
-                names.sort_unstable();
                 fingerprint.push_str(".{");
-                fingerprint.push_str(&names.join(","));
+                fingerprint.push_str(&sorted_fingerprints(names, selected_fingerprint));
                 fingerprint.push('}');
             }
         }
     }
 
     if !hiding.is_empty() {
-        let mut hidden = hiding
-            .iter()
-            .map(import_name_fingerprint)
-            .collect::<Vec<_>>();
-        hidden.sort_unstable();
         fingerprint.push_str(" hiding {");
-        fingerprint.push_str(&hidden.join(","));
+        fingerprint.push_str(&sorted_fingerprints(hiding, import_name_fingerprint));
         fingerprint.push('}');
     }
 
@@ -188,11 +209,25 @@ fn import_fingerprint(
 
 fn selected_fingerprint(name: &ParsedSelectedName<'_>) -> String {
     let mut fingerprint = import_name_fingerprint(&name.name);
+    if let Some(constructors) = &name.constructors {
+        fingerprint.push_str(&constructor_selector_fingerprint(constructors));
+    }
     if let Some((alias, _)) = &name.alias {
         fingerprint.push_str(" as ");
         fingerprint.push_str(alias);
     }
     fingerprint
+}
+
+fn constructor_selector_fingerprint(selector: &ParsedConstructorSelector<'_>) -> String {
+    match selector {
+        ParsedConstructorSelector::All => "(*)".to_owned(),
+        ParsedConstructorSelector::Named(names) => {
+            let mut names = names.iter().map(|(name, _)| *name).collect::<Vec<_>>();
+            names.sort_unstable();
+            format!("({})", names.join(","))
+        }
+    }
 }
 
 fn import_name_fingerprint(name: &ParsedImportName) -> String {
@@ -203,32 +238,108 @@ fn import_name_fingerprint(name: &ParsedImportName) -> String {
 fn lower_export<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
-    names: Vec<ParsedImportName>,
+    kind: ParsedExportKind<'_>,
 ) -> item::Export<'db> {
-    let fingerprint = export_fingerprint(&names);
+    let fingerprint = export_fingerprint(&kind);
     let export_def =
         ctx.alloc_def_with_fingerprint(DefKind::Export, None, Some(&fingerprint), span.start);
 
     let anchor = AnchorId::def(ctx.db, export_def);
     let base_start = span.start;
-    let names = names
-        .into_iter()
-        .map(|it| item::ExportedName {
-            name: lower_owned_ident(ctx.db, anchor, base_start, it.name, it.span),
-            is_operator: it.is_operator,
-        })
-        .collect();
+    let kind = lower_export_kind(ctx.db, anchor, base_start, kind);
     let span = span_from_absolute(anchor, span, base_start);
-    item::Export::new(ctx.db, export_def, span, names)
+    item::Export::new(ctx.db, export_def, span, kind)
 }
 
-fn export_fingerprint(names: &[ParsedImportName]) -> String {
-    let mut names = names
-        .iter()
-        .map(import_name_fingerprint)
-        .collect::<Vec<_>>();
-    names.sort_unstable();
-    format!("{{{}}}", names.join(","))
+fn lower_export_kind<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    kind: ParsedExportKind<'_>,
+) -> item::ExportKind<'db> {
+    match kind {
+        ParsedExportKind::List(names) => item::ExportKind::List(
+            lower_exported_names(db, anchor, base_start, names),
+        ),
+        ParsedExportKind::Module(path) => {
+            item::ExportKind::Module(lower_path(db, anchor, base_start, path))
+        }
+        ParsedExportKind::ModuleAs(path, alias) => item::ExportKind::ModuleAs(
+            lower_path(db, anchor, base_start, path),
+            lower_spanned_ident(db, anchor, base_start, alias),
+        ),
+        ParsedExportKind::ItemsFrom(path, names) => item::ExportKind::ItemsFrom(
+            lower_path(db, anchor, base_start, path),
+            lower_exported_names(db, anchor, base_start, names),
+        ),
+    }
+}
+
+fn lower_exported_names<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    names: Vec<ParsedExportName<'_>>,
+) -> Vec<item::ExportedName<'db>> {
+    names
+        .into_iter()
+        .map(|name| lower_exported_name(db, anchor, base_start, name))
+        .collect()
+}
+
+fn lower_exported_name<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    name: ParsedExportName<'_>,
+) -> item::ExportedName<'db> {
+    item::ExportedName {
+        name: lower_owned_ident(db, anchor, base_start, name.name.name, name.name.span),
+        constructors: name
+            .constructors
+            .map(|constructors| lower_constructor_selector(db, anchor, base_start, constructors)),
+        is_operator: name.name.is_operator,
+    }
+}
+
+fn export_fingerprint(kind: &ParsedExportKind<'_>) -> String {
+    match kind {
+        ParsedExportKind::List(names) => {
+            format!("list{{{}}}", sorted_fingerprints(names, export_name_fingerprint))
+        }
+        ParsedExportKind::Module(path) => format!("module {}", path_fingerprint(path)),
+        ParsedExportKind::ModuleAs(path, alias) => {
+            format!("module {} as {}", path_fingerprint(path), alias.0)
+        }
+        ParsedExportKind::ItemsFrom(path, names) => {
+            format!(
+                "items {}.{{{}}}",
+                path_fingerprint(path),
+                sorted_fingerprints(names, export_name_fingerprint)
+            )
+        }
+    }
+}
+
+fn export_name_fingerprint(name: &ParsedExportName<'_>) -> String {
+    let mut fingerprint = import_name_fingerprint(&name.name);
+    if let Some(constructors) = &name.constructors {
+        fingerprint.push_str(&constructor_selector_fingerprint(constructors));
+    }
+    fingerprint
+}
+
+fn path_fingerprint(path: &[SpannedStr<'_>]) -> String {
+    path.iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn sorted_fingerprints<T>(items: &[T], fingerprint: fn(&T) -> String) -> String {
+    let mut fingerprints = items.iter().map(fingerprint).collect::<Vec<_>>();
+    fingerprints.sort_unstable();
+    fingerprints.join(",")
 }
 
 fn lower_pragma<'db>(
@@ -1548,8 +1659,8 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                         lower_import(&mut ctx, span, external, path, alias, selector, hiding);
                     items.push(item::Item::Import(import));
                 }
-                ParsedTopItem::Export { span, names } => {
-                    let export = lower_export(&mut ctx, span, names);
+                ParsedTopItem::Export { span, kind } => {
+                    let export = lower_export(&mut ctx, span, kind);
                     items.push(item::Item::Export(export));
                 }
                 ParsedTopItem::Pragma {

@@ -271,9 +271,16 @@ impl<'db> Spanned<'db> for ContractDef<'db> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ConstructorSelector<'db> {
+    All,
+    Named(Vec<SpannedElem<'db, Ident<'db>>>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct SelectedName<'db> {
     pub name: SpannedElem<'db, Ident<'db>>,
     pub alias: Option<SpannedElem<'db, Ident<'db>>>,
+    pub constructors: Option<ConstructorSelector<'db>>,
     pub is_operator: bool,
 }
 
@@ -328,7 +335,19 @@ impl<'db> Spanned<'db> for Import<'db> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ExportedName<'db> {
     pub name: SpannedElem<'db, Ident<'db>>,
+    pub constructors: Option<ConstructorSelector<'db>>,
     pub is_operator: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ExportKind<'db> {
+    List(Vec<ExportedName<'db>>),
+    Module(Vec<SpannedElem<'db, Ident<'db>>>),
+    ModuleAs(
+        Vec<SpannedElem<'db, Ident<'db>>>,
+        SpannedElem<'db, Ident<'db>>,
+    ),
+    ItemsFrom(Vec<SpannedElem<'db, Ident<'db>>>, Vec<ExportedName<'db>>),
 }
 
 #[salsa::tracked(debug)]
@@ -343,7 +362,7 @@ pub struct Export<'db> {
 
     #[tracked]
     #[returns(ref)]
-    names: Vec<ExportedName<'db>>,
+    kind: ExportKind<'db>,
 }
 
 impl<'db> Spanned<'db> for Export<'db> {
