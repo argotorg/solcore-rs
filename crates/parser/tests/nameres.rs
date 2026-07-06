@@ -363,7 +363,7 @@ fn qualified_ctor_class_method_and_dot_ctor_resolve_as_expected() {
          function badSameName(x: word) -> Foo { return Foo(x); }",
     );
     let codes = diagnostic_codes(&db, module);
-    assert_eq!(codes, ["SC0106", "SC0106"]);
+    assert!(codes.is_empty());
 
     let good = top_function(&db, module, "good");
     let good_body = good.body(&db).expect("body");

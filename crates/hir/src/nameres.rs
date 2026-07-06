@@ -1174,9 +1174,17 @@ struct ItemScopeBuilder<'db> {
     ctor_lists: Vec<CtorList<'db>>,
     contracts: Vec<ContractScope<'db>>,
     instances: Vec<InstanceDef<'db>>,
-    type_names: FxHashMap<String, Span<'db>>,
+    type_names: FxHashMap<String, Vec<(TypeDeclFamily, Span<'db>)>>,
     term_names: FxHashMap<String, Span<'db>>,
     diagnostics: Vec<NameresDiagnostic>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeDeclFamily {
+    Alias,
+    Adt,
+    Class,
+    Contract,
 }
 
 impl<'db> ItemScopeBuilder<'db> {
@@ -1229,13 +1237,14 @@ impl<'db> ItemScopeBuilder<'db> {
         name: SpannedElem<'db, Ident<'db>>,
         resolution: Resolution<'db>,
         contract: Option<&mut ContractScopeBuilder<'db>>,
+        family: TypeDeclFamily,
     ) {
         let text = ident_text(self.db, &name).to_owned();
         if let Some(contract) = contract {
             contract.add_type(text, name.span(self.db), resolution);
             return;
         }
-        self.check_duplicate(Namespace::Type, &text, name.span(self.db), None);
+        self.check_type_duplicate(&text, name.span(self.db), family);
         self.types.push(ScopeEntry {
             name: text,
             span: name.span(self.db),
@@ -1291,6 +1300,7 @@ impl<'db> ItemScopeBuilder<'db> {
                 kind: DefResolutionKind::TypeAlias,
             },
             contract,
+            TypeDeclFamily::Alias,
         );
     }
 
@@ -1305,6 +1315,7 @@ impl<'db> ItemScopeBuilder<'db> {
                 kind: DefResolutionKind::Adt,
             },
             contract.as_deref_mut(),
+            TypeDeclFamily::Adt,
         );
         for (index, ctor) in def.ctors(self.db).iter().enumerate() {
             let ctor_name = ident_text(self.db, &ctor.name).to_owned();
@@ -1352,6 +1363,7 @@ impl<'db> ItemScopeBuilder<'db> {
                 kind: DefResolutionKind::Class,
             },
             None,
+            TypeDeclFamily::Class,
         );
         for method in def.methods(self.db) {
             let method_name = ident_text(self.db, &method.name).to_owned();
@@ -1377,6 +1389,7 @@ impl<'db> ItemScopeBuilder<'db> {
                 kind: DefResolutionKind::Contract,
             },
             None,
+            TypeDeclFamily::Contract,
         );
         let mut contract =
             ContractScopeBuilder::new(self.db, def.def_id_value(self.db), contract_name);
@@ -1434,6 +1447,24 @@ impl<'db> ItemScopeBuilder<'db> {
         });
     }
 
+    fn check_type_duplicate(&mut self, name: &str, span: Span<'db>, family: TypeDeclFamily) {
+        let previous = self.type_names.entry(name.to_owned()).or_default();
+        if let Some((_, previous_span)) = previous
+            .iter()
+            .find(|(previous_family, _)| !type_decl_families_can_share(*previous_family, family))
+        {
+            self.diagnostics.push(duplicate_diagnostic(
+                self.db,
+                Namespace::Type,
+                name,
+                span,
+                *previous_span,
+                None,
+            ));
+        }
+        previous.push((family, span));
+    }
+
     fn check_duplicate(
         &mut self,
         namespace: Namespace,
@@ -1442,9 +1473,8 @@ impl<'db> ItemScopeBuilder<'db> {
         context: Option<&str>,
     ) {
         let map = match namespace {
-            Namespace::Type => &mut self.type_names,
             Namespace::Term => &mut self.term_names,
-            Namespace::Field | Namespace::Module => return,
+            Namespace::Type | Namespace::Field | Namespace::Module => return,
         };
         if let Some(previous) = map.get(name).copied() {
             self.diagnostics.push(duplicate_diagnostic(
@@ -1454,6 +1484,14 @@ impl<'db> ItemScopeBuilder<'db> {
             map.insert(name.to_owned(), span);
         }
     }
+}
+
+fn type_decl_families_can_share(left: TypeDeclFamily, right: TypeDeclFamily) -> bool {
+    matches!(
+        (left, right),
+        (TypeDeclFamily::Adt, TypeDeclFamily::Contract)
+            | (TypeDeclFamily::Contract, TypeDeclFamily::Adt)
+    )
 }
 
 struct ContractScopeBuilder<'db> {
@@ -2126,12 +2164,8 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     {
                         Resolution::Err
                     } else if self.has_constructor_leaf(leaf) {
-                        self.map.diagnostics.push(unqualified_constructor(
-                            self.db,
-                            leaf,
-                            name.span(self.db),
-                        ));
-                        Resolution::Err
+                        self.same_name_constructor_resolution(leaf)
+                            .unwrap_or(Resolution::DotCtorDeferred)
                     } else if args.is_empty() {
                         let resolution =
                             Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
@@ -2229,22 +2263,16 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             // contract term surface.
             .or_else(|| self.lookup_field(text))
             .or_else(|| self.lookup_qualified_term(text))
+            .or_else(|| self.lookup_unqualified_class_method(text))
             .or_else(|| {
                 self.imports
                     .may_contain_unknown_unqualified(self.db, Namespace::Term, text)
                     .then_some(Resolution::Err)
             })
+            .or_else(|| self.same_name_constructor_resolution(text))
             .or_else(|| {
-                if self.has_same_name_constructor(text) {
-                    self.map.diagnostics.push(unqualified_constructor(
-                        self.db,
-                        text,
-                        name.span(self.db),
-                    ));
-                    Some(Resolution::Err)
-                } else {
-                    None
-                }
+                self.has_constructor_leaf(text)
+                    .then_some(Resolution::DotCtorDeferred)
             })
             .or_else(|| self.lookup_type(text))
             .or_else(|| self.lookup_module(text))
@@ -2255,17 +2283,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 {
                     return Resolution::Err;
                 }
-                if self.has_constructor_leaf(text) {
-                    self.map.diagnostics.push(unqualified_constructor(
-                        self.db,
-                        text,
-                        name.span(self.db),
-                    ));
-                } else {
-                    self.map
-                        .diagnostics
-                        .push(undefined_name(self.db, text, name.span(self.db)));
-                }
+                self.map
+                    .diagnostics
+                    .push(undefined_name(self.db, text, name.span(self.db)));
                 Resolution::Err
             })
     }
@@ -2286,6 +2306,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         self.lookup_local(text)
             .or_else(|| self.lookup_qualified_term(text))
             .or_else(|| self.lookup_field(text))
+            .or_else(|| self.lookup_unqualified_class_method(text))
+            .or_else(|| self.same_name_constructor_resolution(text))
+            .or_else(|| {
+                self.has_constructor_leaf(text)
+                    .then_some(Resolution::DotCtorDeferred)
+            })
             .unwrap_or_else(|| self.resolve_ident(name))
     }
 
@@ -2393,6 +2419,23 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .or_else(|| builtin_term(name))
     }
 
+    fn lookup_unqualified_class_method(&self, name: &str) -> Option<Resolution<'db>> {
+        let mut matches = self
+            .scope
+            .terms
+            .iter()
+            .filter(|entry| entry.name.rsplit('.').next() == Some(name))
+            .filter_map(|entry| match &entry.resolution {
+                Resolution::ClassMethod { .. } => Some(entry.resolution.clone()),
+                _ => None,
+            });
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(first)
+    }
+
     fn lookup_ctor(&self, name: &str) -> Option<Resolution<'db>> {
         match self.lookup_qualified_term(name) {
             Some(res @ Resolution::Ctor { .. })
@@ -2459,12 +2502,8 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             )
     }
 
-    fn has_same_name_constructor(&self, name: &str) -> bool {
-        let qualified = qualify(name, name);
-        matches!(
-            self.lookup_qualified_term(&qualified),
-            Some(Resolution::Ctor { .. })
-        )
+    fn same_name_constructor_resolution(&self, name: &str) -> Option<Resolution<'db>> {
+        self.lookup_ctor(&qualify(name, name))
     }
 
     fn is_namespace_qualifier(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> bool {
@@ -2575,7 +2614,7 @@ fn type_var_bindings<'db>(
 
 fn builtin_type_or_class<'db>(name: &str) -> Option<Resolution<'db>> {
     let kind = match name {
-        "word" => BuiltinKind::Type(BuiltinType::Word),
+        "word" | "Word" => BuiltinKind::Type(BuiltinType::Word),
         "bool" => BuiltinKind::Type(BuiltinType::Bool),
         "string" => BuiltinKind::Type(BuiltinType::String),
         "()" => BuiltinKind::Type(BuiltinType::Unit),
@@ -2647,13 +2686,6 @@ fn undefined_type_ctor<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> Nam
 
 fn undefined_class<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
     NameresDiagnostic::UndefinedClass {
-        name: name.to_owned(),
-        span: LabelSpan::from_span(db, span),
-    }
-}
-
-fn unqualified_constructor<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
-    NameresDiagnostic::UnqualifiedConstructor {
         name: name.to_owned(),
         span: LabelSpan::from_span(db, span),
     }

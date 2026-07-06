@@ -174,6 +174,50 @@ function main() -> word {
     }
 }
 
+#[test]
+fn instance_soundness_edit_is_backdated_into_module_diagnostics() {
+    let before = r#"
+data Box(a) = Box(word);
+forall a b . class a:C(b) {}
+forall a b . instance Box(a):C(b) {}
+"#;
+    let after = r#"
+data Box(a) = Box(word);
+forall a b . class a:C(b) {}
+forall a . instance Box(a):C(word) {}
+"#;
+    let (mut db, file, key) = db_with_main(before);
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        let diagnostics = module_typeck_diagnostics(&db, module);
+        assert!(
+            !diagnostics.is_empty(),
+            "expected coverage diagnostic before edit"
+        );
+        let executed = db.take_executed();
+        assert!(
+            query_executions(&executed, "instance_soundness_diagnostics") > 0,
+            "{executed:#?}"
+        );
+    }
+
+    file.set_content(&mut db).to(Some(after.to_owned()));
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        let diagnostics = module_typeck_diagnostics(&db, module);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let executed = db.take_executed();
+        assert!(
+            query_executions(&executed, "instance_soundness_diagnostics") > 0,
+            "{executed:#?}"
+        );
+    }
+}
+
 fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(

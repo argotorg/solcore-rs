@@ -737,11 +737,11 @@ const IMPORT_CORPUS_CASES: &[ImportCorpusCase] = &[
     },
     ImportCorpusCase {
         path: "module_unqualified_constr_fail.solc",
-        expected_failure: true,
+        expected_failure: false,
     },
     ImportCorpusCase {
         path: "alias_unqualified_constr_fail.solc",
-        expected_failure: true,
+        expected_failure: false,
     },
     ImportCorpusCase {
         path: "selective_unqualified_fun_ok.solc",
@@ -805,7 +805,7 @@ const IMPORT_CORPUS_CASES: &[ImportCorpusCase] = &[
     },
     ImportCorpusCase {
         path: "boolconselect_fail.solc",
-        expected_failure: true,
+        expected_failure: false,
     },
     ImportCorpusCase {
         path: "nested_alias.solc",

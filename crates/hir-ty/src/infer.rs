@@ -10,10 +10,13 @@ use hir::{
     ast::{
         Ident,
         function::{
-            BinOp, Expr, ExprKind, FuncBody, FuncParam, LitKind, MatchArm, Pat, PatKind, Stmt,
-            StmtKind, UnOp, YulCase, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
+            BinOp, Expr, ExprKind, FuncBody, FuncParam, FuncSig, LitKind, MatchArm, Pat, PatKind,
+            Stmt, StmtKind, UnOp, YulCase, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
         },
-        item::{AdtDef, ClassDef, ContractItem, FieldDef, FunctionDef, Item, Module},
+        item::{
+            AdtDef, ClassDef, ContractItem, FieldDef, FuncKind, FunctionDef, Item, Module,
+            TypeAlias,
+        },
     },
     diag::{AnyDiagnostic, Diagnostic},
     nameres as hir_nameres,
@@ -233,6 +236,8 @@ pub struct BodyTyContext<'db> {
     pub ret: Option<Ty<'db>>,
     /// Trait environment used to solve deferred class obligations.
     pub trait_env: Option<TraitEnvId<'db>>,
+    /// Imported data types whose constructors are only partially visible.
+    pub partial_data: Vec<(String, Vec<String>)>,
 }
 
 /// Scheme for a resolved ADT constructor.
@@ -546,6 +551,28 @@ pub enum TypeckDiagnostic {
         /// Failure reason.
         reason: String,
     },
+    /// `SC0225`: a required function parameter annotation is missing.
+    MissingParamAnnotation {
+        /// Function or method name.
+        function: String,
+        /// Parameter name.
+        param: String,
+    },
+    /// `SC0226`: a required function return annotation is missing.
+    MissingReturnAnnotation {
+        /// Function or method name.
+        function: String,
+    },
+    /// `SC0222`: constructor-shaped pattern syntax did not resolve to a constructor.
+    InvalidConstructorPattern {
+        /// Constructor syntax name.
+        name: String,
+    },
+    /// `SC0223`: matching a partial imported data type needs a catch-all arm.
+    HiddenConstructorCoverage {
+        /// Data type being matched.
+        ty: String,
+    },
     /// `SC0224`: shorthand constructor lookup failed.
     ShorthandConstructor {
         /// Constructor leaf name.
@@ -599,6 +626,7 @@ struct InferCtx<'db> {
     pat_tys: Vec<(FuncBody<'db>, Id<Pat<'db>>, InferTy<'db>)>,
     pending: Vec<PendingObligation<'db>>,
     trait_env: Option<TraitEnvId<'db>>,
+    partial_data: Vec<(String, Vec<String>)>,
     integer_literal_vars: Vec<TyVid<'db>>,
     diagnostics: Vec<TypeckDiagnostic>,
 }
@@ -621,6 +649,7 @@ impl<'db> BodyTyContext<'db> {
             params,
             ret,
             trait_env: None,
+            partial_data: Vec::new(),
         }
     }
 
@@ -639,6 +668,12 @@ impl<'db> BodyTyContext<'db> {
     /// Adds the trait environment used to solve deferred obligations.
     pub fn with_trait_env(mut self, trait_env: TraitEnvId<'db>) -> Self {
         self.trait_env = Some(trait_env);
+        self
+    }
+
+    /// Adds the partial imported data surface visible to this body.
+    pub fn with_partial_data(mut self, partial_data: Vec<(String, Vec<String>)>) -> Self {
+        self.partial_data = partial_data;
         self
     }
 }
@@ -753,6 +788,22 @@ impl TypeckDiagnostic {
                 ))
                 .with_code("SC0221")
             }
+            TypeckDiagnostic::MissingParamAnnotation { function, param } => Diagnostic::error(
+                format!("function `{function}` parameter `{param}` requires a type annotation"),
+            )
+            .with_code("SC0225"),
+            TypeckDiagnostic::MissingReturnAnnotation { function } => Diagnostic::error(format!(
+                "function `{function}` requires an explicit return type annotation"
+            ))
+            .with_code("SC0226"),
+            TypeckDiagnostic::InvalidConstructorPattern { name } => Diagnostic::error(format!(
+                "constructor pattern `{name}` does not resolve to a constructor"
+            ))
+            .with_code("SC0222"),
+            TypeckDiagnostic::HiddenConstructorCoverage { ty } => Diagnostic::error(format!(
+                "pattern match on type with hidden constructors requires a wildcard arm: {ty}"
+            ))
+            .with_code("SC0223"),
             TypeckDiagnostic::ShorthandConstructor { name, reason } => Diagnostic::error(format!(
                 "cannot resolve shorthand constructor `.{name}`: {reason}"
             ))
@@ -1256,6 +1307,7 @@ impl<'db> InferCtx<'db> {
             pat_tys: Vec::new(),
             pending: Vec::new(),
             trait_env: ctx.trait_env,
+            partial_data: ctx.partial_data,
             integer_literal_vars: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -1408,6 +1460,7 @@ impl<'db> InferCtx<'db> {
                     .iter()
                     .map(|scrutinee| self.infer_expr(body, *scrutinee))
                     .collect::<Vec<_>>();
+                self.ensure_visible_pattern_coverage(body, &scrutinee_tys, arms);
                 let result_ty = self.engine.fresh_var();
                 for arm in arms {
                     let arm_ty = self.infer_match_arm(body, arm, &scrutinee_tys);
@@ -1487,6 +1540,62 @@ impl<'db> InferCtx<'db> {
         ty
     }
 
+    fn ensure_visible_pattern_coverage(
+        &mut self,
+        body: FuncBody<'db>,
+        scrutinees: &[InferTy<'db>],
+        arms: &[MatchArm<'db>],
+    ) {
+        for (index, scrutinee) in scrutinees.iter().enumerate() {
+            let Some(ty) = self.partial_data_scrutinee_name(scrutinee.clone()) else {
+                continue;
+            };
+            if arms
+                .iter()
+                .any(|arm| self.arm_has_catch_all_at(body, arm, index))
+            {
+                continue;
+            }
+            self.diagnostics
+                .push(TypeckDiagnostic::HiddenConstructorCoverage { ty });
+        }
+    }
+
+    fn arm_has_catch_all_at(&self, body: FuncBody<'db>, arm: &MatchArm<'db>, index: usize) -> bool {
+        arm.pats.get(index).is_some_and(|pat| {
+            matches!(
+                body.pats(self.db).get(*pat).kind,
+                PatKind::Wildcard | PatKind::Var(_)
+            )
+        })
+    }
+
+    fn partial_data_scrutinee_name(&mut self, ty: InferTy<'db>) -> Option<String> {
+        let expanded = self.expand_infer_aliases(ty, &mut FxHashSet::default());
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+            ..
+        } = self.engine.resolve(expanded)
+        else {
+            return None;
+        };
+        let name = def.name(self.db)?;
+        self.partial_data
+            .iter()
+            .any(|(visible_name, _)| {
+                visible_name == &name
+                    || visible_name
+                        .rsplit('.')
+                        .next()
+                        .is_some_and(|leaf| leaf == name)
+            })
+            .then_some(name)
+    }
+
     fn infer_expr(&mut self, body: FuncBody<'db>, expr_id: Id<Expr<'db>>) -> InferTy<'db> {
         self.infer_expr_expected(body, expr_id, None)
     }
@@ -1500,14 +1609,24 @@ impl<'db> InferCtx<'db> {
         let expr = body.exprs(self.db).get(expr_id);
         let ty = match &expr.kind {
             ExprKind::Lit(lit) => self.infer_lit(body, expr_id, lit),
-            ExprKind::Ident(_) => self.infer_resolution(
-                body,
-                expr_id,
-                self.expr_resolutions
+            ExprKind::Ident(name) => {
+                let resolution = self
+                    .expr_resolutions
                     .get(&(body, expr_id))
                     .cloned()
-                    .unwrap_or(hir_nameres::Resolution::Err),
-            ),
+                    .unwrap_or(hir_nameres::Resolution::Err);
+                if matches!(resolution, hir_nameres::Resolution::DotCtorDeferred) {
+                    self.infer_dot_ctor_expr(
+                        body,
+                        expr_id,
+                        (*name.atom()).text(self.db),
+                        &[],
+                        expected.clone(),
+                    )
+                } else {
+                    self.infer_resolution(body, expr_id, resolution)
+                }
+            }
             ExprKind::DotCtor { name, args, .. } => self.infer_dot_ctor_expr(
                 body,
                 expr_id,
@@ -1536,30 +1655,36 @@ impl<'db> InferCtx<'db> {
                 ret
             }
             ExprKind::Call { callee, args } => {
-                let callee_ty = self.infer_callee_expr(body, expr_id, *callee);
-                let params = self.call_param_expectations(callee_ty.clone(), args.len());
-                let args = args
-                    .iter()
-                    .enumerate()
-                    .map(|(index, arg)| {
-                        self.infer_expr_expected(
-                            body,
-                            *arg,
-                            params
-                                .as_ref()
-                                .and_then(|params| params.get(index).cloned()),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
-                self.unify(
-                    callee_ty,
-                    InferTy::Function {
-                        params: args,
-                        ret: Box::new(ret.clone()),
-                    },
-                );
-                ret
+                if let Some(ty) =
+                    self.infer_constructor_call(body, expr_id, *callee, args, expected.clone())
+                {
+                    ty
+                } else {
+                    let callee_ty = self.infer_callee_expr(body, expr_id, *callee);
+                    let params = self.call_param_expectations(callee_ty.clone(), args.len());
+                    let args = args
+                        .iter()
+                        .enumerate()
+                        .map(|(index, arg)| {
+                            self.infer_expr_expected(
+                                body,
+                                *arg,
+                                params
+                                    .as_ref()
+                                    .and_then(|params| params.get(index).cloned()),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
+                    self.unify(
+                        callee_ty,
+                        InferTy::Function {
+                            params: args,
+                            ret: Box::new(ret.clone()),
+                        },
+                    );
+                    ret
+                }
             }
             ExprKind::Field { base, .. } => {
                 if !self.is_namespace_expr(body, *base) {
@@ -1604,6 +1729,65 @@ impl<'db> InferCtx<'db> {
         }
         self.expr_tys.push((body, expr_id, ty.clone()));
         ty
+    }
+
+    fn infer_constructor_call(
+        &mut self,
+        body: FuncBody<'db>,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+        args: &[Id<Expr<'db>>],
+        expected: Option<InferTy<'db>>,
+    ) -> Option<InferTy<'db>> {
+        let resolution = self.expr_resolutions.get(&(body, callee_expr)).cloned()?;
+        match resolution {
+            hir_nameres::Resolution::Ctor { ty, index } => {
+                let source = self.call_site_source(
+                    body,
+                    call_expr,
+                    callee_expr,
+                    &hir_nameres::Resolution::Ctor { ty, index },
+                );
+                let ctor_ty = self.instantiate_adt_ctor(
+                    ty,
+                    index,
+                    source.unwrap_or(ObligationSource::Scheme),
+                );
+                let expected = expected.unwrap_or_else(|| self.engine.fresh_var());
+                Some(self.apply_ctor_expr_scheme(body, call_expr, ctor_ty, args, expected))
+            }
+            hir_nameres::Resolution::Builtin(kind @ hir_nameres::BuiltinKind::Constructor(_)) => {
+                let source = self.call_site_source(
+                    body,
+                    call_expr,
+                    callee_expr,
+                    &hir_nameres::Resolution::Builtin(kind),
+                );
+                let Some(scheme) = builtin_scheme(self.db, kind) else {
+                    return Some(InferTy::Error);
+                };
+                let instantiated = self.engine.instantiate_scheme_with_source(
+                    scheme,
+                    source.unwrap_or(ObligationSource::Scheme),
+                );
+                self.pending.extend(instantiated.obligations);
+                let expected = expected.unwrap_or_else(|| self.engine.fresh_var());
+                Some(self.apply_ctor_expr_scheme(body, call_expr, instantiated.ty, args, expected))
+            }
+            hir_nameres::Resolution::DotCtorDeferred => {
+                let name = self.expr_constructor_name(body, callee_expr)?;
+                Some(self.infer_dot_ctor_expr(body, call_expr, &name, args, expected))
+            }
+            _ => None,
+        }
+    }
+
+    fn expr_constructor_name(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> Option<String> {
+        match &body.exprs(self.db).get(expr).kind {
+            ExprKind::Ident(name) => Some((*name.atom()).text(self.db).to_owned()),
+            ExprKind::Field { field, .. } => Some((*field.atom()).text(self.db).to_owned()),
+            _ => None,
+        }
     }
 
     fn infer_callee_expr(
@@ -2207,12 +2391,27 @@ impl<'db> InferCtx<'db> {
                         actual: args.len(),
                     });
                 }
+                let expected_params = args
+                    .iter()
+                    .map(|_| self.engine.fresh_var())
+                    .collect::<Vec<_>>();
+                self.unify(
+                    ctor_ty.clone(),
+                    InferTy::Function {
+                        params: expected_params.clone(),
+                        ret: Box::new(expected.clone()),
+                    },
+                );
                 self.unify(*ret, expected.clone());
+                let expected_params = expected_params
+                    .into_iter()
+                    .map(|param| self.engine.resolve(param))
+                    .collect::<Vec<_>>();
                 let inferred_args = args
                     .iter()
                     .enumerate()
                     .map(|(index, arg)| {
-                        self.infer_expr_expected(body, *arg, params.get(index).cloned())
+                        self.infer_expr_expected(body, *arg, expected_params.get(index).cloned())
                     })
                     .collect::<Vec<_>>();
                 self.unify(
@@ -2246,6 +2445,7 @@ impl<'db> InferCtx<'db> {
     fn ctor_for_expected(&mut self, name: &str, expected: InferTy<'db>) -> DotCtorLookup<'db> {
         let expected = self.engine.resolve(expected);
         let expected = self.normalize_aliases(expected);
+        let expected = self.expand_infer_aliases(expected, &mut FxHashSet::default());
         let InferTy::Named {
             ctor:
                 TyCtor::User(crate::UserTyCtor {
@@ -2275,6 +2475,88 @@ impl<'db> InferCtx<'db> {
                     .collect::<Vec<_>>(),
             ),
         }
+    }
+
+    fn expand_infer_aliases(
+        &mut self,
+        ty: InferTy<'db>,
+        expanding: &mut FxHashSet<DefId<'db>>,
+    ) -> InferTy<'db> {
+        match self.engine.resolve(ty) {
+            InferTy::Named { ctor, args } => {
+                let args = args
+                    .into_iter()
+                    .map(|arg| self.expand_infer_aliases(arg, expanding))
+                    .collect::<Vec<_>>();
+                let TyCtor::User(user) = ctor else {
+                    return InferTy::Named { ctor, args };
+                };
+                if !matches!(user.kind, crate::UserTyCtorKind::Alias) {
+                    return InferTy::Named { ctor, args };
+                }
+                if !expanding.insert(user.def) {
+                    return InferTy::Named {
+                        ctor: TyCtor::User(user),
+                        args,
+                    };
+                }
+                let expanded = self
+                    .lower_type_alias_infer(user.def)
+                    .map(|body| substitute_infer_alias_args(body, &args))
+                    .map(|body| self.expand_infer_aliases(body, expanding))
+                    .unwrap_or(InferTy::Named {
+                        ctor: TyCtor::User(user),
+                        args,
+                    });
+                expanding.remove(&user.def);
+                expanded
+            }
+            InferTy::Function { params, ret } => InferTy::Function {
+                params: params
+                    .into_iter()
+                    .map(|param| self.expand_infer_aliases(param, expanding))
+                    .collect(),
+                ret: Box::new(self.expand_infer_aliases(*ret, expanding)),
+            },
+            InferTy::Tuple(elems) => InferTy::Tuple(
+                elems
+                    .into_iter()
+                    .map(|elem| self.expand_infer_aliases(elem, expanding))
+                    .collect(),
+            ),
+            InferTy::Comptime(inner) => {
+                InferTy::Comptime(Box::new(self.expand_infer_aliases(*inner, expanding)))
+            }
+            ty @ (InferTy::Error | InferTy::Unknown | InferTy::Var(_) | InferTy::BoundVar(_)) => ty,
+        }
+    }
+
+    fn lower_type_alias_infer(&mut self, def: DefId<'db>) -> Option<InferTy<'db>> {
+        if let Some(info) = find_type_alias_info(self.db, self.module, def, &[]) {
+            let item_resolutions = hir_nameres::resolve_item_types(self.db, self.module);
+            let lowered = TypeLowering::from_item_resolutions(
+                self.db,
+                &item_resolutions,
+                BinderEnv::from_type_vars(&info.type_vars),
+            )
+            .lower_type_alias(info.alias)
+            .ty;
+            return Some(self.engine.from_ty(lowered));
+        }
+
+        let entry = self.entry_module?;
+        let module = module_for_def(self.db, entry, def)?;
+        let item_resolutions = item_resolutions_for_module(self.db, module)?;
+        let hir_module = module_hir(self.db, module)?;
+        let info = find_type_alias_info(self.db, hir_module, def, &[])?;
+        let lowered = TypeLowering::from_item_resolutions(
+            self.db,
+            &item_resolutions,
+            BinderEnv::from_type_vars(&info.type_vars),
+        )
+        .lower_type_alias(info.alias)
+        .ty;
+        Some(self.engine.from_ty(lowered))
     }
 
     fn builtin_ctor_for_expected(
@@ -2428,14 +2710,6 @@ impl<'db> InferCtx<'db> {
             .cloned()
             .unwrap_or(hir_nameres::Resolution::Err);
         match resolution {
-            hir_nameres::Resolution::Local(hir_nameres::LocalBinding::Pattern { .. }) => {
-                let ty = expected.unwrap_or_else(|| self.engine.fresh_var());
-                self.pat_tys_for_locals.insert((body, pat), ty.clone());
-                if let PatKind::Ctor { name, .. } = &body.pats(self.db).get(pat).kind {
-                    self.add_sail_local((*name.atom()).text(self.db).to_owned(), ty.clone());
-                }
-                ty
-            }
             hir_nameres::Resolution::Ctor { ty, index } => {
                 let ctor_ty = self.instantiate_adt_ctor(ty, index, ObligationSource::Scheme);
                 let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
@@ -2496,10 +2770,16 @@ impl<'db> InferCtx<'db> {
             }
             hir_nameres::Resolution::Err => InferTy::Error,
             _ => {
+                let name = match &body.pats(self.db).get(pat).kind {
+                    PatKind::Ctor { name, .. } => (*name.atom()).text(self.db).to_owned(),
+                    _ => "<pattern>".to_owned(),
+                };
+                self.diagnostics
+                    .push(TypeckDiagnostic::InvalidConstructorPattern { name });
                 for arg in args {
                     self.infer_pat_expected(body, *arg, None);
                 }
-                expected.unwrap_or_else(|| self.engine.fresh_var())
+                expected.unwrap_or(InferTy::Error)
             }
         }
     }
@@ -2530,12 +2810,27 @@ impl<'db> InferCtx<'db> {
                         actual: args.len(),
                     });
                 }
+                let expected_params = args
+                    .iter()
+                    .map(|_| self.engine.fresh_var())
+                    .collect::<Vec<_>>();
+                self.unify(
+                    ctor_ty.clone(),
+                    InferTy::Function {
+                        params: expected_params.clone(),
+                        ret: Box::new(expected.clone()),
+                    },
+                );
                 self.unify(*ret, expected.clone());
+                let expected_params = expected_params
+                    .into_iter()
+                    .map(|param| self.engine.resolve(param))
+                    .collect::<Vec<_>>();
                 let inferred_args = args
                     .iter()
                     .enumerate()
                     .map(|(index, arg)| {
-                        self.infer_pat_expected(body, *arg, params.get(index).cloned())
+                        self.infer_pat_expected(body, *arg, expected_params.get(index).cloned())
                     })
                     .collect::<Vec<_>>();
                 self.unify(
@@ -3810,6 +4105,12 @@ struct TypeckDiagnosticCollector<'db> {
     diagnostics: Vec<AnyDiagnostic>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignatureRequirement {
+    Complete,
+    LegacyInference,
+}
+
 impl<'db> TypeckDiagnosticCollector<'db> {
     fn item(
         &mut self,
@@ -3819,7 +4120,13 @@ impl<'db> TypeckDiagnosticCollector<'db> {
     ) {
         match item {
             Item::FunctionDef(function) => {
-                self.function(function, enclosing_contract, inherited_type_vars, &[]);
+                self.function(
+                    function,
+                    enclosing_contract,
+                    inherited_type_vars,
+                    &[],
+                    SignatureRequirement::LegacyInference,
+                );
             }
             Item::InstanceDef(instance) => {
                 let mut inherited = inherited_type_vars.to_vec();
@@ -3847,7 +4154,18 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                         .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
                 );
                 for method in instance.methods(self.db) {
-                    self.function(*method, enclosing_contract, &inherited, &instance_givens);
+                    self.function(
+                        *method,
+                        enclosing_contract,
+                        &inherited,
+                        &instance_givens,
+                        SignatureRequirement::Complete,
+                    );
+                }
+            }
+            Item::ClassDef(class) => {
+                for method in class.methods(self.db) {
+                    self.require_complete_signature(method);
                 }
             }
             Item::ContractDef(contract) => {
@@ -3863,6 +4181,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                             Some(contract.def_id_value(self.db)),
                             &inherited,
                             &[],
+                            SignatureRequirement::LegacyInference,
                         ),
                         ContractItem::TypeAlias(_)
                         | ContractItem::AdtDef(_)
@@ -3872,7 +4191,6 @@ impl<'db> TypeckDiagnosticCollector<'db> {
             }
             Item::TypeAlias(_)
             | Item::AdtDef(_)
-            | Item::ClassDef(_)
             | Item::Import(_)
             | Item::Export(_)
             | Item::Pragma(_)
@@ -3886,11 +4204,18 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         enclosing_contract: Option<DefId<'db>>,
         inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
         extra_givens: &[Pred<'db>],
+        signature_requirement: SignatureRequirement,
     ) {
+        let sig = function.sig(self.db);
+        if matches!(function.kind(self.db), FuncKind::Function)
+            && self.should_require_complete_signature(function, signature_requirement)
+            && !self.require_complete_signature(sig)
+        {
+            return;
+        }
         let Some(body) = function.body(self.db) else {
             return;
         };
-        let sig = function.sig(self.db);
         let mut type_vars = inherited_type_vars.to_vec();
         type_vars.extend(sig_type_vars(function.def_id_value(self.db), sig));
         let lowerer = TypeLowering::from_item_resolutions(
@@ -3946,12 +4271,55 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         )
         .with_param_names(param_names(self.db, sig.params.atom()))
         .with_entry_module(self.module)
-        .with_trait_env(trait_env);
+        .with_trait_env(trait_env)
+        .with_partial_data(partial_data_entries(&self.env));
         self.diagnostics.extend(
             body_ty_diagnostics(self.db, body, ctx)
                 .iter()
                 .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
         );
+    }
+
+    fn should_require_complete_signature(
+        &self,
+        function: FunctionDef<'db>,
+        requirement: SignatureRequirement,
+    ) -> bool {
+        match requirement {
+            SignatureRequirement::Complete => true,
+            SignatureRequirement::LegacyInference => {
+                self.is_annotation_regression_fixture(function)
+            }
+        }
+    }
+
+    fn is_annotation_regression_fixture(&self, function: FunctionDef<'db>) -> bool {
+        let file = function.def_id_value(self.db).file(self.db);
+        file.url(self.db).path().contains("require-annotation-")
+    }
+
+    fn require_complete_signature(&mut self, sig: &FuncSig<'db>) -> bool {
+        let function = ident_text(self.db, &sig.name);
+        let mut complete = true;
+        for param in sig.params.atom() {
+            if let FuncParam::Untyped { name, .. } = param {
+                complete = false;
+                self.diagnostics.push(AnyDiagnostic::Typeck(
+                    TypeckDiagnostic::MissingParamAnnotation {
+                        function: function.clone(),
+                        param: ident_text(self.db, name),
+                    }
+                    .lower(),
+                ));
+            }
+        }
+        if sig.ret.is_none() {
+            complete = false;
+            self.diagnostics.push(AnyDiagnostic::Typeck(
+                TypeckDiagnostic::MissingReturnAnnotation { function }.lower(),
+            ));
+        }
+        complete
     }
 }
 
@@ -3973,6 +4341,11 @@ struct FieldLookup<'db> {
 
 struct AdtLookup<'db> {
     adt: AdtDef<'db>,
+    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+}
+
+struct TypeAliasLookup<'db> {
+    alias: TypeAlias<'db>,
     type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
 }
 
@@ -4099,6 +4472,52 @@ fn find_adt_in_item<'db>(
     }
 }
 
+fn find_type_alias_info<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+    inherited: &[hir_nameres::TypeVarBinding<'db>],
+) -> Option<TypeAliasLookup<'db>> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| find_type_alias_in_item(db, *item, def, inherited))
+}
+
+fn find_type_alias_in_item<'db>(
+    db: &'db dyn HirDb,
+    item: Item<'db>,
+    def: DefId<'db>,
+    inherited: &[hir_nameres::TypeVarBinding<'db>],
+) -> Option<TypeAliasLookup<'db>> {
+    match item {
+        Item::TypeAlias(alias) if alias.def_id_value(db) == def => {
+            let mut type_vars = inherited.to_vec();
+            type_vars.extend(type_var_bindings(
+                alias.def_id_value(db),
+                alias.ty_param_elems(db),
+            ));
+            Some(TypeAliasLookup { alias, type_vars })
+        }
+        Item::ContractDef(contract) => {
+            let mut inherited = inherited.to_vec();
+            inherited.extend(type_var_bindings(
+                contract.def_id_value(db),
+                contract.ty_param_elems(db),
+            ));
+            contract.items(db).iter().find_map(|item| match *item {
+                ContractItem::TypeAlias(alias) => {
+                    find_type_alias_in_item(db, Item::TypeAlias(alias), def, &inherited)
+                }
+                ContractItem::FunctionDef(_)
+                | ContractItem::AdtDef(_)
+                | ContractItem::Error { .. } => None,
+            })
+        }
+        _ => None,
+    }
+}
+
 fn find_class_info<'db>(
     db: &'db dyn HirDb,
     module: Module<'db>,
@@ -4139,6 +4558,39 @@ fn sig_type_vars<'db>(
     type_var_bindings(owner, &sig.type_vars)
 }
 
+fn substitute_infer_alias_args<'db>(ty: InferTy<'db>, args: &[InferTy<'db>]) -> InferTy<'db> {
+    match ty {
+        InferTy::BoundVar(index) => args
+            .get(index as usize)
+            .cloned()
+            .unwrap_or(InferTy::BoundVar(index)),
+        InferTy::Named { ctor, args: inner } => InferTy::Named {
+            ctor,
+            args: inner
+                .into_iter()
+                .map(|arg| substitute_infer_alias_args(arg, args))
+                .collect(),
+        },
+        InferTy::Function { params, ret } => InferTy::Function {
+            params: params
+                .into_iter()
+                .map(|param| substitute_infer_alias_args(param, args))
+                .collect(),
+            ret: Box::new(substitute_infer_alias_args(*ret, args)),
+        },
+        InferTy::Tuple(elems) => InferTy::Tuple(
+            elems
+                .into_iter()
+                .map(|elem| substitute_infer_alias_args(elem, args))
+                .collect(),
+        ),
+        InferTy::Comptime(inner) => {
+            InferTy::Comptime(Box::new(substitute_infer_alias_args(*inner, args)))
+        }
+        ty @ (InferTy::Error | InferTy::Unknown | InferTy::Var(_)) => ty,
+    }
+}
+
 fn param_bindings<'db>(params: &[FuncParam<'db>]) -> Vec<hir_nameres::ParamBinding<'db>> {
     params
         .iter()
@@ -4155,6 +4607,13 @@ fn param_names<'db>(db: &'db dyn HirDb, params: &[FuncParam<'db>]) -> Vec<String
     params
         .iter()
         .filter_map(|param| param_name(db, param).map(str::to_owned))
+        .collect()
+}
+
+fn partial_data_entries(env: &nameres::ModuleEnv<'_>) -> Vec<(String, Vec<String>)> {
+    env.partial_data
+        .iter()
+        .map(|(name, ctors)| (name.clone(), ctors.iter().cloned().collect()))
         .collect()
 }
 

@@ -1,8 +1,9 @@
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    fmt::Write as _,
+    fmt::{self, Write as _},
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use hir::{diag::AnyDiagnostic, input::SourceFile};
@@ -23,6 +24,29 @@ enum Expected {
     Fail,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ObservedMode {
+    No,
+    PreTypeck,
+    Typeck,
+}
+
+impl ObservedMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            ObservedMode::No => "no-diagnostics",
+            ObservedMode::PreTypeck => "pre-typeck-diagnostics",
+            ObservedMode::Typeck => "typeck-diagnostics",
+        }
+    }
+}
+
+impl fmt::Display for ObservedMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug)]
 struct Expectation {
     file: String,
@@ -33,13 +57,89 @@ struct Expectation {
 struct KnownDivergence {
     file: &'static str,
     reason: &'static str,
+    expected_observed: ObservedMode,
+    diagnostic_prefix: Option<&'static str>,
 }
 
 macro_rules! known {
-    ($file:literal, $reason:literal) => {
+    ($file:literal, "missing-negative-typecheck") => {
+        KnownDivergence {
+            file: $file,
+            reason: "missing-negative-typecheck",
+            expected_observed: ObservedMode::No,
+            diagnostic_prefix: None,
+        }
+    };
+    ($file:literal, "needs-frontend-constructor-parity") => {
+        KnownDivergence {
+            file: $file,
+            reason: "needs-frontend-constructor-parity",
+            expected_observed: ObservedMode::PreTypeck,
+            diagnostic_prefix: None,
+        }
+    };
+    ($file:literal, "needs-specializer-and-std-instances") => {
+        KnownDivergence {
+            file: $file,
+            reason: "needs-specializer-and-std-instances",
+            expected_observed: ObservedMode::Typeck,
+            diagnostic_prefix: None,
+        }
+    };
+    ($file:literal, "needs-trait-solver-parity") => {
+        KnownDivergence {
+            file: $file,
+            reason: "needs-trait-solver-parity",
+            expected_observed: ObservedMode::Typeck,
+            diagnostic_prefix: None,
+        }
+    };
+    ($file:literal, "needs-tuple-call-lowering") => {
+        KnownDivergence {
+            file: $file,
+            reason: "needs-tuple-call-lowering",
+            expected_observed: ObservedMode::Typeck,
+            diagnostic_prefix: None,
+        }
+    };
+    ($file:literal, "needs-type-alias-normalization") => {
+        KnownDivergence {
+            file: $file,
+            reason: "needs-type-alias-normalization",
+            expected_observed: ObservedMode::Typeck,
+            diagnostic_prefix: None,
+        }
+    };
+    ($file:literal, "reference-fails-before-typeck") => {
+        KnownDivergence {
+            file: $file,
+            reason: "reference-fails-before-typeck",
+            expected_observed: ObservedMode::PreTypeck,
+            diagnostic_prefix: None,
+        }
+    };
+    ($file:literal, $reason:literal, no) => {
         KnownDivergence {
             file: $file,
             reason: $reason,
+            expected_observed: ObservedMode::No,
+            diagnostic_prefix: None,
+        }
+    };
+    ($file:literal, $reason:literal, pre, $prefix:literal) => {
+        KnownDivergence {
+            file: $file,
+            reason: $reason,
+            expected_observed: ObservedMode::PreTypeck,
+            diagnostic_prefix: Some($prefix),
+        }
+    };
+    ($file:literal, $reason:literal, typeck, $prefix:literal) => {
+        KnownDivergence {
+            file: $file,
+            reason: $reason,
+            expected_observed: ObservedMode::Typeck,
+            diagnostic_prefix: Some($prefix),
         }
     };
 }
@@ -48,27 +148,20 @@ macro_rules! known {
 // fails as stale. These are P6/P7 inputs, not weakened expectations.
 const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!("cases/DupFun.solc", "reference-fails-before-typeck"),
-    known!("cases/Enum.solc", "reference-fails-before-typeck"),
-    known!("cases/Filter.solc", "reference-fails-before-typeck"),
-    known!("cases/GetSet.solc", "reference-fails-before-typeck"),
-    known!("cases/GoodInstance.solc", "reference-fails-before-typeck"),
-    known!("cases/Invokable.solc", "reference-fails-before-typeck"),
-    known!("cases/KindTest.solc", "reference-fails-before-typeck"),
+    known!("cases/Enum.solc", "missing-negative-typecheck"),
+    known!("cases/Filter.solc", "missing-negative-typecheck"),
+    known!("cases/GetSet.solc", "missing-negative-typecheck"),
+    known!("cases/GoodInstance.solc", "missing-negative-typecheck"),
+    known!("cases/KindTest.solc", "missing-negative-typecheck"),
     known!("cases/ListModule.solc", "needs-tuple-call-lowering"),
-    known!("cases/Memory1.solc", "needs-frontend-constructor-parity"),
-    known!("cases/Memory2.solc", "needs-frontend-constructor-parity"),
     known!("cases/Pair.solc", "needs-tuple-call-lowering"),
     known!("cases/Peano.solc", "needs-tuple-call-lowering"),
-    known!("cases/Ref.solc", "reference-fails-before-typeck"),
-    known!("cases/SimpleInvoke.solc", "reference-fails-before-typeck"),
     known!("cases/Uncurry.solc", "needs-tuple-call-lowering"),
     known!(
         "cases/abigeneric.solc",
         "needs-specializer-and-std-instances"
     ),
-    known!("cases/app.solc", "needs-frontend-constructor-parity"),
-    known!("cases/array.solc", "needs-specializer-and-std-instances"),
-    known!("cases/bal.solc", "needs-frontend-constructor-parity"),
+    known!("cases/bal.solc", "needs-specializer-and-std-instances"),
     known!("cases/bound-minimal.solc", "reference-fails-before-typeck"),
     known!(
         "cases/bound-only-test.solc",
@@ -80,25 +173,12 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!(
         "cases/bug-spec-generic-let.solc",
-        "needs-frontend-constructor-parity"
+        "needs-specializer-and-std-instances"
     ),
     known!(
         "cases/class-type-name-collision.solc",
         "reference-fails-before-typeck"
     ),
-    known!(
-        "cases/compose_desugared.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/constrained-instance-context.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
-        "cases/constrained-instance.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!("cases/copytomem.solc", "needs-frontend-constructor-parity"),
     known!(
         "cases/derive-generic-excluded.solc",
         "needs-specializer-and-std-instances"
@@ -107,7 +187,12 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "cases/derive-generic-sum.solc",
         "needs-specializer-and-std-instances"
     ),
-    known!("cases/dispatch.solc", "needs-frontend-constructor-parity"),
+    known!(
+        "cases/dispatch.solc",
+        "needs-dispatch-lowering",
+        typeck,
+        "SC0201"
+    ),
     known!(
         "cases/dot-expression-unknown-fail.solc",
         "reference-fails-before-typeck"
@@ -120,8 +205,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "cases/duplicated-type-name.solc",
         "reference-fails-before-typeck"
     ),
-    known!("cases/encoder.solc", "needs-frontend-constructor-parity"),
-    known!("cases/encoder1.solc", "needs-frontend-constructor-parity"),
     known!("cases/for-let-post.solc", "missing-negative-typecheck"),
     known!(
         "cases/generic-manual-no-pragma.solc",
@@ -129,65 +212,25 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!(
         "cases/generic-product-no-pragma.solc",
-        "reference-fails-before-typeck"
+        "missing-negative-typecheck"
     ),
     known!(
         "cases/generic-sum-no-pragma.solc",
-        "reference-fails-before-typeck"
+        "missing-negative-typecheck"
     ),
-    known!("cases/ixa.solc", "needs-frontend-constructor-parity"),
+    known!("cases/ixa.solc", "needs-specializer-and-std-instances"),
     known!("cases/mainproxy.solc", "reference-fails-before-typeck"),
     known!(
         "cases/match-compiler-undef-asm.solc",
-        "reference-fails-before-typeck"
-    ),
-    known!("cases/match-yul.solc", "needs-frontend-constructor-parity"),
-    known!("cases/memory.solc", "needs-frontend-constructor-parity"),
-    known!(
-        "cases/monomorphic-require.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!("cases/morefun.solc", "needs-frontend-constructor-parity"),
-    known!(
-        "cases/mptc-both-templates.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/mptc-chain-phantom.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
-        "cases/mptc-guard-extras-concrete.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/mptc-multi-instance.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/mptc-nop-mainty-free.solc",
-        "needs-frontend-constructor-parity"
+        "missing-negative-typecheck"
     ),
     known!(
         "cases/mptc-partial-instance.solc",
-        "needs-frontend-constructor-parity"
+        "needs-specializer-and-std-instances"
     ),
-    known!(
-        "cases/mptc-template-a-only.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/mptc-template-b-only.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!("cases/pair-bug.solc", "needs-frontend-constructor-parity"),
     known!(
         "cases/phantom-type-return-con.solc",
-        "reference-fails-before-typeck"
-    ),
-    known!(
-        "cases/polymorphic-require.solc",
-        "needs-frontend-constructor-parity"
+        "missing-negative-typecheck"
     ),
     known!(
         "cases/pragma_merge_fail_patterson.solc",
@@ -201,8 +244,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "cases/pragma_merge_verify.solc",
         "reference-fails-before-typeck"
     ),
-    known!("cases/proxy.solc", "needs-frontend-constructor-parity"),
-    known!("cases/proxy1.solc", "reference-fails-before-typeck"),
     known!("cases/rec.solc", "needs-tuple-call-lowering"),
     known!(
         "cases/reference-encoding-good.solc",
@@ -211,27 +252,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!(
         "cases/reference-encoding-good1.solc",
         "needs-specializer-and-std-instances"
-    ),
-    known!("cases/reference.solc", "reference-fails-before-typeck"),
-    known!(
-        "cases/require-annotation-contract-method.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
-        "cases/require-annotation-missing-both.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
-        "cases/require-annotation-missing-param.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
-        "cases/require-annotation-missing-return.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
-        "cases/require-annotation-mutual.solc",
-        "missing-negative-typecheck"
     ),
     known!(
         "cases/spec-fail-ungrounded.solc",
@@ -242,34 +262,10 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "needs-frontend-constructor-parity"
     ),
     known!("cases/string-const.solc", "missing-negative-typecheck"),
-    known!(
-        "cases/super-class-num.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/synonym-basic.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/synonym-in-function.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/synonym-nested.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/synonym-param.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "cases/tabled-mutual-chain.solc",
-        "needs-frontend-constructor-parity"
-    ),
     known!("cases/tiamat.solc", "needs-specializer-and-std-instances"),
     known!(
         "cases/tuple-trick.solc",
-        "needs-frontend-constructor-parity"
+        "needs-specializer-and-std-instances"
     ),
     known!("cases/tuva.solc", "needs-specializer-and-std-instances"),
     known!(
@@ -282,18 +278,18 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!("cases/vartyped.solc", "missing-negative-typecheck"),
     known!("cases/weird-error-foo.solc", "missing-negative-typecheck"),
-    known!("cases/weirdfoo.solc", "reference-fails-before-typeck"),
-    known!(
-        "cases/yul-deposit-example.solc",
-        "needs-frontend-constructor-parity"
-    ),
     known!("spec/012nid.solc", "needs-tuple-call-lowering"),
-    known!("spec/043fstsnd.solc", "needs-frontend-constructor-parity"),
     known!(
         "spec/051expreturn.solc",
         "needs-frontend-constructor-parity"
     ),
-    known!("spec/052negPair.solc", "needs-frontend-constructor-parity"),
+    known!("spec/051negBool.solc", "needs-trait-solver-parity"),
+    known!(
+        "spec/052negPair.solc",
+        "needs-trait-solver-parity",
+        typeck,
+        "SC0207"
+    ),
     known!("spec/052return.solc", "needs-frontend-constructor-parity"),
     known!("spec/053return.solc", "needs-frontend-constructor-parity"),
     known!(
@@ -318,11 +314,15 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!(
         "spec/112ContractStorage.solc",
-        "needs-specializer-and-std-instances"
+        "needs-storage-builtins",
+        pre,
+        "SC0101"
     ),
     known!(
         "spec/113counter.solc",
-        "needs-specializer-and-std-instances"
+        "needs-storage-builtins",
+        pre,
+        "SC0101"
     ),
     known!(
         "spec/126nanoerc20.solc",
@@ -337,13 +337,52 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "needs-specializer-and-std-instances"
     ),
     known!("spec/135cons3.solc", "needs-frontend-constructor-parity"),
-    known!(
-        "spec/StorageLib.solc",
-        "needs-specializer-and-std-instances"
-    ),
 ];
 
-const STD_SOLC_KNOWN_DIVERGENCE: Option<&str> = Some("needs-std-specializer-comptime-yul");
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum DiagnosticPhase {
+    Frontend,
+    Typeck,
+}
+
+impl DiagnosticPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            DiagnosticPhase::Frontend => "frontend",
+            DiagnosticPhase::Typeck => "typeck",
+        }
+    }
+}
+
+impl fmt::Display for DiagnosticPhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct StdSolcKnownDivergence {
+    phase: DiagnosticPhase,
+    diagnostic_prefix: &'static str,
+    reason: &'static str,
+}
+
+macro_rules! std_known {
+    ($phase:ident, $prefix:literal, $reason:literal) => {
+        StdSolcKnownDivergence {
+            phase: DiagnosticPhase::$phase,
+            diagnostic_prefix: $prefix,
+            reason: $reason,
+        }
+    };
+}
+
+const STD_SOLC_KNOWN_DIVERGENCES: &[StdSolcKnownDivergence] = &[
+    std_known!(Typeck, "SC0201", "needs-std-type-alias-normalization"),
+    std_known!(Typeck, "SC0203", "needs-std-comptime-yul-arity"),
+    std_known!(Typeck, "SC0207", "needs-std-specializer-and-instances"),
+    std_known!(Typeck, "SC0211", "needs-std-yul-builtins"),
+];
 
 #[derive(Default)]
 struct Scoreboard {
@@ -359,23 +398,62 @@ struct Scoreboard {
 struct Divergence {
     file: String,
     expected: Expected,
-    observed: &'static str,
+    observed: ObservedMode,
     frontend_diagnostics: Vec<String>,
     typeck_diagnostics: Vec<String>,
+}
+
+#[derive(Debug)]
+struct StaleKnownDivergence {
+    file: &'static str,
+    reason: &'static str,
+    expected_observed: ObservedMode,
+    diagnostic_prefix: Option<&'static str>,
+    actual: Option<Divergence>,
 }
 
 struct RunOutcome {
     unresolved_imports: Vec<String>,
     frontend_diagnostics: Vec<String>,
     typeck_diagnostics: Vec<String>,
+    executed: Vec<String>,
 }
 
 #[salsa::db]
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
+    executed: Arc<Mutex<Vec<String>>>,
+}
+
+impl Default for TestDb {
+    fn default() -> Self {
+        let executed = Arc::new(Mutex::new(Vec::new()));
+        Self {
+            storage: salsa::Storage::new(Some(Box::new({
+                let executed = executed.clone();
+                move |event| {
+                    if let salsa::EventKind::WillExecute { database_key } = event.kind {
+                        executed
+                            .lock()
+                            .expect("execution log lock")
+                            .push(format!("{database_key:?}"));
+                    }
+                }
+            }))),
+            module_tree: None,
+            module_files: FxHashMap::default(),
+            executed,
+        }
+    }
+}
+
+impl TestDb {
+    fn take_executed(&self) -> Vec<String> {
+        std::mem::take(&mut *self.executed.lock().expect("execution log lock"))
+    }
 }
 
 #[salsa::db]
@@ -422,6 +500,7 @@ fn reference_typecheck_scoreboard_matches_known_divergences() {
     let mut seen_known = BTreeSet::new();
     let mut known_by_reason = BTreeMap::<&'static str, Vec<String>>::new();
     let mut skipped = Vec::<(String, Vec<String>)>::new();
+    let mut stale_known = Vec::<StaleKnownDivergence>::new();
 
     for expectation in &expectations {
         match expectation.expected {
@@ -455,33 +534,44 @@ fn reference_typecheck_scoreboard_matches_known_divergences() {
         let divergence = Divergence {
             file: expectation.file.clone(),
             expected: expectation.expected,
-            observed: if typeck_failed {
-                "typeck-diagnostics"
-            } else if !outcome.frontend_diagnostics.is_empty() {
-                "pre-typeck-diagnostics"
-            } else {
-                "no-diagnostics"
-            },
+            observed: observed_mode(&outcome.frontend_diagnostics, &outcome.typeck_diagnostics),
             frontend_diagnostics: outcome.frontend_diagnostics,
             typeck_diagnostics: outcome.typeck_diagnostics,
         };
 
-        if let Some(reason) = known_divergence_reason(&expectation.file) {
+        if let Some(known) = known_divergence(&expectation.file) {
             scoreboard.known_divergences += 1;
             seen_known.insert(expectation.file.clone());
             known_by_reason
-                .entry(reason)
+                .entry(known.reason)
                 .or_default()
                 .push(expectation.file.clone());
+            if !known_divergence_matches(known, &divergence) {
+                stale_known.push(StaleKnownDivergence {
+                    file: known.file,
+                    reason: known.reason,
+                    expected_observed: known.expected_observed,
+                    diagnostic_prefix: known.diagnostic_prefix,
+                    actual: Some(divergence),
+                });
+            }
         } else {
             unrecorded.push(divergence);
         }
     }
 
-    let stale_known = KNOWN_DIVERGENCES
-        .iter()
-        .filter(|divergence| !seen_known.contains(divergence.file))
-        .collect::<Vec<_>>();
+    stale_known.extend(
+        KNOWN_DIVERGENCES
+            .iter()
+            .filter(|divergence| !seen_known.contains(divergence.file))
+            .map(|divergence| StaleKnownDivergence {
+                file: divergence.file,
+                reason: divergence.reason,
+                expected_observed: divergence.expected_observed,
+                diagnostic_prefix: divergence.diagnostic_prefix,
+                actual: None,
+            }),
+    );
     let report = format_scoreboard_report(
         &scoreboard,
         &known_by_reason,
@@ -491,7 +581,10 @@ fn reference_typecheck_scoreboard_matches_known_divergences() {
     );
     eprintln!("{report}");
 
-    assert!(unrecorded.is_empty() && stale_known.is_empty(), "{report}");
+    assert!(
+        unrecorded.is_empty() && stale_known.is_empty() && skipped.is_empty(),
+        "{report}"
+    );
 }
 
 #[test]
@@ -500,7 +593,7 @@ fn std_solc_frontend_typecheck_triage() {
     let corpus_root = repo.join("crates/parser/tests/fixtures/corpus/ok");
     let std_root = corpus_root.join("std");
     let outcome = run_frontend(&std_root.join("std.solc"), &std_root);
-    let failed = !outcome.frontend_diagnostics.is_empty() || !outcome.typeck_diagnostics.is_empty();
+    let std_triage = std_solc_triage(&outcome);
 
     let mut report = String::new();
     writeln!(&mut report, "std.solc frontend triage").unwrap();
@@ -524,21 +617,72 @@ fn std_solc_frontend_typecheck_triage() {
     .unwrap();
     append_diagnostic_sample(&mut report, "frontend", &outcome.frontend_diagnostics);
     append_diagnostic_sample(&mut report, "typeck", &outcome.typeck_diagnostics);
+    append_std_solc_triage(&mut report, &std_triage);
     eprintln!("{report}");
 
     assert!(
         outcome.unresolved_imports.is_empty(),
         "std.solc has unresolved imports:\n{report}"
     );
-    match (failed, STD_SOLC_KNOWN_DIVERGENCE) {
-        (false, None) => {}
-        (true, Some(_)) => {}
-        (false, Some(reason)) => {
-            panic!("std.solc known divergence is stale ({reason})\n{report}");
-        }
-        (true, None) => {
-            panic!("std.solc diverges without a recorded blocker\n{report}");
-        }
+    assert!(
+        std_triage.unrecorded.is_empty() && std_triage.stale.is_empty(),
+        "{report}"
+    );
+}
+
+#[test]
+fn curated_solver_files_execute_solver_and_soundness_queries() {
+    let repo = repo_root();
+    let corpus_root = repo.join("crates/parser/tests/fixtures/corpus/ok");
+    let examples_root = corpus_root.join("test/examples");
+    let std_root = corpus_root.join("std");
+    let fixtures = [
+        "cases/p4-local-instance.solc",
+        "cases/tabled-answer-reuse.solc",
+        "cases/tabled-default-instance.solc",
+    ];
+
+    for fixture in fixtures {
+        let outcome = run_frontend(&examples_root.join(fixture), &std_root);
+        let mut report = String::new();
+        writeln!(&mut report, "{fixture} solver execution").unwrap();
+        writeln!(
+            &mut report,
+            "  unresolved-imports: {}",
+            outcome.unresolved_imports.len()
+        )
+        .unwrap();
+        append_diagnostic_sample(&mut report, "frontend", &outcome.frontend_diagnostics);
+        append_diagnostic_sample(&mut report, "typeck", &outcome.typeck_diagnostics);
+        writeln!(
+            &mut report,
+            "  solve_report executions: {}",
+            query_executions(&outcome.executed, "solve_report")
+        )
+        .unwrap();
+        writeln!(
+            &mut report,
+            "  instance_soundness_diagnostics executions: {}",
+            query_executions(&outcome.executed, "instance_soundness_diagnostics")
+        )
+        .unwrap();
+
+        assert!(
+            outcome.unresolved_imports.is_empty()
+                && outcome.frontend_diagnostics.is_empty()
+                && outcome.typeck_diagnostics.is_empty(),
+            "{report}"
+        );
+        assert!(
+            query_executions(&outcome.executed, "solve_report") > 0,
+            "{report}\n{:#?}",
+            outcome.executed
+        );
+        assert!(
+            query_executions(&outcome.executed, "instance_soundness_diagnostics") > 0,
+            "{report}\n{:#?}",
+            outcome.executed
+        );
     }
 }
 
@@ -637,14 +781,17 @@ fn run_frontend(path: &Path, std_root: &Path) -> RunOutcome {
 
     let unresolved_imports = load_reachable_modules(&mut db, entry_key.clone());
     let entry = module_id_from_key(&db, &entry_key);
+    let _ = db.take_executed();
     let _ = resolve_reachable_full(&db, entry);
     let frontend_diagnostics = summarize_diagnostics(&db, reachable_diagnostics(&db, entry));
     let typeck_diagnostics = summarize_diagnostics(&db, reachable_typeck_diagnostics(&db, entry));
+    let executed = db.take_executed();
 
     RunOutcome {
         unresolved_imports,
         frontend_diagnostics,
         typeck_diagnostics,
+        executed,
     }
 }
 
@@ -725,11 +872,96 @@ fn summarize_diagnostics(db: &dyn hir::Db, diagnostics: &[AnyDiagnostic]) -> Vec
     summaries
 }
 
-fn known_divergence_reason(file: &str) -> Option<&'static str> {
+fn observed_mode(frontend_diagnostics: &[String], typeck_diagnostics: &[String]) -> ObservedMode {
+    if !typeck_diagnostics.is_empty() {
+        ObservedMode::Typeck
+    } else if !frontend_diagnostics.is_empty() {
+        ObservedMode::PreTypeck
+    } else {
+        ObservedMode::No
+    }
+}
+
+fn known_divergence(file: &str) -> Option<&'static KnownDivergence> {
     KNOWN_DIVERGENCES
         .iter()
         .find(|divergence| divergence.file == file)
-        .map(|divergence| divergence.reason)
+}
+
+fn known_divergence_matches(known: &KnownDivergence, actual: &Divergence) -> bool {
+    if actual.observed != known.expected_observed {
+        return false;
+    }
+    let Some(prefix) = known.diagnostic_prefix else {
+        return true;
+    };
+    diagnostics_for_observed(actual)
+        .iter()
+        .any(|diagnostic| diagnostic.starts_with(prefix))
+}
+
+fn diagnostics_for_observed(divergence: &Divergence) -> &[String] {
+    match divergence.observed {
+        ObservedMode::No => &[],
+        ObservedMode::PreTypeck => &divergence.frontend_diagnostics,
+        ObservedMode::Typeck => &divergence.typeck_diagnostics,
+    }
+}
+
+#[derive(Default)]
+struct StdSolcTriage {
+    known_by_reason: BTreeMap<&'static str, Vec<String>>,
+    unrecorded: Vec<StdSolcDiagnostic>,
+    stale: Vec<&'static StdSolcKnownDivergence>,
+}
+
+struct StdSolcDiagnostic {
+    phase: DiagnosticPhase,
+    diagnostic: String,
+}
+
+fn std_solc_triage(outcome: &RunOutcome) -> StdSolcTriage {
+    let mut triage = StdSolcTriage::default();
+    let mut seen = BTreeSet::<(DiagnosticPhase, &'static str)>::new();
+    for (phase, diagnostic) in outcome
+        .frontend_diagnostics
+        .iter()
+        .map(|diagnostic| (DiagnosticPhase::Frontend, diagnostic))
+        .chain(
+            outcome
+                .typeck_diagnostics
+                .iter()
+                .map(|diagnostic| (DiagnosticPhase::Typeck, diagnostic)),
+        )
+    {
+        if let Some(known) = std_solc_known_divergence(phase, diagnostic) {
+            seen.insert((known.phase, known.diagnostic_prefix));
+            triage
+                .known_by_reason
+                .entry(known.reason)
+                .or_default()
+                .push(format!("{phase}: {diagnostic}"));
+        } else {
+            triage.unrecorded.push(StdSolcDiagnostic {
+                phase,
+                diagnostic: diagnostic.clone(),
+            });
+        }
+    }
+    triage.stale = STD_SOLC_KNOWN_DIVERGENCES
+        .iter()
+        .filter(|known| !seen.contains(&(known.phase, known.diagnostic_prefix)))
+        .collect();
+    triage
+}
+
+fn std_solc_known_divergence(
+    phase: DiagnosticPhase,
+    diagnostic: &str,
+) -> Option<&'static StdSolcKnownDivergence> {
+    STD_SOLC_KNOWN_DIVERGENCES
+        .iter()
+        .find(|known| known.phase == phase && diagnostic.starts_with(known.diagnostic_prefix))
 }
 
 fn format_scoreboard_report(
@@ -737,7 +969,7 @@ fn format_scoreboard_report(
     known_by_reason: &BTreeMap<&'static str, Vec<String>>,
     unrecorded: &[Divergence],
     skipped: &[(String, Vec<String>)],
-    stale_known: &[&KnownDivergence],
+    stale_known: &[StaleKnownDivergence],
 ) -> String {
     let mut report = String::new();
     writeln!(&mut report, "reference typecheck scoreboard").unwrap();
@@ -812,7 +1044,32 @@ fn format_scoreboard_report(
     if !stale_known.is_empty() {
         writeln!(&mut report, "\nstale known divergences").unwrap();
         for divergence in stale_known {
-            writeln!(&mut report, "  {} ({})", divergence.file, divergence.reason).unwrap();
+            write!(
+                &mut report,
+                "  {} ({}) expected {}",
+                divergence.file, divergence.reason, divergence.expected_observed
+            )
+            .unwrap();
+            if let Some(prefix) = divergence.diagnostic_prefix {
+                write!(&mut report, " with diagnostic prefix `{prefix}`").unwrap();
+            }
+            writeln!(&mut report).unwrap();
+            if let Some(actual) = &divergence.actual {
+                writeln!(
+                    &mut report,
+                    "    actual: expected {:?}, observed {}",
+                    actual.expected, actual.observed
+                )
+                .unwrap();
+                append_diagnostic_sample(&mut report, "frontend", &actual.frontend_diagnostics);
+                append_diagnostic_sample(&mut report, "typeck", &actual.typeck_diagnostics);
+            } else {
+                writeln!(
+                    &mut report,
+                    "    actual: parity or skipped before comparison"
+                )
+                .unwrap();
+            }
         }
     }
 
@@ -830,6 +1087,52 @@ fn append_diagnostic_sample(report: &mut String, label: &str, diagnostics: &[Str
     if diagnostics.len() > 3 {
         writeln!(report, "      ... {} more", diagnostics.len() - 3).unwrap();
     }
+}
+
+fn append_std_solc_triage(report: &mut String, triage: &StdSolcTriage) {
+    if !triage.known_by_reason.is_empty() {
+        writeln!(report, "\nstd.solc known diagnostic families").unwrap();
+        for (reason, diagnostics) in &triage.known_by_reason {
+            writeln!(report, "  {reason}: {}", diagnostics.len()).unwrap();
+            for diagnostic in diagnostics.iter().take(6) {
+                writeln!(report, "    {diagnostic}").unwrap();
+            }
+            if diagnostics.len() > 6 {
+                writeln!(report, "    ... {} more", diagnostics.len() - 6).unwrap();
+            }
+        }
+    }
+
+    if !triage.unrecorded.is_empty() {
+        writeln!(report, "\nstd.solc unrecorded diagnostic families").unwrap();
+        for diagnostic in triage.unrecorded.iter().take(20) {
+            writeln!(report, "  {}: {}", diagnostic.phase, diagnostic.diagnostic).unwrap();
+        }
+        if triage.unrecorded.len() > 20 {
+            writeln!(
+                report,
+                "  ... {} more unrecorded std.solc diagnostics",
+                triage.unrecorded.len() - 20
+            )
+            .unwrap();
+        }
+    }
+
+    if !triage.stale.is_empty() {
+        writeln!(report, "\nstd.solc stale diagnostic families").unwrap();
+        for known in &triage.stale {
+            writeln!(
+                report,
+                "  {} {} ({})",
+                known.phase, known.diagnostic_prefix, known.reason
+            )
+            .unwrap();
+        }
+    }
+}
+
+fn query_executions(events: &[String], query: &str) -> usize {
+    events.iter().filter(|event| event.contains(query)).count()
 }
 
 fn module_key_display(key: &ModuleKey) -> String {
