@@ -68,7 +68,9 @@ fn lower_import<'db>(
     alias: Option<SpannedStr<'_>>,
     selected: Vec<SpannedStr<'_>>,
 ) -> item::Import<'db> {
-    let import_def = ctx.alloc_def_with_location(DefKind::Import, None, span.start);
+    let fingerprint = import_fingerprint(&path, alias.as_ref(), &selected);
+    let import_def =
+        ctx.alloc_def_with_fingerprint(DefKind::Import, None, Some(&fingerprint), span.start);
 
     let anchor = AnchorId::def(ctx.db, import_def);
     let path = path
@@ -82,6 +84,32 @@ fn lower_import<'db>(
         .collect();
     let span = span_from_absolute(anchor, span, span.start);
     item::Import::new(ctx.db, import_def, span, path, alias, selected)
+}
+
+fn import_fingerprint(
+    path: &[SpannedStr<'_>],
+    alias: Option<&SpannedStr<'_>>,
+    selected: &[SpannedStr<'_>],
+) -> String {
+    let mut fingerprint = path
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(".");
+
+    if let Some((alias, _)) = alias {
+        fingerprint.push_str(" as ");
+        fingerprint.push_str(alias);
+    }
+
+    if !selected.is_empty() {
+        let selected = selected.iter().map(|(name, _)| *name).collect::<Vec<_>>();
+        fingerprint.push_str("::{");
+        fingerprint.push_str(&selected.join(","));
+        fingerprint.push('}');
+    }
+
+    fingerprint
 }
 
 fn lower_pragma<'db>(
@@ -180,13 +208,33 @@ fn lower_pred_ref<'db>(
     )
 }
 
-fn instance_head_fingerprint(type_vars: &[SpannedStr<'_>], ty: &ParsedTy<'_>) -> Option<String> {
+fn instance_head_fingerprint(
+    type_vars: &[SpannedStr<'_>],
+    head: &ParsedPred<'_>,
+) -> Option<String> {
     let type_vars = type_vars
         .iter()
         .enumerate()
         .map(|(index, (name, _))| (*name, index))
         .collect::<Vec<_>>();
-    canonical_ty_fingerprint(ty, &type_vars)
+
+    let mut components = Vec::with_capacity(1 + head.args.len());
+    components.push(canonical_ty_fingerprint(&head.ty, &type_vars)?);
+    for arg in &head.args {
+        components.push(canonical_ty_fingerprint(arg, &type_vars)?);
+    }
+    Some(structural_fingerprint("pred", &components))
+}
+
+fn structural_fingerprint(label: &str, components: &[String]) -> String {
+    let mut fingerprint = format!("{label}[{}]", components.len());
+    for component in components {
+        fingerprint.push('|');
+        fingerprint.push_str(&component.len().to_string());
+        fingerprint.push(':');
+        fingerprint.push_str(component);
+    }
+    fingerprint
 }
 
 fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> Option<String> {
@@ -1097,7 +1145,7 @@ fn lower_instance<'db>(
     methods: Vec<ParsedFunctionDef<'_>>,
 ) -> item::InstanceDef<'db> {
     let instance_name = head.class.0;
-    let fingerprint = instance_head_fingerprint(&type_vars, &head.ty);
+    let fingerprint = instance_head_fingerprint(&type_vars, &head);
     let instance_def = ctx.alloc_def_with_fingerprint(
         DefKind::Instance,
         Some(instance_name),

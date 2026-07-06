@@ -74,6 +74,18 @@ fn defs_by_name<'db>(
         .collect()
 }
 
+fn defs_by_fingerprint<'db>(
+    db: &'db TestDb,
+    file: SourceFile,
+    kind: DefKind,
+    fingerprint: &str,
+) -> Vec<DefId<'db>> {
+    all_defs(db, file)
+        .into_iter()
+        .filter(|def| def.kind(db) == kind && def.fingerprint(db).as_deref() == Some(fingerprint))
+        .collect()
+}
+
 #[test]
 fn same_named_contract_methods_have_container_relative_def_ids() {
     let db = TestDb::default();
@@ -103,8 +115,82 @@ fn instances_of_same_class_on_different_heads_have_distinct_def_ids() {
     let instances = defs_by_name(&db, file, DefKind::Instance, "StorageType");
     assert_eq!(instances.len(), 2);
     assert_ne!(instances[0], instances[1]);
-    assert_eq!(instances[0].fingerprint(&db).as_deref(), Some("word"));
-    assert_eq!(instances[1].fingerprint(&db).as_deref(), Some("uint"));
+
+    let fingerprints = instances
+        .iter()
+        .map(|def| def.fingerprint(&db))
+        .collect::<Vec<_>>();
+    assert!(fingerprints.contains(&Some("pred[1]|4:word".to_owned())));
+    assert!(fingerprints.contains(&Some("pred[1]|4:uint".to_owned())));
+}
+
+#[test]
+fn instances_with_same_subject_and_different_class_args_have_distinct_def_ids() {
+    let db = TestDb::default();
+    let file = source_file(
+        &db,
+        "instance-class-args",
+        "class self:Carrier(arg) {}\n\n\
+         instance word:Carrier(uint) {}\n\n\
+         instance word:Carrier(bool) {}\n",
+    );
+
+    let instances = defs_by_name(&db, file, DefKind::Instance, "Carrier");
+    assert_eq!(instances.len(), 2);
+    assert_ne!(instances[0], instances[1]);
+
+    let fingerprints = instances
+        .iter()
+        .map(|def| def.fingerprint(&db))
+        .collect::<Vec<_>>();
+    assert!(fingerprints.contains(&Some("pred[2]|4:word|4:uint".to_owned())));
+    assert!(fingerprints.contains(&Some("pred[2]|4:word|4:bool".to_owned())));
+}
+
+#[test]
+fn imports_have_structural_def_ids() {
+    let db = TestDb::default();
+    let file = source_file(&db, "imports-distinct", "import A;\nimport B;\n");
+
+    let import_a = defs_by_fingerprint(&db, file, DefKind::Import, "A");
+    let import_b = defs_by_fingerprint(&db, file, DefKind::Import, "B");
+    assert_eq!(import_a.len(), 1);
+    assert_eq!(import_b.len(), 1);
+    assert_ne!(import_a[0], import_b[0]);
+}
+
+#[test]
+fn inserting_import_above_keeps_existing_import_identities_stable() {
+    let mut db = TestDb::default();
+    let file = source_file(&db, "imports-stable", "import A;\nimport B;\n");
+
+    let before_a = {
+        let imports = defs_by_fingerprint(&db, file, DefKind::Import, "A");
+        assert_eq!(imports.len(), 1);
+        def_identity(&db, imports[0])
+    };
+    let before_b = {
+        let imports = defs_by_fingerprint(&db, file, DefKind::Import, "B");
+        assert_eq!(imports.len(), 1);
+        def_identity(&db, imports[0])
+    };
+
+    file.set_content(&mut db)
+        .to(Some("import C;\nimport A;\nimport B;\n".to_owned()));
+
+    let after_a = {
+        let imports = defs_by_fingerprint(&db, file, DefKind::Import, "A");
+        assert_eq!(imports.len(), 1);
+        def_identity(&db, imports[0])
+    };
+    let after_b = {
+        let imports = defs_by_fingerprint(&db, file, DefKind::Import, "B");
+        assert_eq!(imports.len(), 1);
+        def_identity(&db, imports[0])
+    };
+
+    assert_eq!(after_a, before_a);
+    assert_eq!(after_b, before_b);
 }
 
 #[test]
