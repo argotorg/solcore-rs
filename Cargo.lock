@@ -175,6 +175,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
+name = "ena"
+version = "0.14.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eabffdaee24bd1bf95c5ef7cec31260444317e72ea56c4c91750e8b7ee58d5f1"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "encode_unicode"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -845,6 +854,20 @@ dependencies = [
  "annotate-snippets",
  "rustc-hash",
  "salsa",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "solcore-hir-ty"
+version = "0.1.0"
+dependencies = [
+ "ena",
+ "rustc-hash",
+ "salsa",
+ "solcore-hir",
+ "solcore-nameres",
+ "solcore-parser",
  "tracing",
  "url",
 ]

@@ -1,0 +1,16 @@
+[package]
+name = "solcore-hir-ty"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+ena = { workspace = true }
+hir = { workspace = true }
+nameres = { workspace = true }
+rustc-hash = { workspace = true }
+salsa = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+parser = { workspace = true }
+url = { workspace = true }

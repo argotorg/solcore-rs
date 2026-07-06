@@ -7,11 +7,13 @@ salsa = "0.27"
 url = "2.5"
 annotate-snippets = "0.12"
 rustc-hash = "2"
+ena = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
 nameres = { path = "crates/nameres", package = "solcore-nameres" }
+hir-ty = { path = "crates/hir-ty", package = "solcore-hir-ty" }
 
 [workspace.package]
 edition = "2024"

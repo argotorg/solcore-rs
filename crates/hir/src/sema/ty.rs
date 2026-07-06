@@ -1,24 +1,26 @@
-//! Checked semantic types and predicates.
+//! Ground semantic types and predicates.
 //!
 //! This module is separate from `ast::ty`: AST type references preserve source
 //! syntax before name resolution, while `Ty`, `Pred`, and `TyScheme` represent
-//! the normalized semantic objects that later type checking and inference work
-//! with. Values are interned through Salsa so structurally equal types can be
-//! compared and shared cheaply.
+//! normalized semantic objects that later type checking and inference work
+//! with. Values are interned through Salsa so structurally equal ground types
+//! can be compared and shared cheaply.
+//!
+//! Inference variables are intentionally absent from these interned values.
+//! Type inference uses ephemeral `InferTy` values in `solcore-hir-ty` and
+//! converts them back to `Ty` only at query boundaries.
 
-use crate::{
-    Db,
-    ast::{
-        Ident,
-        item::{AdtDef, ClassDef, ContractDef, TypeAlias},
-    },
-};
+use std::fmt;
+
+use crate::{Db, anchor::DefId};
 
 /// Interned semantic type.
 ///
-/// A `Ty` is no longer just source syntax: names have been resolved to
-/// builtins, user constructors, type variables, or inference variables.
-/// `TyKind::Error` lets later phases continue after an earlier diagnostic.
+/// A `Ty` is a ground semantic shape: names have been resolved to builtins,
+/// user constructors, or de Bruijn-bound variables. `TyKind::Unknown` lets
+/// inference publish a placeholder when an ephemeral variable cannot yet be
+/// made ground; it is not itself an inference variable and carries no solver
+/// identity.
 #[salsa::interned(debug)]
 pub struct Ty<'db> {
     /// Semantic type payload.
@@ -26,18 +28,15 @@ pub struct Ty<'db> {
     pub kind: TyKind<'db>,
 }
 
-/// Shape of a semantic type.
+/// Shape of a ground semantic type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum TyKind<'db> {
-    /// Error sentinel used after a diagnostic has already been emitted.
+    /// Error sentinel used after an earlier diagnostic.
     Error,
-
-    /// Named type variable.
-    Var(TyVar<'db>),
-
-    /// Inference meta variable (unification variable).
-    Meta(InferenceVar),
-
+    /// Unknown placeholder used at inference query boundaries.
+    Unknown,
+    /// De Bruijn-bound type variable.
+    BoundVar(BoundTyVar),
     /// Type constructor application.
     Named {
         /// Resolved constructor.
@@ -45,7 +44,6 @@ pub enum TyKind<'db> {
         /// Type arguments.
         args: Vec<Ty<'db>>,
     },
-
     /// Function type.
     Function {
         /// Parameter types.
@@ -53,39 +51,21 @@ pub enum TyKind<'db> {
         /// Return type.
         ret: Ty<'db>,
     },
-
     /// Tuple type, including unit when the vector is empty.
     Tuple(Vec<Ty<'db>>),
+    /// `comptime` type wrapper.
+    Comptime(Ty<'db>),
 }
 
-/// Inference-only unification variable identifier.
+/// De Bruijn index for a type variable bound by an enclosing scheme.
 ///
-/// These IDs are meaningful only inside the inference context that allocated
-/// them. They intentionally do not carry source spans or global identity.
+/// Index `0` names the first binder in the scheme's binder list. The index is
+/// scoped by the scheme that owns the type and is deliberately independent of
+/// the HIR definition that introduced the binder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
-pub struct InferenceVar(u32);
-
-/// Flavor of semantic type variable.
-///
-/// Bound variables are quantified by a scheme or declaration; skolems are rigid
-/// variables introduced to check polymorphic code without accidental
-/// unification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
-pub enum TyVarFlavor {
-    /// Quantified variable that may be instantiated.
-    Bound,
-    /// Rigid variable that must not be unified away.
-    Skolem,
-}
-
-/// Interned semantic type variable.
-#[salsa::interned(debug)]
-pub struct TyVar<'db> {
-    /// Source-level variable name.
-    #[returns(copy)]
-    pub name: Ident<'db>,
-    /// Inference/checking role of the variable.
-    pub flavor: TyVarFlavor,
+pub struct BoundTyVar {
+    /// Zero-based binder index in the owning scheme.
+    pub index: u32,
 }
 
 /// Resolved type constructor.
@@ -108,7 +88,7 @@ pub enum BuiltinTyCtor {
     Bool,
     /// String type.
     String,
-    /// Arbitrary-precision integer type.
+    /// Comptime-only arbitrary-precision integer type.
     Integer,
     /// Binary product constructor.
     Pair,
@@ -116,21 +96,45 @@ pub enum BuiltinTyCtor {
     Sum,
 }
 
-/// User-defined type constructors.
+/// User-defined type constructor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
-pub enum UserTyCtor<'db> {
+pub struct UserTyCtor<'db> {
+    /// Definition identity of the constructor.
+    pub def: DefId<'db>,
+    /// Kind of user type constructor.
+    pub kind: UserTyCtorKind,
+}
+
+/// Kind of user-defined type constructor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum UserTyCtorKind {
     /// Algebraic data type constructor.
-    Adt(AdtDef<'db>),
+    Adt,
     /// Type alias constructor.
-    Alias(TypeAlias<'db>),
+    Alias,
     /// Contract type constructor.
-    Contract(ContractDef<'db>),
+    Contract,
+}
+
+/// Resolved type-class identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ClassId<'db> {
+    /// Compiler-defined class.
+    Builtin(BuiltinClassId),
+    /// User-defined class.
+    User(DefId<'db>),
+}
+
+/// Built-in class identifiers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum BuiltinClassId {
+    /// `invokable`.
+    Invokable,
+    /// Reserved integer-literal class `Int`.
+    Int,
 }
 
 /// Interned semantic predicate.
-///
-/// Predicates represent class constraints and equality constraints attached to
-/// qualified types.
 #[salsa::interned(debug)]
 pub struct Pred<'db> {
     /// Predicate payload.
@@ -143,14 +147,13 @@ pub struct Pred<'db> {
 pub enum PredKind<'db> {
     /// Type-class membership predicate.
     InClass {
-        /// Resolved class definition.
-        class: ClassDef<'db>,
+        /// Resolved class identifier.
+        class: ClassId<'db>,
         /// Main constrained type.
         main: Ty<'db>,
         /// Additional class arguments.
         args: Vec<Ty<'db>>,
     },
-
     /// Type equality predicate.
     Eq {
         /// Left-hand type.
@@ -158,8 +161,7 @@ pub enum PredKind<'db> {
         /// Right-hand type.
         rhs: Ty<'db>,
     },
-
-    /// Error sentinel used after a diagnostic has already been emitted.
+    /// Error sentinel used after an earlier diagnostic.
     Error,
 }
 
@@ -175,15 +177,22 @@ pub struct QualTy<'db> {
 
 /// Polymorphic type scheme.
 ///
-/// Schemes quantify type variables around a qualified body type. Monomorphic
-/// types are represented by an empty `vars` list.
+/// Schemes quantify a fixed number of de Bruijn binders around a qualified
+/// body type. Monomorphic types have `binder_count == 0`.
 #[salsa::interned(debug)]
 pub struct TyScheme<'db> {
-    /// Quantified variables.
-    #[returns(ref)]
-    pub vars: Vec<TyVar<'db>>,
+    /// Number of binders in scope for `body`.
+    #[returns(copy)]
+    pub binder_count: u32,
     /// Qualified body type.
     pub body: QualTy<'db>,
+}
+
+impl BoundTyVar {
+    /// Creates a bound type-variable reference.
+    pub const fn new(index: u32) -> Self {
+        Self { index }
+    }
 }
 
 impl BuiltinTyCtor {
@@ -211,22 +220,28 @@ impl BuiltinTyCtor {
             _ => None,
         }
     }
+
+    /// Returns the canonical source spelling for this builtin constructor.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Word => "word",
+            Self::Unit => "()",
+            Self::Bool => "bool",
+            Self::String => "string",
+            Self::Integer => "integer",
+            Self::Pair => "pair",
+            Self::Sum => "sum",
+        }
+    }
 }
 
-impl<'db> TyVar<'db> {
-    /// Creates a bound type variable.
-    pub fn bound(db: &'db dyn Db, name: Ident<'db>) -> Self {
-        Self::new(db, name, TyVarFlavor::Bound)
-    }
-
-    /// Creates a skolem type variable.
-    pub fn skolem(db: &'db dyn Db, name: Ident<'db>) -> Self {
-        Self::new(db, name, TyVarFlavor::Skolem)
-    }
-
-    /// Returns whether this variable is instantiable/bound rather than rigid.
-    pub fn is_bound(self, db: &'db dyn Db) -> bool {
-        matches!(self.flavor(db), TyVarFlavor::Bound)
+impl BuiltinClassId {
+    /// Returns the canonical source spelling for this builtin class.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Invokable => "invokable",
+            Self::Int => "Int",
+        }
     }
 }
 
@@ -236,14 +251,14 @@ impl<'db> Ty<'db> {
         Self::new(db, TyKind::Error)
     }
 
-    /// Creates a type variable reference.
-    pub fn var(db: &'db dyn Db, var: TyVar<'db>) -> Self {
-        Self::new(db, TyKind::Var(var))
+    /// Creates an unknown type placeholder.
+    pub fn unknown(db: &'db dyn Db) -> Self {
+        Self::new(db, TyKind::Unknown)
     }
 
-    /// Creates an inference meta-variable type.
-    pub fn meta(db: &'db dyn Db, var: InferenceVar) -> Self {
-        Self::new(db, TyKind::Meta(var))
+    /// Creates a de Bruijn-bound type-variable reference.
+    pub fn bound(db: &'db dyn Db, index: u32) -> Self {
+        Self::new(db, TyKind::BoundVar(BoundTyVar::new(index)))
     }
 
     /// Creates a constructor application.
@@ -262,6 +277,11 @@ impl<'db> Ty<'db> {
     /// Creates a tuple type.
     pub fn tuple(db: &'db dyn Db, elems: Vec<Ty<'db>>) -> Self {
         Self::new(db, TyKind::Tuple(elems))
+    }
+
+    /// Creates a `comptime` type wrapper.
+    pub fn comptime(db: &'db dyn Db, inner: Ty<'db>) -> Self {
+        Self::new(db, TyKind::Comptime(inner))
     }
 
     /// Alias for [`Ty::function`] kept for callers that use type-theory naming.
@@ -297,23 +317,76 @@ impl<'db> Ty<'db> {
         Self::builtin(db, BuiltinTyCtor::String)
     }
 
-    /// Creates the builtin `integer` type.
+    /// Creates the builtin comptime-only `integer` type.
     pub fn integer(db: &'db dyn Db) -> Self {
         Self::builtin(db, BuiltinTyCtor::Integer)
     }
 
     /// Returns a structural size measure for termination checks.
-    ///
-    /// The measure counts constructors recursively and treats variables,
-    /// meta-variables, and error sentinels as size one.
     pub fn measure(self, db: &'db dyn Db) -> usize {
         match self.kind(db) {
-            TyKind::Error | TyKind::Var(_) | TyKind::Meta(_) => 1,
+            TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => 1,
             TyKind::Named { args, .. } => 1 + args.iter().map(|it| it.measure(db)).sum::<usize>(),
             TyKind::Function { params, ret } => {
                 1 + params.iter().map(|it| it.measure(db)).sum::<usize>() + ret.measure(db)
             }
             TyKind::Tuple(elems) => 1 + elems.iter().map(|it| it.measure(db)).sum::<usize>(),
+            TyKind::Comptime(inner) => 1 + inner.measure(db),
+        }
+    }
+
+    /// Returns a stable human-readable type snapshot for diagnostics.
+    pub fn display(self, db: &'db dyn Db) -> String {
+        match self.kind(db) {
+            TyKind::Error => "<error>".to_owned(),
+            TyKind::Unknown => "<unknown>".to_owned(),
+            TyKind::BoundVar(var) => format!("${}", var.index),
+            TyKind::Named { ctor, args } => {
+                let name = match ctor {
+                    TyCtor::Builtin(ctor) => ctor.name().to_owned(),
+                    TyCtor::User(user) => {
+                        let def = user
+                            .def
+                            .name(db)
+                            .unwrap_or_else(|| format!("{:?}", user.def.kind(db)));
+                        format!("{}:{def}", user.kind)
+                    }
+                };
+                if args.is_empty() {
+                    name
+                } else {
+                    format!(
+                        "{name}({})",
+                        args.iter()
+                            .map(|arg| arg.display(db))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            }
+            TyKind::Function { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|param| param.display(db))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("({params}) -> {}", ret.display(db))
+            }
+            TyKind::Tuple(elems) => {
+                if elems.is_empty() {
+                    "()".to_owned()
+                } else {
+                    format!(
+                        "({})",
+                        elems
+                            .iter()
+                            .map(|elem| elem.display(db))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            }
+            TyKind::Comptime(inner) => format!("comptime {}", inner.display(db)),
         }
     }
 }
@@ -322,7 +395,7 @@ impl<'db> Pred<'db> {
     /// Creates a type-class membership predicate.
     pub fn in_class(
         db: &'db dyn Db,
-        class: ClassDef<'db>,
+        class: ClassId<'db>,
         main: Ty<'db>,
         args: Vec<Ty<'db>>,
     ) -> Self {
@@ -349,6 +422,38 @@ impl<'db> Pred<'db> {
             PredKind::Error => 1,
         }
     }
+
+    /// Returns a stable human-readable predicate snapshot for diagnostics.
+    pub fn display(self, db: &'db dyn Db) -> String {
+        match self.kind(db) {
+            PredKind::InClass { class, main, args } => {
+                let class = match class {
+                    ClassId::Builtin(class) => class.name().to_owned(),
+                    ClassId::User(def) => {
+                        format!(
+                            "class:{}",
+                            def.name(db)
+                                .unwrap_or_else(|| format!("{:?}", def.kind(db)))
+                        )
+                    }
+                };
+                if args.is_empty() {
+                    format!("{}:{class}", main.display(db))
+                } else {
+                    format!(
+                        "{}:{class}({})",
+                        main.display(db),
+                        args.iter()
+                            .map(|arg| arg.display(db))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            }
+            PredKind::Eq { lhs, rhs } => format!("{} ~ {}", lhs.display(db), rhs.display(db)),
+            PredKind::Error => "<error predicate>".to_owned(),
+        }
+    }
 }
 
 impl<'db> QualTy<'db> {
@@ -361,6 +466,40 @@ impl<'db> QualTy<'db> {
 impl<'db> TyScheme<'db> {
     /// Creates a monomorphic scheme from a type.
     pub fn monotype(db: &'db dyn Db, ty: Ty<'db>) -> Self {
-        Self::new(db, Vec::new(), QualTy::monotype(db, ty))
+        Self::new(db, 0, QualTy::monotype(db, ty))
+    }
+
+    /// Returns a stable human-readable scheme snapshot for diagnostics.
+    pub fn display(self, db: &'db dyn Db) -> String {
+        let body = self.body(db);
+        let preds = body
+            .preds(db)
+            .iter()
+            .map(|pred| pred.display(db))
+            .collect::<Vec<_>>();
+        let qualified = if preds.is_empty() {
+            body.ty(db).display(db)
+        } else {
+            format!("{} => {}", preds.join(", "), body.ty(db).display(db))
+        };
+        if self.binder_count(db) == 0 {
+            qualified
+        } else {
+            let vars = (0..self.binder_count(db))
+                .map(|index| format!("${index}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("forall {vars}. {qualified}")
+        }
+    }
+}
+
+impl fmt::Display for UserTyCtorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Adt => f.write_str("adt"),
+            Self::Alias => f.write_str("alias"),
+            Self::Contract => f.write_str("contract"),
+        }
     }
 }

@@ -1,0 +1,506 @@
+//! Lowering from nameres-resolved HIR type references into semantic schemes.
+
+use hir::{
+    Db as HirDb,
+    anchor::DefId,
+    ast::{
+        function::{FuncParam, FuncSig},
+        item::{AdtCtor, AdtDef, FieldDef, FunctionDef, TypeAlias},
+        ty::{PredRef, TypeRef, TypeRefKind},
+    },
+    nameres as hir_nameres,
+};
+use rustc_hash::FxHashMap;
+
+use crate::{
+    BoundTyVar, BuiltinClassId, BuiltinTyCtor, ClassId, Pred, QualTy, Ty, TyCtor, TyKind, TyScheme,
+    UserTyCtor, UserTyCtorKind,
+};
+
+/// Mapping from nameres type-variable binders to de Bruijn scheme indices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinderEnv<'db> {
+    binders: FxHashMap<(DefId<'db>, u32), BoundTyVar>,
+    binder_count: u32,
+}
+
+/// Lowered function signature and the monomorphic pieces useful for body
+/// inference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoweredFunction<'db> {
+    /// Polymorphic function scheme.
+    pub scheme: TyScheme<'db>,
+    /// Parameter types in source order.
+    pub params: Vec<Ty<'db>>,
+    /// Return type.
+    pub ret: Ty<'db>,
+}
+
+/// Lowered field type scheme.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoweredField<'db> {
+    /// Field scheme.
+    pub scheme: TyScheme<'db>,
+    /// Field type.
+    pub ty: Ty<'db>,
+}
+
+/// Lowered type-alias scheme.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoweredTypeAlias<'db> {
+    /// Alias scheme.
+    pub scheme: TyScheme<'db>,
+    /// Alias body type.
+    pub ty: Ty<'db>,
+}
+
+/// Lowered ADT constructor scheme.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoweredAdtCtor<'db> {
+    /// Constructor scheme.
+    pub scheme: TyScheme<'db>,
+    /// Constructor field parameter types.
+    pub params: Vec<Ty<'db>>,
+    /// Constructed ADT result type.
+    pub ret: Ty<'db>,
+}
+
+/// Ephemeral type-reference lowerer.
+///
+/// The lowerer is built from nameres resolution records for one signature or
+/// body. It never stores source spans in the resulting semantic types.
+pub struct TypeLowering<'db> {
+    db: &'db dyn HirDb,
+    type_resolutions: FxHashMap<TypeRef<'db>, hir_nameres::Resolution<'db>>,
+    pred_resolutions: FxHashMap<PredRef<'db>, hir_nameres::Resolution<'db>>,
+    binders: BinderEnv<'db>,
+}
+
+impl<'db> BinderEnv<'db> {
+    /// Creates an empty binder environment.
+    pub fn empty() -> Self {
+        Self {
+            binders: FxHashMap::default(),
+            binder_count: 0,
+        }
+    }
+
+    /// Builds a binder environment from nameres type-variable bindings.
+    pub fn from_type_vars(vars: &[hir_nameres::TypeVarBinding<'db>]) -> Self {
+        let mut binders = FxHashMap::default();
+        for (scheme_index, var) in vars.iter().enumerate() {
+            binders.insert((var.owner, var.index), BoundTyVar::new(scheme_index as u32));
+        }
+        Self {
+            binders,
+            binder_count: vars.len() as u32,
+        }
+    }
+
+    /// Returns the number of binders in this scheme environment.
+    pub const fn binder_count(&self) -> u32 {
+        self.binder_count
+    }
+
+    fn resolve(&self, var: &hir_nameres::TypeVarId<'db>) -> Option<BoundTyVar> {
+        self.binders.get(&(var.owner, var.index)).copied()
+    }
+}
+
+impl<'db> TypeLowering<'db> {
+    /// Creates a lowerer from raw nameres resolution slices.
+    pub fn new(
+        db: &'db dyn HirDb,
+        types: &[hir_nameres::TypeResolution<'db>],
+        preds: &[hir_nameres::PredResolution<'db>],
+        binders: BinderEnv<'db>,
+    ) -> Self {
+        Self {
+            db,
+            type_resolutions: types
+                .iter()
+                .map(|entry| (entry.ty, entry.resolution.clone()))
+                .collect(),
+            pred_resolutions: preds
+                .iter()
+                .map(|entry| (entry.pred, entry.resolution.clone()))
+                .collect(),
+            binders,
+        }
+    }
+
+    /// Creates a lowerer from item-level resolution records.
+    pub fn from_item_resolutions(
+        db: &'db dyn HirDb,
+        map: &hir_nameres::ItemResolutionMap<'db>,
+        binders: BinderEnv<'db>,
+    ) -> Self {
+        Self::new(db, &map.types, &map.preds, binders)
+    }
+
+    /// Creates a lowerer from body-level resolution records.
+    pub fn from_body_resolutions(
+        db: &'db dyn HirDb,
+        map: &hir_nameres::BodyResolutionMap<'db>,
+        binders: BinderEnv<'db>,
+    ) -> Self {
+        Self::new(db, &map.types, &map.preds, binders)
+    }
+
+    /// Lowers one type reference to a ground semantic type.
+    pub fn lower_type(&self, ty: TypeRef<'db>) -> Ty<'db> {
+        match ty.kind(self.db) {
+            TypeRefKind::Named { args, .. } => {
+                let Some(resolution) = self.type_resolutions.get(&ty) else {
+                    return Ty::error(self.db);
+                };
+                if let Some(bound) = self.lower_type_var_resolution(resolution) {
+                    return Ty::bound(self.db, bound.index);
+                }
+                let Some(ctor) = self.lower_type_ctor_resolution(resolution) else {
+                    return Ty::error(self.db);
+                };
+                let args = args
+                    .atom()
+                    .iter()
+                    .map(|arg| self.lower_type(*arg))
+                    .collect();
+                Ty::named(self.db, ctor, args)
+            }
+            TypeRefKind::Fn { params, ret } => Ty::function(
+                self.db,
+                params
+                    .atom()
+                    .iter()
+                    .map(|param| self.lower_type(*param))
+                    .collect(),
+                self.lower_type(*ret),
+            ),
+            TypeRefKind::Comptime { inner, .. } => Ty::comptime(self.db, self.lower_type(*inner)),
+            TypeRefKind::Tuple { elems } => Ty::tuple(
+                self.db,
+                elems
+                    .atom()
+                    .iter()
+                    .map(|elem| self.lower_type(*elem))
+                    .collect(),
+            ),
+            TypeRefKind::Error { .. } => Ty::error(self.db),
+        }
+    }
+
+    /// Lowers one predicate reference to a semantic predicate.
+    pub fn lower_pred(&self, pred: PredRef<'db>) -> Pred<'db> {
+        let Some(resolution) = self.pred_resolutions.get(&pred) else {
+            return Pred::error(self.db);
+        };
+        let Some(class) = self.lower_class_resolution(resolution) else {
+            return Pred::error(self.db);
+        };
+        let kind = pred.kind(self.db);
+        Pred::in_class(
+            self.db,
+            class,
+            self.lower_type(kind.ty),
+            kind.args
+                .atom()
+                .iter()
+                .map(|arg| self.lower_type(*arg))
+                .collect(),
+        )
+    }
+
+    /// Lowers a function signature to a scheme.
+    pub fn lower_func_sig(&self, sig: &FuncSig<'db>) -> LoweredFunction<'db> {
+        let params = sig
+            .params
+            .atom()
+            .iter()
+            .map(|param| self.lower_param(param))
+            .collect::<Vec<_>>();
+        let ret = sig
+            .ret
+            .map(|ret| self.lower_type(ret))
+            .unwrap_or_else(|| Ty::unit(self.db));
+        let fn_ty = Ty::function(self.db, params.clone(), ret);
+        let preds = sig
+            .preds
+            .iter()
+            .map(|pred| self.lower_pred(*pred))
+            .collect::<Vec<_>>();
+        let scheme = TyScheme::new(
+            self.db,
+            self.binders.binder_count(),
+            QualTy::new(self.db, preds, fn_ty),
+        );
+        LoweredFunction {
+            scheme,
+            params,
+            ret,
+        }
+    }
+
+    /// Lowers a function definition to a scheme.
+    pub fn lower_function(&self, function: FunctionDef<'db>) -> LoweredFunction<'db> {
+        self.lower_func_sig(function.sig(self.db))
+    }
+
+    /// Lowers a type alias to a scheme.
+    pub fn lower_type_alias(&self, alias: TypeAlias<'db>) -> LoweredTypeAlias<'db> {
+        let ty = self.lower_type(alias.ty(self.db));
+        let scheme = TyScheme::new(
+            self.db,
+            self.binders.binder_count(),
+            QualTy::monotype(self.db, ty),
+        );
+        LoweredTypeAlias { scheme, ty }
+    }
+
+    /// Lowers a field type to a scheme.
+    pub fn lower_field(&self, field: &FieldDef<'db>) -> LoweredField<'db> {
+        let ty = self.lower_type(field.ty());
+        let scheme = TyScheme::new(
+            self.db,
+            self.binders.binder_count(),
+            QualTy::monotype(self.db, ty),
+        );
+        LoweredField { scheme, ty }
+    }
+
+    /// Lowers an ADT constructor to a function-like scheme.
+    pub fn lower_adt_ctor(&self, adt: AdtDef<'db>, ctor: &AdtCtor<'db>) -> LoweredAdtCtor<'db> {
+        let fields = self.lower_type(*ctor.fields.atom());
+        let params = tuple_params(self.db, fields);
+        let ret_args = (0..self.binders.binder_count())
+            .map(|index| Ty::bound(self.db, index))
+            .collect::<Vec<_>>();
+        let ret = Ty::named(
+            self.db,
+            TyCtor::User(UserTyCtor {
+                def: adt.def_id_value(self.db),
+                kind: UserTyCtorKind::Adt,
+            }),
+            ret_args,
+        );
+        let ty = Ty::function(self.db, params.clone(), ret);
+        let scheme = TyScheme::new(
+            self.db,
+            self.binders.binder_count(),
+            QualTy::monotype(self.db, ty),
+        );
+        LoweredAdtCtor {
+            scheme,
+            params,
+            ret,
+        }
+    }
+
+    fn lower_param(&self, param: &FuncParam<'db>) -> Ty<'db> {
+        match param {
+            FuncParam::Typed { ty, .. } => self.lower_type(*ty),
+            FuncParam::Untyped { .. } => Ty::unknown(self.db),
+            FuncParam::Error { .. } => Ty::error(self.db),
+        }
+    }
+
+    fn lower_type_var_resolution(
+        &self,
+        resolution: &hir_nameres::Resolution<'db>,
+    ) -> Option<BoundTyVar> {
+        match resolution {
+            hir_nameres::Resolution::Local(hir_nameres::LocalBinding::TypeVar(var)) => {
+                self.binders.resolve(var)
+            }
+            _ => None,
+        }
+    }
+
+    fn lower_type_ctor_resolution(
+        &self,
+        resolution: &hir_nameres::Resolution<'db>,
+    ) -> Option<TyCtor<'db>> {
+        match resolution {
+            hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Type(ty)) => {
+                Some(TyCtor::Builtin(builtin_type_ctor(*ty)))
+            }
+            hir_nameres::Resolution::Def { def, kind } => user_type_ctor(*def, *kind),
+            _ => None,
+        }
+    }
+
+    fn lower_class_resolution(
+        &self,
+        resolution: &hir_nameres::Resolution<'db>,
+    ) -> Option<ClassId<'db>> {
+        match resolution {
+            hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Class(class)) => {
+                Some(ClassId::Builtin(builtin_class(*class)))
+            }
+            hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Class,
+            } => Some(ClassId::User(*def)),
+            _ => None,
+        }
+    }
+}
+
+/// Returns the builtin value scheme for a resolved builtin term or class
+/// method.
+pub fn builtin_scheme<'db>(
+    db: &'db dyn HirDb,
+    builtin: hir_nameres::BuiltinKind,
+) -> Option<TyScheme<'db>> {
+    match builtin {
+        hir_nameres::BuiltinKind::Constructor(ctor) => builtin_ctor_scheme(db, ctor),
+        hir_nameres::BuiltinKind::Function(function) => builtin_function_scheme(db, function),
+        hir_nameres::BuiltinKind::ClassMethod(method) => builtin_method_scheme(db, method),
+        hir_nameres::BuiltinKind::Type(_) | hir_nameres::BuiltinKind::Class(_) => None,
+    }
+}
+
+fn builtin_ctor_scheme<'db>(
+    db: &'db dyn HirDb,
+    ctor: hir_nameres::BuiltinCtor,
+) -> Option<TyScheme<'db>> {
+    let ty = match ctor {
+        hir_nameres::BuiltinCtor::True | hir_nameres::BuiltinCtor::False => Ty::bool(db),
+        hir_nameres::BuiltinCtor::Unit => Ty::unit(db),
+        hir_nameres::BuiltinCtor::Pair => {
+            let lhs = Ty::bound(db, 0);
+            let rhs = Ty::bound(db, 1);
+            let pair = Ty::named(db, TyCtor::Builtin(BuiltinTyCtor::Pair), vec![lhs, rhs]);
+            return Some(TyScheme::new(
+                db,
+                2,
+                QualTy::monotype(db, Ty::function(db, vec![lhs, rhs], pair)),
+            ));
+        }
+        hir_nameres::BuiltinCtor::Inl => {
+            let lhs = Ty::bound(db, 0);
+            let rhs = Ty::bound(db, 1);
+            let sum = Ty::named(db, TyCtor::Builtin(BuiltinTyCtor::Sum), vec![lhs, rhs]);
+            return Some(TyScheme::new(
+                db,
+                2,
+                QualTy::monotype(db, Ty::function(db, vec![lhs], sum)),
+            ));
+        }
+        hir_nameres::BuiltinCtor::Inr => {
+            let lhs = Ty::bound(db, 0);
+            let rhs = Ty::bound(db, 1);
+            let sum = Ty::named(db, TyCtor::Builtin(BuiltinTyCtor::Sum), vec![lhs, rhs]);
+            return Some(TyScheme::new(
+                db,
+                2,
+                QualTy::monotype(db, Ty::function(db, vec![rhs], sum)),
+            ));
+        }
+    };
+    Some(TyScheme::monotype(db, ty))
+}
+
+fn builtin_function_scheme<'db>(
+    db: &'db dyn HirDb,
+    function: hir_nameres::BuiltinFunction,
+) -> Option<TyScheme<'db>> {
+    let word = Ty::word(db);
+    let integer = Ty::integer(db);
+    let bool_ty = Ty::bool(db);
+    let scheme = match function {
+        hir_nameres::BuiltinFunction::PrimAddWord => {
+            TyScheme::monotype(db, Ty::function(db, vec![word, word], word))
+        }
+        hir_nameres::BuiltinFunction::PrimEqWord => {
+            TyScheme::monotype(db, Ty::function(db, vec![word, word], bool_ty))
+        }
+        hir_nameres::BuiltinFunction::WordToInteger => {
+            TyScheme::monotype(db, Ty::function(db, vec![word], integer))
+        }
+        hir_nameres::BuiltinFunction::WordFromInteger => {
+            TyScheme::monotype(db, Ty::function(db, vec![integer], word))
+        }
+        hir_nameres::BuiltinFunction::IntegerAdd
+        | hir_nameres::BuiltinFunction::IntegerSub
+        | hir_nameres::BuiltinFunction::IntegerMul => {
+            TyScheme::monotype(db, Ty::function(db, vec![integer, integer], integer))
+        }
+        hir_nameres::BuiltinFunction::IntegerLt | hir_nameres::BuiltinFunction::IntegerEq => {
+            TyScheme::monotype(db, Ty::function(db, vec![integer, integer], bool_ty))
+        }
+        hir_nameres::BuiltinFunction::Invoke => return None,
+    };
+    Some(scheme)
+}
+
+fn builtin_method_scheme<'db>(
+    db: &'db dyn HirDb,
+    method: hir_nameres::BuiltinClassMethod,
+) -> Option<TyScheme<'db>> {
+    match method {
+        hir_nameres::BuiltinClassMethod::IntFromInteger => {
+            let result = Ty::bound(db, 0);
+            let pred = Pred::in_class(
+                db,
+                ClassId::Builtin(BuiltinClassId::Int),
+                result,
+                Vec::new(),
+            );
+            Some(TyScheme::new(
+                db,
+                1,
+                QualTy::new(
+                    db,
+                    vec![pred],
+                    Ty::function(db, vec![Ty::integer(db)], result),
+                ),
+            ))
+        }
+        hir_nameres::BuiltinClassMethod::InvokableInvoke => None,
+    }
+}
+
+fn builtin_type_ctor(ty: hir_nameres::BuiltinType) -> BuiltinTyCtor {
+    match ty {
+        hir_nameres::BuiltinType::Word => BuiltinTyCtor::Word,
+        hir_nameres::BuiltinType::Bool => BuiltinTyCtor::Bool,
+        hir_nameres::BuiltinType::String => BuiltinTyCtor::String,
+        hir_nameres::BuiltinType::Unit => BuiltinTyCtor::Unit,
+        hir_nameres::BuiltinType::Pair => BuiltinTyCtor::Pair,
+        hir_nameres::BuiltinType::Sum => BuiltinTyCtor::Sum,
+        hir_nameres::BuiltinType::Integer => BuiltinTyCtor::Integer,
+    }
+}
+
+fn builtin_class(class: hir_nameres::BuiltinClass) -> BuiltinClassId {
+    match class {
+        hir_nameres::BuiltinClass::Invokable => BuiltinClassId::Invokable,
+        hir_nameres::BuiltinClass::Int => BuiltinClassId::Int,
+    }
+}
+
+fn user_type_ctor<'db>(
+    def: DefId<'db>,
+    kind: hir_nameres::DefResolutionKind,
+) -> Option<TyCtor<'db>> {
+    let kind = match kind {
+        hir_nameres::DefResolutionKind::Adt => UserTyCtorKind::Adt,
+        hir_nameres::DefResolutionKind::TypeAlias => UserTyCtorKind::Alias,
+        hir_nameres::DefResolutionKind::Contract => UserTyCtorKind::Contract,
+        hir_nameres::DefResolutionKind::Function
+        | hir_nameres::DefResolutionKind::Class
+        | hir_nameres::DefResolutionKind::Instance => return None,
+    };
+    Some(TyCtor::User(UserTyCtor { def, kind }))
+}
+
+fn tuple_params<'db>(db: &'db dyn HirDb, ty: Ty<'db>) -> Vec<Ty<'db>> {
+    match ty.kind(db) {
+        TyKind::Tuple(elems) => elems.clone(),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
+            args,
+        } if args.is_empty() => Vec::new(),
+        _ => vec![ty],
+    }
+}
