@@ -237,7 +237,9 @@ pub enum BuiltinKind {
 
 /// Result of resolving a name occurrence or binder.
 ///
-/// `Err` records that resolution failed after a diagnostic was emitted.
+/// `Err` records that resolution failed, or that parser/import recovery made the
+/// target intentionally unknown and diagnostics were suppressed at the caller
+/// boundary.
 /// `DotCtorDeferred` is used for leading-dot constructor syntax whose concrete
 /// type is determined later by type information.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -496,6 +498,30 @@ pub struct ModuleResolutionMap<'db> {
     pub diagnostics: Vec<NameresDiagnostic>,
 }
 
+/// Diagnostic emission policy for name resolution.
+///
+/// Parser recovery can leave `Error` HIR nodes and can also lose declarations.
+/// When a source file already has parse diagnostics, callers should still build
+/// resolution maps for editor features, but must suppress all nameres
+/// diagnostics. This matches the reference behavior of stopping after parse
+/// errors and avoids showing cascades from an incomplete recovered HIR. We also
+/// suppress `SC0108` duplicate diagnostics in this mode because recovery can
+/// distort item boundaries, so even structure-like checks are not guaranteed to
+/// be sound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameresDiagnosticPolicy {
+    /// Emit name-resolution diagnostics normally.
+    Emit,
+    /// Keep resolution data but clear all name-resolution diagnostics.
+    SuppressForParseErrors,
+}
+
+impl NameresDiagnosticPolicy {
+    fn suppresses_diagnostics(self) -> bool {
+        matches!(self, Self::SuppressForParseErrors)
+    }
+}
+
 /// Provider of names imported from other modules.
 ///
 /// HIR name resolution is parameterized by this trait so the inter-module
@@ -515,6 +541,28 @@ pub trait ImportedNames<'db> {
     /// The default is `false` so purely local resolution can ignore import
     /// constructor ambiguity.
     fn has_constructor_leaf(&self, _db: &'db dyn Db, _leaf: &str) -> bool {
+        false
+    }
+
+    /// Returns whether an imported parse-broken module may still contain this
+    /// unqualified name.
+    ///
+    /// Import providers with parse errors have an incomplete public interface:
+    /// absence from the recovered interface is not evidence that a name is
+    /// truly missing. Returning `true` lets HIR resolution produce
+    /// [`Resolution::Err`] without an undefined-name diagnostic.
+    fn may_contain_unknown_unqualified(
+        &self,
+        _db: &'db dyn Db,
+        _namespace: Namespace,
+        _name: &str,
+    ) -> bool {
+        false
+    }
+
+    /// Returns whether a module qualifier targets a parse-broken provider whose
+    /// members are therefore unknown.
+    fn has_incomplete_module_qualifier(&self, _db: &'db dyn Db, _qualifier: &str) -> bool {
         false
     }
 }
@@ -762,6 +810,36 @@ impl<'db> BodyResolutionMap<'db> {
     }
 }
 
+impl<'db> ItemResolutionMap<'db> {
+    fn apply_diagnostic_policy(&mut self, policy: NameresDiagnosticPolicy) {
+        if policy.suppresses_diagnostics() {
+            self.diagnostics.clear();
+        }
+    }
+}
+
+impl<'db> BodyResolutionMap<'db> {
+    fn apply_diagnostic_policy(&mut self, policy: NameresDiagnosticPolicy) {
+        if policy.suppresses_diagnostics() {
+            self.diagnostics.clear();
+        }
+    }
+}
+
+impl<'db> ModuleResolutionMap<'db> {
+    fn apply_diagnostic_policy(&mut self, policy: NameresDiagnosticPolicy) {
+        if !policy.suppresses_diagnostics() {
+            return;
+        }
+        self.item_scope.diagnostics.clear();
+        self.item_resolutions.apply_diagnostic_policy(policy);
+        for body in &mut self.bodies {
+            body.apply_diagnostic_policy(policy);
+        }
+        self.diagnostics.clear();
+    }
+}
+
 /// Builds the item-level scope for `module`.
 ///
 /// This query collects declarations before resolving bodies so forward
@@ -830,6 +908,17 @@ pub fn resolve_body_with_imports<'db>(
     context: &BodyResolutionContext<'db>,
     imports: &dyn ImportedNames<'db>,
 ) -> BodyResolutionMap<'db> {
+    resolve_body_with_imports_and_policy(db, body, context, imports, NameresDiagnosticPolicy::Emit)
+}
+
+/// Resolves one function body with imported names and an explicit diagnostic policy.
+pub fn resolve_body_with_imports_and_policy<'db>(
+    db: &'db dyn Db,
+    body: FuncBody<'db>,
+    context: &BodyResolutionContext<'db>,
+    imports: &dyn ImportedNames<'db>,
+    policy: NameresDiagnosticPolicy,
+) -> BodyResolutionMap<'db> {
     let scope = item_scope(db, context.module);
     let mut resolver = BodyResolver::new(db, &scope, imports, context.enclosing_contract);
     resolver.with_type_vars(&context.type_vars, |resolver| {
@@ -840,7 +929,9 @@ pub fn resolve_body_with_imports<'db>(
             resolver.body(body);
         });
     });
-    resolver.map
+    let mut map = resolver.map;
+    map.apply_diagnostic_policy(policy);
+    map
 }
 
 /// Resolves all item signatures and function bodies in a module without imports.
@@ -861,6 +952,23 @@ pub fn resolve_module_with_imports<'db>(
     scope: ItemScope<'db>,
     imports: &dyn ImportedNames<'db>,
 ) -> ModuleResolutionMap<'db> {
+    resolve_module_with_imports_and_policy(
+        db,
+        module,
+        scope,
+        imports,
+        NameresDiagnosticPolicy::Emit,
+    )
+}
+
+/// Resolves all item signatures and function bodies with an explicit diagnostic policy.
+pub fn resolve_module_with_imports_and_policy<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    scope: ItemScope<'db>,
+    imports: &dyn ImportedNames<'db>,
+    policy: NameresDiagnosticPolicy,
+) -> ModuleResolutionMap<'db> {
     let item_resolutions = resolve_item_types_with_imports(db, module, &scope, imports);
     let mut bodies = Vec::new();
     for item in module.items(db) {
@@ -871,12 +979,14 @@ pub fn resolve_module_with_imports<'db>(
     for body in &bodies {
         diagnostics.extend(body.diagnostics.iter().cloned());
     }
-    ModuleResolutionMap {
+    let mut map = ModuleResolutionMap {
         item_scope: scope,
         item_resolutions,
         bodies,
         diagnostics,
-    }
+    };
+    map.apply_diagnostic_policy(policy);
+    map
 }
 
 fn collect_item_body_resolutions<'db>(
@@ -1558,9 +1668,15 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                     self.ty(*arg);
                 }
                 let resolution = if let Some(qualifier) = qualifier {
-                    let qualified =
-                        qualify(ident_text(self.db, qualifier), ident_text(self.db, name));
+                    let qualifier_text = ident_text(self.db, qualifier);
+                    let qualified = qualify(qualifier_text, ident_text(self.db, name));
                     self.lookup_type(&qualified).unwrap_or_else(|| {
+                        if self
+                            .imports
+                            .has_incomplete_module_qualifier(self.db, qualifier_text)
+                        {
+                            return Resolution::Err;
+                        }
                         self.map.diagnostics.push(undefined_type_ctor(
                             self.db,
                             &qualified,
@@ -1593,7 +1709,12 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                     self.ty(*elem);
                 }
             }
-            TypeRefKind::Error { .. } => {}
+            TypeRefKind::Error { .. } => {
+                self.map.types.push(TypeResolution {
+                    ty,
+                    resolution: Resolution::Err,
+                });
+            }
         }
     }
 
@@ -1630,6 +1751,11 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
             .or_else(|| self.scope.type_resolution(name))
             .or_else(|| self.imports.imported(self.db, Namespace::Type, name))
             .or_else(|| builtin_type_or_class(name))
+            .or_else(|| {
+                self.imports
+                    .may_contain_unknown_unqualified(self.db, Namespace::Type, name)
+                    .then_some(Resolution::Err)
+            })
     }
 
     fn lookup_class(&self, name: &str) -> Option<Resolution<'db>> {
@@ -1640,7 +1766,8 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                     ..
                 },
             )
-            | Some(res @ Resolution::Builtin(BuiltinKind::Class(_))) => Some(res),
+            | Some(res @ Resolution::Builtin(BuiltinKind::Class(_)))
+            | Some(res @ Resolution::Err) => Some(res),
             Some(_) | None => None,
         }
     }
@@ -1783,7 +1910,10 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     fn expr(&mut self, body: FuncBody<'db>, expr_id: Id<Expr<'db>>) {
         let expr = body.exprs(self.db).get(expr_id);
         match &expr.kind {
-            ExprKind::Lit(_) | ExprKind::Error => {}
+            ExprKind::Lit(_) => {}
+            ExprKind::Error => {
+                self.map.record_expr(body, expr_id, Resolution::Err);
+            }
             ExprKind::Ident(name) => {
                 let resolution = self.resolve_ident(name);
                 self.map.record_expr(body, expr_id, resolution);
@@ -1795,6 +1925,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 let leaf = ident_text(self.db, name);
                 let resolution = if self.has_constructor_leaf(leaf) {
                     Resolution::DotCtorDeferred
+                } else if self.imports.may_contain_unknown_unqualified(
+                    self.db,
+                    Namespace::Term,
+                    leaf,
+                ) {
+                    Resolution::Err
                 } else {
                     self.map
                         .diagnostics
@@ -1873,7 +2009,10 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     fn pat(&mut self, body: FuncBody<'db>, pat_id: Id<Pat<'db>>) {
         let pat = body.pats(self.db).get(pat_id);
         match &pat.kind {
-            PatKind::Wildcard | PatKind::Lit(_) | PatKind::Error => {}
+            PatKind::Wildcard | PatKind::Lit(_) => {}
+            PatKind::Error => {
+                self.map.record_pat(body, pat_id, Resolution::Err);
+            }
             PatKind::Var(name) => {
                 let resolution = Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
                 self.add_local(ident_text(self.db, name), resolution.clone());
@@ -1891,9 +2030,15 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 let resolution = if leading_dot.is_some() {
                     Resolution::DotCtorDeferred
                 } else if let Some(qualifier) = qualifier {
-                    let qualified =
-                        qualify(ident_text(self.db, qualifier), ident_text(self.db, name));
+                    let qualifier_text = ident_text(self.db, qualifier);
+                    let qualified = qualify(qualifier_text, ident_text(self.db, name));
                     self.lookup_ctor(&qualified).unwrap_or_else(|| {
+                        if self
+                            .imports
+                            .has_incomplete_module_qualifier(self.db, qualifier_text)
+                        {
+                            return Resolution::Err;
+                        }
                         self.map.diagnostics.push(undefined_name(
                             self.db,
                             &qualified,
@@ -1903,7 +2048,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     })
                 } else {
                     let leaf = ident_text(self.db, name);
-                    if self.has_constructor_leaf(leaf) {
+                    if self
+                        .imports
+                        .may_contain_unknown_unqualified(self.db, Namespace::Term, leaf)
+                    {
+                        Resolution::Err
+                    } else if self.has_constructor_leaf(leaf) {
                         self.map.diagnostics.push(unqualified_constructor(
                             self.db,
                             leaf,
@@ -1944,9 +2094,15 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     self.ty(*arg);
                 }
                 let resolution = if let Some(qualifier) = qualifier {
-                    let qualified =
-                        qualify(ident_text(self.db, qualifier), ident_text(self.db, name));
+                    let qualifier_text = ident_text(self.db, qualifier);
+                    let qualified = qualify(qualifier_text, ident_text(self.db, name));
                     self.lookup_type(&qualified).unwrap_or_else(|| {
+                        if self
+                            .imports
+                            .has_incomplete_module_qualifier(self.db, qualifier_text)
+                        {
+                            return Resolution::Err;
+                        }
                         self.map.diagnostics.push(undefined_type_ctor(
                             self.db,
                             &qualified,
@@ -1979,7 +2135,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     self.ty(*elem);
                 }
             }
-            TypeRefKind::Error { .. } => {}
+            TypeRefKind::Error { .. } => {
+                self.map.types.push(TypeResolution {
+                    ty,
+                    resolution: Resolution::Err,
+                });
+            }
         }
     }
 
@@ -1997,6 +2158,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .or_else(|| self.lookup_field(text))
             .or_else(|| self.lookup_qualified_term(text))
             .or_else(|| {
+                self.imports
+                    .may_contain_unknown_unqualified(self.db, Namespace::Term, text)
+                    .then_some(Resolution::Err)
+            })
+            .or_else(|| {
                 if self.has_same_name_constructor(text) {
                     self.map.diagnostics.push(unqualified_constructor(
                         self.db,
@@ -2011,6 +2177,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .or_else(|| self.lookup_type(text))
             .or_else(|| self.lookup_module(text))
             .unwrap_or_else(|| {
+                if self
+                    .imports
+                    .may_contain_unknown_unqualified(self.db, Namespace::Term, text)
+                {
+                    return Resolution::Err;
+                }
                 if self.has_constructor_leaf(text) {
                     self.map.diagnostics.push(unqualified_constructor(
                         self.db,
@@ -2036,6 +2208,13 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     .or_else(|| self.lookup_module(text))
                     .or_else(|| self.lookup_qualified_term(text))
                     .unwrap_or_else(|| {
+                        if self.imports.may_contain_unknown_unqualified(
+                            self.db,
+                            Namespace::Module,
+                            text,
+                        ) {
+                            return Resolution::Err;
+                        }
                         self.map.diagnostics.push(undefined_name(
                             self.db,
                             text,
@@ -2094,6 +2273,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
 
         if self.lookup_module(&qualifier).is_some() {
             if self.lookup_module(&qualified).is_none() {
+                if self
+                    .imports
+                    .has_incomplete_module_qualifier(self.db, &qualifier)
+                {
+                    return Some(Resolution::Err);
+                }
                 self.map
                     .diagnostics
                     .push(undefined_name(self.db, field_text, field.span(self.db)));
@@ -2158,6 +2343,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .or_else(|| self.scope.type_resolution(name))
             .or_else(|| self.imports.imported(self.db, Namespace::Type, name))
             .or_else(|| builtin_type_or_class(name))
+            .or_else(|| {
+                self.imports
+                    .may_contain_unknown_unqualified(self.db, Namespace::Type, name)
+                    .then_some(Resolution::Err)
+            })
     }
 
     fn lookup_module(&self, name: &str) -> Option<Resolution<'db>> {

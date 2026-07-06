@@ -280,6 +280,13 @@ pub struct ModuleEnv<'db> {
     pub constructor_visibility: BTreeMap<String, BTreeSet<String>>,
     /// Data types imported with only a subset of constructors.
     pub partial_data: BTreeMap<String, BTreeSet<String>>,
+    /// Names selected from parse-broken providers whose namespace is unknown.
+    pub unknown_unqualified_names: BTreeSet<String>,
+    /// Whether a wildcard import from a parse-broken provider makes any missing
+    /// unqualified name potentially part of that incomplete interface.
+    pub unknown_unqualified_wildcard: bool,
+    /// Module qualifiers whose target provider had parse errors.
+    pub incomplete_modules: BTreeSet<String>,
     /// Instances visible from local and imported modules.
     pub instances: Vec<Origin<'db>>,
     /// Diagnostics found while building the import environment.
@@ -297,6 +304,9 @@ impl<'db> ModuleEnv<'db> {
             constructor_leaves: BTreeSet::new(),
             constructor_visibility: BTreeMap::new(),
             partial_data: BTreeMap::new(),
+            unknown_unqualified_names: BTreeSet::new(),
+            unknown_unqualified_wildcard: false,
+            incomplete_modules: BTreeSet::new(),
             instances: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -327,6 +337,19 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
 
     fn has_constructor_leaf(&self, _db: &'db dyn hir::Db, leaf: &str) -> bool {
         self.constructor_leaves.contains(leaf)
+    }
+
+    fn may_contain_unknown_unqualified(
+        &self,
+        _db: &'db dyn hir::Db,
+        _namespace: hir_nameres::Namespace,
+        name: &str,
+    ) -> bool {
+        self.unknown_unqualified_wildcard || self.unknown_unqualified_names.contains(name)
+    }
+
+    fn has_incomplete_module_qualifier(&self, _db: &'db dyn hir::Db, qualifier: &str) -> bool {
+        self.incomplete_modules.contains(qualifier)
     }
 }
 
@@ -922,6 +945,11 @@ pub fn module_env<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ModuleEnv<'db>
     builder.finish()
 }
 
+fn module_has_parse_errors<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> bool {
+    db.module_file(module)
+        .is_some_and(|file| !parse_diagnostics(db, file).is_empty())
+}
+
 /// Runs validation and HIR name resolution for one module.
 ///
 /// Standard library modules are currently validated but skipped for full local
@@ -938,7 +966,14 @@ pub fn resolve_module_full<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> FullR
     let hir_module = parse_file_to_hir(db, file).module(db);
     let env = module_env(db, module);
     if let Some(item_scope) = env.item_scope.clone() {
-        let _ = hir_nameres::resolve_module_with_imports(db, hir_module, item_scope, &env);
+        let policy = if module_has_parse_errors(db, module) {
+            hir_nameres::NameresDiagnosticPolicy::SuppressForParseErrors
+        } else {
+            hir_nameres::NameresDiagnosticPolicy::Emit
+        };
+        let _ = hir_nameres::resolve_module_with_imports_and_policy(
+            db, hir_module, item_scope, &env, policy,
+        );
     }
     FullResolutionSummary { checked: true }
 }
@@ -961,6 +996,15 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
     };
 
     let mut diagnostics = parse_diagnostics(db, file).to_vec();
+    if !diagnostics.is_empty() {
+        // A parse-broken file has incomplete recovered HIR. The reference
+        // compiler stops before nameres in this state, so we publish only parse
+        // diagnostics here while still allowing resolution queries to run for
+        // editor features.
+        sort_dedup_any_diagnostics(db, &mut diagnostics);
+        return diagnostics;
+    }
+
     let mut module_diags = collect_module_validation_diagnostics(db, module);
     let env = module_env(db, module);
     module_diags.extend(env.diagnostics.iter().cloned());
@@ -973,8 +1017,13 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
     if !matches!(module.library(db), LibraryId::Std) {
         let hir_module = parse_file_to_hir(db, file).module(db);
         if let Some(item_scope) = env.item_scope.clone() {
-            let resolution =
-                hir_nameres::resolve_module_with_imports(db, hir_module, item_scope, &env);
+            let resolution = hir_nameres::resolve_module_with_imports_and_policy(
+                db,
+                hir_module,
+                item_scope,
+                &env,
+                hir_nameres::NameresDiagnosticPolicy::Emit,
+            );
             diagnostics.extend(
                 resolution
                     .diagnostics
@@ -1119,6 +1168,9 @@ impl<'db> ModuleEnvBuilder<'db> {
                 constructor_leaves: BTreeSet::new(),
                 constructor_visibility: BTreeMap::new(),
                 partial_data: BTreeMap::new(),
+                unknown_unqualified_names: BTreeSet::new(),
+                unknown_unqualified_wildcard: false,
+                incomplete_modules: BTreeSet::new(),
                 instances: unique_origins(instances.local.into_iter().chain(instances.imported)),
                 diagnostics: Vec::new(),
             },
@@ -1139,8 +1191,12 @@ impl<'db> ModuleEnvBuilder<'db> {
         let Ok(target) = resolve_module_path(self.db, self.module, path.clone()) else {
             return;
         };
+        let target_has_parse_errors = module_has_parse_errors(self.db, target);
 
         if let Some(selector) = import.selector(self.db) {
+            if target_has_parse_errors {
+                self.add_unknown_selector_imports(selector);
+            }
             let interface = public_interface(self.db, target);
             for item_ref in select_import_refs(
                 self.db,
@@ -1163,6 +1219,24 @@ impl<'db> ModuleEnvBuilder<'db> {
                 &mut seen,
                 &mut stack,
             );
+        }
+    }
+
+    fn add_unknown_selector_imports(&mut self, selector: &ImportSelector<'db>) {
+        match selector {
+            ImportSelector::Wildcard => {
+                self.env.unknown_unqualified_wildcard = true;
+            }
+            ImportSelector::Names(names) => {
+                for selected in names {
+                    let local_name = selected
+                        .alias
+                        .as_ref()
+                        .map(|alias| spanned_name_text(self.db, alias))
+                        .unwrap_or_else(|| spanned_name_text(self.db, &selected.name));
+                    self.env.unknown_unqualified_names.insert(local_name);
+                }
+            }
         }
     }
 
@@ -1232,6 +1306,9 @@ impl<'db> ModuleEnvBuilder<'db> {
     fn add_module_binding(&mut self, name: &str, target: ModuleId<'db>, span: Span<'db>) {
         for prefix in module_prefixes(name) {
             self.env.modules.entry(prefix.clone()).or_insert(target);
+            if module_has_parse_errors(self.db, target) {
+                self.env.incomplete_modules.insert(prefix.clone());
+            }
             self.check_module_name_conflict(&prefix, span);
         }
     }
@@ -1521,6 +1598,7 @@ fn expand_exported_name<'db>(
 
     match &name.constructors {
         Some(selector) => {
+            let may_be_unknown = selected_import_may_be_unknown(db, module, &text);
             let refs = local_data_ref_with_constructors(
                 db,
                 module,
@@ -1538,7 +1616,7 @@ fn expand_exported_name<'db>(
                     selected_imports,
                     name,
                     ConstructorDiagnosticCtx {
-                        strict,
+                        strict: strict && !may_be_unknown,
                         diagnostics,
                         diagnostic: ConstructorDiagnostic::Local,
                     },
@@ -1546,7 +1624,7 @@ fn expand_exported_name<'db>(
             });
             if let Some(item_ref) = refs {
                 raw.item_refs.push(item_ref);
-            } else if strict {
+            } else if strict && !may_be_unknown {
                 diagnostics.push(unknown_local_export_diag(db, name.name.span(db), &text));
             }
         }
@@ -1559,7 +1637,7 @@ fn expand_exported_name<'db>(
                     .cloned(),
             );
             if refs.is_empty() {
-                if strict {
+                if strict && !selected_import_may_be_unknown(db, module, &text) {
                     diagnostics.push(unknown_local_export_diag(db, name.name.span(db), &text));
                 }
             } else {
@@ -1568,6 +1646,42 @@ fn expand_exported_name<'db>(
             }
         }
     }
+}
+
+fn selected_import_may_be_unknown<'db>(db: &'db dyn Db, module: ModuleId<'db>, name: &str) -> bool {
+    let Some(file) = db.module_file(module) else {
+        return false;
+    };
+    let module_items = module_imports(db, file);
+    for import in module_items.imports {
+        let Some(selector) = import.selector(db) else {
+            continue;
+        };
+        let path = path_ref_from_import(db, import);
+        let mut scratch = Vec::new();
+        let Some(target) = resolve_for_export(db, module, &path, false, &mut scratch) else {
+            continue;
+        };
+        if !module_has_parse_errors(db, target) {
+            continue;
+        }
+        match selector {
+            ImportSelector::Wildcard => return true,
+            ImportSelector::Names(names) => {
+                if names.iter().any(|selected| {
+                    selected
+                        .alias
+                        .as_ref()
+                        .map(|alias| spanned_name_text(db, alias))
+                        .unwrap_or_else(|| spanned_name_text(db, &selected.name))
+                        == name
+                }) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn expand_reexport_items<'db>(
@@ -1583,6 +1697,7 @@ fn expand_reexport_items<'db>(
         return;
     };
     let interface = public_interface(db, target);
+    let target_has_parse_errors = module_has_parse_errors(db, target);
 
     for name in names {
         let text = spanned_name_text(db, &name.name);
@@ -1599,13 +1714,13 @@ fn expand_reexport_items<'db>(
                 &interface.item_refs,
                 name,
                 ConstructorDiagnosticCtx {
-                    strict,
+                    strict: strict && !target_has_parse_errors,
                     diagnostics,
                     diagnostic: ConstructorDiagnostic::ReExport,
                 },
             ) {
                 Some(item_ref) => raw.item_refs.push(item_ref),
-                None if strict => {
+                None if strict && !target_has_parse_errors => {
                     diagnostics.push(unknown_reexport_diag(db, name.name.span(db), &text));
                 }
                 None => {}
@@ -1619,7 +1734,7 @@ fn expand_reexport_items<'db>(
                     .map(strip_constructor_visibility)
                     .collect();
                 if matching.is_empty() {
-                    if strict {
+                    if strict && !target_has_parse_errors {
                         diagnostics.push(unknown_reexport_diag(db, name.name.span(db), &text));
                     }
                 } else {
@@ -2379,6 +2494,9 @@ fn validate_import_items_exist<'db>(
         let Some(target) = resolve_for_export(db, module, &path, false, diagnostics) else {
             continue;
         };
+        if module_has_parse_errors(db, target) {
+            continue;
+        }
         let interface = public_interface(db, target);
         let available = interface_names(&interface);
         if let ImportSelector::Names(names) = selector {

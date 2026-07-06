@@ -12,9 +12,9 @@ use hir::{
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_nameres::{
-    LibraryId, ModuleGraph, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
-    module_key_for_path, public_interface, reachable_diagnostics, resolve_module_path_candidate,
-    resolve_reachable_full, strongly_connected_components,
+    LibraryId, ModuleGraph, ModuleId, ModuleKey, ModuleTree, module_diagnostics,
+    module_id_from_key, module_key_for_path, public_interface, reachable_diagnostics,
+    resolve_module_path_candidate, resolve_reachable_full, strongly_connected_components,
 };
 use url::Url;
 
@@ -174,6 +174,46 @@ fn failure_diagnostics_match_snapshots() {
 }
 
 #[test]
+fn parse_broken_selected_import_does_not_blame_importer() {
+    let (db, entry) = load_sources(parse_broken_provider_sources(
+        "import util.{lost};
+         function main() -> word { return lost(0); }",
+    ));
+    let main = module_id_from_key(&db, &entry);
+    assert_eq!(module_diagnostic_codes(&db, main), Vec::<String>::new());
+
+    let util = module_id_from_key(&db, &module_key(["util"]));
+    let util_diagnostics = lowered_module_diagnostics(&db, util);
+    assert!(!util_diagnostics.is_empty());
+    assert_eq!(diagnostic_codes(&util_diagnostics), Vec::<String>::new());
+}
+
+#[test]
+fn parse_broken_qualified_import_does_not_blame_importer() {
+    let (db, entry) = load_sources(parse_broken_provider_sources(
+        "import util;
+         function main() -> word { return util.lost(0); }",
+    ));
+    let main = module_id_from_key(&db, &entry);
+    assert_eq!(module_diagnostic_codes(&db, main), Vec::<String>::new());
+}
+
+#[test]
+fn parse_broken_module_diagnostics_publish_only_parse_errors() {
+    let (db, entry) = load_sources([(
+        vec!["main"],
+        "function main() -> word {
+           let x = ;
+           return missing;
+         }",
+    )]);
+    let main = module_id_from_key(&db, &entry);
+    let diagnostics = lowered_module_diagnostics(&db, main);
+    assert!(!diagnostics.is_empty());
+    assert_eq!(diagnostic_codes(&diagnostics), Vec::<String>::new());
+}
+
+#[test]
 fn imports_corpus_matches_reference_expectations() {
     std::thread::Builder::new()
         .name("imports-corpus-validation".to_owned())
@@ -283,6 +323,68 @@ fn load_fixture(root: &Path, external_roots: BTreeMap<String, PathBuf>) -> (Test
     let entry_path = root.join("main.solc");
     let entry_key = module_key_for_path(LibraryId::Main, root, &entry_path).expect("entry key");
     (db, entry_key)
+}
+
+fn load_sources<const N: usize>(sources: [(Vec<&str>, &str); N]) -> (TestDb, ModuleKey) {
+    let mut db = TestDb::default();
+    db.module_tree = Some(ModuleTree::new(
+        &db,
+        PathBuf::from("/memory/main"),
+        repo_std_dir(),
+        BTreeMap::new(),
+    ));
+    for (path, source) in sources {
+        let key = ModuleKey {
+            library: LibraryId::Main,
+            logical_path: path.into_iter().map(str::to_owned).collect(),
+        };
+        let url = fixture_url(&key);
+        let file = SourceFile::new(&db, url, Some(source.to_owned()));
+        db.module_files.insert(key, file);
+    }
+    (
+        db,
+        ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec!["main".to_owned()],
+        },
+    )
+}
+
+fn parse_broken_provider_sources(main: &str) -> [(Vec<&str>, &str); 2] {
+    [
+        (vec!["main"], main),
+        (
+            vec!["util"],
+            "lost(x: word) -> word { return 0; }
+             function other() {}",
+        ),
+    ]
+}
+
+fn module_key<const N: usize>(path: [&str; N]) -> ModuleKey {
+    ModuleKey {
+        library: LibraryId::Main,
+        logical_path: path.into_iter().map(str::to_owned).collect(),
+    }
+}
+
+fn lowered_module_diagnostics<'db>(db: &'db TestDb, module: ModuleId<'db>) -> Vec<Diagnostic> {
+    module_diagnostics(db, module)
+        .iter()
+        .map(|diagnostic| diagnostic.lower(db))
+        .collect()
+}
+
+fn module_diagnostic_codes(db: &TestDb, module: ModuleId<'_>) -> Vec<String> {
+    diagnostic_codes(&lowered_module_diagnostics(db, module))
+}
+
+fn diagnostic_codes(diagnostics: &[Diagnostic]) -> Vec<String> {
+    diagnostics
+        .iter()
+        .filter_map(|diagnostic| diagnostic.code.clone())
+        .collect()
 }
 
 fn load_entry(

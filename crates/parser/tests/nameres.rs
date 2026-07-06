@@ -5,9 +5,12 @@ use hir::{
     },
     diag::Diagnostic,
     input::SourceFile,
-    nameres::{Resolution, resolve_module},
+    nameres::{
+        EmptyImportedNames, NameresDiagnosticPolicy, Resolution, item_scope, resolve_module,
+        resolve_module_with_imports_and_policy,
+    },
 };
-use solcore_parser::parse_file_to_hir;
+use solcore_parser::{parse_diagnostics, parse_file_to_hir};
 
 #[salsa::db]
 #[derive(Default, Clone)]
@@ -39,6 +42,12 @@ fn source_file(db: &TestDb, name: &str, src: &str) -> SourceFile {
 fn parse_module<'db>(db: &'db TestDb, src: &str) -> Module<'db> {
     let file = source_file(db, "nameres", src);
     parse_file_to_hir(db, file).module(db)
+}
+
+fn parse_and_module<'db>(db: &'db TestDb, name: &str, src: &str) -> (SourceFile, Module<'db>) {
+    let file = source_file(db, name, src);
+    let module = parse_file_to_hir(db, file).module(db);
+    (file, module)
 }
 
 fn function_name<'db>(db: &'db TestDb, function: FunctionDef<'db>) -> &'db str {
@@ -96,6 +105,93 @@ fn diagnostic_codes(db: &TestDb, module: Module<'_>) -> Vec<String> {
         .iter()
         .filter_map(|diagnostic| diagnostic.code.clone())
         .collect()
+}
+
+#[test]
+fn parse_recovery_suppression_policy_silences_name_lookup_cascades() {
+    let cases = [
+        (
+            "body_expr_error",
+            "function f() -> word {
+               let x = ;
+               return missing;
+             }",
+        ),
+        (
+            "lost_function_signature",
+            "lost(x: word) -> word { return 0; }
+             function caller() -> word { return lost(0); }",
+        ),
+        (
+            "broken_import",
+            "impoort util;
+             function caller() -> word { return missing; }",
+        ),
+        (
+            "broken_type_annotation",
+            "typeish Alias = word;
+             function caller(x: Alias) -> word { return 0; }",
+        ),
+        (
+            "top_level_item_error",
+            "function first() {}
+             unknown nonsense tokens
+             function second() {}
+             function caller() -> word { return missing; }",
+        ),
+        (
+            "broken_contract_member",
+            "contract C {
+               broken :
+               function get() -> word { return broken; }
+             }",
+        ),
+    ];
+
+    for (name, src) in cases {
+        let db = TestDb::default();
+        let (file, module) = parse_and_module(&db, name, src);
+        let parse_count = parse_diagnostics(&db, file).len();
+        assert!(parse_count > 0, "probe `{name}` should have parse errors");
+        let scope = item_scope(&db, module);
+        let imports = EmptyImportedNames;
+        let resolution = resolve_module_with_imports_and_policy(
+            &db,
+            module,
+            scope,
+            &imports,
+            NameresDiagnosticPolicy::SuppressForParseErrors,
+        );
+        assert!(
+            resolution.diagnostics.is_empty(),
+            "parse-broken probe `{name}` should not publish nameres diagnostics"
+        );
+        if name == "body_expr_error" {
+            assert!(
+                resolution
+                    .bodies
+                    .iter()
+                    .flat_map(|map| &map.exprs)
+                    .any(|entry| {
+                        matches!(&entry.body.exprs(&db).get(entry.expr).kind, ExprKind::Error)
+                            && matches!(entry.resolution, Resolution::Err)
+                    }),
+                "recovered expression errors should resolve to Resolution::Err"
+            );
+        }
+    }
+}
+
+#[test]
+fn parse_clean_file_still_reports_undefined_name() {
+    let db = TestDb::default();
+    let (file, module) = parse_and_module(
+        &db,
+        "clean_undefined_name",
+        "function caller() -> word { return missing; }",
+    );
+    assert!(parse_diagnostics(&db, file).is_empty());
+    assert_eq!(diagnostic_codes(&db, module), ["SC0101"]);
 }
 
 fn body_map<'db>(
