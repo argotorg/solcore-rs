@@ -1,7 +1,0 @@
-import std;
-
-contract Test {
-  function main() {
-    return Add.add(21, 21);
-  }
-}

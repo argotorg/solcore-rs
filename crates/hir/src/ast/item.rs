@@ -29,7 +29,7 @@ pub struct AdtDef<'db> {
     /// Data constructors declared for this ADT.
     #[tracked]
     #[returns(ref)]
-    ctors: Vec<AdtCtor<'db>>,
+    pub ctors: Vec<AdtCtor<'db>>,
 }
 
 impl<'db> Spanned<'db> for AdtDef<'db> {
@@ -80,11 +80,11 @@ pub struct FunctionDef<'db> {
 
     #[tracked]
     #[returns(ref)]
-    sig: FuncSig<'db>,
+    pub sig: FuncSig<'db>,
 
     #[tracked]
     #[returns(copy)]
-    body: Option<FuncBody<'db>>,
+    pub body: Option<FuncBody<'db>>,
 }
 
 impl<'db> Spanned<'db> for FunctionDef<'db> {
@@ -114,7 +114,7 @@ pub struct TypeAlias<'db> {
 
     /// Aliased type.
     #[tracked]
-    ty: TypeRef<'db>,
+    pub ty: TypeRef<'db>,
 }
 
 impl<'db> Spanned<'db> for TypeAlias<'db> {
@@ -140,14 +140,14 @@ pub struct ClassDef<'db> {
 
     #[tracked]
     #[returns(ref)]
-    super_preds: Vec<PredRef<'db>>,
+    pub super_preds: Vec<PredRef<'db>>,
 
     #[tracked]
-    head: PredRef<'db>,
+    pub head: PredRef<'db>,
 
     #[tracked]
     #[returns(ref)]
-    methods: Vec<FuncSig<'db>>,
+    pub methods: Vec<FuncSig<'db>>,
 }
 
 impl<'db> Spanned<'db> for ClassDef<'db> {
@@ -172,18 +172,18 @@ pub struct InstanceDef<'db> {
 
     #[tracked]
     #[returns(ref)]
-    preds: Vec<PredRef<'db>>,
+    pub preds: Vec<PredRef<'db>>,
 
     #[tracked]
     #[returns(copy)]
     default_kw: Option<Span<'db>>,
 
     #[tracked]
-    head: PredRef<'db>,
+    pub head: PredRef<'db>,
 
     #[tracked]
     #[returns(ref)]
-    methods: Vec<FunctionDef<'db>>,
+    pub methods: Vec<FunctionDef<'db>>,
 }
 
 impl<'db> Spanned<'db> for InstanceDef<'db> {
@@ -257,11 +257,11 @@ pub struct ContractDef<'db> {
 
     #[tracked]
     #[returns(ref)]
-    fields: Vec<FieldDef<'db>>,
+    pub fields: Vec<FieldDef<'db>>,
 
     #[tracked]
     #[returns(ref)]
-    items: Vec<ContractItem<'db>>,
+    pub items: Vec<ContractItem<'db>>,
 }
 
 impl<'db> Spanned<'db> for ContractDef<'db> {

@@ -1,0 +1,13 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/corpus/fail/test/imports/select_alias_tail_fail.solc
+---
+error: unexpected `as`; expected `;` while parsing import declaration
+ --> /select_alias_tail_fail.solc:1:25
+  |
+1 | import selectlib.{keep} as keep_;
+  |                         ^^
+2 |
+3 | function main(x: word) -> word {
+  |

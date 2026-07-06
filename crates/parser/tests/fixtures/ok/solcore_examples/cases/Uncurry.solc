@@ -1,5 +1,0 @@
-function uncurry (f,p) {
-  match p {
-  | (x,y) => return f(x,y);
-  }
-}

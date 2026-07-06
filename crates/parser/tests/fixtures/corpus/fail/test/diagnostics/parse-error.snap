@@ -1,0 +1,10 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/corpus/fail/test/diagnostics/parse-error.solc
+---
+error: unexpected end of input; expected `)`, or `,` while parsing function parameter
+ --> /parse-error.solc:1:38
+  |
+1 | function main( -> word { return 0; }
+  |                                     ^

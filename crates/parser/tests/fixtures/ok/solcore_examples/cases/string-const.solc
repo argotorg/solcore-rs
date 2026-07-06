@@ -1,5 +1,0 @@
-contract Answer {
-  function main() {
-    return "42";
-  }
-}

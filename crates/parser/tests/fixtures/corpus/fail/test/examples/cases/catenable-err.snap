@@ -1,0 +1,12 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/catenable-err.solc
+---
+error: unexpected `}`; expected `;` while parsing class declaration
+ --> /catenable-err.solc:3:1
+  |
+1 | forall t.class t:Catenable {
+2 |   function cat(x:t) -> memory(bytes)
+3 | }
+  | ^

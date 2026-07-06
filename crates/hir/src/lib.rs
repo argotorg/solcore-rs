@@ -5,6 +5,7 @@ pub mod diag;
 pub mod input;
 pub mod sema;
 pub mod span;
+pub mod visit;
 
 #[salsa::db]
 pub trait Db: salsa::Database {

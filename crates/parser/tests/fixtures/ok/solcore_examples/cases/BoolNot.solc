@@ -1,8 +1,0 @@
-data Bool = False | True;
-
-function not (b) {
-  match b {
-  | False => return True ;
-  | True => return False ;
-  }
-}

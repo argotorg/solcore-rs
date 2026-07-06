@@ -1,7 +1,0 @@
-contract C {
-  function main() -> () {
-    assembly {
-      return(0,0);
-    }
-  }
-}

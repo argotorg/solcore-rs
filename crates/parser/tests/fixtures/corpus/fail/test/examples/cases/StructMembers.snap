@@ -1,0 +1,33 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/StructMembers.solc
+---
+error: unexpected `;`; expected end of input, or statement
+  --> /StructMembers.solc:78:40
+   |
+77 |         let szb = memorySize(pb);
+78 |         assembly { sz := add(sz, szb) }; // TODO: bounds check?
+   |                                        ^
+79 |         return sz;
+   |
+---
+
+error: unexpected `;`; expected end of input, or statement
+  --> /StructMembers.solc:92:37
+   |
+91 |         let v;
+92 |         assembly { v := mload(off) };
+   |                                     ^
+93 |         return Uint256(v);
+   |
+---
+
+error: unexpected `;`; expected end of input, or statement
+   --> /StructMembers.solc:123:45
+    |
+122 |
+123 |         assembly { ptr := add(ptr, offset) };
+    |                                             ^
+124 |
+    |

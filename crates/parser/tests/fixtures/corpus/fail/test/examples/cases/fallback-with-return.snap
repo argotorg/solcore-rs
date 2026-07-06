@@ -1,0 +1,13 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/fallback-with-return.solc
+---
+error: fallback function must return unit (`()`) while parsing fallback definition
+ --> /fallback-with-return.solc:7:19
+  |
+6 |
+7 |     fallback() -> uint256 {
+  |                   ^^^^^^^
+8 |         return uint256(0);
+  |

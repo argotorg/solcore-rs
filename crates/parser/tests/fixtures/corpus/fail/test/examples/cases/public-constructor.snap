@@ -1,0 +1,13 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/public-constructor.solc
+---
+error: constructor is implicitly public; remove the 'public' keyword while parsing constructor definition
+ --> /public-constructor.solc:5:5
+  |
+4 | contract PublicConstructor {
+5 |     public constructor() {}
+  |     ^^^^^^
+6 |
+  |

@@ -8,7 +8,7 @@ use crate::{
 #[salsa::interned(debug)]
 pub struct TypeRef<'db> {
     #[returns(ref)]
-    kind: TypeRefKind<'db>,
+    pub kind: TypeRefKind<'db>,
 }
 
 impl<'db> Spanned<'db> for TypeRef<'db> {
@@ -65,7 +65,7 @@ impl<'db> Spanned<'db> for TypeRefKind<'db> {
 #[salsa::interned(debug)]
 pub struct PredRef<'db> {
     #[returns(ref)]
-    kind: PredRefKind<'db>,
+    pub kind: PredRefKind<'db>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
