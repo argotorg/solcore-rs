@@ -1,12 +1,12 @@
 use crate::{
-    Db,
     anchor::DefId,
     arena::{Arena, Id},
     ast::{
-        Ident,
         ty::{PredRef, TypeRef},
+        Ident,
     },
     span::{Span, Spanned, SpannedElem},
+    Db,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -86,6 +86,12 @@ pub enum StmtKind<'db> {
         scrutinees: Vec<Id<Expr<'db>>>,
         arms: Vec<MatchArm<'db>>,
     },
+    For {
+        init: Vec<Id<Stmt<'db>>>,
+        cond: Id<Expr<'db>>,
+        post: Vec<Id<Stmt<'db>>>,
+        body: Vec<Id<Stmt<'db>>>,
+    },
     If {
         cond: Id<Expr<'db>>,
         then_body: Vec<Id<Stmt<'db>>>,
@@ -94,6 +100,8 @@ pub enum StmtKind<'db> {
     Assembly {
         body: Vec<YulStmt<'db>>,
     },
+    Break,
+    Continue,
     Error,
 }
 
@@ -107,6 +115,11 @@ pub struct Expr<'db> {
 pub enum ExprKind<'db> {
     Lit(LitKind),
     Ident(SpannedElem<'db, Ident<'db>>),
+    DotCtor {
+        dot: Span<'db>,
+        name: SpannedElem<'db, Ident<'db>>,
+        args: Vec<Id<Expr<'db>>>,
+    },
     Lambda {
         params: SpannedElem<'db, Vec<FuncParam<'db>>>,
         ret: Option<TypeRef<'db>>,
@@ -165,9 +178,14 @@ pub enum PatKind<'db> {
     Var(SpannedElem<'db, Ident<'db>>),
     Lit(LitKind),
     Ctor {
+        leading_dot: Option<Span<'db>>,
         qualifier: Option<SpannedElem<'db, Ident<'db>>>,
         name: SpannedElem<'db, Ident<'db>>,
         args: Vec<Id<Pat<'db>>>,
+    },
+    ComptimeLabel {
+        kw: Span<'db>,
+        expr: Id<Expr<'db>>,
     },
     Tuple {
         elems: Vec<Id<Pat<'db>>>,
@@ -346,7 +364,9 @@ pub enum FuncParam<'db> {
         name: SpannedElem<'db, Ident<'db>>,
     },
 
-    Error { span: Span<'db> },
+    Error {
+        span: Span<'db>,
+    },
 }
 
 impl<'db> Spanned<'db> for FuncParam<'db> {

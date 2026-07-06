@@ -506,6 +506,65 @@ enum ParsedAssignOp {
     SubEq,
 }
 
+fn assign_op_parser<'src, I>() -> impl Parser<'src, I, ParsedAssignOp, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    just(Token::Eq)
+        .to(ParsedAssignOp::Eq)
+        .or(just(Token::PlusEq).to(ParsedAssignOp::AddEq))
+        .or(just(Token::MinusEq).to(ParsedAssignOp::SubEq))
+}
+
+fn assign_stmt_kind<'src>(
+    lhs: ParsedExpr<'src>,
+    rhs: Option<(ParsedAssignOp, ParsedExpr<'src>)>,
+) -> ParsedStmtKind<'src> {
+    match rhs {
+        Some((ParsedAssignOp::Eq, rhs)) => ParsedStmtKind::Assign { lhs, rhs },
+        Some((ParsedAssignOp::AddEq, rhs)) => ParsedStmtKind::AddAssign { lhs, rhs },
+        Some((ParsedAssignOp::SubEq, rhs)) => ParsedStmtKind::SubAssign { lhs, rhs },
+        None => ParsedStmtKind::Expr(lhs),
+    }
+}
+
+fn parsed_for_let_parser<'src, I>() -> impl Parser<'src, I, ParsedStmt<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    just(Token::Let)
+        .ignore_then(ident_parser())
+        .then(just(Token::Colon).ignore_then(type_parser()).or_not())
+        .then(
+            just(Token::Eq)
+                .or(just(Token::ColonEq))
+                .ignore_then(parsed_expr_parser())
+                .or_not(),
+        )
+        .map_with(|((name, ty), init), e| ParsedStmt {
+            span: e.span(),
+            kind: ParsedStmtKind::Let {
+                comptime: ty.as_ref().and_then(parsed_ty_comptime_span),
+                name,
+                ty,
+                init,
+            },
+        })
+}
+
+fn parsed_for_assign_or_expr_parser<'src, I>()
+-> impl Parser<'src, I, ParsedStmt<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    parsed_expr_parser()
+        .then(assign_op_parser().then(parsed_expr_parser()).or_not())
+        .map_with(|(lhs, rhs), e| ParsedStmt {
+            span: e.span(),
+            kind: assign_stmt_kind(lhs, rhs),
+        })
+}
+
 fn parsed_lit_parser<'src, I>() -> impl Parser<'src, I, ParsedLitKind<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -607,6 +666,22 @@ where
                 span: e.span(),
                 kind: ParsedExprKind::Lit(lit),
             })
+            .or(just(Token::Dot)
+                .map_with(|_, e| e.span())
+                .then(ident_parser())
+                .then(
+                    expr.clone()
+                        .separated_by(just(Token::Comma))
+                        .allow_trailing()
+                        .collect::<Vec<_>>()
+                        .delimited_by(just(Token::LParen), just(Token::RParen))
+                        .or_not()
+                        .map(Option::unwrap_or_default),
+                )
+                .map_with(|((dot, name), args), e| ParsedExpr {
+                    span: e.span(),
+                    kind: ParsedExprKind::DotCtor { dot, name, args },
+                }))
             .or(ident_parser().map(|ident| ParsedExpr {
                 span: ident.1,
                 kind: ParsedExprKind::Ident(ident),
@@ -820,6 +895,29 @@ where
             .or_not()
             .boxed();
 
+        let dot_ctor = just(Token::Dot)
+            .map_with(|_, e| e.span())
+            .then(ident_parser())
+            .then(ctor_args.clone())
+            .map_with(|((dot, name), args), e| ParsedPat {
+                span: e.span(),
+                kind: ParsedPatKind::Ctor {
+                    leading_dot: Some(dot),
+                    qualifier: None,
+                    name,
+                    args: args.unwrap_or_default(),
+                },
+            })
+            .boxed();
+
+        let comptime_pat = comptime_kw_parser()
+            .then(parsed_expr_parser())
+            .map_with(|(kw, expr), e| ParsedPat {
+                span: e.span(),
+                kind: ParsedPatKind::ComptimeLabel { kw, expr },
+            })
+            .boxed();
+
         let qualified_name =
             ident_parser().then(just(Token::Dot).ignore_then(ident_parser()).or_not());
         let ctor_or_var = qualified_name
@@ -842,6 +940,7 @@ where
                         ParsedPatKind::Var(name)
                     } else {
                         ParsedPatKind::Ctor {
+                            leading_dot: None,
                             qualifier,
                             name,
                             args: args.unwrap_or_default(),
@@ -868,6 +967,8 @@ where
         wildcard
             .or(lit_pat)
             .or(tuple_or_paren_pat)
+            .or(dot_ctor)
+            .or(comptime_pat)
             .or(ctor_or_var)
             .recover_with(via_parser(recovery))
     })
@@ -1208,6 +1309,41 @@ where
                 span: e.span(),
                 kind: ParsedStmtKind::Match { scrutinees, arms },
             })
+            .then_ignore(just(Token::Semi).or_not())
+            .boxed();
+
+        let for_item = parsed_for_let_parser()
+            .or(parsed_for_assign_or_expr_parser())
+            .boxed();
+        let for_items = for_item
+            .separated_by(just(Token::Comma))
+            .collect::<Vec<_>>()
+            .boxed();
+        let for_stmt = just(Token::For)
+            .ignore_then(
+                for_items
+                    .clone()
+                    .then_ignore(just(Token::Semi))
+                    .then(parsed_expr_parser())
+                    .then_ignore(just(Token::Semi))
+                    .then(for_items)
+                    .delimited_by(just(Token::LParen), just(Token::RParen)),
+            )
+            .then(
+                stmt.clone()
+                    .repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map_with(|(((init, cond), post), body), e| ParsedStmt {
+                span: e.span(),
+                kind: ParsedStmtKind::For {
+                    init,
+                    cond,
+                    post,
+                    body,
+                },
+            })
             .boxed();
 
         let if_stmt = just(Token::If)
@@ -1251,12 +1387,22 @@ where
             })
             .boxed();
 
-        let assign_op = just(Token::Eq)
-            .to(ParsedAssignOp::Eq)
-            .or(just(Token::PlusEq).to(ParsedAssignOp::AddEq))
-            .or(just(Token::MinusEq).to(ParsedAssignOp::SubEq));
+        let break_stmt = just(Token::Break)
+            .then_ignore(just(Token::Semi))
+            .map_with(|_, e| ParsedStmt {
+                span: e.span(),
+                kind: ParsedStmtKind::Break,
+            })
+            .boxed();
+        let continue_stmt = just(Token::Continue)
+            .then_ignore(just(Token::Semi))
+            .map_with(|_, e| ParsedStmt {
+                span: e.span(),
+                kind: ParsedStmtKind::Continue,
+            })
+            .boxed();
         let assign_or_expr = parsed_expr_parser()
-            .then(assign_op.then(parsed_expr_parser()).or_not())
+            .then(assign_op_parser().then(parsed_expr_parser()).or_not())
             .then(just(Token::Semi).or_not())
             .validate(|((lhs, rhs), semi), e, emitter| {
                 if rhs.is_some() && semi.is_none() {
@@ -1267,16 +1413,7 @@ where
                 }
                 ParsedStmt {
                     span: e.span(),
-                    kind: match rhs {
-                        Some((ParsedAssignOp::Eq, rhs)) => ParsedStmtKind::Assign { lhs, rhs },
-                        Some((ParsedAssignOp::AddEq, rhs)) => {
-                            ParsedStmtKind::AddAssign { lhs, rhs }
-                        }
-                        Some((ParsedAssignOp::SubEq, rhs)) => {
-                            ParsedStmtKind::SubAssign { lhs, rhs }
-                        }
-                        None => ParsedStmtKind::Expr(lhs),
-                    },
+                    kind: assign_stmt_kind(lhs, rhs),
                 }
             })
             .boxed();
@@ -1285,8 +1422,11 @@ where
             let_stmt,
             return_stmt,
             match_stmt,
+            for_stmt,
             if_stmt,
             assembly_stmt,
+            break_stmt,
+            continue_stmt,
             assign_or_expr,
         ))
     })
@@ -2509,6 +2649,7 @@ mod tests {
             qualifier: Some((qualifier, _)),
             name: (name, _),
             args,
+            ..
         } = &arms[0].pats[0].kind
         else {
             panic!("expected qualified nullary constructor pattern");

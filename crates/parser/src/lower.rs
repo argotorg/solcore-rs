@@ -1,16 +1,16 @@
 use hir::{
     anchor::{DefId, DefKind, DefLocation, DefLocationTable, KeyCanonicalizer},
     arena::Arena,
-    ast::{Ident, function, item, ty},
+    ast::{function, item, ty, Ident},
     diag::{Diagnostic, Offset},
     input::SourceFile,
     span::{AnchorId, Span, Spanned, SpannedElem},
 };
 
 use crate::{
-    Db, ParseHirOutput,
     parse::{parse_body_statements, parse_supported_items},
     types::*,
+    Db, ParseHirOutput,
 };
 
 fn offset_from_usize(raw: usize) -> Offset {
@@ -700,6 +700,12 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedExprKind::Ident(name) => {
                 function::ExprKind::Ident(lower_spanned_ident(self.db, anchor, base_start, name))
             }
+            ParsedExprKind::DotCtor { dot, name, args } => {
+                let dot = span_from_absolute(anchor, dot, base_start);
+                let name = lower_spanned_ident(self.db, anchor, base_start, name);
+                let args = self.lower_exprs(anchor, base_start, args, arenas);
+                function::ExprKind::DotCtor { dot, name, args }
+            }
             ParsedExprKind::Lambda {
                 params,
                 params_span,
@@ -992,6 +998,23 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedStmtKind::Match { scrutinees, arms } => {
                 self.lower_match_stmt(anchor, base_start, scrutinees, arms, arenas)
             }
+            ParsedStmtKind::For {
+                init,
+                cond,
+                post,
+                body,
+            } => {
+                let init = self.lower_stmt_block(anchor, base_start, init, arenas);
+                let cond = self.lower_expr(anchor, base_start, cond, arenas);
+                let post = self.lower_stmt_block(anchor, base_start, post, arenas);
+                let body = self.lower_stmt_block(anchor, base_start, body, arenas);
+                function::StmtKind::For {
+                    init,
+                    cond,
+                    post,
+                    body,
+                }
+            }
             ParsedStmtKind::If {
                 cond,
                 then_body,
@@ -1003,6 +1026,8 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
                     .map(|stmt| lower_parsed_yul_stmt(self.db, anchor, base_start, stmt))
                     .collect(),
             },
+            ParsedStmtKind::Break => function::StmtKind::Break,
+            ParsedStmtKind::Continue => function::StmtKind::Continue,
             ParsedStmtKind::Error => function::StmtKind::Error,
         }
     }
@@ -1029,19 +1054,18 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         arenas: &mut BodyArenas<'db>,
     ) -> function::StmtKind<'db> {
         let scrutinees = self.lower_exprs(anchor, base_start, scrutinees, arenas);
-        let arms = arms
-            .into_iter()
-            .map(|arm| {
-                let span = span_from_absolute(anchor, arm.span, base_start);
-                let pats = arm
-                    .pats
-                    .into_iter()
-                    .map(|pat| lower_parsed_pat(self.db, anchor, base_start, pat, &mut arenas.pats))
-                    .collect();
-                let body = self.lower_stmt_block(anchor, base_start, arm.body, arenas);
-                function::MatchArm { span, pats, body }
-            })
-            .collect();
+        let mut lowered_arms = Vec::with_capacity(arms.len());
+        for arm in arms {
+            let span = span_from_absolute(anchor, arm.span, base_start);
+            let pats = arm
+                .pats
+                .into_iter()
+                .map(|pat| lower_parsed_pat(self, anchor, base_start, pat, arenas))
+                .collect();
+            let body = self.lower_stmt_block(anchor, base_start, arm.body, arenas);
+            lowered_arms.push(function::MatchArm { span, pats, body });
+        }
+        let arms = lowered_arms;
         function::StmtKind::Match { scrutinees, arms }
     }
 
@@ -1083,50 +1107,64 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
 }
 
 fn lower_parsed_pat<'db>(
-    db: &'db dyn Db,
+    ctx: &mut LoweringCtx<'db, '_>,
     anchor: AnchorId<'db>,
     base_start: usize,
     pat: ParsedPat<'_>,
-    pats: &mut Arena<function::Pat<'db>>,
+    arenas: &mut BodyArenas<'db>,
 ) -> hir::arena::Id<function::Pat<'db>> {
     let span = span_from_absolute(anchor, pat.span, base_start);
     let kind = match pat.kind {
         ParsedPatKind::Wildcard => function::PatKind::Wildcard,
         ParsedPatKind::Var(name) => {
-            function::PatKind::Var(lower_spanned_ident(db, anchor, base_start, name))
+            function::PatKind::Var(lower_spanned_ident(ctx.db, anchor, base_start, name))
         }
         ParsedPatKind::Lit(lit) => function::PatKind::Lit(lower_parsed_lit(lit)),
         ParsedPatKind::Ctor {
+            leading_dot,
             qualifier,
             name,
             args,
         } => {
-            let qualifier =
-                qualifier.map(|qualifier| lower_spanned_ident(db, anchor, base_start, qualifier));
-            let name = lower_spanned_ident(db, anchor, base_start, name);
+            let leading_dot = leading_dot.map(|dot| span_from_absolute(anchor, dot, base_start));
+            let qualifier = qualifier
+                .map(|qualifier| lower_spanned_ident(ctx.db, anchor, base_start, qualifier));
+            let name = lower_spanned_ident(ctx.db, anchor, base_start, name);
             let args = args
                 .into_iter()
-                .map(|arg| lower_parsed_pat(db, anchor, base_start, arg, pats))
+                .map(|arg| lower_parsed_pat(ctx, anchor, base_start, arg, arenas))
                 .collect();
             function::PatKind::Ctor {
+                leading_dot,
                 qualifier,
                 name,
                 args,
             }
         }
+        ParsedPatKind::ComptimeLabel { kw, expr } => {
+            let kw = span_from_absolute(anchor, kw, base_start);
+            let expr = ctx.lower_expr(anchor, base_start, expr, arenas);
+            function::PatKind::ComptimeLabel { kw, expr }
+        }
         ParsedPatKind::Tuple(mut elems) if elems.len() == 1 => {
-            return lower_parsed_pat(db, anchor, base_start, elems.pop().expect("len == 1"), pats);
+            return lower_parsed_pat(
+                ctx,
+                anchor,
+                base_start,
+                elems.pop().expect("len == 1"),
+                arenas,
+            );
         }
         ParsedPatKind::Tuple(elems) => {
             let elems = elems
                 .into_iter()
-                .map(|elem| lower_parsed_pat(db, anchor, base_start, elem, pats))
+                .map(|elem| lower_parsed_pat(ctx, anchor, base_start, elem, arenas))
                 .collect();
             function::PatKind::Tuple { elems }
         }
         ParsedPatKind::Error => function::PatKind::Error,
     };
-    pats.alloc(function::Pat { span, kind })
+    arenas.pats.alloc(function::Pat { span, kind })
 }
 
 fn lower_parsed_yul_expr<'db>(

@@ -221,6 +221,11 @@ pub(crate) struct ParsedExpr<'src> {
 pub(crate) enum ParsedExprKind<'src> {
     Lit(ParsedLitKind<'src>),
     Ident(SpannedStr<'src>),
+    DotCtor {
+        dot: LexSpan,
+        name: SpannedStr<'src>,
+        args: Vec<ParsedExpr<'src>>,
+    },
     Lambda {
         params: Vec<ParsedFuncParam<'src>>,
         params_span: LexSpan,
@@ -273,9 +278,14 @@ pub(crate) enum ParsedPatKind<'src> {
     Var(SpannedStr<'src>),
     Lit(ParsedLitKind<'src>),
     Ctor {
+        leading_dot: Option<LexSpan>,
         qualifier: Option<SpannedStr<'src>>,
         name: SpannedStr<'src>,
         args: Vec<ParsedPat<'src>>,
+    },
+    ComptimeLabel {
+        kw: LexSpan,
+        expr: ParsedExpr<'src>,
     },
     Tuple(Vec<ParsedPat<'src>>),
     Error,
@@ -320,6 +330,12 @@ pub(crate) enum ParsedStmtKind<'src> {
         scrutinees: Vec<ParsedExpr<'src>>,
         arms: Vec<ParsedMatchArm<'src>>,
     },
+    For {
+        init: Vec<ParsedStmt<'src>>,
+        cond: ParsedExpr<'src>,
+        post: Vec<ParsedStmt<'src>>,
+        body: Vec<ParsedStmt<'src>>,
+    },
     If {
         cond: ParsedExpr<'src>,
         then_body: Vec<ParsedStmt<'src>>,
@@ -328,6 +344,8 @@ pub(crate) enum ParsedStmtKind<'src> {
     Assembly {
         body: Vec<ParsedYulStmt<'src>>,
     },
+    Break,
+    Continue,
     Error,
 }
 
