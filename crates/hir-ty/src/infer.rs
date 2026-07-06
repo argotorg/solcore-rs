@@ -26,9 +26,13 @@ use tracing::field;
 
 use crate::{
     BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TyScheme,
-    TypeLowering, builtin_scheme, canonical_goal,
-    solver::{Evidence, Solution, TraitEnvId, instance_soundness_diagnostics, solve_report},
-    trait_env_with_givens,
+    TypeLowering, UserTyCtorKind,
+    alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
+    builtin_scheme, canonical_goal_with_allowed,
+    solver::{
+        Evidence, Solution, Substitution, TraitEnvId, instance_soundness_diagnostics, solve_report,
+    },
+    trait_env_with_givens, type_alias_normalization_errors,
 };
 
 /// Ephemeral inference variable identifier.
@@ -127,6 +131,54 @@ pub enum InferTy<'db> {
     Tuple(Vec<InferTy<'db>>),
     /// `comptime` type wrapper.
     Comptime(Box<InferTy<'db>>),
+}
+
+impl<'db> AliasType<'db> for InferTy<'db> {
+    fn alias_kind(&self, _db: &'db dyn Db) -> AliasTypeKind<'db, Self> {
+        match self {
+            InferTy::Error => AliasTypeKind::Error,
+            InferTy::Unknown => AliasTypeKind::Unknown,
+            InferTy::Var(var) => AliasTypeKind::BoundVar(var.index()),
+            InferTy::BoundVar(index) => AliasTypeKind::BoundVar(*index),
+            InferTy::Named { ctor, args } => AliasTypeKind::Named {
+                ctor: *ctor,
+                args: args.clone(),
+            },
+            InferTy::Function { params, ret } => AliasTypeKind::Function {
+                params: params.clone(),
+                ret: (**ret).clone(),
+            },
+            InferTy::Tuple(elems) => AliasTypeKind::Tuple(elems.clone()),
+            InferTy::Comptime(inner) => AliasTypeKind::Comptime((**inner).clone()),
+        }
+    }
+
+    fn alias_error(_db: &'db dyn Db) -> Self {
+        InferTy::Error
+    }
+
+    fn alias_bound(_db: &'db dyn Db, index: u32) -> Self {
+        InferTy::BoundVar(index)
+    }
+
+    fn alias_named(_db: &'db dyn Db, ctor: TyCtor<'db>, args: Vec<Self>) -> Self {
+        InferTy::Named { ctor, args }
+    }
+
+    fn alias_function(_db: &'db dyn Db, params: Vec<Self>, ret: Self) -> Self {
+        InferTy::Function {
+            params,
+            ret: Box::new(ret),
+        }
+    }
+
+    fn alias_tuple(_db: &'db dyn Db, elems: Vec<Self>) -> Self {
+        InferTy::Tuple(elems)
+    }
+
+    fn alias_comptime(_db: &'db dyn Db, inner: Self) -> Self {
+        InferTy::Comptime(Box::new(inner))
+    }
 }
 
 /// Unification failure from the ephemeral unifier.
@@ -445,6 +497,55 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0214`: an instance context mentions variables absent from the head.
     BoundedVariableCondition,
+    /// `SC0215`: a recursive type alias was rejected.
+    TypeAliasCycle {
+        /// Alias name.
+        alias: String,
+    },
+    /// `SC0216`: a type alias was applied with the wrong number of arguments.
+    TypeAliasArity {
+        /// Alias name.
+        alias: String,
+        /// Declared arity.
+        expected: usize,
+        /// Actual argument count.
+        actual: usize,
+    },
+    /// `SC0217`: a class predicate used the wrong number of weak arguments.
+    ClassArity {
+        /// Class name.
+        class: String,
+        /// Declared weak-argument arity.
+        expected: usize,
+        /// Actual weak-argument count.
+        actual: usize,
+    },
+    /// `SC0218`: two visible non-default instance heads overlap.
+    OverlappingInstance {
+        /// New instance predicate.
+        instance: String,
+        /// Prior overlapping instance predicate.
+        overlaps: String,
+    },
+    /// `SC0219`: a default instance head was not headed by a type variable.
+    InvalidDefaultInstance {
+        /// Instance predicate snapshot.
+        head: String,
+    },
+    /// `SC0220`: an instance omits one or more required methods.
+    IncompleteInstance {
+        /// Class name.
+        class: String,
+        /// Missing method names.
+        missing: Vec<String>,
+    },
+    /// `SC0221`: an instance method signature does not match its class method.
+    InvalidInstanceMethodSignature {
+        /// Method name.
+        method: String,
+        /// Failure reason.
+        reason: String,
+    },
     /// `SC0224`: shorthand constructor lookup failed.
     ShorthandConstructor {
         /// Constructor leaf name.
@@ -612,11 +713,106 @@ impl TypeckDiagnostic {
             TypeckDiagnostic::BoundedVariableCondition => {
                 Diagnostic::error("Bounded variable condition fails!").with_code("SC0214")
             }
+            TypeckDiagnostic::TypeAliasCycle { alias } => {
+                Diagnostic::error(format!("recursive type alias `{alias}`")).with_code("SC0215")
+            }
+            TypeckDiagnostic::TypeAliasArity {
+                alias,
+                expected,
+                actual,
+            } => Diagnostic::error(format!(
+                "type synonym arity mismatch for `{alias}`: expected {expected}, got {actual}"
+            ))
+            .with_code("SC0216"),
+            TypeckDiagnostic::ClassArity {
+                class,
+                expected,
+                actual,
+            } => Diagnostic::error(format!(
+                "class arity mismatch for `{class}`: expected {expected}, got {actual}"
+            ))
+            .with_code("SC0217"),
+            TypeckDiagnostic::OverlappingInstance { instance, overlaps } => {
+                Diagnostic::error(format!(
+                    "Overlapping instances are not supported\ninstance:\n{instance}\noverlaps with:\n{overlaps}"
+                ))
+                .with_code("SC0218")
+            }
+            TypeckDiagnostic::InvalidDefaultInstance { head } => Diagnostic::error(format!(
+                "Cannot have a default instance with a non-type variable as main argument: {head}"
+            ))
+            .with_code("SC0219"),
+            TypeckDiagnostic::IncompleteInstance { class, missing } => Diagnostic::error(format!(
+                "Incomplete definition for class:\n{class}\nmissing definitions for:\n{}",
+                missing.join(", ")
+            ))
+            .with_code("SC0220"),
+            TypeckDiagnostic::InvalidInstanceMethodSignature { method, reason } => {
+                Diagnostic::error(format!(
+                    "Invalid instance member signature for `{method}`: {reason}"
+                ))
+                .with_code("SC0221")
+            }
             TypeckDiagnostic::ShorthandConstructor { name, reason } => Diagnostic::error(format!(
                 "cannot resolve shorthand constructor `.{name}`: {reason}"
             ))
             .with_code("SC0224"),
         }
+    }
+}
+
+fn alias_error_to_diagnostic(error: AliasError) -> TypeckDiagnostic {
+    match error {
+        AliasError::Cycle { alias } => TypeckDiagnostic::TypeAliasCycle { alias },
+        AliasError::Arity {
+            alias,
+            expected,
+            actual,
+        } => TypeckDiagnostic::TypeAliasArity {
+            alias,
+            expected,
+            actual,
+        },
+    }
+}
+
+fn infer_ty_mentions_alias<'db>(ty: &InferTy<'db>) -> bool {
+    match ty {
+        InferTy::Named { ctor, args } => {
+            matches!(ctor, TyCtor::User(user) if matches!(user.kind, UserTyCtorKind::Alias))
+                || args.iter().any(infer_ty_mentions_alias)
+        }
+        InferTy::Function { params, ret } => {
+            params.iter().any(infer_ty_mentions_alias) || infer_ty_mentions_alias(ret)
+        }
+        InferTy::Tuple(elems) => elems.iter().any(infer_ty_mentions_alias),
+        InferTy::Comptime(inner) => infer_ty_mentions_alias(inner),
+        InferTy::Error | InferTy::Unknown | InferTy::Var(_) | InferTy::BoundVar(_) => false,
+    }
+}
+
+fn ty_mentions_alias<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    match ty.kind(db) {
+        TyKind::Named { ctor, args } => {
+            matches!(ctor, TyCtor::User(user) if matches!(user.kind, UserTyCtorKind::Alias))
+                || args.iter().any(|arg| ty_mentions_alias(db, *arg))
+        }
+        TyKind::Function { params, ret } => {
+            params.iter().any(|param| ty_mentions_alias(db, *param)) || ty_mentions_alias(db, *ret)
+        }
+        TyKind::Tuple(elems) => elems.iter().any(|elem| ty_mentions_alias(db, *elem)),
+        TyKind::Comptime(inner) => ty_mentions_alias(db, *inner),
+        TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => false,
+    }
+}
+
+fn pred_mentions_alias<'db>(db: &'db dyn Db, pred: Pred<'db>) -> bool {
+    match pred.kind(db) {
+        PredKind::InClass { main, args, .. } => {
+            ty_mentions_alias(db, *main) || args.iter().any(|arg| ty_mentions_alias(db, *arg))
+        }
+        PredKind::Eq { lhs, rhs } => ty_mentions_alias(db, *lhs) || ty_mentions_alias(db, *rhs),
+        PredKind::Error => false,
     }
 }
 
@@ -1013,6 +1209,8 @@ impl<'db> UnifyError<'db> {
 
 impl<'db> InferCtx<'db> {
     fn new(db: &'db dyn Db, body: FuncBody<'db>, ctx: BodyTyContext<'db>) -> Self {
+        let module = ctx.module;
+        let entry_module = ctx.entry_module;
         let binders = BinderEnv::from_type_vars(&ctx.type_vars);
         let lowerer = TypeLowering::from_body_resolutions(db, &ctx.name_resolution, binders);
         let expr_resolutions = ctx
@@ -1045,8 +1243,8 @@ impl<'db> InferCtx<'db> {
             db,
             lowerer,
             engine,
-            module: ctx.module,
-            entry_module: ctx.entry_module,
+            module,
+            entry_module,
             expr_resolutions,
             pat_resolutions,
             param_tys,
@@ -1065,6 +1263,11 @@ impl<'db> InferCtx<'db> {
 
     fn finish(mut self) -> InferenceResult<'db> {
         self.default_integer_literals();
+        let solved = if let Some(trait_env) = self.trait_env {
+            self.solve_pending_obligations(trait_env)
+        } else {
+            ObligationSolveOutput::default()
+        };
         let expr_tys = self
             .expr_tys
             .into_iter()
@@ -1103,16 +1306,11 @@ impl<'db> InferCtx<'db> {
             expr_tys,
             pat_tys,
             obligations,
-            obligation_evidence: Vec::new(),
-            call_site_evidence: Vec::new(),
+            obligation_evidence: solved.evidence,
+            call_site_evidence: solved.call_site_evidence,
             diagnostics: self.diagnostics,
         };
-        if let Some(trait_env) = self.trait_env {
-            let solved = solve_deferred_obligations(self.db, trait_env, &result.obligations);
-            result.obligation_evidence = solved.evidence;
-            result.call_site_evidence = solved.call_site_evidence;
-            result.diagnostics.extend(solved.diagnostics);
-        }
+        result.diagnostics.extend(solved.diagnostics);
         result
     }
 
@@ -1575,6 +1773,7 @@ impl<'db> InferCtx<'db> {
         let Some(expected) = expected else {
             return (None, None);
         };
+        let expected = self.normalize_aliases(expected);
         match self.engine.resolve(expected.clone()) {
             InferTy::Function { params, ret } => {
                 if params.len() != param_count {
@@ -1917,6 +2116,7 @@ impl<'db> InferCtx<'db> {
         callee: InferTy<'db>,
         actual: usize,
     ) -> Option<Vec<InferTy<'db>>> {
+        let callee = self.normalize_aliases(callee);
         match self.engine.resolve(callee.clone()) {
             InferTy::Function { params, .. } => {
                 if params.len() != actual {
@@ -2045,6 +2245,7 @@ impl<'db> InferCtx<'db> {
 
     fn ctor_for_expected(&mut self, name: &str, expected: InferTy<'db>) -> DotCtorLookup<'db> {
         let expected = self.engine.resolve(expected);
+        let expected = self.normalize_aliases(expected);
         let InferTy::Named {
             ctor:
                 TyCtor::User(crate::UserTyCtor {
@@ -2095,7 +2296,7 @@ impl<'db> InferCtx<'db> {
         };
         let instantiated = self.engine.instantiate_scheme(scheme);
         let result = ctor_result_ty(&instantiated.ty);
-        if self.engine.can_unify(expected, result) {
+        if self.can_unify(expected, result) {
             self.pending.extend(instantiated.obligations);
             DotCtorLookup::Match(instantiated.ty)
         } else {
@@ -2129,23 +2330,24 @@ impl<'db> InferCtx<'db> {
         elems: &[Id<Expr<'db>>],
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
-        let expected_elems =
-            expected
-                .as_ref()
-                .and_then(|expected| match self.engine.resolve(expected.clone()) {
-                    InferTy::Tuple(expected_elems) if expected_elems.len() == elems.len() => {
-                        Some(expected_elems)
-                    }
-                    InferTy::Tuple(expected_elems) => {
-                        self.diagnostics.push(TypeckDiagnostic::WrongArity {
-                            context: "tuple".to_owned(),
-                            expected: expected_elems.len(),
-                            actual: elems.len(),
-                        });
-                        Some(expected_elems)
-                    }
-                    _ => None,
-                });
+        let expected_elems = expected.as_ref().and_then(|expected| {
+            let expected = self.normalize_aliases(expected.clone());
+            let expected = self.engine.resolve(expected);
+            match expected {
+                InferTy::Tuple(expected_elems) if expected_elems.len() == elems.len() => {
+                    Some(expected_elems)
+                }
+                InferTy::Tuple(expected_elems) => {
+                    self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                        context: "tuple".to_owned(),
+                        expected: expected_elems.len(),
+                        actual: elems.len(),
+                    });
+                    Some(expected_elems)
+                }
+                _ => None,
+            }
+        });
         InferTy::Tuple(
             elems
                 .iter()
@@ -2169,29 +2371,30 @@ impl<'db> InferCtx<'db> {
         elems: &[Id<Pat<'db>>],
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
-        let expected_elems =
-            expected
-                .as_ref()
-                .and_then(|expected| match self.engine.resolve(expected.clone()) {
-                    InferTy::Tuple(expected_elems) => {
-                        if expected_elems.len() != elems.len() {
-                            self.diagnostics.push(TypeckDiagnostic::WrongArity {
-                                context: "tuple pattern".to_owned(),
-                                expected: expected_elems.len(),
-                                actual: elems.len(),
-                            });
-                        }
-                        Some(expected_elems)
-                    }
-                    InferTy::Var(_) | InferTy::Unknown | InferTy::Error => None,
-                    other => {
-                        self.diagnostics.push(TypeckDiagnostic::Mismatch {
-                            expected: "tuple".to_owned(),
-                            actual: self.engine.display(other),
+        let expected_elems = expected.as_ref().and_then(|expected| {
+            let expected = self.normalize_aliases(expected.clone());
+            let expected = self.engine.resolve(expected);
+            match expected {
+                InferTy::Tuple(expected_elems) => {
+                    if expected_elems.len() != elems.len() {
+                        self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                            context: "tuple pattern".to_owned(),
+                            expected: expected_elems.len(),
+                            actual: elems.len(),
                         });
-                        None
                     }
-                });
+                    Some(expected_elems)
+                }
+                InferTy::Var(_) | InferTy::Unknown | InferTy::Error => None,
+                other => {
+                    self.diagnostics.push(TypeckDiagnostic::Mismatch {
+                        expected: "tuple".to_owned(),
+                        actual: self.engine.display(other),
+                    });
+                    None
+                }
+            }
+        });
         let inferred = elems
             .iter()
             .enumerate()
@@ -2400,6 +2603,7 @@ impl<'db> InferCtx<'db> {
     }
 
     fn is_numeric_or_open(&mut self, ty: InferTy<'db>) -> bool {
+        let ty = self.normalize_aliases(ty);
         match self.engine.resolve(ty) {
             InferTy::Error | InferTy::Unknown | InferTy::Var(_) => true,
             InferTy::Named {
@@ -2683,7 +2887,7 @@ impl<'db> InferCtx<'db> {
             return InferTy::Error;
         };
         let word = self.engine.from_ty(Ty::word(self.db));
-        if self.engine.can_unify(ty.clone(), word.clone()) {
+        if self.can_unify(ty.clone(), word.clone()) {
             self.unify(ty, word.clone());
         } else {
             self.diagnostics.push(TypeckDiagnostic::NonWordYulVar {
@@ -2699,7 +2903,7 @@ impl<'db> InferCtx<'db> {
             return;
         };
         let word = self.engine.from_ty(Ty::word(self.db));
-        if self.engine.can_unify(ty.clone(), word.clone()) {
+        if self.can_unify(ty.clone(), word.clone()) {
             self.unify(ty, word);
         } else {
             self.diagnostics.push(TypeckDiagnostic::NonWordYulVar {
@@ -2721,6 +2925,7 @@ impl<'db> InferCtx<'db> {
     }
 
     fn yul_return_arity(&mut self, ty: InferTy<'db>) -> usize {
+        let ty = self.normalize_aliases(ty);
         match self.engine.resolve(ty) {
             InferTy::Error => 0,
             InferTy::Tuple(elems) => elems.len(),
@@ -2862,8 +3067,218 @@ impl<'db> InferCtx<'db> {
     }
 
     fn unify(&mut self, expected: InferTy<'db>, actual: InferTy<'db>) {
+        let expected = self.normalize_aliases(expected);
+        let actual = self.normalize_aliases(actual);
         if let Err(err) = self.engine.unify(expected, actual) {
             self.diagnostics.push(err.diagnostic(&mut self.engine));
+        }
+    }
+
+    fn can_unify(&mut self, expected: InferTy<'db>, actual: InferTy<'db>) -> bool {
+        let expected = self.normalize_aliases(expected);
+        let actual = self.normalize_aliases(actual);
+        self.engine.can_unify(expected, actual)
+    }
+
+    fn normalize_aliases(&mut self, ty: InferTy<'db>) -> InferTy<'db> {
+        if !infer_ty_mentions_alias(&ty) {
+            return ty;
+        }
+        let item_resolutions = self.item_resolutions_for_aliases();
+        let mut normalizer = AliasNormalizer::new(self.db, self.module, &item_resolutions);
+        let value = normalizer.normalize_ty(ty);
+        self.diagnostics.extend(
+            normalizer
+                .take_errors()
+                .into_iter()
+                .map(alias_error_to_diagnostic),
+        );
+        value
+    }
+
+    fn normalize_pred_aliases(&mut self, pred: Pred<'db>) -> Pred<'db> {
+        if !pred_mentions_alias(self.db, pred) {
+            return pred;
+        }
+        let item_resolutions = self.item_resolutions_for_aliases();
+        let mut normalizer = AliasNormalizer::new(self.db, self.module, &item_resolutions);
+        let value = normalizer.normalize_pred(pred);
+        self.diagnostics.extend(
+            normalizer
+                .take_errors()
+                .into_iter()
+                .map(alias_error_to_diagnostic),
+        );
+        value
+    }
+
+    fn item_resolutions_for_aliases(&self) -> hir_nameres::ItemResolutionMap<'db> {
+        if let Some(entry_module) = self.entry_module {
+            let env = nameres::module_env(self.db, entry_module);
+            if let Some(scope) = env.item_scope.as_ref() {
+                return hir_nameres::resolve_item_types_with_imports(
+                    self.db,
+                    self.module,
+                    scope,
+                    &env,
+                );
+            }
+        }
+        hir_nameres::resolve_item_types(self.db, self.module)
+    }
+
+    fn solve_pending_obligations(
+        &mut self,
+        trait_env: TraitEnvId<'db>,
+    ) -> ObligationSolveOutput<'db> {
+        let mut evidence = Vec::new();
+        let mut call_site_evidence = Vec::new();
+        let mut diagnostics = Vec::new();
+
+        for (index, pending) in self.pending.clone().into_iter().enumerate() {
+            let pred = self.pending_obligation_pred(&pending);
+            if matches!(pred.pred.kind(self.db), PredKind::Error) {
+                continue;
+            }
+            let report = solve_report(
+                self.db,
+                trait_env,
+                canonical_goal_with_allowed(self.db, pred.pred, pred.allowed_vars.clone()),
+            );
+            if report.exhausted {
+                diagnostics.push(TypeckDiagnostic::SolverFuelExhausted {
+                    pred: pred.pred.display(self.db),
+                });
+                continue;
+            }
+            match report.solution {
+                Solution::Unique {
+                    subst,
+                    evidence: proof,
+                } => {
+                    self.apply_solver_substitution(&pred.goal_vars, &subst);
+                    evidence.push(ObligationEvidence {
+                        obligation: index,
+                        evidence: proof.clone(),
+                    });
+                    if let ObligationSource::CallSite {
+                        body,
+                        call_expr,
+                        callee_expr,
+                        callee,
+                    } = &pending.source
+                    {
+                        call_site_evidence.push(CallSiteEvidence {
+                            body: *body,
+                            call_expr: *call_expr,
+                            callee_expr: *callee_expr,
+                            callee: callee.clone(),
+                            obligation: index,
+                            evidence: proof,
+                        });
+                    }
+                }
+                Solution::Ambiguous { candidates } => {
+                    diagnostics.push(TypeckDiagnostic::AmbiguousConstraint {
+                        pred: pred.pred.display(self.db),
+                        candidates: candidates
+                            .iter()
+                            .map(|candidate| candidate.evidence.display(self.db))
+                            .collect(),
+                    });
+                }
+                Solution::NoSolution => diagnostics.push(TypeckDiagnostic::UnsatisfiedConstraint {
+                    pred: pred.pred.display(self.db),
+                }),
+            }
+        }
+
+        ObligationSolveOutput {
+            evidence,
+            call_site_evidence,
+            diagnostics,
+        }
+    }
+
+    fn pending_obligation_pred(
+        &mut self,
+        pending: &PendingObligation<'db>,
+    ) -> CanonicalizedPending<'db> {
+        let main = self.normalize_aliases(pending.main.clone());
+        let args = pending
+            .args
+            .iter()
+            .cloned()
+            .map(|arg| self.normalize_aliases(arg))
+            .collect::<Vec<_>>();
+        let mut canonicalizer = ObligationCanonicalizer::new(self.db, &mut self.engine);
+        let main = canonicalizer.ty(main);
+        let args = args.into_iter().map(|arg| canonicalizer.ty(arg)).collect();
+        let allowed_vars = canonicalizer.allowed_vars();
+        let goal_vars = canonicalizer.goal_vars;
+        let pred = self.normalize_pred_aliases(Pred::in_class(self.db, pending.class, main, args));
+        CanonicalizedPending {
+            pred,
+            allowed_vars,
+            goal_vars,
+        }
+    }
+
+    fn apply_solver_substitution(
+        &mut self,
+        goal_vars: &FxHashMap<u32, TyVid<'db>>,
+        subst: &Substitution<'db>,
+    ) {
+        let values = subst.values.iter().copied().collect::<FxHashMap<_, _>>();
+        for (solver_var, infer_var) in goal_vars {
+            let Some(value) = values.get(solver_var).copied() else {
+                continue;
+            };
+            let value = apply_solver_ty_subst(self.db, value, &values);
+            if matches!(value.kind(self.db), TyKind::BoundVar(var) if var.index == *solver_var) {
+                continue;
+            }
+            let value = self.infer_from_solver_ty(value, goal_vars);
+            self.unify(InferTy::Var(*infer_var), value);
+        }
+    }
+
+    fn infer_from_solver_ty(
+        &mut self,
+        ty: Ty<'db>,
+        goal_vars: &FxHashMap<u32, TyVid<'db>>,
+    ) -> InferTy<'db> {
+        match ty.kind(self.db) {
+            TyKind::BoundVar(var) => goal_vars
+                .get(&var.index)
+                .copied()
+                .map(InferTy::Var)
+                .unwrap_or(InferTy::BoundVar(var.index)),
+            TyKind::Error => InferTy::Error,
+            TyKind::Unknown => InferTy::Unknown,
+            TyKind::Named { ctor, args } => InferTy::Named {
+                ctor: *ctor,
+                args: args
+                    .iter()
+                    .map(|arg| self.infer_from_solver_ty(*arg, goal_vars))
+                    .collect(),
+            },
+            TyKind::Function { params, ret } => InferTy::Function {
+                params: params
+                    .iter()
+                    .map(|param| self.infer_from_solver_ty(*param, goal_vars))
+                    .collect(),
+                ret: Box::new(self.infer_from_solver_ty(*ret, goal_vars)),
+            },
+            TyKind::Tuple(elems) => InferTy::Tuple(
+                elems
+                    .iter()
+                    .map(|elem| self.infer_from_solver_ty(*elem, goal_vars))
+                    .collect(),
+            ),
+            TyKind::Comptime(inner) => {
+                InferTy::Comptime(Box::new(self.infer_from_solver_ty(*inner, goal_vars)))
+            }
         }
     }
 
@@ -2877,74 +3292,113 @@ impl<'db> InferCtx<'db> {
     }
 }
 
+struct CanonicalizedPending<'db> {
+    pred: Pred<'db>,
+    allowed_vars: Vec<u32>,
+    goal_vars: FxHashMap<u32, TyVid<'db>>,
+}
+
+struct ObligationCanonicalizer<'a, 'db> {
+    db: &'db dyn Db,
+    engine: &'a mut InferTable<'db>,
+    next: u32,
+    vars: FxHashMap<TyVid<'db>, u32>,
+    goal_vars: FxHashMap<u32, TyVid<'db>>,
+}
+
+impl<'a, 'db> ObligationCanonicalizer<'a, 'db> {
+    fn new(db: &'db dyn Db, engine: &'a mut InferTable<'db>) -> Self {
+        Self {
+            db,
+            engine,
+            next: 0,
+            vars: FxHashMap::default(),
+            goal_vars: FxHashMap::default(),
+        }
+    }
+
+    fn ty(&mut self, ty: InferTy<'db>) -> Ty<'db> {
+        match self.engine.resolve(ty) {
+            InferTy::Error => Ty::error(self.db),
+            InferTy::Unknown => Ty::unknown(self.db),
+            InferTy::Var(var) => {
+                let root = self.engine.table.find(var);
+                let index = *self.vars.entry(root).or_insert_with(|| {
+                    let index = self.next;
+                    self.next += 1;
+                    self.goal_vars.insert(index, root);
+                    index
+                });
+                Ty::bound(self.db, index)
+            }
+            InferTy::BoundVar(index) => Ty::bound(self.db, index),
+            InferTy::Named { ctor, args } => Ty::named(
+                self.db,
+                ctor,
+                args.into_iter().map(|arg| self.ty(arg)).collect(),
+            ),
+            InferTy::Function { params, ret } => Ty::function(
+                self.db,
+                params.into_iter().map(|param| self.ty(param)).collect(),
+                self.ty(*ret),
+            ),
+            InferTy::Tuple(elems) => Ty::tuple(
+                self.db,
+                elems.into_iter().map(|elem| self.ty(elem)).collect(),
+            ),
+            InferTy::Comptime(inner) => Ty::comptime(self.db, self.ty(*inner)),
+        }
+    }
+
+    fn allowed_vars(&self) -> Vec<u32> {
+        let mut vars = self.goal_vars.keys().copied().collect::<Vec<_>>();
+        vars.sort_unstable();
+        vars
+    }
+}
+
+#[derive(Default)]
 struct ObligationSolveOutput<'db> {
     evidence: Vec<ObligationEvidence<'db>>,
     call_site_evidence: Vec<CallSiteEvidence<'db>>,
     diagnostics: Vec<TypeckDiagnostic>,
 }
 
-fn solve_deferred_obligations<'db>(
+fn apply_solver_ty_subst<'db>(
     db: &'db dyn Db,
-    trait_env: TraitEnvId<'db>,
-    obligations: &[DeferredObligation<'db>],
-) -> ObligationSolveOutput<'db> {
-    let mut evidence = Vec::new();
-    let mut call_site_evidence = Vec::new();
-    let mut diagnostics = Vec::new();
-    for (index, obligation) in obligations.iter().enumerate() {
-        if matches!(obligation.pred.kind(db), PredKind::Error) {
-            continue;
-        }
-        let report = solve_report(db, trait_env, canonical_goal(db, obligation.pred));
-        if report.exhausted {
-            diagnostics.push(TypeckDiagnostic::SolverFuelExhausted {
-                pred: obligation.pred.display(db),
-            });
-            continue;
-        }
-        match report.solution {
-            Solution::Unique {
-                evidence: proof, ..
-            } => {
-                evidence.push(ObligationEvidence {
-                    obligation: index,
-                    evidence: proof.clone(),
-                });
-                if let ObligationSource::CallSite {
-                    body,
-                    call_expr,
-                    callee_expr,
-                    callee,
-                } = &obligation.source
-                {
-                    call_site_evidence.push(CallSiteEvidence {
-                        body: *body,
-                        call_expr: *call_expr,
-                        callee_expr: *callee_expr,
-                        callee: callee.clone(),
-                        obligation: index,
-                        evidence: proof,
-                    });
-                }
-            }
-            Solution::Ambiguous { candidates } => {
-                diagnostics.push(TypeckDiagnostic::AmbiguousConstraint {
-                    pred: obligation.pred.display(db),
-                    candidates: candidates
-                        .iter()
-                        .map(|candidate| candidate.evidence.display(db))
-                        .collect(),
-                });
-            }
-            Solution::NoSolution => diagnostics.push(TypeckDiagnostic::UnsatisfiedConstraint {
-                pred: obligation.pred.display(db),
-            }),
-        }
-    }
-    ObligationSolveOutput {
-        evidence,
-        call_site_evidence,
-        diagnostics,
+    ty: Ty<'db>,
+    subst: &FxHashMap<u32, Ty<'db>>,
+) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::BoundVar(var) => subst
+            .get(&var.index)
+            .copied()
+            .map(|ty| apply_solver_ty_subst(db, ty, subst))
+            .unwrap_or(ty),
+        TyKind::Named { ctor, args } => Ty::named(
+            db,
+            *ctor,
+            args.iter()
+                .map(|arg| apply_solver_ty_subst(db, *arg, subst))
+                .collect(),
+        ),
+        TyKind::Function { params, ret } => Ty::function(
+            db,
+            params
+                .iter()
+                .map(|param| apply_solver_ty_subst(db, *param, subst))
+                .collect(),
+            apply_solver_ty_subst(db, *ret, subst),
+        ),
+        TyKind::Tuple(elems) => Ty::tuple(
+            db,
+            elems
+                .iter()
+                .map(|elem| apply_solver_ty_subst(db, *elem, subst))
+                .collect(),
+        ),
+        TyKind::Comptime(inner) => Ty::comptime(db, apply_solver_ty_subst(db, *inner, subst)),
+        TyKind::Error | TyKind::Unknown => ty,
     }
 }
 
@@ -3204,7 +3658,7 @@ fn function_scheme_in_module<'db>(
         BinderEnv::from_type_vars(&info.type_vars),
     )
     .lower_function(info.function);
-    Some(lowered.scheme)
+    Some(AliasNormalizer::new(db, module, item_resolutions).normalize_scheme(lowered.scheme))
 }
 
 fn field_scheme_in_module<'db>(
@@ -3220,7 +3674,7 @@ fn field_scheme_in_module<'db>(
         BinderEnv::from_type_vars(&info.type_vars),
     )
     .lower_field(&info.field);
-    Some(lowered.scheme)
+    Some(AliasNormalizer::new(db, module, item_resolutions).normalize_scheme(lowered.scheme))
 }
 
 fn adt_ctor_scheme_in_module<'db>(
@@ -3238,7 +3692,7 @@ fn adt_ctor_scheme_in_module<'db>(
         BinderEnv::from_type_vars(&info.type_vars),
     )
     .lower_adt_ctor(info.adt, ctor);
-    Some(lowered.scheme)
+    Some(AliasNormalizer::new(db, module, item_resolutions).normalize_scheme(lowered.scheme))
 }
 
 fn class_method_scheme_in_module<'db>(
@@ -3260,7 +3714,7 @@ fn class_method_scheme_in_module<'db>(
         BinderEnv::from_type_vars(&info.type_vars),
     )
     .lower_class_method(info.class, method);
-    Some(scheme)
+    Some(AliasNormalizer::new(db, module, item_resolutions).normalize_scheme(scheme))
 }
 
 fn adt_ctor_indices_by_name_in_module<'db>(
@@ -3322,16 +3776,23 @@ pub fn module_typeck_diagnostics<'db>(
     };
     let item_resolutions =
         hir_nameres::resolve_item_types_with_imports(db, hir_module, &item_scope, &env);
+    let mut diagnostics = instance_soundness_diagnostics(db, module)
+        .iter()
+        .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower()))
+        .collect::<Vec<_>>();
+    diagnostics.extend(
+        type_alias_normalization_errors(db, hir_module, &item_resolutions)
+            .into_iter()
+            .map(alias_error_to_diagnostic)
+            .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+    );
     let mut collector = TypeckDiagnosticCollector {
         db,
         module,
         hir_module,
         env,
         item_resolutions,
-        diagnostics: instance_soundness_diagnostics(db, module)
-            .iter()
-            .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower()))
-            .collect(),
+        diagnostics,
     };
     for item in hir_module.items(db) {
         collector.item(*item, None, &[]);
@@ -3358,7 +3819,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
     ) {
         match item {
             Item::FunctionDef(function) => {
-                self.function(function, enclosing_contract, inherited_type_vars);
+                self.function(function, enclosing_contract, inherited_type_vars, &[]);
             }
             Item::InstanceDef(instance) => {
                 let mut inherited = inherited_type_vars.to_vec();
@@ -3366,8 +3827,27 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                     instance.def_id_value(self.db),
                     instance.type_var_elems(self.db),
                 ));
+                let instance_lowerer = TypeLowering::from_item_resolutions(
+                    self.db,
+                    &self.item_resolutions,
+                    BinderEnv::from_type_vars(&inherited),
+                );
+                let mut normalizer =
+                    AliasNormalizer::new(self.db, self.hir_module, &self.item_resolutions);
+                let instance_givens = instance
+                    .preds(self.db)
+                    .iter()
+                    .map(|pred| normalizer.normalize_pred(instance_lowerer.lower_pred(*pred)))
+                    .collect::<Vec<_>>();
+                self.diagnostics.extend(
+                    normalizer
+                        .take_errors()
+                        .into_iter()
+                        .map(alias_error_to_diagnostic)
+                        .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+                );
                 for method in instance.methods(self.db) {
-                    self.function(*method, enclosing_contract, &inherited);
+                    self.function(*method, enclosing_contract, &inherited, &instance_givens);
                 }
             }
             Item::ContractDef(contract) => {
@@ -3382,6 +3862,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                             function,
                             Some(contract.def_id_value(self.db)),
                             &inherited,
+                            &[],
                         ),
                         ContractItem::TypeAlias(_)
                         | ContractItem::AdtDef(_)
@@ -3404,6 +3885,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         function: FunctionDef<'db>,
         enclosing_contract: Option<DefId<'db>>,
         inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+        extra_givens: &[Pred<'db>],
     ) {
         let Some(body) = function.body(self.db) else {
             return;
@@ -3416,7 +3898,22 @@ impl<'db> TypeckDiagnosticCollector<'db> {
             &self.item_resolutions,
             BinderEnv::from_type_vars(&type_vars),
         );
-        let lowered = lowerer.lower_function(function);
+        let mut lowered = lowerer.lower_function(function);
+        let mut normalizer = AliasNormalizer::new(self.db, self.hir_module, &self.item_resolutions);
+        lowered.scheme = normalizer.normalize_scheme(lowered.scheme);
+        lowered.params = lowered
+            .params
+            .into_iter()
+            .map(|param| normalizer.normalize_ty(param))
+            .collect();
+        lowered.ret = normalizer.normalize_ty(lowered.ret);
+        self.diagnostics.extend(
+            normalizer
+                .take_errors()
+                .into_iter()
+                .map(alias_error_to_diagnostic)
+                .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+        );
         let context = hir_nameres::BodyResolutionContext {
             module: self.hir_module,
             enclosing_contract,
@@ -3433,10 +3930,12 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         if !body_map.diagnostics.is_empty() {
             return;
         }
+        let mut givens = lowered.scheme.body(self.db).preds(self.db).clone();
+        givens.extend(extra_givens.iter().copied());
         let trait_env = trait_env_with_givens(
             self.db,
             crate::solver::trait_env_for_module(self.db, self.module),
-            lowered.scheme.body(self.db).preds(self.db).clone(),
+            givens,
         );
         let ctx = BodyTyContext::new(
             self.hir_module,
@@ -4800,6 +5299,38 @@ instance word:Ord {}
     }
 
     #[test]
+    fn direct_instance_precedes_superclass_projection() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:Eq {}
+forall a . a:Eq => class a:Ord {}
+instance word:Eq {}
+instance word:Ord {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "Eq"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            solution,
+            Solution::Unique {
+                evidence: Evidence::Instance { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn local_givens_and_superclasses_precede_global_instances() {
         let db = TestDb::default();
         let module = parse_module(
@@ -5193,6 +5724,24 @@ forall a . instance Phantom(a):MyClass(a) {}
                     && main == "word"
                     && undetermined.len() == 1
                     && undetermined[0] == "a"
+            )),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn instance_soundness_rejects_default_head_without_type_var() {
+        let diagnostics = soundness_diagnostics(
+            r#"
+forall a . class a:C {}
+default instance word:C {}
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::InvalidDefaultInstance { .. }
             )),
             "{diagnostics:?}"
         );

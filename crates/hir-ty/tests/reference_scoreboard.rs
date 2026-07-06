@@ -48,16 +48,15 @@ macro_rules! known {
 // fails as stale. These are P6/P7 inputs, not weakened expectations.
 const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!("cases/DupFun.solc", "reference-fails-before-typeck"),
-    known!("cases/EqQual.solc", "needs-trait-solver-parity"),
+    known!("cases/Enum.solc", "reference-fails-before-typeck"),
+    known!("cases/Filter.solc", "reference-fails-before-typeck"),
     known!("cases/GetSet.solc", "reference-fails-before-typeck"),
     known!("cases/GoodInstance.solc", "reference-fails-before-typeck"),
-    known!("cases/IncompleteInstDef.solc", "missing-negative-typecheck"),
     known!("cases/Invokable.solc", "reference-fails-before-typeck"),
     known!("cases/KindTest.solc", "reference-fails-before-typeck"),
     known!("cases/ListModule.solc", "needs-tuple-call-lowering"),
     known!("cases/Memory1.solc", "needs-frontend-constructor-parity"),
     known!("cases/Memory2.solc", "needs-frontend-constructor-parity"),
-    known!("cases/NegPair.solc", "needs-trait-solver-parity"),
     known!("cases/Pair.solc", "needs-tuple-call-lowering"),
     known!("cases/Peano.solc", "needs-tuple-call-lowering"),
     known!("cases/Ref.solc", "reference-fails-before-typeck"),
@@ -67,11 +66,9 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "cases/abigeneric.solc",
         "needs-specializer-and-std-instances"
     ),
-    known!("cases/another-subst.solc", "needs-trait-solver-parity"),
     known!("cases/app.solc", "needs-frontend-constructor-parity"),
     known!("cases/array.solc", "needs-specializer-and-std-instances"),
     known!("cases/bal.solc", "needs-frontend-constructor-parity"),
-    known!("cases/bar.solc", "needs-trait-solver-parity"),
     known!("cases/bound-minimal.solc", "reference-fails-before-typeck"),
     known!(
         "cases/bound-only-test.solc",
@@ -86,15 +83,13 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "needs-frontend-constructor-parity"
     ),
     known!(
-        "cases/class-return-type-miss.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
         "cases/class-type-name-collision.solc",
         "reference-fails-before-typeck"
     ),
-    known!("cases/complexproxy.solc", "reference-fails-before-typeck"),
-    known!("cases/compose_desugared.solc", "needs-trait-solver-parity"),
+    known!(
+        "cases/compose_desugared.solc",
+        "needs-frontend-constructor-parity"
+    ),
     known!(
         "cases/constrained-instance-context.solc",
         "needs-specializer-and-std-instances"
@@ -104,7 +99,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "needs-specializer-and-std-instances"
     ),
     known!("cases/copytomem.solc", "needs-frontend-constructor-parity"),
-    known!("cases/default-inst.solc", "reference-fails-before-typeck"),
     known!(
         "cases/derive-generic-excluded.solc",
         "needs-specializer-and-std-instances"
@@ -130,10 +124,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!("cases/encoder1.solc", "needs-frontend-constructor-parity"),
     known!("cases/for-let-post.solc", "missing-negative-typecheck"),
     known!(
-        "cases/fresh-pat-arg-synonym.solc",
-        "needs-type-alias-normalization"
-    ),
-    known!(
         "cases/generic-manual-no-pragma.solc",
         "missing-negative-typecheck"
     ),
@@ -144,22 +134,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!(
         "cases/generic-sum-no-pragma.solc",
         "reference-fails-before-typeck"
-    ),
-    known!(
-        "cases/instance-context-wrong-kind.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
-        "cases/instance-synonym-int.solc",
-        "needs-type-alias-normalization"
-    ),
-    known!(
-        "cases/instance-synonym.solc",
-        "needs-type-alias-normalization"
-    ),
-    known!(
-        "cases/instance-wrong-sig.solc",
-        "missing-negative-typecheck"
     ),
     known!("cases/ixa.solc", "needs-frontend-constructor-parity"),
     known!("cases/mainproxy.solc", "reference-fails-before-typeck"),
@@ -206,15 +180,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "cases/mptc-template-b-only.solc",
         "needs-frontend-constructor-parity"
     ),
-    known!(
-        "cases/overlap-synonym-detected.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
-        "cases/overlap-synonym-missed-order.solc",
-        "missing-negative-typecheck"
-    ),
-    known!("cases/overlapping-heads.solc", "missing-negative-typecheck"),
     known!("cases/pair-bug.solc", "needs-frontend-constructor-parity"),
     known!(
         "cases/phantom-type-return-con.solc",
@@ -277,26 +242,25 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "needs-frontend-constructor-parity"
     ),
     known!("cases/string-const.solc", "missing-negative-typecheck"),
-    known!("cases/super-class-num.solc", "needs-trait-solver-parity"),
-    known!("cases/super-class.solc", "needs-trait-solver-parity"),
-    known!("cases/synonym-basic.solc", "needs-type-alias-normalization"),
     known!(
-        "cases/synonym-in-function.solc",
-        "needs-type-alias-normalization"
+        "cases/super-class-num.solc",
+        "needs-frontend-constructor-parity"
     ),
     known!(
-        "cases/synonym-long-cycle.solc",
-        "missing-negative-typecheck"
+        "cases/synonym-basic.solc",
+        "needs-frontend-constructor-parity"
+    ),
+    known!(
+        "cases/synonym-in-function.solc",
+        "needs-frontend-constructor-parity"
     ),
     known!(
         "cases/synonym-nested.solc",
-        "needs-type-alias-normalization"
+        "needs-frontend-constructor-parity"
     ),
-    known!("cases/synonym-param.solc", "needs-type-alias-normalization"),
-    known!("cases/synonym-recursive.solc", "missing-negative-typecheck"),
     known!(
-        "cases/synonym-self-recursive.solc",
-        "missing-negative-typecheck"
+        "cases/synonym-param.solc",
+        "needs-frontend-constructor-parity"
     ),
     known!(
         "cases/tabled-mutual-chain.solc",
@@ -308,10 +272,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "needs-frontend-constructor-parity"
     ),
     known!("cases/tuva.solc", "needs-specializer-and-std-instances"),
-    known!(
-        "cases/type-synonym-arg.solc",
-        "needs-type-alias-normalization"
-    ),
     known!(
         "cases/uintdesugared.solc",
         "needs-specializer-and-std-instances"
@@ -333,7 +293,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "spec/051expreturn.solc",
         "needs-frontend-constructor-parity"
     ),
-    known!("spec/051negBool.solc", "needs-trait-solver-parity"),
     known!("spec/052negPair.solc", "needs-frontend-constructor-parity"),
     known!("spec/052return.solc", "needs-frontend-constructor-parity"),
     known!("spec/053return.solc", "needs-frontend-constructor-parity"),
@@ -363,11 +322,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!(
         "spec/113counter.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!("spec/11negPair.solc", "needs-trait-solver-parity"),
-    known!(
-        "spec/120basicCounter.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(

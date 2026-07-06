@@ -463,7 +463,7 @@ fn builtin_function_scheme<'db>(
             TyScheme::monotype(db, Ty::function(db, vec![word, word], word))
         }
         hir_nameres::BuiltinFunction::PrimEqWord => {
-            TyScheme::monotype(db, Ty::function(db, vec![word, word], bool_ty))
+            TyScheme::monotype(db, Ty::function(db, vec![word, word], word))
         }
         hir_nameres::BuiltinFunction::WordToInteger => {
             TyScheme::monotype(db, Ty::function(db, vec![word], integer))

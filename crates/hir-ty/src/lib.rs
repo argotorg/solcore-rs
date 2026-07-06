@@ -4,10 +4,15 @@
 //! ground semantic type model free of inference variables, and uses ephemeral
 //! ena-backed inference state only inside query execution.
 
+pub mod alias;
 pub mod infer;
 pub mod lower;
 pub mod solver;
 
+pub use alias::{
+    AliasError, AliasNorm, AliasNormalizer, AliasType, AliasTypeKind, normalize_pred_aliases,
+    normalize_scheme_aliases, normalize_ty_aliases, type_alias_normalization_errors,
+};
 pub use hir::sema::ty::{
     BoundTyVar, BuiltinClassId, BuiltinTyCtor, ClassId, Pred, PredKind, QualTy, Ty, TyCtor, TyKind,
     TyScheme, UserTyCtor, UserTyCtorKind,
@@ -24,7 +29,7 @@ pub use lower::{
 };
 pub use solver::{
     BaseTraitEnvId, Candidate, CanonicalGoal, ClauseOrigin, Evidence, LocalGivensId, ProgramClause,
-    Solution, SolverReport, Substitution, TraitEnvId, canonical_goal,
+    Solution, SolverReport, Substitution, TraitEnvId, canonical_goal, canonical_goal_with_allowed,
     instance_soundness_diagnostics, solve, solve_report, trait_env_for_module,
     trait_env_from_module_resolution, trait_env_with_givens,
 };

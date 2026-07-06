@@ -10,7 +10,8 @@ use hir::{
     anchor::DefId,
     ast::{
         Ident,
-        item::{ClassDef, ContractItem, InstanceDef, Item, Module, TypeAlias},
+        function::{FuncParam, FuncSig},
+        item::{ClassDef, FunctionDef, InstanceDef, Item, Module},
     },
     nameres as hir_nameres,
     span::SpannedElem,
@@ -22,6 +23,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{
     BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TypeLowering,
     TypeckDiagnostic,
+    alias::{AliasError, AliasNormalizer, normalize_pred_aliases},
 };
 
 const DEFAULT_SOLVER_FUEL: usize = 256;
@@ -31,6 +33,9 @@ const DEFAULT_SOLVER_FUEL: usize = 256;
 pub struct CanonicalGoal<'db> {
     /// Canonical class predicate.
     pub pred: Pred<'db>,
+    /// Goal variables that may be solved by instance matching.
+    #[returns(ref)]
+    pub allowed_vars: Vec<u32>,
 }
 
 /// Interned base trait environment for one module.
@@ -193,7 +198,7 @@ pub fn trait_env_for_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Trai
             .find(|instance| instance.def_id_value(db) == origin.def_id)
             .copied()
         {
-            builder.add_instance(instance, &item_resolutions);
+            builder.add_instance(scope.module, instance, &item_resolutions);
         }
     }
 
@@ -214,7 +219,7 @@ pub fn trait_env_from_module_resolution<'db>(
     builder.add_module_superclasses(module, &module_resolution.item_resolutions);
     for item in module.items(db) {
         if let Item::InstanceDef(instance) = item {
-            builder.add_instance(*instance, &module_resolution.item_resolutions);
+            builder.add_instance(module, *instance, &module_resolution.item_resolutions);
         }
     }
     builder.finish(Vec::new())
@@ -237,7 +242,18 @@ pub fn trait_env_with_givens<'db>(
 
 /// Wraps a predicate as a solver goal.
 pub fn canonical_goal<'db>(db: &'db dyn Db, pred: Pred<'db>) -> CanonicalGoal<'db> {
-    CanonicalGoal::new(db, pred)
+    CanonicalGoal::new(db, pred, Vec::new())
+}
+
+/// Wraps a predicate as a solver goal with bindable goal variables.
+pub fn canonical_goal_with_allowed<'db>(
+    db: &'db dyn Db,
+    pred: Pred<'db>,
+    mut allowed_vars: Vec<u32>,
+) -> CanonicalGoal<'db> {
+    allowed_vars.sort_unstable();
+    allowed_vars.dedup();
+    CanonicalGoal::new(db, pred, allowed_vars)
 }
 
 /// Returns local instance soundness diagnostics for one module.
@@ -253,6 +269,13 @@ pub fn instance_soundness_diagnostics<'db>(
         return Vec::new();
     }
     let hir_module = parse_file_to_hir(db, file).module(db);
+    if !hir_module
+        .items(db)
+        .iter()
+        .any(|item| matches!(item, Item::InstanceDef(_)))
+    {
+        return Vec::new();
+    }
     let env = nameres::module_env(db, module);
     let Some(item_scope) = env.item_scope.clone() else {
         return Vec::new();
@@ -264,17 +287,26 @@ pub fn instance_soundness_diagnostics<'db>(
     }
 
     let pragmas = InstanceSoundnessPragmas::from_module(db, hir_module);
-    let mut diagnostics = Vec::new();
+    let mut diagnostics =
+        crate::alias::type_alias_normalization_errors(db, hir_module, &item_resolutions)
+            .into_iter()
+            .map(alias_error_to_diagnostic)
+            .collect::<Vec<_>>();
+    let mut prior_heads = imported_non_default_heads(db, module, &env);
     for item in hir_module.items(db) {
-        if let Item::InstanceDef(instance) = item {
-            check_instance_soundness(
+        if let Item::InstanceDef(instance) = item
+            && let Some(head) = check_instance_soundness(
                 db,
                 hir_module,
                 *instance,
                 &item_resolutions,
                 &pragmas,
+                &prior_heads,
                 &mut diagnostics,
-            );
+            )
+            && instance.default_kw(db).is_none()
+        {
+            prior_heads.push(head);
         }
     }
     diagnostics
@@ -339,8 +371,9 @@ fn check_instance_soundness<'db>(
     instance: InstanceDef<'db>,
     item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
     pragmas: &InstanceSoundnessPragmas,
+    prior_heads: &[Pred<'db>],
     diagnostics: &mut Vec<TypeckDiagnostic>,
-) {
+) -> Option<Pred<'db>> {
     let type_vars = type_var_bindings(instance.def_id_value(db), instance.type_var_elems(db));
     let type_var_names = type_var_names(db, &type_vars);
     let lowerer = TypeLowering::from_item_resolutions(
@@ -350,15 +383,39 @@ fn check_instance_soundness<'db>(
     );
     let head_ref = instance.head(db);
     let class_name = head_ref_class_name(db, head_ref);
-    let head = expand_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(head_ref));
+    let head_norm =
+        normalize_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(head_ref));
+    diagnostics.extend(head_norm.errors.into_iter().map(alias_error_to_diagnostic));
+    let head = head_norm.value;
     if matches!(head.kind(db), PredKind::Error) {
-        return;
+        return None;
     }
     let conditions = instance
         .preds(db)
         .iter()
-        .map(|pred| expand_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(*pred)))
+        .map(|pred| {
+            let norm =
+                normalize_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(*pred));
+            diagnostics.extend(norm.errors.into_iter().map(alias_error_to_diagnostic));
+            norm.value
+        })
         .collect::<Vec<_>>();
+
+    check_pred_class_arity(db, module, head, diagnostics);
+    for condition in &conditions {
+        check_pred_class_arity(db, module, *condition, diagnostics);
+    }
+    check_default_instance_head(
+        db,
+        head,
+        instance.default_kw(db).is_some(),
+        &type_var_names,
+        diagnostics,
+    );
+    if instance.default_kw(db).is_none() {
+        check_overlapping_instance(db, head, prior_heads, &type_var_names, diagnostics);
+    }
+    check_instance_methods(db, module, instance, item_resolutions, head, diagnostics);
 
     if !pragmas.coverage.disables(&class_name) {
         check_coverage_condition(db, head, &class_name, &type_var_names, diagnostics);
@@ -368,6 +425,594 @@ fn check_instance_soundness<'db>(
     }
     if !pragmas.bounded_variable.disables(&class_name) {
         check_bounded_variable_condition(db, head, &conditions, diagnostics);
+    }
+    Some(head)
+}
+
+fn alias_error_to_diagnostic(error: AliasError) -> TypeckDiagnostic {
+    match error {
+        AliasError::Cycle { alias } => TypeckDiagnostic::TypeAliasCycle { alias },
+        AliasError::Arity {
+            alias,
+            expected,
+            actual,
+        } => TypeckDiagnostic::TypeAliasArity {
+            alias,
+            expected,
+            actual,
+        },
+    }
+}
+
+fn imported_non_default_heads<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    env: &nameres::ModuleEnv<'db>,
+) -> Vec<Pred<'db>> {
+    let mut heads = Vec::new();
+    for origin in &env.instances {
+        if origin.module == module {
+            continue;
+        }
+        let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, origin.module)
+        else {
+            continue;
+        };
+        let Some(instance) = scope
+            .instances
+            .iter()
+            .find(|instance| instance.def_id_value(db) == origin.def_id)
+            .copied()
+        else {
+            continue;
+        };
+        if instance.default_kw(db).is_some() {
+            continue;
+        }
+        let type_vars = type_var_bindings(instance.def_id_value(db), instance.type_var_elems(db));
+        let lowerer = TypeLowering::from_item_resolutions(
+            db,
+            &item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        let head = normalize_pred_aliases(
+            db,
+            scope.module,
+            &item_resolutions,
+            lowerer.lower_pred(instance.head(db)),
+        )
+        .value;
+        if !matches!(head.kind(db), PredKind::Error) {
+            heads.push(head);
+        }
+    }
+    heads
+}
+
+fn check_pred_class_arity<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    pred: Pred<'db>,
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    let PredKind::InClass { class, args, .. } = pred.kind(db) else {
+        return;
+    };
+    let Some(expected) = class_arity(db, module, *class) else {
+        return;
+    };
+    if expected != args.len() {
+        diagnostics.push(TypeckDiagnostic::ClassArity {
+            class: display_class_source(db, *class),
+            expected,
+            actual: args.len(),
+        });
+    }
+}
+
+fn class_arity<'db>(db: &'db dyn Db, module: Module<'db>, class: ClassId<'db>) -> Option<usize> {
+    match class {
+        ClassId::Builtin(BuiltinClassId::Invokable) => Some(2),
+        ClassId::Builtin(BuiltinClassId::Int) => Some(0),
+        ClassId::User(def) => {
+            let class_module = module_for_def(db, def)
+                .and_then(|module| scope_resolution_for_module_id(db, module).map(|it| it.0.module))
+                .unwrap_or(module);
+            find_class_info(db, class_module, def)
+                .map(|info| info.class.head(db).kind(db).args.atom().len())
+        }
+    }
+}
+
+fn check_default_instance_head<'db>(
+    db: &'db dyn Db,
+    head: Pred<'db>,
+    is_default: bool,
+    type_var_names: &[String],
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    if !is_default {
+        return;
+    }
+    let PredKind::InClass { main, .. } = head.kind(db) else {
+        diagnostics.push(TypeckDiagnostic::InvalidDefaultInstance {
+            head: display_pred_source(db, head, type_var_names),
+        });
+        return;
+    };
+    if !matches!(main.kind(db), TyKind::BoundVar(_)) {
+        diagnostics.push(TypeckDiagnostic::InvalidDefaultInstance {
+            head: display_pred_source(db, head, type_var_names),
+        });
+    }
+}
+
+fn check_overlapping_instance<'db>(
+    db: &'db dyn Db,
+    head: Pred<'db>,
+    prior_heads: &[Pred<'db>],
+    type_var_names: &[String],
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    for prior in prior_heads {
+        if !same_class(db, head, *prior) {
+            continue;
+        }
+        if instance_heads_overlap(db, head, *prior) {
+            diagnostics.push(TypeckDiagnostic::OverlappingInstance {
+                instance: display_pred_source(db, head, type_var_names),
+                overlaps: prior.display(db),
+            });
+            return;
+        }
+    }
+}
+
+fn same_class<'db>(db: &'db dyn Db, lhs: Pred<'db>, rhs: Pred<'db>) -> bool {
+    matches!(
+        (lhs.kind(db), rhs.kind(db)),
+        (
+            PredKind::InClass { class: lhs_class, .. },
+            PredKind::InClass { class: rhs_class, .. }
+        ) if lhs_class == rhs_class
+    )
+}
+
+fn instance_heads_overlap<'db>(db: &'db dyn Db, lhs: Pred<'db>, rhs: Pred<'db>) -> bool {
+    let offset = max_pred_var(db, lhs).map_or(0, |index| index + 1);
+    let rhs = offset_pred_vars(db, rhs, offset);
+    let mut bindable = FxHashSet::default();
+    collect_pred_vars(db, lhs, &mut bindable);
+    collect_pred_vars(db, rhs, &mut bindable);
+    let mut subst = MatchSubst::default();
+    match (lhs.kind(db), rhs.kind(db)) {
+        (PredKind::InClass { main: lhs_main, .. }, PredKind::InClass { main: rhs_main, .. }) => {
+            unify_ty(db, *lhs_main, *rhs_main, &mut subst, &bindable)
+        }
+        _ => false,
+    }
+}
+
+fn check_instance_methods<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    instance: InstanceDef<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    head: Pred<'db>,
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    let PredKind::InClass {
+        class: ClassId::User(class_def),
+        ..
+    } = head.kind(db)
+    else {
+        return;
+    };
+    let class_module = module_for_def(db, *class_def)
+        .and_then(|module| scope_resolution_for_module_id(db, module).map(|it| it.0.module))
+        .unwrap_or(module);
+    let Some(class_info) = find_class_info(db, class_module, *class_def) else {
+        return;
+    };
+    let class_name = class_info
+        .class
+        .def_id_value(db)
+        .name(db)
+        .unwrap_or_else(|| "<class>".to_owned());
+    let methods = instance.methods(db);
+    let method_names = methods
+        .iter()
+        .map(|method| ident_text(db, &method.sig(db).name))
+        .collect::<Vec<_>>();
+    let required = class_info
+        .class
+        .methods(db)
+        .iter()
+        .map(|method| ident_text(db, &method.name))
+        .collect::<Vec<_>>();
+    let missing = required
+        .iter()
+        .filter(|required| !method_names.iter().any(|name| name == *required))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        diagnostics.push(TypeckDiagnostic::IncompleteInstance {
+            class: class_name.clone(),
+            missing,
+        });
+    }
+
+    for class_method in class_info.class.methods(db) {
+        let method_name = ident_text(db, &class_method.name);
+        let Some(instance_method) = methods
+            .iter()
+            .find(|method| ident_text(db, &method.sig(db).name) == method_name)
+        else {
+            continue;
+        };
+        let ctx = InstanceMethodCheckCtx {
+            db,
+            module,
+            item_resolutions,
+            class_info: &class_info,
+            instance_head: head,
+        };
+        check_instance_method_signature(&ctx, class_method, *instance_method, diagnostics);
+    }
+}
+
+struct InstanceMethodCheckCtx<'a, 'db> {
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &'a hir_nameres::ItemResolutionMap<'db>,
+    class_info: &'a ClassLookup<'db>,
+    instance_head: Pred<'db>,
+}
+
+fn check_instance_method_signature<'db>(
+    ctx: &InstanceMethodCheckCtx<'_, 'db>,
+    class_method: &FuncSig<'db>,
+    instance_method: FunctionDef<'db>,
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    let db = ctx.db;
+    let method_name = ident_text(db, &class_method.name);
+    if let Some(reason) = incomplete_class_method_signature_reason(class_method) {
+        diagnostics.push(TypeckDiagnostic::InvalidInstanceMethodSignature {
+            method: method_name.clone(),
+            reason,
+        });
+        return;
+    }
+    if let Some(reason) = incomplete_instance_method_signature_reason(instance_method.sig(db)) {
+        diagnostics.push(TypeckDiagnostic::InvalidInstanceMethodSignature {
+            method: method_name.clone(),
+            reason,
+        });
+        return;
+    }
+
+    let class_lowerer = TypeLowering::from_item_resolutions(
+        db,
+        ctx.item_resolutions,
+        BinderEnv::from_type_vars(&ctx.class_info.type_vars),
+    );
+    let mut class_normalizer = AliasNormalizer::new(db, ctx.module, ctx.item_resolutions);
+    let class_scheme = class_lowerer.lower_class_method(ctx.class_info.class, class_method);
+    let class_scheme = class_normalizer.normalize_scheme(class_scheme);
+    let class_head =
+        class_normalizer.normalize_pred(class_lowerer.lower_pred(ctx.class_info.class.head(db)));
+    diagnostics.extend(
+        class_normalizer
+            .take_errors()
+            .into_iter()
+            .map(alias_error_to_diagnostic),
+    );
+
+    let mut subst = FxHashMap::default();
+    if !bind_class_head_vars(db, class_head, ctx.instance_head, &mut subst) {
+        return;
+    }
+    let expected = substitute_bound_vars(db, class_scheme.body(db).ty(db), &subst);
+
+    let mut method_type_vars = type_var_bindings(
+        instance_method.def_id_value(db),
+        &instance_method.sig(db).type_vars,
+    );
+    let mut inherited = type_var_bindings_for_instance(db, instance_method, ctx.module);
+    inherited.append(&mut method_type_vars);
+    let method_lowerer = TypeLowering::from_item_resolutions(
+        db,
+        ctx.item_resolutions,
+        BinderEnv::from_type_vars(&inherited),
+    );
+    let actual = method_lowerer
+        .lower_function(instance_method)
+        .scheme
+        .body(db)
+        .ty(db);
+    let mut actual_normalizer = AliasNormalizer::new(db, ctx.module, ctx.item_resolutions);
+    let mut actual = actual_normalizer.normalize_ty(actual);
+    if instance_method.sig(db).ret.is_none() {
+        actual = fill_missing_instance_return(db, expected, actual);
+    }
+    diagnostics.extend(
+        actual_normalizer
+            .take_errors()
+            .into_iter()
+            .map(alias_error_to_diagnostic),
+    );
+
+    if !ty_equal(db, expected, actual) {
+        diagnostics.push(TypeckDiagnostic::InvalidInstanceMethodSignature {
+            method: method_name,
+            reason: format!(
+                "expected {}, got {}",
+                expected.display(db),
+                actual.display(db)
+            ),
+        });
+    }
+}
+
+fn incomplete_class_method_signature_reason<'db>(sig: &FuncSig<'db>) -> Option<String> {
+    if sig
+        .params
+        .atom()
+        .iter()
+        .any(|param| !matches!(param, FuncParam::Typed { .. }))
+    {
+        return Some("all parameters must have explicit types".to_owned());
+    }
+    if sig.ret.is_none() {
+        return Some("missing return type".to_owned());
+    }
+    None
+}
+
+fn incomplete_instance_method_signature_reason<'db>(sig: &FuncSig<'db>) -> Option<String> {
+    if sig
+        .params
+        .atom()
+        .iter()
+        .any(|param| !matches!(param, FuncParam::Typed { .. }))
+    {
+        return Some("all parameters must have explicit types".to_owned());
+    }
+    None
+}
+
+fn fill_missing_instance_return<'db>(
+    db: &'db dyn Db,
+    expected: Ty<'db>,
+    actual: Ty<'db>,
+) -> Ty<'db> {
+    match (expected.kind(db), actual.kind(db)) {
+        (
+            TyKind::Function {
+                ret: expected_ret, ..
+            },
+            TyKind::Function { params, .. },
+        ) => Ty::function(db, params.clone(), *expected_ret),
+        _ => actual,
+    }
+}
+
+fn bind_class_head_vars<'db>(
+    db: &'db dyn Db,
+    class_head: Pred<'db>,
+    instance_head: Pred<'db>,
+    subst: &mut FxHashMap<u32, Ty<'db>>,
+) -> bool {
+    match (class_head.kind(db), instance_head.kind(db)) {
+        (
+            PredKind::InClass {
+                class: class_class,
+                main: class_main,
+                args: class_args,
+            },
+            PredKind::InClass {
+                class: instance_class,
+                main: instance_main,
+                args: instance_args,
+            },
+        ) if class_class == instance_class && class_args.len() == instance_args.len() => {
+            bind_ty_vars(db, *class_main, *instance_main, subst)
+                && class_args
+                    .iter()
+                    .zip(instance_args)
+                    .all(|(class_arg, instance_arg)| {
+                        bind_ty_vars(db, *class_arg, *instance_arg, subst)
+                    })
+        }
+        _ => false,
+    }
+}
+
+fn bind_ty_vars<'db>(
+    db: &'db dyn Db,
+    pattern: Ty<'db>,
+    value: Ty<'db>,
+    subst: &mut FxHashMap<u32, Ty<'db>>,
+) -> bool {
+    match pattern.kind(db) {
+        TyKind::BoundVar(var) => match subst.get(&var.index).copied() {
+            Some(existing) => ty_equal(db, existing, value),
+            None => {
+                subst.insert(var.index, value);
+                true
+            }
+        },
+        TyKind::Named { ctor, args } => match value.kind(db) {
+            TyKind::Named {
+                ctor: value_ctor,
+                args: value_args,
+            } if ctor == value_ctor && args.len() == value_args.len() => args
+                .iter()
+                .zip(value_args)
+                .all(|(arg, value_arg)| bind_ty_vars(db, *arg, *value_arg, subst)),
+            _ => false,
+        },
+        TyKind::Function { params, ret } => match value.kind(db) {
+            TyKind::Function {
+                params: value_params,
+                ret: value_ret,
+            } if params.len() == value_params.len() => {
+                params
+                    .iter()
+                    .zip(value_params)
+                    .all(|(param, value_param)| bind_ty_vars(db, *param, *value_param, subst))
+                    && bind_ty_vars(db, *ret, *value_ret, subst)
+            }
+            _ => false,
+        },
+        TyKind::Tuple(elems) => match value.kind(db) {
+            TyKind::Tuple(value_elems) if elems.len() == value_elems.len() => elems
+                .iter()
+                .zip(value_elems)
+                .all(|(elem, value_elem)| bind_ty_vars(db, *elem, *value_elem, subst)),
+            _ => false,
+        },
+        TyKind::Comptime(inner) => match value.kind(db) {
+            TyKind::Comptime(value_inner) => bind_ty_vars(db, *inner, *value_inner, subst),
+            _ => false,
+        },
+        TyKind::Error | TyKind::Unknown => true,
+    }
+}
+
+fn substitute_bound_vars<'db>(
+    db: &'db dyn Db,
+    ty: Ty<'db>,
+    subst: &FxHashMap<u32, Ty<'db>>,
+) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::BoundVar(var) => subst.get(&var.index).copied().unwrap_or(ty),
+        TyKind::Named { ctor, args } => Ty::named(
+            db,
+            *ctor,
+            args.iter()
+                .map(|arg| substitute_bound_vars(db, *arg, subst))
+                .collect(),
+        ),
+        TyKind::Function { params, ret } => Ty::function(
+            db,
+            params
+                .iter()
+                .map(|param| substitute_bound_vars(db, *param, subst))
+                .collect(),
+            substitute_bound_vars(db, *ret, subst),
+        ),
+        TyKind::Tuple(elems) => Ty::tuple(
+            db,
+            elems
+                .iter()
+                .map(|elem| substitute_bound_vars(db, *elem, subst))
+                .collect(),
+        ),
+        TyKind::Comptime(inner) => Ty::comptime(db, substitute_bound_vars(db, *inner, subst)),
+        TyKind::Error | TyKind::Unknown => ty,
+    }
+}
+
+fn type_var_bindings_for_instance<'db>(
+    db: &'db dyn Db,
+    method: FunctionDef<'db>,
+    module: Module<'db>,
+) -> Vec<hir_nameres::TypeVarBinding<'db>> {
+    for item in module.items(db) {
+        if let Item::InstanceDef(instance) = item
+            && instance
+                .methods(db)
+                .iter()
+                .any(|candidate| candidate.def_id_value(db) == method.def_id_value(db))
+        {
+            return type_var_bindings(instance.def_id_value(db), instance.type_var_elems(db));
+        }
+    }
+    Vec::new()
+}
+
+struct ClassLookup<'db> {
+    class: ClassDef<'db>,
+    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+}
+
+fn find_class_info<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<ClassLookup<'db>> {
+    module.items(db).iter().find_map(|item| {
+        let Item::ClassDef(class) = item else {
+            return None;
+        };
+        if class.def_id_value(db) != def {
+            return None;
+        }
+        Some(ClassLookup {
+            class: *class,
+            type_vars: type_var_bindings(class.def_id_value(db), class.type_var_elems(db)),
+        })
+    })
+}
+
+fn ident_text<'db>(db: &'db dyn HirDb, name: &SpannedElem<'db, Ident<'db>>) -> String {
+    (*name.atom()).text(db).to_owned()
+}
+
+fn max_pred_var<'db>(db: &'db dyn Db, pred: Pred<'db>) -> Option<u32> {
+    let mut max = None;
+    collect_max_pred_var(db, pred, &mut max);
+    max
+}
+
+fn offset_pred_vars<'db>(db: &'db dyn Db, pred: Pred<'db>, offset: u32) -> Pred<'db> {
+    match pred.kind(db) {
+        PredKind::InClass { class, main, args } => Pred::in_class(
+            db,
+            *class,
+            offset_ty_vars(db, *main, offset),
+            args.iter()
+                .map(|arg| offset_ty_vars(db, *arg, offset))
+                .collect(),
+        ),
+        PredKind::Eq { lhs, rhs } => Pred::eq(
+            db,
+            offset_ty_vars(db, *lhs, offset),
+            offset_ty_vars(db, *rhs, offset),
+        ),
+        PredKind::Error => pred,
+    }
+}
+
+fn offset_ty_vars<'db>(db: &'db dyn Db, ty: Ty<'db>, offset: u32) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::BoundVar(var) => Ty::bound(db, var.index + offset),
+        TyKind::Named { ctor, args } => Ty::named(
+            db,
+            *ctor,
+            args.iter()
+                .map(|arg| offset_ty_vars(db, *arg, offset))
+                .collect(),
+        ),
+        TyKind::Function { params, ret } => Ty::function(
+            db,
+            params
+                .iter()
+                .map(|param| offset_ty_vars(db, *param, offset))
+                .collect(),
+            offset_ty_vars(db, *ret, offset),
+        ),
+        TyKind::Tuple(elems) => Ty::tuple(
+            db,
+            elems
+                .iter()
+                .map(|elem| offset_ty_vars(db, *elem, offset))
+                .collect(),
+        ),
+        TyKind::Comptime(inner) => Ty::comptime(db, offset_ty_vars(db, *inner, offset)),
+        TyKind::Error | TyKind::Unknown => ty,
     }
 }
 
@@ -556,222 +1201,6 @@ fn display_class_source<'db>(db: &'db dyn Db, class: ClassId<'db>) -> String {
     }
 }
 
-fn expand_pred_aliases<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
-    pred: Pred<'db>,
-) -> Pred<'db> {
-    match pred.kind(db) {
-        PredKind::InClass { class, main, args } => Pred::in_class(
-            db,
-            *class,
-            expand_ty_aliases(
-                db,
-                module,
-                item_resolutions,
-                *main,
-                &mut FxHashSet::default(),
-            ),
-            args.iter()
-                .map(|arg| {
-                    expand_ty_aliases(
-                        db,
-                        module,
-                        item_resolutions,
-                        *arg,
-                        &mut FxHashSet::default(),
-                    )
-                })
-                .collect(),
-        ),
-        PredKind::Eq { lhs, rhs } => Pred::eq(
-            db,
-            expand_ty_aliases(
-                db,
-                module,
-                item_resolutions,
-                *lhs,
-                &mut FxHashSet::default(),
-            ),
-            expand_ty_aliases(
-                db,
-                module,
-                item_resolutions,
-                *rhs,
-                &mut FxHashSet::default(),
-            ),
-        ),
-        PredKind::Error => pred,
-    }
-}
-
-fn expand_ty_aliases<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
-    ty: Ty<'db>,
-    expanding: &mut FxHashSet<DefId<'db>>,
-) -> Ty<'db> {
-    match ty.kind(db) {
-        TyKind::Named { ctor, args } => {
-            let args = args
-                .iter()
-                .map(|arg| expand_ty_aliases(db, module, item_resolutions, *arg, expanding))
-                .collect::<Vec<_>>();
-            let TyCtor::User(user) = ctor else {
-                return Ty::named(db, *ctor, args);
-            };
-            if !matches!(user.kind, crate::UserTyCtorKind::Alias) {
-                return Ty::named(db, *ctor, args);
-            }
-            if !expanding.insert(user.def) {
-                return Ty::named(db, *ctor, args);
-            }
-            let expanded = lower_type_alias_body(db, module, item_resolutions, user.def)
-                .map(|body| substitute_alias_args(db, body, &args))
-                .map(|body| expand_ty_aliases(db, module, item_resolutions, body, expanding))
-                .unwrap_or_else(|| Ty::named(db, *ctor, args));
-            expanding.remove(&user.def);
-            expanded
-        }
-        TyKind::Function { params, ret } => Ty::function(
-            db,
-            params
-                .iter()
-                .map(|param| expand_ty_aliases(db, module, item_resolutions, *param, expanding))
-                .collect(),
-            expand_ty_aliases(db, module, item_resolutions, *ret, expanding),
-        ),
-        TyKind::Tuple(elems) => Ty::tuple(
-            db,
-            elems
-                .iter()
-                .map(|elem| expand_ty_aliases(db, module, item_resolutions, *elem, expanding))
-                .collect(),
-        ),
-        TyKind::Comptime(inner) => Ty::comptime(
-            db,
-            expand_ty_aliases(db, module, item_resolutions, *inner, expanding),
-        ),
-        TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => ty,
-    }
-}
-
-fn lower_type_alias_body<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
-    def: DefId<'db>,
-) -> Option<Ty<'db>> {
-    if let Some(info) = find_type_alias_info(db, module, def, &[]) {
-        return Some(
-            TypeLowering::from_item_resolutions(
-                db,
-                item_resolutions,
-                BinderEnv::from_type_vars(&info.type_vars),
-            )
-            .lower_type_alias(info.alias)
-            .ty,
-        );
-    }
-
-    let module = module_for_def(db, def)?;
-    let (scope, item_resolutions) = scope_resolution_for_module_id(db, module)?;
-    let info = find_type_alias_info(db, scope.module, def, &[])?;
-    Some(
-        TypeLowering::from_item_resolutions(
-            db,
-            &item_resolutions,
-            BinderEnv::from_type_vars(&info.type_vars),
-        )
-        .lower_type_alias(info.alias)
-        .ty,
-    )
-}
-
-fn substitute_alias_args<'db>(db: &'db dyn Db, ty: Ty<'db>, args: &[Ty<'db>]) -> Ty<'db> {
-    match ty.kind(db) {
-        TyKind::BoundVar(var) => args.get(var.index as usize).copied().unwrap_or(ty),
-        TyKind::Named { ctor, args: inner } => Ty::named(
-            db,
-            *ctor,
-            inner
-                .iter()
-                .map(|arg| substitute_alias_args(db, *arg, args))
-                .collect(),
-        ),
-        TyKind::Function { params, ret } => Ty::function(
-            db,
-            params
-                .iter()
-                .map(|param| substitute_alias_args(db, *param, args))
-                .collect(),
-            substitute_alias_args(db, *ret, args),
-        ),
-        TyKind::Tuple(elems) => Ty::tuple(
-            db,
-            elems
-                .iter()
-                .map(|elem| substitute_alias_args(db, *elem, args))
-                .collect(),
-        ),
-        TyKind::Comptime(inner) => Ty::comptime(db, substitute_alias_args(db, *inner, args)),
-        TyKind::Error | TyKind::Unknown => ty,
-    }
-}
-
-struct TypeAliasInfo<'db> {
-    alias: TypeAlias<'db>,
-    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
-}
-
-fn find_type_alias_info<'db>(
-    db: &'db dyn Db,
-    module: Module<'db>,
-    def: DefId<'db>,
-    inherited: &[hir_nameres::TypeVarBinding<'db>],
-) -> Option<TypeAliasInfo<'db>> {
-    module
-        .items(db)
-        .iter()
-        .find_map(|item| find_type_alias_in_item(db, *item, def, inherited))
-}
-
-fn find_type_alias_in_item<'db>(
-    db: &'db dyn Db,
-    item: Item<'db>,
-    def: DefId<'db>,
-    inherited: &[hir_nameres::TypeVarBinding<'db>],
-) -> Option<TypeAliasInfo<'db>> {
-    match item {
-        Item::TypeAlias(alias) if alias.def_id_value(db) == def => {
-            let mut type_vars = inherited.to_vec();
-            type_vars.extend(type_var_bindings(
-                alias.def_id_value(db),
-                alias.ty_param_elems(db),
-            ));
-            Some(TypeAliasInfo { alias, type_vars })
-        }
-        Item::ContractDef(contract) => {
-            let mut inherited = inherited.to_vec();
-            inherited.extend(type_var_bindings(
-                contract.def_id_value(db),
-                contract.ty_param_elems(db),
-            ));
-            contract.items(db).iter().find_map(|item| match *item {
-                ContractItem::TypeAlias(alias) => {
-                    find_type_alias_in_item(db, Item::TypeAlias(alias), def, &inherited)
-                }
-                ContractItem::FunctionDef(_)
-                | ContractItem::AdtDef(_)
-                | ContractItem::Error { .. } => None,
-            })
-        }
-        _ => None,
-    }
-}
-
 /// Tracked solver query required by the trait-solving interface.
 #[salsa::tracked]
 pub fn solve<'db>(
@@ -789,12 +1218,18 @@ pub fn solve_report<'db>(
     env: TraitEnvId<'db>,
     goal: CanonicalGoal<'db>,
 ) -> SolverReport<'db> {
-    solve_goal(db, env, goal.pred(db))
+    solve_goal(db, env, goal.pred(db), goal.allowed_vars(db))
 }
 
-fn solve_goal<'db>(db: &'db dyn Db, env: TraitEnvId<'db>, goal: Pred<'db>) -> SolverReport<'db> {
+fn solve_goal<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    goal: Pred<'db>,
+    allowed_vars: &[u32],
+) -> SolverReport<'db> {
     let mut solver = Solver::new(db, env, DEFAULT_SOLVER_FUEL);
-    let mut report = solver.solve_pred(goal);
+    let allowed_vars = allowed_vars.iter().copied().collect();
+    let mut report = solver.solve_pred_with_allowed(goal, SolveMode::Normal, &allowed_vars);
     report.fuel_remaining = solver.fuel;
     report
 }
@@ -905,13 +1340,14 @@ impl<'db> TraitEnvBuilder<'db> {
     ) {
         for item in module.items(self.db) {
             if let Item::ClassDef(class) = item {
-                self.add_class_superclasses(*class, item_resolutions);
+                self.add_class_superclasses(module, *class, item_resolutions);
             }
         }
     }
 
     fn add_class_superclasses(
         &mut self,
+        module: Module<'db>,
         class: ClassDef<'db>,
         item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
     ) {
@@ -922,11 +1358,12 @@ impl<'db> TraitEnvBuilder<'db> {
             item_resolutions,
             BinderEnv::from_type_vars(&type_vars),
         );
-        let class_head = lowerer.lower_pred(class.head(self.db));
+        let mut normalizer = AliasNormalizer::new(self.db, module, item_resolutions);
+        let class_head = normalizer.normalize_pred(lowerer.lower_pred(class.head(self.db)));
         for super_pred in class.super_preds(self.db) {
             self.clauses.push(ProgramClause {
                 binder_count: type_vars.len() as u32,
-                head: lowerer.lower_pred(*super_pred),
+                head: normalizer.normalize_pred(lowerer.lower_pred(*super_pred)),
                 conditions: vec![class_head],
                 origin: ClauseOrigin::Superclass(class.def_id_value(self.db)),
                 is_default: false,
@@ -936,6 +1373,7 @@ impl<'db> TraitEnvBuilder<'db> {
 
     fn add_instance(
         &mut self,
+        module: Module<'db>,
         instance: InstanceDef<'db>,
         item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
     ) {
@@ -948,11 +1386,12 @@ impl<'db> TraitEnvBuilder<'db> {
             item_resolutions,
             BinderEnv::from_type_vars(&type_vars),
         );
-        let head = lowerer.lower_pred(instance.head(self.db));
+        let mut normalizer = AliasNormalizer::new(self.db, module, item_resolutions);
+        let head = normalizer.normalize_pred(lowerer.lower_pred(instance.head(self.db)));
         let conditions = instance
             .preds(self.db)
             .iter()
-            .map(|pred| lowerer.lower_pred(*pred))
+            .map(|pred| normalizer.normalize_pred(lowerer.lower_pred(*pred)))
             .collect();
 
         // Instance soundness checks are intentionally run by the module-level
@@ -990,10 +1429,6 @@ impl<'db> Solver<'db> {
             active: FxHashSet::default(),
             fuel,
         }
-    }
-
-    fn solve_pred(&mut self, goal: Pred<'db>) -> SolverReport<'db> {
-        self.solve_pred_with_allowed(goal, SolveMode::Normal, &FxHashSet::default())
     }
 
     fn solve_pred_with_allowed(
@@ -1048,11 +1483,23 @@ impl<'db> Solver<'db> {
             return SolverReport::new(Solution::NoSolution, normal_exhausted);
         }
 
-        let (default_candidates, _, default_exhausted) =
+        let (default_candidates, default_matched, default_exhausted) =
             self.solve_with_clause_set(goal, true, allowed_goal_vars, SolveMode::Normal);
+        if !default_candidates.is_empty() {
+            return SolverReport::new(
+                solution_from_candidates(default_candidates),
+                normal_exhausted || default_exhausted,
+            );
+        }
+        if default_matched {
+            return SolverReport::new(Solution::NoSolution, normal_exhausted || default_exhausted);
+        }
+
+        let (superclass_candidates, superclass_exhausted) =
+            self.solve_from_superclass_projection(goal, allowed_goal_vars);
         SolverReport::new(
-            solution_from_candidates(default_candidates),
-            normal_exhausted || default_exhausted,
+            solution_from_candidates(superclass_candidates),
+            normal_exhausted || default_exhausted || superclass_exhausted,
         )
     }
 
@@ -1104,6 +1551,9 @@ impl<'db> Solver<'db> {
             if clause.is_default != is_default {
                 continue;
             }
+            if matches!(clause.origin, ClauseOrigin::Superclass(_)) {
+                continue;
+            }
             let outcome = self.try_clause(goal, &clause, allowed_goal_vars, mode);
             matched |= outcome.matched;
             exhausted |= outcome.exhausted;
@@ -1112,6 +1562,26 @@ impl<'db> Solver<'db> {
 
         candidates = unique_candidates(candidates);
         (candidates, matched, exhausted)
+    }
+
+    fn solve_from_superclass_projection(
+        &mut self,
+        goal: Pred<'db>,
+        allowed_goal_vars: &FxHashSet<u32>,
+    ) -> (Vec<Candidate<'db>>, bool) {
+        let mut candidates = Vec::new();
+        let mut exhausted = false;
+
+        for clause in self.env.clauses(self.db).clone() {
+            if !matches!(clause.origin, ClauseOrigin::Superclass(_)) {
+                continue;
+            }
+            let outcome = self.try_clause(goal, &clause, allowed_goal_vars, SolveMode::Normal);
+            exhausted |= outcome.exhausted;
+            candidates.extend(outcome.candidates);
+        }
+
+        (unique_candidates(candidates), exhausted)
     }
 
     fn has_non_default_unifying_head(

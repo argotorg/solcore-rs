@@ -795,16 +795,17 @@ fn lower_func_sig<'db>(
     }
 }
 
-fn lower_class<'db>(
+fn lower_class<'db, 'src>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
-    type_vars: Vec<SpannedStr<'_>>,
-    super_preds: Vec<ParsedPred<'_>>,
-    head: ParsedPred<'_>,
-    methods: Vec<ParsedFuncSig<'_>>,
+    mut type_vars: Vec<SpannedStr<'src>>,
+    super_preds: Vec<ParsedPred<'src>>,
+    head: ParsedPred<'src>,
+    methods: Vec<ParsedFuncSig<'src>>,
 ) -> item::ClassDef<'db> {
     let class_name = head.class.0;
     let class_def = ctx.alloc_def_with_location(DefKind::Class, Some(class_name), span.start);
+    add_implicit_class_head_binder(&mut type_vars, &head);
 
     let anchor = AnchorId::def(ctx.db, class_def);
     let type_vars = type_vars
@@ -830,6 +831,35 @@ fn lower_class<'db>(
         super_preds,
         head,
         methods,
+    )
+}
+
+fn add_implicit_class_head_binder<'src>(
+    type_vars: &mut Vec<SpannedStr<'src>>,
+    head: &ParsedPred<'src>,
+) {
+    if !type_vars.is_empty() {
+        return;
+    }
+    let ParsedTyKind::Named {
+        qualifiers,
+        name,
+        args,
+        ..
+    } = &head.ty.kind
+    else {
+        return;
+    };
+    if !qualifiers.is_empty() || !args.is_empty() || is_builtin_type_name(name.0) {
+        return;
+    }
+    type_vars.push(*name);
+}
+
+fn is_builtin_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "word" | "bool" | "string" | "integer" | "()" | "pair" | "sum"
     )
 }
 
