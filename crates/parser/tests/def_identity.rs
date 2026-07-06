@@ -1,0 +1,175 @@
+use hir::{
+    anchor::{DefId, DefKind},
+    input::SourceFile,
+};
+use salsa::Setter;
+use solcore_parser::parse_file_to_hir;
+
+#[salsa::db]
+#[derive(Default, Clone)]
+struct TestDb {
+    storage: salsa::Storage<Self>,
+}
+
+#[salsa::db]
+impl salsa::Database for TestDb {}
+
+#[salsa::db]
+impl hir::Db for TestDb {
+    fn def_location_table<'db>(
+        &'db self,
+        file: SourceFile,
+    ) -> &'db hir::anchor::DefLocationTable<'db> {
+        parse_file_to_hir(self, file).def_locations(self)
+    }
+}
+
+#[salsa::db]
+impl solcore_parser::Db for TestDb {}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DefIdentity {
+    owner: Option<Box<DefIdentity>>,
+    kind: DefKind,
+    name: Option<String>,
+    fingerprint: Option<String>,
+    disambiguator: u32,
+}
+
+fn source_file(db: &TestDb, name: &str, src: &str) -> SourceFile {
+    let url = format!("memory:///{name}.solc").parse().expect("valid url");
+    SourceFile::new(db, url, Some(src.to_owned()))
+}
+
+fn def_identity<'db>(db: &'db TestDb, def: DefId<'db>) -> DefIdentity {
+    DefIdentity {
+        owner: def
+            .owner(db)
+            .map(|owner| Box::new(def_identity(db, owner))),
+        kind: def.kind(db),
+        name: def.name(db),
+        fingerprint: def.fingerprint(db),
+        disambiguator: def.disambiguator(db).as_u32(),
+    }
+}
+
+fn all_defs<'db>(db: &'db TestDb, file: SourceFile) -> Vec<DefId<'db>> {
+    parse_file_to_hir(db, file)
+        .def_locations(db)
+        .entries
+        .iter()
+        .map(|entry| entry.def_id)
+        .collect()
+}
+
+fn defs_by_name<'db>(
+    db: &'db TestDb,
+    file: SourceFile,
+    kind: DefKind,
+    name: &str,
+) -> Vec<DefId<'db>> {
+    all_defs(db, file)
+        .into_iter()
+        .filter(|def| def.kind(db) == kind && def.name(db).as_deref() == Some(name))
+        .collect()
+}
+
+#[test]
+fn same_named_contract_methods_have_container_relative_def_ids() {
+    let db = TestDb::default();
+    let file = source_file(
+        &db,
+        "contract-methods",
+        "contract A {\n  function f() {}\n}\n\ncontract B {\n  function f() {}\n}\n",
+    );
+
+    let methods = defs_by_name(&db, file, DefKind::Function, "f");
+    assert_eq!(methods.len(), 2);
+    assert_ne!(methods[0], methods[1]);
+    assert_ne!(methods[0].owner(&db), methods[1].owner(&db));
+}
+
+#[test]
+fn instances_of_same_class_on_different_heads_have_distinct_def_ids() {
+    let db = TestDb::default();
+    let file = source_file(
+        &db,
+        "instance-heads",
+        "class self:StorageType {}\n\n\
+         instance word:StorageType {\n  function rep(x:word) -> word { return x; }\n}\n\n\
+         instance uint:StorageType {\n  function rep(x:uint) -> uint { return x; }\n}\n",
+    );
+
+    let instances = defs_by_name(&db, file, DefKind::Instance, "StorageType");
+    assert_eq!(instances.len(), 2);
+    assert_ne!(instances[0], instances[1]);
+    assert_eq!(instances[0].fingerprint(&db).as_deref(), Some("word"));
+    assert_eq!(instances[1].fingerprint(&db).as_deref(), Some("uint"));
+}
+
+#[test]
+fn inserting_unrelated_item_above_def_keeps_identity_stable() {
+    let mut db = TestDb::default();
+    let file = source_file(&db, "stable-def", "\nfunction target() {}\n");
+
+    let before = {
+        let targets = defs_by_name(&db, file, DefKind::Function, "target");
+        assert_eq!(targets.len(), 1);
+        def_identity(&db, targets[0])
+    };
+
+    file.set_content(&mut db)
+        .to(Some("\nfunction helper() {}\n\nfunction target() {}\n".to_owned()));
+
+    let after = {
+        let targets = defs_by_name(&db, file, DefKind::Function, "target");
+        assert_eq!(targets.len(), 1);
+        def_identity(&db, targets[0])
+    };
+
+    assert_eq!(after, before);
+}
+
+#[test]
+fn leading_whitespace_does_not_change_def_identity() {
+    let mut db = TestDb::default();
+    let file = source_file(&db, "leading-whitespace", "\nfunction target() {}\n");
+
+    let before = {
+        let targets = defs_by_name(&db, file, DefKind::Function, "target");
+        assert_eq!(targets.len(), 1);
+        def_identity(&db, targets[0])
+    };
+
+    file.set_content(&mut db)
+        .to(Some("\n\n\nfunction target() {}\n".to_owned()));
+
+    let after = {
+        let targets = defs_by_name(&db, file, DefKind::Function, "target");
+        assert_eq!(targets.len(), 1);
+        def_identity(&db, targets[0])
+    };
+
+    assert_eq!(after, before);
+}
+
+#[test]
+fn well_formed_program_defs_have_zero_disambiguators() {
+    let db = TestDb::default();
+    let file = source_file(
+        &db,
+        "zero-disambiguators",
+        "class self:StorageType {}\n\n\
+         instance word:StorageType {\n  function rep(x:word) -> word { return x; }\n}\n\n\
+         contract Counter {\n  function main() -> word { return 0; }\n}\n\n\
+         function top() {}\n",
+    );
+
+    let non_zero = all_defs(&db, file)
+        .into_iter()
+        .map(|def| def_identity(&db, def))
+        .filter(|identity| identity.disambiguator != 0)
+        .collect::<Vec<_>>();
+
+    assert_eq!(non_zero, Vec::<DefIdentity>::new());
+}
