@@ -158,10 +158,30 @@ fn main() {
         return;
     }
 
-    for diagnostic in diagnostics {
-        eprint!("{}", diagnostic.render(&db));
-    }
+    eprint!(
+        "{}",
+        render_diagnostic_blocks(diagnostics.iter().map(|diagnostic| diagnostic.render(&db)))
+    );
     std::process::exit(1);
+}
+
+fn render_diagnostic_blocks(rendered_blocks: impl IntoIterator<Item = String>) -> String {
+    let mut output = String::new();
+    for rendered in rendered_blocks {
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&normalize_rendered_diagnostic(rendered));
+    }
+    output
+}
+
+fn normalize_rendered_diagnostic(mut rendered: String) -> String {
+    while rendered.ends_with('\n') {
+        rendered.pop();
+    }
+    rendered.push('\n');
+    rendered
 }
 
 fn sort_dedup_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<Diagnostic>) {
@@ -296,4 +316,21 @@ fn repo_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("driver crate lives under <repo>/crates/driver")
         .to_path_buf()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rendered_diagnostic_blocks_have_rustc_style_spacing() {
+        assert_eq!(
+            render_diagnostic_blocks(["error: one".to_owned()]),
+            "error: one\n"
+        );
+        assert_eq!(
+            render_diagnostic_blocks(["error: one\n\n".to_owned(), "error: two".to_owned()]),
+            "error: one\n\nerror: two\n"
+        );
+    }
 }
