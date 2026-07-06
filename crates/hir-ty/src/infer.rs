@@ -278,6 +278,17 @@ pub struct PatTy<'db> {
     pub ty: Ty<'db>,
 }
 
+/// Ground type assigned to a let binding.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct LetTy<'db> {
+    /// Body containing the let statement.
+    pub body: FuncBody<'db>,
+    /// Let statement ID.
+    pub stmt: Id<Stmt<'db>>,
+    /// Ground type or `Ty::unknown`.
+    pub ty: Ty<'db>,
+}
+
 /// Source of a deferred obligation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum ObligationSource<'db> {
@@ -432,6 +443,8 @@ pub struct InferenceResult<'db> {
     pub expr_tys: Vec<ExprTy<'db>>,
     /// Pattern type table.
     pub pat_tys: Vec<PatTy<'db>>,
+    /// Let binding type table.
+    pub let_tys: Vec<LetTy<'db>>,
     /// Deferred obligations that the future solver must resolve.
     pub obligations: Vec<DeferredObligation<'db>>,
     /// Evidence for obligations solved by the trait solver.
@@ -451,6 +464,9 @@ pub trait InferResultExt<'db> {
 
     /// Returns the recorded type for `pat` in `body`.
     fn pat_ty(&self, body: FuncBody<'db>, pat: Id<Pat<'db>>) -> Option<Ty<'db>>;
+
+    /// Returns the recorded type for a let statement in `body`.
+    fn let_ty(&self, body: FuncBody<'db>, stmt: Id<Stmt<'db>>) -> Option<Ty<'db>>;
 }
 
 impl<'db> InferResultExt<'db> for InferenceResult<'db> {
@@ -465,6 +481,13 @@ impl<'db> InferResultExt<'db> for InferenceResult<'db> {
         self.pat_tys
             .iter()
             .find(|entry| entry.body == body && entry.pat == pat)
+            .map(|entry| entry.ty)
+    }
+
+    fn let_ty(&self, body: FuncBody<'db>, stmt: Id<Stmt<'db>>) -> Option<Ty<'db>> {
+        self.let_tys
+            .iter()
+            .find(|entry| entry.body == body && entry.stmt == stmt)
             .map(|entry| entry.ty)
     }
 }
@@ -1461,6 +1484,15 @@ impl<'db> InferCtx<'db> {
                 ty: self.engine.ground_ty(ty),
             })
             .collect();
+        let let_tys = self
+            .let_tys
+            .into_iter()
+            .map(|((body, stmt), ty)| LetTy {
+                body,
+                stmt,
+                ty: self.engine.ground_ty(ty),
+            })
+            .collect();
         let obligations = self
             .pending
             .into_iter()
@@ -1494,6 +1526,7 @@ impl<'db> InferCtx<'db> {
         let mut result = InferenceResult {
             expr_tys,
             pat_tys,
+            let_tys,
             obligations,
             obligation_evidence: solved.evidence,
             call_site_evidence: solved.call_site_evidence,

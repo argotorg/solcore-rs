@@ -3,7 +3,7 @@ use hir::{
     ast::function::{BinOp, LitKind, UnOp, YulStmt},
     span::Span,
 };
-use hir_ty::Ty;
+use hir_ty::{FrontendDesugarPlan, Ty};
 
 /// A semantic type that has been checked to contain no type variables or
 /// unknown placeholders by the specializer.
@@ -35,6 +35,7 @@ pub struct MonoId<'db> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonoModule<'db> {
     pub module: DefId<'db>,
+    pub frontend_desugar: FrontendDesugarPlan<'db>,
     pub items: Vec<MonoItem<'db>>,
 }
 
@@ -53,6 +54,8 @@ pub struct MonoContract<'db> {
     pub def: DefId<'db>,
     pub name: String,
     pub span: Span<'db>,
+    pub constructor: MonoConstructor<'db>,
+    pub fallback: MonoFallback<'db>,
     pub entries: Vec<MonoEntry<'db>>,
 }
 
@@ -60,9 +63,54 @@ pub struct MonoContract<'db> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonoEntry<'db> {
     pub source: DefId<'db>,
+    pub kind: MonoEntryKind,
     pub name: String,
     pub specialized: String,
     pub span: Span<'db>,
+    pub selector: Option<[u8; 4]>,
+    pub signature: Option<String>,
+    pub payable: bool,
+    pub inputs: Vec<MonoAbiParam>,
+    pub outputs: Vec<MonoAbiParam>,
+}
+
+/// Dispatch entry category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MonoEntryKind {
+    Method,
+    Constructor,
+    Fallback,
+}
+
+/// Constructor dispatch/ABI metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonoConstructor<'db> {
+    pub source: Option<DefId<'db>>,
+    pub explicit: bool,
+    pub specialized: Option<String>,
+    pub payable: bool,
+    pub inputs: Vec<MonoAbiParam>,
+    pub span: Span<'db>,
+}
+
+/// Fallback dispatch/ABI metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonoFallback<'db> {
+    pub source: Option<DefId<'db>>,
+    pub explicit: bool,
+    pub specialized: Option<String>,
+    pub payable: bool,
+    pub inputs: Vec<MonoAbiParam>,
+    pub outputs: Vec<MonoAbiParam>,
+    pub span: Span<'db>,
+}
+
+/// ABI parameter or tuple component.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MonoAbiParam {
+    pub name: String,
+    pub ty: String,
+    pub components: Vec<MonoAbiParam>,
 }
 
 /// Specialized function.
@@ -74,6 +122,7 @@ pub struct MonoFunction<'db> {
     pub span: Span<'db>,
     pub params: Vec<MonoParam<'db>>,
     pub ret: MonoTy<'db>,
+    pub comptime_obligations: Vec<MonoComptimeObligation<'db>>,
     pub body: Vec<MonoStmt<'db>>,
 }
 
@@ -100,6 +149,23 @@ pub struct MonoParam<'db> {
     pub comptime: bool,
     pub ty: MonoTy<'db>,
     pub span: Span<'db>,
+}
+
+/// A comptime obligation carried from type inference into mono IR.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonoComptimeObligation<'db> {
+    pub span: Span<'db>,
+    pub expr: MonoExpr<'db>,
+    pub kind: MonoComptimeObligationKind,
+}
+
+/// Source of a comptime obligation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum MonoComptimeObligationKind {
+    LetInit { name: String },
+    Return { context: String },
+    CallParam { function: String, param: String },
+    PatternLabel,
 }
 
 /// Specialized statement.

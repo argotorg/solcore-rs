@@ -27,8 +27,8 @@ pub use hir::sema::ty::{
 pub use infer::{
     AdtCtorScheme, BodyTyContext, CallSiteCallee, CallSiteEvidence, ComptimeObligationKind,
     DeferredObligation, ExprTy, InferResultExt, InferTable, InferTy, InferenceResult, Instantiated,
-    ObligationEvidence, ObligationSource, PatTy, TyVid, TypeckDiagnostic, UnifyError, VarValue,
-    body_ty_diagnostics, infer_body,
+    LetTy, ObligationEvidence, ObligationSource, PatTy, TyVid, TypeckDiagnostic, UnifyError,
+    VarValue, body_ty_diagnostics, infer_body,
 };
 pub use lower::{
     BinderEnv, LoweredAdtCtor, LoweredField, LoweredFunction, LoweredTypeAlias, TypeLowering,

@@ -19,8 +19,10 @@ mod ir;
 mod specialize;
 
 pub use ir::{
-    MonoArm, MonoContract, MonoEntry, MonoExpr, MonoExprKind, MonoFunction, MonoFunctionOrigin,
-    MonoId, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+    MonoAbiParam, MonoArm, MonoComptimeObligation, MonoComptimeObligationKind, MonoConstructor,
+    MonoContract, MonoEntry, MonoEntryKind, MonoExpr, MonoExprKind, MonoFallback, MonoFunction,
+    MonoFunctionOrigin, MonoId, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt,
+    MonoStmtKind, MonoTy,
 };
 pub use specialize::{
     SpecializeDiagnostic, SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput,

@@ -1,4 +1,8 @@
-use std::{collections::VecDeque, fmt};
+use std::{
+    collections::{VecDeque, hash_map::DefaultHasher},
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 use hir::{
     Db as HirDb,
@@ -14,11 +18,12 @@ use hir::{
     span::{Span, Spanned, SpannedElem},
 };
 use hir_ty::{
-    AliasNormalizer, BinderEnv, BodyTyContext, BuiltinTyCtor, CallSiteCallee, CallSiteEvidence,
-    ClassId, ComptimeObligationKind, Db, Evidence, InferResultExt, InferenceResult,
-    LoweredFunction, Pred, PredKind, Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor,
-    UserTyCtorKind, canonical_goal, contract_dispatch_surface, derived_generic_plan, infer_body,
-    solve, solver::DerivedClauseKind, trait_env_from_module_resolution, trait_env_with_givens,
+    AbiParam, AliasNormalizer, BinderEnv, BodyTyContext, BuiltinTyCtor, CallSiteCallee,
+    CallSiteEvidence, ClassId, ComptimeObligationKind, Db, Evidence, InferResultExt,
+    InferenceResult, LoweredFunction, Pred, PredKind, Solution, Ty, TyCtor, TyKind, TypeLowering,
+    UserTyCtor, UserTyCtorKind, canonical_goal, contract_dispatch_surface, derived_generic_plan,
+    frontend_desugar_plan, infer_body, solve, solver::DerivedClauseKind,
+    trait_env_from_module_resolution, trait_env_with_givens,
 };
 use nameres::{
     LibraryId, ModuleId, module_id_from_key, module_key_for_path, resolve_reachable_full,
@@ -28,8 +33,10 @@ use rustc_hash::FxHashMap;
 
 use crate::evaluate::{EvaluateOptions, evaluate_module};
 use crate::ir::{
-    MonoArm, MonoContract, MonoEntry, MonoExpr, MonoExprKind, MonoFunction, MonoFunctionOrigin,
-    MonoId, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+    MonoAbiParam, MonoArm, MonoComptimeObligation, MonoComptimeObligationKind, MonoConstructor,
+    MonoContract, MonoEntry, MonoEntryKind, MonoExpr, MonoExprKind, MonoFallback, MonoFunction,
+    MonoFunctionOrigin, MonoId, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt,
+    MonoStmtKind, MonoTy,
 };
 
 /// Specialization resource limits.
@@ -148,6 +155,7 @@ enum FunctionInfoKind {
 struct InstanceInfo<'db> {
     instance: InstanceDef<'db>,
     head: Pred<'db>,
+    preds: Vec<Pred<'db>>,
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +205,8 @@ struct BodyCtx<'a, 'db> {
     body_map: hir_nameres::BodyResolutionMap<'db>,
     subst: TySubst<'db>,
     depth: usize,
+    lowered_exprs: FxHashMap<Id<Expr<'db>>, MonoExpr<'db>>,
+    locals: FxHashMap<String, Ty<'db>>,
 }
 
 impl<'db> Driver<'db> {
@@ -265,6 +275,7 @@ impl<'db> Driver<'db> {
 
         let module = MonoModule {
             module: self.module.def_id_value(self.db),
+            frontend_desugar: frontend_desugar_plan(self.db, self.module),
             items,
         };
         let (module, mut eval_diagnostics) = evaluate_module(
@@ -372,9 +383,18 @@ impl<'db> Driver<'db> {
                     instance.type_var_elems(self.db),
                 ));
                 let head = self.lower_pred_with_vars(module, instance.head(self.db), &type_vars);
+                let preds = instance
+                    .preds(self.db)
+                    .iter()
+                    .map(|pred| self.lower_pred_with_vars(module, *pred, &type_vars))
+                    .collect();
                 self.instances.insert(
                     instance.def_id_value(self.db),
-                    InstanceInfo { instance, head },
+                    InstanceInfo {
+                        instance,
+                        head,
+                        preds,
+                    },
                 );
                 for method in instance.methods(self.db) {
                     let method_name = ident_text(self.db, &method.sig(self.db).name);
@@ -433,11 +453,31 @@ impl<'db> Driver<'db> {
             };
             has_contract = true;
             let surface = contract_dispatch_surface(self.db, self.module, *contract);
+            let constructor_surface = surface.constructor.clone();
+            let fallback_surface = surface.fallback.clone();
             let mut entries = Vec::new();
+            let mut constructor_meta = MonoConstructor {
+                source: None,
+                explicit: constructor_surface.explicit,
+                specialized: None,
+                payable: constructor_surface.payable,
+                inputs: mono_abi_params(constructor_surface.inputs.clone()),
+                span: contract.span(self.db),
+            };
+            let mut fallback_meta = MonoFallback {
+                source: fallback_surface.def,
+                explicit: fallback_surface.explicit,
+                specialized: None,
+                payable: fallback_surface.payable,
+                inputs: mono_abi_params(fallback_surface.inputs.clone()),
+                outputs: mono_abi_params(fallback_surface.outputs.clone()),
+                span: contract.span(self.db),
+            };
             for method in surface.methods {
                 if let Some(key) = self.root_for_def(method.def) {
                     entries.push(MonoEntry {
                         source: method.def,
+                        kind: MonoEntryKind::Method,
                         name: method.name,
                         specialized: key.base_name.clone(),
                         span: self
@@ -445,28 +485,49 @@ impl<'db> Driver<'db> {
                             .get(&method.def)
                             .map(|info| info.function.span(self.db))
                             .unwrap_or_else(|| contract.span(self.db)),
+                        selector: selector_bytes(&method.selector),
+                        signature: Some(method.signature),
+                        payable: method.payable,
+                        inputs: mono_abi_params(method.inputs),
+                        outputs: mono_abi_params(method.outputs),
                     });
                     roots.push(key);
                 }
             }
-            if let Some(index) = surface.constructor.source_index
+            if let Some(index) = constructor_surface.source_index
                 && let Some(ContractItem::FunctionDef(function)) =
                     contract.items(self.db).get(index)
                 && let Some(key) = self.root_for_def(function.def_id_value(self.db))
             {
+                constructor_meta.source = Some(function.def_id_value(self.db));
+                constructor_meta.specialized = Some(key.base_name.clone());
+                constructor_meta.span = function.span(self.db);
                 entries.push(MonoEntry {
                     source: function.def_id_value(self.db),
+                    kind: MonoEntryKind::Constructor,
                     name: "constructor".to_owned(),
                     specialized: key.base_name.clone(),
                     span: function.span(self.db),
+                    selector: None,
+                    signature: None,
+                    payable: constructor_surface.payable,
+                    inputs: mono_abi_params(constructor_surface.inputs.clone()),
+                    outputs: Vec::new(),
                 });
                 roots.push(key);
             }
-            if let Some(def) = surface.fallback.def
+            if let Some(def) = fallback_surface.def
                 && let Some(key) = self.root_for_def(def)
             {
+                fallback_meta.specialized = Some(key.base_name.clone());
+                fallback_meta.span = self
+                    .functions
+                    .get(&def)
+                    .map(|info| info.function.span(self.db))
+                    .unwrap_or_else(|| contract.span(self.db));
                 entries.push(MonoEntry {
                     source: def,
+                    kind: MonoEntryKind::Fallback,
                     name: "fallback".to_owned(),
                     specialized: key.base_name.clone(),
                     span: self
@@ -474,6 +535,11 @@ impl<'db> Driver<'db> {
                         .get(&def)
                         .map(|info| info.function.span(self.db))
                         .unwrap_or_else(|| contract.span(self.db)),
+                    selector: None,
+                    signature: None,
+                    payable: fallback_surface.payable,
+                    inputs: mono_abi_params(fallback_surface.inputs.clone()),
+                    outputs: mono_abi_params(fallback_surface.outputs.clone()),
                 });
                 roots.push(key);
             }
@@ -485,9 +551,15 @@ impl<'db> Driver<'db> {
                     {
                         entries.push(MonoEntry {
                             source: function.def_id_value(self.db),
+                            kind: MonoEntryKind::Method,
                             name: "main".to_owned(),
                             specialized: key.base_name.clone(),
                             span: function.span(self.db),
+                            selector: None,
+                            signature: None,
+                            payable: false,
+                            inputs: Vec::new(),
+                            outputs: Vec::new(),
                         });
                         roots.push(key);
                     }
@@ -497,6 +569,8 @@ impl<'db> Driver<'db> {
                 def: contract.def_id_value(self.db),
                 name: ident_text(self.db, &contract.name_elem(self.db)),
                 span: contract.span(self.db),
+                constructor: constructor_meta,
+                fallback: fallback_meta,
                 entries,
             });
         }
@@ -607,10 +681,15 @@ impl<'db> Driver<'db> {
             });
             return;
         }
-        let params = self
-            .function_params(&info, &lowered, &subst)
-            .unwrap_or_default();
-        let ret = subst.apply_ty(self.db, lowered.ret);
+        self.resolve_mptc_from_preds(
+            info.module,
+            lowered.scheme.body(self.db).preds(self.db),
+            &mut subst,
+        );
+        let Some(params) = self.function_params(&info, &lowered, &subst, pending.key.ty) else {
+            return;
+        };
+        let ret = self.specialized_return_ty(&info, &lowered, &subst, pending.key.ty);
         if !self.ensure_closed(
             ret,
             &pending.key.base_name,
@@ -636,12 +715,23 @@ impl<'db> Driver<'db> {
             body_map,
             subst,
             depth: pending.depth,
+            lowered_exprs: FxHashMap::default(),
+            locals: params
+                .iter()
+                .map(|param| (param.name.clone(), param.ty.ty()))
+                .collect(),
         };
-        let body = body
+        let Some(body) = body
             .top_level_stmts(ctx.driver.db)
             .iter()
             .map(|stmt| ctx.stmt(*stmt))
-            .collect();
+            .collect::<Option<Vec<_>>>()
+        else {
+            return;
+        };
+        let Some(comptime_obligations) = ctx.comptime_obligations() else {
+            return;
+        };
         let fun = MonoFunction {
             origin: pending.key.origin.clone(),
             source: Some(pending.key.def),
@@ -649,6 +739,7 @@ impl<'db> Driver<'db> {
             span: info.function.span(ctx.driver.db),
             params,
             ret: MonoTy::new_unchecked(ret),
+            comptime_obligations,
             body,
         };
         ctx.driver.mono_funs.insert(pending.key, fun);
@@ -659,6 +750,7 @@ impl<'db> Driver<'db> {
         info: &FunctionInfo<'db>,
         lowered: &LoweredFunction<'db>,
         subst: &TySubst<'db>,
+        key_ty: Ty<'db>,
     ) -> Option<Vec<MonoParam<'db>>> {
         let sig = info.function.sig(self.db);
         let params = sig.params.atom();
@@ -666,9 +758,11 @@ impl<'db> Driver<'db> {
             return None;
         }
         let mut out = Vec::new();
-        for (param, ty) in params.iter().zip(&lowered.params) {
-            let ty = subst.apply_ty(self.db, *ty);
-            self.ensure_closed(ty, "parameter", Some(param.span(self.db)));
+        for (index, (param, ty)) in params.iter().zip(&lowered.params).enumerate() {
+            let ty = self.specialized_param_ty(*ty, subst, key_ty, index);
+            if !self.ensure_closed(ty, "parameter", Some(param.span(self.db))) {
+                return None;
+            }
             out.push(MonoParam {
                 name: param_name(self.db, param).unwrap_or("_").to_owned(),
                 comptime: param_comptime(param) || ty_is_comptime(self.db, ty),
@@ -679,13 +773,61 @@ impl<'db> Driver<'db> {
         Some(out)
     }
 
+    fn specialized_return_ty(
+        &self,
+        info: &FunctionInfo<'db>,
+        lowered: &LoweredFunction<'db>,
+        subst: &TySubst<'db>,
+        key_ty: Ty<'db>,
+    ) -> Ty<'db> {
+        let ret = subst.apply_ty(self.db, lowered.ret);
+        if info.function.sig(self.db).ret.is_none()
+            && !ty_is_closed(self.db, ret)
+            && let Some(key_ret) = function_ret_ty(self.db, key_ty)
+            && ty_is_closed(self.db, key_ret)
+        {
+            return key_ret;
+        }
+        ret
+    }
+
+    fn specialized_param_ty(
+        &self,
+        lowered_param: Ty<'db>,
+        subst: &TySubst<'db>,
+        key_ty: Ty<'db>,
+        index: usize,
+    ) -> Ty<'db> {
+        let ty = subst.apply_ty(self.db, lowered_param);
+        if !ty_is_closed(self.db, ty)
+            && let Some(key_param) = function_param_ty(self.db, key_ty, index)
+            && ty_is_closed(self.db, key_param)
+        {
+            return key_param;
+        }
+        ty
+    }
+
     fn source_base_name(&self, info: &FunctionInfo<'db>) -> String {
         match &info.kind {
             FunctionInfoKind::Source | FunctionInfoKind::Contract => {
-                ident_text(self.db, &info.function.sig(self.db).name)
+                self.qualified_source_base_name(info)
             }
             FunctionInfoKind::InstanceMethod { method } => method.clone(),
         }
+    }
+
+    fn qualified_source_base_name(&self, info: &FunctionInfo<'db>) -> String {
+        let def = info.function.def_id_value(self.db);
+        let mut parts = def_owner_path(self.db, def);
+        parts.push(ident_text(self.db, &info.function.sig(self.db).name));
+        parts.push(def_hash_suffix(self.db, def));
+        parts
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .map(|part| sanitize_name_component(&part))
+            .collect::<Vec<_>>()
+            .join("_")
     }
 
     fn lower_normalized_function(&self, info: &FunctionInfo<'db>) -> LoweredFunction<'db> {
@@ -793,9 +935,9 @@ impl<'db> Driver<'db> {
         }
     }
 
-    fn mono_ty(&mut self, ty: Ty<'db>, context: &str, span: Span<'db>) -> MonoTy<'db> {
-        self.ensure_closed(ty, context, Some(span));
-        MonoTy::new_unchecked(ty)
+    fn mono_ty(&mut self, ty: Ty<'db>, context: &str, span: Span<'db>) -> Option<MonoTy<'db>> {
+        self.ensure_closed(ty, context, Some(span))
+            .then(|| MonoTy::new_unchecked(ty))
     }
 
     fn resolve_class_method_call(
@@ -926,6 +1068,85 @@ impl<'db> Driver<'db> {
                 )
             })?;
         self.solve_closed_pred(pred)
+    }
+
+    fn resolve_mptc_from_preds(
+        &self,
+        _module: Module<'db>,
+        preds: &[Pred<'db>],
+        subst: &mut TySubst<'db>,
+    ) {
+        for pred in preds {
+            let PredKind::InClass { class, main, args } = pred.kind(self.db) else {
+                continue;
+            };
+            let main = subst.apply_ty(self.db, *main);
+            let extras = args
+                .iter()
+                .map(|arg| subst.apply_ty(self.db, *arg))
+                .collect::<Vec<_>>();
+            if ty_is_closed(self.db, main)
+                && extras.iter().any(|extra| !ty_is_closed(self.db, *extra))
+            {
+                self.try_resolve_mptc(*class, main, &extras, subst);
+            }
+        }
+    }
+
+    fn try_resolve_mptc(
+        &self,
+        class: ClassId<'db>,
+        main: Ty<'db>,
+        extras: &[Ty<'db>],
+        subst: &mut TySubst<'db>,
+    ) {
+        for info in self.instances.values() {
+            let PredKind::InClass {
+                class: inst_class,
+                main: inst_main,
+                args: inst_args,
+            } = info.head.kind(self.db)
+            else {
+                continue;
+            };
+            if *inst_class != class || inst_args.len() != extras.len() {
+                continue;
+            }
+            let mut phi = TySubst::default();
+            if !phi.match_ty(self.db, *inst_main, main) {
+                continue;
+            }
+            let mut phi_with_eq = phi.clone();
+            for pred in &info.preds {
+                if let PredKind::Eq { lhs, rhs } = phi.apply_pred(self.db, *pred).kind(self.db) {
+                    match (lhs.kind(self.db), rhs.kind(self.db)) {
+                        (TyKind::BoundVar(var), _) if ty_is_closed(self.db, *rhs) => {
+                            phi_with_eq.insert_if_consistent(var.index, *rhs);
+                        }
+                        (_, TyKind::BoundVar(var)) if ty_is_closed(self.db, *lhs) => {
+                            phi_with_eq.insert_if_consistent(var.index, *lhs);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let concrete_extras = inst_args
+                .iter()
+                .map(|arg| phi_with_eq.apply_ty(self.db, *arg))
+                .collect::<Vec<_>>();
+            if !concrete_extras
+                .iter()
+                .all(|extra| ty_is_closed(self.db, *extra))
+            {
+                continue;
+            }
+            for (extra, concrete) in extras.iter().zip(concrete_extras) {
+                let mut recovered = TySubst::default();
+                if recovered.match_ty(self.db, *extra, concrete) {
+                    subst.extend_consistent(recovered);
+                }
+            }
+        }
     }
 
     fn specialize_derived_generic(
@@ -1094,6 +1315,7 @@ impl<'db> Driver<'db> {
             span,
             params: vec![param],
             ret: MonoTy::new_unchecked(ret_ty),
+            comptime_obligations: Vec::new(),
             body: vec![MonoStmt {
                 span,
                 kind: MonoStmtKind::Match {
@@ -1106,7 +1328,7 @@ impl<'db> Driver<'db> {
 }
 
 impl<'a, 'db> BodyCtx<'a, 'db> {
-    fn stmt(&mut self, stmt_id: Id<Stmt<'db>>) -> MonoStmt<'db> {
+    fn stmt(&mut self, stmt_id: Id<Stmt<'db>>) -> Option<MonoStmt<'db>> {
         let stmt = self.body.stmts(self.driver.db).get(stmt_id);
         let span = stmt.span;
         let kind = match &stmt.kind {
@@ -1116,63 +1338,83 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 ty,
                 init,
             } => {
-                let init_expr = init.map(|expr| self.expr(expr));
-                let sem_ty = init
-                    .and_then(|expr| self.expr_ty(expr))
-                    .or_else(|| ty.map(|ty| self.lower_body_ty(ty)))
+                let init_expr = match init {
+                    Some(expr) => Some(self.expr(*expr)?),
+                    None => None,
+                };
+                let sem_ty = self
+                    .result
+                    .let_ty(self.body, stmt_id)
+                    .or_else(|| {
+                        init.and_then(|expr| self.expr_ty(expr))
+                            .or_else(|| ty.map(|ty| self.lower_body_ty(ty)))
+                    })
                     .map(|ty| self.subst.apply_ty(self.driver.db, ty))
                     .unwrap_or_else(|| Ty::unknown(self.driver.db));
                 let id = MonoId {
                     name: ident_text(self.driver.db, name),
-                    ty: self.driver.mono_ty(sem_ty, "let binding", span),
+                    ty: self.driver.mono_ty(sem_ty, "let binding", span)?,
                     span: name.span(self.driver.db),
                 };
+                self.locals.insert(id.name.clone(), sem_ty);
                 let comptime = comptime.is_some()
                     || ty.is_some_and(|ty| ty_is_comptime(self.driver.db, self.lower_body_ty(ty)))
                     || self.stmt_has_comptime_let_obligation(stmt_id);
                 MonoStmtKind::Let {
                     comptime,
                     id,
-                    ty: ty.map(|ty| {
-                        let ty = self.subst.apply_ty(self.driver.db, self.lower_body_ty(ty));
-                        self.driver.mono_ty(ty, "let annotation", span)
-                    }),
+                    ty: match ty {
+                        Some(ty) => {
+                            let ty = self.subst.apply_ty(self.driver.db, self.lower_body_ty(*ty));
+                            Some(self.driver.mono_ty(ty, "let annotation", span)?)
+                        }
+                        None => None,
+                    },
                     init: init_expr,
                 }
             }
-            StmtKind::Return(expr) => MonoStmtKind::Return(expr.map(|expr| self.expr(expr))),
-            StmtKind::Expr(expr) => MonoStmtKind::Expr(self.expr(*expr)),
+            StmtKind::Return(expr) => MonoStmtKind::Return(match expr {
+                Some(expr) => Some(self.expr(*expr)?),
+                None => None,
+            }),
+            StmtKind::Expr(expr) => MonoStmtKind::Expr(self.expr(*expr)?),
             StmtKind::Assign { lhs, rhs } => MonoStmtKind::Assign {
-                lhs: self.expr(*lhs),
-                rhs: self.expr(*rhs),
+                lhs: self.expr(*lhs)?,
+                rhs: self.expr(*rhs)?,
             },
             StmtKind::AddAssign { lhs, rhs } => MonoStmtKind::AddAssign {
-                lhs: self.expr(*lhs),
-                rhs: self.expr(*rhs),
+                lhs: self.expr(*lhs)?,
+                rhs: self.expr(*rhs)?,
             },
             StmtKind::SubAssign { lhs, rhs } => MonoStmtKind::SubAssign {
-                lhs: self.expr(*lhs),
-                rhs: self.expr(*rhs),
+                lhs: self.expr(*lhs)?,
+                rhs: self.expr(*rhs)?,
             },
             StmtKind::BitXorAssign { lhs, rhs } => MonoStmtKind::BitXorAssign {
-                lhs: self.expr(*lhs),
-                rhs: self.expr(*rhs),
+                lhs: self.expr(*lhs)?,
+                rhs: self.expr(*rhs)?,
             },
             StmtKind::BitAndAssign { lhs, rhs } => MonoStmtKind::BitAndAssign {
-                lhs: self.expr(*lhs),
-                rhs: self.expr(*rhs),
+                lhs: self.expr(*lhs)?,
+                rhs: self.expr(*rhs)?,
             },
             StmtKind::BitOrAssign { lhs, rhs } => MonoStmtKind::BitOrAssign {
-                lhs: self.expr(*lhs),
-                rhs: self.expr(*rhs),
+                lhs: self.expr(*lhs)?,
+                rhs: self.expr(*rhs)?,
             },
             StmtKind::ModAssign { lhs, rhs } => MonoStmtKind::ModAssign {
-                lhs: self.expr(*lhs),
-                rhs: self.expr(*rhs),
+                lhs: self.expr(*lhs)?,
+                rhs: self.expr(*rhs)?,
             },
             StmtKind::Match { scrutinees, arms } => MonoStmtKind::Match {
-                scrutinees: scrutinees.iter().map(|expr| self.expr(*expr)).collect(),
-                arms: arms.iter().map(|arm| self.arm(arm)).collect(),
+                scrutinees: scrutinees
+                    .iter()
+                    .map(|expr| self.expr(*expr))
+                    .collect::<Option<Vec<_>>>()?,
+                arms: arms
+                    .iter()
+                    .map(|arm| self.arm(arm))
+                    .collect::<Option<Vec<_>>>()?,
             },
             StmtKind::For {
                 init,
@@ -1180,56 +1422,98 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 post,
                 body,
             } => MonoStmtKind::For {
-                init: init.iter().map(|stmt| self.stmt(*stmt)).collect(),
-                cond: self.expr(*cond),
-                post: post.iter().map(|stmt| self.stmt(*stmt)).collect(),
-                body: body.iter().map(|stmt| self.stmt(*stmt)).collect(),
+                init: init
+                    .iter()
+                    .map(|stmt| self.stmt(*stmt))
+                    .collect::<Option<Vec<_>>>()?,
+                cond: self.expr(*cond)?,
+                post: post
+                    .iter()
+                    .map(|stmt| self.stmt(*stmt))
+                    .collect::<Option<Vec<_>>>()?,
+                body: body
+                    .iter()
+                    .map(|stmt| self.stmt(*stmt))
+                    .collect::<Option<Vec<_>>>()?,
             },
             StmtKind::If {
                 cond,
                 then_body,
                 else_body,
             } => MonoStmtKind::If {
-                cond: self.expr(*cond),
-                then_body: then_body.iter().map(|stmt| self.stmt(*stmt)).collect(),
-                else_body: else_body
-                    .as_ref()
-                    .map(|body| body.iter().map(|stmt| self.stmt(*stmt)).collect()),
+                cond: self.expr(*cond)?,
+                then_body: then_body
+                    .iter()
+                    .map(|stmt| self.stmt(*stmt))
+                    .collect::<Option<Vec<_>>>()?,
+                else_body: match else_body.as_ref() {
+                    Some(body) => Some(
+                        body.iter()
+                            .map(|stmt| self.stmt(*stmt))
+                            .collect::<Option<Vec<_>>>()?,
+                    ),
+                    None => None,
+                },
             },
-            StmtKind::Block { body } => {
-                MonoStmtKind::Block(body.iter().map(|stmt| self.stmt(*stmt)).collect())
-            }
+            StmtKind::Block { body } => MonoStmtKind::Block(
+                body.iter()
+                    .map(|stmt| self.stmt(*stmt))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
             StmtKind::Assembly { body } => MonoStmtKind::Assembly(body.clone()),
             StmtKind::Break => MonoStmtKind::Break,
             StmtKind::Continue => MonoStmtKind::Continue,
             StmtKind::Error => MonoStmtKind::Error,
         };
-        MonoStmt { span, kind }
+        Some(MonoStmt { span, kind })
     }
 
-    fn arm(&mut self, arm: &MatchArm<'db>) -> MonoArm<'db> {
-        MonoArm {
+    fn arm(&mut self, arm: &MatchArm<'db>) -> Option<MonoArm<'db>> {
+        Some(MonoArm {
             span: arm.span,
-            pats: arm.pats.iter().map(|pat| self.pat(*pat)).collect(),
-            body: arm.body.iter().map(|stmt| self.stmt(*stmt)).collect(),
-        }
+            pats: arm
+                .pats
+                .iter()
+                .map(|pat| self.pat(*pat))
+                .collect::<Option<Vec<_>>>()?,
+            body: arm
+                .body
+                .iter()
+                .map(|stmt| self.stmt(*stmt))
+                .collect::<Option<Vec<_>>>()?,
+        })
     }
 
-    fn expr(&mut self, expr_id: Id<Expr<'db>>) -> MonoExpr<'db> {
+    fn expr(&mut self, expr_id: Id<Expr<'db>>) -> Option<MonoExpr<'db>> {
         let expr = self.body.exprs(self.driver.db).get(expr_id);
-        let ty = self
+        let mut ty = self
             .expr_ty(expr_id)
             .map(|ty| self.subst.apply_ty(self.driver.db, ty))
             .unwrap_or_else(|| Ty::unknown(self.driver.db));
-        let mono_ty = self.driver.mono_ty(ty, "expression", expr.span);
+        if matches!(ty.kind(self.driver.db), TyKind::Unknown)
+            && let ExprKind::Ident(name) = &expr.kind
+            && let Some(local_ty) = self.locals.get(ident_text(self.driver.db, name).as_str())
+        {
+            ty = *local_ty;
+        }
+        if matches!(ty.kind(self.driver.db), TyKind::Unknown)
+            && let ExprKind::Call { callee, .. } = &expr.kind
+            && let Some(ctor_ty) = self.constructor_call_result_ty(*callee)
+        {
+            ty = ctor_ty;
+        }
+        let mono_ty = self.driver.mono_ty(ty, "expression", expr.span)?;
         let kind = match &expr.kind {
             ExprKind::Lit(lit) => MonoExprKind::Lit(lit.clone()),
-            ExprKind::Ident(name) => self.ident_expr(expr_id, name, ty, expr.span),
-            ExprKind::Tuple(elems) => {
-                MonoExprKind::Tuple(elems.iter().map(|expr| self.expr(*expr)).collect())
-            }
+            ExprKind::Ident(name) => self.ident_expr(expr_id, name, mono_ty, expr.span),
+            ExprKind::Tuple(elems) => MonoExprKind::Tuple(
+                elems
+                    .iter()
+                    .map(|expr| self.expr(*expr))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
             ExprKind::Call { callee, args } => {
-                self.call_expr(expr_id, *callee, args, ty, expr.span)
+                self.call_expr(expr_id, *callee, args, ty, expr.span)?
             }
             ExprKind::Field { base, field } => {
                 if let Some(resolution) = self.expr_resolution(expr_id) {
@@ -1270,39 +1554,39 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                             })
                         }
                         _ => MonoExprKind::Field {
-                            base: Box::new(self.expr(*base)),
+                            base: Box::new(self.expr(*base)?),
                             field: ident_text(self.driver.db, field),
                         },
                     }
                 } else {
                     MonoExprKind::Field {
-                        base: Box::new(self.expr(*base)),
+                        base: Box::new(self.expr(*base)?),
                         field: ident_text(self.driver.db, field),
                     }
                 }
             }
             ExprKind::BinOp { lhs, op, rhs } => MonoExprKind::BinOp {
-                lhs: Box::new(self.expr(*lhs)),
+                lhs: Box::new(self.expr(*lhs)?),
                 op: *op.atom(),
-                rhs: Box::new(self.expr(*rhs)),
+                rhs: Box::new(self.expr(*rhs)?),
             },
             ExprKind::UnaryOp { op, expr } => MonoExprKind::UnaryOp {
                 op: *op.atom(),
-                expr: Box::new(self.expr(*expr)),
+                expr: Box::new(self.expr(*expr)?),
             },
             ExprKind::Index { base, index } => MonoExprKind::Index {
-                base: Box::new(self.expr(*base)),
-                index: Box::new(self.expr(*index)),
+                base: Box::new(self.expr(*base)?),
+                index: Box::new(self.expr(*index)?),
             },
             ExprKind::Proxy { ty, .. } => {
                 let ty = self.subst.apply_ty(self.driver.db, self.lower_body_ty(*ty));
-                MonoExprKind::Proxy(self.driver.mono_ty(ty, "proxy", expr.span))
+                MonoExprKind::Proxy(self.driver.mono_ty(ty, "proxy", expr.span)?)
             }
             ExprKind::TypeAnnot { expr: inner, ty } => {
                 let ty = self.subst.apply_ty(self.driver.db, self.lower_body_ty(*ty));
                 MonoExprKind::TypeAnnot {
-                    expr: Box::new(self.expr(*inner)),
-                    ty: self.driver.mono_ty(ty, "type annotation", expr.span),
+                    expr: Box::new(self.expr(*inner)?),
+                    ty: self.driver.mono_ty(ty, "type annotation", expr.span)?,
                 }
             }
             ExprKind::If {
@@ -1310,9 +1594,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 then_expr,
                 else_expr,
             } => MonoExprKind::If {
-                cond: Box::new(self.expr(*cond)),
-                then_expr: Box::new(self.expr(*then_expr)),
-                else_expr: Box::new(self.expr(*else_expr)),
+                cond: Box::new(self.expr(*cond)?),
+                then_expr: Box::new(self.expr(*then_expr)?),
+                else_expr: Box::new(self.expr(*else_expr)?),
             },
             ExprKind::Lambda { body, .. } => MonoExprKind::Lambda {
                 name: body
@@ -1326,22 +1610,27 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     ty: mono_ty,
                     span: expr.span,
                 },
-                args: args.iter().map(|arg| self.expr(*arg)).collect(),
+                args: args
+                    .iter()
+                    .map(|arg| self.expr(*arg))
+                    .collect::<Option<Vec<_>>>()?,
             },
             ExprKind::Error => MonoExprKind::Error,
         };
-        MonoExpr {
+        let mono_expr = MonoExpr {
             span: expr.span,
             ty: mono_ty,
             kind,
-        }
+        };
+        self.lowered_exprs.insert(expr_id, mono_expr.clone());
+        Some(mono_expr)
     }
 
     fn ident_expr(
         &mut self,
         expr_id: Id<Expr<'db>>,
         name: &SpannedElem<'db, Ident<'db>>,
-        ty: Ty<'db>,
+        ty: MonoTy<'db>,
         span: Span<'db>,
     ) -> MonoExprKind<'db> {
         match self.expr_resolution(expr_id) {
@@ -1352,7 +1641,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         self.driver.adts.get(&adt).map(|info| info.adt),
                         index,
                     ),
-                    ty: MonoTy::new_unchecked(ty),
+                    ty,
                     span,
                 },
                 args: Vec::new(),
@@ -1361,7 +1650,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 MonoExprKind::Con {
                     ctor: MonoId {
                         name: builtin_ctor_name(ctor).to_owned(),
-                        ty: MonoTy::new_unchecked(ty),
+                        ty,
                         span,
                     },
                     args: Vec::new(),
@@ -1369,7 +1658,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             }
             _ => MonoExprKind::Var(MonoId {
                 name: ident_text(self.driver.db, name),
-                ty: MonoTy::new_unchecked(ty),
+                ty,
                 span,
             }),
         }
@@ -1382,8 +1671,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         args: &[Id<Expr<'db>>],
         result_ty: Ty<'db>,
         span: Span<'db>,
-    ) -> MonoExprKind<'db> {
-        let arg_exprs = args.iter().map(|arg| self.expr(*arg)).collect::<Vec<_>>();
+    ) -> Option<MonoExprKind<'db>> {
+        let arg_exprs = args
+            .iter()
+            .map(|arg| self.expr(*arg))
+            .collect::<Option<Vec<_>>>()?;
         let mut callee_ty = self
             .expr_ty(callee)
             .map(|ty| self.subst.apply_ty(self.driver.db, ty))
@@ -1395,6 +1687,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 result_ty,
             );
         }
+        let mono_callee_ty = self.driver.mono_ty(callee_ty, "callee", span)?;
         let resolution = self.expr_resolution(callee);
         match resolution {
             Some(hir_nameres::Resolution::Def {
@@ -1402,27 +1695,40 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 kind: hir_nameres::DefResolutionKind::Function,
             }) => {
                 let name = self.specialize_direct_function(def, callee_ty, span);
-                MonoExprKind::Call {
+                Some(MonoExprKind::Call {
                     callee: MonoId {
                         name,
-                        ty: MonoTy::new_unchecked(callee_ty),
+                        ty: mono_callee_ty,
                         span,
                     },
                     args: arg_exprs,
-                }
+                })
             }
-            Some(hir_nameres::Resolution::Ctor { ty: adt, index }) => MonoExprKind::Con {
+            Some(hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Adt,
+            }) => Some(MonoExprKind::Con {
+                ctor: MonoId {
+                    name: def
+                        .name(self.driver.db)
+                        .unwrap_or_else(|| "ctor".to_owned()),
+                    ty: self.driver.mono_ty(result_ty, "constructor", span)?,
+                    span,
+                },
+                args: arg_exprs,
+            }),
+            Some(hir_nameres::Resolution::Ctor { ty: adt, index }) => Some(MonoExprKind::Con {
                 ctor: MonoId {
                     name: ctor_name(
                         self.driver.db,
                         self.driver.adts.get(&adt).map(|info| info.adt),
                         index,
                     ),
-                    ty: MonoTy::new_unchecked(callee_ty),
+                    ty: mono_callee_ty,
                     span,
                 },
                 args: arg_exprs,
-            },
+            }),
             Some(hir_nameres::Resolution::ClassMethod { class, name }) => {
                 if self.is_int_from_integer_call(callee) {
                     return self.int_from_integer_call(arg_exprs, result_ty, span);
@@ -1436,23 +1742,23 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         .driver
                         .resolve_class_method_call(&name, evidence, callee_ty, span, self.depth)
                 {
-                    return MonoExprKind::Call {
+                    return Some(MonoExprKind::Call {
                         callee: MonoId {
                             name,
-                            ty: MonoTy::new_unchecked(callee_ty),
+                            ty: mono_callee_ty,
                             span,
                         },
                         args: arg_exprs,
-                    };
+                    });
                 }
                 self.driver.diagnostics.push(SpecializeDiagnostic {
                     kind: SpecializeDiagnosticKind::MissingEvidence { context: name },
                     span: Some(span),
                 });
-                MonoExprKind::ClosureDispatch {
-                    callee: Box::new(self.expr(callee)),
+                Some(MonoExprKind::ClosureDispatch {
+                    callee: Box::new(self.expr(callee)?),
                     args: arg_exprs,
-                }
+                })
             }
             Some(hir_nameres::Resolution::Builtin(kind)) => {
                 if matches!(
@@ -1463,37 +1769,84 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 ) {
                     return self.int_from_integer_call(arg_exprs, result_ty, span);
                 }
-                let callee = MonoId {
+                let builtin_callee = MonoId {
                     name: builtin_name(kind).to_owned(),
-                    ty: MonoTy::new_unchecked(callee_ty),
+                    ty: mono_callee_ty,
                     span,
                 };
                 match kind {
-                    hir_nameres::BuiltinKind::Constructor(_) => MonoExprKind::Con {
-                        ctor: callee,
+                    hir_nameres::BuiltinKind::Constructor(_) => Some(MonoExprKind::Con {
+                        ctor: builtin_callee,
                         args: arg_exprs,
-                    },
+                    }),
                     hir_nameres::BuiltinKind::ClassMethod(
                         hir_nameres::BuiltinClassMethod::InvokableInvoke,
-                    ) => MonoExprKind::ClosureDispatch {
-                        callee: Box::new(MonoExpr {
-                            span,
-                            ty: callee.ty,
-                            kind: MonoExprKind::Var(callee),
-                        }),
+                    ) => {
+                        let evidence = self.call_evidence(call_expr, callee).map(|evidence| {
+                            self.subst.apply_evidence(self.driver.db, evidence.evidence)
+                        });
+                        if let Some(evidence) = evidence
+                            && let Some(name) = self.driver.resolve_class_method_call(
+                                "invoke", evidence, callee_ty, span, self.depth,
+                            )
+                        {
+                            return Some(MonoExprKind::Call {
+                                callee: MonoId {
+                                    name,
+                                    ty: mono_callee_ty,
+                                    span,
+                                },
+                                args: arg_exprs,
+                            });
+                        }
+                        self.invokable_closure_dispatch(arg_exprs, span)
+                    }
+                    _ => Some(MonoExprKind::Call {
+                        callee: builtin_callee,
                         args: arg_exprs,
-                    },
-                    _ => MonoExprKind::Call {
-                        callee,
-                        args: arg_exprs,
-                    },
+                    }),
                 }
             }
-            _ => MonoExprKind::ClosureDispatch {
-                callee: Box::new(self.expr(callee)),
-                args: arg_exprs,
-            },
+            _ => {
+                if let Some(adt) = self.adt_for_ident_callee(callee) {
+                    return Some(MonoExprKind::Con {
+                        ctor: MonoId {
+                            name: adt
+                                .name(self.driver.db)
+                                .unwrap_or_else(|| "ctor".to_owned()),
+                            ty: self.driver.mono_ty(result_ty, "constructor", span)?,
+                            span,
+                        },
+                        args: arg_exprs,
+                    });
+                }
+                Some(MonoExprKind::ClosureDispatch {
+                    callee: Box::new(self.expr(callee)?),
+                    args: arg_exprs,
+                })
+            }
         }
+    }
+
+    fn invokable_closure_dispatch(
+        &mut self,
+        mut arg_exprs: Vec<MonoExpr<'db>>,
+        span: Span<'db>,
+    ) -> Option<MonoExprKind<'db>> {
+        if arg_exprs.is_empty() {
+            self.driver.diagnostics.push(SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::MissingEvidence {
+                    context: "invokable.invoke".to_owned(),
+                },
+                span: Some(span),
+            });
+            return Some(MonoExprKind::Error);
+        }
+        let callee = arg_exprs.remove(0);
+        Some(MonoExprKind::ClosureDispatch {
+            callee: Box::new(callee),
+            args: arg_exprs,
+        })
     }
 
     fn specialize_direct_function(
@@ -1509,6 +1862,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 self.driver.db,
                 lowered.scheme.body(self.driver.db).ty(self.driver.db),
                 callee_ty,
+            );
+            self.driver.resolve_mptc_from_preds(
+                info.module,
+                lowered.scheme.body(self.driver.db).preds(self.driver.db),
+                &mut subst,
             );
             let args = subst.specialization_args();
             let base = self.driver.source_base_name(&info);
@@ -1539,12 +1897,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         mut args: Vec<MonoExpr<'db>>,
         result_ty: Ty<'db>,
         span: Span<'db>,
-    ) -> MonoExprKind<'db> {
+    ) -> Option<MonoExprKind<'db>> {
         if ty_is_builtin(self.driver.db, result_ty, BuiltinTyCtor::Integer) {
-            return args
-                .pop()
-                .map(|expr| expr.kind)
-                .unwrap_or(MonoExprKind::Error);
+            return Some(
+                args.pop()
+                    .map(|expr| expr.kind)
+                    .unwrap_or(MonoExprKind::Error),
+            );
         }
         if ty_is_builtin(self.driver.db, result_ty, BuiltinTyCtor::Word) {
             let ty = Ty::function(
@@ -1552,14 +1911,14 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 vec![Ty::integer(self.driver.db)],
                 Ty::word(self.driver.db),
             );
-            return MonoExprKind::Call {
+            return Some(MonoExprKind::Call {
                 callee: MonoId {
                     name: "wordFromInteger".to_owned(),
                     ty: MonoTy::new_unchecked(ty),
                     span,
                 },
                 args,
-            };
+            });
         }
         if let Some(evidence) = self.call_evidence_for_builtin_int(span) {
             let evidence = self.subst.apply_evidence(self.driver.db, evidence.evidence);
@@ -1570,7 +1929,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 span,
                 self.depth,
             ) {
-                return MonoExprKind::Call {
+                return Some(MonoExprKind::Call {
                     callee: MonoId {
                         name,
                         ty: MonoTy::new_unchecked(Ty::function(
@@ -1581,10 +1940,10 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         span,
                     },
                     args,
-                };
+                });
             }
         }
-        MonoExprKind::Call {
+        Some(MonoExprKind::Call {
             callee: MonoId {
                 name: "Int_fromInteger".to_owned(),
                 ty: MonoTy::new_unchecked(Ty::function(
@@ -1595,21 +1954,25 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 span,
             },
             args,
-        }
+        })
     }
 
-    fn pat(&mut self, pat_id: Id<Pat<'db>>) -> MonoPat<'db> {
+    fn pat(&mut self, pat_id: Id<Pat<'db>>) -> Option<MonoPat<'db>> {
         let pat = self.body.pats(self.driver.db).get(pat_id);
         let ty = self
             .result
             .pat_ty(self.body, pat_id)
             .map(|ty| self.subst.apply_ty(self.driver.db, ty))
             .unwrap_or_else(|| Ty::unknown(self.driver.db));
-        let mono_ty = self.driver.mono_ty(ty, "pattern", pat.span);
+        let mono_ty = self.driver.mono_ty(ty, "pattern", pat.span)?;
         let kind = match &pat.kind {
             PatKind::Wildcard => MonoPatKind::Wildcard,
             PatKind::Var(name) => MonoPatKind::Var(MonoId {
-                name: ident_text(self.driver.db, name),
+                name: {
+                    let name = ident_text(self.driver.db, name);
+                    self.locals.insert(name.clone(), ty);
+                    name
+                },
                 ty: mono_ty,
                 span: pat.span,
             }),
@@ -1620,19 +1983,25 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     ty: mono_ty,
                     span: pat.span,
                 },
-                args: args.iter().map(|arg| self.pat(*arg)).collect(),
+                args: args
+                    .iter()
+                    .map(|arg| self.pat(*arg))
+                    .collect::<Option<Vec<_>>>()?,
             },
-            PatKind::Tuple { elems } => {
-                MonoPatKind::Tuple(elems.iter().map(|pat| self.pat(*pat)).collect())
-            }
-            PatKind::ComptimeLabel { expr, .. } => MonoPatKind::ComptimeLabel(self.expr(*expr)),
+            PatKind::Tuple { elems } => MonoPatKind::Tuple(
+                elems
+                    .iter()
+                    .map(|pat| self.pat(*pat))
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            PatKind::ComptimeLabel { expr, .. } => MonoPatKind::ComptimeLabel(self.expr(*expr)?),
             PatKind::Error => MonoPatKind::Error,
         };
-        MonoPat {
+        Some(MonoPat {
             span: pat.span,
             ty: mono_ty,
             kind,
-        }
+        })
     }
 
     fn expr_ty(&self, expr: Id<Expr<'db>>) -> Option<Ty<'db>> {
@@ -1645,6 +2014,46 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             .iter()
             .find(|entry| entry.body == self.body && entry.expr == expr)
             .map(|entry| entry.resolution.clone())
+    }
+
+    fn constructor_call_result_ty(&self, callee: Id<Expr<'db>>) -> Option<Ty<'db>> {
+        if let Some(adt) = self.adt_for_ident_callee(callee) {
+            return Some(Ty::named(
+                self.driver.db,
+                TyCtor::User(UserTyCtor {
+                    def: adt,
+                    kind: UserTyCtorKind::Adt,
+                }),
+                Vec::new(),
+            ));
+        }
+        match self.expr_resolution(callee)? {
+            hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Adt,
+            }
+            | hir_nameres::Resolution::Ctor { ty: def, .. } => Some(Ty::named(
+                self.driver.db,
+                TyCtor::User(UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+                Vec::new(),
+            )),
+            _ => None,
+        }
+    }
+
+    fn adt_for_ident_callee(&self, callee: Id<Expr<'db>>) -> Option<DefId<'db>> {
+        let ExprKind::Ident(name) = &self.body.exprs(self.driver.db).get(callee).kind else {
+            return None;
+        };
+        let text = ident_text(self.driver.db, name);
+        self.driver
+            .adts
+            .keys()
+            .copied()
+            .find(|def| def.name(self.driver.db).as_deref() == Some(text.as_str()))
     }
 
     fn call_evidence(
@@ -1711,6 +2120,43 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 )
         })
     }
+
+    fn comptime_obligations(&mut self) -> Option<Vec<MonoComptimeObligation<'db>>> {
+        let obligations = self
+            .result
+            .comptime_obligations
+            .clone()
+            .into_iter()
+            .filter(|obligation| obligation.body == self.body)
+            .collect::<Vec<_>>();
+        let mut out = Vec::new();
+        for obligation in obligations {
+            let expr = match self.lowered_exprs.get(&obligation.expr).cloned() {
+                Some(expr) => expr,
+                None => self.expr(obligation.expr)?,
+            };
+            let kind = match obligation.kind {
+                ComptimeObligationKind::LetInit { name, .. } => {
+                    MonoComptimeObligationKind::LetInit { name }
+                }
+                ComptimeObligationKind::Return { context } => {
+                    MonoComptimeObligationKind::Return { context }
+                }
+                ComptimeObligationKind::CallParam {
+                    function, param, ..
+                } => MonoComptimeObligationKind::CallParam { function, param },
+                ComptimeObligationKind::PatternLabel { .. } => {
+                    MonoComptimeObligationKind::PatternLabel
+                }
+            };
+            out.push(MonoComptimeObligation {
+                span: expr.span,
+                expr,
+                kind,
+            });
+        }
+        Some(out)
+    }
 }
 
 impl<'db> TySubst<'db> {
@@ -1727,6 +2173,23 @@ impl<'db> TySubst<'db> {
         let mut args = self.vars.iter().collect::<Vec<_>>();
         args.sort_by_key(|(index, _)| **index);
         args.into_iter().map(|(_, ty)| *ty).collect()
+    }
+
+    fn insert_if_consistent(&mut self, index: u32, ty: Ty<'db>) -> bool {
+        match self.vars.get(&index) {
+            Some(existing) if *existing != ty => false,
+            Some(_) => true,
+            None => {
+                self.vars.insert(index, ty);
+                true
+            }
+        }
+    }
+
+    fn extend_consistent(&mut self, other: TySubst<'db>) {
+        for (index, ty) in other.vars {
+            self.insert_if_consistent(index, ty);
+        }
     }
 
     fn match_ty(&mut self, db: &'db dyn Db, pattern: Ty<'db>, target: Ty<'db>) -> bool {
@@ -1974,6 +2437,100 @@ fn flatten_name(name: &str) -> String {
     name.replace('.', "_")
 }
 
+fn mono_abi_params(params: Vec<AbiParam>) -> Vec<MonoAbiParam> {
+    params
+        .into_iter()
+        .map(|param| MonoAbiParam {
+            name: param.name,
+            ty: param.ty,
+            components: mono_abi_params(param.components),
+        })
+        .collect()
+}
+
+fn selector_bytes(selector: &str) -> Option<[u8; 4]> {
+    let hex = selector.strip_prefix("0x").unwrap_or(selector);
+    if hex.len() != 8 {
+        return None;
+    }
+    let mut bytes = [0_u8; 4];
+    for index in 0..4 {
+        bytes[index] = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok()?;
+    }
+    Some(bytes)
+}
+
+fn function_param_ty<'db>(db: &'db dyn Db, ty: Ty<'db>, index: usize) -> Option<Ty<'db>> {
+    match ty.kind(db) {
+        TyKind::Function { params, .. } => params.get(index).copied(),
+        TyKind::Comptime(inner) => function_param_ty(db, *inner, index),
+        _ => None,
+    }
+}
+
+fn function_ret_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Option<Ty<'db>> {
+    match ty.kind(db) {
+        TyKind::Function { ret, .. } => Some(*ret),
+        TyKind::Comptime(inner) => function_ret_ty(db, *inner),
+        _ => None,
+    }
+}
+
+fn def_owner_path<'db>(db: &'db dyn HirDb, def: DefId<'db>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut owner = def.owner(db);
+    while let Some(current) = owner {
+        if let Some(name) = current.name(db) {
+            out.push(name);
+        } else if current.owner(db).is_none() {
+            out.push(source_file_stem(current.file(db).url(db).path()));
+        }
+        owner = current.owner(db);
+    }
+    out.reverse();
+    if out.is_empty() {
+        out.push(source_file_stem(def.file(db).url(db).path()));
+    }
+    out
+}
+
+fn source_file_stem(path: &str) -> String {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    file.rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(file)
+        .to_owned()
+}
+
+fn def_hash_suffix<'db>(db: &'db dyn HirDb, def: DefId<'db>) -> String {
+    let mut hasher = DefaultHasher::new();
+    hash_def_id(db, def, &mut hasher);
+    format!("d{:08x}", (hasher.finish() & 0xffff_ffff) as u32)
+}
+
+fn hash_def_id<'db>(db: &'db dyn HirDb, def: DefId<'db>, state: &mut DefaultHasher) {
+    def.file(db).url(db).as_str().hash(state);
+    def.kind(db).hash(state);
+    def.name(db).hash(state);
+    def.fingerprint(db).hash(state);
+    def.disambiguator(db).as_u32().hash(state);
+    if let Some(owner) = def.owner(db) {
+        hash_def_id(db, owner, state);
+    }
+}
+
+fn sanitize_name_component(component: &str) -> String {
+    let mut out = String::with_capacity(component.len());
+    for ch in component.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() { "_".to_owned() } else { out }
+}
+
 fn mangle_ty<'db>(db: &'db dyn HirDb, ty: Ty<'db>) -> String {
     match ty.kind(db) {
         TyKind::Named { ctor, args } => {
@@ -2065,14 +2622,12 @@ fn strip_comptime_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
 
 fn class_method_name_parts<'db>(db: &'db dyn HirDb, pred: Pred<'db>) -> (String, Vec<Ty<'db>>) {
     match pred.kind(db) {
-        PredKind::InClass { class, main, args } => {
+        PredKind::InClass { class, main, .. } => {
             let class = match class {
                 ClassId::Builtin(class) => class.name().to_owned(),
                 ClassId::User(def) => def.name(db).unwrap_or_else(|| "Class".to_owned()),
             };
-            let mut tys = vec![*main];
-            tys.extend(args.iter().copied());
-            (class, tys)
+            (class, vec![*main])
         }
         _ => ("Class".to_owned(), Vec::new()),
     }

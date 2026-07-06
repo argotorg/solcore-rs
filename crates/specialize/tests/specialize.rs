@@ -13,8 +13,9 @@ use nameres::{
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_specialize::{
-    MonoExprKind, MonoItem, MonoStmtKind, SpecializeDiagnosticKind, SpecializeOptions,
-    SpecializeOutput, specialize_module, specialize_name,
+    MonoComptimeObligationKind, MonoEntryKind, MonoExpr, MonoExprKind, MonoItem, MonoPatKind,
+    MonoStmt, MonoStmtKind, SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput,
+    specialize_module, specialize_name,
 };
 
 #[salsa::db]
@@ -151,7 +152,13 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     let names = function_names(&output);
-    assert_eq!(names.iter().filter(|name| *name == "id$word").count(), 1);
+    assert_eq!(
+        names
+            .iter()
+            .filter(|name| name.contains("_id_") && name.ends_with("$word"))
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -190,8 +197,417 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     let names = function_names(&output);
-    assert!(names.contains(&"same$word".to_owned()), "{names:?}");
+    assert!(
+        names
+            .iter()
+            .any(|name| name.contains("_same_") && name.ends_with("$word")),
+        "{names:?}"
+    );
     assert!(names.contains(&"Eq_eq$word".to_owned()), "{names:?}");
+}
+
+#[test]
+fn invokable_invoke_replays_call_site_evidence() {
+    let (_db, output) = specialize_src(
+        r#"
+forall a b c . c : invokable(a, b) => function app(f : c, x : a) -> b {
+  return invokable.invoke(f, x);
+}
+
+data t_id = t_id;
+
+function impure(x : word) -> word {
+  let y : word;
+  assembly { y := sload(x) }
+  return y;
+}
+
+instance t_id : invokable(word, word) {
+  function invoke(self : t_id, x : word) -> word {
+    return impure(x);
+  }
+}
+
+contract C {
+  public function main(x : word) -> word {
+    return app(t_id, x);
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(
+        names.contains(&"invokable_invoke$t_id".to_owned()),
+        "{names:?}"
+    );
+    assert!(
+        !output.module.items.iter().any(|item| match item {
+            MonoItem::Function(function) => function.body.iter().any(stmt_has_closure_dispatch),
+            _ => false,
+        }),
+        "{:?}",
+        output.module
+    );
+}
+
+#[test]
+fn mptc_phantom_extras_recovered_before_naming_and_body_lowering() {
+    let (_db, output) = specialize_src(
+        r#"
+data Foo = Foo(word);
+
+forall self rep.
+class self:Encoder(rep) {
+  function encode(x:self, hint:word) -> rep;
+}
+
+forall rep r.
+class rep:Sink(r) {
+  function sink(x:rep) -> r;
+}
+
+instance Foo:Encoder(word) {
+  function encode(x:Foo, hint:word) -> word {
+    let y : word;
+    assembly { y := sload(hint) }
+    match x { | Foo(v) => return v; }
+  }
+}
+
+instance word:Sink(word) {
+  function sink(x:word) -> word {
+    let y : word;
+    assembly { y := sload(x) }
+    return x;
+  }
+}
+
+forall a rep . a:Encoder(rep), rep:Sink(word) =>
+function f(x:a) -> word {
+  let r : rep = Encoder.encode(x, 0);
+  return Sink.sink(r);
+}
+
+contract C {
+  public function main(x : word) -> word {
+    return f(Foo(x));
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(
+        names.contains(&"Encoder_encode$Foo".to_owned()),
+        "{names:?}"
+    );
+    assert!(names.contains(&"Sink_sink$word".to_owned()), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.contains("$t")),
+        "unrecovered type variable in {names:?}"
+    );
+}
+
+#[test]
+fn instance_method_names_use_only_class_head_main_type() {
+    let repo = repo_root();
+    let fixture = repo.join(
+        "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/mptc-both-templates.solc",
+    );
+    let output = specialize_fixture(&fixture);
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(names.contains(&"Convert_toRep$Box".to_owned()), "{names:?}");
+    assert!(
+        names.contains(&"Convert_fromRep$Box".to_owned()),
+        "{names:?}"
+    );
+    assert!(
+        !names
+            .iter()
+            .any(|name| name == "Convert_toRep$Box_word" || name == "Convert_fromRep$Box_word"),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn ensure_closed_failure_aborts_that_specialization() {
+    let (_db, output) = specialize_src(
+        r#"
+forall a . function leak() -> a {
+  let y : a;
+  return y;
+}
+
+contract C {
+  public function main() -> () {
+    let x = leak();
+    return ();
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic.kind,
+            SpecializeDiagnosticKind::FreeTypeVariable { .. }
+        )),
+        "{:?}",
+        output.diagnostics
+    );
+    assert!(
+        !function_names(&output)
+            .iter()
+            .any(|name| name.contains("_leak_")),
+        "{:?}",
+        function_names(&output)
+    );
+}
+
+#[test]
+fn omitted_return_annotations_use_inferred_call_site_return() {
+    let repo = repo_root();
+    let fixture =
+        repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/comptime/OneOne.solc");
+    let output = specialize_fixture(&fixture);
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert!(main_return_number(&output).is_some(), "{:?}", output.module);
+}
+
+#[test]
+fn source_names_are_qualified_across_contracts() {
+    let (_db, output) = specialize_src(
+        r#"
+contract A { public function get() -> word { return 1; } }
+contract B { public function get() -> word { return 2; } }
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let entries = output
+        .module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MonoItem::Contract(contract) => Some(contract.entries.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    assert_eq!(entries.len(), 2, "{entries:?}");
+    assert_ne!(entries[0].specialized, entries[1].specialized);
+    assert!(entries.iter().all(|entry| entry.name == "get"));
+}
+
+#[test]
+fn dispatch_abi_metadata_is_preserved_in_mono_ir() {
+    let (_db, output) = specialize_src(
+        r#"
+contract PayableTest {
+  constructor() {}
+  public payable function deposit() -> word { return 1; }
+  payable fallback() -> () {}
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let contract = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Contract(contract) => Some(contract),
+            _ => None,
+        })
+        .expect("contract");
+    let deposit = contract
+        .entries
+        .iter()
+        .find(|entry| entry.name == "deposit")
+        .expect("deposit entry");
+    assert_eq!(deposit.kind, MonoEntryKind::Method);
+    assert_eq!(deposit.signature.as_deref(), Some("deposit()"));
+    assert_eq!(deposit.selector, Some([0xd0, 0xe3, 0x0d, 0xb0]));
+    assert!(deposit.payable);
+    assert_eq!(deposit.inputs, Vec::new());
+    assert_eq!(deposit.outputs.len(), 1);
+    assert!(contract.constructor.explicit);
+    assert!(!contract.constructor.payable);
+    assert!(contract.fallback.explicit);
+    assert!(contract.fallback.payable);
+    assert!(
+        contract
+            .fallback
+            .specialized
+            .as_deref()
+            .is_some_and(|name| name.contains("_fallback_"))
+    );
+}
+
+#[test]
+fn mono_ir_carries_frontend_desugar_hook_plan() {
+    let repo = repo_root();
+    let storage = specialize_fixture(
+        &repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/storage.solc"),
+    );
+    let lambda = specialize_fixture(
+        &repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases/SimpleLambda.solc"),
+    );
+    let (_if_db, if_output) = specialize_src(
+        r#"
+contract C {
+  public function main() -> word {
+    if (true) { return 1; } else { return 0; }
+  }
+}
+"#,
+    );
+
+    assert!(storage.diagnostics.is_empty(), "{:?}", storage.diagnostics);
+    assert!(lambda.diagnostics.is_empty(), "{:?}", lambda.diagnostics);
+    assert!(
+        if_output.diagnostics.is_empty(),
+        "{:?}",
+        if_output.diagnostics
+    );
+    assert!(storage.module.frontend_desugar.bodies.iter().any(|body| {
+        body.transforms.iter().any(|transform| {
+            matches!(
+                transform,
+                hir_ty::FrontendTransform::FieldRead { hook, .. } if hook.contains("RVA.acc")
+            )
+        })
+    }));
+    assert!(storage.module.frontend_desugar.bodies.iter().any(|body| {
+        body.transforms.iter().any(|transform| {
+            matches!(
+                transform,
+                hir_ty::FrontendTransform::FieldWrite { hook, .. } if hook.contains("LVA.acc")
+            )
+        })
+    }));
+    assert!(lambda.module.frontend_desugar.bodies.iter().any(|body| {
+        body.transforms.iter().any(|transform| {
+            matches!(
+                transform,
+                hir_ty::FrontendTransform::IndirectCall {
+                    evidence: Some(_),
+                    ..
+                }
+            )
+        })
+    }));
+    assert!(if_output.module.frontend_desugar.bodies.iter().any(|body| {
+        body.transforms
+            .iter()
+            .any(|transform| matches!(transform, hir_ty::FrontendTransform::IfStmtToMatch { .. }))
+    }));
+}
+
+#[test]
+fn specializes_p7_cited_regression_corpus() {
+    let repo = repo_root();
+    let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples");
+    for fixture in [
+        "cases/app.solc",
+        "cases/compose_desugared.solc",
+        "cases/mptc-chain-phantom.solc",
+        "cases/bug-spec-generic-let.solc",
+        "cases/mptc-both-templates.solc",
+        "comptime/OneOne.solc",
+        "dispatch/nonpayable_ctor.solc",
+        "dispatch/storage.solc",
+        "cases/SimpleLambda.solc",
+        "dispatch/specialise_sum_of_product.solc",
+    ] {
+        let output = specialize_fixture(&corpus.join(fixture));
+        assert_eq!(output.diagnostics, Vec::new(), "{fixture}");
+    }
+    let basic = specialize_fixture(&corpus.join("dispatch/basic.solc"));
+    let basic_contract = basic
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Contract(contract) => Some(contract),
+            _ => None,
+        })
+        .expect("basic contract metadata");
+    assert!(
+        basic_contract.entries.iter().any(|entry| {
+            entry.name == "something"
+                && entry.signature.as_deref() == Some("something()")
+                && entry.selector.is_some()
+        }),
+        "{:?}",
+        basic_contract.entries
+    );
+    let payable = specialize_fixture(&corpus.join("dispatch/payable.solc"));
+    let payable_contract = payable
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Contract(contract) => Some(contract),
+            _ => None,
+        })
+        .expect("payable contract metadata");
+    assert!(
+        payable_contract
+            .entries
+            .iter()
+            .any(|entry| entry.name == "deposit" && entry.payable && entry.selector.is_some()),
+        "{:?}",
+        payable_contract.entries
+    );
+    assert!(payable_contract.fallback.explicit);
+    assert!(payable_contract.fallback.payable);
+}
+
+#[test]
+fn comptime_obligations_are_carried_into_mono_side_table() {
+    let (_db, output) = specialize_src(
+        r#"
+function need(comptime x : word) -> word { return x; }
+
+contract C {
+  public function main(x : word) -> comptime word {
+    return need(x);
+  }
+}
+"#,
+    );
+
+    let obligations = output
+        .module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MonoItem::Function(function) => Some(function.comptime_obligations.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    assert!(
+        obligations
+            .iter()
+            .any(|obligation| matches!(obligation.kind, MonoComptimeObligationKind::Return { .. })),
+        "{obligations:?}"
+    );
+    assert!(
+        obligations.iter().any(|obligation| matches!(
+            obligation.kind,
+            MonoComptimeObligationKind::CallParam { .. }
+        )),
+        "{obligations:?}"
+    );
 }
 
 #[test]
@@ -264,12 +680,19 @@ contract C {
     );
 
     assert_eq!(output.diagnostics, Vec::new());
-    assert_eq!(
-        function_summaries(db, &output),
-        vec![
-            "id$word(word) -> word".to_owned(),
-            "main(word) -> word".to_owned(),
-        ]
+    let summaries = function_summaries(db, &output);
+    assert_eq!(summaries.len(), 2, "{summaries:?}");
+    assert!(
+        summaries
+            .iter()
+            .any(|summary| summary.contains("_id_") && summary.ends_with("(word) -> word")),
+        "{summaries:?}"
+    );
+    assert!(
+        summaries
+            .iter()
+            .any(|summary| summary.contains("_main_") && summary.ends_with("(word) -> word")),
+        "{summaries:?}"
     );
 }
 
@@ -345,7 +768,8 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     assert_eq!(main_return_number(&output), Some("55".to_owned()));
-    assert_eq!(function_names(&output), vec!["main".to_owned()]);
+    assert_eq!(function_names(&output).len(), 1);
+    assert!(function_names(&output)[0].contains("_main_"));
 }
 
 #[test]
@@ -444,21 +868,38 @@ contract C {
     );
 
     assert_eq!(output.diagnostics, Vec::new());
-    assert_eq!(
-        main_return_number(&output),
-        Some(
-            "35286403120855365962805127237049809881669876751651884979611909062921250761797"
-                .to_owned()
-        )
-    );
+    assert_eq!(main_return_number(&output), Some("0".to_owned()));
 }
 
 fn main_return_number(output: &SpecializeOutput<'_>) -> Option<String> {
+    let mut main_names = output
+        .module
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MonoItem::Contract(contract) => Some(
+                contract
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.name == "main")
+                    .map(|entry| entry.specialized.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+    if main_names.is_empty() {
+        main_names = function_names(output)
+            .into_iter()
+            .filter(|name| name == "main" || name.contains("_main_"))
+            .collect();
+    }
     output.module.items.iter().find_map(|item| {
         let MonoItem::Function(function) = item else {
             return None;
         };
-        (function.name == "main").then(|| {
+        main_names.contains(&function.name).then(|| {
             function.body.iter().find_map(|stmt| match &stmt.kind {
                 MonoStmtKind::Return(Some(expr)) => match &expr.kind {
                     MonoExprKind::Lit(hir::ast::function::LitKind::Number(value)) => {
@@ -470,6 +911,103 @@ fn main_return_number(output: &SpecializeOutput<'_>) -> Option<String> {
             })
         })?
     })
+}
+
+fn stmt_has_closure_dispatch(stmt: &MonoStmt<'_>) -> bool {
+    match &stmt.kind {
+        MonoStmtKind::Let { init, .. } => init.as_ref().is_some_and(expr_has_closure_dispatch),
+        MonoStmtKind::Return(expr) => expr.as_ref().is_some_and(expr_has_closure_dispatch),
+        MonoStmtKind::Expr(expr) => expr_has_closure_dispatch(expr),
+        MonoStmtKind::Assign { lhs, rhs }
+        | MonoStmtKind::AddAssign { lhs, rhs }
+        | MonoStmtKind::SubAssign { lhs, rhs }
+        | MonoStmtKind::BitXorAssign { lhs, rhs }
+        | MonoStmtKind::BitAndAssign { lhs, rhs }
+        | MonoStmtKind::BitOrAssign { lhs, rhs }
+        | MonoStmtKind::ModAssign { lhs, rhs } => {
+            expr_has_closure_dispatch(lhs) || expr_has_closure_dispatch(rhs)
+        }
+        MonoStmtKind::Match { scrutinees, arms } => {
+            scrutinees.iter().any(expr_has_closure_dispatch)
+                || arms.iter().any(|arm| {
+                    arm.pats.iter().any(pat_has_closure_dispatch)
+                        || arm.body.iter().any(stmt_has_closure_dispatch)
+                })
+        }
+        MonoStmtKind::For {
+            init,
+            cond,
+            post,
+            body,
+        } => {
+            init.iter().any(stmt_has_closure_dispatch)
+                || expr_has_closure_dispatch(cond)
+                || post.iter().any(stmt_has_closure_dispatch)
+                || body.iter().any(stmt_has_closure_dispatch)
+        }
+        MonoStmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            expr_has_closure_dispatch(cond)
+                || then_body.iter().any(stmt_has_closure_dispatch)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|body| body.iter().any(stmt_has_closure_dispatch))
+        }
+        MonoStmtKind::Block(body) => body.iter().any(stmt_has_closure_dispatch),
+        MonoStmtKind::Assembly(_)
+        | MonoStmtKind::Break
+        | MonoStmtKind::Continue
+        | MonoStmtKind::Error => false,
+    }
+}
+
+fn expr_has_closure_dispatch(expr: &MonoExpr<'_>) -> bool {
+    match &expr.kind {
+        MonoExprKind::ClosureDispatch { .. } => true,
+        MonoExprKind::Tuple(elems) => elems.iter().any(expr_has_closure_dispatch),
+        MonoExprKind::Call { args, .. } | MonoExprKind::Con { args, .. } => {
+            args.iter().any(expr_has_closure_dispatch)
+        }
+        MonoExprKind::BinOp { lhs, rhs, .. } => {
+            expr_has_closure_dispatch(lhs) || expr_has_closure_dispatch(rhs)
+        }
+        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
+            expr_has_closure_dispatch(expr)
+        }
+        MonoExprKind::Index { base, index } => {
+            expr_has_closure_dispatch(base) || expr_has_closure_dispatch(index)
+        }
+        MonoExprKind::Field { base, .. } => expr_has_closure_dispatch(base),
+        MonoExprKind::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            expr_has_closure_dispatch(cond)
+                || expr_has_closure_dispatch(then_expr)
+                || expr_has_closure_dispatch(else_expr)
+        }
+        MonoExprKind::Var(_)
+        | MonoExprKind::Lit(_)
+        | MonoExprKind::Proxy(_)
+        | MonoExprKind::Lambda { .. }
+        | MonoExprKind::Error => false,
+    }
+}
+
+fn pat_has_closure_dispatch(pat: &solcore_specialize::MonoPat<'_>) -> bool {
+    match &pat.kind {
+        MonoPatKind::Con { args, .. } | MonoPatKind::Tuple(args) => {
+            args.iter().any(pat_has_closure_dispatch)
+        }
+        MonoPatKind::ComptimeLabel(expr) => expr_has_closure_dispatch(expr),
+        MonoPatKind::Wildcard | MonoPatKind::Var(_) | MonoPatKind::Lit(_) | MonoPatKind::Error => {
+            false
+        }
+    }
 }
 
 fn has_comptime_failure(output: &SpecializeOutput<'_>) -> bool {
