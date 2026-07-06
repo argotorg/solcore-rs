@@ -32,6 +32,13 @@ where
     select! { Token::Ident(name) => name }.map_with(|name, e| (name, e.span()))
 }
 
+fn comptime_kw_parser<'src, I>() -> impl Parser<'src, I, LexSpan, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    select! { Token::Ident(name) if name == "comptime" => () }.map_with(|_, e| e.span())
+}
+
 fn import_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -166,6 +173,17 @@ where
             })
             .boxed();
 
+        let comptime_type = comptime_kw_parser()
+            .then(ty.clone())
+            .map_with(|(kw, inner), e| ParsedTy {
+                span: e.span(),
+                kind: ParsedTyKind::Comptime {
+                    kw,
+                    inner: Box::new(inner),
+                },
+            })
+            .boxed();
+
         let tuple_type = paren_types
             .map_with(|elems, e| ParsedTy {
                 span: e.span(),
@@ -173,10 +191,17 @@ where
             })
             .boxed();
 
-        fn_type.or(tuple_type).or(named_type)
+        comptime_type.or(fn_type).or(tuple_type).or(named_type)
     })
     .labelled("type")
     .as_context()
+}
+
+fn parsed_ty_comptime_span(ty: &ParsedTy<'_>) -> Option<LexSpan> {
+    match ty.kind {
+        ParsedTyKind::Comptime { kw, .. } => Some(kw),
+        _ => None,
+    }
 }
 
 fn pred_parser<'src, I>() -> impl Parser<'src, I, ParsedPred<'src>, ParserErr<'src>>
@@ -334,13 +359,7 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     recursive(|expr| {
-        let lambda_param = ident_parser()
-            .then(just(Token::Colon).ignore_then(type_parser()).or_not())
-            .map(|(name, ty)| match ty {
-                Some(ty) => ParsedFuncParam::Typed { name, ty },
-                None => ParsedFuncParam::Untyped { name },
-            })
-            .boxed();
+        let lambda_param = param_parser().boxed();
 
         let lambda_params = lambda_param
             .separated_by(just(Token::Comma))
@@ -961,7 +980,12 @@ where
             .then_ignore(just(Token::Semi))
             .map_with(|((name, ty), init), e| ParsedStmt {
                 span: e.span(),
-                kind: ParsedStmtKind::Let { name, ty, init },
+                kind: ParsedStmtKind::Let {
+                    comptime: ty.as_ref().and_then(parsed_ty_comptime_span),
+                    name,
+                    ty,
+                    init,
+                },
             })
             .boxed();
 
@@ -1069,14 +1093,49 @@ fn param_parser<'src, I>() -> impl Parser<'src, I, ParsedFuncParam<'src>, Parser
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
+    let comptime_typed = comptime_kw_parser()
+        .then(ident_parser())
+        .then_ignore(just(Token::Colon))
+        .rewind()
+        .ignore_then(comptime_kw_parser())
+        .then(ident_parser())
+        .then_ignore(just(Token::Colon))
+        .then(type_parser())
+        .map(|((comptime, name), ty)| ParsedFuncParam::Typed {
+            comptime: Some(comptime),
+            name,
+            ty,
+        })
+        .boxed();
+
+    let param_end = just(Token::Comma).or(just(Token::RParen)).ignored();
+    let comptime_untyped = comptime_kw_parser()
+        .then(ident_parser())
+        .then_ignore(param_end.rewind())
+        .rewind()
+        .ignore_then(comptime_kw_parser())
+        .then(ident_parser())
+        .map(|(comptime, name)| ParsedFuncParam::Untyped {
+            comptime: Some(comptime),
+            name,
+        })
+        .boxed();
+
     let typed = ident_parser()
         .then_ignore(just(Token::Colon))
         .then(type_parser())
-        .map(|(name, ty)| ParsedFuncParam::Typed { name, ty })
+        .map(|(name, ty)| ParsedFuncParam::Typed {
+            comptime: None,
+            name,
+            ty,
+        })
         .boxed();
 
     let untyped = ident_parser()
-        .map(|name| ParsedFuncParam::Untyped { name })
+        .map(|name| ParsedFuncParam::Untyped {
+            comptime: None,
+            name,
+        })
         .boxed();
 
     let recovery = any()
@@ -1086,7 +1145,7 @@ where
         .at_least(1)
         .map_with(|_, e| ParsedFuncParam::Error { span: e.span() });
 
-    choice((typed, untyped))
+    choice((comptime_typed, comptime_untyped, typed, untyped))
         .recover_with(via_parser(recovery))
         .labelled("function parameter")
         .as_context()

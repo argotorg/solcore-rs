@@ -27,6 +27,10 @@ pub enum TypeRefKind<'db> {
         params: SpannedElem<'db, Vec<TypeRef<'db>>>,
         ret: TypeRef<'db>,
     },
+    Comptime {
+        kw: Span<'db>,
+        inner: TypeRef<'db>,
+    },
     Tuple {
         elems: SpannedElem<'db, TypeRef<'db>>,
     },
@@ -38,6 +42,7 @@ impl<'db> Spanned<'db> for TypeRefKind<'db> {
         match self {
             Self::Named { name, args } => name.span(db) + args.span(db),
             Self::Fn { params, ret } => params.span(db) + ret.span(db),
+            Self::Comptime { kw, inner } => *kw + inner.span(db),
             Self::Tuple { elems } => elems.span(db),
             Self::Error { span } => *span,
         }

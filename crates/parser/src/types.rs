@@ -92,6 +92,10 @@ pub(crate) enum ParsedTyKind<'src> {
         params: Vec<ParsedTy<'src>>,
         ret: Box<ParsedTy<'src>>,
     },
+    Comptime {
+        kw: LexSpan,
+        inner: Box<ParsedTy<'src>>,
+    },
     Tuple {
         elems: Vec<ParsedTy<'src>>,
     },
@@ -115,10 +119,12 @@ pub(crate) struct ParsedAdtCtor<'src> {
 #[derive(Debug, Clone)]
 pub(crate) enum ParsedFuncParam<'src> {
     Typed {
+        comptime: Option<LexSpan>,
         name: SpannedStr<'src>,
         ty: ParsedTy<'src>,
     },
     Untyped {
+        comptime: Option<LexSpan>,
         name: SpannedStr<'src>,
     },
     Error {
@@ -265,6 +271,7 @@ pub(crate) struct ParsedStmt<'src> {
 #[derive(Debug, Clone)]
 pub(crate) enum ParsedStmtKind<'src> {
     Let {
+        comptime: Option<LexSpan>,
         name: SpannedStr<'src>,
         ty: Option<ParsedTy<'src>>,
         init: Option<ParsedExpr<'src>>,

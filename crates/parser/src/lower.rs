@@ -161,6 +161,10 @@ fn lower_type_ref<'db>(
                 ret,
             }
         }
+        ParsedTyKind::Comptime { kw, inner } => ty::TypeRefKind::Comptime {
+            kw: span_from_absolute(anchor, kw, base_start),
+            inner: lower_type_ref(db, anchor, base_start, *inner),
+        },
         ParsedTyKind::Tuple { elems } => {
             let span = span_from_absolute(anchor, parsed_ty.span, base_start);
             let tuple_ty = if elems.len() == 1 {
@@ -267,6 +271,9 @@ fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> O
             let ret = canonical_ty_fingerprint(ret, type_vars)?;
             Some(format!("fn({})->{ret}", params.join(",")))
         }
+        ParsedTyKind::Comptime { inner, .. } => {
+            canonical_ty_fingerprint(inner, type_vars).map(|inner| format!("comptime({inner})"))
+        }
         ParsedTyKind::Tuple { elems } => {
             let elems = elems
                 .iter()
@@ -367,11 +374,13 @@ fn lower_func_sig<'db>(
         .params
         .into_iter()
         .map(|param| match param {
-            ParsedFuncParam::Typed { name, ty } => function::FuncParam::Typed {
+            ParsedFuncParam::Typed { comptime, name, ty } => function::FuncParam::Typed {
+                comptime: comptime.map(|span| span_from_absolute(anchor, span, base_start)),
                 name: lower_spanned_ident(db, anchor, base_start, name),
                 ty: lower_type_ref(db, anchor, base_start, ty),
             },
-            ParsedFuncParam::Untyped { name } => function::FuncParam::Untyped {
+            ParsedFuncParam::Untyped { comptime, name } => function::FuncParam::Untyped {
+                comptime: comptime.map(|span| span_from_absolute(anchor, span, base_start)),
                 name: lower_spanned_ident(db, anchor, base_start, name),
             },
             ParsedFuncParam::Error { span } => function::FuncParam::Error {
@@ -789,11 +798,13 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         param: ParsedFuncParam<'_>,
     ) -> function::FuncParam<'db> {
         match param {
-            ParsedFuncParam::Typed { name, ty } => function::FuncParam::Typed {
+            ParsedFuncParam::Typed { comptime, name, ty } => function::FuncParam::Typed {
+                comptime: comptime.map(|span| span_from_absolute(anchor, span, base_start)),
                 name: lower_spanned_ident(self.db, anchor, base_start, name),
                 ty: lower_type_ref(self.db, anchor, base_start, ty),
             },
-            ParsedFuncParam::Untyped { name } => function::FuncParam::Untyped {
+            ParsedFuncParam::Untyped { comptime, name } => function::FuncParam::Untyped {
+                comptime: comptime.map(|span| span_from_absolute(anchor, span, base_start)),
                 name: lower_spanned_ident(self.db, anchor, base_start, name),
             },
             ParsedFuncParam::Error { span } => function::FuncParam::Error {
@@ -822,7 +833,13 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         arenas: &mut BodyArenas<'db>,
     ) -> function::StmtKind<'db> {
         match kind {
-            ParsedStmtKind::Let { name, ty, init } => function::StmtKind::Let {
+            ParsedStmtKind::Let {
+                comptime,
+                name,
+                ty,
+                init,
+            } => function::StmtKind::Let {
+                comptime: comptime.map(|span| span_from_absolute(anchor, span, base_start)),
                 name: lower_spanned_ident(self.db, anchor, base_start, name),
                 ty: ty.map(|ty| lower_type_ref(self.db, anchor, base_start, ty)),
                 init: init.map(|expr| self.lower_expr(anchor, base_start, expr, arenas)),

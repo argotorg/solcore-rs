@@ -63,6 +63,7 @@ pub struct Stmt<'db> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum StmtKind<'db> {
     Let {
+        comptime: Option<Span<'db>>,
         name: SpannedElem<'db, Ident<'db>>,
         ty: Option<TypeRef<'db>>,
         init: Option<Id<Expr<'db>>>,
@@ -333,11 +334,13 @@ impl<'db> Spanned<'db> for YulCase<'db> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum FuncParam<'db> {
     Typed {
+        comptime: Option<Span<'db>>,
         name: SpannedElem<'db, Ident<'db>>,
         ty: TypeRef<'db>,
     },
 
     Untyped {
+        comptime: Option<Span<'db>>,
         name: SpannedElem<'db, Ident<'db>>,
     },
 
@@ -347,8 +350,12 @@ pub enum FuncParam<'db> {
 impl<'db> Spanned<'db> for FuncParam<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         match self {
-            Self::Typed { name, ty } => name.span(db) + ty.span(db),
-            Self::Untyped { name } => name.span(db),
+            Self::Typed { comptime, name, ty } => {
+                comptime.map_or_else(|| name.span(db), |kw| kw + name.span(db)) + ty.span(db)
+            }
+            Self::Untyped { comptime, name } => {
+                comptime.map_or_else(|| name.span(db), |kw| kw + name.span(db))
+            }
             Self::Error { span } => *span,
         }
     }

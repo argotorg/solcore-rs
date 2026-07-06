@@ -354,6 +354,7 @@ mod tests {
         assert_eq!(tokenize("foo_bar"), vec![Token::Ident("foo_bar")]);
         // Mixed underscores and hyphens.
         assert_eq!(tokenize("foo_bar-baz"), vec![Token::Ident("foo_bar-baz")]);
+        assert_eq!(tokenize("comptime"), vec![Token::Ident("comptime")]);
     }
 
     #[test]
