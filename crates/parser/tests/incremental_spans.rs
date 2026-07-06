@@ -3,6 +3,8 @@
 //! (the property that lets Salsa backdate the def's downstream queries), while
 //! absolute resolution still tracks the edit.
 
+use std::sync::{Arc, Mutex};
+
 use hir::{
     ast::item::{FunctionDef, Item},
     input::SourceFile,
@@ -12,9 +14,36 @@ use salsa::Setter;
 use solcore_parser::parse_file_to_hir;
 
 #[salsa::db]
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct TestDb {
     storage: salsa::Storage<Self>,
+    executed: Arc<Mutex<Vec<String>>>,
+}
+
+impl Default for TestDb {
+    fn default() -> Self {
+        let executed = Arc::new(Mutex::new(Vec::new()));
+        Self {
+            storage: salsa::Storage::new(Some(Box::new({
+                let executed = executed.clone();
+                move |event| {
+                    if let salsa::EventKind::WillExecute { database_key } = event.kind {
+                        executed
+                            .lock()
+                            .expect("execution log lock")
+                            .push(format!("{database_key:?}"));
+                    }
+                }
+            }))),
+            executed,
+        }
+    }
+}
+
+impl TestDb {
+    fn take_executed(&self) -> Vec<String> {
+        std::mem::take(&mut *self.executed.lock().expect("execution log lock"))
+    }
 }
 
 #[salsa::db]
@@ -32,6 +61,15 @@ impl hir::Db for TestDb {
 
 #[salsa::db]
 impl solcore_parser::Db for TestDb {}
+
+#[salsa::tracked]
+fn function_relative_span<'db>(
+    db: &'db dyn hir::Db,
+    function: FunctionDef<'db>,
+) -> (u32, u32) {
+    let span = function.span(db);
+    (span.begin().as_u32(), span.end().as_u32())
+}
 
 fn first_function<'db>(db: &'db TestDb, file: SourceFile) -> FunctionDef<'db> {
     parse_file_to_hir(db, file)
@@ -68,36 +106,54 @@ fn top_level_error_item_has_recovery_span() {
 }
 
 #[test]
-fn anchor_relative_span_survives_edit_above_def() {
+fn relative_span_query_backdates_after_edit_above_def() {
     let mut db = TestDb::default();
     let url = "memory:///incr.solc".parse().expect("valid url");
     let src = "function id(x: word) -> word {\n  return x;\n}\n";
     let file = SourceFile::new(&db, url, Some(src.to_owned()));
 
-    // Baseline: capture the function's relative + absolute span, then drop all
-    // `'db` borrows so the input can be mutated.
-    let (rel_begin, rel_end, abs_start) = {
+    // Baseline: execute the semantic-style query once, then drop all `'db`
+    // borrows so the input can be mutated.
+    let (before_fact, abs_start) = {
         let func = first_function(&db, file);
-        let rel = Spanned::span(&func, &db);
+        let _ = db.take_executed();
+        let fact = function_relative_span(&db, func);
+        let executed = db.take_executed();
+        assert_eq!(relative_span_query_executions(&executed), 1);
+
+        let rel = func.span(&db);
         let abs = rel.resolve_to_absolute(&db);
         // The function anchors on itself, so its relative span starts at 0, and
         // with no leading text its absolute start is 0 too.
         assert_eq!(rel.begin().as_u32(), 0);
         assert_eq!(abs.start().as_u32(), 0);
-        (rel.begin().as_u32(), rel.end().as_u32(), abs.start().as_u32())
+        (fact, abs.start().as_u32())
     };
 
     // Insert a comment line *above* the function.
     let prefix = "// a comment above\n";
     file.set_content(&mut db).to(Some(format!("{prefix}{src}")));
 
-    let func = first_function(&db, file);
-    let rel = Spanned::span(&func, &db);
-    let abs = rel.resolve_to_absolute(&db);
+    let (after_fact, abs) = {
+        let func = first_function(&db, file);
+        let _ = db.take_executed();
+        let fact = function_relative_span(&db, func);
+        let executed = db.take_executed();
+        assert_eq!(relative_span_query_executions(&executed), 0);
 
-    // Relative span is byte-identical => the def's HIR node did not change.
-    assert_eq!(rel.begin().as_u32(), rel_begin);
-    assert_eq!(rel.end().as_u32(), rel_end);
+        let rel = func.span(&db);
+        (fact, rel.resolve_to_absolute(&db))
+    };
+
+    // Relative fact is byte-identical and the tracked query did not re-execute.
+    assert_eq!(after_fact, before_fact);
     // Absolute span shifted by exactly the inserted prefix length.
     assert_eq!(abs.start().as_u32(), abs_start + prefix.len() as u32);
+}
+
+fn relative_span_query_executions(events: &[String]) -> usize {
+    events
+        .iter()
+        .filter(|event| event.contains("function_relative_span"))
+        .count()
 }

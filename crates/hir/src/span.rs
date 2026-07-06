@@ -32,6 +32,11 @@ impl<'db> AnchorId<'db> {
         *self.kind(db)
     }
 
+    /// Resolves the source file for this anchor.
+    ///
+    /// Edge-only: do not call this inside tracked semantic queries. Def anchors
+    /// read `def_location_table`, which changes on nearly any edit and would
+    /// over-invalidate otherwise byte-shift-invariant results.
     pub fn source_file(self, db: &'db dyn Db) -> SourceFile {
         match *self.kind(db) {
             AnchorKind::Root(file) => file,
@@ -44,6 +49,11 @@ impl<'db> AnchorId<'db> {
         }
     }
 
+    /// Resolves the absolute byte offset for this anchor's base.
+    ///
+    /// Edge-only: do not call this inside tracked semantic queries. Def anchors
+    /// read `def_location_table`, which changes on nearly any edit and would
+    /// over-invalidate otherwise byte-shift-invariant results.
     pub fn base_offset(self, db: &'db dyn Db) -> Offset {
         match *self.kind(db) {
             AnchorKind::Root(_) => Offset::new(0),
@@ -86,6 +96,11 @@ impl<'db> Span<'db> {
         self.anchor.source_file(db)
     }
 
+    /// Resolves this anchor-relative span to absolute file offsets.
+    ///
+    /// Edge-only: use this at diagnostics/LSP boundaries, not inside tracked
+    /// semantic queries. Def anchors depend on `def_location_table`, which
+    /// shifts on nearly any edit and would over-invalidate semantic results.
     pub fn resolve_to_absolute(self, db: &'db dyn Db) -> AbsoluteSpan {
         let file = self.anchor.source_file(db);
         let base = self.anchor.base_offset(db);
