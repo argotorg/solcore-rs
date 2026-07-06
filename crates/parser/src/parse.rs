@@ -784,15 +784,21 @@ where
             })
             .boxed();
 
-        let tuple_pat = pat
+        let tuple_or_paren_pat = pat
             .clone()
             .separated_by(just(Token::Comma))
             .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
-            .map_with(|pats, e| ParsedPat {
-                span: e.span(),
-                kind: ParsedPatKind::Tuple(pats),
+            .map_with(|pats, e| {
+                if pats.len() == 1 {
+                    pats.into_iter().next().expect("len == 1")
+                } else {
+                    ParsedPat {
+                        span: e.span(),
+                        kind: ParsedPatKind::Tuple(pats),
+                    }
+                }
             })
             .boxed();
 
@@ -832,7 +838,7 @@ where
 
         wildcard
             .or(lit_pat)
-            .or(tuple_pat)
+            .or(tuple_or_paren_pat)
             .or(ctor_or_var)
             .recover_with(via_parser(recovery))
     })
@@ -1344,6 +1350,40 @@ where
         })
 }
 
+fn implicit_public_modifiers_parser<'src, I>(
+    allow_contract_modifiers: bool,
+    decl_name: &'static str,
+) -> impl Parser<'src, I, ParsedFuncModifiers, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let public = just(Token::Public).map_with(|_, e| e.span()).or_not();
+    let payable = just(Token::Payable).map_with(|_, e| e.span()).or_not();
+
+    public
+        .then(payable)
+        .validate(move |(public, payable), _, emitter| {
+            if let Some(span) = public {
+                emitter.emit(Rich::custom(
+                    span,
+                    format!("{decl_name} is implicitly public; remove the 'public' keyword"),
+                ));
+            }
+            if !allow_contract_modifiers
+                && let Some(span) = payable
+            {
+                emitter.emit(Rich::custom(
+                    span,
+                    "`payable` is only allowed on a function, constructor, or fallback inside a contract",
+                ));
+            }
+            ParsedFuncModifiers {
+                public: None,
+                payable,
+            }
+        })
+}
+
 fn signature_parser<'src, I>(
     allow_contract_modifiers: bool,
 ) -> impl Parser<'src, I, ParsedFuncSig<'src>, ParserErr<'src>>
@@ -1454,7 +1494,8 @@ fn constructor_def_parser<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let modifiers = contract_modifiers_parser(allow_contract_modifiers).boxed();
+    let modifiers =
+        implicit_public_modifiers_parser(allow_contract_modifiers, "constructor").boxed();
     let params = param_parser()
         .separated_by(just(Token::Comma))
         .allow_trailing()
@@ -1490,6 +1531,14 @@ where
         .boxed()
 }
 
+fn parsed_ty_is_unit(ty: &ParsedTy<'_>) -> bool {
+    match &ty.kind {
+        ParsedTyKind::Tuple { elems } if elems.is_empty() => true,
+        ParsedTyKind::Tuple { elems } if elems.len() == 1 => parsed_ty_is_unit(&elems[0]),
+        _ => false,
+    }
+}
+
 fn fallback_def_parser<'src, I>(
     allow_contract_modifiers: bool,
 ) -> impl Parser<'src, I, ParsedFunctionDef<'src>, ParserErr<'src>>
@@ -1504,7 +1553,7 @@ where
         .map(|preds| preds.unwrap_or_default())
         .boxed();
 
-    let modifiers = contract_modifiers_parser(allow_contract_modifiers).boxed();
+    let modifiers = implicit_public_modifiers_parser(allow_contract_modifiers, "fallback").boxed();
 
     let params = param_parser()
         .separated_by(just(Token::Comma))
@@ -1524,7 +1573,28 @@ where
         .then(modifiers)
         .then(just(Token::Fallback).map_with(|_, e| e.span()))
         .then(params)
+        .validate(|value, _, emitter| {
+            let ((((_, _), _), _), (params, params_span)) = &value;
+            if !params.is_empty() {
+                emitter.emit(Rich::custom(
+                    *params_span,
+                    "fallback function must not declare input parameters",
+                ));
+            }
+            value
+        })
         .then(ret)
+        .validate(|value, _, emitter| {
+            if let Some(ret_ty) = &value.1
+                && !parsed_ty_is_unit(ret_ty)
+            {
+                emitter.emit(Rich::custom(
+                    ret_ty.span,
+                    "fallback function must return unit (`()`)",
+                ));
+            }
+            value
+        })
         .then(body_span_parser())
         .map_with(
             |(
@@ -2357,6 +2427,27 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert!(output.is_some(), "expected parsed output");
+    }
+
+    #[test]
+    fn parenthesized_single_pattern_parses_as_grouping() {
+        let source = "{ match p { | (y) => return y; | ((), (x, z)) => return x; } }";
+        let body = parse_body_statements(source, (0..source.len()).into());
+        assert!(body.errors.is_empty(), "body errors: {:?}", body.errors);
+
+        let ParsedStmtKind::Match { arms, .. } = &body.output[0].kind else {
+            panic!("expected match statement");
+        };
+
+        let ParsedPatKind::Var((name, _)) = &arms[0].pats[0].kind else {
+            panic!("expected grouped pattern to parse as a variable");
+        };
+        assert_eq!(*name, "y");
+
+        let ParsedPatKind::Tuple(elems) = &arms[1].pats[0].kind else {
+            panic!("expected nested tuple pattern to stay a tuple");
+        };
+        assert_eq!(elems.len(), 2);
     }
 
     #[test]

@@ -20,6 +20,12 @@ function nestedTupleUnitPattern(p) {
   }
 }
 
+function groupedSinglePattern(p) {
+  match p {
+    | (y) => return y;
+  }
+}
+
 function pairData(x : word, y : word) -> Pair(word, word) {
   return Pair(x, y);
 }

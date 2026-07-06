@@ -1104,6 +1104,9 @@ fn lower_parsed_pat<'db>(
                 .collect();
             function::PatKind::Ctor { name, args }
         }
+        ParsedPatKind::Tuple(mut elems) if elems.len() == 1 => {
+            return lower_parsed_pat(db, anchor, base_start, elems.pop().expect("len == 1"), pats);
+        }
         ParsedPatKind::Tuple(elems) => {
             let elems = elems
                 .into_iter()
