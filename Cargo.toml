@@ -3,9 +3,10 @@ members = ["crates/*"]
 resolver = "3"
 
 [workspace.dependencies]
-salsa = "0.25"
+salsa = "0.27"
 url = "2.5"
 annotate-snippets = "0.12"
+rustc-hash = "2"
 parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
 nameres = { path = "crates/nameres", package = "solcore-nameres" }
