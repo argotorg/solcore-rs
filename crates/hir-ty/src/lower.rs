@@ -5,7 +5,7 @@ use hir::{
     anchor::DefId,
     ast::{
         function::{FuncParam, FuncSig},
-        item::{AdtCtor, AdtDef, FieldDef, FunctionDef, TypeAlias},
+        item::{AdtCtor, AdtDef, ClassDef, FieldDef, FunctionDef, TypeAlias},
         ty::{PredRef, TypeRef, TypeRefKind},
     },
     nameres as hir_nameres,
@@ -221,7 +221,7 @@ impl<'db> TypeLowering<'db> {
         let ret = sig
             .ret
             .map(|ret| self.lower_type(ret))
-            .unwrap_or_else(|| Ty::unit(self.db));
+            .unwrap_or_else(|| Ty::unknown(self.db));
         let fn_ty = Ty::function(self.db, params.clone(), ret);
         let preds = sig
             .preds
@@ -243,6 +243,32 @@ impl<'db> TypeLowering<'db> {
     /// Lowers a function definition to a scheme.
     pub fn lower_function(&self, function: FunctionDef<'db>) -> LoweredFunction<'db> {
         self.lower_func_sig(function.sig(self.db))
+    }
+
+    /// Lowers a class method signature to the scheme visible at call sites.
+    ///
+    /// The method is qualified by the class head predicate, so instantiating
+    /// the scheme during body inference emits the pending class obligation
+    /// that a future solver will discharge.
+    pub fn lower_class_method(&self, class: ClassDef<'db>, method: &FuncSig<'db>) -> TyScheme<'db> {
+        let params = method
+            .params
+            .atom()
+            .iter()
+            .map(|param| self.lower_param(param))
+            .collect::<Vec<_>>();
+        let ret = method
+            .ret
+            .map(|ret| self.lower_type(ret))
+            .unwrap_or_else(|| Ty::unknown(self.db));
+        let mut preds = Vec::new();
+        preds.push(self.lower_pred(class.head(self.db)));
+        preds.extend(method.preds.iter().map(|pred| self.lower_pred(*pred)));
+        TyScheme::new(
+            self.db,
+            self.binders.binder_count(),
+            QualTy::new(self.db, preds, Ty::function(self.db, params, ret)),
+        )
     }
 
     /// Lowers a type alias to a scheme.
@@ -297,9 +323,21 @@ impl<'db> TypeLowering<'db> {
 
     fn lower_param(&self, param: &FuncParam<'db>) -> Ty<'db> {
         match param {
-            FuncParam::Typed { ty, .. } => self.lower_type(*ty),
-            FuncParam::Untyped { .. } => Ty::unknown(self.db),
+            FuncParam::Typed { comptime, ty, .. } => {
+                self.maybe_comptime(*comptime, self.lower_type(*ty))
+            }
+            FuncParam::Untyped { comptime, .. } => {
+                self.maybe_comptime(*comptime, Ty::unknown(self.db))
+            }
             FuncParam::Error { .. } => Ty::error(self.db),
+        }
+    }
+
+    fn maybe_comptime(&self, marker: Option<hir::span::Span<'db>>, ty: Ty<'db>) -> Ty<'db> {
+        if marker.is_none() || matches!(ty.kind(self.db), TyKind::Comptime(_)) {
+            ty
+        } else {
+            Ty::comptime(self.db, ty)
         }
     }
 

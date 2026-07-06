@@ -12,9 +12,10 @@ pub use hir::sema::ty::{
     TyScheme, UserTyCtor, UserTyCtorKind,
 };
 pub use infer::{
-    BodyTyContext, DeferredObligation, ExprTy, InferResultExt, InferTable, InferTy,
-    InferenceResult, Instantiated, ObligationSource, PatTy, TyVid, TypeckDiagnostic, UnifyError,
-    VarValue, body_ty_diagnostics, infer_body,
+    AdtCtorScheme, BodyTyCatalog, BodyTyContext, ClassMethodScheme, DeferredObligation, ExprTy,
+    FieldScheme, FunctionScheme, InferResultExt, InferTable, InferTy, InferenceResult,
+    Instantiated, ObligationSource, PatTy, TyVid, TypeckDiagnostic, UnifyError, VarValue,
+    body_ty_diagnostics, infer_body,
 };
 pub use lower::{
     BinderEnv, LoweredAdtCtor, LoweredField, LoweredFunction, LoweredTypeAlias, TypeLowering,
