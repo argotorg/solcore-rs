@@ -180,14 +180,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "reference-fails-before-typeck"
     ),
     known!(
-        "cases/derive-generic-excluded.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
-        "cases/derive-generic-sum.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
         "cases/dispatch.solc",
         "needs-dispatch-lowering",
         typeck,
@@ -206,18 +198,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "reference-fails-before-typeck"
     ),
     known!("cases/for-let-post.solc", "missing-negative-typecheck"),
-    known!(
-        "cases/generic-manual-no-pragma.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
-        "cases/generic-product-no-pragma.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
-        "cases/generic-sum-no-pragma.solc",
-        "missing-negative-typecheck"
-    ),
     known!("cases/ixa.solc", "needs-specializer-and-std-instances"),
     known!("cases/mainproxy.solc", "reference-fails-before-typeck"),
     known!(

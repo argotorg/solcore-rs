@@ -17,6 +17,7 @@ use hir::{
             AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FuncKind, FunctionDef, Item,
             Module, TypeAlias,
         },
+        ty::{TypeRef, TypeRefKind},
     },
     diag::{AnyDiagnostic, Diagnostic},
     nameres as hir_nameres,
@@ -28,13 +29,14 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::field;
 
 use crate::{
-    BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TyScheme,
-    TypeLowering, UserTyCtorKind,
+    BinderEnv, BuiltinClassId, BuiltinTyCtor, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind,
+    TyScheme, TypeLowering, UserTyCtorKind,
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
     builtin_scheme, canonical_goal_with_allowed,
     contract::module_contract_diagnostics,
     solver::{
-        Evidence, Solution, Substitution, TraitEnvId, instance_soundness_diagnostics, solve_report,
+        DerivedClauseKind, Evidence, Solution, Substitution, TraitEnvId,
+        instance_soundness_diagnostics, solve_report,
     },
     trait_env_with_givens, type_alias_normalization_errors,
 };
@@ -581,6 +583,28 @@ pub enum TypeckDiagnostic {
         /// Lookup failure reason.
         reason: String,
     },
+    /// `SC0227`: a type has both an auto-derived and manual `Generic` instance.
+    GenericDeriveConflict {
+        /// Type name with the conflicting manual instance.
+        ty: String,
+    },
+    /// `SC0240`: a runtime expression was supplied to a comptime parameter.
+    RuntimeToComptimeParam {
+        /// Callee name.
+        function: String,
+        /// Parameter name.
+        param: String,
+    },
+    /// `SC0241`: a comptime let binding has a runtime initializer.
+    ComptimeLetRuntime {
+        /// Binding name.
+        name: String,
+    },
+    /// `SC0242`: a function annotated `-> comptime` returns runtime data.
+    ComptimeReturnRuntime {
+        /// Function or body context.
+        context: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -593,6 +617,12 @@ struct PendingObligation<'db> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct YulFunctionSig<'db> {
+    params: Vec<InferTy<'db>>,
+    ret: InferTy<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClosureSig<'db> {
     params: Vec<InferTy<'db>>,
     ret: InferTy<'db>,
 }
@@ -628,6 +658,7 @@ struct InferCtx<'db> {
     pending: Vec<PendingObligation<'db>>,
     trait_env: Option<TraitEnvId<'db>>,
     partial_data: Vec<(String, Vec<String>)>,
+    closure_sigs: FxHashMap<DefId<'db>, ClosureSig<'db>>,
     integer_literal_vars: Vec<TyVid<'db>>,
     diagnostics: Vec<TypeckDiagnostic>,
 }
@@ -809,6 +840,24 @@ impl TypeckDiagnostic {
                 "cannot resolve shorthand constructor `.{name}`: {reason}"
             ))
             .with_code("SC0224"),
+            TypeckDiagnostic::GenericDeriveConflict { ty } => Diagnostic::error(format!(
+                "type '{ty}' has a manual Generic instance but no 'pragma no-generic-instance-for {ty}'; add the pragma to suppress auto-derivation"
+            ))
+            .with_code("SC0227"),
+            TypeckDiagnostic::RuntimeToComptimeParam { function, param } => {
+                Diagnostic::error(format!(
+                    "runtime value passed to comptime parameter '{param}' of '{function}'"
+                ))
+                .with_code("SC0240")
+            }
+            TypeckDiagnostic::ComptimeLetRuntime { name } => Diagnostic::error(format!(
+                "comptime let '{name}' is bound to a runtime expression"
+            ))
+            .with_code("SC0241"),
+            TypeckDiagnostic::ComptimeReturnRuntime { context } => Diagnostic::error(format!(
+                "{context}: function annotated '-> comptime' returns a runtime expression"
+            ))
+            .with_code("SC0242"),
         }
     }
 }
@@ -1201,6 +1250,8 @@ impl<'db> InferTable<'db> {
                 Ok(())
             }
             (InferTy::Comptime(lhs), InferTy::Comptime(rhs)) => self.unify_inner(*lhs, *rhs),
+            (InferTy::Comptime(lhs), rhs) => self.unify_inner(*lhs, rhs),
+            (lhs, InferTy::Comptime(rhs)) => self.unify_inner(lhs, *rhs),
             (expected, actual) => Err(UnifyError::Mismatch { expected, actual }),
         }
     }
@@ -1309,6 +1360,7 @@ impl<'db> InferCtx<'db> {
             pending: Vec::new(),
             trait_env: ctx.trait_env,
             partial_data: ctx.partial_data,
+            closure_sigs: FxHashMap::default(),
             integer_literal_vars: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -1412,7 +1464,14 @@ impl<'db> InferCtx<'db> {
                     .unwrap_or_else(|| self.engine.fresh_var());
                 let local_ty = self.maybe_comptime(*comptime, local_ty);
                 if let Some(init) = init {
-                    let init_ty = self.infer_expr_expected(body, *init, Some(local_ty.clone()));
+                    let init_ty = if ty.is_none()
+                        && comptime.is_none()
+                        && matches!(body.exprs(self.db).get(*init).kind, ExprKind::Lambda { .. })
+                    {
+                        self.infer_expr(body, *init)
+                    } else {
+                        self.infer_expr_expected(body, *init, Some(local_ty.clone()))
+                    };
                     self.unify(local_ty.clone(), init_ty);
                 }
                 self.let_tys.insert((body, stmt_id), local_ty);
@@ -1661,30 +1720,7 @@ impl<'db> InferCtx<'db> {
                 {
                     ty
                 } else {
-                    let callee_ty = self.infer_callee_expr(body, expr_id, *callee);
-                    let params = self.call_param_expectations(callee_ty.clone(), args.len());
-                    let args = args
-                        .iter()
-                        .enumerate()
-                        .map(|(index, arg)| {
-                            self.infer_expr_expected(
-                                body,
-                                *arg,
-                                params
-                                    .as_ref()
-                                    .and_then(|params| params.get(index).cloned()),
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
-                    self.unify(
-                        callee_ty,
-                        InferTy::Function {
-                            params: args,
-                            ret: Box::new(ret.clone()),
-                        },
-                    );
-                    ret
+                    self.infer_call_expr(body, expr_id, *callee, args, expected.clone())
                 }
             }
             ExprKind::Field { base, .. } => {
@@ -1783,6 +1819,111 @@ impl<'db> InferCtx<'db> {
         }
     }
 
+    fn infer_call_expr(
+        &mut self,
+        body: FuncBody<'db>,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+        args: &[Id<Expr<'db>>],
+        expected: Option<InferTy<'db>>,
+    ) -> InferTy<'db> {
+        let callee_ty = self.infer_callee_expr(body, call_expr, callee_expr);
+        let normalized = self.normalize_aliases(callee_ty.clone());
+        match self.engine.resolve(normalized.clone()) {
+            InferTy::Function { params, .. } => {
+                self.infer_direct_call(body, callee_ty, Some(params), args, expected)
+            }
+            InferTy::Error | InferTy::Unknown | InferTy::Var(_) => {
+                self.infer_direct_call(body, callee_ty, None, args, expected)
+            }
+            _ => self.infer_indirect_call(body, callee_ty, args, expected),
+        }
+    }
+
+    fn infer_direct_call(
+        &mut self,
+        body: FuncBody<'db>,
+        callee_ty: InferTy<'db>,
+        params: Option<Vec<InferTy<'db>>>,
+        args: &[Id<Expr<'db>>],
+        expected: Option<InferTy<'db>>,
+    ) -> InferTy<'db> {
+        if let Some(params) = &params
+            && params.len() != args.len()
+        {
+            self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                context: "call".to_owned(),
+                expected: params.len(),
+                actual: args.len(),
+            });
+        }
+        let args = args
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                self.infer_expr_expected(
+                    body,
+                    *arg,
+                    params
+                        .as_ref()
+                        .and_then(|params| params.get(index).cloned()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
+        self.unify(
+            callee_ty,
+            InferTy::Function {
+                params: args,
+                ret: Box::new(ret.clone()),
+            },
+        );
+        ret
+    }
+
+    fn infer_indirect_call(
+        &mut self,
+        body: FuncBody<'db>,
+        callee_ty: InferTy<'db>,
+        args: &[Id<Expr<'db>>],
+        expected: Option<InferTy<'db>>,
+    ) -> InferTy<'db> {
+        let closure_sig = self.closure_sig_for_ty(callee_ty.clone());
+        if let Some(sig) = &closure_sig
+            && sig.params.len() != args.len()
+        {
+            self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                context: "call".to_owned(),
+                expected: sig.params.len(),
+                actual: args.len(),
+            });
+        }
+        let inferred_args = args
+            .iter()
+            .enumerate()
+            .map(|(index, arg)| {
+                self.infer_expr_expected(
+                    body,
+                    *arg,
+                    closure_sig
+                        .as_ref()
+                        .and_then(|sig| sig.params.get(index).cloned()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
+        if let Some(sig) = closure_sig {
+            self.unify(sig.ret, ret.clone());
+        }
+        self.pending.push(PendingObligation {
+            class: ClassId::Builtin(BuiltinClassId::Invokable),
+            main: callee_ty,
+            args: vec![invokable_arg_infer(inferred_args), ret.clone()],
+            source: ObligationSource::Scheme,
+        });
+        ret
+    }
+
     fn expr_constructor_name(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> Option<String> {
         match &body.exprs(self.db).get(expr).kind {
             ExprKind::Ident(name) => Some((*name.atom()).text(self.db).to_owned()),
@@ -1863,6 +2004,25 @@ impl<'db> InferCtx<'db> {
         })
     }
 
+    fn closure_sig_for_ty(&mut self, ty: InferTy<'db>) -> Option<ClosureSig<'db>> {
+        let ty = self.normalize_aliases(ty);
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+            args,
+        } = self.engine.resolve(ty)
+        else {
+            return None;
+        };
+        if !args.is_empty() {
+            return None;
+        }
+        self.closure_sigs.get(&def).cloned()
+    }
+
     fn infer_lit(
         &mut self,
         body: FuncBody<'db>,
@@ -1894,6 +2054,7 @@ impl<'db> InferCtx<'db> {
         body: FuncBody<'db>,
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
+        let has_expected = expected.is_some();
         let (expected_params, expected_ret) = self.expected_lambda_parts(expected, params.len());
         let param_tys = params
             .iter()
@@ -1944,9 +2105,28 @@ impl<'db> InferCtx<'db> {
         self.infer_body(body);
         self.return_stack.pop();
         self.pop_sail_scope();
-        InferTy::Function {
-            params: param_tys,
-            ret: Box::new(ret),
+        let fn_ty = InferTy::Function {
+            params: param_tys.clone(),
+            ret: Box::new(ret.clone()),
+        };
+        if has_expected {
+            fn_ty
+        } else {
+            let closure_def = closure_def_id(self.db, body);
+            self.closure_sigs.insert(
+                closure_def,
+                ClosureSig {
+                    params: param_tys,
+                    ret,
+                },
+            );
+            InferTy::Named {
+                ctor: TyCtor::User(crate::UserTyCtor {
+                    def: closure_def,
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+                args: Vec::new(),
+            }
         }
     }
 
@@ -2293,33 +2473,6 @@ impl<'db> InferCtx<'db> {
             class_method_scheme_for_entry(self.db, entry_module, class, name.to_owned())
         } else {
             class_method_scheme_in_hir_module(self.db, self.module, class, name.to_owned())
-        }
-    }
-
-    fn call_param_expectations(
-        &mut self,
-        callee: InferTy<'db>,
-        actual: usize,
-    ) -> Option<Vec<InferTy<'db>>> {
-        let callee = self.normalize_aliases(callee);
-        match self.engine.resolve(callee.clone()) {
-            InferTy::Function { params, .. } => {
-                if params.len() != actual {
-                    self.diagnostics.push(TypeckDiagnostic::WrongArity {
-                        context: "call".to_owned(),
-                        expected: params.len(),
-                        actual,
-                    });
-                }
-                Some(params)
-            }
-            InferTy::Error | InferTy::Unknown | InferTy::Var(_) => None,
-            other => {
-                self.diagnostics.push(TypeckDiagnostic::NonCallable {
-                    callee: self.engine.display(other),
-                });
-                None
-            }
         }
     }
 
@@ -3432,6 +3585,13 @@ impl<'db> InferCtx<'db> {
         let mut diagnostics = Vec::new();
 
         for (index, pending) in self.pending.clone().into_iter().enumerate() {
+            if let Some(proof) = self.solve_local_closure_obligation(&pending) {
+                evidence.push(ObligationEvidence {
+                    obligation: index,
+                    evidence: proof,
+                });
+                continue;
+            }
             let pred = self.pending_obligation_pred(&pending);
             if matches!(pred.pred.kind(self.db), PredKind::Error) {
                 continue;
@@ -3494,6 +3654,39 @@ impl<'db> InferCtx<'db> {
             call_site_evidence,
             diagnostics,
         }
+    }
+
+    fn solve_local_closure_obligation(
+        &mut self,
+        pending: &PendingObligation<'db>,
+    ) -> Option<Evidence<'db>> {
+        if pending.class != ClassId::Builtin(BuiltinClassId::Invokable) || pending.args.len() != 2 {
+            return None;
+        }
+        let main = self.normalize_aliases(pending.main.clone());
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+            args,
+        } = self.engine.resolve(main)
+        else {
+            return None;
+        };
+        if !args.is_empty() {
+            return None;
+        }
+        let sig = self.closure_sigs.get(&def)?.clone();
+        self.unify(pending.args[0].clone(), invokable_arg_infer(sig.params));
+        self.unify(pending.args[1].clone(), sig.ret);
+        let pred = self.pending_obligation_pred(pending).pred;
+        Some(Evidence::Derived {
+            kind: DerivedClauseKind::Closure,
+            pred,
+            sub_evidence: Vec::new(),
+        })
     }
 
     fn pending_obligation_pred(
@@ -4087,6 +4280,11 @@ pub fn module_typeck_diagnostics<'db>(
             .into_iter()
             .map(AnyDiagnostic::Typeck),
     );
+    diagnostics.extend(
+        crate::solver::generic_derivation_diagnostics(db, hir_module, &item_resolutions, &env)
+            .into_iter()
+            .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+    );
     let mut collector = TypeckDiagnosticCollector {
         db,
         module,
@@ -4115,6 +4313,1058 @@ struct TypeckDiagnosticCollector<'db> {
 enum SignatureRequirement {
     Complete,
     LegacyInference,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComptimeValue {
+    Comptime,
+    Runtime,
+    Deferred,
+}
+
+impl ComptimeValue {
+    fn from_all(values: impl IntoIterator<Item = Self>) -> Self {
+        let mut saw_deferred = false;
+        for value in values {
+            match value {
+                ComptimeValue::Runtime => return ComptimeValue::Runtime,
+                ComptimeValue::Deferred => saw_deferred = true,
+                ComptimeValue::Comptime => {}
+            }
+        }
+        if saw_deferred {
+            ComptimeValue::Deferred
+        } else {
+            ComptimeValue::Comptime
+        }
+    }
+
+    fn from_any_runtime(values: &[Self]) -> Self {
+        if values.contains(&ComptimeValue::Runtime) {
+            ComptimeValue::Runtime
+        } else if values.contains(&ComptimeValue::Deferred) {
+            ComptimeValue::Deferred
+        } else {
+            ComptimeValue::Comptime
+        }
+    }
+
+    fn is_runtime(self) -> bool {
+        matches!(self, ComptimeValue::Runtime)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ComptimeParamInfo {
+    name: String,
+    is_comptime: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ComptimeCallableSig {
+    name: String,
+    params: Vec<ComptimeParamInfo>,
+    ret_comptime: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ComptimeBindingKey<'db> {
+    Param(hir_nameres::ParamId<'db>),
+    Let {
+        body: FuncBody<'db>,
+        stmt: Id<Stmt<'db>>,
+    },
+    Pattern {
+        body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
+    },
+}
+
+struct ComptimeChecker<'db, 'a> {
+    db: &'db dyn Db,
+    entry_module: ModuleId<'db>,
+    hir_module: Module<'db>,
+    item_resolutions: &'a hir_nameres::ItemResolutionMap<'db>,
+    expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
+    scopes: Vec<FxHashMap<String, ComptimeBindingKey<'db>>>,
+    bindings: FxHashMap<ComptimeBindingKey<'db>, ComptimeValue>,
+    diagnostics: Vec<TypeckDiagnostic>,
+    current_function: String,
+    current_return_comptime: bool,
+}
+
+impl<'db, 'a> ComptimeChecker<'db, 'a> {
+    fn new(
+        db: &'db dyn Db,
+        entry_module: ModuleId<'db>,
+        hir_module: Module<'db>,
+        item_resolutions: &'a hir_nameres::ItemResolutionMap<'db>,
+        body_map: &hir_nameres::BodyResolutionMap<'db>,
+        function: FunctionDef<'db>,
+    ) -> Self {
+        let sig = function.sig(db);
+        let expr_resolutions = body_map
+            .exprs
+            .iter()
+            .map(|entry| ((entry.body, entry.expr), entry.resolution.clone()))
+            .collect();
+        Self {
+            db,
+            entry_module,
+            hir_module,
+            item_resolutions,
+            expr_resolutions,
+            scopes: vec![FxHashMap::default()],
+            bindings: FxHashMap::default(),
+            diagnostics: Vec::new(),
+            current_function: ident_text(db, &sig.name),
+            current_return_comptime: type_ref_is_comptime(db, sig.ret.as_ref()),
+        }
+    }
+
+    fn check_function(
+        mut self,
+        function: FunctionDef<'db>,
+        body: FuncBody<'db>,
+    ) -> Vec<TypeckDiagnostic> {
+        self.bind_params(body, function.sig(self.db).params.atom());
+        self.check_stmt_sequence(body, body.top_level_stmts(self.db));
+        self.diagnostics
+    }
+
+    fn bind_params(&mut self, body: FuncBody<'db>, params: &[FuncParam<'db>]) {
+        for (index, param) in params.iter().enumerate() {
+            let Some(name) = param_name(self.db, param).map(str::to_owned) else {
+                continue;
+            };
+            let key = ComptimeBindingKey::Param(hir_nameres::ParamId {
+                body,
+                index: index as u32,
+            });
+            let value = if param_is_comptime(self.db, param) {
+                ComptimeValue::Comptime
+            } else {
+                ComptimeValue::Runtime
+            };
+            self.bindings.insert(key, value);
+            self.add_name(name, key);
+        }
+    }
+
+    fn check_stmt_sequence(
+        &mut self,
+        body: FuncBody<'db>,
+        stmts: &[Id<Stmt<'db>>],
+    ) -> ComptimeValue {
+        let mut last = ComptimeValue::Comptime;
+        for (index, stmt) in stmts.iter().enumerate() {
+            last = self.check_stmt(body, *stmt, index + 1 == stmts.len());
+        }
+        last
+    }
+
+    fn check_stmt(
+        &mut self,
+        body: FuncBody<'db>,
+        stmt_id: Id<Stmt<'db>>,
+        is_tail: bool,
+    ) -> ComptimeValue {
+        match &body.stmts(self.db).get(stmt_id).kind {
+            StmtKind::Let {
+                comptime,
+                name,
+                ty,
+                init,
+            } => {
+                let declared_comptime = comptime.is_some()
+                    || type_ref_is_comptime(self.db, ty.as_ref())
+                    || ty
+                        .as_ref()
+                        .is_some_and(|ty| type_ref_is_integer(self.db, *ty));
+                let init_value = init
+                    .map(|expr| self.classify_expr(body, expr))
+                    .unwrap_or(ComptimeValue::Deferred);
+                let name_text = ident_text(self.db, name);
+                if declared_comptime && init_value.is_runtime() {
+                    self.diagnostics.push(TypeckDiagnostic::ComptimeLetRuntime {
+                        name: name_text.clone(),
+                    });
+                }
+                let value = if declared_comptime && !init_value.is_runtime() {
+                    ComptimeValue::Comptime
+                } else {
+                    init_value
+                };
+                let key = ComptimeBindingKey::Let {
+                    body,
+                    stmt: stmt_id,
+                };
+                self.bindings.insert(key, value);
+                self.add_name(name_text, key);
+                ComptimeValue::Comptime
+            }
+            StmtKind::Return(expr) => {
+                let value = expr
+                    .map(|expr| self.classify_expr(body, expr))
+                    .unwrap_or(ComptimeValue::Comptime);
+                self.check_comptime_return(value);
+                value
+            }
+            StmtKind::Expr(expr) => {
+                let value = self.classify_expr(body, *expr);
+                if is_tail {
+                    self.check_comptime_return(value);
+                }
+                value
+            }
+            StmtKind::Assign { lhs, rhs }
+            | StmtKind::AddAssign { lhs, rhs }
+            | StmtKind::SubAssign { lhs, rhs }
+            | StmtKind::BitXorAssign { lhs, rhs }
+            | StmtKind::BitAndAssign { lhs, rhs }
+            | StmtKind::BitOrAssign { lhs, rhs }
+            | StmtKind::ModAssign { lhs, rhs } => {
+                let rhs_value = self.classify_expr(body, *rhs);
+                if let Some(key) = self.binding_key_for_expr(body, *lhs) {
+                    self.bindings.insert(key, rhs_value);
+                }
+                rhs_value
+            }
+            StmtKind::Match { scrutinees, arms } => {
+                let scrutinee_values = scrutinees
+                    .iter()
+                    .map(|expr| self.classify_expr(body, *expr))
+                    .collect::<Vec<_>>();
+                for arm in arms {
+                    self.push_scope();
+                    for (pat, value) in arm.pats.iter().zip(scrutinee_values.iter().copied()) {
+                        self.bind_pattern(body, *pat, value);
+                    }
+                    self.check_stmt_sequence(body, &arm.body);
+                    self.pop_scope();
+                }
+                ComptimeValue::from_any_runtime(&scrutinee_values)
+            }
+            StmtKind::For {
+                init,
+                cond,
+                post,
+                body: for_body,
+            } => {
+                self.push_scope();
+                self.check_stmt_sequence(body, init);
+                let cond_value = self.classify_expr(body, *cond);
+                self.check_stmt_sequence(body, for_body);
+                self.check_stmt_sequence(body, post);
+                self.pop_scope();
+                cond_value
+            }
+            StmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let cond_value = self.classify_expr(body, *cond);
+                self.push_scope();
+                let then_value = self.check_stmt_sequence(body, then_body);
+                self.pop_scope();
+                let else_value = if let Some(else_body) = else_body {
+                    self.push_scope();
+                    let value = self.check_stmt_sequence(body, else_body);
+                    self.pop_scope();
+                    value
+                } else {
+                    ComptimeValue::Comptime
+                };
+                ComptimeValue::from_any_runtime(&[cond_value, then_value, else_value])
+            }
+            StmtKind::Block { body: block } => {
+                self.push_scope();
+                let value = self.check_stmt_sequence(body, block);
+                self.pop_scope();
+                value
+            }
+            StmtKind::Assembly { body: yul_body } => {
+                self.check_yul_block(yul_body);
+                ComptimeValue::Deferred
+            }
+            StmtKind::Break | StmtKind::Continue => ComptimeValue::Deferred,
+            StmtKind::Error => ComptimeValue::Deferred,
+        }
+    }
+
+    fn classify_expr(&mut self, body: FuncBody<'db>, expr_id: Id<Expr<'db>>) -> ComptimeValue {
+        match &body.exprs(self.db).get(expr_id).kind {
+            ExprKind::Lit(_) | ExprKind::Proxy { .. } => ComptimeValue::Comptime,
+            ExprKind::Ident(name) => self
+                .expr_resolution(body, expr_id)
+                .and_then(|resolution| self.value_for_resolution(resolution))
+                .unwrap_or_else(|| self.lookup_name((*name.atom()).text(self.db))),
+            ExprKind::DotCtor { args, .. } | ExprKind::Tuple(args) => {
+                ComptimeValue::from_all(args.iter().map(|arg| self.classify_expr(body, *arg)))
+            }
+            ExprKind::Lambda {
+                params,
+                ret,
+                body: lambda_body,
+            } => {
+                self.check_lambda(*lambda_body, params.atom(), *ret);
+                ComptimeValue::Comptime
+            }
+            ExprKind::BinOp { lhs, rhs, .. } => ComptimeValue::from_all([
+                self.classify_expr(body, *lhs),
+                self.classify_expr(body, *rhs),
+            ]),
+            ExprKind::Index { base, index } => ComptimeValue::from_all([
+                self.classify_expr(body, *base),
+                self.classify_expr(body, *index),
+            ]),
+            ExprKind::Call { callee, args } => self.classify_call(body, expr_id, *callee, args),
+            ExprKind::Field { base, .. } => {
+                if self.expr_resolution(body, expr_id).is_some() {
+                    ComptimeValue::Deferred
+                } else {
+                    self.classify_expr(body, *base)
+                }
+            }
+            ExprKind::TypeAnnot { expr, .. } => self.classify_expr(body, *expr),
+            ExprKind::UnaryOp { expr, .. } => self.classify_expr(body, *expr),
+            ExprKind::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => ComptimeValue::from_all([
+                self.classify_expr(body, *cond),
+                self.classify_expr(body, *then_expr),
+                self.classify_expr(body, *else_expr),
+            ]),
+            ExprKind::Error => ComptimeValue::Deferred,
+        }
+    }
+
+    fn classify_call(
+        &mut self,
+        body: FuncBody<'db>,
+        _call_expr: Id<Expr<'db>>,
+        callee: Id<Expr<'db>>,
+        args: &[Id<Expr<'db>>],
+    ) -> ComptimeValue {
+        let arg_values = args
+            .iter()
+            .map(|arg| self.classify_expr(body, *arg))
+            .collect::<Vec<_>>();
+        let callee_resolution = self.expr_resolution(body, callee).cloned();
+        if let Some(sig) = callee_resolution
+            .as_ref()
+            .and_then(|resolution| self.callable_sig_for_resolution(resolution))
+        {
+            for (arg_value, param) in arg_values.iter().copied().zip(sig.params.iter()) {
+                if param.is_comptime && arg_value.is_runtime() {
+                    self.diagnostics
+                        .push(TypeckDiagnostic::RuntimeToComptimeParam {
+                            function: sig.name.clone(),
+                            param: param.name.clone(),
+                        });
+                }
+            }
+            let runtime_body = callee_resolution
+                .as_ref()
+                .is_some_and(|resolution| self.resolution_has_runtime_body(resolution));
+            if runtime_body || arg_values.contains(&ComptimeValue::Runtime) {
+                ComptimeValue::Runtime
+            } else if sig.ret_comptime
+                || arg_values
+                    .iter()
+                    .all(|value| *value == ComptimeValue::Comptime)
+            {
+                ComptimeValue::Comptime
+            } else {
+                ComptimeValue::Deferred
+            }
+        } else if arg_values.contains(&ComptimeValue::Runtime) {
+            ComptimeValue::Runtime
+        } else {
+            ComptimeValue::Deferred
+        }
+    }
+
+    fn check_lambda(
+        &mut self,
+        lambda_body: FuncBody<'db>,
+        params: &[FuncParam<'db>],
+        ret: Option<TypeRef<'db>>,
+    ) {
+        let previous_function = std::mem::replace(&mut self.current_function, "lambda".to_owned());
+        let previous_return = std::mem::replace(
+            &mut self.current_return_comptime,
+            type_ref_is_comptime(self.db, ret.as_ref()),
+        );
+        self.push_scope();
+        self.bind_params(lambda_body, params);
+        self.check_stmt_sequence(lambda_body, lambda_body.top_level_stmts(self.db));
+        self.pop_scope();
+        self.current_function = previous_function;
+        self.current_return_comptime = previous_return;
+    }
+
+    fn check_comptime_return(&mut self, value: ComptimeValue) {
+        if self.current_return_comptime && value.is_runtime() {
+            self.diagnostics
+                .push(TypeckDiagnostic::ComptimeReturnRuntime {
+                    context: self.current_function.clone(),
+                });
+        }
+    }
+
+    fn check_yul_block(&mut self, stmts: &[YulStmt<'db>]) {
+        for stmt in stmts {
+            self.check_yul_stmt(stmt);
+        }
+    }
+
+    fn check_yul_stmt(&mut self, stmt: &YulStmt<'db>) {
+        match &stmt.kind {
+            YulStmtKind::Block(body) => {
+                self.push_scope();
+                self.check_yul_block(body);
+                self.pop_scope();
+            }
+            YulStmtKind::Let { init, .. } => {
+                if let Some(init) = init {
+                    self.classify_yul_expr(init);
+                }
+            }
+            YulStmtKind::Assign { names, value } => {
+                let value = self.classify_yul_expr(value);
+                for name in names {
+                    let text = (*name.atom()).text(self.db);
+                    if let Some(key) = self.lookup_key(text) {
+                        self.bindings.insert(key, value);
+                    }
+                }
+            }
+            YulStmtKind::Expr(expr) => {
+                self.classify_yul_expr(expr);
+            }
+            YulStmtKind::If { cond, body } => {
+                self.classify_yul_expr(cond);
+                self.push_scope();
+                self.check_yul_block(body);
+                self.pop_scope();
+            }
+            YulStmtKind::For {
+                init,
+                cond,
+                post,
+                body,
+            } => {
+                self.push_scope();
+                self.check_yul_block(init);
+                self.classify_yul_expr(cond);
+                self.check_yul_block(body);
+                self.check_yul_block(post);
+                self.pop_scope();
+            }
+            YulStmtKind::Switch {
+                expr,
+                cases,
+                default,
+            } => {
+                self.classify_yul_expr(expr);
+                for case in cases {
+                    self.push_scope();
+                    self.check_yul_block(&case.body);
+                    self.pop_scope();
+                }
+                if let Some(default) = default {
+                    self.push_scope();
+                    self.check_yul_block(default);
+                    self.pop_scope();
+                }
+            }
+            YulStmtKind::FunctionDef { .. }
+            | YulStmtKind::Leave
+            | YulStmtKind::Break
+            | YulStmtKind::Continue
+            | YulStmtKind::Error => {}
+        }
+    }
+
+    fn classify_yul_expr(&mut self, expr: &YulExpr<'db>) -> ComptimeValue {
+        match &expr.kind {
+            YulExprKind::Lit(_) => ComptimeValue::Comptime,
+            YulExprKind::Ident(name) => self.lookup_name((*name.atom()).text(self.db)),
+            YulExprKind::Call { name, args } => {
+                let text = (*name.atom()).text(self.db);
+                let args = args
+                    .iter()
+                    .map(|arg| self.classify_yul_expr(arg))
+                    .collect::<Vec<_>>();
+                if yul_builtin_is_runtime(text) || args.contains(&ComptimeValue::Runtime) {
+                    ComptimeValue::Runtime
+                } else if args.iter().all(|value| *value == ComptimeValue::Comptime) {
+                    ComptimeValue::Comptime
+                } else {
+                    ComptimeValue::Deferred
+                }
+            }
+            YulExprKind::Error => ComptimeValue::Deferred,
+        }
+    }
+
+    fn bind_pattern(&mut self, body: FuncBody<'db>, pat: Id<Pat<'db>>, value: ComptimeValue) {
+        match &body.pats(self.db).get(pat).kind {
+            PatKind::Var(name) => {
+                let key = ComptimeBindingKey::Pattern { body, pat };
+                self.bindings.insert(key, value);
+                self.add_name(ident_text(self.db, name), key);
+            }
+            PatKind::Ctor { args, .. } => {
+                for arg in args {
+                    self.bind_pattern(body, *arg, value);
+                }
+            }
+            PatKind::Tuple { elems } => {
+                for elem in elems {
+                    self.bind_pattern(body, *elem, value);
+                }
+            }
+            PatKind::ComptimeLabel { expr, .. } => {
+                self.classify_expr(body, *expr);
+            }
+            PatKind::Wildcard | PatKind::Lit(_) | PatKind::Error => {}
+        }
+    }
+
+    fn binding_key_for_expr(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<ComptimeBindingKey<'db>> {
+        match self.expr_resolution(body, expr)? {
+            hir_nameres::Resolution::Param(param) => Some(ComptimeBindingKey::Param(*param)),
+            hir_nameres::Resolution::Local(hir_nameres::LocalBinding::Let { body, stmt }) => {
+                Some(ComptimeBindingKey::Let {
+                    body: *body,
+                    stmt: *stmt,
+                })
+            }
+            hir_nameres::Resolution::Local(hir_nameres::LocalBinding::Pattern { body, pat }) => {
+                Some(ComptimeBindingKey::Pattern {
+                    body: *body,
+                    pat: *pat,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn value_for_resolution(
+        &self,
+        resolution: &hir_nameres::Resolution<'db>,
+    ) -> Option<ComptimeValue> {
+        let key = match resolution {
+            hir_nameres::Resolution::Param(param) => ComptimeBindingKey::Param(*param),
+            hir_nameres::Resolution::Local(hir_nameres::LocalBinding::Let { body, stmt }) => {
+                ComptimeBindingKey::Let {
+                    body: *body,
+                    stmt: *stmt,
+                }
+            }
+            hir_nameres::Resolution::Local(hir_nameres::LocalBinding::Pattern { body, pat }) => {
+                ComptimeBindingKey::Pattern {
+                    body: *body,
+                    pat: *pat,
+                }
+            }
+            _ => return None,
+        };
+        Some(
+            self.bindings
+                .get(&key)
+                .copied()
+                .unwrap_or(ComptimeValue::Deferred),
+        )
+    }
+
+    fn callable_sig_for_resolution(
+        &self,
+        resolution: &hir_nameres::Resolution<'db>,
+    ) -> Option<ComptimeCallableSig> {
+        match resolution {
+            hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Function,
+            } => self.function_info(*def).map(|function| {
+                callable_sig_from_func_sig(self.db, function.function.sig(self.db))
+            }),
+            hir_nameres::Resolution::ClassMethod { class, name } => {
+                self.class_method_sig(*class, name)
+            }
+            hir_nameres::Resolution::Builtin(kind) => builtin_comptime_sig(*kind),
+            _ => None,
+        }
+    }
+
+    fn resolution_has_runtime_body(&self, resolution: &hir_nameres::Resolution<'db>) -> bool {
+        match resolution {
+            hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Function,
+            } => self
+                .function_info(*def)
+                .and_then(|info| info.function.body(self.db))
+                .is_some_and(|body| body_contains_runtime_yul(self.db, body)),
+            hir_nameres::Resolution::ClassMethod { class, name } => {
+                self.class_method_has_runtime_instance_body(*class, name)
+            }
+            hir_nameres::Resolution::Builtin(kind) => builtin_is_runtime(*kind),
+            _ => false,
+        }
+    }
+
+    fn function_info(&self, def: DefId<'db>) -> Option<FunctionLookup<'db>> {
+        let module = module_for_def(self.db, self.entry_module, def)
+            .and_then(|module| module_hir(self.db, module))
+            .unwrap_or(self.hir_module);
+        find_function_info(self.db, module, def)
+    }
+
+    fn class_method_sig(&self, class: DefId<'db>, name: &str) -> Option<ComptimeCallableSig> {
+        let module = module_for_def(self.db, self.entry_module, class)
+            .and_then(|module| module_hir(self.db, module))
+            .unwrap_or(self.hir_module);
+        let class_info = find_class_info(self.db, module, class)?;
+        let method = class_info
+            .class
+            .methods(self.db)
+            .iter()
+            .find(|method| ident_text(self.db, &method.name) == name)?;
+        let mut sig = callable_sig_from_func_sig(self.db, method);
+        let class_name = class.name(self.db).unwrap_or_else(|| "class".to_owned());
+        sig.name = format!("{class_name}.{name}");
+        Some(sig)
+    }
+
+    fn class_method_has_runtime_instance_body(&self, class: DefId<'db>, name: &str) -> bool {
+        self.module_contains_runtime_instance_method(self.hir_module, class, name)
+            || nameres::module_graph(self.db, self.entry_module)
+                .modules
+                .into_iter()
+                .filter_map(|module| module_hir(self.db, module))
+                .any(|module| self.module_contains_runtime_instance_method(module, class, name))
+    }
+
+    fn module_contains_runtime_instance_method(
+        &self,
+        module: Module<'db>,
+        class: DefId<'db>,
+        name: &str,
+    ) -> bool {
+        for item in module.items(self.db) {
+            let Item::InstanceDef(instance) = item else {
+                continue;
+            };
+            if !self.instance_targets_class(module, *instance, class) {
+                continue;
+            }
+            if instance.methods(self.db).iter().any(|method| {
+                ident_text(self.db, &method.sig(self.db).name) == name
+                    && method
+                        .body(self.db)
+                        .is_some_and(|body| body_contains_runtime_yul(self.db, body))
+            }) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn instance_targets_class(
+        &self,
+        module: Module<'db>,
+        instance: hir::ast::item::InstanceDef<'db>,
+        class: DefId<'db>,
+    ) -> bool {
+        let resolved_item_resolutions;
+        let item_resolutions = if module == self.hir_module {
+            self.item_resolutions
+        } else {
+            resolved_item_resolutions = hir_nameres::resolve_item_types(self.db, module);
+            &resolved_item_resolutions
+        };
+        let type_vars = type_var_bindings(
+            instance.def_id_value(self.db),
+            instance.type_var_elems(self.db),
+        );
+        let lowerer = TypeLowering::from_item_resolutions(
+            self.db,
+            item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        matches!(
+            lowerer.lower_pred(instance.head(self.db)).kind(self.db),
+            PredKind::InClass {
+                class: ClassId::User(found),
+                ..
+            } if *found == class
+        )
+    }
+
+    fn expr_resolution(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<&hir_nameres::Resolution<'db>> {
+        self.expr_resolutions.get(&(body, expr))
+    }
+
+    fn lookup_name(&self, name: &str) -> ComptimeValue {
+        self.lookup_key(name)
+            .and_then(|key| self.bindings.get(&key).copied())
+            .unwrap_or(ComptimeValue::Deferred)
+    }
+
+    fn lookup_key(&self, name: &str) -> Option<ComptimeBindingKey<'db>> {
+        self.scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
+    }
+
+    fn add_name(&mut self, name: String, key: ComptimeBindingKey<'db>) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.insert(name, key);
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.scopes.push(FxHashMap::default());
+    }
+
+    fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+}
+
+fn callable_sig_from_func_sig<'db>(db: &'db dyn HirDb, sig: &FuncSig<'db>) -> ComptimeCallableSig {
+    ComptimeCallableSig {
+        name: ident_text(db, &sig.name),
+        params: sig
+            .params
+            .atom()
+            .iter()
+            .enumerate()
+            .map(|(index, param)| ComptimeParamInfo {
+                name: param_name(db, param)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("arg{index}")),
+                is_comptime: param_is_comptime(db, param),
+            })
+            .collect(),
+        ret_comptime: type_ref_is_comptime(db, sig.ret.as_ref()),
+    }
+}
+
+fn builtin_comptime_sig(kind: hir_nameres::BuiltinKind) -> Option<ComptimeCallableSig> {
+    use hir_nameres::{BuiltinClassMethod, BuiltinFunction, BuiltinKind};
+    let sig = match kind {
+        BuiltinKind::Function(BuiltinFunction::WordToInteger) => ComptimeCallableSig {
+            name: "wordToInteger".to_owned(),
+            params: vec![ComptimeParamInfo {
+                name: "x".to_owned(),
+                is_comptime: false,
+            }],
+            ret_comptime: true,
+        },
+        BuiltinKind::Function(BuiltinFunction::WordFromInteger) => ComptimeCallableSig {
+            name: "wordFromInteger".to_owned(),
+            params: vec![ComptimeParamInfo {
+                name: "x".to_owned(),
+                is_comptime: false,
+            }],
+            ret_comptime: true,
+        },
+        BuiltinKind::Function(
+            BuiltinFunction::IntegerAdd
+            | BuiltinFunction::IntegerSub
+            | BuiltinFunction::IntegerMul
+            | BuiltinFunction::IntegerLt
+            | BuiltinFunction::IntegerEq,
+        ) => ComptimeCallableSig {
+            name: "integer primitive".to_owned(),
+            params: vec![
+                ComptimeParamInfo {
+                    name: "lhs".to_owned(),
+                    is_comptime: false,
+                },
+                ComptimeParamInfo {
+                    name: "rhs".to_owned(),
+                    is_comptime: false,
+                },
+            ],
+            ret_comptime: true,
+        },
+        BuiltinKind::ClassMethod(BuiltinClassMethod::IntFromInteger) => ComptimeCallableSig {
+            name: "Int.fromInteger".to_owned(),
+            params: vec![ComptimeParamInfo {
+                name: "x".to_owned(),
+                is_comptime: false,
+            }],
+            ret_comptime: true,
+        },
+        BuiltinKind::Function(BuiltinFunction::PrimAddWord | BuiltinFunction::PrimEqWord)
+        | BuiltinKind::Function(BuiltinFunction::Invoke)
+        | BuiltinKind::ClassMethod(BuiltinClassMethod::InvokableInvoke)
+        | BuiltinKind::Constructor(_)
+        | BuiltinKind::Type(_)
+        | BuiltinKind::Class(_) => return None,
+    };
+    Some(sig)
+}
+
+fn builtin_is_runtime(kind: hir_nameres::BuiltinKind) -> bool {
+    let _ = kind;
+    false
+}
+
+fn param_is_comptime<'db>(db: &'db dyn HirDb, param: &FuncParam<'db>) -> bool {
+    match param {
+        FuncParam::Typed { comptime, ty, .. } => {
+            comptime.is_some() || type_ref_is_comptime(db, Some(ty))
+        }
+        FuncParam::Untyped { comptime, .. } => comptime.is_some(),
+        FuncParam::Error { .. } => false,
+    }
+}
+
+fn type_ref_is_comptime<'db>(db: &'db dyn HirDb, ty: Option<&TypeRef<'db>>) -> bool {
+    ty.is_some_and(|ty| matches!(ty.kind(db), TypeRefKind::Comptime { .. }))
+}
+
+fn type_ref_is_integer<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>) -> bool {
+    match ty.kind(db) {
+        TypeRefKind::Comptime { inner, .. } => type_ref_is_integer(db, *inner),
+        TypeRefKind::Named { name, args, .. } => {
+            (*name.atom()).text(db) == "integer" && args.atom().is_empty()
+        }
+        _ => false,
+    }
+}
+
+fn body_contains_runtime_yul<'db>(db: &'db dyn HirDb, body: FuncBody<'db>) -> bool {
+    body.top_level_stmts(db)
+        .iter()
+        .any(|stmt| stmt_contains_runtime_yul(db, body, *stmt))
+}
+
+fn stmt_contains_runtime_yul<'db>(
+    db: &'db dyn HirDb,
+    body: FuncBody<'db>,
+    stmt: Id<Stmt<'db>>,
+) -> bool {
+    match &body.stmts(db).get(stmt).kind {
+        StmtKind::Let { init, .. } => {
+            init.is_some_and(|expr| expr_contains_runtime_yul(db, body, expr))
+        }
+        StmtKind::Return(expr) => {
+            expr.is_some_and(|expr| expr_contains_runtime_yul(db, body, expr))
+        }
+        StmtKind::Expr(expr) => expr_contains_runtime_yul(db, body, *expr),
+        StmtKind::Assign { lhs, rhs }
+        | StmtKind::AddAssign { lhs, rhs }
+        | StmtKind::SubAssign { lhs, rhs }
+        | StmtKind::BitXorAssign { lhs, rhs }
+        | StmtKind::BitAndAssign { lhs, rhs }
+        | StmtKind::BitOrAssign { lhs, rhs }
+        | StmtKind::ModAssign { lhs, rhs } => {
+            expr_contains_runtime_yul(db, body, *lhs) || expr_contains_runtime_yul(db, body, *rhs)
+        }
+        StmtKind::Match { scrutinees, arms } => {
+            scrutinees
+                .iter()
+                .any(|expr| expr_contains_runtime_yul(db, body, *expr))
+                || arms.iter().any(|arm| {
+                    arm.body
+                        .iter()
+                        .any(|stmt| stmt_contains_runtime_yul(db, body, *stmt))
+                })
+        }
+        StmtKind::For {
+            init,
+            cond,
+            post,
+            body: for_body,
+        } => {
+            init.iter()
+                .chain(post)
+                .chain(for_body)
+                .any(|stmt| stmt_contains_runtime_yul(db, body, *stmt))
+                || expr_contains_runtime_yul(db, body, *cond)
+        }
+        StmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            expr_contains_runtime_yul(db, body, *cond)
+                || then_body
+                    .iter()
+                    .any(|stmt| stmt_contains_runtime_yul(db, body, *stmt))
+                || else_body.as_ref().is_some_and(|else_body| {
+                    else_body
+                        .iter()
+                        .any(|stmt| stmt_contains_runtime_yul(db, body, *stmt))
+                })
+        }
+        StmtKind::Block { body: block } => block
+            .iter()
+            .any(|stmt| stmt_contains_runtime_yul(db, body, *stmt)),
+        StmtKind::Assembly { body } => yul_block_contains_runtime(db, body),
+        StmtKind::Break | StmtKind::Continue | StmtKind::Error => false,
+    }
+}
+
+fn expr_contains_runtime_yul<'db>(
+    db: &'db dyn HirDb,
+    body: FuncBody<'db>,
+    expr: Id<Expr<'db>>,
+) -> bool {
+    match &body.exprs(db).get(expr).kind {
+        ExprKind::Lambda {
+            body: lambda_body, ..
+        } => body_contains_runtime_yul(db, *lambda_body),
+        ExprKind::BinOp { lhs, rhs, .. } => {
+            expr_contains_runtime_yul(db, body, *lhs) || expr_contains_runtime_yul(db, body, *rhs)
+        }
+        ExprKind::Index { base, index } => {
+            expr_contains_runtime_yul(db, body, *base)
+                || expr_contains_runtime_yul(db, body, *index)
+        }
+        ExprKind::Call { callee, args } => {
+            expr_contains_runtime_yul(db, body, *callee)
+                || args
+                    .iter()
+                    .any(|arg| expr_contains_runtime_yul(db, body, *arg))
+        }
+        ExprKind::Field { base, .. }
+        | ExprKind::TypeAnnot { expr: base, .. }
+        | ExprKind::UnaryOp { expr: base, .. } => expr_contains_runtime_yul(db, body, *base),
+        ExprKind::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            expr_contains_runtime_yul(db, body, *cond)
+                || expr_contains_runtime_yul(db, body, *then_expr)
+                || expr_contains_runtime_yul(db, body, *else_expr)
+        }
+        ExprKind::DotCtor { args, .. } | ExprKind::Tuple(args) => args
+            .iter()
+            .any(|arg| expr_contains_runtime_yul(db, body, *arg)),
+        ExprKind::Lit(_) | ExprKind::Ident(_) | ExprKind::Proxy { .. } | ExprKind::Error => false,
+    }
+}
+
+fn yul_block_contains_runtime<'db>(db: &'db dyn HirDb, body: &[YulStmt<'db>]) -> bool {
+    body.iter().any(|stmt| yul_stmt_contains_runtime(db, stmt))
+}
+
+fn yul_stmt_contains_runtime<'db>(db: &'db dyn HirDb, stmt: &YulStmt<'db>) -> bool {
+    match &stmt.kind {
+        YulStmtKind::Block(body) => yul_block_contains_runtime(db, body),
+        YulStmtKind::Let { init, .. } => init
+            .as_ref()
+            .is_some_and(|expr| yul_expr_contains_runtime(db, expr)),
+        YulStmtKind::Assign { value, .. } | YulStmtKind::Expr(value) => {
+            yul_expr_contains_runtime(db, value)
+        }
+        YulStmtKind::If { cond, body } => {
+            yul_expr_contains_runtime(db, cond) || yul_block_contains_runtime(db, body)
+        }
+        YulStmtKind::For {
+            init,
+            cond,
+            post,
+            body,
+        } => {
+            yul_block_contains_runtime(db, init)
+                || yul_expr_contains_runtime(db, cond)
+                || yul_block_contains_runtime(db, post)
+                || yul_block_contains_runtime(db, body)
+        }
+        YulStmtKind::Switch {
+            expr,
+            cases,
+            default,
+        } => {
+            yul_expr_contains_runtime(db, expr)
+                || cases
+                    .iter()
+                    .any(|case| yul_block_contains_runtime(db, &case.body))
+                || default
+                    .as_ref()
+                    .is_some_and(|body| yul_block_contains_runtime(db, body))
+        }
+        YulStmtKind::FunctionDef { body, .. } => yul_block_contains_runtime(db, body),
+        YulStmtKind::Leave | YulStmtKind::Break | YulStmtKind::Continue | YulStmtKind::Error => {
+            false
+        }
+    }
+}
+
+fn yul_expr_contains_runtime<'db>(db: &'db dyn HirDb, expr: &YulExpr<'db>) -> bool {
+    match &expr.kind {
+        YulExprKind::Call { name, args } => {
+            yul_builtin_is_runtime((*name.atom()).text(db))
+                || args.iter().any(|arg| yul_expr_contains_runtime(db, arg))
+        }
+        YulExprKind::Lit(_) | YulExprKind::Ident(_) | YulExprKind::Error => false,
+    }
+}
+
+fn yul_builtin_is_runtime(name: &str) -> bool {
+    matches!(
+        name,
+        "sload"
+            | "sstore"
+            | "balance"
+            | "origin"
+            | "caller"
+            | "callvalue"
+            | "calldataload"
+            | "calldatasize"
+            | "calldatacopy"
+            | "codesize"
+            | "codecopy"
+            | "extcodesize"
+            | "extcodecopy"
+            | "returndatasize"
+            | "returndatacopy"
+            | "extcodehash"
+            | "blockhash"
+            | "coinbase"
+            | "timestamp"
+            | "number"
+            | "difficulty"
+            | "gaslimit"
+            | "chainid"
+            | "selfbalance"
+            | "basefee"
+            | "gas"
+            | "log0"
+            | "log1"
+            | "log2"
+            | "log3"
+            | "log4"
+            | "create"
+            | "create2"
+            | "call"
+            | "callcode"
+            | "delegatecall"
+            | "staticcall"
+            | "selfdestruct"
+    )
 }
 
 impl<'db> TypeckDiagnosticCollector<'db> {
@@ -4262,6 +5512,19 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         if !body_map.diagnostics.is_empty() {
             return;
         }
+        self.diagnostics.extend(
+            ComptimeChecker::new(
+                self.db,
+                self.module,
+                self.hir_module,
+                &self.item_resolutions,
+                &body_map,
+                function,
+            )
+            .check_function(function, body)
+            .into_iter()
+            .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+        );
         let mut givens = lowered.scheme.body(self.db).preds(self.db).clone();
         givens.extend(extra_givens.iter().copied());
         let trait_env = trait_env_with_givens(
@@ -4729,6 +5992,30 @@ fn partial_data_entries(env: &nameres::ModuleEnv<'_>) -> Vec<(String, Vec<String
 
 fn ident_text<'db>(db: &'db dyn HirDb, ident: &SpannedElem<'db, Ident<'db>>) -> String {
     (*ident.atom()).text(db).to_owned()
+}
+
+fn closure_def_id<'db>(db: &'db dyn Db, body: FuncBody<'db>) -> DefId<'db> {
+    let body_def = body.def_id(db);
+    DefId::new(
+        db,
+        body_def.file(db),
+        Some(body_def),
+        DefKind::Adt,
+        Some("t_closure".to_owned()),
+        body_def.fingerprint(db),
+        Disambiguator::ZERO,
+    )
+}
+
+fn invokable_arg_infer<'db>(args: Vec<InferTy<'db>>) -> InferTy<'db> {
+    match args.as_slice() {
+        [] => InferTy::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
+            args: Vec::new(),
+        },
+        [arg] => arg.clone(),
+        _ => InferTy::Tuple(args),
+    }
 }
 
 /// Infers expression and pattern types for one body.
@@ -6193,13 +7480,16 @@ function badYul() -> word {
             &db,
             "function f() -> word { let x : word = 1; return x(); }",
         );
-        let (_, result) = infer_function(&db, module, "f");
-        assert!(
-            result
-                .diagnostics
-                .iter()
-                .any(|diag| matches!(diag, TypeckDiagnostic::NonCallable { .. }))
-        );
+        let result = infer_all_functions_with_solver(&db, module)
+            .into_iter()
+            .find(|(name, _)| name == "f")
+            .expect("function")
+            .1;
+        assert!(result.diagnostics.iter().any(|diag| matches!(
+            diag,
+            TypeckDiagnostic::UnsatisfiedConstraint { pred }
+                if pred.contains("invokable")
+        )));
     }
 
     #[test]

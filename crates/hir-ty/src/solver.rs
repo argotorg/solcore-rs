@@ -11,7 +11,7 @@ use hir::{
     ast::{
         Ident,
         function::{FuncParam, FuncSig},
-        item::{ClassDef, FunctionDef, InstanceDef, Item, Module},
+        item::{AdtDef, ClassDef, ContractItem, FunctionDef, InstanceDef, Item, Module},
     },
     nameres as hir_nameres,
     span::SpannedElem,
@@ -85,10 +85,21 @@ pub enum ClauseOrigin<'db> {
     Instance(DefId<'db>),
     /// Compiler-defined fact.
     Builtin,
+    /// Compiler-synthesized instance-like clause.
+    Derived(DerivedClauseKind),
     /// Local given predicate from a checked body.
     Given,
     /// Superclass projection clause.
     Superclass(DefId<'db>),
+}
+
+/// Family of compiler-synthesized clauses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum DerivedClauseKind {
+    /// Automatically derived `Generic` instance.
+    Generic,
+    /// Lambda closure `invokable` instance.
+    Closure,
 }
 
 /// Lifetime-free evidence tree for a solved obligation.
@@ -118,6 +129,15 @@ pub enum Evidence<'db> {
         pred: Pred<'db>,
         /// Evidence for the subclass predicate.
         child: Box<Evidence<'db>>,
+    },
+    /// Evidence from a compiler-synthesized clause.
+    Derived {
+        /// Derived clause family.
+        kind: DerivedClauseKind,
+        /// Predicate discharged directly.
+        pred: Pred<'db>,
+        /// Evidence for synthesized clause context predicates.
+        sub_evidence: Vec<Evidence<'db>>,
     },
 }
 
@@ -201,6 +221,11 @@ pub fn trait_env_for_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Trai
             builder.add_instance(scope.module, instance, &item_resolutions);
         }
     }
+    if let Some(generic) = visible_generic_class(db, &env)
+        && let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, module)
+    {
+        builder.add_derived_generic_instances(scope.module, &item_resolutions, generic);
+    }
 
     builder.finish(Vec::new())
 }
@@ -222,7 +247,35 @@ pub fn trait_env_from_module_resolution<'db>(
             builder.add_instance(module, *instance, &module_resolution.item_resolutions);
         }
     }
+    if let Some(generic) = local_generic_class(db, module)
+        .or_else(|| imported_generic_class(db, &module_resolution.item_resolutions))
+    {
+        builder.add_derived_generic_instances(module, &module_resolution.item_resolutions, generic);
+    }
     builder.finish(Vec::new())
+}
+
+/// Returns diagnostics for Generic auto-derivation conflicts in one module.
+pub fn generic_derivation_diagnostics<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    env: &nameres::ModuleEnv<'db>,
+) -> Vec<TypeckDiagnostic> {
+    let Some(generic) = visible_generic_class(db, env).or_else(|| local_generic_class(db, module))
+    else {
+        return Vec::new();
+    };
+    let excluded = no_generic_instance_for(db, module);
+    let manual = manual_generic_instance_types(db, module, item_resolutions, generic);
+    local_adt_infos(db, module)
+        .into_iter()
+        .filter(|info| manual.contains(&info.adt.def_id_value(db)))
+        .filter(|info| !excluded.contains(&adt_name(db, info.adt)))
+        .map(|info| TypeckDiagnostic::GenericDeriveConflict {
+            ty: adt_name(db, info.adt),
+        })
+        .collect()
 }
 
 /// Extends an existing trait environment with local given predicates.
@@ -938,6 +991,12 @@ struct ClassLookup<'db> {
     type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
 }
 
+#[derive(Clone)]
+struct AdtDeriveInfo<'db> {
+    adt: AdtDef<'db>,
+    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+}
+
 fn find_class_info<'db>(
     db: &'db dyn HirDb,
     module: Module<'db>,
@@ -955,6 +1014,245 @@ fn find_class_info<'db>(
             type_vars: type_var_bindings(class.def_id_value(db), class.type_var_elems(db)),
         })
     })
+}
+
+fn visible_generic_class<'db>(
+    db: &'db dyn Db,
+    env: &nameres::ModuleEnv<'db>,
+) -> Option<DefId<'db>> {
+    env.types
+        .get("Generic")
+        .and_then(|resolution| generic_class_from_resolution(db, resolution))
+        .or_else(|| {
+            env.item_scope
+                .as_ref()
+                .and_then(|scope| local_generic_class(db, scope.module))
+        })
+}
+
+fn imported_generic_class<'db>(
+    db: &'db dyn Db,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+) -> Option<DefId<'db>> {
+    item_resolutions
+        .preds
+        .iter()
+        .find_map(|entry| generic_class_from_resolution(db, &entry.resolution))
+        .or_else(|| {
+            item_resolutions
+                .types
+                .iter()
+                .find_map(|entry| generic_class_from_resolution(db, &entry.resolution))
+        })
+}
+
+fn generic_class_from_resolution<'db>(
+    db: &'db dyn Db,
+    resolution: &hir_nameres::Resolution<'db>,
+) -> Option<DefId<'db>> {
+    match resolution {
+        hir_nameres::Resolution::Def {
+            def,
+            kind: hir_nameres::DefResolutionKind::Class,
+        } if def.name(db).as_deref() == Some("Generic") => Some(*def),
+        _ => None,
+    }
+}
+
+fn local_generic_class<'db>(db: &'db dyn Db, module: Module<'db>) -> Option<DefId<'db>> {
+    module.items(db).iter().find_map(|item| {
+        let Item::ClassDef(class) = item else {
+            return None;
+        };
+        let PredKind::InClass {
+            class: ClassId::User(def),
+            ..
+        } = TypeLowering::from_item_resolutions(
+            db,
+            &hir_nameres::resolve_item_types(db, module),
+            BinderEnv::from_type_vars(&type_var_bindings(
+                class.def_id_value(db),
+                class.type_var_elems(db),
+            )),
+        )
+        .lower_pred(class.head(db))
+        .kind(db)
+        else {
+            return None;
+        };
+        (def.name(db).as_deref() == Some("Generic")).then_some(*def)
+    })
+}
+
+fn no_generic_instance_for<'db>(db: &'db dyn HirDb, module: Module<'db>) -> FxHashSet<String> {
+    let mut excluded = FxHashSet::default();
+    for item in module.items(db) {
+        let Item::Pragma(pragma) = item else {
+            continue;
+        };
+        if (*pragma.name(db).atom()).text(db) != "no-generic-instance-for" {
+            continue;
+        }
+        excluded.extend(
+            pragma
+                .items(db)
+                .iter()
+                .map(|item| (*item.atom()).text(db).to_owned()),
+        );
+    }
+    excluded
+}
+
+fn manual_generic_instance_types<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    generic: DefId<'db>,
+) -> FxHashSet<DefId<'db>> {
+    let mut types = FxHashSet::default();
+    for item in module.items(db) {
+        let Item::InstanceDef(instance) = item else {
+            continue;
+        };
+        let type_vars = type_var_bindings(instance.def_id_value(db), instance.type_var_elems(db));
+        let lowerer = TypeLowering::from_item_resolutions(
+            db,
+            item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
+        let head = normalizer.normalize_pred(lowerer.lower_pred(instance.head(db)));
+        let PredKind::InClass {
+            class: ClassId::User(class),
+            main,
+            ..
+        } = head.kind(db)
+        else {
+            continue;
+        };
+        if *class != generic {
+            continue;
+        }
+        if let Some(def) = ty_head_adt_def(db, *main) {
+            types.insert(def);
+        }
+    }
+    types
+}
+
+fn ty_head_adt_def<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Option<DefId<'db>> {
+    match ty.kind(db) {
+        TyKind::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+            ..
+        } => Some(*def),
+        _ => None,
+    }
+}
+
+fn local_adt_infos<'db>(db: &'db dyn HirDb, module: Module<'db>) -> Vec<AdtDeriveInfo<'db>> {
+    let mut infos = Vec::new();
+    for item in module.items(db) {
+        collect_local_adt_infos(db, *item, &[], &mut infos);
+    }
+    infos
+}
+
+fn collect_local_adt_infos<'db>(
+    db: &'db dyn HirDb,
+    item: Item<'db>,
+    inherited: &[hir_nameres::TypeVarBinding<'db>],
+    infos: &mut Vec<AdtDeriveInfo<'db>>,
+) {
+    match item {
+        Item::AdtDef(adt) => {
+            let mut type_vars = inherited.to_vec();
+            type_vars.extend(type_var_bindings(
+                adt.def_id_value(db),
+                adt.ty_param_elems(db),
+            ));
+            infos.push(AdtDeriveInfo { adt, type_vars });
+        }
+        Item::ContractDef(contract) => {
+            let mut inherited = inherited.to_vec();
+            inherited.extend(type_var_bindings(
+                contract.def_id_value(db),
+                contract.ty_param_elems(db),
+            ));
+            for item in contract.items(db) {
+                if let ContractItem::AdtDef(adt) = *item {
+                    collect_local_adt_infos(db, Item::AdtDef(adt), &inherited, infos);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn adt_name<'db>(db: &'db dyn HirDb, adt: AdtDef<'db>) -> String {
+    ident_text(db, &adt.name_elem(db))
+}
+
+fn generic_rep_ty<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    info: &AdtDeriveInfo<'db>,
+) -> Ty<'db> {
+    let lowerer = TypeLowering::from_item_resolutions(
+        db,
+        item_resolutions,
+        BinderEnv::from_type_vars(&info.type_vars),
+    );
+    let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
+    let reps = info
+        .adt
+        .ctors(db)
+        .iter()
+        .map(|ctor| {
+            let fields = normalizer.normalize_ty(lowerer.lower_type(*ctor.fields.atom()));
+            constructor_rep_ty(db, fields)
+        })
+        .collect::<Vec<_>>();
+    sum_rep_ty(db, reps)
+}
+
+fn constructor_rep_ty<'db>(db: &'db dyn Db, fields: Ty<'db>) -> Ty<'db> {
+    match fields.kind(db) {
+        TyKind::Tuple(elems) => product_rep_ty(db, elems.clone()),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+            args,
+        } if args.is_empty() => Ty::unit(db),
+        _ => fields,
+    }
+}
+
+fn product_rep_ty<'db>(db: &'db dyn Db, fields: Vec<Ty<'db>>) -> Ty<'db> {
+    match fields.as_slice() {
+        [] => Ty::unit(db),
+        [field] => *field,
+        _ => Ty::tuple(db, fields),
+    }
+}
+
+fn sum_rep_ty<'db>(db: &'db dyn Db, mut reps: Vec<Ty<'db>>) -> Ty<'db> {
+    match reps.len() {
+        0 => Ty::unit(db),
+        1 => reps.pop().expect("one rep"),
+        _ => {
+            let first = reps.remove(0);
+            Ty::named(
+                db,
+                TyCtor::Builtin(crate::BuiltinTyCtor::Sum),
+                vec![first, sum_rep_ty(db, reps)],
+            )
+        }
+    }
 }
 
 fn ident_text<'db>(db: &'db dyn HirDb, name: &SpannedElem<'db, Ident<'db>>) -> String {
@@ -1295,6 +1593,21 @@ impl<'db> Evidence<'db> {
                     child.display(db)
                 )
             }
+            Evidence::Derived {
+                kind,
+                pred,
+                sub_evidence,
+            } => {
+                if sub_evidence.is_empty() {
+                    format!("derived {kind:?} {}", pred.display(db))
+                } else {
+                    format!(
+                        "derived {kind:?} {} with {} subproof(s)",
+                        pred.display(db),
+                        sub_evidence.len()
+                    )
+                }
+            }
         }
     }
 }
@@ -1326,6 +1639,30 @@ impl<'db> TraitEnvBuilder<'db> {
             self.clauses.push(ProgramClause {
                 binder_count: 0,
                 head: Pred::in_class(self.db, int, ty, Vec::new()),
+                conditions: Vec::new(),
+                origin: ClauseOrigin::Builtin,
+                is_default: false,
+            });
+        }
+        self.add_builtin_function_invokables();
+    }
+
+    fn add_builtin_function_invokables(&mut self) {
+        let invokable = ClassId::Builtin(BuiltinClassId::Invokable);
+        for arity in 0..=8 {
+            let params = (0..arity)
+                .map(|index| Ty::bound(self.db, index))
+                .collect::<Vec<_>>();
+            let ret = Ty::bound(self.db, arity);
+            let main = Ty::function(self.db, params.clone(), ret);
+            self.clauses.push(ProgramClause {
+                binder_count: arity + 1,
+                head: Pred::in_class(
+                    self.db,
+                    invokable,
+                    main,
+                    vec![invokable_arg_ty(self.db, params), ret],
+                ),
                 conditions: Vec::new(),
                 origin: ClauseOrigin::Builtin,
                 is_default: false,
@@ -1403,6 +1740,53 @@ impl<'db> TraitEnvBuilder<'db> {
             origin: ClauseOrigin::Instance(instance.def_id_value(self.db)),
             is_default: instance.default_kw(self.db).is_some(),
         });
+    }
+
+    fn add_derived_generic_instances(
+        &mut self,
+        module: Module<'db>,
+        item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+        generic: DefId<'db>,
+    ) {
+        let excluded = no_generic_instance_for(self.db, module);
+        let manual = manual_generic_instance_types(self.db, module, item_resolutions, generic);
+        for info in local_adt_infos(self.db, module) {
+            if info.adt.ctors(self.db).is_empty() {
+                continue;
+            }
+            if excluded.contains(&adt_name(self.db, info.adt))
+                || manual.contains(&info.adt.def_id_value(self.db))
+            {
+                continue;
+            }
+            let params = info
+                .adt
+                .ty_param_elems(self.db)
+                .iter()
+                .enumerate()
+                .map(|(index, _)| Ty::bound(self.db, index as u32))
+                .collect::<Vec<_>>();
+            let main = Ty::named(
+                self.db,
+                TyCtor::User(crate::UserTyCtor {
+                    def: info.adt.def_id_value(self.db),
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+                params,
+            );
+            self.clauses.push(ProgramClause {
+                binder_count: info.type_vars.len() as u32,
+                head: Pred::in_class(
+                    self.db,
+                    ClassId::User(generic),
+                    main,
+                    vec![generic_rep_ty(self.db, module, item_resolutions, &info)],
+                ),
+                conditions: Vec::new(),
+                origin: ClauseOrigin::Derived(DerivedClauseKind::Generic),
+                is_default: false,
+            });
+        }
     }
 }
 
@@ -1812,6 +2196,11 @@ fn clause_evidence<'db>(
             sub_evidence,
         },
         ClauseOrigin::Builtin | ClauseOrigin::Given => Evidence::Builtin { pred: goal },
+        ClauseOrigin::Derived(kind) => Evidence::Derived {
+            kind,
+            pred: goal,
+            sub_evidence,
+        },
         ClauseOrigin::Superclass(class) => Evidence::Superclass {
             class,
             pred: goal,
@@ -2022,6 +2411,7 @@ fn match_ty<'db>(
             {
                 true
             }
+            TyKind::Comptime(goal_inner) => match_ty(db, pattern, *goal_inner, subst, pattern_vars),
             _ => false,
         },
         TyKind::Function {
@@ -2040,6 +2430,7 @@ fn match_ty<'db>(
                     })
                     && match_ty(db, *pattern_ret, *goal_ret, subst, pattern_vars)
             }
+            TyKind::Comptime(goal_inner) => match_ty(db, pattern, *goal_inner, subst, pattern_vars),
             _ => false,
         },
         TyKind::Tuple(pattern_elems) => match goal.kind(db) {
@@ -2053,13 +2444,14 @@ fn match_ty<'db>(
                 ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
                 args,
             } if pattern_elems.is_empty() && args.is_empty() => true,
+            TyKind::Comptime(goal_inner) => match_ty(db, pattern, *goal_inner, subst, pattern_vars),
             _ => false,
         },
         TyKind::Comptime(pattern_inner) => match goal.kind(db) {
             TyKind::Comptime(goal_inner) => {
                 match_ty(db, *pattern_inner, *goal_inner, subst, pattern_vars)
             }
-            _ => false,
+            _ => match_ty(db, *pattern_inner, goal, subst, pattern_vars),
         },
     }
 }
@@ -2197,6 +2589,8 @@ fn unify_ty<'db>(
         (TyKind::Comptime(lhs_inner), TyKind::Comptime(rhs_inner)) => {
             unify_ty(db, *lhs_inner, *rhs_inner, subst, bindable)
         }
+        (TyKind::Comptime(lhs_inner), _) => unify_ty(db, *lhs_inner, rhs, subst, bindable),
+        (_, TyKind::Comptime(rhs_inner)) => unify_ty(db, lhs, *rhs_inner, subst, bindable),
         _ => false,
     }
 }
@@ -2261,7 +2655,17 @@ fn ty_equal<'db>(db: &'db dyn Db, lhs: Ty<'db>, rhs: Ty<'db>) -> bool {
                     .all(|(lhs_elem, rhs_elem)| ty_equal(db, *lhs_elem, *rhs_elem))
         }
         (TyKind::Comptime(lhs), TyKind::Comptime(rhs)) => ty_equal(db, *lhs, *rhs),
+        (TyKind::Comptime(lhs), _) => ty_equal(db, *lhs, rhs),
+        (_, TyKind::Comptime(rhs)) => ty_equal(db, lhs, *rhs),
         _ => false,
+    }
+}
+
+fn invokable_arg_ty<'db>(db: &'db dyn Db, params: Vec<Ty<'db>>) -> Ty<'db> {
+    match params.as_slice() {
+        [] => Ty::unit(db),
+        [param] => *param,
+        _ => Ty::tuple(db, params),
     }
 }
 
@@ -2293,6 +2697,18 @@ fn apply_evidence<'db>(
             class,
             pred: subst.apply_pred(db, pred),
             child: Box::new(apply_evidence(db, *child, subst)),
+        },
+        Evidence::Derived {
+            kind,
+            pred,
+            sub_evidence,
+        } => Evidence::Derived {
+            kind,
+            pred: subst.apply_pred(db, pred),
+            sub_evidence: sub_evidence
+                .into_iter()
+                .map(|evidence| apply_evidence(db, evidence, subst))
+                .collect(),
         },
     }
 }

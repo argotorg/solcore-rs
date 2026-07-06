@@ -503,7 +503,7 @@ fn builtin_function_scheme<'db>(
         hir_nameres::BuiltinFunction::IntegerLt | hir_nameres::BuiltinFunction::IntegerEq => {
             TyScheme::monotype(db, Ty::function(db, vec![integer, integer], bool_ty))
         }
-        hir_nameres::BuiltinFunction::Invoke => return None,
+        hir_nameres::BuiltinFunction::Invoke => return Some(invokable_invoke_scheme(db)),
     };
     Some(scheme)
 }
@@ -531,8 +531,25 @@ fn builtin_method_scheme<'db>(
                 ),
             ))
         }
-        hir_nameres::BuiltinClassMethod::InvokableInvoke => None,
+        hir_nameres::BuiltinClassMethod::InvokableInvoke => Some(invokable_invoke_scheme(db)),
     }
+}
+
+fn invokable_invoke_scheme<'db>(db: &'db dyn HirDb) -> TyScheme<'db> {
+    let self_ty = Ty::bound(db, 0);
+    let args = Ty::bound(db, 1);
+    let ret = Ty::bound(db, 2);
+    let pred = Pred::in_class(
+        db,
+        ClassId::Builtin(BuiltinClassId::Invokable),
+        self_ty,
+        vec![args, ret],
+    );
+    TyScheme::new(
+        db,
+        3,
+        QualTy::new(db, vec![pred], Ty::function(db, vec![self_ty, args], ret)),
+    )
 }
 
 fn builtin_type_ctor(ty: hir_nameres::BuiltinType) -> BuiltinTyCtor {
