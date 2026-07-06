@@ -1096,13 +1096,23 @@ fn lower_parsed_pat<'db>(
             function::PatKind::Var(lower_spanned_ident(db, anchor, base_start, name))
         }
         ParsedPatKind::Lit(lit) => function::PatKind::Lit(lower_parsed_lit(lit)),
-        ParsedPatKind::Ctor { name, args } => {
+        ParsedPatKind::Ctor {
+            qualifier,
+            name,
+            args,
+        } => {
+            let qualifier =
+                qualifier.map(|qualifier| lower_spanned_ident(db, anchor, base_start, qualifier));
             let name = lower_spanned_ident(db, anchor, base_start, name);
             let args = args
                 .into_iter()
                 .map(|arg| lower_parsed_pat(db, anchor, base_start, arg, pats))
                 .collect();
-            function::PatKind::Ctor { name, args }
+            function::PatKind::Ctor {
+                qualifier,
+                name,
+                args,
+            }
         }
         ParsedPatKind::Tuple(mut elems) if elems.len() == 1 => {
             return lower_parsed_pat(db, anchor, base_start, elems.pop().expect("len == 1"), pats);

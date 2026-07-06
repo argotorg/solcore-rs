@@ -273,6 +273,7 @@ pub(crate) enum ParsedPatKind<'src> {
     Var(SpannedStr<'src>),
     Lit(ParsedLitKind<'src>),
     Ctor {
+        qualifier: Option<SpannedStr<'src>>,
         name: SpannedStr<'src>,
         args: Vec<ParsedPat<'src>>,
     },

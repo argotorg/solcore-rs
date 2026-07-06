@@ -1,0 +1,11 @@
+contract QualifiedConstructorPatterns {
+  data Option(a) = None | Some(a);
+
+  function join(mmx) {
+    match mmx {
+    | Option.None => return Option.None;
+    | Option.Some(Option.Some(x)) => return Option.Some(x);
+    | Option.Some(Option.None) => return Option.None;
+    }
+  }
+}

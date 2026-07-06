@@ -165,6 +165,7 @@ pub enum PatKind<'db> {
     Var(SpannedElem<'db, Ident<'db>>),
     Lit(LitKind),
     Ctor {
+        qualifier: Option<SpannedElem<'db, Ident<'db>>>,
         name: SpannedElem<'db, Ident<'db>>,
         args: Vec<Id<Pat<'db>>>,
     },

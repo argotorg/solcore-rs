@@ -811,14 +811,34 @@ where
             .or_not()
             .boxed();
 
-        let ctor_or_var = ident_parser()
+        let qualified_name =
+            ident_parser().then(just(Token::Dot).ignore_then(ident_parser()).or_not());
+        let ctor_or_var = qualified_name
             .then(ctor_args)
-            .map_with(|(name, args), e| ParsedPat {
-                span: e.span(),
-                kind: match args {
-                    Some(args) => ParsedPatKind::Ctor { name, args },
-                    None => ParsedPatKind::Var(name),
-                },
+            .map_with(|((head, leaf), args), e| {
+                let (qualifier, name) = match leaf {
+                    Some(name) => (Some(head), name),
+                    None => (None, head),
+                };
+                let is_unqualified_var = qualifier.is_none()
+                    && args.is_none()
+                    && name
+                        .0
+                        .chars()
+                        .next()
+                        .is_none_or(|first| first.is_lowercase());
+                ParsedPat {
+                    span: e.span(),
+                    kind: if is_unqualified_var {
+                        ParsedPatKind::Var(name)
+                    } else {
+                        ParsedPatKind::Ctor {
+                            qualifier,
+                            name,
+                            args: args.unwrap_or_default(),
+                        }
+                    },
+                }
             })
             .boxed();
 
@@ -2448,6 +2468,48 @@ mod tests {
             panic!("expected nested tuple pattern to stay a tuple");
         };
         assert_eq!(elems.len(), 2);
+    }
+
+    #[test]
+    fn qualified_constructor_patterns_parse() {
+        let source = "\
+{ match mmx {
+| Option.None => return x;
+| Option.Some(Option.None) => return x;
+| y => return y;
+} }";
+        let body = parse_body_statements(source, (0..source.len()).into());
+        assert!(body.errors.is_empty(), "body errors: {:?}", body.errors);
+
+        let ParsedStmtKind::Match { arms, .. } = &body.output[0].kind else {
+            panic!("expected match statement");
+        };
+
+        let ParsedPatKind::Ctor {
+            qualifier: Some((qualifier, _)),
+            name: (name, _),
+            args,
+        } = &arms[0].pats[0].kind
+        else {
+            panic!("expected qualified nullary constructor pattern");
+        };
+        assert_eq!((*qualifier, *name, args.len()), ("Option", "None", 0));
+
+        let ParsedPatKind::Ctor { args, .. } = &arms[1].pats[0].kind else {
+            panic!("expected qualified constructor pattern with args");
+        };
+        assert!(matches!(
+            args[0].kind,
+            ParsedPatKind::Ctor {
+                qualifier: Some(_),
+                ..
+            }
+        ));
+
+        assert!(matches!(
+            arms[2].pats[0].kind,
+            ParsedPatKind::Var((name, _)) if name == "y"
+        ));
     }
 
     #[test]
