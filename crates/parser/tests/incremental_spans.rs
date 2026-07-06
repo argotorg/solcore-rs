@@ -46,6 +46,28 @@ fn first_function<'db>(db: &'db TestDb, file: SourceFile) -> FunctionDef<'db> {
 }
 
 #[test]
+fn top_level_error_item_has_recovery_span() {
+    let db = TestDb::default();
+    let url = "memory:///recovery.solc".parse().expect("valid url");
+    let src = "function first() {}\nunknown nonsense tokens\nfunction second() {}\n";
+    let file = SourceFile::new(&db, url, Some(src.to_owned()));
+
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let error_item = module
+        .items(&db)
+        .iter()
+        .find(|item| matches!(item, Item::Error { .. }))
+        .expect("a recovered top-level error item");
+    let absolute = error_item.span(&db).resolve_to_absolute(&db);
+
+    assert_eq!(absolute.file(), file);
+    assert_eq!(
+        absolute.start().as_u32(),
+        src.find("unknown").expect("error text") as u32
+    );
+}
+
+#[test]
 fn anchor_relative_span_survives_edit_above_def() {
     let mut db = TestDb::default();
     let url = "memory:///incr.solc".parse().expect("valid url");

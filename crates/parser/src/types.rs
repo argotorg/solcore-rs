@@ -121,7 +121,9 @@ pub(crate) enum ParsedFuncParam<'src> {
     Untyped {
         name: SpannedStr<'src>,
     },
-    Error,
+    Error {
+        span: LexSpan,
+    },
 }
 
 #[derive(Debug, Clone)]

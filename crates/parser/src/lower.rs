@@ -134,6 +134,7 @@ fn lower_type_ref<'db>(
             }
         }
         ParsedTyKind::Tuple { elems } => {
+            let span = span_from_absolute(anchor, parsed_ty.span, base_start);
             let tuple_ty = if elems.len() == 1 {
                 lower_type_ref(
                     db,
@@ -142,14 +143,15 @@ fn lower_type_ref<'db>(
                     elems.into_iter().next().expect("len == 1"),
                 )
             } else {
-                ty::TypeRef::new(db, ty::TypeRefKind::Error)
+                ty::TypeRef::new(db, ty::TypeRefKind::Error { span })
             };
-            let span = span_from_absolute(anchor, parsed_ty.span, base_start);
             ty::TypeRefKind::Tuple {
                 elems: SpannedElem::new(tuple_ty, span),
             }
         }
-        ParsedTyKind::Error => ty::TypeRefKind::Error,
+        ParsedTyKind::Error => ty::TypeRefKind::Error {
+            span: span_from_absolute(anchor, parsed_ty.span, base_start),
+        },
     };
     ty::TypeRef::new(db, kind)
 }
@@ -205,6 +207,7 @@ fn lower_adt_ctor<'db>(
     ctor: ParsedAdtCtor<'_>,
 ) -> item::AdtCtor<'db> {
     let name = lower_spanned_ident(db, anchor, base_start, ctor.name);
+    let fields_span = span_from_absolute(anchor, ctor.span, base_start);
     let fields_ty = if ctor.fields.len() == 1 {
         lower_type_ref(
             db,
@@ -213,9 +216,8 @@ fn lower_adt_ctor<'db>(
             ctor.fields.into_iter().next().expect("len == 1"),
         )
     } else {
-        ty::TypeRef::new(db, ty::TypeRefKind::Error)
+        ty::TypeRef::new(db, ty::TypeRefKind::Error { span: fields_span })
     };
-    let fields_span = span_from_absolute(anchor, ctor.span, base_start);
     item::AdtCtor::new(name, SpannedElem::new(fields_ty, fields_span))
 }
 
@@ -274,7 +276,9 @@ fn lower_func_sig<'db>(
             ParsedFuncParam::Untyped { name } => function::FuncParam::Untyped {
                 name: lower_spanned_ident(db, anchor, base_start, name),
             },
-            ParsedFuncParam::Error => function::FuncParam::Error,
+            ParsedFuncParam::Error { span } => function::FuncParam::Error {
+                span: span_from_absolute(anchor, span, base_start),
+            },
         })
         .collect::<Vec<_>>();
     let params_span = span_from_absolute(anchor, parsed.params_span, base_start);
@@ -662,7 +666,9 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedFuncParam::Untyped { name } => function::FuncParam::Untyped {
                 name: lower_spanned_ident(self.db, anchor, base_start, name),
             },
-            ParsedFuncParam::Error => function::FuncParam::Error,
+            ParsedFuncParam::Error { span } => function::FuncParam::Error {
+                span: span_from_absolute(anchor, span, base_start),
+            },
         }
     }
 
@@ -1068,10 +1074,9 @@ fn lower_contract_item<'db>(
             ty_params,
             ctors,
         } => item::ContractItem::AdtDef(lower_adt(ctx, span, name, ty_params, ctors)),
-        ParsedContractItem::Error { span } => {
-            let _ = span;
-            item::ContractItem::Error
-        }
+        ParsedContractItem::Error { span } => item::ContractItem::Error {
+            span: root_span_from_lex(ctx.db, ctx.file, span),
+        },
     }
 }
 
@@ -1220,10 +1225,9 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                     let function = lower_function(&mut ctx, span, sig, body_span);
                     items.push(item::Item::FunctionDef(function));
                 }
-                ParsedTopItem::Error { span } => {
-                    let _ = span;
-                    items.push(item::Item::Error);
-                }
+                ParsedTopItem::Error { span } => items.push(item::Item::Error {
+                    span: root_span_from_lex(db, file, span),
+                }),
             }
         }
     }

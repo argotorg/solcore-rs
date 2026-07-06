@@ -339,7 +339,7 @@ pub enum FuncParam<'db> {
         name: SpannedElem<'db, Ident<'db>>,
     },
 
-    Error,
+    Error { span: Span<'db> },
 }
 
 impl<'db> Spanned<'db> for FuncParam<'db> {
@@ -347,7 +347,7 @@ impl<'db> Spanned<'db> for FuncParam<'db> {
         match self {
             Self::Typed { name, ty } => name.span(db) + ty.span(db),
             Self::Untyped { name } => name.span(db),
-            Self::Error => panic!("FuncParam::Error has no span"),
+            Self::Error { span } => *span,
         }
     }
 }

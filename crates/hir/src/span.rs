@@ -107,6 +107,11 @@ impl<'db> Add for Span<'db> {
 
     fn add(self, rhs: Self) -> Self {
         debug_assert_eq!(self.anchor, rhs.anchor);
+        if self.anchor != rhs.anchor {
+            // Spans with different anchors use incompatible bases; keep the
+            // left operand instead of mixing unrelated relative offsets.
+            return self;
+        }
         let begin = std::cmp::min(self.begin, rhs.begin);
         let end = std::cmp::max(self.end, rhs.end);
         Self {

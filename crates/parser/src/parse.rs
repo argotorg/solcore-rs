@@ -1083,7 +1083,7 @@ where
         .and_is(just(Token::RParen).not())
         .repeated()
         .at_least(1)
-        .to(ParsedFuncParam::Error);
+        .map_with(|_, e| ParsedFuncParam::Error { span: e.span() });
 
     choice((typed, untyped))
         .recover_with(via_parser(recovery))
