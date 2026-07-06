@@ -14,6 +14,8 @@ pub struct FuncSig<'db> {
     pub span: Span<'db>,
     pub type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
     pub preds: Vec<PredRef<'db>>,
+    pub public: Option<Span<'db>>,
+    pub payable: Option<Span<'db>>,
     pub name: SpannedElem<'db, Ident<'db>>,
     pub params: SpannedElem<'db, Vec<FuncParam<'db>>>,
     pub ret: Option<TypeRef<'db>>,

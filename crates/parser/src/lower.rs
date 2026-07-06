@@ -387,10 +387,18 @@ fn lower_func_sig<'db>(
         .map(|ret_ty| lower_type_ref(db, anchor, base_start, ret_ty));
 
     let span = span_from_absolute(anchor, parsed.span, base_start);
+    let public = parsed
+        .public
+        .map(|span| span_from_absolute(anchor, span, base_start));
+    let payable = parsed
+        .payable
+        .map(|span| span_from_absolute(anchor, span, base_start));
     function::FuncSig {
         span,
         type_vars,
         preds,
+        public,
+        payable,
         name,
         params,
         ret,
@@ -1101,6 +1109,7 @@ fn lower_parsed_yul_stmt<'db>(
 fn lower_function<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
+    kind: item::FuncKind,
     sig: ParsedFuncSig<'_>,
     body_span: LexSpan,
 ) -> item::FunctionDef<'db> {
@@ -1132,7 +1141,7 @@ fn lower_function<'db>(
         pats,
     );
 
-    item::FunctionDef::new(ctx.db, func_def, func_span, lowered_sig, Some(body))
+    item::FunctionDef::new(ctx.db, func_def, func_span, kind, lowered_sig, Some(body))
 }
 
 fn lower_instance<'db>(
@@ -1167,7 +1176,9 @@ fn lower_instance<'db>(
     let methods = ctx.with_owner(instance_def, |ctx| {
         methods
             .into_iter()
-            .map(|method| lower_function(ctx, method.span, method.sig, method.body_span))
+            .map(|method| {
+                lower_function(ctx, method.span, method.kind, method.sig, method.body_span)
+            })
             .collect::<Vec<_>>()
     });
     let span = span_from_absolute(anchor, span, span.start);
@@ -1192,6 +1203,7 @@ fn lower_contract_item<'db>(
         ParsedContractItem::Function(function) => item::ContractItem::FunctionDef(lower_function(
             ctx,
             function.span,
+            function.kind,
             function.sig,
             function.body_span,
         )),
@@ -1358,7 +1370,8 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                     sig,
                     body_span,
                 } => {
-                    let function = lower_function(&mut ctx, span, sig, body_span);
+                    let function =
+                        lower_function(&mut ctx, span, item::FuncKind::Function, sig, body_span);
                     items.push(item::Item::FunctionDef(function));
                 }
                 ParsedTopItem::Error { span } => items.push(item::Item::Error {

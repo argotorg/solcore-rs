@@ -1,5 +1,5 @@
 use chumsky::{extra, prelude::Rich};
-use hir::ast::function;
+use hir::ast::{function, item::FuncKind};
 
 use crate::lexer::Token;
 
@@ -131,6 +131,8 @@ pub(crate) struct ParsedFuncSig<'src> {
     pub(crate) span: LexSpan,
     pub(crate) type_vars: Vec<SpannedStr<'src>>,
     pub(crate) preds: Vec<ParsedPred<'src>>,
+    pub(crate) public: Option<LexSpan>,
+    pub(crate) payable: Option<LexSpan>,
     pub(crate) name: SpannedStr<'src>,
     pub(crate) params: Vec<ParsedFuncParam<'src>>,
     pub(crate) params_span: LexSpan,
@@ -140,6 +142,7 @@ pub(crate) struct ParsedFuncSig<'src> {
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedFunctionDef<'src> {
     pub(crate) span: LexSpan,
+    pub(crate) kind: FuncKind,
     pub(crate) sig: ParsedFuncSig<'src>,
     pub(crate) body_span: LexSpan,
 }

@@ -36,10 +36,16 @@ pub enum Token<'a> {
     Default,
     #[token("match")]
     Match,
+    #[token("public")]
+    Public,
+    #[token("payable")]
+    Payable,
     #[token("function")]
     Function,
     #[token("constructor")]
     Constructor,
+    #[token("fallback")]
+    Fallback,
     #[token("return")]
     Return,
     #[token("leave")]
@@ -221,8 +227,11 @@ mod tests {
         assert_eq!(tokenize("case"), vec![Token::Case]);
         assert_eq!(tokenize("default"), vec![Token::Default]);
         assert_eq!(tokenize("match"), vec![Token::Match]);
+        assert_eq!(tokenize("public"), vec![Token::Public]);
+        assert_eq!(tokenize("payable"), vec![Token::Payable]);
         assert_eq!(tokenize("function"), vec![Token::Function]);
         assert_eq!(tokenize("constructor"), vec![Token::Constructor]);
+        assert_eq!(tokenize("fallback"), vec![Token::Fallback]);
         assert_eq!(tokenize("return"), vec![Token::Return]);
         assert_eq!(tokenize("leave"), vec![Token::Leave]);
         assert_eq!(tokenize("continue"), vec![Token::Continue]);

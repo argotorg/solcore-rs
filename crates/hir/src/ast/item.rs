@@ -57,6 +57,13 @@ impl<'db> Spanned<'db> for AdtCtor<'db> {
 }
 
 /// Function definition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum FuncKind {
+    Function,
+    Constructor,
+    Fallback,
+}
+
 #[salsa::tracked(debug)]
 pub struct FunctionDef<'db> {
     #[tracked]
@@ -66,6 +73,10 @@ pub struct FunctionDef<'db> {
     #[tracked]
     #[returns(copy)]
     span: Span<'db>,
+
+    #[tracked]
+    #[returns(copy)]
+    kind: FuncKind,
 
     #[tracked]
     #[returns(ref)]
