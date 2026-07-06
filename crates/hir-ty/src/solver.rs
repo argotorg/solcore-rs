@@ -934,6 +934,15 @@ fn bind_ty_vars<'db>(
     value: Ty<'db>,
     subst: &mut FxHashMap<u32, Ty<'db>>,
 ) -> bool {
+    if let TyKind::Comptime(inner) = pattern.kind(db) {
+        return match value.kind(db) {
+            TyKind::Comptime(value_inner) => bind_ty_vars(db, *inner, *value_inner, subst),
+            _ => bind_ty_vars(db, *inner, value, subst),
+        };
+    }
+    if let TyKind::Comptime(inner) = value.kind(db) {
+        return bind_ty_vars(db, pattern, *inner, subst);
+    }
     match pattern.kind(db) {
         TyKind::BoundVar(var) => match subst.get(&var.index).copied() {
             Some(existing) => ty_equal(db, existing, value),
@@ -972,10 +981,7 @@ fn bind_ty_vars<'db>(
                 .all(|(elem, value_elem)| bind_ty_vars(db, *elem, *value_elem, subst)),
             _ => false,
         },
-        TyKind::Comptime(inner) => match value.kind(db) {
-            TyKind::Comptime(value_inner) => bind_ty_vars(db, *inner, *value_inner, subst),
-            _ => false,
-        },
+        TyKind::Comptime(_) => unreachable!("comptime wrappers are stripped before matching"),
         TyKind::Error | TyKind::Unknown => true,
     }
 }

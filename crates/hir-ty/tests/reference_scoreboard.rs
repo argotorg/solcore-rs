@@ -257,6 +257,97 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!("cases/vartyped.solc", "missing-negative-typecheck"),
     known!("cases/weird-error-foo.solc", "missing-negative-typecheck"),
+    known!(
+        "comptime/ct_asm_ret.solc",
+        "needs-backend-comptime-obligation-check",
+        no
+    ),
+    known!(
+        "comptime/ct_let_runtime.solc",
+        "needs-backend-comptime-obligation-check",
+        no
+    ),
+    known!(
+        "comptime/ct_overloaded_bad.solc",
+        "needs-backend-comptime-obligation-check",
+        no
+    ),
+    known!(
+        "comptime/ct_param_poly_runtime.solc",
+        "needs-backend-comptime-obligation-check",
+        no
+    ),
+    known!(
+        "comptime/ct_runtime_arg.solc",
+        "needs-backend-comptime-obligation-check",
+        no
+    ),
+    known!(
+        "comptime/fromInt.solc",
+        "needs-std-comptime-surface",
+        typeck,
+        "SC0224"
+    ),
+    known!(
+        "comptime/fromInt2.solc",
+        "needs-std-comptime-surface",
+        pre,
+        "SC0101"
+    ),
+    known!(
+        "comptime/fromInt3.solc",
+        "needs-std-comptime-surface",
+        typeck,
+        "SC0207"
+    ),
+    known!(
+        "comptime/fromLit.solc",
+        "needs-std-comptime-surface",
+        typeck,
+        "SC0224"
+    ),
+    known!(
+        "comptime/int-untyped-let.solc",
+        "needs-integer-literal-inference",
+        typeck,
+        "SC0201"
+    ),
+    known!(
+        "comptime/integer-lit-class.solc",
+        "needs-integer-literal-inference",
+        typeck,
+        "SC0201"
+    ),
+    known!(
+        "comptime/integer-lit-pat.solc",
+        "needs-comptime-wrapper-numeric-pattern-parity",
+        typeck,
+        "SC0201"
+    ),
+    known!(
+        "comptime/match_labels.solc",
+        "needs-string-comptime-std-parity",
+        typeck,
+        "SC0201"
+    ),
+    known!(
+        "comptime/string-lit-keccak.solc",
+        "needs-string-comptime-std-parity",
+        typeck,
+        "SC0201"
+    ),
+    known!(
+        "comptime/string-lit-len.solc",
+        "needs-string-comptime-std-parity",
+        typeck,
+        "SC0201"
+    ),
+    known!(
+        "comptime/string-lit-ops.solc",
+        "needs-string-comptime-std-parity",
+        typeck,
+        "SC0201"
+    ),
     known!("spec/012nid.solc", "needs-tuple-call-lowering"),
     known!(
         "spec/051expreturn.solc",
@@ -713,13 +804,13 @@ fn assert_expectations_cover_corpus(expectations: &[Expectation], examples_root:
     let actual = corpus_files(examples_root);
     assert_eq!(
         listed, actual,
-        "expectations.txt must exactly cover the spec/cases corpus"
+        "expectations.txt must exactly cover the cases/comptime/spec corpus"
     );
 }
 
 fn corpus_files(examples_root: &Path) -> Vec<String> {
     let mut files = Vec::new();
-    for bucket in ["cases", "spec"] {
+    for bucket in ["cases", "comptime", "spec"] {
         for entry in fs::read_dir(examples_root.join(bucket)).expect("corpus bucket exists") {
             let entry = entry.expect("corpus entry");
             let path = entry.path();

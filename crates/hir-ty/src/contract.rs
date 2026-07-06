@@ -558,12 +558,6 @@ fn find_contract_by_def<'db>(
     })
 }
 
-fn split_function_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> (Vec<Ty<'db>>, Ty<'db>) {
-    match ty.kind(db) {
-        TyKind::Function { params, ret } => (params.clone(), *ret),
-        _ => (Vec::new(), Ty::unknown(db)),
-    }
-}
 
 fn method_signature_string<'db>(
     db: &'db dyn Db,
