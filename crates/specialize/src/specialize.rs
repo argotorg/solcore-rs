@@ -9,18 +9,24 @@ use hir::{
         function::{Expr, ExprKind, FuncBody, FuncParam, MatchArm, Pat, PatKind, Stmt, StmtKind},
         item::{AdtDef, ContractItem, FunctionDef, InstanceDef, Item, Module},
     },
+    input::SourceFile,
     nameres as hir_nameres,
     span::{Span, Spanned, SpannedElem},
 };
 use hir_ty::{
     AliasNormalizer, BinderEnv, BodyTyContext, BuiltinTyCtor, CallSiteCallee, CallSiteEvidence,
-    ClassId, Db, Evidence, InferResultExt, InferenceResult, LoweredFunction, Pred, PredKind,
-    Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal,
-    contract_dispatch_surface, derived_generic_plan, infer_body, solve, solver::DerivedClauseKind,
-    trait_env_from_module_resolution, trait_env_with_givens,
+    ClassId, ComptimeObligationKind, Db, Evidence, InferResultExt, InferenceResult,
+    LoweredFunction, Pred, PredKind, Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor,
+    UserTyCtorKind, canonical_goal, contract_dispatch_surface, derived_generic_plan, infer_body,
+    solve, solver::DerivedClauseKind, trait_env_from_module_resolution, trait_env_with_givens,
 };
+use nameres::{
+    LibraryId, ModuleId, module_id_from_key, module_key_for_path, resolve_reachable_full,
+};
+use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 
+use crate::evaluate::{EvaluateOptions, evaluate_module};
 use crate::ir::{
     MonoArm, MonoContract, MonoEntry, MonoExpr, MonoExprKind, MonoFunction, MonoFunctionOrigin,
     MonoId, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
@@ -31,6 +37,7 @@ use crate::ir::{
 pub struct SpecializeOptions {
     pub max_instantiations: usize,
     pub max_depth: usize,
+    pub eval_fuel: usize,
 }
 
 impl Default for SpecializeOptions {
@@ -38,6 +45,7 @@ impl Default for SpecializeOptions {
         Self {
             max_instantiations: 2048,
             max_depth: 128,
+            eval_fuel: 256,
         }
     }
 }
@@ -66,6 +74,9 @@ pub enum SpecializeDiagnosticKind<'db> {
     MissingEvidence { context: String },
     UnsupportedEvidence { context: String },
     UnresolvedExternal { function: DefId<'db>, name: String },
+    ComptimeEvaluationFailed { context: String },
+    ComptimeFuelExhausted { function: String, limit: usize },
+    IntegerErasure { context: String, ty: String },
 }
 
 /// Specializes one HIR module from its backend entry surface.
@@ -98,9 +109,10 @@ pub fn specialize_name<'db>(db: &'db dyn HirDb, base: &str, tys: &[Ty<'db>]) -> 
 struct Driver<'db> {
     db: &'db dyn Db,
     module: Module<'db>,
+    modules: Vec<Module<'db>>,
     options: SpecializeOptions,
-    resolution: hir_nameres::ModuleResolutionMap<'db>,
-    base_trait_env: hir_ty::TraitEnvId<'db>,
+    module_resolutions: FxHashMap<DefId<'db>, hir_nameres::ModuleResolutionMap<'db>>,
+    module_trait_envs: FxHashMap<DefId<'db>, hir_ty::TraitEnvId<'db>>,
     functions: FxHashMap<DefId<'db>, FunctionInfo<'db>>,
     body_maps: FxHashMap<FuncBody<'db>, hir_nameres::BodyResolutionMap<'db>>,
     classes: FxHashMap<DefId<'db>, ClassInfo<'db>>,
@@ -118,6 +130,7 @@ struct Driver<'db> {
 
 #[derive(Debug, Clone)]
 struct FunctionInfo<'db> {
+    module: Module<'db>,
     function: FunctionDef<'db>,
     body: Option<FuncBody<'db>>,
     type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
@@ -139,6 +152,7 @@ struct InstanceInfo<'db> {
 
 #[derive(Debug, Clone)]
 struct ClassInfo<'db> {
+    module: Module<'db>,
     class: hir::ast::item::ClassDef<'db>,
     type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
 }
@@ -187,14 +201,22 @@ struct BodyCtx<'a, 'db> {
 
 impl<'db> Driver<'db> {
     fn new(db: &'db dyn Db, module: Module<'db>, options: SpecializeOptions) -> Self {
-        let resolution = hir_nameres::resolve_module(db, module);
-        let base_trait_env = trait_env_from_module_resolution(db, module, &resolution);
+        let modules = reachable_modules(db, module);
+        let mut module_resolutions = FxHashMap::default();
+        let mut module_trait_envs = FxHashMap::default();
+        for indexed in &modules {
+            let resolution = hir_nameres::resolve_module(db, *indexed);
+            let trait_env = trait_env_from_module_resolution(db, *indexed, &resolution);
+            module_resolutions.insert(indexed.def_id_value(db), resolution);
+            module_trait_envs.insert(indexed.def_id_value(db), trait_env);
+        }
         let mut driver = Self {
             db,
             module,
+            modules,
             options,
-            resolution,
-            base_trait_env,
+            module_resolutions,
+            module_trait_envs,
             functions: FxHashMap::default(),
             body_maps: FxHashMap::default(),
             classes: FxHashMap::default(),
@@ -241,36 +263,58 @@ impl<'db> Driver<'db> {
             }
         }
 
-        SpecializeOutput {
-            module: MonoModule {
-                module: self.module.def_id_value(self.db),
-                items,
+        let module = MonoModule {
+            module: self.module.def_id_value(self.db),
+            items,
+        };
+        let (module, mut eval_diagnostics) = evaluate_module(
+            self.db,
+            module,
+            EvaluateOptions {
+                fuel: self.options.eval_fuel,
             },
+        );
+        self.diagnostics.append(&mut eval_diagnostics);
+
+        SpecializeOutput {
+            module,
             diagnostics: std::mem::take(&mut self.diagnostics),
         }
     }
 
     fn collect_module_index(&mut self) {
-        let items = self.module.items(self.db).clone();
-        for item in items {
-            self.collect_item(item, &[]);
+        let modules = self.modules.clone();
+        for module in modules {
+            let items = module.items(self.db).clone();
+            for item in items {
+                self.collect_item(module, item, &[]);
+            }
         }
     }
 
     fn collect_body_maps(&mut self) {
-        let mut bodies = Vec::new();
-        for item in self.module.items(self.db) {
-            collect_body_order(self.db, *item, &mut bodies);
-        }
-        for (body, map) in bodies
-            .into_iter()
-            .zip(self.resolution.bodies.iter().cloned())
-        {
-            self.body_maps.insert(body, map);
+        let modules = self.modules.clone();
+        for module in modules {
+            let mut bodies = Vec::new();
+            for item in module.items(self.db) {
+                collect_body_order(self.db, *item, &mut bodies);
+            }
+            let Some(resolution) = self.module_resolutions.get(&module.def_id_value(self.db))
+            else {
+                continue;
+            };
+            for (body, map) in bodies.into_iter().zip(resolution.bodies.iter().cloned()) {
+                self.body_maps.insert(body, map);
+            }
         }
     }
 
-    fn collect_item(&mut self, item: Item<'db>, inherited: &[hir_nameres::TypeVarBinding<'db>]) {
+    fn collect_item(
+        &mut self,
+        module: Module<'db>,
+        item: Item<'db>,
+        inherited: &[hir_nameres::TypeVarBinding<'db>],
+    ) {
         match item {
             Item::FunctionDef(function) => {
                 let mut type_vars = inherited.to_vec();
@@ -281,6 +325,7 @@ impl<'db> Driver<'db> {
                 self.functions.insert(
                     function.def_id_value(self.db),
                     FunctionInfo {
+                        module,
                         function,
                         body: function.body(self.db),
                         type_vars,
@@ -305,6 +350,7 @@ impl<'db> Driver<'db> {
                             self.functions.insert(
                                 function.def_id_value(self.db),
                                 FunctionInfo {
+                                    module,
                                     function,
                                     body: function.body(self.db),
                                     type_vars: fn_type_vars,
@@ -325,7 +371,7 @@ impl<'db> Driver<'db> {
                     instance.def_id_value(self.db),
                     instance.type_var_elems(self.db),
                 ));
-                let head = self.lower_pred_with_vars(instance.head(self.db), &type_vars);
+                let head = self.lower_pred_with_vars(module, instance.head(self.db), &type_vars);
                 self.instances.insert(
                     instance.def_id_value(self.db),
                     InstanceInfo { instance, head },
@@ -340,6 +386,7 @@ impl<'db> Driver<'db> {
                     self.functions.insert(
                         method.def_id_value(self.db),
                         FunctionInfo {
+                            module,
                             function: *method,
                             body: method.body(self.db),
                             type_vars: method_type_vars,
@@ -359,8 +406,14 @@ impl<'db> Driver<'db> {
                     class.def_id_value(self.db),
                     class.type_var_elems(self.db),
                 ));
-                self.classes
-                    .insert(class.def_id_value(self.db), ClassInfo { class, type_vars });
+                self.classes.insert(
+                    class.def_id_value(self.db),
+                    ClassInfo {
+                        module,
+                        class,
+                        type_vars,
+                    },
+                );
             }
             Item::TypeAlias(_)
             | Item::Import(_)
@@ -423,6 +476,22 @@ impl<'db> Driver<'db> {
                         .unwrap_or_else(|| contract.span(self.db)),
                 });
                 roots.push(key);
+            }
+            if entries.is_empty() {
+                for item in contract.items(self.db) {
+                    if let ContractItem::FunctionDef(function) = *item
+                        && ident_text(self.db, &function.sig(self.db).name) == "main"
+                        && let Some(key) = self.root_for_def(function.def_id_value(self.db))
+                    {
+                        entries.push(MonoEntry {
+                            source: function.def_id_value(self.db),
+                            name: "main".to_owned(),
+                            specialized: key.base_name.clone(),
+                            span: function.span(self.db),
+                        });
+                        roots.push(key);
+                    }
+                }
             }
             contracts.push(MonoContract {
                 def: contract.def_id_value(self.db),
@@ -602,7 +671,7 @@ impl<'db> Driver<'db> {
             self.ensure_closed(ty, "parameter", Some(param.span(self.db)));
             out.push(MonoParam {
                 name: param_name(self.db, param).unwrap_or("_").to_owned(),
-                comptime: param_comptime(param),
+                comptime: param_comptime(param) || ty_is_comptime(self.db, ty),
                 ty: MonoTy::new_unchecked(ty),
                 span: param.span(self.db),
             });
@@ -620,14 +689,15 @@ impl<'db> Driver<'db> {
     }
 
     fn lower_normalized_function(&self, info: &FunctionInfo<'db>) -> LoweredFunction<'db> {
+        let resolution = self.module_resolution(info.module);
         let lowerer = TypeLowering::from_item_resolutions(
             self.db,
-            &self.resolution.item_resolutions,
+            &resolution.item_resolutions,
             BinderEnv::from_type_vars(&info.type_vars),
         );
         let mut lowered = lowerer.lower_function(info.function);
         let mut normalizer =
-            AliasNormalizer::new(self.db, self.module, &self.resolution.item_resolutions);
+            AliasNormalizer::new(self.db, info.module, &resolution.item_resolutions);
         lowered.scheme = normalizer.normalize_scheme(lowered.scheme);
         lowered.params = lowered
             .params
@@ -640,17 +710,31 @@ impl<'db> Driver<'db> {
 
     fn lower_pred_with_vars(
         &self,
+        module: Module<'db>,
         pred: hir::ast::ty::PredRef<'db>,
         type_vars: &[hir_nameres::TypeVarBinding<'db>],
     ) -> Pred<'db> {
+        let resolution = self.module_resolution(module);
         let lowerer = TypeLowering::from_item_resolutions(
             self.db,
-            &self.resolution.item_resolutions,
+            &resolution.item_resolutions,
             BinderEnv::from_type_vars(type_vars),
         );
-        let mut normalizer =
-            AliasNormalizer::new(self.db, self.module, &self.resolution.item_resolutions);
+        let mut normalizer = AliasNormalizer::new(self.db, module, &resolution.item_resolutions);
         normalizer.normalize_pred(lowerer.lower_pred(pred))
+    }
+
+    fn module_resolution(&self, module: Module<'db>) -> &hir_nameres::ModuleResolutionMap<'db> {
+        self.module_resolutions
+            .get(&module.def_id_value(self.db))
+            .expect("module resolution indexed")
+    }
+
+    fn module_trait_env(&self, module: Module<'db>) -> hir_ty::TraitEnvId<'db> {
+        *self
+            .module_trait_envs
+            .get(&module.def_id_value(self.db))
+            .expect("module trait environment indexed")
     }
 
     fn infer_result(
@@ -662,11 +746,11 @@ impl<'db> Driver<'db> {
     ) -> InferenceResult<'db> {
         let trait_env = trait_env_with_givens(
             self.db,
-            self.base_trait_env,
+            self.module_trait_env(info.module),
             lowered.scheme.body(self.db).preds(self.db).clone(),
         );
         let ctx = BodyTyContext::new(
-            self.module,
+            info.module,
             body_map.clone(),
             info.type_vars.clone(),
             lowered.params.clone(),
@@ -685,10 +769,12 @@ impl<'db> Driver<'db> {
         body: FuncBody<'db>,
     ) -> Option<&hir_nameres::BodyResolutionMap<'db>> {
         self.body_maps.get(&body).or_else(|| {
-            self.resolution
-                .bodies
-                .iter()
-                .find(|candidate| body_map_contains(candidate, body))
+            self.module_resolutions.values().find_map(|resolution| {
+                resolution
+                    .bodies
+                    .iter()
+                    .find(|candidate| body_map_contains(candidate, body))
+            })
         })
     }
 
@@ -787,7 +873,11 @@ impl<'db> Driver<'db> {
         if !pred_is_closed(self.db, pred) {
             return None;
         }
-        match solve(self.db, self.base_trait_env, canonical_goal(self.db, pred)) {
+        match solve(
+            self.db,
+            self.module_trait_env(self.module),
+            canonical_goal(self.db, pred),
+        ) {
             Solution::Unique { evidence, .. } => Some(evidence),
             Solution::Ambiguous { .. } | Solution::NoSolution => None,
         }
@@ -807,11 +897,14 @@ impl<'db> Driver<'db> {
             .find(|candidate| ident_text(self.db, &candidate.name) == method)?;
         let lowerer = TypeLowering::from_item_resolutions(
             self.db,
-            &self.resolution.item_resolutions,
+            &self.module_resolution(info.module).item_resolutions,
             BinderEnv::from_type_vars(&info.type_vars),
         );
-        let mut normalizer =
-            AliasNormalizer::new(self.db, self.module, &self.resolution.item_resolutions);
+        let mut normalizer = AliasNormalizer::new(
+            self.db,
+            info.module,
+            &self.module_resolution(info.module).item_resolutions,
+        );
         let scheme =
             normalizer.normalize_scheme(lowerer.lower_class_method(info.class, method_sig));
         let mut subst = TySubst::default();
@@ -1034,8 +1127,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     ty: self.driver.mono_ty(sem_ty, "let binding", span),
                     span: name.span(self.driver.db),
                 };
+                let comptime = comptime.is_some()
+                    || ty.is_some_and(|ty| ty_is_comptime(self.driver.db, self.lower_body_ty(ty)))
+                    || self.stmt_has_comptime_let_obligation(stmt_id);
                 MonoStmtKind::Let {
-                    comptime: comptime.is_some(),
+                    comptime,
                     id,
                     ty: ty.map(|ty| {
                         let ty = self.subst.apply_ty(self.driver.db, self.lower_body_ty(ty));
@@ -1597,12 +1693,23 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             &self.body_map,
             BinderEnv::from_type_vars(&self.info.type_vars),
         );
+        let resolution = self.driver.module_resolution(self.info.module);
         let mut normalizer = AliasNormalizer::new(
             self.driver.db,
-            self.driver.module,
-            &self.driver.resolution.item_resolutions,
+            self.info.module,
+            &resolution.item_resolutions,
         );
         normalizer.normalize_ty(lowerer.lower_type(ty))
+    }
+
+    fn stmt_has_comptime_let_obligation(&self, stmt: Id<Stmt<'db>>) -> bool {
+        self.result.comptime_obligations.iter().any(|obligation| {
+            obligation.body == self.body
+                && matches!(
+                    obligation.kind,
+                    ComptimeObligationKind::LetInit { stmt: recorded, .. } if recorded == stmt
+                )
+        })
     }
 }
 
@@ -1623,6 +1730,8 @@ impl<'db> TySubst<'db> {
     }
 
     fn match_ty(&mut self, db: &'db dyn Db, pattern: Ty<'db>, target: Ty<'db>) -> bool {
+        let pattern = strip_comptime_ty(db, pattern);
+        let target = strip_comptime_ty(db, target);
         match pattern.kind(db) {
             TyKind::BoundVar(var) => match self.vars.get(&var.index) {
                 Some(existing) => *existing == target,
@@ -1829,6 +1938,38 @@ fn collect_body_order<'db>(db: &'db dyn HirDb, item: Item<'db>, bodies: &mut Vec
     }
 }
 
+fn reachable_modules<'db>(db: &'db dyn Db, entry: Module<'db>) -> Vec<Module<'db>> {
+    let Some(entry_id) = module_id_for_source_file(db, entry.def_id_value(db).file(db)) else {
+        return vec![entry];
+    };
+    let graph = resolve_reachable_full(db, entry_id);
+    let mut modules = graph
+        .modules
+        .into_iter()
+        .filter_map(|module| {
+            db.module_file(module)
+                .map(|file| parse_file_to_hir(db, file).module(db))
+        })
+        .collect::<Vec<_>>();
+    if modules.is_empty() {
+        modules.push(entry);
+    }
+    modules
+}
+
+fn module_id_for_source_file<'db>(db: &'db dyn Db, file: SourceFile) -> Option<ModuleId<'db>> {
+    let path = file.url(db).to_file_path().ok()?;
+    let tree = db.module_tree();
+    module_key_for_path(LibraryId::Main, tree.main_root(db), &path)
+        .or_else(|| module_key_for_path(LibraryId::Std, tree.std_root(db), &path))
+        .or_else(|| {
+            tree.external_roots(db).iter().find_map(|(name, root)| {
+                module_key_for_path(LibraryId::External(name.clone()), root, &path)
+            })
+        })
+        .map(|key| module_id_from_key(db, &key))
+}
+
 fn flatten_name(name: &str) -> String {
     name.replace('.', "_")
 }
@@ -1903,12 +2044,23 @@ fn pred_is_closed<'db>(db: &'db dyn Db, pred: Pred<'db>) -> bool {
 
 fn ty_is_builtin<'db>(db: &'db dyn Db, ty: Ty<'db>, builtin: BuiltinTyCtor) -> bool {
     matches!(
-        ty.kind(db),
+        strip_comptime_ty(db, ty).kind(db),
         TyKind::Named {
             ctor: TyCtor::Builtin(ctor),
             args,
         } if *ctor == builtin && args.is_empty()
     )
+}
+
+fn ty_is_comptime<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    matches!(ty.kind(db), TyKind::Comptime(_))
+}
+
+fn strip_comptime_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::Comptime(inner) => strip_comptime_ty(db, *inner),
+        _ => ty,
+    }
 }
 
 fn class_method_name_parts<'db>(db: &'db dyn HirDb, pred: Pred<'db>) -> (String, Vec<Ty<'db>>) {
@@ -2223,6 +2375,16 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
             Self::MissingEvidence { context } => write!(f, "missing evidence: {context}"),
             Self::UnsupportedEvidence { context } => write!(f, "unsupported evidence: {context}"),
             Self::UnresolvedExternal { name, .. } => write!(f, "unresolved external: {name}"),
+            Self::ComptimeEvaluationFailed { context } => {
+                write!(f, "comptime evaluation failed: {context}")
+            }
+            Self::ComptimeFuelExhausted { function, limit } => write!(
+                f,
+                "comptime evaluation fuel exhausted in {function} at {limit} unfold steps"
+            ),
+            Self::IntegerErasure { context, ty } => {
+                write!(f, "integer type survived comptime erasure: {context}: {ty}")
+            }
         }
     }
 }

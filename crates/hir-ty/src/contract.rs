@@ -30,8 +30,6 @@ use crate::{
     trait_env_from_module_resolution, trait_env_with_givens,
 };
 
-const PLACEHOLDER_SELECTOR: &str = "<keccak256[0..4] pending>";
-
 /// Typed dispatch/ABI surface for one contract.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct DispatchSurface<'db> {
@@ -64,8 +62,7 @@ pub struct DispatchMethod<'db> {
     pub payable: bool,
     /// ABI selector preimage, e.g. `transfer(address,uint256)`.
     pub signature: String,
-    /// Placeholder until the comptime keccak phase computes the first four
-    /// bytes.
+    /// First four bytes of `keccak256(signature)`, rendered as `0x` + hex.
     pub selector: String,
     /// ABI input parameters.
     pub inputs: Vec<AbiParam>,
@@ -230,6 +227,14 @@ pub enum IndirectArgShape<'db> {
     },
 }
 
+/// Interned ABI signature preimage used as the selector query key.
+#[salsa::interned(debug)]
+pub struct AbiSignature<'db> {
+    /// Canonical signature, e.g. `transfer(address,uint256)`.
+    #[returns(ref)]
+    pub text: String,
+}
+
 /// Returns the typed dispatch surface for one contract in `module`.
 pub fn contract_dispatch_surface<'db>(
     db: &'db dyn Db,
@@ -238,6 +243,16 @@ pub fn contract_dispatch_surface<'db>(
 ) -> DispatchSurface<'db> {
     let _ = module;
     contract_dispatch_surface_by_def(db, contract.def_id_value(db))
+}
+
+/// Computes the ABI selector for a canonical signature.
+#[salsa::tracked]
+pub fn abi_selector<'db>(db: &'db dyn Db, signature: AbiSignature<'db>) -> String {
+    let hash = hir::keccak::keccak256(signature.text(db).as_bytes());
+    format!(
+        "0x{:02x}{:02x}{:02x}{:02x}",
+        hash[0], hash[1], hash[2], hash[3]
+    )
 }
 
 #[salsa::tracked]
@@ -419,13 +434,14 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                             ));
                             format!("{}(<unsupported>)", ident_text(db, &sig.name))
                         });
+                let selector = abi_selector(db, AbiSignature::new(db, signature.clone()));
                 methods.push(DispatchMethod {
                     def: function.def_id_value(db),
                     source_index,
                     name: ident_text(db, &sig.name),
                     payable: sig.payable.is_some(),
                     signature,
-                    selector: PLACEHOLDER_SELECTOR.to_owned(),
+                    selector,
                     inputs,
                     outputs,
                 });
@@ -557,7 +573,6 @@ fn find_contract_by_def<'db>(
         _ => None,
     })
 }
-
 
 fn method_signature_string<'db>(
     db: &'db dyn Db,

@@ -15,19 +15,20 @@ pub use alias::{
     normalize_scheme_aliases, normalize_ty_aliases, type_alias_normalization_errors,
 };
 pub use contract::{
-    AbiParam, BodyDesugarPlan, BoolNode, DispatchConstructor, DispatchFallback, DispatchMethod,
-    DispatchSurface, FrontendDesugarPlan, FrontendTransform, IndirectArgShape, contract_abi_json,
-    contract_dispatch_surface, frontend_desugar_plan, module_contract_diagnostics,
+    AbiParam, AbiSignature, BodyDesugarPlan, BoolNode, DispatchConstructor, DispatchFallback,
+    DispatchMethod, DispatchSurface, FrontendDesugarPlan, FrontendTransform, IndirectArgShape,
+    abi_selector, contract_abi_json, contract_dispatch_surface, frontend_desugar_plan,
+    module_contract_diagnostics,
 };
 pub use hir::sema::ty::{
     BoundTyVar, BuiltinClassId, BuiltinTyCtor, ClassId, Pred, PredKind, QualTy, Ty, TyCtor, TyKind,
     TyScheme, UserTyCtor, UserTyCtorKind,
 };
 pub use infer::{
-    AdtCtorScheme, BodyTyContext, CallSiteCallee, CallSiteEvidence, DeferredObligation, ExprTy,
-    InferResultExt, InferTable, InferTy, InferenceResult, Instantiated, ObligationEvidence,
-    ObligationSource, PatTy, TyVid, TypeckDiagnostic, UnifyError, VarValue, body_ty_diagnostics,
-    infer_body,
+    AdtCtorScheme, BodyTyContext, CallSiteCallee, CallSiteEvidence, ComptimeObligationKind,
+    DeferredObligation, ExprTy, InferResultExt, InferTable, InferTy, InferenceResult, Instantiated,
+    ObligationEvidence, ObligationSource, PatTy, TyVid, TypeckDiagnostic, UnifyError, VarValue,
+    body_ty_diagnostics, infer_body,
 };
 pub use lower::{
     BinderEnv, LoweredAdtCtor, LoweredField, LoweredFunction, LoweredTypeAlias, TypeLowering,

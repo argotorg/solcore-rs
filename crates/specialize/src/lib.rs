@@ -14,6 +14,7 @@
 //! preserved as external monomorphic calls; whole-program expansion can layer on
 //! top of this crate without changing the IR.
 
+mod evaluate;
 mod ir;
 mod specialize;
 

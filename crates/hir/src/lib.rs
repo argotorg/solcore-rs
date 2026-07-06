@@ -20,6 +20,8 @@ pub mod ast;
 pub mod diag;
 /// Salsa inputs for source files and compilation roots.
 pub mod input;
+/// Ethereum Keccak-256 helper for selector and literal hashing.
+pub mod keccak;
 /// Intra-module name resolution.
 pub mod nameres;
 /// Semantic model types.

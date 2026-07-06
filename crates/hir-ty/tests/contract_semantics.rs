@@ -154,7 +154,7 @@ contract Token {
     assert_eq!(surface.methods[0].name, "pay");
     assert!(surface.methods[0].payable);
     assert_eq!(surface.methods[0].signature, "pay(uint256)");
-    assert_eq!(surface.methods[0].selector, "<keccak256[0..4] pending>");
+    assert_eq!(surface.methods[0].selector, "0xc290d691");
     assert_eq!(surface.methods[0].outputs[0].ty, "uint256");
     assert_eq!(surface.methods[0].outputs[1].ty, "bool");
 }
