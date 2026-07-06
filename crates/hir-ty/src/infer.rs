@@ -5,8 +5,8 @@ use std::marker::PhantomData;
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use hir::{
     Db as HirDb,
-    anchor::DefId,
-    arena::Id,
+    anchor::{DefId, DefKind, Disambiguator},
+    arena::{Arena, Id},
     ast::{
         Ident,
         function::{
@@ -14,8 +14,8 @@ use hir::{
             Stmt, StmtKind, UnOp, YulCase, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
         },
         item::{
-            AdtDef, ClassDef, ContractItem, FieldDef, FuncKind, FunctionDef, Item, Module,
-            TypeAlias,
+            AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FuncKind, FunctionDef, Item,
+            Module, TypeAlias,
         },
     },
     diag::{AnyDiagnostic, Diagnostic},
@@ -32,6 +32,7 @@ use crate::{
     TypeLowering, UserTyCtorKind,
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
     builtin_scheme, canonical_goal_with_allowed,
+    contract::module_contract_diagnostics,
     solver::{
         Evidence, Solution, Substitution, TraitEnvId, instance_soundness_diagnostics, solve_report,
     },
@@ -4081,6 +4082,11 @@ pub fn module_typeck_diagnostics<'db>(
             .map(alias_error_to_diagnostic)
             .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
     );
+    diagnostics.extend(
+        module_contract_diagnostics(db, hir_module)
+            .into_iter()
+            .map(AnyDiagnostic::Typeck),
+    );
     let mut collector = TypeckDiagnosticCollector {
         db,
         module,
@@ -4174,6 +4180,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                     contract.def_id_value(self.db),
                     contract.ty_param_elems(self.db),
                 ));
+                self.contract_field_initializers(contract, &inherited);
                 for item in contract.items(self.db) {
                     match *item {
                         ContractItem::FunctionDef(function) => self.function(
@@ -4278,6 +4285,109 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 .iter()
                 .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
         );
+    }
+
+    fn contract_field_initializers(
+        &mut self,
+        contract: ContractDef<'db>,
+        inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    ) {
+        for (index, field) in contract.fields(self.db).iter().enumerate() {
+            if field.init().is_none() {
+                continue;
+            }
+            let field_ty = TypeLowering::from_item_resolutions(
+                self.db,
+                &self.item_resolutions,
+                BinderEnv::from_type_vars(inherited_type_vars),
+            )
+            .lower_field(field)
+            .ty;
+            let mut normalizer =
+                AliasNormalizer::new(self.db, self.hir_module, &self.item_resolutions);
+            let field_ty = normalizer.normalize_ty(field_ty);
+            self.diagnostics.extend(
+                normalizer
+                    .take_errors()
+                    .into_iter()
+                    .map(alias_error_to_diagnostic)
+                    .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+            );
+
+            let body = self.field_initializer_body(contract, field, index as u32);
+            let context = hir_nameres::BodyResolutionContext {
+                module: self.hir_module,
+                enclosing_contract: Some(contract.def_id_value(self.db)),
+                params: Vec::new(),
+                type_vars: inherited_type_vars.to_vec(),
+            };
+            let body_map = hir_nameres::resolve_body_with_imports_and_policy(
+                self.db,
+                body,
+                &context,
+                &self.env,
+                hir_nameres::NameresDiagnosticPolicy::Emit,
+            );
+            if !body_map.diagnostics.is_empty() {
+                self.diagnostics.extend(
+                    body_map
+                        .diagnostics
+                        .iter()
+                        .cloned()
+                        .map(AnyDiagnostic::Nameres),
+                );
+                continue;
+            }
+            let trait_env = crate::solver::trait_env_for_module(self.db, self.module);
+            let ctx = BodyTyContext::new(
+                self.hir_module,
+                body_map,
+                inherited_type_vars.to_vec(),
+                Vec::new(),
+                Some(field_ty),
+            )
+            .with_entry_module(self.module)
+            .with_trait_env(trait_env)
+            .with_partial_data(partial_data_entries(&self.env));
+            self.diagnostics.extend(
+                body_ty_diagnostics(self.db, body, ctx)
+                    .iter()
+                    .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+            );
+        }
+    }
+
+    fn field_initializer_body(
+        &self,
+        contract: ContractDef<'db>,
+        field: &FieldDef<'db>,
+        index: u32,
+    ) -> FuncBody<'db> {
+        let init = field.init().expect("field initializer");
+        let field_name = ident_text(self.db, field.name());
+        let body_def = DefId::new(
+            self.db,
+            contract.def_id_value(self.db).file(self.db),
+            Some(contract.def_id_value(self.db)),
+            DefKind::FuncBody,
+            Some(format!("{field_name}$field_init")),
+            Some(index.to_string()),
+            Disambiguator::ZERO,
+        );
+        let mut stmts = Arena::new();
+        let stmt = stmts.alloc(Stmt {
+            span: init.span,
+            kind: StmtKind::Return(Some(init.root)),
+        });
+        FuncBody::new(
+            self.db,
+            body_def,
+            init.span,
+            vec![stmt],
+            stmts,
+            init.exprs.clone(),
+            Arena::new(),
+        )
     }
 
     fn should_require_complete_signature(

@@ -5,6 +5,7 @@
 //! ena-backed inference state only inside query execution.
 
 pub mod alias;
+pub mod contract;
 pub mod infer;
 pub mod lower;
 pub mod solver;
@@ -12,6 +13,11 @@ pub mod solver;
 pub use alias::{
     AliasError, AliasNorm, AliasNormalizer, AliasType, AliasTypeKind, normalize_pred_aliases,
     normalize_scheme_aliases, normalize_ty_aliases, type_alias_normalization_errors,
+};
+pub use contract::{
+    AbiParam, BodyDesugarPlan, BoolNode, DispatchConstructor, DispatchFallback, DispatchMethod,
+    DispatchSurface, FrontendDesugarPlan, FrontendTransform, contract_abi_json,
+    contract_dispatch_surface, frontend_desugar_plan, module_contract_diagnostics,
 };
 pub use hir::sema::ty::{
     BoundTyVar, BuiltinClassId, BuiltinTyCtor, ClassId, Pred, PredKind, QualTy, Ty, TyCtor, TyKind,
