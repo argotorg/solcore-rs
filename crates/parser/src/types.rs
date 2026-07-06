@@ -25,7 +25,12 @@ pub(crate) enum ParsedTopItem<'src> {
         span: LexSpan,
         path: Vec<SpannedStr<'src>>,
         alias: Option<SpannedStr<'src>>,
-        selected: Vec<SpannedStr<'src>>,
+        selector: Option<ParsedImportSelector<'src>>,
+        hiding: Vec<ParsedImportName>,
+    },
+    Export {
+        span: LexSpan,
+        names: Vec<ParsedImportName>,
     },
     Pragma {
         span: LexSpan,
@@ -74,6 +79,25 @@ pub(crate) enum ParsedTopItem<'src> {
     Error {
         span: LexSpan,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedImportName {
+    pub(crate) name: String,
+    pub(crate) span: LexSpan,
+    pub(crate) is_operator: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedSelectedName<'src> {
+    pub(crate) name: ParsedImportName,
+    pub(crate) alias: Option<SpannedStr<'src>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ParsedImportSelector<'src> {
+    Wildcard,
+    Names(Vec<ParsedSelectedName<'src>>),
 }
 
 #[derive(Debug, Clone)]

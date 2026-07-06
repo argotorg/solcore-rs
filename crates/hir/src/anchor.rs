@@ -34,6 +34,7 @@ pub enum DefKind {
     Contract,
     Field,
     Import,
+    Export,
     Pragma,
 }
 

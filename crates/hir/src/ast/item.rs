@@ -270,6 +270,25 @@ impl<'db> Spanned<'db> for ContractDef<'db> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct SelectedName<'db> {
+    pub name: SpannedElem<'db, Ident<'db>>,
+    pub alias: Option<SpannedElem<'db, Ident<'db>>>,
+    pub is_operator: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ImportHiddenName<'db> {
+    pub name: SpannedElem<'db, Ident<'db>>,
+    pub is_operator: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ImportSelector<'db> {
+    Wildcard,
+    Names(Vec<SelectedName<'db>>),
+}
+
 #[salsa::tracked(debug)]
 pub struct Import<'db> {
     #[tracked]
@@ -289,12 +308,43 @@ pub struct Import<'db> {
 
     #[tracked]
     #[returns(ref)]
-    selected: Vec<SpannedElem<'db, Ident<'db>>>,
+    selector: Option<ImportSelector<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
+    hiding: Vec<ImportHiddenName<'db>>,
 }
 
 impl<'db> Spanned<'db> for Import<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         Import::span(*self, db)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ExportedName<'db> {
+    pub name: SpannedElem<'db, Ident<'db>>,
+    pub is_operator: bool,
+}
+
+#[salsa::tracked(debug)]
+pub struct Export<'db> {
+    #[tracked]
+    #[returns(copy)]
+    def_id: DefId<'db>,
+
+    #[tracked]
+    #[returns(copy)]
+    span: Span<'db>,
+
+    #[tracked]
+    #[returns(ref)]
+    names: Vec<ExportedName<'db>>,
+}
+
+impl<'db> Spanned<'db> for Export<'db> {
+    fn span(&self, db: &'db dyn Db) -> Span<'db> {
+        Export::span(*self, db)
     }
 }
 
@@ -332,6 +382,7 @@ pub enum Item<'db> {
     InstanceDef(InstanceDef<'db>),
     ContractDef(ContractDef<'db>),
     Import(Import<'db>),
+    Export(Export<'db>),
     Pragma(Pragma<'db>),
     Error { span: Span<'db> },
 }
@@ -346,6 +397,7 @@ impl<'db> Spanned<'db> for Item<'db> {
             Self::InstanceDef(def) => def.span(db),
             Self::ContractDef(def) => def.span(db),
             Self::Import(def) => def.span(db),
+            Self::Export(def) => def.span(db),
             Self::Pragma(def) => def.span(db),
             Self::Error { span } => *span,
         }

@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/fail/missing_semicolon.solc
 ---
-error: unexpected end of input; expected `.`, `;`, `as`, or `{` while parsing import declaration
+error: unexpected end of input; expected `.`, `;`, or `as` while parsing import declaration
  --> /missing_semicolon.solc:1:18
   |
 1 | import core.math

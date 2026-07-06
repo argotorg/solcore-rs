@@ -8,6 +8,8 @@ pub enum Token<'a> {
     Contract,
     #[token("import")]
     Import,
+    #[token("export")]
+    Export,
     #[token("as")]
     As,
     #[token("let")]
@@ -112,6 +114,8 @@ pub enum Token<'a> {
     Eq,
     #[token("|")]
     Pipe,
+    #[token("^")]
+    Caret,
 
     // Punctuation.
     #[token(".")]
@@ -213,6 +217,7 @@ mod tests {
     fn test_keywords() {
         assert_eq!(tokenize("contract"), vec![Token::Contract]);
         assert_eq!(tokenize("import"), vec![Token::Import]);
+        assert_eq!(tokenize("export"), vec![Token::Export]);
         assert_eq!(tokenize("as"), vec![Token::As]);
         assert_eq!(tokenize("let"), vec![Token::Let]);
         assert_eq!(tokenize("data"), vec![Token::Data]);
@@ -271,6 +276,7 @@ mod tests {
         assert_eq!(tokenize(">"), vec![Token::Greater]);
         assert_eq!(tokenize("="), vec![Token::Eq]);
         assert_eq!(tokenize("|"), vec![Token::Pipe]);
+        assert_eq!(tokenize("^"), vec![Token::Caret]);
     }
 
     #[test]

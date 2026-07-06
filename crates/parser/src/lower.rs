@@ -61,35 +61,79 @@ fn lower_spanned_ident<'db>(
     )
 }
 
+fn lower_owned_ident<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    name: String,
+    span: LexSpan,
+) -> SpannedElem<'db, Ident<'db>> {
+    SpannedElem::new(
+        Ident::new(db, name),
+        span_from_absolute(anchor, span, base_start),
+    )
+}
+
 fn lower_import<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     path: Vec<SpannedStr<'_>>,
     alias: Option<SpannedStr<'_>>,
-    selected: Vec<SpannedStr<'_>>,
+    selector: Option<ParsedImportSelector<'_>>,
+    hiding: Vec<ParsedImportName>,
 ) -> item::Import<'db> {
-    let fingerprint = import_fingerprint(&path, alias.as_ref(), &selected);
+    let fingerprint = import_fingerprint(&path, alias.as_ref(), selector.as_ref(), &hiding);
     let import_def =
         ctx.alloc_def_with_fingerprint(DefKind::Import, None, Some(&fingerprint), span.start);
 
     let anchor = AnchorId::def(ctx.db, import_def);
+    let base_start = span.start;
     let path = path
         .into_iter()
-        .map(|segment| lower_spanned_ident(ctx.db, anchor, span.start, segment))
+        .map(|segment| lower_spanned_ident(ctx.db, anchor, base_start, segment))
         .collect();
-    let alias = alias.map(|it| lower_spanned_ident(ctx.db, anchor, span.start, it));
-    let selected = selected
+    let alias = alias.map(|it| lower_spanned_ident(ctx.db, anchor, base_start, it));
+    let selector =
+        selector.map(|selector| lower_import_selector(ctx.db, anchor, base_start, selector));
+    let hiding = hiding
         .into_iter()
-        .map(|it| lower_spanned_ident(ctx.db, anchor, span.start, it))
+        .map(|it| item::ImportHiddenName {
+            name: lower_owned_ident(ctx.db, anchor, base_start, it.name, it.span),
+            is_operator: it.is_operator,
+        })
         .collect();
-    let span = span_from_absolute(anchor, span, span.start);
-    item::Import::new(ctx.db, import_def, span, path, alias, selected)
+    let span = span_from_absolute(anchor, span, base_start);
+    item::Import::new(ctx.db, import_def, span, path, alias, selector, hiding)
+}
+
+fn lower_import_selector<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    selector: ParsedImportSelector<'_>,
+) -> item::ImportSelector<'db> {
+    match selector {
+        ParsedImportSelector::Wildcard => item::ImportSelector::Wildcard,
+        ParsedImportSelector::Names(names) => item::ImportSelector::Names(
+            names
+                .into_iter()
+                .map(|it| item::SelectedName {
+                    name: lower_owned_ident(db, anchor, base_start, it.name.name, it.name.span),
+                    alias: it
+                        .alias
+                        .map(|alias| lower_spanned_ident(db, anchor, base_start, alias)),
+                    is_operator: it.name.is_operator,
+                })
+                .collect(),
+        ),
+    }
 }
 
 fn import_fingerprint(
     path: &[SpannedStr<'_>],
     alias: Option<&SpannedStr<'_>>,
-    selected: &[SpannedStr<'_>],
+    selector: Option<&ParsedImportSelector<'_>>,
+    hiding: &[ParsedImportName],
 ) -> String {
     let mut fingerprint = path
         .iter()
@@ -102,14 +146,76 @@ fn import_fingerprint(
         fingerprint.push_str(alias);
     }
 
-    if !selected.is_empty() {
-        let selected = selected.iter().map(|(name, _)| *name).collect::<Vec<_>>();
-        fingerprint.push_str("::{");
-        fingerprint.push_str(&selected.join(","));
+    if let Some(selector) = selector {
+        match selector {
+            ParsedImportSelector::Wildcard => fingerprint.push_str(".{*}"),
+            ParsedImportSelector::Names(names) => {
+                let mut names = names.iter().map(selected_fingerprint).collect::<Vec<_>>();
+                names.sort_unstable();
+                fingerprint.push_str(".{");
+                fingerprint.push_str(&names.join(","));
+                fingerprint.push('}');
+            }
+        }
+    }
+
+    if !hiding.is_empty() {
+        let mut hidden = hiding
+            .iter()
+            .map(import_name_fingerprint)
+            .collect::<Vec<_>>();
+        hidden.sort_unstable();
+        fingerprint.push_str(" hiding {");
+        fingerprint.push_str(&hidden.join(","));
         fingerprint.push('}');
     }
 
     fingerprint
+}
+
+fn selected_fingerprint(name: &ParsedSelectedName<'_>) -> String {
+    let mut fingerprint = import_name_fingerprint(&name.name);
+    if let Some((alias, _)) = &name.alias {
+        fingerprint.push_str(" as ");
+        fingerprint.push_str(alias);
+    }
+    fingerprint
+}
+
+fn import_name_fingerprint(name: &ParsedImportName) -> String {
+    let kind = if name.is_operator { "op" } else { "name" };
+    format!("{kind}:{}", name.name)
+}
+
+fn lower_export<'db>(
+    ctx: &mut LoweringCtx<'db, '_>,
+    span: LexSpan,
+    names: Vec<ParsedImportName>,
+) -> item::Export<'db> {
+    let fingerprint = export_fingerprint(&names);
+    let export_def =
+        ctx.alloc_def_with_fingerprint(DefKind::Export, None, Some(&fingerprint), span.start);
+
+    let anchor = AnchorId::def(ctx.db, export_def);
+    let base_start = span.start;
+    let names = names
+        .into_iter()
+        .map(|it| item::ExportedName {
+            name: lower_owned_ident(ctx.db, anchor, base_start, it.name, it.span),
+            is_operator: it.is_operator,
+        })
+        .collect();
+    let span = span_from_absolute(anchor, span, base_start);
+    item::Export::new(ctx.db, export_def, span, names)
+}
+
+fn export_fingerprint(names: &[ParsedImportName]) -> String {
+    let mut names = names
+        .iter()
+        .map(import_name_fingerprint)
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    format!("{{{}}}", names.join(","))
 }
 
 fn lower_pragma<'db>(
@@ -1318,10 +1424,15 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                     span,
                     path,
                     alias,
-                    selected,
+                    selector,
+                    hiding,
                 } => {
-                    let import = lower_import(&mut ctx, span, path, alias, selected);
+                    let import = lower_import(&mut ctx, span, path, alias, selector, hiding);
                     items.push(item::Item::Import(import));
+                }
+                ParsedTopItem::Export { span, names } => {
+                    let export = lower_export(&mut ctx, span, names);
+                    items.push(item::Item::Export(export));
                 }
                 ParsedTopItem::Pragma {
                     span,

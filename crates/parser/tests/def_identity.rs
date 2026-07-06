@@ -43,9 +43,7 @@ fn source_file(db: &TestDb, name: &str, src: &str) -> SourceFile {
 
 fn def_identity<'db>(db: &'db TestDb, def: DefId<'db>) -> DefIdentity {
     DefIdentity {
-        owner: def
-            .owner(db)
-            .map(|owner| Box::new(def_identity(db, owner))),
+        owner: def.owner(db).map(|owner| Box::new(def_identity(db, owner))),
         kind: def.kind(db),
         name: def.name(db),
         fingerprint: def.fingerprint(db),
@@ -194,6 +192,38 @@ fn inserting_import_above_keeps_existing_import_identities_stable() {
 }
 
 #[test]
+fn import_selector_fingerprints_are_structural_and_order_independent() {
+    let db = TestDb::default();
+    let file = source_file(
+        &db,
+        "imports-selector-fingerprints",
+        "import A.{x as y, (^^)} hiding {z, w};\n\
+         import A.{(^^), x as y} hiding {w, z};\n\
+         import A.{x};\n\
+         import A.{x as y};\n\
+         import A.{*};\n",
+    );
+
+    let mut fingerprints = all_defs(&db, file)
+        .into_iter()
+        .filter(|def| def.kind(&db) == DefKind::Import)
+        .map(|def| def.fingerprint(&db).expect("import fingerprint"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(fingerprints.len(), 5);
+    fingerprints.sort();
+    assert_eq!(
+        fingerprints
+            .windows(2)
+            .filter(|pair| pair[0] == pair[1])
+            .count(),
+        1
+    );
+    fingerprints.dedup();
+    assert_eq!(fingerprints.len(), 4);
+}
+
+#[test]
 fn inserting_unrelated_item_above_def_keeps_identity_stable() {
     let mut db = TestDb::default();
     let file = source_file(&db, "stable-def", "\nfunction target() {}\n");
@@ -204,8 +234,9 @@ fn inserting_unrelated_item_above_def_keeps_identity_stable() {
         def_identity(&db, targets[0])
     };
 
-    file.set_content(&mut db)
-        .to(Some("\nfunction helper() {}\n\nfunction target() {}\n".to_owned()));
+    file.set_content(&mut db).to(Some(
+        "\nfunction helper() {}\n\nfunction target() {}\n".to_owned(),
+    ));
 
     let after = {
         let targets = defs_by_name(&db, file, DefKind::Function, "target");

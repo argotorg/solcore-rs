@@ -39,6 +39,105 @@ where
     select! { Token::Ident(name) if name == "comptime" => () }.map_with(|_, e| e.span())
 }
 
+fn hiding_kw_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    select! { Token::Ident(name) if name == "hiding" => () }
+}
+
+fn operator_part_parser<'src, I>() -> impl Parser<'src, I, &'static str, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    select! {
+        Token::ColonEq => ":=",
+        Token::Arrow => "->",
+        Token::FatArrow => "=>",
+        Token::EqEq => "==",
+        Token::NotEq => "!=",
+        Token::GreaterEq => ">=",
+        Token::LessEq => "<=",
+        Token::AndAnd => "&&",
+        Token::OrOr => "||",
+        Token::PlusEq => "+=",
+        Token::MinusEq => "-=",
+        Token::Plus => "+",
+        Token::Minus => "-",
+        Token::Star => "*",
+        Token::Slash => "/",
+        Token::Percent => "%",
+        Token::Bang => "!",
+        Token::Less => "<",
+        Token::Greater => ">",
+        Token::Eq => "=",
+        Token::Pipe => "|",
+        Token::Caret => "^",
+        Token::Colon => ":",
+    }
+}
+
+fn import_name_parser<'src, I>() -> impl Parser<'src, I, ParsedImportName, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let ident = ident_parser().map(|(name, span)| ParsedImportName {
+        name: name.to_owned(),
+        span,
+        is_operator: false,
+    });
+
+    let operator = operator_part_parser()
+        .repeated()
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .map_with(|parts, e| ParsedImportName {
+            name: parts.concat(),
+            span: e.span(),
+            is_operator: true,
+        });
+
+    choice((operator, ident))
+        .labelled("selector name")
+        .as_context()
+}
+
+fn export_name_parser<'src, I>() -> impl Parser<'src, I, ParsedImportName, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let ctor_names = ident_parser()
+        .separated_by(just(Token::Comma))
+        .at_least(1)
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .ignored();
+    let ctor_selector = just(Token::LParen)
+        .ignore_then(just(Token::Star).ignored().or(ctor_names))
+        .then_ignore(just(Token::RParen));
+
+    let wildcard = just(Token::Star).map_with(|_, e| ParsedImportName {
+        name: "*".to_owned(),
+        span: e.span(),
+        is_operator: false,
+    });
+    let ident = ident_parser()
+        .then(ctor_selector.or_not())
+        .map(|((name, span), _)| ParsedImportName {
+            name: name.to_owned(),
+            span,
+            is_operator: false,
+        });
+    let operator = import_name_parser()
+        .filter(|name| name.is_operator)
+        .map(|name| name);
+
+    choice((wildcard, operator, ident))
+        .labelled("export name")
+        .as_context()
+}
+
 fn import_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -49,30 +148,42 @@ where
         .collect::<Vec<_>>()
         .boxed();
 
-    let path_for_selective = ident_parser()
-        .separated_by(just(Token::Dot))
-        .at_least(1)
-        .allow_trailing()
-        .collect::<Vec<_>>()
-        .boxed();
-
-    let selected_items = ident_parser()
+    let selected_item = import_name_parser()
+        .then(just(Token::As).ignore_then(ident_parser()).or_not())
+        .map(|(name, alias)| ParsedSelectedName { name, alias });
+    let named_selector = selected_item
         .separated_by(just(Token::Comma))
         .at_least(1)
         .allow_trailing()
         .collect::<Vec<_>>()
+        .map(ParsedImportSelector::Names);
+    let wildcard_selector = just(Token::Star).to(ParsedImportSelector::Wildcard);
+    let selector = choice((wildcard_selector, named_selector))
         .delimited_by(just(Token::LBrace), just(Token::RBrace))
         .boxed();
+    let hiding = hiding_kw_parser()
+        .ignore_then(
+            import_name_parser()
+                .separated_by(just(Token::Comma))
+                .allow_trailing()
+                .collect::<Vec<_>>()
+                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+        )
+        .or_not()
+        .map(Option::unwrap_or_default);
 
     let selective = just(Token::Import)
-        .ignore_then(path_for_selective)
-        .then(selected_items)
+        .ignore_then(path.clone())
+        .then_ignore(just(Token::Dot))
+        .then(selector)
+        .then(hiding)
         .then_ignore(just(Token::Semi))
-        .map_with(|(path, selected), e| ParsedTopItem::Import {
+        .map_with(|((path, selector), hiding), e| ParsedTopItem::Import {
             span: e.span(),
             path,
             alias: None,
-            selected,
+            selector: Some(selector),
+            hiding,
         })
         .boxed();
 
@@ -85,7 +196,8 @@ where
             span: e.span(),
             path,
             alias: Some(alias),
-            selected: Vec::new(),
+            selector: None,
+            hiding: Vec::new(),
         })
         .boxed();
 
@@ -96,12 +208,57 @@ where
             span: e.span(),
             path,
             alias: None,
-            selected: Vec::new(),
+            selector: None,
+            hiding: Vec::new(),
         })
         .boxed();
 
     choice((selective, with_alias, plain))
         .labelled("import declaration")
+        .as_context()
+        .boxed()
+}
+
+fn export_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let path = ident_parser()
+        .separated_by(just(Token::Dot))
+        .at_least(1)
+        .collect::<Vec<_>>()
+        .boxed();
+
+    let module_wildcard = path
+        .clone()
+        .then_ignore(just(Token::Dot))
+        .then_ignore(just(Token::Star))
+        .map_with(|path, e| ParsedImportName {
+            name: path
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>()
+                .join(".")
+                + ".*",
+            span: e.span(),
+            is_operator: false,
+        });
+    let export_item = choice((module_wildcard, export_name_parser()));
+    let export_items = export_item
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LBrace), just(Token::RBrace))
+        .boxed();
+
+    just(Token::Export)
+        .ignore_then(export_items)
+        .then_ignore(just(Token::Semi))
+        .map_with(|names, e| ParsedTopItem::Export {
+            span: e.span(),
+            names,
+        })
+        .labelled("export declaration")
         .as_context()
         .boxed()
 }
@@ -1728,7 +1885,13 @@ where
         .at_least(1)
         .map_with(|_, e| ParsedContractItem::Error { span: e.span() });
 
-    choice((function_def, constructor_def, fallback_def, type_alias, adt_def))
+    choice((
+        function_def,
+        constructor_def,
+        fallback_def,
+        type_alias,
+        adt_def,
+    ))
     .recover_with(via_parser(recovery))
     .labelled("contract member")
     .as_context()
@@ -1780,6 +1943,7 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     let item_start = just(Token::Import)
+        .or(just(Token::Export))
         .or(just(Token::Pragma))
         .or(just(Token::Type))
         .or(just(Token::Data))
@@ -1799,6 +1963,7 @@ where
 
     choice((
         import_parser(),
+        export_parser(),
         pragma_parser(),
         type_alias_parser(),
         adt_parser(),
@@ -1841,6 +2006,7 @@ fn token_spelling(token: &Token<'_>) -> &'static str {
     match token {
         Token::Contract => "contract",
         Token::Import => "import",
+        Token::Export => "export",
         Token::As => "as",
         Token::Let => "let",
         Token::Data => "data",
@@ -1891,6 +2057,7 @@ fn token_spelling(token: &Token<'_>) -> &'static str {
         Token::Greater => ">",
         Token::Eq => "=",
         Token::Pipe => "|",
+        Token::Caret => "^",
         Token::Dot => ".",
         Token::Colon => ":",
         Token::Semi => ";",
@@ -2198,18 +2365,22 @@ mod tests {
         assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
 
         match parsed.output.as_slice() {
-            [ParsedTopItem::Import {
-                path,
-                alias,
-                selected,
-                ..
-            }] => {
+            [
+                ParsedTopItem::Import {
+                    path,
+                    alias,
+                    selector,
+                    hiding,
+                    ..
+                },
+            ] => {
                 assert_eq!(
                     path.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
                     vec!["math", "bits"]
                 );
                 assert_eq!(alias.as_ref().map(|(name, _)| *name), Some("Bits"));
-                assert!(selected.is_empty(), "expected no selected items");
+                assert!(selector.is_none(), "expected no selector");
+                assert!(hiding.is_empty(), "expected no hidden items");
             }
             other => panic!("unexpected parse output: {other:?}"),
         }
@@ -2221,24 +2392,71 @@ mod tests {
         assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
 
         match parsed.output.as_slice() {
-            [ParsedTopItem::Import {
-                path,
-                alias,
-                selected,
-                ..
-            }] => {
+            [
+                ParsedTopItem::Import {
+                    path,
+                    alias,
+                    selector,
+                    hiding,
+                    ..
+                },
+            ] => {
                 assert_eq!(
                     path.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
                     vec!["math", "words"]
                 );
                 assert!(alias.is_none(), "expected no alias");
+                assert!(hiding.is_empty(), "expected no hidden items");
+                let ParsedImportSelector::Names(selected) =
+                    selector.as_ref().expect("expected selector")
+                else {
+                    panic!("expected selected names");
+                };
                 assert_eq!(
-                    selected.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+                    selected
+                        .iter()
+                        .map(|name| name.name.name.as_str())
+                        .collect::<Vec<_>>(),
                     vec!["addWord", "subWord"]
                 );
             }
             other => panic!("unexpected parse output: {other:?}"),
         }
+    }
+
+    #[test]
+    fn import_with_wildcard_and_hiding_parses() {
+        let parsed = parse_supported_items("import glob.{*} hiding {drop};");
+        assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
+
+        match parsed.output.as_slice() {
+            [
+                ParsedTopItem::Import {
+                    selector, hiding, ..
+                },
+            ] => {
+                assert!(matches!(selector, Some(ParsedImportSelector::Wildcard)));
+                assert_eq!(
+                    hiding
+                        .iter()
+                        .map(|name| name.name.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["drop"]
+                );
+            }
+            other => panic!("unexpected parse output: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn import_and_export_operator_names_parse() {
+        let parsed = parse_supported_items("import math.{pow, (^^)};\nexport { f, (^^) };");
+        assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
+
+        assert!(matches!(
+            parsed.output.as_slice(),
+            [ParsedTopItem::Import { .. }, ParsedTopItem::Export { .. }]
+        ));
     }
 
     #[test]
