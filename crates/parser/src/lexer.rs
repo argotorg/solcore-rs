@@ -62,8 +62,6 @@ pub enum Token<'a> {
     Assembly,
     #[token("pragma")]
     Pragma,
-    #[token("then")]
-    Then,
     #[token("true")]
     True,
     #[token("false")]
@@ -244,7 +242,7 @@ mod tests {
         assert_eq!(tokenize("lam"), vec![Token::Lam]);
         assert_eq!(tokenize("assembly"), vec![Token::Assembly]);
         assert_eq!(tokenize("pragma"), vec![Token::Pragma]);
-        assert_eq!(tokenize("then"), vec![Token::Then]);
+        assert_eq!(tokenize("then"), vec![Token::Ident("then")]);
         assert_eq!(tokenize("true"), vec![Token::True]);
         assert_eq!(tokenize("false"), vec![Token::False]);
     }

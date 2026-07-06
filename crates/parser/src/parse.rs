@@ -46,6 +46,13 @@ where
     select! { Token::Ident(name) if name == "hiding" => () }
 }
 
+fn then_kw_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    select! { Token::Ident(name) if name == "then" => () }.labelled("then")
+}
+
 fn operator_part_parser<'src, I>() -> impl Parser<'src, I, &'static str, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -543,7 +550,7 @@ where
 
         let if_expr = just(Token::If)
             .ignore_then(expr.clone())
-            .then_ignore(just(Token::Then))
+            .then_ignore(then_kw_parser())
             .then(expr.clone())
             .then_ignore(just(Token::Else))
             .then(expr.clone())
@@ -557,15 +564,17 @@ where
             })
             .boxed();
 
-        let boundary = just(Token::Semi)
-            .or(just(Token::Comma))
-            .or(just(Token::RParen))
-            .or(just(Token::RBracket))
-            .or(just(Token::RBrace))
-            .or(just(Token::Then))
-            .or(just(Token::Else))
-            .or(just(Token::FatArrow))
-            .or(just(Token::Pipe));
+        let boundary = choice((
+            just(Token::Semi).ignored(),
+            just(Token::Comma).ignored(),
+            just(Token::RParen).ignored(),
+            just(Token::RBracket).ignored(),
+            just(Token::RBrace).ignored(),
+            then_kw_parser(),
+            just(Token::Else).ignored(),
+            just(Token::FatArrow).ignored(),
+            just(Token::Pipe).ignored(),
+        ));
         let atom_recovery = any()
             .and_is(boundary.not())
             .repeated()
@@ -1248,15 +1257,27 @@ where
             .or(just(Token::MinusEq).to(ParsedAssignOp::SubEq));
         let assign_or_expr = parsed_expr_parser()
             .then(assign_op.then(parsed_expr_parser()).or_not())
-            .then_ignore(just(Token::Semi))
-            .map_with(|(lhs, rhs), e| ParsedStmt {
-                span: e.span(),
-                kind: match rhs {
-                    Some((ParsedAssignOp::Eq, rhs)) => ParsedStmtKind::Assign { lhs, rhs },
-                    Some((ParsedAssignOp::AddEq, rhs)) => ParsedStmtKind::AddAssign { lhs, rhs },
-                    Some((ParsedAssignOp::SubEq, rhs)) => ParsedStmtKind::SubAssign { lhs, rhs },
-                    None => ParsedStmtKind::Expr(lhs),
-                },
+            .then(just(Token::Semi).or_not())
+            .validate(|((lhs, rhs), semi), e, emitter| {
+                if rhs.is_some() && semi.is_none() {
+                    emitter.emit(Rich::custom(
+                        e.span(),
+                        "assignment statement requires trailing `;`",
+                    ));
+                }
+                ParsedStmt {
+                    span: e.span(),
+                    kind: match rhs {
+                        Some((ParsedAssignOp::Eq, rhs)) => ParsedStmtKind::Assign { lhs, rhs },
+                        Some((ParsedAssignOp::AddEq, rhs)) => {
+                            ParsedStmtKind::AddAssign { lhs, rhs }
+                        }
+                        Some((ParsedAssignOp::SubEq, rhs)) => {
+                            ParsedStmtKind::SubAssign { lhs, rhs }
+                        }
+                        None => ParsedStmtKind::Expr(lhs),
+                    },
+                }
             })
             .boxed();
 
@@ -2123,7 +2144,6 @@ fn token_spelling(token: &Token<'_>) -> &'static str {
         Token::Lam => "lam",
         Token::Assembly => "assembly",
         Token::Pragma => "pragma",
-        Token::Then => "then",
         Token::True => "true",
         Token::False => "false",
         Token::ColonEq => ":=",
