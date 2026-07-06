@@ -2025,7 +2025,9 @@ impl<'db> InferCtx<'db> {
                 expected
             }
             non_function => {
-                if !matches!(
+                if args.is_empty() {
+                    self.unify(non_function.clone(), expected.clone());
+                } else if !matches!(
                     non_function,
                     InferTy::Error | InferTy::Unknown | InferTy::Var(_)
                 ) {
@@ -2050,11 +2052,14 @@ impl<'db> InferCtx<'db> {
                     kind: crate::UserTyCtorKind::Adt,
                 }),
             ..
-        } = expected
+        } = &expected
         else {
+            if builtin_ctor_kind_by_name(name).is_some() {
+                return self.builtin_ctor_for_expected(name, expected);
+            }
             return DotCtorLookup::NoExpected;
         };
-        let matches = self.lookup_adt_ctor_schemes_by_name(def, name);
+        let matches = self.lookup_adt_ctor_schemes_by_name(*def, name);
         match matches.as_slice() {
             [] => DotCtorLookup::NoMatch,
             [entry] => {
@@ -2068,6 +2073,33 @@ impl<'db> InferCtx<'db> {
                     .map(|entry| entry.name.clone())
                     .collect::<Vec<_>>(),
             ),
+        }
+    }
+
+    fn builtin_ctor_for_expected(
+        &mut self,
+        name: &str,
+        expected: InferTy<'db>,
+    ) -> DotCtorLookup<'db> {
+        if matches!(
+            expected,
+            InferTy::Error | InferTy::Unknown | InferTy::Var(_)
+        ) {
+            return DotCtorLookup::NoExpected;
+        }
+        let Some(kind) = builtin_ctor_kind_by_name(name) else {
+            return DotCtorLookup::NoExpected;
+        };
+        let Some(scheme) = builtin_scheme(self.db, kind) else {
+            return DotCtorLookup::NoMatch;
+        };
+        let instantiated = self.engine.instantiate_scheme(scheme);
+        let result = ctor_result_ty(&instantiated.ty);
+        if self.engine.can_unify(expected, result) {
+            self.pending.extend(instantiated.obligations);
+            DotCtorLookup::Match(instantiated.ty)
+        } else {
+            DotCtorLookup::NoMatch
         }
     }
 
@@ -3137,6 +3169,26 @@ fn adt_ctor_indices_by_name_in_hir_module<'db>(
     name: String,
 ) -> Vec<(u32, String)> {
     adt_ctor_indices_by_name_in_module(db, module, ty, &name)
+}
+
+fn builtin_ctor_kind_by_name(name: &str) -> Option<hir_nameres::BuiltinKind> {
+    let ctor = match name {
+        "true" => hir_nameres::BuiltinCtor::True,
+        "false" => hir_nameres::BuiltinCtor::False,
+        "()" => hir_nameres::BuiltinCtor::Unit,
+        "pair" => hir_nameres::BuiltinCtor::Pair,
+        "inl" => hir_nameres::BuiltinCtor::Inl,
+        "inr" => hir_nameres::BuiltinCtor::Inr,
+        _ => return None,
+    };
+    Some(hir_nameres::BuiltinKind::Constructor(ctor))
+}
+
+fn ctor_result_ty<'db>(ty: &InferTy<'db>) -> InferTy<'db> {
+    match ty {
+        InferTy::Function { ret, .. } => (**ret).clone(),
+        ty => ty.clone(),
+    }
 }
 
 fn function_scheme_in_module<'db>(

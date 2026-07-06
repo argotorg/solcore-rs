@@ -2453,6 +2453,10 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .is_some_and(|contract| contract.has_constructor_leaf(leaf))
             || self.scope.has_constructor_leaf(leaf)
             || self.imports.has_constructor_leaf(self.db, leaf)
+            || matches!(
+                builtin_term(leaf),
+                Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
+            )
     }
 
     fn has_same_name_constructor(&self, name: &str) -> bool {
