@@ -31,12 +31,12 @@ use hir::{
             FunctionDef, Import, ImportHiddenName, ImportSelector, Item, SelectedName, TypeAlias,
         },
     },
-    diag::Diagnostic,
+    diag::{AnyDiagnostic, Diagnostic, DiagnosticId, LabelSpan},
     input::SourceFile,
     nameres as hir_nameres,
     span::{Span, Spanned, SpannedElem},
 };
-use parser::parse_file_to_hir;
+use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Database contract for inter-module name resolution.
@@ -282,6 +282,8 @@ pub struct ModuleEnv<'db> {
     pub partial_data: BTreeMap<String, BTreeSet<String>>,
     /// Instances visible from local and imported modules.
     pub instances: Vec<Origin<'db>>,
+    /// Diagnostics found while building the import environment.
+    pub diagnostics: Vec<ModuleDiagnostic<'db>>,
 }
 
 impl<'db> ModuleEnv<'db> {
@@ -296,6 +298,7 @@ impl<'db> ModuleEnv<'db> {
             constructor_visibility: BTreeMap::new(),
             partial_data: BTreeMap::new(),
             instances: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
 }
@@ -332,6 +335,253 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
 pub struct FullResolutionSummary {
     /// `true` once full resolution has traversed the module.
     pub checked: bool,
+}
+
+/// Typed inter-module diagnostic.
+///
+/// These variants cover module loading, import validation, export validation,
+/// and import-surface conflicts. They stay typed while the `solcore-nameres`
+/// crate computes module state, then lower to the generic diagnostic surface
+/// for aggregation and rendering.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ModuleDiagnostic<'db> {
+    /// `SC0109`: a module path resolved to no loaded source file.
+    ModuleNotFound {
+        /// Display form of the missing module path.
+        path: String,
+        /// Span of the module reference.
+        span: LabelSpan,
+    },
+    /// `SC0110`: selected or hidden import item is absent from the target.
+    UnknownImportItem {
+        /// Missing imported item name.
+        name: String,
+        /// Span of the selected or hidden name.
+        span: LabelSpan,
+    },
+    /// `SC0111`: two exported items expose the same public name.
+    DuplicateExportedItemName {
+        /// Duplicated exported item name.
+        name: String,
+        /// Optional module span used when the source file is loaded.
+        span: Option<LabelSpan>,
+    },
+    /// `SC0112`: two exported module aliases expose the same public name.
+    DuplicateExportedModuleName {
+        /// Duplicated exported module alias.
+        name: String,
+        /// Optional module span used when the source file is loaded.
+        span: Option<LabelSpan>,
+    },
+    /// `SC0113`: a local export names no local or selected import item.
+    UnknownLocalExport {
+        /// Missing export name.
+        name: String,
+        /// Span of the export name.
+        span: LabelSpan,
+    },
+    /// `SC0114`: an exported constructor is absent from the exported type.
+    UnknownLocalConstructor {
+        /// Exported type name.
+        type_name: String,
+        /// Missing constructor name.
+        ctor_name: String,
+        /// Span of the exported type name.
+        span: LabelSpan,
+    },
+    /// `SC0115`: a re-export names no item provided by the target module.
+    UnknownReExport {
+        /// Missing re-exported name.
+        name: String,
+        /// Span of the re-exported name.
+        span: LabelSpan,
+    },
+    /// `SC0115`: a re-exported constructor is absent from the target type.
+    UnknownReExportConstructor {
+        /// Re-exported type name.
+        type_name: String,
+        /// Missing constructor name.
+        ctor_name: String,
+        /// Span of the re-exported type name.
+        span: LabelSpan,
+    },
+    /// `SC0116`: two plain imports introduce the same qualifier.
+    DuplicateImportQualifier {
+        /// Duplicated qualifier name.
+        name: String,
+        /// Span of the first qualifier.
+        first: LabelSpan,
+        /// Span of the duplicate qualifier.
+        second: LabelSpan,
+    },
+    /// `SC0117`: a selective import lists the same effective name twice.
+    DuplicateImportSelector {
+        /// Duplicated selected or hidden name.
+        name: String,
+        /// Span of the first occurrence.
+        first: LabelSpan,
+        /// Span of the duplicate occurrence.
+        second: LabelSpan,
+    },
+    /// `SC0118`: an external-library path has no configured root.
+    MissingExternalRoot {
+        /// External library name.
+        name: String,
+        /// Span of the external import marker or path.
+        span: LabelSpan,
+    },
+    /// `SC0120`: the same selected name is imported from multiple modules.
+    AmbiguousSelectedImport {
+        /// Ambiguous selected name.
+        name: String,
+        /// Span of the import that introduced the ambiguity.
+        span: LabelSpan,
+        /// Modules that provide the same name.
+        modules: Vec<ModuleId<'db>>,
+    },
+    /// `SC0121`: an unqualified import surface conflicts with a local name.
+    ConflictingUnqualifiedName {
+        /// Conflicting name.
+        name: String,
+        /// Span of the import that introduced the name.
+        import_span: LabelSpan,
+        /// Span of the local binding with the same name.
+        local_span: LabelSpan,
+    },
+}
+
+impl<'db> ModuleDiagnostic<'db> {
+    /// Lowers this typed module diagnostic to the generic rendering surface.
+    pub fn lower(&self, db: &'db dyn Db) -> Diagnostic {
+        match self {
+            ModuleDiagnostic::ModuleNotFound { path, span } => {
+                Diagnostic::error(format!("module not found: {path}"))
+                    .with_code("SC0109")
+                    .with_primary_label_span(span.clone(), Some("module reference"))
+                    .with_note("check the module path or add the missing source file")
+            }
+            ModuleDiagnostic::UnknownImportItem { name, span } => {
+                Diagnostic::error(format!("unknown import item `{name}`"))
+                    .with_code("SC0110")
+                    .with_primary_label_span(span.clone(), Some("unknown import item"))
+                    .with_note("check the imported module's exported names")
+            }
+            ModuleDiagnostic::DuplicateExportedItemName { name, span } => {
+                let diagnostic =
+                    Diagnostic::error(format!("duplicate exported item name `{name}`"))
+                        .with_code("SC0111")
+                        .with_note("export each item name from only one origin");
+                if let Some(span) = span {
+                    diagnostic.with_primary_label_span(
+                        span.clone(),
+                        Some("module exports this name more than once"),
+                    )
+                } else {
+                    diagnostic
+                }
+            }
+            ModuleDiagnostic::DuplicateExportedModuleName { name, span } => {
+                let diagnostic =
+                    Diagnostic::error(format!("duplicate exported module name `{name}`"))
+                        .with_code("SC0112")
+                        .with_note("export each module name from only one target");
+                if let Some(span) = span {
+                    diagnostic.with_primary_label_span(
+                        span.clone(),
+                        Some("module exports this alias more than once"),
+                    )
+                } else {
+                    diagnostic
+                }
+            }
+            ModuleDiagnostic::UnknownLocalExport { name, span } => {
+                Diagnostic::error(format!("unknown export `{name}`"))
+                    .with_code("SC0113")
+                    .with_primary_label_span(span.clone(), Some("unknown export"))
+                    .with_note(
+                        "export a top-level item defined in this module or selected from an import",
+                    )
+            }
+            ModuleDiagnostic::UnknownLocalConstructor {
+                type_name,
+                ctor_name,
+                span,
+            } => Diagnostic::error(format!(
+                "unknown exported constructor `{type_name}.{ctor_name}`"
+            ))
+            .with_code("SC0114")
+            .with_primary_label_span(span.clone(), Some("unknown exported constructor"))
+            .with_note("select constructors defined by the exported type"),
+            ModuleDiagnostic::UnknownReExport { name, span } => {
+                Diagnostic::error(format!("unknown re-exported name `{name}`"))
+                    .with_code("SC0115")
+                    .with_primary_label_span(span.clone(), Some("unknown re-exported name"))
+                    .with_note("re-export a name provided by the target module")
+            }
+            ModuleDiagnostic::UnknownReExportConstructor {
+                type_name,
+                ctor_name,
+                span,
+            } => Diagnostic::error(format!(
+                "unknown re-exported constructor `{type_name}.{ctor_name}`"
+            ))
+            .with_code("SC0115")
+            .with_primary_label_span(span.clone(), Some("unknown re-exported constructor"))
+            .with_note("re-export constructors provided by the target module"),
+            ModuleDiagnostic::DuplicateImportQualifier {
+                name,
+                first,
+                second,
+            } => Diagnostic::error(format!("duplicate import qualifier `{name}`"))
+                .with_code("SC0116")
+                .with_primary_label_span(second.clone(), Some("duplicate import qualifier"))
+                .with_secondary_label_span(first.clone(), Some("first qualifier with this name"))
+                .with_note("use an explicit alias to disambiguate one of the imports"),
+            ModuleDiagnostic::DuplicateImportSelector {
+                name,
+                first,
+                second,
+            } => Diagnostic::error(format!("duplicate name `{name}` in selective import"))
+                .with_code("SC0117")
+                .with_primary_label_span(second.clone(), Some("duplicate selected import"))
+                .with_secondary_label_span(
+                    first.clone(),
+                    Some("first selected import with this name"),
+                )
+                .with_note("list each selected or hidden name only once"),
+            ModuleDiagnostic::MissingExternalRoot { name, span } => {
+                Diagnostic::error(format!("external library root is not configured: @{name}"))
+                    .with_code("SC0118")
+                    .with_primary_label_span(span.clone(), Some("external library import"))
+                    .with_note("configure the external library root")
+            }
+            ModuleDiagnostic::AmbiguousSelectedImport {
+                name,
+                span,
+                modules,
+            } => {
+                let module_list = modules
+                    .iter()
+                    .map(|module| module_id_display(db, *module))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Diagnostic::error(format!("ambiguous selected import `{name}`"))
+                    .with_code("SC0120")
+                    .with_primary_label_span(span.clone(), Some("ambiguous selected import"))
+                    .with_note(format!("`{name}` is imported from {module_list}"))
+                    .with_note("use an explicit module qualifier or narrow the selected imports")
+            }
+            ModuleDiagnostic::ConflictingUnqualifiedName {
+                name,
+                import_span,
+                local_span,
+            } => Diagnostic::error(format!("conflicting unqualified name `{name}`"))
+                .with_code("SC0121")
+                .with_primary_label_span(import_span.clone(), Some("conflicting imported name"))
+                .with_secondary_label_span(local_span.clone(), Some("local binding with this name"))
+                .with_note("rename the local binding or use an import alias"),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -410,16 +660,16 @@ pub fn resolve_module_path_candidate<'db>(
     db: &'db dyn Db,
     importing: ModuleId<'db>,
     path: &ModulePathRef<'db>,
-) -> Result<ResolvedModulePath<'db>, Diagnostic> {
+) -> Result<ResolvedModulePath<'db>, Box<ModuleDiagnostic<'db>>> {
     let segments = path_segments(db, path);
     let tree = db.module_tree();
 
     let (library, logical_path, root) = if path.external.is_some() {
         let Some((lib_name, rest)) = segments.split_first() else {
-            return Err(module_not_found_diag(db, path));
+            return Err(Box::new(module_not_found_diag(db, path)));
         };
         let Some(root) = tree.external_roots(db).get(lib_name).cloned() else {
-            return Err(missing_external_root_diag(db, path, lib_name));
+            return Err(Box::new(missing_external_root_diag(db, path, lib_name)));
         };
         let logical_path = if rest.is_empty() {
             vec![lib_name.clone()]
@@ -460,12 +710,12 @@ pub fn resolve_module_path<'db>(
     db: &'db dyn Db,
     importing: ModuleId<'db>,
     path: ModulePathRef<'db>,
-) -> Result<ModuleId<'db>, Diagnostic> {
+) -> Result<ModuleId<'db>, Box<ModuleDiagnostic<'db>>> {
     let resolved = resolve_module_path_candidate(db, importing, &path)?;
     if db.module_file(resolved.module).is_some() {
         Ok(resolved.module)
     } else {
-        Err(module_not_found_diag(db, &path))
+        Err(Box::new(module_not_found_diag(db, &path)))
     }
 }
 
@@ -528,36 +778,26 @@ pub fn module_graph<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'
         let refs = module_imports(db, file);
 
         for path in refs.import_refs {
-            match resolve_module_path(db, module, path) {
-                Ok(target) => {
-                    import_edges.push(ModuleEdge {
-                        from: module,
-                        to: target,
-                    });
-                    reference_edges.push(ModuleEdge {
-                        from: module,
-                        to: target,
-                    });
-                    queue.push_back(target);
-                }
-                Err(diagnostic) => {
-                    let _ = diagnostic.accumulate(db);
-                }
+            if let Ok(target) = resolve_module_path(db, module, path) {
+                import_edges.push(ModuleEdge {
+                    from: module,
+                    to: target,
+                });
+                reference_edges.push(ModuleEdge {
+                    from: module,
+                    to: target,
+                });
+                queue.push_back(target);
             }
         }
 
         for path in refs.export_refs {
-            match resolve_module_path(db, module, path) {
-                Ok(target) => {
-                    reference_edges.push(ModuleEdge {
-                        from: module,
-                        to: target,
-                    });
-                    queue.push_back(target);
-                }
-                Err(diagnostic) => {
-                    let _ = diagnostic.accumulate(db);
-                }
+            if let Ok(target) = resolve_module_path(db, module, path) {
+                reference_edges.push(ModuleEdge {
+                    from: module,
+                    to: target,
+                });
+                queue.push_back(target);
             }
         }
     }
@@ -613,7 +853,8 @@ pub fn public_interface<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Interfac
     // iteration dependencies in the same recursive module group may still have
     // provisional empty interfaces. Strict unknown-name diagnostics are emitted
     // by `validate_module` after the cycle has converged.
-    interface_from_raw(expand_module_exports(db, module, false))
+    let mut diagnostics = Vec::new();
+    interface_from_raw(expand_module_exports(db, module, false, &mut diagnostics))
 }
 
 fn public_interface_initial<'db>(
@@ -644,10 +885,7 @@ fn public_interface_cycle<'db>(
 /// that depend on re-exported interfaces see the converged value.
 #[salsa::tracked]
 pub fn validate_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ValidationSummary {
-    validate_imports(db, module);
     let _ = public_interface(db, module);
-    let raw = expand_module_exports(db, module, true);
-    validate_duplicate_exports(db, module, &raw);
     ValidationSummary { checked: true }
 }
 
@@ -713,6 +951,86 @@ pub fn resolve_reachable_full<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Mod
         let _ = resolve_module_full(db, *module);
     }
     graph
+}
+
+/// Returns parse, module, and local name-resolution diagnostics for one module.
+#[salsa::tracked(returns(ref))]
+pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<AnyDiagnostic> {
+    let Some(file) = db.module_file(module) else {
+        return Vec::new();
+    };
+
+    let mut diagnostics = parse_diagnostics(db, file).to_vec();
+    let mut module_diags = collect_module_validation_diagnostics(db, module);
+    let env = module_env(db, module);
+    module_diags.extend(env.diagnostics.iter().cloned());
+    diagnostics.extend(
+        module_diags
+            .into_iter()
+            .map(|diagnostic| AnyDiagnostic::Module(diagnostic.lower(db))),
+    );
+
+    if !matches!(module.library(db), LibraryId::Std) {
+        let hir_module = parse_file_to_hir(db, file).module(db);
+        if let Some(item_scope) = env.item_scope.clone() {
+            let resolution =
+                hir_nameres::resolve_module_with_imports(db, hir_module, item_scope, &env);
+            diagnostics.extend(
+                resolution
+                    .diagnostics
+                    .into_iter()
+                    .map(AnyDiagnostic::Nameres),
+            );
+        }
+    }
+
+    sort_dedup_any_diagnostics(db, &mut diagnostics);
+    diagnostics
+}
+
+/// Returns diagnostics for every module reachable from `entry`.
+#[salsa::tracked(returns(ref))]
+pub fn reachable_diagnostics<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Vec<AnyDiagnostic> {
+    let graph = module_graph(db, entry);
+    let mut diagnostics = Vec::new();
+    for module in graph.modules {
+        diagnostics.extend(module_diagnostics(db, module).iter().cloned());
+    }
+    sort_dedup_any_diagnostics(db, &mut diagnostics);
+    diagnostics
+}
+
+fn collect_module_validation_diagnostics<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+) -> Vec<ModuleDiagnostic<'db>> {
+    let Some(file) = db.module_file(module) else {
+        return Vec::new();
+    };
+    let module_items = module_imports(db, file);
+    let mut diagnostics = Vec::new();
+
+    for path in module_items
+        .import_refs
+        .iter()
+        .chain(module_items.export_refs.iter())
+    {
+        if let Err(diagnostic) = resolve_module_path(db, module, path.clone()) {
+            diagnostics.push(*diagnostic);
+        }
+    }
+
+    validate_imports(db, module, &mut diagnostics);
+    let _ = public_interface(db, module);
+    let raw = expand_module_exports(db, module, true, &mut diagnostics);
+    validate_duplicate_exports(db, module, &raw, &mut diagnostics);
+    diagnostics
+}
+
+fn sort_dedup_any_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<AnyDiagnostic>) {
+    diagnostics.sort_by_key(|diagnostic| diagnostic.query_sort_key(db));
+    let mut seen: FxHashSet<DiagnosticId> = FxHashSet::default();
+    diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
 }
 
 /// Collects instances declared directly in `module`.
@@ -802,6 +1120,7 @@ impl<'db> ModuleEnvBuilder<'db> {
                 constructor_visibility: BTreeMap::new(),
                 partial_data: BTreeMap::new(),
                 instances: unique_origins(instances.local.into_iter().chain(instances.imported)),
+                diagnostics: Vec::new(),
             },
             local_terms,
             local_types,
@@ -872,13 +1191,12 @@ impl<'db> ModuleEnvBuilder<'db> {
                 .conflict_diagnostics
                 .insert((namespace, item_ref.public_name.clone()))
         {
-            let _ = conflicting_unqualified_name_diag(
+            self.env.diagnostics.push(conflicting_unqualified_name_diag(
                 self.db,
                 span,
                 *local_span,
                 &item_ref.public_name,
-            )
-            .accumulate(self.db);
+            ));
         }
     }
 
@@ -927,8 +1245,9 @@ impl<'db> ModuleEnvBuilder<'db> {
         if let Some(local_span) = local_span
             && self.module_conflict_diagnostics.insert(name.to_owned())
         {
-            let _ = conflicting_unqualified_name_diag(self.db, span, local_span, name)
-                .accumulate(self.db);
+            self.env.diagnostics.push(conflicting_unqualified_name_diag(
+                self.db, span, local_span, name,
+            ));
         }
     }
 
@@ -1013,7 +1332,7 @@ fn root_for_library<'db>(
     tree: ModuleTree,
     library: &LibraryId,
     path: &ModulePathRef<'db>,
-) -> Result<PathBuf, Diagnostic> {
+) -> Result<PathBuf, Box<ModuleDiagnostic<'db>>> {
     match library {
         LibraryId::Main => Ok(tree.main_root(db).clone()),
         LibraryId::Std => Ok(tree.std_root(db).clone()),
@@ -1021,7 +1340,7 @@ fn root_for_library<'db>(
             .external_roots(db)
             .get(name)
             .cloned()
-            .ok_or_else(|| missing_external_root_diag(db, path, name)),
+            .ok_or_else(|| Box::new(missing_external_root_diag(db, path, name))),
     }
 }
 
@@ -1102,6 +1421,7 @@ fn expand_module_exports<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     strict: bool,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) -> RawInterface<'db> {
     let Some(file) = db.module_file(module) else {
         return RawInterface::default();
@@ -1112,9 +1432,17 @@ fn expand_module_exports<'db>(
     }
 
     let mut raw = RawInterface::default();
-    let selected_imports = selected_imported_refs(db, module, strict);
+    let selected_imports = selected_imported_refs(db, module, strict, diagnostics);
     for export in module_items.exports {
-        expand_export(db, module, export, &selected_imports, strict, &mut raw);
+        expand_export(
+            db,
+            module,
+            export,
+            &selected_imports,
+            strict,
+            diagnostics,
+            &mut raw,
+        );
     }
     raw
 }
@@ -1125,17 +1453,18 @@ fn expand_export<'db>(
     export: Export<'db>,
     selected_imports: &[ItemRef<'db>],
     strict: bool,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
     raw: &mut RawInterface<'db>,
 ) {
     match export.kind(db) {
         ExportKind::List(names) => {
             for name in names {
-                expand_exported_name(db, module, name, selected_imports, strict, raw);
+                expand_exported_name(db, module, name, selected_imports, strict, diagnostics, raw);
             }
         }
         ExportKind::Module(path) => {
             let path_ref = path_ref_from_segments(db, export.span(db), path.clone());
-            if let Some(target) = resolve_for_export(db, module, &path_ref, strict) {
+            if let Some(target) = resolve_for_export(db, module, &path_ref, strict, diagnostics) {
                 raw.module_aliases.push(ModuleAlias {
                     public_name: default_module_binding_name(db, &path_ref),
                     target,
@@ -1144,7 +1473,7 @@ fn expand_export<'db>(
         }
         ExportKind::ModuleAs(path, alias) => {
             let path_ref = path_ref_from_segments(db, export.span(db), path.clone());
-            if let Some(target) = resolve_for_export(db, module, &path_ref, strict) {
+            if let Some(target) = resolve_for_export(db, module, &path_ref, strict, diagnostics) {
                 raw.module_aliases.push(ModuleAlias {
                     public_name: spanned_name_text(db, alias),
                     target,
@@ -1153,7 +1482,7 @@ fn expand_export<'db>(
         }
         ExportKind::ItemsFrom(path, names) => {
             let path_ref = path_ref_from_segments(db, export.span(db), path.clone());
-            expand_reexport_items(db, module, &path_ref, names, strict, raw);
+            expand_reexport_items(db, module, &path_ref, names, strict, diagnostics, raw);
         }
     }
 }
@@ -1164,6 +1493,7 @@ fn expand_exported_name<'db>(
     name: &ExportedName<'db>,
     selected_imports: &[ItemRef<'db>],
     strict: bool,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
     raw: &mut RawInterface<'db>,
 ) {
     let text = spanned_name_text(db, &name.name);
@@ -1183,6 +1513,7 @@ fn expand_exported_name<'db>(
                 is_operator: false,
             }],
             strict,
+            diagnostics,
             raw,
         );
         return;
@@ -1190,22 +1521,33 @@ fn expand_exported_name<'db>(
 
     match &name.constructors {
         Some(selector) => {
-            let refs = local_data_ref_with_constructors(db, module, &text, selector, strict, name)
-                .or_else(|| {
-                    visible_data_ref_with_constructors(
-                        db,
-                        &text,
-                        selector,
-                        selected_imports,
+            let refs = local_data_ref_with_constructors(
+                db,
+                module,
+                &text,
+                selector,
+                strict,
+                diagnostics,
+                name,
+            )
+            .or_else(|| {
+                visible_data_ref_with_constructors(
+                    db,
+                    &text,
+                    selector,
+                    selected_imports,
+                    name,
+                    ConstructorDiagnosticCtx {
                         strict,
-                        ConstructorDiagnostic::Local,
-                        name,
-                    )
-                });
+                        diagnostics,
+                        diagnostic: ConstructorDiagnostic::Local,
+                    },
+                )
+            });
             if let Some(item_ref) = refs {
                 raw.item_refs.push(item_ref);
             } else if strict {
-                let _ = unknown_local_export_diag(db, name.name.span(db), &text).accumulate(db);
+                diagnostics.push(unknown_local_export_diag(db, name.name.span(db), &text));
             }
         }
         None => {
@@ -1218,7 +1560,7 @@ fn expand_exported_name<'db>(
             );
             if refs.is_empty() {
                 if strict {
-                    let _ = unknown_local_export_diag(db, name.name.span(db), &text).accumulate(db);
+                    diagnostics.push(unknown_local_export_diag(db, name.name.span(db), &text));
                 }
             } else {
                 raw.item_refs
@@ -1234,9 +1576,10 @@ fn expand_reexport_items<'db>(
     path: &ModulePathRef<'db>,
     names: &[ExportedName<'db>],
     strict: bool,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
     raw: &mut RawInterface<'db>,
 ) {
-    let Some(target) = resolve_for_export(db, module, path, strict) else {
+    let Some(target) = resolve_for_export(db, module, path, strict, diagnostics) else {
         return;
     };
     let interface = public_interface(db, target);
@@ -1254,13 +1597,16 @@ fn expand_reexport_items<'db>(
                 &text,
                 selector,
                 &interface.item_refs,
-                strict,
-                ConstructorDiagnostic::ReExport,
                 name,
+                ConstructorDiagnosticCtx {
+                    strict,
+                    diagnostics,
+                    diagnostic: ConstructorDiagnostic::ReExport,
+                },
             ) {
                 Some(item_ref) => raw.item_refs.push(item_ref),
                 None if strict => {
-                    let _ = unknown_reexport_diag(db, name.name.span(db), &text).accumulate(db);
+                    diagnostics.push(unknown_reexport_diag(db, name.name.span(db), &text));
                 }
                 None => {}
             },
@@ -1274,7 +1620,7 @@ fn expand_reexport_items<'db>(
                     .collect();
                 if matching.is_empty() {
                     if strict {
-                        let _ = unknown_reexport_diag(db, name.name.span(db), &text).accumulate(db);
+                        diagnostics.push(unknown_reexport_diag(db, name.name.span(db), &text));
                     }
                 } else {
                     raw.item_refs.extend(matching);
@@ -1289,12 +1635,13 @@ fn resolve_for_export<'db>(
     module: ModuleId<'db>,
     path: &ModulePathRef<'db>,
     strict: bool,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) -> Option<ModuleId<'db>> {
     match resolve_module_path(db, module, path.clone()) {
         Ok(target) => Some(target),
         Err(diagnostic) => {
             if strict {
-                let _ = diagnostic.accumulate(db);
+                diagnostics.push(*diagnostic);
             }
             None
         }
@@ -1526,6 +1873,7 @@ fn local_data_ref_with_constructors<'db>(
     type_name: &str,
     selector: &ConstructorSelector<'db>,
     strict: bool,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
     exported: &ExportedName<'db>,
 ) -> Option<ItemRef<'db>> {
     let def = find_local_data_type(db, module, type_name)?;
@@ -1534,8 +1882,12 @@ fn local_data_ref_with_constructors<'db>(
     let missing = missing_constructors(db, selector, &available);
     if strict {
         for ctor in missing {
-            let _ = unknown_local_ctor_diag(db, exported.name.span(db), type_name, &ctor)
-                .accumulate(db);
+            diagnostics.push(unknown_local_ctor_diag(
+                db,
+                exported.name.span(db),
+                type_name,
+                &ctor,
+            ));
         }
     }
     let mut item_ref = adt_ref(db, module, def, false);
@@ -1548,9 +1900,8 @@ fn visible_data_ref_with_constructors<'db>(
     type_name: &str,
     selector: &ConstructorSelector<'db>,
     refs: &[ItemRef<'db>],
-    strict: bool,
-    diagnostic: ConstructorDiagnostic,
     exported: &ExportedName<'db>,
+    ctx: ConstructorDiagnosticCtx<'_, 'db>,
 ) -> Option<ItemRef<'db>> {
     let data_ref = refs
         .iter()
@@ -1567,18 +1918,16 @@ fn visible_data_ref_with_constructors<'db>(
         .into_iter()
         .collect();
     let missing = missing_constructors(db, selector, &visible);
-    if strict {
+    if ctx.strict {
         for ctor in missing {
-            let _ = match diagnostic {
+            ctx.diagnostics.push(match ctx.diagnostic {
                 ConstructorDiagnostic::Local => {
                     unknown_local_ctor_diag(db, exported.name.span(db), type_name, &ctor)
-                        .accumulate(db)
                 }
                 ConstructorDiagnostic::ReExport => {
                     unknown_reexport_ctor_diag(db, exported.name.span(db), type_name, &ctor)
-                        .accumulate(db)
                 }
-            };
+            });
         }
     }
     let mut selected = data_ref;
@@ -1594,6 +1943,12 @@ fn visible_data_ref_with_constructors<'db>(
 enum ConstructorDiagnostic {
     Local,
     ReExport,
+}
+
+struct ConstructorDiagnosticCtx<'a, 'db> {
+    strict: bool,
+    diagnostics: &'a mut Vec<ModuleDiagnostic<'db>>,
+    diagnostic: ConstructorDiagnostic,
 }
 
 fn find_local_data_type<'db>(
@@ -1660,6 +2015,7 @@ fn selected_imported_refs<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     strict: bool,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) -> Vec<ItemRef<'db>> {
     let Some(file) = db.module_file(module) else {
         return Vec::new();
@@ -1671,7 +2027,7 @@ fn selected_imported_refs<'db>(
             continue;
         };
         let path = path_ref_from_import(db, import);
-        let Some(target) = resolve_for_export(db, module, &path, strict) else {
+        let Some(target) = resolve_for_export(db, module, &path, strict, diagnostics) else {
             continue;
         };
         let interface = public_interface(db, target);
@@ -1884,44 +2240,60 @@ fn find_origin_class<'db>(
     })
 }
 
-fn validate_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) {
+fn validate_imports<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
+) {
     let Some(file) = db.module_file(module) else {
         return;
     };
     let module_items = module_imports(db, file);
-    validate_duplicate_qualifiers(db, &module_items.imports);
-    validate_duplicate_selectors(db, &module_items.imports);
-    validate_import_items_exist(db, module, &module_items.imports);
-    validate_ambiguous_selected_imports(db, module, &module_items.imports);
+    validate_duplicate_qualifiers(db, &module_items.imports, diagnostics);
+    validate_duplicate_selectors(db, &module_items.imports, diagnostics);
+    validate_import_items_exist(db, module, &module_items.imports, diagnostics);
+    validate_ambiguous_selected_imports(db, module, &module_items.imports, diagnostics);
 }
 
-fn validate_duplicate_qualifiers<'db>(db: &'db dyn Db, imports: &[Import<'db>]) {
+fn validate_duplicate_qualifiers<'db>(
+    db: &'db dyn Db,
+    imports: &[Import<'db>],
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
+) {
     let mut seen: FxHashMap<String, Span<'db>> = FxHashMap::default();
     for import in imports {
         let Some((name, span)) = import_qualifier(db, *import) else {
             continue;
         };
         if let Some(first_span) = seen.get(&name) {
-            let _ = duplicate_qualifier_diag(db, *first_span, span, &name).accumulate(db);
+            diagnostics.push(duplicate_qualifier_diag(db, *first_span, span, &name));
         } else {
             seen.insert(name, span);
         }
     }
 }
 
-fn validate_duplicate_selectors<'db>(db: &'db dyn Db, imports: &[Import<'db>]) {
+fn validate_duplicate_selectors<'db>(
+    db: &'db dyn Db,
+    imports: &[Import<'db>],
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
+) {
     for import in imports {
         let Some(selector) = import.selector(db) else {
             continue;
         };
         if let ImportSelector::Names(names) = selector {
-            validate_duplicate_selected_names(db, names);
+            validate_duplicate_selected_names(db, names, diagnostics);
         }
-        validate_duplicate_hidden_names(db, import.hiding(db));
+        validate_duplicate_hidden_names(db, import.hiding(db), diagnostics);
     }
 }
 
-fn validate_duplicate_selected_names<'db>(db: &'db dyn Db, names: &[SelectedName<'db>]) {
+fn validate_duplicate_selected_names<'db>(
+    db: &'db dyn Db,
+    names: &[SelectedName<'db>],
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
+) {
     let mut sources: FxHashMap<String, Span<'db>> = FxHashMap::default();
     let mut locals: FxHashMap<String, Span<'db>> = FxHashMap::default();
     let mut emitted: FxHashSet<(String, Span<'db>, Span<'db>)> = FxHashSet::default();
@@ -1931,6 +2303,7 @@ fn validate_duplicate_selected_names<'db>(db: &'db dyn Db, names: &[SelectedName
             emit_duplicate_selector_once(
                 db,
                 &mut emitted,
+                diagnostics,
                 *first_span,
                 selected.name.span(db),
                 &source,
@@ -1944,7 +2317,14 @@ fn validate_duplicate_selected_names<'db>(db: &'db dyn Db, names: &[SelectedName
             .map(|alias| (spanned_name_text(db, alias), alias.span(db)))
             .unwrap_or_else(|| (source, selected.name.span(db)));
         if let Some(first_span) = locals.get(&local.0) {
-            emit_duplicate_selector_once(db, &mut emitted, *first_span, local.1, &local.0);
+            emit_duplicate_selector_once(
+                db,
+                &mut emitted,
+                diagnostics,
+                *first_span,
+                local.1,
+                &local.0,
+            );
         } else {
             locals.insert(local.0, local.1);
         }
@@ -1954,22 +2334,31 @@ fn validate_duplicate_selected_names<'db>(db: &'db dyn Db, names: &[SelectedName
 fn emit_duplicate_selector_once<'db>(
     db: &'db dyn Db,
     emitted: &mut FxHashSet<(String, Span<'db>, Span<'db>)>,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
     first: Span<'db>,
     second: Span<'db>,
     name: &str,
 ) {
     if emitted.insert((name.to_owned(), first, second)) {
-        let _ = duplicate_selector_diag(db, first, second, name).accumulate(db);
+        diagnostics.push(duplicate_selector_diag(db, first, second, name));
     }
 }
 
-fn validate_duplicate_hidden_names<'db>(db: &'db dyn Db, names: &[ImportHiddenName<'db>]) {
+fn validate_duplicate_hidden_names<'db>(
+    db: &'db dyn Db,
+    names: &[ImportHiddenName<'db>],
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
+) {
     let mut seen: FxHashMap<String, Span<'db>> = FxHashMap::default();
     for hidden in names {
         let name = spanned_name_text(db, &hidden.name);
         if let Some(first_span) = seen.get(&name) {
-            let _ = duplicate_selector_diag(db, *first_span, hidden.name.span(db), &name)
-                .accumulate(db);
+            diagnostics.push(duplicate_selector_diag(
+                db,
+                *first_span,
+                hidden.name.span(db),
+                &name,
+            ));
         } else {
             seen.insert(name, hidden.name.span(db));
         }
@@ -1980,13 +2369,14 @@ fn validate_import_items_exist<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     imports: &[Import<'db>],
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) {
     for import in imports {
         let Some(selector) = import.selector(db) else {
             continue;
         };
         let path = path_ref_from_import(db, *import);
-        let Some(target) = resolve_for_export(db, module, &path, false) else {
+        let Some(target) = resolve_for_export(db, module, &path, false, diagnostics) else {
             continue;
         };
         let interface = public_interface(db, target);
@@ -1995,15 +2385,14 @@ fn validate_import_items_exist<'db>(
             for selected in names {
                 let name = spanned_name_text(db, &selected.name);
                 if !available.contains(&name) {
-                    let _ =
-                        unknown_import_item_diag(db, selected.name.span(db), &name).accumulate(db);
+                    diagnostics.push(unknown_import_item_diag(db, selected.name.span(db), &name));
                 }
             }
         }
         for hidden in import.hiding(db) {
             let name = spanned_name_text(db, &hidden.name);
             if !available.contains(&name) {
-                let _ = unknown_import_item_diag(db, hidden.name.span(db), &name).accumulate(db);
+                diagnostics.push(unknown_import_item_diag(db, hidden.name.span(db), &name));
             }
         }
     }
@@ -2013,6 +2402,7 @@ fn validate_ambiguous_selected_imports<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     imports: &[Import<'db>],
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) {
     let mut imported: FxHashMap<(Namespace, String), Vec<ModuleId<'db>>> = FxHashMap::default();
     let mut spans: FxHashMap<(Namespace, String), Span<'db>> = FxHashMap::default();
@@ -2021,7 +2411,7 @@ fn validate_ambiguous_selected_imports<'db>(
             continue;
         };
         let path = path_ref_from_import(db, *import);
-        let Some(target) = resolve_for_export(db, module, &path, false) else {
+        let Some(target) = resolve_for_export(db, module, &path, false, diagnostics) else {
             continue;
         };
         let interface = public_interface(db, target);
@@ -2052,7 +2442,7 @@ fn validate_ambiguous_selected_imports<'db>(
                     |file| parse_file_to_hir(db, file).module(db).span(db),
                 )
             });
-            let _ = ambiguous_import_diag(db, span, name, targets).accumulate(db);
+            diagnostics.push(ambiguous_import_diag(db, span, name, targets));
         }
     }
 }
@@ -2061,6 +2451,7 @@ fn validate_duplicate_exports<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     raw: &RawInterface<'db>,
+    diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) {
     let module_span = db
         .module_file(module)
@@ -2092,7 +2483,7 @@ fn validate_duplicate_exports<'db>(
             }
         }
         if unique.len() > 1 {
-            let _ = duplicate_export_item_diag(db, module_span, &name).accumulate(db);
+            diagnostics.push(duplicate_export_item_diag(db, module_span, &name));
         }
     }
 
@@ -2108,7 +2499,7 @@ fn validate_duplicate_exports<'db>(
 
     for (name, targets) in modules {
         if targets.len() > 1 {
-            let _ = duplicate_export_module_diag(db, module_span, &name).accumulate(db);
+            diagnostics.push(duplicate_export_module_diag(db, module_span, &name));
         }
     }
 }
@@ -2173,36 +2564,33 @@ fn unique_origins<'db>(values: impl IntoIterator<Item = Origin<'db>>) -> Vec<Ori
     result
 }
 
-fn module_not_found_diag<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> Diagnostic {
-    Diagnostic::error(format!(
-        "module not found: {}",
-        module_path_display(db, path)
-    ))
-    .with_code("SC0109")
-    .with_primary_label(db, path.span, Some("module reference"))
-    .with_note("check the module path or add the missing source file")
+fn module_not_found_diag<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::ModuleNotFound {
+        path: module_path_display(db, path),
+        span: LabelSpan::from_span(db, path.span),
+    }
 }
 
 fn missing_external_root_diag<'db>(
     db: &'db dyn Db,
     path: &ModulePathRef<'db>,
     name: &str,
-) -> Diagnostic {
-    Diagnostic::error(format!("external library root is not configured: @{name}"))
-        .with_code("SC0118")
-        .with_primary_label(
-            db,
-            path.external.unwrap_or(path.span),
-            Some("external library import"),
-        )
-        .with_note("configure the external library root")
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::MissingExternalRoot {
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, path.external.unwrap_or(path.span)),
+    }
 }
 
-fn unknown_import_item_diag<'db>(db: &'db dyn Db, span: Span<'db>, name: &str) -> Diagnostic {
-    Diagnostic::error(format!("unknown import item `{name}`"))
-        .with_code("SC0110")
-        .with_primary_label(db, span, Some("unknown import item"))
-        .with_note("check the imported module's exported names")
+fn unknown_import_item_diag<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    name: &str,
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::UnknownImportItem {
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+    }
 }
 
 fn duplicate_qualifier_diag<'db>(
@@ -2210,12 +2598,12 @@ fn duplicate_qualifier_diag<'db>(
     first: Span<'db>,
     second: Span<'db>,
     name: &str,
-) -> Diagnostic {
-    Diagnostic::error(format!("duplicate import qualifier `{name}`"))
-        .with_code("SC0116")
-        .with_primary_label(db, second, Some("duplicate import qualifier"))
-        .with_secondary_label(db, first, Some("first qualifier with this name"))
-        .with_note("use an explicit alias to disambiguate one of the imports")
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::DuplicateImportQualifier {
+        name: name.to_owned(),
+        first: LabelSpan::from_span(db, first),
+        second: LabelSpan::from_span(db, second),
+    }
 }
 
 fn duplicate_selector_diag<'db>(
@@ -2223,12 +2611,12 @@ fn duplicate_selector_diag<'db>(
     first: Span<'db>,
     second: Span<'db>,
     name: &str,
-) -> Diagnostic {
-    Diagnostic::error(format!("duplicate name `{name}` in selective import"))
-        .with_code("SC0117")
-        .with_primary_label(db, second, Some("duplicate selected import"))
-        .with_secondary_label(db, first, Some("first selected import with this name"))
-        .with_note("list each selected or hidden name only once")
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::DuplicateImportSelector {
+        name: name.to_owned(),
+        first: LabelSpan::from_span(db, first),
+        second: LabelSpan::from_span(db, second),
+    }
 }
 
 fn ambiguous_import_diag<'db>(
@@ -2236,17 +2624,12 @@ fn ambiguous_import_diag<'db>(
     span: Span<'db>,
     name: &str,
     modules: Vec<ModuleId<'db>>,
-) -> Diagnostic {
-    let module_list = modules
-        .into_iter()
-        .map(|module| module_id_display(db, module))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Diagnostic::error(format!("ambiguous selected import `{name}`"))
-        .with_code("SC0120")
-        .with_primary_label(db, span, Some("ambiguous selected import"))
-        .with_note(format!("`{name}` is imported from {module_list}"))
-        .with_note("use an explicit module qualifier or narrow the selected imports")
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::AmbiguousSelectedImport {
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+        modules,
+    }
 }
 
 fn conflicting_unqualified_name_diag<'db>(
@@ -2254,19 +2637,23 @@ fn conflicting_unqualified_name_diag<'db>(
     import_span: Span<'db>,
     local_span: Span<'db>,
     name: &str,
-) -> Diagnostic {
-    Diagnostic::error(format!("conflicting unqualified name `{name}`"))
-        .with_code("SC0121")
-        .with_primary_label(db, import_span, Some("conflicting imported name"))
-        .with_secondary_label(db, local_span, Some("local binding with this name"))
-        .with_note("rename the local binding or use an import alias")
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::ConflictingUnqualifiedName {
+        name: name.to_owned(),
+        import_span: LabelSpan::from_span(db, import_span),
+        local_span: LabelSpan::from_span(db, local_span),
+    }
 }
 
-fn unknown_local_export_diag<'db>(db: &'db dyn Db, span: Span<'db>, name: &str) -> Diagnostic {
-    Diagnostic::error(format!("unknown export `{name}`"))
-        .with_code("SC0113")
-        .with_primary_label(db, span, Some("unknown export"))
-        .with_note("export a top-level item defined in this module or selected from an import")
+fn unknown_local_export_diag<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    name: &str,
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::UnknownLocalExport {
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+    }
 }
 
 fn unknown_local_ctor_diag<'db>(
@@ -2274,20 +2661,23 @@ fn unknown_local_ctor_diag<'db>(
     span: Span<'db>,
     type_name: &str,
     ctor_name: &str,
-) -> Diagnostic {
-    Diagnostic::error(format!(
-        "unknown exported constructor `{type_name}.{ctor_name}`"
-    ))
-    .with_code("SC0114")
-    .with_primary_label(db, span, Some("unknown exported constructor"))
-    .with_note("select constructors defined by the exported type")
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::UnknownLocalConstructor {
+        type_name: type_name.to_owned(),
+        ctor_name: ctor_name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+    }
 }
 
-fn unknown_reexport_diag<'db>(db: &'db dyn Db, span: Span<'db>, name: &str) -> Diagnostic {
-    Diagnostic::error(format!("unknown re-exported name `{name}`"))
-        .with_code("SC0115")
-        .with_primary_label(db, span, Some("unknown re-exported name"))
-        .with_note("re-export a name provided by the target module")
+fn unknown_reexport_diag<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    name: &str,
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::UnknownReExport {
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+    }
 }
 
 fn unknown_reexport_ctor_diag<'db>(
@@ -2295,27 +2685,22 @@ fn unknown_reexport_ctor_diag<'db>(
     span: Span<'db>,
     type_name: &str,
     ctor_name: &str,
-) -> Diagnostic {
-    Diagnostic::error(format!(
-        "unknown re-exported constructor `{type_name}.{ctor_name}`"
-    ))
-    .with_code("SC0115")
-    .with_primary_label(db, span, Some("unknown re-exported constructor"))
-    .with_note("re-export constructors provided by the target module")
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::UnknownReExportConstructor {
+        type_name: type_name.to_owned(),
+        ctor_name: ctor_name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+    }
 }
 
 fn duplicate_export_item_diag<'db>(
     db: &'db dyn Db,
     span: Option<Span<'db>>,
     name: &str,
-) -> Diagnostic {
-    let diagnostic = Diagnostic::error(format!("duplicate exported item name `{name}`"))
-        .with_code("SC0111")
-        .with_note("export each item name from only one origin");
-    if let Some(span) = span {
-        diagnostic.with_primary_label(db, span, Some("module exports this name more than once"))
-    } else {
-        diagnostic
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::DuplicateExportedItemName {
+        name: name.to_owned(),
+        span: span.map(|span| LabelSpan::from_span(db, span)),
     }
 }
 
@@ -2323,14 +2708,10 @@ fn duplicate_export_module_diag<'db>(
     db: &'db dyn Db,
     span: Option<Span<'db>>,
     name: &str,
-) -> Diagnostic {
-    let diagnostic = Diagnostic::error(format!("duplicate exported module name `{name}`"))
-        .with_code("SC0112")
-        .with_note("export each module name from only one target");
-    if let Some(span) = span {
-        diagnostic.with_primary_label(db, span, Some("module exports this alias more than once"))
-    } else {
-        diagnostic
+) -> ModuleDiagnostic<'db> {
+    ModuleDiagnostic::DuplicateExportedModuleName {
+        name: name.to_owned(),
+        span: span.map(|span| LabelSpan::from_span(db, span)),
     }
 }
 

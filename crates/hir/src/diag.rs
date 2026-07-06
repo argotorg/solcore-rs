@@ -6,14 +6,12 @@
 //! and def anchors keep a structural `DefKey`. Rendering rehydrates that key
 //! against the current database and resolves it through the def-location table.
 //!
-//! This preserves the anchor-relative design while making accumulated
-//! diagnostics portable through Salsa's accumulator API. It also means label
-//! resolution follows the same edge-only rule as other absolute span work:
-//! diagnostics are resolved when they are rendered, not while semantic results
-//! are cached.
+//! This preserves the anchor-relative design while making diagnostics portable
+//! as ordinary query values. Label resolution follows the same edge-only rule
+//! as other absolute span work: diagnostics are resolved when they are rendered
+//! or sorted for publication, not while semantic results are cached.
 
 use annotate_snippets::{Annotation, AnnotationKind, Group, Level, Renderer, Snippet};
-use salsa::Accumulator;
 
 use crate::{
     anchor::{DefId, DefKey, resolve_def_location},
@@ -23,10 +21,9 @@ use crate::{
 
 /// A diagnostic emitted during compilation.
 ///
-/// Diagnostics are value objects accumulated by Salsa queries. Their labels are
-/// stored in a lifetime-free representation so callers can render them after the
-/// producing query has returned.
-#[salsa::accumulator]
+/// Diagnostics are value objects returned by pull-style diagnostic queries.
+/// Their labels are stored in a lifetime-free representation so callers can
+/// render them after the producing query has returned.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct Diagnostic {
     /// Severity of this diagnostic.
@@ -39,6 +36,95 @@ pub struct Diagnostic {
     pub labels: Vec<DiagnosticLabel>,
     /// Additional notes/help text shown below the main message.
     pub notes: Vec<String>,
+    /// Reserved quick-fix suggestions attached to this diagnostic.
+    pub suggestions: Vec<Suggestion>,
+}
+
+/// A diagnostic from any compiler layer before final rendering.
+///
+/// Parser diagnostics are already produced as generic user-facing diagnostics.
+/// HIR name-resolution diagnostics stay typed until they cross the rendering
+/// boundary. Inter-module diagnostics are kept typed inside `solcore-nameres`
+/// and wrapped here after lowering to the generic diagnostic surface.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum AnyDiagnostic {
+    /// Parser/lowering diagnostic.
+    Parse(Diagnostic),
+    /// HIR local name-resolution diagnostic.
+    Nameres(crate::nameres::NameresDiagnostic),
+    /// Inter-module loader/import/export diagnostic lowered at the crate edge.
+    Module(Diagnostic),
+}
+
+/// Stable identity used to deduplicate diagnostics.
+///
+/// The value is computed from the diagnostic code, headline message, and labels.
+/// Notes and suggestions are intentionally excluded so presentation-only detail
+/// does not split otherwise identical diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DiagnosticId(u64);
+
+/// Deterministic edge sort key for rendered diagnostics.
+///
+/// The primary start is absolute and therefore this key must only be computed
+/// at output boundaries such as the CLI driver or LSP publication.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DiagnosticSortKey {
+    /// URL of the primary file, when the diagnostic has a source label.
+    pub file: Option<String>,
+    /// Absolute primary start offset, when a source label exists.
+    pub primary_start: Option<Offset>,
+    /// Diagnostic code, e.g. `SC0101`.
+    pub code: Option<String>,
+    /// Human-readable headline message.
+    pub message: String,
+}
+
+/// Deterministic non-absolute sort key for cached diagnostic query values.
+///
+/// This key uses the source file named by the primary label anchor plus the
+/// anchor-relative start offset. It is safe inside tracked queries because it
+/// does not resolve def-relative spans to absolute positions.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DiagnosticQuerySortKey {
+    file: Option<String>,
+    relative_start: Option<Offset>,
+    code: Option<String>,
+    message: String,
+    id: DiagnosticId,
+}
+
+/// A source edit anchored to the same lifetime-free span model as labels.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct AnchoredTextEdit {
+    /// Span to replace.
+    pub span: LabelSpan,
+    /// Replacement text.
+    pub replacement: String,
+}
+
+/// Confidence level for applying a suggestion automatically.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum Applicability {
+    /// The edit can be applied mechanically.
+    MachineApplicable,
+    /// The edit is plausible but may need user review.
+    MaybeIncorrect,
+    /// The edit contains placeholders the user must fill in.
+    HasPlaceholders,
+    /// Applicability has not been classified yet.
+    Unspecified,
+}
+
+/// Reserved quick-fix surface attached to user-facing diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct Suggestion {
+    /// User-facing command title.
+    pub title: String,
+    /// Whether the edit can be applied automatically.
+    pub applicability: Applicability,
+    /// Text edits that implement the suggestion.
+    pub edits: Vec<AnchoredTextEdit>,
 }
 
 /// Severity level for diagnostics.
@@ -74,7 +160,7 @@ enum LabelAnchor {
 /// later. It intentionally avoids absolute offsets so byte-shift invariance is
 /// preserved until rendering.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-struct LabelSpan {
+pub struct LabelSpan {
     anchor: LabelAnchor,
     begin: Offset,
     end: Offset,
@@ -86,7 +172,11 @@ impl LabelSpan {
         Self { anchor, begin, end }
     }
 
-    fn from_span<'db>(db: &'db dyn crate::Db, span: Span<'db>) -> Self {
+    /// Snapshots a HIR span into a lifetime-free diagnostic span.
+    ///
+    /// The snapshot keeps only anchor-relative offsets. Absolute file offsets
+    /// are still resolved later at diagnostic/LSP boundaries.
+    pub fn from_span<'db>(db: &'db dyn crate::Db, span: Span<'db>) -> Self {
         let anchor = match span.anchor().kind_value(db) {
             AnchorKind::Root(file) => LabelAnchor::Root(file),
             AnchorKind::Def(def) => LabelAnchor::Def(def.key(db)),
@@ -94,7 +184,29 @@ impl LabelSpan {
         Self::new(anchor, span.begin(), span.end())
     }
 
-    fn resolve_to_absolute(&self, db: &dyn crate::Db) -> AbsoluteSpan {
+    /// Returns the source file named by this span's anchor.
+    pub fn file(&self) -> SourceFile {
+        match &self.anchor {
+            LabelAnchor::Root(file) => *file,
+            LabelAnchor::Def(key) => key.file,
+        }
+    }
+
+    /// Returns the anchor-relative start offset.
+    pub const fn begin(&self) -> Offset {
+        self.begin
+    }
+
+    /// Returns the anchor-relative end offset.
+    pub const fn end(&self) -> Offset {
+        self.end
+    }
+
+    /// Resolves this span to absolute offsets.
+    ///
+    /// This is an edge-only operation. Do not call it inside tracked semantic
+    /// queries because it consults the current def-location table.
+    pub fn resolve_to_absolute(&self, db: &dyn crate::Db) -> AbsoluteSpan {
         let (file, base) = match &self.anchor {
             LabelAnchor::Root(file) => (*file, Offset::new(0)),
             LabelAnchor::Def(key) => {
@@ -125,16 +237,6 @@ pub struct DiagnosticLabel {
     message: Option<String>,
     /// Label style used by renderers (primary/secondary).
     style: LabelStyle,
-}
-
-/// Proof token that a diagnostic has been accumulated.
-///
-/// The token prevents callers from silently discarding a diagnostic-producing
-/// expression without acknowledging that reporting happened.
-#[must_use]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct AccumulatedProof {
-    _private: (),
 }
 
 /// Style of a diagnostic label.
@@ -242,6 +344,7 @@ impl Diagnostic {
             code: None,
             labels: Vec::new(),
             notes: Vec::new(),
+            suggestions: Vec::new(),
         }
     }
 
@@ -278,7 +381,11 @@ impl Diagnostic {
     }
 
     /// Appends a primary label.
-    fn with_primary_label_span(self, span: LabelSpan, message: Option<impl Into<String>>) -> Self {
+    pub fn with_primary_label_span(
+        self,
+        span: LabelSpan,
+        message: Option<impl Into<String>>,
+    ) -> Self {
         self.with_label(DiagnosticLabel::primary(span, message))
     }
 
@@ -297,7 +404,7 @@ impl Diagnostic {
     }
 
     /// Appends a secondary label.
-    fn with_secondary_label_span(
+    pub fn with_secondary_label_span(
         self,
         span: LabelSpan,
         message: Option<impl Into<String>>,
@@ -324,10 +431,60 @@ impl Diagnostic {
         self
     }
 
-    /// Accumulates this diagnostic and returns proof that reporting happened.
-    pub fn accumulate(self, db: &dyn crate::Db) -> AccumulatedProof {
-        <Self as Accumulator>::accumulate(self, db);
-        AccumulatedProof { _private: () }
+    /// Appends a quick-fix suggestion.
+    pub fn with_suggestion(mut self, suggestion: Suggestion) -> Self {
+        self.suggestions.push(suggestion);
+        self
+    }
+
+    /// Returns the source file of the primary label, if any.
+    ///
+    /// This does not resolve def-relative offsets; it only reads the file stored
+    /// in the label anchor.
+    pub fn primary_file(&self, _db: &dyn crate::Db) -> Option<SourceFile> {
+        self.primary_label().map(|label| label.span.file())
+    }
+
+    /// Returns a deterministic edge sort key.
+    ///
+    /// The key resolves the primary span to an absolute start offset and must
+    /// only be used at the output boundary.
+    pub fn sort_key(&self, db: &dyn crate::Db) -> DiagnosticSortKey {
+        let primary = self
+            .primary_label()
+            .map(|label| label.span.resolve_to_absolute(db));
+        DiagnosticSortKey {
+            file: primary.map(|span| span.file().url(db).to_string()),
+            primary_start: primary.map(|span| span.start()),
+            code: self.code.clone(),
+            message: self.message.clone(),
+        }
+    }
+
+    /// Returns this diagnostic's stable deduplication identity.
+    pub fn diagnostic_id(&self, db: &dyn crate::Db) -> DiagnosticId {
+        let mut state = FNV_OFFSET;
+        hash_option_str(&mut state, self.code.as_deref());
+        hash_str(&mut state, &self.message);
+        hash_u64(&mut state, self.labels.len() as u64);
+        for label in &self.labels {
+            hash_label_span(db, &mut state, &label.span);
+            hash_label_style(&mut state, label.style);
+            hash_option_str(&mut state, label.message.as_deref());
+        }
+        DiagnosticId(state)
+    }
+
+    /// Returns a deterministic non-absolute sort key for use inside queries.
+    pub fn query_sort_key(&self, db: &dyn crate::Db) -> DiagnosticQuerySortKey {
+        let primary = self.primary_label();
+        DiagnosticQuerySortKey {
+            file: primary.map(|label| label.span.file().url(db).to_string()),
+            relative_start: primary.map(|label| label.span.begin()),
+            code: self.code.clone(),
+            message: self.message.clone(),
+            id: self.diagnostic_id(db),
+        }
     }
 
     /// Converts this diagnostic into `annotate_snippets` groups.
@@ -414,6 +571,35 @@ impl Diagnostic {
     pub fn render_with(&self, db: &dyn crate::Db, renderer: &Renderer) -> String {
         let report = self.to_annotate_report(db);
         renderer.render(&report)
+    }
+
+    fn primary_label(&self) -> Option<&DiagnosticLabel> {
+        self.labels
+            .iter()
+            .find(|label| matches!(label.style, LabelStyle::Primary))
+            .or_else(|| self.labels.first())
+    }
+}
+
+impl AnyDiagnostic {
+    /// Lowers this typed or generic diagnostic to the user-facing diagnostic.
+    pub fn lower(&self, db: &dyn crate::Db) -> Diagnostic {
+        match self {
+            AnyDiagnostic::Parse(diagnostic) | AnyDiagnostic::Module(diagnostic) => {
+                diagnostic.clone()
+            }
+            AnyDiagnostic::Nameres(diagnostic) => diagnostic.lower(db),
+        }
+    }
+
+    /// Returns the stable deduplication identity after lowering.
+    pub fn diagnostic_id(&self, db: &dyn crate::Db) -> DiagnosticId {
+        self.lower(db).diagnostic_id(db)
+    }
+
+    /// Returns a deterministic non-absolute sort key for use inside queries.
+    pub fn query_sort_key(&self, db: &dyn crate::Db) -> DiagnosticQuerySortKey {
+        self.lower(db).query_sort_key(db)
     }
 }
 
@@ -585,4 +771,100 @@ fn add_offset(base: Offset, rel: Offset) -> Offset {
         panic!("offset overflow while resolving diagnostic span");
     };
     Offset::new(raw)
+}
+
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+fn hash_bytes(state: &mut u64, bytes: &[u8]) {
+    for byte in bytes {
+        *state ^= u64::from(*byte);
+        *state = state.wrapping_mul(FNV_PRIME);
+    }
+}
+
+fn hash_u8(state: &mut u64, value: u8) {
+    hash_bytes(state, &[value]);
+}
+
+fn hash_u32(state: &mut u64, value: u32) {
+    hash_bytes(state, &value.to_le_bytes());
+}
+
+fn hash_u64(state: &mut u64, value: u64) {
+    hash_bytes(state, &value.to_le_bytes());
+}
+
+fn hash_str(state: &mut u64, value: &str) {
+    hash_u64(state, value.len() as u64);
+    hash_bytes(state, value.as_bytes());
+}
+
+fn hash_option_str(state: &mut u64, value: Option<&str>) {
+    match value {
+        Some(value) => {
+            hash_u8(state, 1);
+            hash_str(state, value);
+        }
+        None => hash_u8(state, 0),
+    }
+}
+
+fn hash_source_file(db: &dyn crate::Db, state: &mut u64, file: SourceFile) {
+    hash_str(state, file.url(db).as_str());
+}
+
+fn hash_label_span(db: &dyn crate::Db, state: &mut u64, span: &LabelSpan) {
+    match &span.anchor {
+        LabelAnchor::Root(file) => {
+            hash_u8(state, 0);
+            hash_source_file(db, state, *file);
+        }
+        LabelAnchor::Def(key) => {
+            hash_u8(state, 1);
+            hash_def_key(db, state, key);
+        }
+    }
+    hash_u32(state, span.begin.as_u32());
+    hash_u32(state, span.end.as_u32());
+}
+
+fn hash_def_key(db: &dyn crate::Db, state: &mut u64, key: &DefKey) {
+    hash_source_file(db, state, key.file);
+    match &key.owner {
+        Some(owner) => {
+            hash_u8(state, 1);
+            hash_def_key(db, state, owner);
+        }
+        None => hash_u8(state, 0),
+    }
+    hash_str(state, def_kind_name(key.kind));
+    hash_option_str(state, key.name.as_deref());
+    hash_option_str(state, key.fingerprint.as_deref());
+    hash_u32(state, key.disambiguator.as_u32());
+}
+
+fn def_kind_name(kind: crate::anchor::DefKind) -> &'static str {
+    match kind {
+        crate::anchor::DefKind::Module => "module",
+        crate::anchor::DefKind::Function => "function",
+        crate::anchor::DefKind::FuncBody => "func_body",
+        crate::anchor::DefKind::TypeAlias => "type_alias",
+        crate::anchor::DefKind::Adt => "adt",
+        crate::anchor::DefKind::AdtCtor => "adt_ctor",
+        crate::anchor::DefKind::Class => "class",
+        crate::anchor::DefKind::Instance => "instance",
+        crate::anchor::DefKind::Contract => "contract",
+        crate::anchor::DefKind::Field => "field",
+        crate::anchor::DefKind::Import => "import",
+        crate::anchor::DefKind::Export => "export",
+        crate::anchor::DefKind::Pragma => "pragma",
+    }
+}
+
+fn hash_label_style(state: &mut u64, style: LabelStyle) {
+    match style {
+        LabelStyle::Primary => hash_u8(state, 0),
+        LabelStyle::Secondary => hash_u8(state, 1),
+    }
 }

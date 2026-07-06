@@ -2,8 +2,12 @@ use std::{panic, path::Path, thread};
 
 use annotate_snippets::Renderer;
 use dir_test::{Fixture, dir_test};
-use hir::{diag::Diagnostic, input::SourceFile, visit::ErrorNode};
-use solcore_parser::parse_file_to_hir;
+use hir::{
+    diag::{AnyDiagnostic, Diagnostic},
+    input::SourceFile,
+    visit::ErrorNode,
+};
+use solcore_parser::{parse_diagnostics, parse_file_to_hir};
 
 #[salsa::db]
 #[derive(Default, Clone)]
@@ -47,7 +51,7 @@ fn assert_fail_fixture(path: &str, content: &str) {
     let db = TestDb::default();
     let file = fixture_source_file(&db, path, content);
     let _ = parse_file_to_hir(&db, file);
-    let diagnostics = parse_file_to_hir::accumulated::<Diagnostic>(&db, file);
+    let diagnostics = lower_diagnostics(&db, parse_diagnostics(&db, file));
     assert!(
         !diagnostics.is_empty(),
         "expected diagnostics for fail fixture `{}`",
@@ -86,7 +90,7 @@ fn assert_ok_fixture(path: &str, content: &str) {
     let file = fixture_source_file(&db, path, content);
 
     let module = parse_file_to_hir(&db, file).module(&db);
-    let diagnostics = parse_file_to_hir::accumulated::<Diagnostic>(&db, file);
+    let diagnostics = lower_diagnostics(&db, parse_diagnostics(&db, file));
     assert!(
         diagnostics.is_empty(),
         "expected no diagnostics for ok fixture `{}`\n{}",
@@ -127,7 +131,14 @@ fn fixture_source_file(db: &TestDb, path: &str, content: &str) -> SourceFile {
     SourceFile::new(db, url, Some(content.to_string()))
 }
 
-fn render_diagnostics(db: &dyn hir::Db, diagnostics: &[&Diagnostic]) -> String {
+fn lower_diagnostics(db: &dyn hir::Db, diagnostics: &[AnyDiagnostic]) -> Vec<Diagnostic> {
+    diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.lower(db))
+        .collect()
+}
+
+fn render_diagnostics(db: &dyn hir::Db, diagnostics: &[Diagnostic]) -> String {
     if diagnostics.is_empty() {
         return "no diagnostics\n".to_owned();
     }

@@ -2,10 +2,12 @@
 //!
 //! The parser first produces lightweight parsed syntax with absolute lexical
 //! spans, then the lowerer converts it into HIR with stable definition IDs and
-//! anchor-relative spans. Parse diagnostics are accumulated during lowering, so
+//! anchor-relative spans. Parse diagnostics are returned by a pull query, so
 //! later HIR visitors can treat `Error` nodes as silent recovery markers.
 
-use hir::{Db as HirDb, anchor::DefLocationTable, ast::item, input::SourceFile};
+use hir::{
+    Db as HirDb, anchor::DefLocationTable, ast::item, diag::AnyDiagnostic, input::SourceFile,
+};
 
 /// Token definitions used by the parser.
 pub mod lexer;
@@ -36,13 +38,25 @@ pub struct ParseHirOutput<'db> {
     #[tracked]
     #[returns(ref)]
     pub def_locations: DefLocationTable<'db>,
+
+    /// Parse diagnostics produced while lowering this file.
+    #[tracked]
+    #[returns(ref)]
+    pub diagnostics: Vec<AnyDiagnostic>,
 }
 
 /// Parses one source file into HIR in a single tracked query.
 ///
-/// The query also accumulates parse diagnostics and records def-location data
-/// needed to resolve anchor-relative spans at diagnostic/LSP edges.
+/// The query records def-location data needed to resolve anchor-relative spans
+/// at diagnostic/LSP edges. Parse diagnostics are exposed through
+/// [`parse_diagnostics`].
 #[salsa::tracked]
 pub fn parse_file_to_hir<'db>(db: &'db dyn Db, file: SourceFile) -> ParseHirOutput<'db> {
     lower::parse_file_to_hir_impl(db, file)
+}
+
+/// Returns parser/lowering diagnostics for one source file.
+#[salsa::tracked(returns(ref))]
+pub fn parse_diagnostics(db: &dyn Db, file: SourceFile) -> Vec<AnyDiagnostic> {
+    parse_file_to_hir(db, file).diagnostics(db).clone()
 }

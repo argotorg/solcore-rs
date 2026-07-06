@@ -5,13 +5,16 @@ use std::{
 };
 
 use annotate_snippets::Renderer;
-use hir::{diag::Diagnostic, input::SourceFile};
+use hir::{
+    diag::{Diagnostic, DiagnosticId},
+    input::SourceFile,
+};
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_nameres::{
     LibraryId, ModuleGraph, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
-    module_key_for_path, public_interface, resolve_module_path_candidate, resolve_reachable_full,
-    strongly_connected_components,
+    module_key_for_path, public_interface, reachable_diagnostics, resolve_module_path_candidate,
+    resolve_reachable_full, strongly_connected_components,
 };
 use url::Url;
 
@@ -248,10 +251,14 @@ fn imports_corpus_matches_reference_expectations_impl() {
     );
 }
 
-fn run<'db>(db: &'db TestDb, entry: &ModuleKey) -> (ModuleGraph<'db>, Vec<&'db Diagnostic>) {
+fn run<'db>(db: &'db TestDb, entry: &ModuleKey) -> (ModuleGraph<'db>, Vec<Diagnostic>) {
     let entry = module_id_from_key(db, entry);
     let graph = resolve_reachable_full(db, entry);
-    let diagnostics = resolve_reachable_full::accumulated::<Diagnostic>(db, entry);
+    let mut diagnostics = reachable_diagnostics(db, entry)
+        .iter()
+        .map(|diagnostic| diagnostic.lower(db))
+        .collect::<Vec<_>>();
+    sort_dedup_diagnostics(db, &mut diagnostics);
     (graph, diagnostics)
 }
 
@@ -366,7 +373,7 @@ fn fixture_url(key: &ModuleKey) -> Url {
         .expect("fixture memory URL")
 }
 
-fn assert_no_diagnostics(db: &TestDb, diagnostics: &[&Diagnostic]) {
+fn assert_no_diagnostics(db: &TestDb, diagnostics: &[Diagnostic]) {
     assert!(
         diagnostics.is_empty(),
         "expected no diagnostics\n{}",
@@ -374,7 +381,7 @@ fn assert_no_diagnostics(db: &TestDb, diagnostics: &[&Diagnostic]) {
     );
 }
 
-fn render_diagnostics(db: &dyn hir::Db, diagnostics: &[&Diagnostic]) -> String {
+fn render_diagnostics(db: &dyn hir::Db, diagnostics: &[Diagnostic]) -> String {
     if diagnostics.is_empty() {
         return "no diagnostics\n".to_owned();
     }
@@ -388,6 +395,12 @@ fn render_diagnostics(db: &dyn hir::Db, diagnostics: &[&Diagnostic]) -> String {
         output.push_str(&diagnostic.render_with(db, &renderer));
     }
     output
+}
+
+fn sort_dedup_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<Diagnostic>) {
+    diagnostics.sort_by_key(|diagnostic| diagnostic.sort_key(db));
+    let mut seen = FxHashSet::<DiagnosticId>::default();
+    diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
 }
 
 fn snapshot_diagnostics(fixture: &Path, rendered: &str) {

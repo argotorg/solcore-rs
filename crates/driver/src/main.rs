@@ -1,7 +1,7 @@
 //! Command-line driver for parsing and resolving Solcore modules.
 //!
 //! The driver owns filesystem concerns: argument parsing, root selection,
-//! loading reachable modules into the Salsa database, and rendering accumulated
+//! loading reachable modules into the Salsa database, and rendering pull-style
 //! diagnostics. Compiler crates stay pure and receive source files through
 //! database inputs.
 
@@ -11,10 +11,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use hir::{diag::Diagnostic, input::SourceFile};
+use hir::{
+    diag::{Diagnostic, DiagnosticId},
+    input::SourceFile,
+};
 use nameres::{
     LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
-    resolve_module_path_candidate, resolve_reachable_full,
+    reachable_diagnostics, resolve_module_path_candidate, resolve_reachable_full,
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -146,7 +149,11 @@ fn main() {
 
     let entry = module_id_from_key(&db, &entry_key);
     let _ = resolve_reachable_full(&db, entry);
-    let diagnostics = resolve_reachable_full::accumulated::<Diagnostic>(&db, entry);
+    let mut diagnostics = reachable_diagnostics(&db, entry)
+        .iter()
+        .map(|diagnostic| diagnostic.lower(&db))
+        .collect::<Vec<_>>();
+    sort_dedup_diagnostics(&db, &mut diagnostics);
     if diagnostics.is_empty() {
         return;
     }
@@ -155,6 +162,12 @@ fn main() {
         eprint!("{}", diagnostic.render(&db));
     }
     std::process::exit(1);
+}
+
+fn sort_dedup_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<Diagnostic>) {
+    diagnostics.sort_by_key(|diagnostic| diagnostic.sort_key(db));
+    let mut seen = FxHashSet::<DiagnosticId>::default();
+    diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
 }
 
 /// Parsed command-line arguments.

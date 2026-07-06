@@ -3,13 +3,13 @@
 //! Lowering is where source-level parsed DTOs gain HIR identity. It allocates
 //! structural `DefId`s, records def-anchor base offsets, converts absolute
 //! lexical spans into anchor-relative spans, and builds function-body arenas.
-//! This is also where parse errors become accumulated diagnostics.
+//! This is also where parse errors become pull-style diagnostics.
 
 use hir::{
     anchor::{DefId, DefKind, DefLocation, DefLocationTable, KeyCanonicalizer},
     arena::Arena,
     ast::{Ident, function, item, ty},
-    diag::{Diagnostic, Offset},
+    diag::{AnyDiagnostic, Diagnostic, Offset},
     input::SourceFile,
     span::{AnchorId, Span, Spanned, SpannedElem},
 };
@@ -48,12 +48,21 @@ fn root_span_from_lex<'db>(db: &'db dyn Db, file: SourceFile, span: LexSpan) -> 
     )
 }
 
-fn accumulate_parse_errors(db: &dyn Db, file: SourceFile, errors: Vec<ParsedError>) {
-    for error in errors {
-        let _ = Diagnostic::error(error.message)
-            .with_primary_label(db, root_span_from_lex(db, file, error.span), None::<String>)
-            .accumulate(db);
-    }
+fn lower_parse_errors(
+    db: &dyn Db,
+    file: SourceFile,
+    errors: Vec<ParsedError>,
+) -> Vec<AnyDiagnostic> {
+    errors
+        .into_iter()
+        .map(|error| {
+            AnyDiagnostic::Parse(Diagnostic::error(error.message).with_primary_label(
+                db,
+                root_span_from_lex(db, file, error.span),
+                None::<String>,
+            ))
+        })
+        .collect()
 }
 
 fn lower_spanned_ident<'db>(
@@ -1825,7 +1834,7 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
 
     let module = item::Module::new(db, module_def, module_span, items);
     let def_locations = DefLocationTable::from_def_locations(def_locations);
-    accumulate_parse_errors(db, file, parse_errors);
+    let diagnostics = lower_parse_errors(db, file, parse_errors);
 
-    ParseHirOutput::new(db, module, def_locations)
+    ParseHirOutput::new(db, module, def_locations, diagnostics)
 }

@@ -3,7 +3,7 @@
 //! The grammar produces lightweight parsed nodes with absolute lexical spans.
 //! Bodies are first captured as brace spans and parsed separately during
 //! lowering so function/lambda bodies can receive their own def anchors. Error
-//! recovery nodes are produced here, but diagnostics are accumulated after the
+//! recovery nodes are produced here, but diagnostics are collected after the
 //! parsed output is lowered to HIR spans.
 
 use chumsky::{input::ValueInput, prelude::*};

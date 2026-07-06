@@ -3,7 +3,7 @@
 //! Function bodies are arena-backed: statements, expressions, and patterns refer
 //! to each other by typed arena IDs. This avoids recursive ownership cycles and
 //! keeps body-local references compact. The `Error` variants in this file are
-//! recovery sentinels and should stay silent; parse diagnostics are accumulated
+//! recovery sentinels and should stay silent; parse diagnostics are collected
 //! during parsing/lowering, and visitors can inspect these nodes separately.
 
 use crate::{

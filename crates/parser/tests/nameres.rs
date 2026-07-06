@@ -5,7 +5,7 @@ use hir::{
     },
     diag::Diagnostic,
     input::SourceFile,
-    nameres::{resolve_module, Resolution},
+    nameres::{Resolution, resolve_module},
 };
 use solcore_parser::parse_file_to_hir;
 
@@ -83,9 +83,12 @@ fn contract_function<'db>(
         .expect("contract function")
 }
 
-fn diagnostics<'db>(db: &'db TestDb, module: Module<'db>) -> Vec<&'db Diagnostic> {
-    let _ = resolve_module(db, module);
-    resolve_module::accumulated::<Diagnostic>(db, module)
+fn diagnostics<'db>(db: &'db TestDb, module: Module<'db>) -> Vec<Diagnostic> {
+    resolve_module(db, module)
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.lower(db))
+        .collect()
 }
 
 fn diagnostic_codes(db: &TestDb, module: Module<'_>) -> Vec<String> {
@@ -241,11 +244,10 @@ fn qualified_ctor_class_method_and_dot_ctor_resolve_as_expected() {
     let dot = top_function(&db, module, "dot");
     let dot_body = dot.body(&db).expect("body");
     let dot_map = body_map(&db, module, dot_body);
-    assert!(dot_map
-        .exprs
-        .iter()
-        .any(|entry| entry.body == dot_body
-            && matches!(entry.resolution, Resolution::DotCtorDeferred)));
+    assert!(
+        dot_map.exprs.iter().any(|entry| entry.body == dot_body
+            && matches!(entry.resolution, Resolution::DotCtorDeferred))
+    );
 }
 
 #[test]
@@ -265,9 +267,11 @@ fn duplicate_declarations_report_two_namespace_errors_with_two_labels() {
         .collect::<Vec<_>>();
 
     assert_eq!(duplicate_diagnostics.len(), 2);
-    assert!(duplicate_diagnostics
-        .iter()
-        .all(|diagnostic| diagnostic.labels.len() >= 2));
+    assert!(
+        duplicate_diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.labels.len() >= 2)
+    );
 }
 
 #[test]

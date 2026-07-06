@@ -41,7 +41,7 @@ use crate::{
         },
         ty::{PredRef, TypeRef, TypeRefKind},
     },
-    diag::Diagnostic,
+    diag::{Diagnostic, LabelSpan},
     span::{Span, Spanned, SpannedElem},
 };
 
@@ -369,6 +369,8 @@ pub struct ItemScope<'db> {
     pub contracts: Vec<ContractScope<'db>>,
     /// Instance definitions in source order.
     pub instances: Vec<InstanceDef<'db>>,
+    /// Diagnostics found while building item scopes.
+    pub diagnostics: Vec<NameresDiagnostic>,
 }
 
 /// Resolution attached to an unresolved type reference.
@@ -396,6 +398,8 @@ pub struct ItemResolutionMap<'db> {
     pub types: Vec<TypeResolution<'db>>,
     /// Resolved predicate references.
     pub preds: Vec<PredResolution<'db>>,
+    /// Diagnostics found while resolving item signatures.
+    pub diagnostics: Vec<NameresDiagnostic>,
 }
 
 /// Resolution attached to an expression occurrence.
@@ -444,6 +448,8 @@ pub struct BodyResolutionMap<'db> {
     pub types: Vec<TypeResolution<'db>>,
     /// Predicate references used in the body.
     pub preds: Vec<PredResolution<'db>>,
+    /// Diagnostics found while resolving this body.
+    pub diagnostics: Vec<NameresDiagnostic>,
 }
 
 /// Parameter binding passed into body resolution.
@@ -486,6 +492,8 @@ pub struct ModuleResolutionMap<'db> {
     pub item_resolutions: ItemResolutionMap<'db>,
     /// Body resolution maps for functions and methods.
     pub bodies: Vec<BodyResolutionMap<'db>>,
+    /// Diagnostics found while resolving this module.
+    pub diagnostics: Vec<NameresDiagnostic>,
 }
 
 /// Provider of names imported from other modules.
@@ -523,6 +531,118 @@ impl<'db> ImportedNames<'db> for EmptyImportedNames {
         _name: &str,
     ) -> Option<Resolution<'db>> {
         None
+    }
+}
+
+/// Typed local name-resolution diagnostic.
+///
+/// The variants mirror the `SC010x` local resolver codes and store
+/// lifetime-free label spans. Lowering to the generic user-facing diagnostic is
+/// deferred until the driver or another diagnostic edge asks for it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum NameresDiagnostic {
+    /// `SC0101`: failed term, field, module, or qualified-name lookup.
+    UndefinedName {
+        /// Name text as it appeared at the failing lookup.
+        name: String,
+        /// Source span of the failed lookup.
+        span: LabelSpan,
+    },
+    /// `SC0103`: failed type-constructor lookup.
+    UndefinedTypeConstructor {
+        /// Type constructor name.
+        name: String,
+        /// Source span of the failed lookup.
+        span: LabelSpan,
+    },
+    /// `SC0105`: failed class lookup.
+    UndefinedClass {
+        /// Class name.
+        name: String,
+        /// Source span of the failed lookup.
+        span: LabelSpan,
+    },
+    /// `SC0106`: constructor used without the required type qualifier.
+    UnqualifiedConstructor {
+        /// Constructor leaf name.
+        name: String,
+        /// Source span of the constructor occurrence.
+        span: LabelSpan,
+    },
+    /// `SC0107`: parser recovery produced an invalid pattern shape.
+    InvalidPattern {
+        /// Source span covering the invalid pattern.
+        span: LabelSpan,
+    },
+    /// `SC0108`: duplicate declaration in a local namespace.
+    DuplicateDeclaration {
+        /// Namespace where the duplicate was found.
+        namespace: Namespace,
+        /// Duplicated surface name.
+        name: String,
+        /// Span of the duplicate declaration.
+        span: LabelSpan,
+        /// Span of the first declaration.
+        previous: LabelSpan,
+        /// Optional contextual note, such as the enclosing contract.
+        context: Option<String>,
+    },
+}
+
+impl NameresDiagnostic {
+    /// Lowers this typed diagnostic to the generic rendering surface.
+    pub fn lower(&self, _db: &dyn Db) -> Diagnostic {
+        match self {
+            NameresDiagnostic::UndefinedName { name, span } => {
+                Diagnostic::error(format!("undefined name: {name}"))
+                    .with_code("SC0101")
+                    .with_primary_label_span(span.clone(), Some("unknown name"))
+            }
+            NameresDiagnostic::UndefinedTypeConstructor { name, span } => {
+                Diagnostic::error(format!("undefined type constructor: {name}"))
+                    .with_code("SC0103")
+                    .with_primary_label_span(span.clone(), Some("undefined type constructor"))
+            }
+            NameresDiagnostic::UndefinedClass { name, span } => {
+                Diagnostic::error(format!("undefined class: {name}"))
+                    .with_code("SC0105")
+                    .with_primary_label_span(span.clone(), Some("undefined class"))
+            }
+            NameresDiagnostic::UnqualifiedConstructor { name, span } => {
+                Diagnostic::error(format!("unqualified constructor: {name}"))
+                    .with_code("SC0106")
+                    .with_primary_label_span(span.clone(), Some("constructor must be qualified"))
+                    .with_note("use Type.Constructor form")
+            }
+            NameresDiagnostic::InvalidPattern { span } => {
+                Diagnostic::error("invalid pattern syntax")
+                    .with_code("SC0107")
+                    .with_primary_label_span(span.clone(), Some("invalid pattern"))
+            }
+            NameresDiagnostic::DuplicateDeclaration {
+                namespace,
+                name,
+                span,
+                previous,
+                context,
+            } => {
+                let namespace_text = match namespace {
+                    Namespace::Type => "type namespace",
+                    Namespace::Term => "term namespace",
+                    Namespace::Field | Namespace::Module => "namespace",
+                };
+                let mut diagnostic = Diagnostic::error(format!(
+                    "duplicate declaration `{name}` in {namespace_text}"
+                ))
+                .with_code("SC0108")
+                .with_primary_label_span(span.clone(), Some("duplicate declaration"))
+                .with_secondary_label_span(previous.clone(), Some("previous declaration"));
+                if let Some(context) = context {
+                    diagnostic = diagnostic.with_note(format!("context: {context}"));
+                }
+                diagnostic
+            }
+        }
     }
 }
 
@@ -746,10 +866,16 @@ pub fn resolve_module_with_imports<'db>(
     for item in module.items(db) {
         collect_item_body_resolutions(db, module, *item, None, &[], imports, &mut bodies);
     }
+    let mut diagnostics = scope.diagnostics.clone();
+    diagnostics.extend(item_resolutions.diagnostics.iter().cloned());
+    for body in &bodies {
+        diagnostics.extend(body.diagnostics.iter().cloned());
+    }
     ModuleResolutionMap {
         item_scope: scope,
         item_resolutions,
         bodies,
+        diagnostics,
     }
 }
 
@@ -868,6 +994,7 @@ struct ItemScopeBuilder<'db> {
     instances: Vec<InstanceDef<'db>>,
     type_names: FxHashMap<String, Span<'db>>,
     term_names: FxHashMap<String, Span<'db>>,
+    diagnostics: Vec<NameresDiagnostic>,
 }
 
 impl<'db> ItemScopeBuilder<'db> {
@@ -883,6 +1010,7 @@ impl<'db> ItemScopeBuilder<'db> {
             instances: Vec::new(),
             type_names: FxHashMap::default(),
             term_names: FxHashMap::default(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -895,6 +1023,7 @@ impl<'db> ItemScopeBuilder<'db> {
             ctor_lists: self.ctor_lists,
             contracts: self.contracts,
             instances: self.instances,
+            diagnostics: self.diagnostics,
         }
     }
 
@@ -1080,7 +1209,9 @@ impl<'db> ItemScopeBuilder<'db> {
                 ContractItem::Error { .. } => {}
             }
         }
-        self.contracts.push(contract.finish());
+        let (contract_scope, diagnostics) = contract.finish();
+        self.diagnostics.extend(diagnostics);
+        self.contracts.push(contract_scope);
     }
 
     fn add_import_modules(
@@ -1134,7 +1265,9 @@ impl<'db> ItemScopeBuilder<'db> {
             Namespace::Field | Namespace::Module => return,
         };
         if let Some(previous) = map.get(name).copied() {
-            duplicate_diagnostic(self.db, namespace, name, span, previous, context);
+            self.diagnostics.push(duplicate_diagnostic(
+                self.db, namespace, name, span, previous, context,
+            ));
         } else {
             map.insert(name.to_owned(), span);
         }
@@ -1151,6 +1284,7 @@ struct ContractScopeBuilder<'db> {
     ctor_lists: Vec<CtorList<'db>>,
     type_names: FxHashMap<String, Span<'db>>,
     term_names: FxHashMap<String, Span<'db>>,
+    diagnostics: Vec<NameresDiagnostic>,
 }
 
 impl<'db> ContractScopeBuilder<'db> {
@@ -1165,18 +1299,22 @@ impl<'db> ContractScopeBuilder<'db> {
             ctor_lists: Vec::new(),
             type_names: FxHashMap::default(),
             term_names: FxHashMap::default(),
+            diagnostics: Vec::new(),
         }
     }
 
-    fn finish(self) -> ContractScope<'db> {
-        ContractScope {
-            contract: self.contract,
-            name: self.name,
-            types: self.types,
-            terms: self.terms,
-            fields: self.fields,
-            ctor_lists: self.ctor_lists,
-        }
+    fn finish(self) -> (ContractScope<'db>, Vec<NameresDiagnostic>) {
+        (
+            ContractScope {
+                contract: self.contract,
+                name: self.name,
+                types: self.types,
+                terms: self.terms,
+                fields: self.fields,
+                ctor_lists: self.ctor_lists,
+            },
+            self.diagnostics,
+        )
     }
 
     fn add_type(&mut self, name: String, span: Span<'db>, resolution: Resolution<'db>) {
@@ -1224,7 +1362,14 @@ impl<'db> ContractScopeBuilder<'db> {
         };
         if let Some(previous) = map.get(name).copied() {
             let context = format!("contract {}", self.name);
-            duplicate_diagnostic(self.db, namespace, name, span, previous, Some(&context));
+            self.diagnostics.push(duplicate_diagnostic(
+                self.db,
+                namespace,
+                name,
+                span,
+                previous,
+                Some(&context),
+            ));
         } else {
             map.insert(name.to_owned(), span);
         }
@@ -1391,7 +1536,9 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
         }
         let name = ident_text(self.db, &kind.class);
         let resolution = self.lookup_class(name).unwrap_or_else(|| {
-            undefined_class(self.db, name, kind.class.span(self.db));
+            self.map
+                .diagnostics
+                .push(undefined_class(self.db, name, kind.class.span(self.db)));
             Resolution::Err
         });
         self.map.preds.push(PredResolution { pred, resolution });
@@ -1414,13 +1561,21 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                     let qualified =
                         qualify(ident_text(self.db, qualifier), ident_text(self.db, name));
                     self.lookup_type(&qualified).unwrap_or_else(|| {
-                        undefined_type_ctor(self.db, &qualified, name.span(self.db));
+                        self.map.diagnostics.push(undefined_type_ctor(
+                            self.db,
+                            &qualified,
+                            name.span(self.db),
+                        ));
                         Resolution::Err
                     })
                 } else {
                     let name_text = ident_text(self.db, name);
                     self.lookup_type(name_text).unwrap_or_else(|| {
-                        undefined_type_ctor(self.db, name_text, name.span(self.db));
+                        self.map.diagnostics.push(undefined_type_ctor(
+                            self.db,
+                            name_text,
+                            name.span(self.db),
+                        ));
                         Resolution::Err
                     })
                 };
@@ -1641,7 +1796,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 let resolution = if self.has_constructor_leaf(leaf) {
                     Resolution::DotCtorDeferred
                 } else {
-                    undefined_name(self.db, leaf, name.span(self.db));
+                    self.map
+                        .diagnostics
+                        .push(undefined_name(self.db, leaf, name.span(self.db)));
                     Resolution::Err
                 };
                 self.map.record_expr(body, expr_id, resolution);
@@ -1737,13 +1894,21 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     let qualified =
                         qualify(ident_text(self.db, qualifier), ident_text(self.db, name));
                     self.lookup_ctor(&qualified).unwrap_or_else(|| {
-                        undefined_name(self.db, &qualified, name.span(self.db));
+                        self.map.diagnostics.push(undefined_name(
+                            self.db,
+                            &qualified,
+                            name.span(self.db),
+                        ));
                         Resolution::Err
                     })
                 } else {
                     let leaf = ident_text(self.db, name);
                     if self.has_constructor_leaf(leaf) {
-                        unqualified_constructor(self.db, leaf, name.span(self.db));
+                        self.map.diagnostics.push(unqualified_constructor(
+                            self.db,
+                            leaf,
+                            name.span(self.db),
+                        ));
                         Resolution::Err
                     } else if args.is_empty() {
                         let resolution =
@@ -1751,7 +1916,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         self.add_local(leaf, resolution.clone());
                         resolution
                     } else {
-                        invalid_pattern(self.db, pat.span);
+                        self.map
+                            .diagnostics
+                            .push(invalid_pattern(self.db, pat.span));
                         Resolution::Err
                     }
                 };
@@ -1780,13 +1947,21 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     let qualified =
                         qualify(ident_text(self.db, qualifier), ident_text(self.db, name));
                     self.lookup_type(&qualified).unwrap_or_else(|| {
-                        undefined_type_ctor(self.db, &qualified, name.span(self.db));
+                        self.map.diagnostics.push(undefined_type_ctor(
+                            self.db,
+                            &qualified,
+                            name.span(self.db),
+                        ));
                         Resolution::Err
                     })
                 } else {
                     let name_text = ident_text(self.db, name);
                     self.lookup_type(name_text).unwrap_or_else(|| {
-                        undefined_type_ctor(self.db, name_text, name.span(self.db));
+                        self.map.diagnostics.push(undefined_type_ctor(
+                            self.db,
+                            name_text,
+                            name.span(self.db),
+                        ));
                         Resolution::Err
                     })
                 };
@@ -1814,7 +1989,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         }
     }
 
-    fn resolve_ident(&self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
+    fn resolve_ident(&mut self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
         let text = ident_text(self.db, name);
         self.lookup_local(text)
             // Contract fields intentionally beat same-name functions in the
@@ -1823,7 +1998,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .or_else(|| self.lookup_qualified_term(text))
             .or_else(|| {
                 if self.has_same_name_constructor(text) {
-                    unqualified_constructor(self.db, text, name.span(self.db));
+                    self.map.diagnostics.push(unqualified_constructor(
+                        self.db,
+                        text,
+                        name.span(self.db),
+                    ));
                     Some(Resolution::Err)
                 } else {
                     None
@@ -1833,9 +2012,15 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .or_else(|| self.lookup_module(text))
             .unwrap_or_else(|| {
                 if self.has_constructor_leaf(text) {
-                    unqualified_constructor(self.db, text, name.span(self.db));
+                    self.map.diagnostics.push(unqualified_constructor(
+                        self.db,
+                        text,
+                        name.span(self.db),
+                    ));
                 } else {
-                    undefined_name(self.db, text, name.span(self.db));
+                    self.map
+                        .diagnostics
+                        .push(undefined_name(self.db, text, name.span(self.db)));
                 }
                 Resolution::Err
             })
@@ -1851,7 +2036,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     .or_else(|| self.lookup_module(text))
                     .or_else(|| self.lookup_qualified_term(text))
                     .unwrap_or_else(|| {
-                        undefined_name(self.db, text, name.span(self.db));
+                        self.map.diagnostics.push(undefined_name(
+                            self.db,
+                            text,
+                            name.span(self.db),
+                        ));
                         Resolution::Err
                     });
                 self.map.record_expr(body, expr_id, resolution);
@@ -1867,7 +2056,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     }
 
     fn resolve_field_expr(
-        &self,
+        &mut self,
         body: FuncBody<'db>,
         base: Id<Expr<'db>>,
         field: &SpannedElem<'db, Ident<'db>>,
@@ -1897,13 +2086,17 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 } | Resolution::Builtin(BuiltinKind::Type(_) | BuiltinKind::Class(_))
             )
         ) {
-            undefined_name(self.db, field_text, field.span(self.db));
+            self.map
+                .diagnostics
+                .push(undefined_name(self.db, field_text, field.span(self.db)));
             return Some(Resolution::Err);
         }
 
         if self.lookup_module(&qualifier).is_some() {
             if self.lookup_module(&qualified).is_none() {
-                undefined_name(self.db, field_text, field.span(self.db));
+                self.map
+                    .diagnostics
+                    .push(undefined_name(self.db, field_text, field.span(self.db)));
                 return Some(Resolution::Err);
             }
             return Some(Resolution::Module(ModuleRef {
@@ -2143,56 +2336,46 @@ fn duplicate_diagnostic<'db>(
     span: Span<'db>,
     previous: Span<'db>,
     context: Option<&str>,
-) {
-    let namespace_text = match namespace {
-        Namespace::Type => "type namespace",
-        Namespace::Term => "term namespace",
-        Namespace::Field | Namespace::Module => "namespace",
-    };
-    let mut diagnostic = Diagnostic::error(format!(
-        "duplicate declaration `{name}` in {namespace_text}"
-    ))
-    .with_code("SC0108")
-    .with_primary_label(db, span, Some("duplicate declaration"))
-    .with_secondary_label(db, previous, Some("previous declaration"));
-    if let Some(context) = context {
-        diagnostic = diagnostic.with_note(format!("context: {context}"));
+) -> NameresDiagnostic {
+    NameresDiagnostic::DuplicateDeclaration {
+        namespace,
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+        previous: LabelSpan::from_span(db, previous),
+        context: context.map(ToOwned::to_owned),
     }
-    let _ = diagnostic.accumulate(db);
 }
 
-fn undefined_name<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) {
-    let _ = Diagnostic::error(format!("undefined name: {name}"))
-        .with_code("SC0101")
-        .with_primary_label(db, span, Some("unknown name"))
-        .accumulate(db);
+fn undefined_name<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
+    NameresDiagnostic::UndefinedName {
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+    }
 }
 
-fn undefined_type_ctor<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) {
-    let _ = Diagnostic::error(format!("undefined type constructor: {name}"))
-        .with_code("SC0103")
-        .with_primary_label(db, span, Some("undefined type constructor"))
-        .accumulate(db);
+fn undefined_type_ctor<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
+    NameresDiagnostic::UndefinedTypeConstructor {
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+    }
 }
 
-fn undefined_class<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) {
-    let _ = Diagnostic::error(format!("undefined class: {name}"))
-        .with_code("SC0105")
-        .with_primary_label(db, span, Some("undefined class"))
-        .accumulate(db);
+fn undefined_class<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
+    NameresDiagnostic::UndefinedClass {
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+    }
 }
 
-fn unqualified_constructor<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) {
-    let _ = Diagnostic::error(format!("unqualified constructor: {name}"))
-        .with_code("SC0106")
-        .with_primary_label(db, span, Some("constructor must be qualified"))
-        .with_note("use Type.Constructor form")
-        .accumulate(db);
+fn unqualified_constructor<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
+    NameresDiagnostic::UnqualifiedConstructor {
+        name: name.to_owned(),
+        span: LabelSpan::from_span(db, span),
+    }
 }
 
-fn invalid_pattern<'db>(db: &'db dyn Db, span: Span<'db>) {
-    let _ = Diagnostic::error("invalid pattern syntax")
-        .with_code("SC0107")
-        .with_primary_label(db, span, Some("invalid pattern"))
-        .accumulate(db);
+fn invalid_pattern<'db>(db: &'db dyn Db, span: Span<'db>) -> NameresDiagnostic {
+    NameresDiagnostic::InvalidPattern {
+        span: LabelSpan::from_span(db, span),
+    }
 }
