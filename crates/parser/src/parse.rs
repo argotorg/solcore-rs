@@ -149,10 +149,15 @@ fn import_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserE
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let path = ident_parser()
-        .separated_by(just(Token::Dot))
-        .at_least(1)
-        .collect::<Vec<_>>()
+    let path = just(Token::At)
+        .map_with(|_, e| e.span())
+        .or_not()
+        .then(
+            ident_parser()
+                .separated_by(just(Token::Dot))
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
         .boxed();
 
     let selected_item = import_name_parser()
@@ -185,13 +190,16 @@ where
         .then(selector)
         .then(hiding)
         .then_ignore(just(Token::Semi))
-        .map_with(|((path, selector), hiding), e| ParsedTopItem::Import {
-            span: e.span(),
-            path,
-            alias: None,
-            selector: Some(selector),
-            hiding,
-        })
+        .map_with(
+            |(((external, path), selector), hiding), e| ParsedTopItem::Import {
+                span: e.span(),
+                external,
+                path,
+                alias: None,
+                selector: Some(selector),
+                hiding,
+            },
+        )
         .boxed();
 
     let with_alias = just(Token::Import)
@@ -199,8 +207,9 @@ where
         .then_ignore(just(Token::As))
         .then(ident_parser())
         .then_ignore(just(Token::Semi))
-        .map_with(|(path, alias), e| ParsedTopItem::Import {
+        .map_with(|((external, path), alias), e| ParsedTopItem::Import {
             span: e.span(),
+            external,
             path,
             alias: Some(alias),
             selector: None,
@@ -211,8 +220,9 @@ where
     let plain = just(Token::Import)
         .ignore_then(path)
         .then_ignore(just(Token::Semi))
-        .map_with(|path, e| ParsedTopItem::Import {
+        .map_with(|(external, path), e| ParsedTopItem::Import {
             span: e.span(),
+            external,
             path,
             alias: None,
             selector: None,
@@ -308,11 +318,24 @@ where
             .map(|args| args.unwrap_or_default())
             .boxed();
 
-        let named_type = ident_parser()
+        let qualified_name =
+            ident_parser().then(just(Token::Dot).ignore_then(ident_parser()).or_not());
+
+        let named_type = qualified_name
             .then(args)
-            .map_with(|(name, args), e| ParsedTy {
-                span: e.span(),
-                kind: ParsedTyKind::Named { name, args },
+            .map_with(|((head, leaf), args), e| {
+                let (qualifier, name) = match leaf {
+                    Some(name) => (Some(head), name),
+                    None => (None, head),
+                };
+                ParsedTy {
+                    span: e.span(),
+                    kind: ParsedTyKind::Named {
+                        qualifier,
+                        name,
+                        args,
+                    },
+                }
             })
             .boxed();
 
@@ -355,7 +378,24 @@ where
             })
             .boxed();
 
-        comptime_type.or(fn_type).or(tuple_type).or(named_type)
+        let atom_type = recursive(|atom| {
+            let proxy_type = just(Token::At)
+                .map_with(|_, e| e.span())
+                .then(atom)
+                .map_with(|(at, inner), e| ParsedTy {
+                    span: e.span(),
+                    kind: ParsedTyKind::Proxy {
+                        at,
+                        inner: Box::new(inner),
+                    },
+                })
+                .boxed();
+
+            proxy_type.or(tuple_type).or(named_type)
+        })
+        .boxed();
+
+        comptime_type.or(fn_type).or(atom_type)
     })
     .labelled("type")
     .as_context()
@@ -435,6 +475,7 @@ where
             let ty = ParsedTy {
                 span: var.1,
                 kind: ParsedTyKind::Named {
+                    qualifier: None,
                     name: var,
                     args: Vec::new(),
                 },
@@ -2308,6 +2349,7 @@ fn token_spelling(token: &Token<'_>) -> &'static str {
         Token::Eq => "=",
         Token::Pipe => "|",
         Token::Caret => "^",
+        Token::At => "@",
         Token::Dot => ".",
         Token::Colon => ":",
         Token::Semi => ";",
@@ -2681,6 +2723,7 @@ mod tests {
         match parsed.output.as_slice() {
             [
                 ParsedTopItem::Import {
+                    external,
                     path,
                     alias,
                     selector,
@@ -2688,6 +2731,7 @@ mod tests {
                     ..
                 },
             ] => {
+                assert!(external.is_none(), "expected non-external import");
                 assert_eq!(
                     path.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
                     vec!["math", "bits"]
@@ -2708,6 +2752,7 @@ mod tests {
         match parsed.output.as_slice() {
             [
                 ParsedTopItem::Import {
+                    external,
                     path,
                     alias,
                     selector,
@@ -2715,6 +2760,7 @@ mod tests {
                     ..
                 },
             ] => {
+                assert!(external.is_none(), "expected non-external import");
                 assert_eq!(
                     path.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
                     vec!["math", "words"]

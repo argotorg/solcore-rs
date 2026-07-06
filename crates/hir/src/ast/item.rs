@@ -300,6 +300,10 @@ pub struct Import<'db> {
     span: Span<'db>,
 
     #[tracked]
+    #[returns(copy)]
+    external: Option<Span<'db>>,
+
+    #[tracked]
     #[returns(ref)]
     path: Vec<SpannedElem<'db, Ident<'db>>>,
 

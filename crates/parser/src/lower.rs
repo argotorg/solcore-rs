@@ -77,17 +77,20 @@ fn lower_owned_ident<'db>(
 fn lower_import<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
+    external: Option<LexSpan>,
     path: Vec<SpannedStr<'_>>,
     alias: Option<SpannedStr<'_>>,
     selector: Option<ParsedImportSelector<'_>>,
     hiding: Vec<ParsedImportName>,
 ) -> item::Import<'db> {
-    let fingerprint = import_fingerprint(&path, alias.as_ref(), selector.as_ref(), &hiding);
+    let fingerprint =
+        import_fingerprint(external, &path, alias.as_ref(), selector.as_ref(), &hiding);
     let import_def =
         ctx.alloc_def_with_fingerprint(DefKind::Import, None, Some(&fingerprint), span.start);
 
     let anchor = AnchorId::def(ctx.db, import_def);
     let base_start = span.start;
+    let external = external.map(|span| span_from_absolute(anchor, span, base_start));
     let path = path
         .into_iter()
         .map(|segment| lower_spanned_ident(ctx.db, anchor, base_start, segment))
@@ -103,7 +106,9 @@ fn lower_import<'db>(
         })
         .collect();
     let span = span_from_absolute(anchor, span, base_start);
-    item::Import::new(ctx.db, import_def, span, path, alias, selector, hiding)
+    item::Import::new(
+        ctx.db, import_def, span, external, path, alias, selector, hiding,
+    )
 }
 
 fn lower_import_selector<'db>(
@@ -130,16 +135,24 @@ fn lower_import_selector<'db>(
 }
 
 fn import_fingerprint(
+    external: Option<LexSpan>,
     path: &[SpannedStr<'_>],
     alias: Option<&SpannedStr<'_>>,
     selector: Option<&ParsedImportSelector<'_>>,
     hiding: &[ParsedImportName],
 ) -> String {
-    let mut fingerprint = path
-        .iter()
-        .map(|(name, _)| *name)
-        .collect::<Vec<_>>()
-        .join(".");
+    let mut fingerprint = if external.is_some() {
+        "@".to_owned()
+    } else {
+        String::new()
+    };
+    fingerprint.push_str(
+        &path
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+            .join("."),
+    );
 
     if let Some((alias, _)) = alias {
         fingerprint.push_str(" as ");
@@ -242,17 +255,39 @@ fn lower_type_ref<'db>(
     base_start: usize,
     parsed_ty: ParsedTy<'_>,
 ) -> ty::TypeRef<'db> {
+    let ty_span = parsed_ty.span;
     let kind = match parsed_ty.kind {
-        ParsedTyKind::Named { name, args } => {
+        ParsedTyKind::Named {
+            qualifier,
+            name,
+            args,
+        } => {
+            let qualifier =
+                qualifier.map(|qualifier| lower_spanned_ident(db, anchor, base_start, qualifier));
             let name = lower_spanned_ident(db, anchor, base_start, name);
             let args = args
                 .into_iter()
                 .map(|arg| lower_type_ref(db, anchor, base_start, arg))
                 .collect::<Vec<_>>();
-            let args_span = span_from_absolute(anchor, parsed_ty.span, base_start);
+            let args_span = span_from_absolute(anchor, ty_span, base_start);
             ty::TypeRefKind::Named {
+                qualifier,
                 name,
                 args: SpannedElem::new(args, args_span),
+            }
+        }
+        ParsedTyKind::Proxy { at, inner } => {
+            let inner = lower_type_ref(db, anchor, base_start, *inner);
+            ty::TypeRefKind::Named {
+                qualifier: None,
+                name: SpannedElem::new(
+                    Ident::new(db, "Proxy".to_owned()),
+                    span_from_absolute(anchor, at, base_start),
+                ),
+                args: SpannedElem::new(
+                    vec![inner],
+                    span_from_absolute(anchor, ty_span, base_start),
+                ),
             }
         }
         ParsedTyKind::Fn { params, ret } => {
@@ -260,7 +295,7 @@ fn lower_type_ref<'db>(
                 .into_iter()
                 .map(|param| lower_type_ref(db, anchor, base_start, param))
                 .collect::<Vec<_>>();
-            let params_span = span_from_absolute(anchor, parsed_ty.span, base_start);
+            let params_span = span_from_absolute(anchor, ty_span, base_start);
             let ret = lower_type_ref(db, anchor, base_start, *ret);
             ty::TypeRefKind::Fn {
                 params: SpannedElem::new(params, params_span),
@@ -272,10 +307,10 @@ fn lower_type_ref<'db>(
             inner: lower_type_ref(db, anchor, base_start, *inner),
         },
         ParsedTyKind::Tuple { elems } => {
-            return lower_type_list_ref(db, anchor, base_start, parsed_ty.span, elems);
+            return lower_type_list_ref(db, anchor, base_start, ty_span, elems);
         }
         ParsedTyKind::Error => ty::TypeRefKind::Error {
-            span: span_from_absolute(anchor, parsed_ty.span, base_start),
+            span: span_from_absolute(anchor, ty_span, base_start),
         },
     };
     ty::TypeRef::new(db, kind)
@@ -365,12 +400,18 @@ fn structural_fingerprint(label: &str, components: &[String]) -> String {
 
 fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> Option<String> {
     match &ty.kind {
-        ParsedTyKind::Named { name, args } => {
-            let name = if args.is_empty() {
+        ParsedTyKind::Named {
+            qualifier,
+            name,
+            args,
+        } => {
+            let name = if args.is_empty() && qualifier.is_none() {
                 type_vars
                     .iter()
                     .find_map(|(var, index)| (*var == name.0).then_some(format!("${index}")))
                     .unwrap_or_else(|| name.0.to_owned())
+            } else if let Some((qualifier, _)) = qualifier {
+                format!("{}.{}", qualifier, name.0)
             } else {
                 name.0.to_owned()
             };
@@ -384,6 +425,9 @@ fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> O
                     .collect::<Option<Vec<_>>>()?;
                 Some(format!("{name}({})", args.join(",")))
             }
+        }
+        ParsedTyKind::Proxy { inner, .. } => {
+            canonical_ty_fingerprint(inner, type_vars).map(|inner| format!("Proxy({inner})"))
         }
         ParsedTyKind::Fn { params, ret } => {
             let params = params
@@ -1494,12 +1538,14 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
             match parsed {
                 ParsedTopItem::Import {
                     span,
+                    external,
                     path,
                     alias,
                     selector,
                     hiding,
                 } => {
-                    let import = lower_import(&mut ctx, span, path, alias, selector, hiding);
+                    let import =
+                        lower_import(&mut ctx, span, external, path, alias, selector, hiding);
                     items.push(item::Item::Import(import));
                 }
                 ParsedTopItem::Export { span, names } => {

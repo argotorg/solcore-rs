@@ -20,6 +20,7 @@ impl<'db> Spanned<'db> for TypeRef<'db> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum TypeRefKind<'db> {
     Named {
+        qualifier: Option<SpannedElem<'db, Ident<'db>>>,
         name: SpannedElem<'db, Ident<'db>>,
         args: SpannedElem<'db, Vec<TypeRef<'db>>>,
     },
@@ -34,13 +35,25 @@ pub enum TypeRefKind<'db> {
     Tuple {
         elems: SpannedElem<'db, Vec<TypeRef<'db>>>,
     },
-    Error { span: Span<'db> },
+    Error {
+        span: Span<'db>,
+    },
 }
 
 impl<'db> Spanned<'db> for TypeRefKind<'db> {
     fn span(&self, db: &'db dyn Db) -> Span<'db> {
         match self {
-            Self::Named { name, args } => name.span(db) + args.span(db),
+            Self::Named {
+                qualifier,
+                name,
+                args,
+            } => {
+                let head = qualifier
+                    .as_ref()
+                    .map(|qualifier| qualifier.span(db) + name.span(db))
+                    .unwrap_or_else(|| name.span(db));
+                head + args.span(db)
+            }
             Self::Fn { params, ret } => params.span(db) + ret.span(db),
             Self::Comptime { kw, inner } => *kw + inner.span(db),
             Self::Tuple { elems } => elems.span(db),

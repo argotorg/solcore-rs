@@ -114,6 +114,8 @@ pub enum Token<'a> {
     Pipe,
     #[token("^")]
     Caret,
+    #[token("@")]
+    At,
 
     // Punctuation.
     #[token(".")]
@@ -275,6 +277,7 @@ mod tests {
         assert_eq!(tokenize("="), vec![Token::Eq]);
         assert_eq!(tokenize("|"), vec![Token::Pipe]);
         assert_eq!(tokenize("^"), vec![Token::Caret]);
+        assert_eq!(tokenize("@"), vec![Token::At]);
     }
 
     #[test]

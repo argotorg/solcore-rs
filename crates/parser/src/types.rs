@@ -23,6 +23,7 @@ pub(crate) struct ParseOutput<T> {
 pub(crate) enum ParsedTopItem<'src> {
     Import {
         span: LexSpan,
+        external: Option<LexSpan>,
         path: Vec<SpannedStr<'src>>,
         alias: Option<SpannedStr<'src>>,
         selector: Option<ParsedImportSelector<'src>>,
@@ -109,8 +110,13 @@ pub(crate) struct ParsedTy<'src> {
 #[derive(Debug, Clone)]
 pub(crate) enum ParsedTyKind<'src> {
     Named {
+        qualifier: Option<SpannedStr<'src>>,
         name: SpannedStr<'src>,
         args: Vec<ParsedTy<'src>>,
+    },
+    Proxy {
+        at: LexSpan,
+        inner: Box<ParsedTy<'src>>,
     },
     Fn {
         params: Vec<ParsedTy<'src>>,
