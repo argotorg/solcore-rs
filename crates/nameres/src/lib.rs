@@ -26,9 +26,11 @@ use hir::{
     anchor::{DefId, DefKind},
     ast::{
         Ident,
+        function::{FuncBody, FuncParam},
         item::{
-            AdtDef, ClassDef, ConstructorSelector, ContractDef, Export, ExportKind, ExportedName,
-            FunctionDef, Import, ImportHiddenName, ImportSelector, Item, SelectedName, TypeAlias,
+            AdtDef, ClassDef, ConstructorSelector, ContractDef, ContractItem, Export, ExportKind,
+            ExportedName, FunctionDef, Import, ImportHiddenName, ImportSelector, Item, Module,
+            SelectedName, TypeAlias,
         },
     },
     diag::{AnyDiagnostic, Diagnostic, DiagnosticId, LabelSpan},
@@ -996,7 +998,8 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
     };
 
     let mut diagnostics = parse_diagnostics(db, file).to_vec();
-    if !diagnostics.is_empty() {
+    let has_parse_errors = !diagnostics.is_empty();
+    if has_parse_errors {
         // A parse-broken file has incomplete recovered HIR. The reference
         // compiler stops before nameres in this state, so we publish only parse
         // diagnostics here while still allowing resolution queries to run for
@@ -1017,24 +1020,163 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
     if !matches!(module.library(db), LibraryId::Std) {
         let hir_module = parse_file_to_hir(db, file).module(db);
         if let Some(item_scope) = env.item_scope.clone() {
-            let resolution = hir_nameres::resolve_module_with_imports_and_policy(
-                db,
-                hir_module,
-                item_scope,
-                &env,
-                hir_nameres::NameresDiagnosticPolicy::Emit,
-            );
             diagnostics.extend(
-                resolution
+                item_scope
                     .diagnostics
-                    .into_iter()
+                    .iter()
+                    .cloned()
                     .map(AnyDiagnostic::Nameres),
             );
+            let item_resolutions =
+                hir_nameres::resolve_item_types_with_imports(db, hir_module, &item_scope, &env);
+            diagnostics.extend(
+                item_resolutions
+                    .diagnostics
+                    .iter()
+                    .cloned()
+                    .map(AnyDiagnostic::Nameres),
+            );
+            collect_body_diagnostics(db, hir_module, &env, has_parse_errors, &mut diagnostics);
         }
     }
 
     sort_dedup_any_diagnostics(db, &mut diagnostics);
     diagnostics
+}
+
+/// Returns local name-resolution diagnostics for one function body.
+#[salsa::tracked(returns(ref))]
+pub fn body_diagnostics<'db>(
+    db: &'db dyn Db,
+    body: FuncBody<'db>,
+    context: hir_nameres::BodyResolutionContext<'db>,
+    env: ModuleEnv<'db>,
+    suppress_for_parse_errors: bool,
+) -> Vec<AnyDiagnostic> {
+    let policy = if suppress_for_parse_errors {
+        hir_nameres::NameresDiagnosticPolicy::SuppressForParseErrors
+    } else {
+        hir_nameres::NameresDiagnosticPolicy::Emit
+    };
+    let resolution =
+        hir_nameres::resolve_body_with_imports_and_policy(db, body, &context, &env, policy);
+    let mut diagnostics = resolution
+        .diagnostics
+        .into_iter()
+        .map(AnyDiagnostic::Nameres)
+        .collect::<Vec<_>>();
+    sort_dedup_any_diagnostics(db, &mut diagnostics);
+    diagnostics
+}
+
+fn collect_body_diagnostics<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    env: &ModuleEnv<'db>,
+    suppress_for_parse_errors: bool,
+    diagnostics: &mut Vec<AnyDiagnostic>,
+) {
+    let mut collector = BodyDiagnosticCollector {
+        db,
+        module,
+        env,
+        suppress_for_parse_errors,
+        diagnostics,
+    };
+    for item in module.items(db) {
+        collector.item(*item, None, &[]);
+    }
+}
+
+struct BodyDiagnosticCollector<'a, 'db> {
+    db: &'db dyn Db,
+    module: Module<'db>,
+    env: &'a ModuleEnv<'db>,
+    suppress_for_parse_errors: bool,
+    diagnostics: &'a mut Vec<AnyDiagnostic>,
+}
+
+impl<'a, 'db> BodyDiagnosticCollector<'a, 'db> {
+    fn item(
+        &mut self,
+        item: Item<'db>,
+        enclosing_contract: Option<DefId<'db>>,
+        inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    ) {
+        match item {
+            Item::FunctionDef(def) => {
+                self.function(def, enclosing_contract, inherited_type_vars);
+            }
+            Item::InstanceDef(def) => {
+                let mut inherited = inherited_type_vars.to_vec();
+                inherited.extend(type_var_bindings(
+                    def.def_id_value(self.db),
+                    def.type_var_elems(self.db),
+                ));
+                for method in def.methods(self.db) {
+                    self.function(*method, enclosing_contract, &inherited);
+                }
+            }
+            Item::ContractDef(def) => {
+                let mut inherited = inherited_type_vars.to_vec();
+                inherited.extend(type_var_bindings(
+                    def.def_id_value(self.db),
+                    def.ty_param_elems(self.db),
+                ));
+                for item in def.items(self.db) {
+                    match *item {
+                        ContractItem::FunctionDef(defn) => {
+                            self.function(defn, Some(def.def_id_value(self.db)), &inherited);
+                        }
+                        ContractItem::TypeAlias(_)
+                        | ContractItem::AdtDef(_)
+                        | ContractItem::Error { .. } => {}
+                    }
+                }
+            }
+            Item::TypeAlias(_)
+            | Item::AdtDef(_)
+            | Item::ClassDef(_)
+            | Item::Import(_)
+            | Item::Export(_)
+            | Item::Pragma(_)
+            | Item::Error { .. } => {}
+        }
+    }
+
+    fn function(
+        &mut self,
+        function: FunctionDef<'db>,
+        enclosing_contract: Option<DefId<'db>>,
+        inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    ) {
+        let Some(body) = function.body(self.db) else {
+            return;
+        };
+        let sig = function.sig(self.db);
+        let mut type_vars = inherited_type_vars.to_vec();
+        type_vars.extend(type_var_bindings(
+            function.def_id_value(self.db),
+            &sig.type_vars,
+        ));
+        let context = hir_nameres::BodyResolutionContext {
+            module: self.module,
+            enclosing_contract,
+            params: param_bindings(sig.params.atom()),
+            type_vars,
+        };
+        self.diagnostics.extend(
+            body_diagnostics(
+                self.db,
+                body,
+                context,
+                self.env.clone(),
+                self.suppress_for_parse_errors,
+            )
+            .iter()
+            .cloned(),
+        );
+    }
 }
 
 /// Returns diagnostics for every module reachable from `entry`.
@@ -1080,6 +1222,35 @@ fn sort_dedup_any_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<AnyDiagnos
     diagnostics.sort_by_key(|diagnostic| diagnostic.query_sort_key(db));
     let mut seen: FxHashSet<DiagnosticId> = FxHashSet::default();
     diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
+}
+
+fn param_bindings<'db>(params: &[FuncParam<'db>]) -> Vec<hir_nameres::ParamBinding<'db>> {
+    params
+        .iter()
+        .filter_map(param_name)
+        .map(|name| hir_nameres::ParamBinding { name: *name })
+        .collect()
+}
+
+fn param_name<'a, 'db>(param: &'a FuncParam<'db>) -> Option<&'a SpannedElem<'db, Ident<'db>>> {
+    match param {
+        FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => Some(name),
+        FuncParam::Error { .. } => None,
+    }
+}
+
+fn type_var_bindings<'db>(
+    owner: DefId<'db>,
+    vars: &[SpannedElem<'db, Ident<'db>>],
+) -> Vec<hir_nameres::TypeVarBinding<'db>> {
+    vars.iter()
+        .enumerate()
+        .map(|(index, name)| hir_nameres::TypeVarBinding {
+            owner,
+            name: *name,
+            index: index as u32,
+        })
+        .collect()
 }
 
 /// Collects instances declared directly in `module`.
