@@ -1,10 +1,11 @@
 //! Function, statement, expression, pattern, and Yul HIR nodes.
 //!
-//! Function bodies are arena-backed: statements, expressions, and patterns refer
-//! to each other by typed arena IDs. This avoids recursive ownership cycles and
-//! keeps body-local references compact. The `Error` variants in this file are
-//! recovery sentinels and should stay silent; parse diagnostics are collected
-//! during parsing/lowering, and visitors can inspect these nodes separately.
+//! Function bodies are arena-backed: statements, expressions, and patterns
+//! refer to each other by typed arena IDs. This avoids recursive ownership
+//! cycles and keeps body-local references compact. The `Error` variants in this
+//! file are recovery sentinels and should stay silent; parse diagnostics are
+//! collected during parsing/lowering, and visitors can inspect these nodes
+//! separately.
 
 use crate::{
     Db,
@@ -17,11 +18,12 @@ use crate::{
     span::{Span, Spanned, SpannedElem},
 };
 
-/// Lowered function signature shared by functions, methods, lambdas, and ABI forms.
+/// Lowered function signature shared by functions, methods, lambdas, and ABI
+/// forms.
 ///
 /// The signature stores source-level types and predicates, not checked types.
-/// `public` and `payable` keep the keyword spans when present so diagnostics can
-/// point at modifier misuse.
+/// `public` and `payable` keep the keyword spans when present so diagnostics
+/// can point at modifier misuse.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct FuncSig<'db> {
     /// Span covering the complete signature syntax.
@@ -48,7 +50,8 @@ impl<'db> Spanned<'db> for FuncSig<'db> {
     }
 }
 
-/// Lowered function body with arena-owned statements, expressions, and patterns.
+/// Lowered function body with arena-owned statements, expressions, and
+/// patterns.
 ///
 /// The body is a definition so spans inside it can be relative to the body base
 /// rather than to the whole file. `top_level_stmts` preserves execution order;
@@ -99,8 +102,8 @@ pub struct Stmt<'db> {
 ///
 /// Child expressions, patterns, and statements are referenced by IDs into the
 /// owning [`FuncBody`] arenas. The resolver relies on this shape for lexical
-/// scoping; for example `let` initializers are resolved before their binders are
-/// inserted.
+/// scoping; for example `let` initializers are resolved before their binders
+/// are inserted.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum StmtKind<'db> {
     /// Local binding statement.

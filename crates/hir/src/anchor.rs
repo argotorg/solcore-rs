@@ -1,9 +1,10 @@
 //! Stable structural identity for HIR definitions.
 //!
-//! [`crate::anchor::DefId`] is the identity used by semantic phases, spans, and diagnostics to
-//! refer to definitions across Salsa revisions. A definition key is structural:
-//! it contains the source file, an owner chain, a [`crate::anchor::DefKind`], an optional
-//! surface name, an optional structural fingerprint, and a disambiguator.
+//! [`crate::anchor::DefId`] is the identity used by semantic phases, spans, and
+//! diagnostics to refer to definitions across Salsa revisions. A definition key
+//! is structural: it contains the source file, an owner chain, a
+//! [`crate::anchor::DefKind`], an optional surface name, an optional structural
+//! fingerprint, and a disambiguator.
 //!
 //! The owner chain is the primary nesting model. A method belongs to its
 //! instance or contract, and a function body belongs to its function, so moving
@@ -89,9 +90,10 @@ pub(crate) struct DefKey {
 
 /// Canonical definition key.
 ///
-/// `DefId` is interned from a structural key rather than allocated from a global
-/// counter. The identity is stable when byte positions shift, provided the
-/// owner chain, kind, name, fingerprint, and duplicate ordinal stay the same.
+/// `DefId` is interned from a structural key rather than allocated from a
+/// global counter. The identity is stable when byte positions shift, provided
+/// the owner chain, kind, name, fingerprint, and duplicate ordinal stay the
+/// same.
 #[salsa::interned(debug)]
 pub struct DefId<'db> {
     /// Source file that owns this definition's structural key.
@@ -177,8 +179,8 @@ impl<'db> DefLocationTable<'db> {
     /// # Panics
     ///
     /// Panics if the same [`DefId`] appears more than once. Multiple distinct
-    /// definitions may share a hash; lookup verifies equality after narrowing to
-    /// the hash range.
+    /// definitions may share a hash; lookup verifies equality after narrowing
+    /// to the hash range.
     pub fn from_def_locations(
         entries: impl IntoIterator<Item = (DefId<'db>, DefLocation)>,
     ) -> Self {
@@ -249,7 +251,8 @@ struct DefBaseKey {
 ///
 /// A fresh canonicalizer is used for one lowering pass. It remembers how many
 /// times each base key has appeared and assigns duplicate ordinals in source
-/// traversal order, while leaving unique definitions at [`Disambiguator::ZERO`].
+/// traversal order, while leaving unique definitions at
+/// [`Disambiguator::ZERO`].
 #[derive(Debug, Default)]
 pub struct KeyCanonicalizer {
     def_counts: FxHashMap<DefBaseKey, u32>,
@@ -290,8 +293,8 @@ impl KeyCanonicalizer {
     /// Interns a [`DefId`] with the next deterministic disambiguator.
     ///
     /// This is the normal construction path during lowering. Use
-    /// [`Self::next_def_disambiguator`] only when the caller needs to inspect or
-    /// store the ordinal separately.
+    /// [`Self::next_def_disambiguator`] only when the caller needs to inspect
+    /// or store the ordinal separately.
     pub fn alloc_def<'db>(
         &mut self,
         db: &'db dyn crate::Db,

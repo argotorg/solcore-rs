@@ -14,7 +14,7 @@
 use annotate_snippets::{Annotation, AnnotationKind, Group, Level, Renderer, Snippet};
 
 use crate::{
-    anchor::{resolve_def_location, DefId, DefKey},
+    anchor::{DefId, DefKey, resolve_def_location},
     input::SourceFile,
     span::{AnchorKind, Span},
 };
@@ -78,7 +78,8 @@ pub struct DiagnosticSortKey {
     pub code: Option<String>,
     /// Human-readable headline message.
     pub message: String,
-    /// Stable identity tie-breaker for diagnostics that share the visible edge key.
+    /// Stable identity tie-breaker for diagnostics that share the visible edge
+    /// key.
     pub id: DiagnosticId,
 }
 
@@ -441,8 +442,8 @@ impl Diagnostic {
 
     /// Returns the source file of the primary label, if any.
     ///
-    /// This does not resolve def-relative offsets; it only reads the file stored
-    /// in the label anchor.
+    /// This does not resolve def-relative offsets; it only reads the file
+    /// stored in the label anchor.
     pub fn primary_file(&self, _db: &dyn crate::Db) -> Option<SourceFile> {
         self.primary_label().map(|label| label.span.file())
     }
@@ -498,7 +499,8 @@ impl Diagnostic {
     /// Converts this diagnostic into `annotate_snippets` groups.
     ///
     /// This is where label spans are resolved to absolute file offsets. Labels
-    /// whose files have no available content are skipped, but notes still render.
+    /// whose files have no available content are skipped, but notes still
+    /// render.
     pub fn to_annotate_report<'db>(&self, db: &'db dyn crate::Db) -> Vec<Group<'db>> {
         let mut title = self
             .level
@@ -659,11 +661,7 @@ impl LabelStyle {
 fn clamp_span(start: usize, end: usize, source_len: usize) -> core::ops::Range<usize> {
     let start = start.min(source_len);
     let end = end.min(source_len);
-    if start <= end {
-        start..end
-    } else {
-        end..start
-    }
+    if start <= end { start..end } else { end..start }
 }
 
 fn context_window_span(

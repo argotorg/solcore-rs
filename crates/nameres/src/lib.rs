@@ -1,9 +1,9 @@
 //! Inter-module name resolution and public interface construction.
 //!
-//! This crate sits above parsing and HIR name resolution. It maps logical module
-//! paths to source files, gathers imports/exports, builds a reachable module
-//! graph, computes each module's public interface, and finally resolves local
-//! HIR bodies with imported names available.
+//! This crate sits above parsing and HIR name resolution. It maps logical
+//! module paths to source files, gathers imports/exports, builds a reachable
+//! module graph, computes each module's public interface, and finally resolves
+//! local HIR bodies with imported names available.
 //!
 //! [`ModuleId`] is logical, not textual or filesystem identity. It is interned
 //! from a [`ModuleKey`] containing the library (`main`, `std`, or an external
@@ -794,7 +794,8 @@ fn selector_kind<'db>(selector: &ImportSelector<'db>) -> &'static str {
     }
 }
 
-/// Resolves a module path reference to a logical module and candidate file path.
+/// Resolves a module path reference to a logical module and candidate file
+/// path.
 ///
 /// This function does not require the target module to already be loaded. The
 /// driver uses it to discover reachable files before the tracked
@@ -846,8 +847,8 @@ pub fn resolve_module_path_candidate<'db>(
 
 /// Resolves a module path reference to a loaded module.
 ///
-/// Returns a diagnostic when the path cannot be mapped to a library root or when
-/// the target source file has not been loaded into the database.
+/// Returns a diagnostic when the path cannot be mapped to a library root or
+/// when the target source file has not been loaded into the database.
 #[salsa::tracked]
 #[tracing::instrument(
     target = "nameres::query",
@@ -1089,8 +1090,8 @@ pub fn validate_reachable<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleG
 
 /// Builds the imported-name environment for a module.
 ///
-/// Missing source files produce an empty environment so graph/load errors can be
-/// reported separately without panicking downstream HIR resolution.
+/// Missing source files produce an empty environment so graph/load errors can
+/// be reported separately without panicking downstream HIR resolution.
 #[salsa::tracked]
 #[tracing::instrument(
     target = "nameres::query",

@@ -2,21 +2,21 @@
 //!
 //! This resolver builds lexical item/body scopes for one lowered module and
 //! records what every type reference, predicate, expression, statement binder,
-//! and pattern binder resolves to. Inter-module imports are injected through the
-//! `ImportedNames` trait; this crate remains responsible for local language
+//! and pattern binder resolves to. Inter-module imports are injected through
+//! the `ImportedNames` trait; this crate remains responsible for local language
 //! semantics and builtin lookup.
 //!
 //! Solcore has distinct type and term namespaces. Type aliases, data types,
 //! contracts, classes, type variables, and builtin type/class names live in the
 //! type namespace. Functions, constructors, class methods, parameters, locals,
 //! fields, modules used as qualifiers, and builtin values/functions live in the
-//! term/module lookup surface. Constructor leaves are intentionally not accepted
-//! unqualified when they would be ambiguous with the type that owns them; callers
-//! must use qualified constructor syntax.
+//! term/module lookup surface. Constructor leaves are intentionally not
+//! accepted unqualified when they would be ambiguous with the type that owns
+//! them; callers must use qualified constructor syntax.
 //!
 //! Body scoping follows the reference semantics:
-//! - A `let` initializer is resolved before the `let` binder is inserted, so the
-//!   initializer cannot refer to the binding being declared.
+//! - A `let` initializer is resolved before the `let` binder is inserted, so
+//!   the initializer cannot refer to the binding being declared.
 //! - `for` statements do not introduce their own lexical scope; their
 //!   initializer, condition, post statements, and body share the surrounding
 //!   scope.
@@ -237,9 +237,9 @@ pub enum BuiltinKind {
 
 /// Result of resolving a name occurrence or binder.
 ///
-/// `Err` records that resolution failed, or that parser/import recovery made the
-/// target intentionally unknown and diagnostics were suppressed at the caller
-/// boundary.
+/// `Err` records that resolution failed, or that parser/import recovery made
+/// the target intentionally unknown and diagnostics were suppressed at the
+/// caller boundary.
 /// `DotCtorDeferred` is used for leading-dot constructor syntax whose concrete
 /// type is determined later by type information.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -331,9 +331,9 @@ pub struct FieldEntry<'db> {
 
 /// Name scope contributed by a contract body.
 ///
-/// Contract scopes are nested below the module scope. They contain contract-local
-/// types, terms, fields, and constructors, and are consulted when resolving code
-/// inside that contract.
+/// Contract scopes are nested below the module scope. They contain
+/// contract-local types, terms, fields, and constructors, and are consulted
+/// when resolving code inside that contract.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ContractScope<'db> {
     /// Contract definition that owns this scope.
@@ -919,7 +919,8 @@ pub fn resolve_item_types<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemReso
     resolve_item_types_with_imports(db, module, &scope, &imports)
 }
 
-/// Resolves type and predicate references in item signatures with imported names.
+/// Resolves type and predicate references in item signatures with imported
+/// names.
 ///
 /// `scope` must be the item scope for `module`. `imports` is consulted after
 /// local item/contract scopes and before builtin names.
@@ -960,9 +961,9 @@ pub fn resolve_body<'db>(
 
 /// Resolves one function body with imported names.
 ///
-/// This entry point is used by the inter-module resolver. It preserves the local
-/// scoping rules documented at module level and consults `imports` only after
-/// local/field/item lookup has failed.
+/// This entry point is used by the inter-module resolver. It preserves the
+/// local scoping rules documented at module level and consults `imports` only
+/// after local/field/item lookup has failed.
 pub fn resolve_body_with_imports<'db>(
     db: &'db dyn Db,
     body: FuncBody<'db>,
@@ -972,7 +973,8 @@ pub fn resolve_body_with_imports<'db>(
     resolve_body_with_imports_and_policy(db, body, context, imports, NameresDiagnosticPolicy::Emit)
 }
 
-/// Resolves one function body with imported names and an explicit diagnostic policy.
+/// Resolves one function body with imported names and an explicit diagnostic
+/// policy.
 pub fn resolve_body_with_imports_and_policy<'db>(
     db: &'db dyn Db,
     body: FuncBody<'db>,
@@ -995,7 +997,8 @@ pub fn resolve_body_with_imports_and_policy<'db>(
     map
 }
 
-/// Resolves all item signatures and function bodies in a module without imports.
+/// Resolves all item signatures and function bodies in a module without
+/// imports.
 #[salsa::tracked]
 #[tracing::instrument(
     target = "hir::query",
@@ -1012,8 +1015,8 @@ pub fn resolve_module<'db>(db: &'db dyn Db, module: Module<'db>) -> ModuleResolu
 
 /// Resolves all item signatures and function bodies in a module with imports.
 ///
-/// The supplied `scope` is reused for both item and body resolution so duplicate
-/// diagnostics and lookup surfaces are computed once.
+/// The supplied `scope` is reused for both item and body resolution so
+/// duplicate diagnostics and lookup surfaces are computed once.
 pub fn resolve_module_with_imports<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -1029,7 +1032,8 @@ pub fn resolve_module_with_imports<'db>(
     )
 }
 
-/// Resolves all item signatures and function bodies with an explicit diagnostic policy.
+/// Resolves all item signatures and function bodies with an explicit diagnostic
+/// policy.
 pub fn resolve_module_with_imports_and_policy<'db>(
     db: &'db dyn Db,
     module: Module<'db>,

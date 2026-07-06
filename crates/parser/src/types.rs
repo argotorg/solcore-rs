@@ -1,9 +1,9 @@
 //! Lightweight parsed syntax shared by the grammar and HIR lowerer.
 //!
-//! These types borrow text from the source string and use absolute lexical spans.
-//! They deliberately avoid HIR concepts such as `DefId` and anchor-relative
-//! spans; lowering is the boundary that allocates identities, anchors, arenas,
-//! and diagnostics.
+//! These types borrow text from the source string and use absolute lexical
+//! spans. They deliberately avoid HIR concepts such as `DefId` and
+//! anchor-relative spans; lowering is the boundary that allocates identities,
+//! anchors, arenas, and diagnostics.
 
 use chumsky::{extra, prelude::Rich};
 use hir::ast::{function, item::FuncKind};

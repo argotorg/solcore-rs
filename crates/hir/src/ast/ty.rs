@@ -2,8 +2,8 @@
 //!
 //! These nodes preserve source-level type names and argument structure before
 //! name resolution and type checking. The semantic shape is interned separately
-//! from occurrence spans so equivalent type references share the same intern key
-//! even when they appear at different byte offsets.
+//! from occurrence spans so equivalent type references share the same intern
+//! key even when they appear at different byte offsets.
 
 use crate::{
     Db,

@@ -235,8 +235,8 @@ struct Args {
 /// Parses command-line arguments.
 ///
 /// The driver accepts exactly one input file and zero or more external library
-/// roots via `--external-lib NAME=PATH`, `--external-lib=NAME=PATH`, `--lib`, or
-/// `--lib=`.
+/// roots via `--external-lib NAME=PATH`, `--external-lib=NAME=PATH`, `--lib`,
+/// or `--lib=`.
 fn parse_args(args: Vec<String>) -> Result<Args, String> {
     let mut input = None;
     let mut external_roots = Vec::new();
@@ -377,7 +377,8 @@ fn parse_external_root(value: &str) -> Result<(String, PathBuf), String> {
     Ok((name.to_owned(), PathBuf::from(path)))
 }
 
-/// Loads all modules reachable from `entry` by following import/export references.
+/// Loads all modules reachable from `entry` by following import/export
+/// references.
 ///
 /// Missing or unreadable modules are left unloaded so the name-resolution graph
 /// can emit normal diagnostics for them.
@@ -487,7 +488,8 @@ fn source_file_for_path(db: &DriverDb, path: &Path, source: String) -> Result<So
     Ok(SourceFile::new(db, url, Some(source)))
 }
 
-/// Converts a possibly relative path to an absolute path without resolving symlinks.
+/// Converts a possibly relative path to an absolute path without resolving
+/// symlinks.
 fn absolutize(path: &Path) -> std::io::Result<PathBuf> {
     if path.is_absolute() {
         Ok(path.to_path_buf())

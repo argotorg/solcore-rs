@@ -1,8 +1,8 @@
 //! Typed index arena for HIR bodies.
 //!
 //! Function bodies store statements, expressions, and patterns in compact
-//! arenas so recursive references can be represented by copyable IDs rather than
-//! by nested boxes. An `Id<T>` is meaningful only for the `Arena<T>` that
+//! arenas so recursive references can be represented by copyable IDs rather
+//! than by nested boxes. An `Id<T>` is meaningful only for the `Arena<T>` that
 //! allocated it.
 
 use std::{

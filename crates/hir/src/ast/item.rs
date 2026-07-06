@@ -2,8 +2,8 @@
 //!
 //! Items are the named declarations that participate in structural identity,
 //! module interfaces, and name resolution. Most item definitions are Salsa
-//! tracked structs keyed by a [`crate::anchor::DefId`] so later phases can refer to stable
-//! identities while still reading fields incrementally.
+//! tracked structs keyed by a [`crate::anchor::DefId`] so later phases can
+//! refer to stable identities while still reading fields incrementally.
 
 use crate::{
     Db,

@@ -63,10 +63,7 @@ impl hir::Db for TestDb {
 impl solcore_parser::Db for TestDb {}
 
 #[salsa::tracked]
-fn function_relative_span<'db>(
-    db: &'db dyn hir::Db,
-    function: FunctionDef<'db>,
-) -> (u32, u32) {
+fn function_relative_span<'db>(db: &'db dyn hir::Db, function: FunctionDef<'db>) -> (u32, u32) {
     let span = function.span(db);
     (span.begin().as_u32(), span.end().as_u32())
 }

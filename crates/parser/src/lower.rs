@@ -1775,8 +1775,9 @@ fn lower_contract<'db>(
 /// Parses and lowers one source file into HIR.
 ///
 /// The returned `ParseHirOutput` contains both the lowered module and the
-/// def-location table required for later absolute span resolution. This function
-/// assumes parsed spans are absolute byte offsets into the same source file.
+/// def-location table required for later absolute span resolution. This
+/// function assumes parsed spans are absolute byte offsets into the same source
+/// file.
 ///
 /// # Panics
 ///

@@ -7,18 +7,18 @@
 //! compared and shared cheaply.
 
 use crate::{
-    ast::{
-        item::{AdtDef, ClassDef, ContractDef, TypeAlias},
-        Ident,
-    },
     Db,
+    ast::{
+        Ident,
+        item::{AdtDef, ClassDef, ContractDef, TypeAlias},
+    },
 };
 
 /// Interned semantic type.
 ///
-/// A `Ty` is no longer just source syntax: names have been resolved to builtins,
-/// user constructors, type variables, or inference variables. `TyKind::Error`
-/// lets later phases continue after an earlier diagnostic.
+/// A `Ty` is no longer just source syntax: names have been resolved to
+/// builtins, user constructors, type variables, or inference variables.
+/// `TyKind::Error` lets later phases continue after an earlier diagnostic.
 #[salsa::interned(debug)]
 pub struct Ty<'db> {
     /// Semantic type payload.
@@ -68,7 +68,8 @@ pub struct InferenceVar(u32);
 /// Flavor of semantic type variable.
 ///
 /// Bound variables are quantified by a scheme or declaration; skolems are rigid
-/// variables introduced to check polymorphic code without accidental unification.
+/// variables introduced to check polymorphic code without accidental
+/// unification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub enum TyVarFlavor {
     /// Quantified variable that may be instantiated.
@@ -186,7 +187,8 @@ pub struct TyScheme<'db> {
 }
 
 impl BuiltinTyCtor {
-    /// Returns the number of type arguments required by this builtin constructor.
+    /// Returns the number of type arguments required by this builtin
+    /// constructor.
     pub const fn arity(self) -> usize {
         match self {
             Self::Word | Self::Unit | Self::Bool | Self::String | Self::Integer => 0,

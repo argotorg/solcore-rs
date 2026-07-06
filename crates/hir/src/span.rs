@@ -1,18 +1,19 @@
 //! Anchor-relative source spans.
 //!
-//! HIR spans are stored as byte offsets relative to an [`crate::span::AnchorId`] instead of
-//! as absolute file offsets. Root anchors are file-relative; definition anchors
-//! are relative to the current base offset of a stable [`crate::anchor::DefId`]. That design
-//! lets semantic Salsa queries stay byte-shift invariant: moving a function
-//! down in a file changes the def-location table, but not every span inside the
-//! function body.
+//! HIR spans are stored as byte offsets relative to an
+//! [`crate::span::AnchorId`] instead of as absolute file offsets. Root anchors
+//! are file-relative; definition anchors are relative to the current base
+//! offset of a stable [`crate::anchor::DefId`]. That design lets semantic Salsa
+//! queries stay byte-shift invariant: moving a function down in a file changes
+//! the def-location table, but not every span inside the function body.
 //!
 //! Absolute resolution is therefore an edge-only operation. Diagnostics, LSP,
 //! CLI output, and other presentation boundaries may call
-//! [`crate::span::Span::resolve_to_absolute`], [`crate::span::AnchorId::source_file`], or
-//! [`crate::span::AnchorId::base_offset`]. Tracked semantic queries should keep spans
-//! relative, because reading the location table would backdate otherwise stable
-//! results and cause broad re-execution after unrelated edits.
+//! [`crate::span::Span::resolve_to_absolute`],
+//! [`crate::span::AnchorId::source_file`], or
+//! [`crate::span::AnchorId::base_offset`]. Tracked semantic queries should keep
+//! spans relative, because reading the location table would backdate otherwise
+//! stable results and cause broad re-execution after unrelated edits.
 
 use std::ops::Add;
 
@@ -144,8 +145,8 @@ impl<'db> Span<'db> {
 
     /// Returns the starting byte offset relative to this span's anchor.
     ///
-    /// For root anchors this is also the file offset; for def anchors it is only
-    /// meaningful after adding the def's current base offset.
+    /// For root anchors this is also the file offset; for def anchors it is
+    /// only meaningful after adding the def's current base offset.
     pub fn begin(self) -> Offset {
         self.begin
     }
@@ -160,9 +161,9 @@ impl<'db> Span<'db> {
 
     /// Resolves the source file for this span's anchor.
     ///
-    /// This follows the same edge-only rule as [`AnchorId::source_file`]. It may
-    /// consult the def-location table for def anchors and panic if the table is
-    /// missing the definition.
+    /// This follows the same edge-only rule as [`AnchorId::source_file`]. It
+    /// may consult the def-location table for def anchors and panic if the
+    /// table is missing the definition.
     pub fn source_file(self, db: &'db dyn Db) -> SourceFile {
         self.anchor.source_file(db)
     }
@@ -191,7 +192,8 @@ fn add_offset(base: Offset, rel: Offset) -> Offset {
 impl<'db> Add for Span<'db> {
     type Output = Self;
 
-    /// Returns the smallest span covering both operands when they share an anchor.
+    /// Returns the smallest span covering both operands when they share an
+    /// anchor.
     ///
     /// Spans with different anchors cannot be combined without absolute
     /// resolution, so release builds preserve the left operand after a debug
@@ -246,8 +248,8 @@ impl<'db, T: salsa::Update> Spanned<'db> for SpannedElem<'db, T> {
 /// Common interface for HIR nodes that can identify their source range.
 ///
 /// Implementations return anchor-relative spans. Callers must only resolve the
-/// span to absolute offsets when they are producing diagnostics, editor data, or
-/// other non-cached presentation artifacts.
+/// span to absolute offsets when they are producing diagnostics, editor data,
+/// or other non-cached presentation artifacts.
 pub trait Spanned<'db> {
     /// Returns the anchor-relative span covering this node's original syntax.
     ///
