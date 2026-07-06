@@ -354,7 +354,7 @@ pub struct Module<'db> {
 
     #[tracked]
     #[returns(ref)]
-    items: Vec<Item<'db>>,
+    pub items: Vec<Item<'db>>,
 }
 
 impl<'db> Spanned<'db> for Module<'db> {
