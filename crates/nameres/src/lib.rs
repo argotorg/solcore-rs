@@ -1,3 +1,22 @@
+//! Inter-module name resolution and public interface construction.
+//!
+//! This crate sits above parsing and HIR name resolution. It maps logical module
+//! paths to source files, gathers imports/exports, builds a reachable module
+//! graph, computes each module's public interface, and finally resolves local
+//! HIR bodies with imported names available.
+//!
+//! [`ModuleId`] is logical, not textual or filesystem identity. It is interned
+//! from a [`ModuleKey`] containing the library (`main`, `std`, or an external
+//! root) plus the module path inside that library. The same source text reached
+//! through a different library root is a different module by design.
+//!
+//! Public interfaces are Salsa tracked with a fixed point:
+//! `public_interface_initial` seeds cyclic queries with an empty interface, and
+//! `public_interface_cycle` keeps the newer result only when it changes.
+//! Starting empty is conservative: during an import/export cycle, no name is
+//! assumed visible until a real expansion proves it. Repeated evaluation grows
+//! or stabilizes the interface until the cycle converges.
+
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     path::{Path, PathBuf},
@@ -20,48 +39,78 @@ use hir::{
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+/// Database contract for inter-module name resolution.
 #[salsa::db]
 pub trait Db: parser::Db {
+    /// Returns the logical library roots available to this compilation.
     fn module_tree(&self) -> ModuleTree;
 
+    /// Returns the source file loaded for a logical module, if any.
+    ///
+    /// Drivers may populate this map lazily while traversing imports.
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile>;
 }
 
+/// Input describing the module roots for a compilation.
+///
+/// Paths are expected to be normalized by the driver. External roots are keyed
+/// by the library name used after `@` imports.
 #[salsa::input(debug)]
 pub struct ModuleTree {
+    /// Root directory for the main input library.
     #[returns(ref)]
     pub main_root: PathBuf,
 
+    /// Root directory for the standard library.
     #[returns(ref)]
     pub std_root: PathBuf,
 
+    /// Named external library roots.
     #[returns(ref)]
     pub external_roots: BTreeMap<String, PathBuf>,
 }
 
+/// Logical library namespace that owns a module path.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, salsa::Update)]
 pub enum LibraryId {
+    /// User input tree.
     Main,
+    /// Standard library tree.
     Std,
+    /// Named external library root.
     External(String),
 }
 
+/// Lifetime-free logical module key.
+///
+/// This is the driver-facing form of a module identity. It can live in normal
+/// maps and be re-interned as a [`ModuleId`] when a database is available.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleKey {
+    /// Library root that owns the path.
     pub library: LibraryId,
+    /// Dot/path segments relative to the library root.
     pub logical_path: Vec<String>,
 }
 
+/// Interned logical module identity.
+///
+/// Module identity is based on library plus logical path. Absolute file paths
+/// are derived from the module tree and may change without changing the logical
+/// module.
 #[salsa::interned(debug)]
 pub struct ModuleId<'db> {
+    /// Library root that owns this module.
     #[returns(ref)]
     pub library: LibraryId,
 
+    /// Dot/path segments relative to the library root.
     #[returns(ref)]
     pub logical_path: Vec<String>,
 }
 
 impl<'db> ModuleId<'db> {
+    /// Returns this module's lifetime-free key.
     pub fn key(self, db: &'db dyn Db) -> ModuleKey {
         ModuleKey {
             library: self.library(db).clone(),
@@ -69,107 +118,169 @@ impl<'db> ModuleId<'db> {
         }
     }
 
+    /// Returns a human-readable module path.
     pub fn display(self, db: &'db dyn Db) -> String {
         module_id_display(db, self)
     }
 }
 
+/// Module path reference extracted from import/export syntax.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ModulePathRef<'db> {
+    /// Span covering the complete module path syntax.
     pub span: Span<'db>,
+    /// Span of the external-library marker when present.
     pub external: Option<Span<'db>>,
+    /// Path segments in source order.
     pub segments: Vec<SpannedElem<'db, Ident<'db>>>,
 }
 
+/// Import/export module references found in one source file.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ModuleImports<'db> {
+    /// Import declarations in source order.
     pub imports: Vec<Import<'db>>,
+    /// Export declarations in source order.
     pub exports: Vec<Export<'db>>,
+    /// Module paths mentioned by imports.
     pub import_refs: Vec<ModulePathRef<'db>>,
+    /// Module paths mentioned by exports/re-exports.
     pub export_refs: Vec<ModulePathRef<'db>>,
 }
 
+/// Resolved module path and its file location.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ResolvedModulePath<'db> {
+    /// Logical module identity.
     pub module: ModuleId<'db>,
+    /// Absolute source file path for the module.
     pub file_path: PathBuf,
 }
 
+/// Interface namespace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum Namespace {
+    /// Term namespace.
     Term,
+    /// Type namespace.
     Type,
+    /// Class namespace.
     Class,
 }
 
+/// Origin of a public/imported item.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct Origin<'db> {
+    /// Module where the item originates.
     pub module: ModuleId<'db>,
+    /// Definition identity of the originating item.
     pub def_id: DefId<'db>,
 }
 
+/// Public or imported item reference.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ItemRef<'db> {
+    /// Namespace in which the item is visible.
     pub namespace: Namespace,
+    /// Name exposed by an interface or import.
     pub public_name: String,
+    /// Original name in the source module.
     pub source_name: String,
+    /// Module/definition origin.
     pub origin: Origin<'db>,
     /// `Some` marks data types. The set contains the public constructors; an
     /// empty set means the data type is exported opaquely.
     pub constructors: Option<BTreeSet<String>>,
 }
 
+/// Public module alias exported by an interface.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ModuleAlias<'db> {
+    /// Alias name visible to importers.
     pub public_name: String,
+    /// Target module identity.
     pub target: ModuleId<'db>,
 }
 
+/// Public interface of one module.
+///
+/// The maps are the lookup surfaces used by imports and re-exports. `item_refs`
+/// preserves normalized item references for selector filtering and constructor
+/// visibility.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, salsa::Update)]
 pub struct Interface<'db> {
+    /// Public term names.
     pub terms: BTreeMap<String, Origin<'db>>,
+    /// Public type names.
     pub types: BTreeMap<String, Origin<'db>>,
+    /// Public class names.
     pub classes: BTreeMap<String, Origin<'db>>,
+    /// Public constructors per data type name.
     pub constructor_visibility: BTreeMap<String, BTreeSet<String>>,
+    /// Public module aliases.
     pub module_aliases: BTreeMap<String, ModuleId<'db>>,
+    /// Normalized public item references.
     pub item_refs: Vec<ItemRef<'db>>,
 }
 
+/// Directed edge in a reachable module graph.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ModuleEdge<'db> {
+    /// Source module.
     pub from: ModuleId<'db>,
+    /// Target module.
     pub to: ModuleId<'db>,
 }
 
+/// Reachable module graph from an entry module.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ModuleGraph<'db> {
+    /// Entry module.
     pub entry: ModuleId<'db>,
+    /// Reachable modules in traversal order.
     pub modules: Vec<ModuleId<'db>>,
+    /// Edges from import declarations.
     pub import_edges: Vec<ModuleEdge<'db>>,
+    /// Edges from export/re-export references.
     pub reference_edges: Vec<ModuleEdge<'db>>,
 }
 
+/// Summary returned by validation queries.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ValidationSummary {
+    /// `true` once validation has traversed the module.
     pub checked: bool,
 }
 
+/// Instance origins visible for a module.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct InstanceImports<'db> {
+    /// Locally declared instances.
     pub local: Vec<Origin<'db>>,
+    /// Imported instances.
     pub imported: Vec<Origin<'db>>,
 }
 
+/// Imported-name environment supplied to HIR name resolution.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ModuleEnv<'db> {
+    /// Owner used when synthesizing module qualifier resolutions.
     pub owner: Option<DefId<'db>>,
+    /// Local item scope, when loaded.
     pub item_scope: Option<hir_nameres::ItemScope<'db>>,
+    /// Imported term names.
     pub terms: BTreeMap<String, hir_nameres::Resolution<'db>>,
+    /// Imported type/class names.
     pub types: BTreeMap<String, hir_nameres::Resolution<'db>>,
+    /// Visible module qualifiers.
     pub modules: BTreeMap<String, ModuleId<'db>>,
+    /// Constructor leaf names visible from imported data types.
     pub constructor_leaves: BTreeSet<String>,
+    /// Constructor visibility by public data type name.
     pub constructor_visibility: BTreeMap<String, BTreeSet<String>>,
+    /// Data types imported with only a subset of constructors.
     pub partial_data: BTreeMap<String, BTreeSet<String>>,
+    /// Instances visible from local and imported modules.
     pub instances: Vec<Origin<'db>>,
 }
 
@@ -216,8 +327,10 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
     }
 }
 
+/// Summary returned by full resolution queries.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct FullResolutionSummary {
+    /// `true` once full resolution has traversed the module.
     pub checked: bool,
 }
 
@@ -227,6 +340,10 @@ struct RawInterface<'db> {
     module_aliases: Vec<ModuleAlias<'db>>,
 }
 
+/// Formats a logical module ID as user-facing text.
+///
+/// Main modules omit a prefix, standard-library modules use `std`, and external
+/// modules use `@name.path` form.
 pub fn module_id_display<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> String {
     let path = module.logical_path(db).join(".");
     match module.library(db) {
@@ -237,6 +354,7 @@ pub fn module_id_display<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> String 
     }
 }
 
+/// Formats a module path reference as it appeared in import/export syntax.
 pub fn module_path_display<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> String {
     let segments = path_segments(db, path).join(".");
     if path.external.is_some() {
@@ -246,6 +364,10 @@ pub fn module_path_display<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> S
     }
 }
 
+/// Converts a logical module path into the conventional source file path.
+///
+/// Each logical segment becomes a path component and the file extension is
+/// `.solc`.
 pub fn module_file_path(logical_path: &[String]) -> PathBuf {
     let mut path = PathBuf::new();
     for segment in logical_path {
@@ -255,6 +377,10 @@ pub fn module_file_path(logical_path: &[String]) -> PathBuf {
     path
 }
 
+/// Converts an absolute file path under `root` into a logical module key.
+///
+/// Returns `None` when `file_path` is outside `root`, contains non-UTF-8 path
+/// segments, or maps to an empty logical path.
 pub fn module_key_for_path(library: LibraryId, root: &Path, file_path: &Path) -> Option<ModuleKey> {
     let rel = file_path.strip_prefix(root).ok()?;
     let mut logical_path = Vec::new();
@@ -270,10 +396,16 @@ pub fn module_key_for_path(library: LibraryId, root: &Path, file_path: &Path) ->
     })
 }
 
+/// Interns a logical module key in the current database.
 pub fn module_id_from_key<'db>(db: &'db dyn Db, key: &ModuleKey) -> ModuleId<'db> {
     ModuleId::new(db, key.library.clone(), key.logical_path.clone())
 }
 
+/// Resolves a module path reference to a logical module and candidate file path.
+///
+/// This function does not require the target module to already be loaded. The
+/// driver uses it to discover reachable files before the tracked
+/// [`resolve_module_path`] query enforces presence in the database.
 pub fn resolve_module_path_candidate<'db>(
     db: &'db dyn Db,
     importing: ModuleId<'db>,
@@ -319,6 +451,10 @@ pub fn resolve_module_path_candidate<'db>(
     Ok(ResolvedModulePath { module, file_path })
 }
 
+/// Resolves a module path reference to a loaded module.
+///
+/// Returns a diagnostic when the path cannot be mapped to a library root or when
+/// the target source file has not been loaded into the database.
 #[salsa::tracked]
 pub fn resolve_module_path<'db>(
     db: &'db dyn Db,
@@ -333,6 +469,10 @@ pub fn resolve_module_path<'db>(
     }
 }
 
+/// Extracts import and export module references from a source file.
+///
+/// The parser/lowerer owns syntax diagnostics; this query only classifies the
+/// lowered import/export items for graph construction.
 #[salsa::tracked]
 pub fn module_imports<'db>(db: &'db dyn Db, file: SourceFile) -> ModuleImports<'db> {
     let module = parse_file_to_hir(db, file).module(db);
@@ -363,6 +503,11 @@ pub fn module_imports<'db>(db: &'db dyn Db, file: SourceFile) -> ModuleImports<'
     }
 }
 
+/// Builds the import/export reachability graph from `entry`.
+///
+/// Import edges represent direct imports. Reference edges include both imports
+/// and module references that appear in exports/re-exports, because those also
+/// participate in public-interface cycles.
 #[salsa::tracked]
 pub fn module_graph<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'db> {
     let mut modules = Vec::new();
@@ -425,6 +570,10 @@ pub fn module_graph<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'
     }
 }
 
+/// Computes strongly connected components of a module graph.
+///
+/// Components are based on reference edges, not only imports, so export cycles
+/// are represented in the same graph used by interface fixed points.
 pub fn strongly_connected_components<'db>(graph: &ModuleGraph<'db>) -> Vec<Vec<ModuleId<'db>>> {
     let mut adjacency: FxHashMap<ModuleId<'db>, Vec<ModuleId<'db>>> = FxHashMap::default();
     for module in &graph.modules {
@@ -452,6 +601,12 @@ pub fn strongly_connected_components<'db>(graph: &ModuleGraph<'db>) -> Vec<Vec<M
     state.components
 }
 
+/// Computes the public interface exported by `module`.
+///
+/// This query may recursively depend on other public interfaces through
+/// re-exports. Salsa handles cycles by starting from an empty interface and
+/// re-running until interface equality stabilizes; diagnostics that require the
+/// final fixed point are emitted by [`validate_module`].
 #[salsa::tracked(cycle_fn = public_interface_cycle, cycle_initial = public_interface_initial)]
 pub fn public_interface<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Interface<'db> {
     // This query is intentionally side-effect free: during salsa fixed-point
@@ -466,6 +621,8 @@ fn public_interface_initial<'db>(
     _id: salsa::Id,
     _module: ModuleId<'db>,
 ) -> Interface<'db> {
+    // Empty is the least assumption for export cycles: no imported name is
+    // visible until a later iteration can prove it from a concrete interface.
     Interface::default()
 }
 
@@ -476,9 +633,15 @@ fn public_interface_cycle<'db>(
     value: Interface<'db>,
     _module: ModuleId<'db>,
 ) -> Interface<'db> {
+    // Salsa compares this returned value with the last provisional interface and
+    // continues the cycle only while it changes.
     value
 }
 
+/// Validates imports and exports for one loaded module.
+///
+/// The public interface is forced before duplicate export validation so checks
+/// that depend on re-exported interfaces see the converged value.
 #[salsa::tracked]
 pub fn validate_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ValidationSummary {
     validate_imports(db, module);
@@ -488,6 +651,10 @@ pub fn validate_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Validatio
     ValidationSummary { checked: true }
 }
 
+/// Validates every module reachable from `entry`.
+///
+/// The returned graph is the same graph used for traversal, allowing callers to
+/// inspect reachability after forcing diagnostics.
 #[salsa::tracked]
 pub fn validate_reachable<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'db> {
     let graph = module_graph(db, entry);
@@ -497,6 +664,10 @@ pub fn validate_reachable<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleG
     graph
 }
 
+/// Builds the imported-name environment for a module.
+///
+/// Missing source files produce an empty environment so graph/load errors can be
+/// reported separately without panicking downstream HIR resolution.
 #[salsa::tracked]
 pub fn module_env<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ModuleEnv<'db> {
     let Some(file) = db.module_file(module) else {
@@ -513,6 +684,10 @@ pub fn module_env<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ModuleEnv<'db>
     builder.finish()
 }
 
+/// Runs validation and HIR name resolution for one module.
+///
+/// Standard library modules are currently validated but skipped for full local
+/// HIR body resolution to keep driver runs focused on user code.
 #[salsa::tracked]
 pub fn resolve_module_full<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> FullResolutionSummary {
     let _ = validate_module(db, module);
@@ -530,6 +705,7 @@ pub fn resolve_module_full<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> FullR
     FullResolutionSummary { checked: true }
 }
 
+/// Runs full resolution for every module reachable from `entry`.
 #[salsa::tracked]
 pub fn resolve_reachable_full<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'db> {
     let graph = module_graph(db, entry);
@@ -539,6 +715,10 @@ pub fn resolve_reachable_full<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Mod
     graph
 }
 
+/// Collects instances declared directly in `module`.
+///
+/// Missing source files yield an empty list; module loading diagnostics are
+/// emitted by graph construction.
 #[salsa::tracked]
 pub fn module_instances<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<Origin<'db>> {
     let Some(file) = db.module_file(module) else {
@@ -558,6 +738,7 @@ pub fn module_instances<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<Orig
         .collect()
 }
 
+/// Collects local and directly imported instance origins for `module`.
 #[salsa::tracked]
 pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> InstanceImports<'db> {
     let Some(file) = db.module_file(module) else {

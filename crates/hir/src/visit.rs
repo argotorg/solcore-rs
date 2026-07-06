@@ -1,3 +1,11 @@
+//! HIR inspection helpers.
+//!
+//! This module currently exposes an error-node collector used by tests and
+//! callers that need to distinguish parser recovery from later semantic errors.
+//! It follows a silent-`Error` contract: recovered HIR nodes are collected as
+//! data, not reported as diagnostics here. The parser/lowerer is responsible
+//! for emitting parse diagnostics exactly once.
+
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -13,12 +21,23 @@ use crate::{
     span::{Span, Spanned},
 };
 
+/// Recovered error placeholder found in lowered HIR.
+///
+/// The `kind` names the enum variant that carried the placeholder, and `span`
+/// is the anchor-relative source range of the recovered syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ErrorNode<'db> {
+    /// Static enum-variant name for the recovered node.
     pub kind: &'static str,
+    /// Anchor-relative range associated with the recovery node.
     pub span: Span<'db>,
 }
 
+/// Collects recovered `Error` nodes from a module without emitting diagnostics.
+///
+/// This is intentionally a read-only inspection pass. It recurses through item
+/// signatures, function bodies, nested lambda bodies, type references, and Yul
+/// blocks, but it does not interpret names or types.
 pub fn collect_error_nodes<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<ErrorNode<'db>> {
     let mut collector = ErrorCollector {
         db,

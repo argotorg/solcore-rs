@@ -1,3 +1,11 @@
+//! Chumsky grammar for Solcore source syntax.
+//!
+//! The grammar produces lightweight parsed nodes with absolute lexical spans.
+//! Bodies are first captured as brace spans and parsed separately during
+//! lowering so function/lambda bodies can receive their own def anchors. Error
+//! recovery nodes are produced here, but diagnostics are accumulated after the
+//! parsed output is lowered to HIR spans.
+
 use chumsky::{input::ValueInput, prelude::*};
 use hir::ast::{function, item::FuncKind};
 use logos::Logos;
@@ -751,6 +759,10 @@ fn expr_pat_parsers<'src, I>() -> (
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
+    // Expressions and patterns are mutually recursive: patterns can contain
+    // comptime expressions, while expressions contain match arms with patterns.
+    // `Recursive::declare` lets both parser handles exist before either grammar
+    // is defined.
     let mut expr = Recursive::declare();
     let mut pat = Recursive::declare();
 
@@ -977,6 +989,9 @@ where
             .then_ignore(just(Token::FatArrow))
             .ignored();
         let bit_or_op = just(Token::Pipe)
+            // In a match body, `| pat =>` starts the next arm; without this
+            // guard the expression parser could consume the separator as a
+            // bitwise-or operator while recovering from the previous arm body.
             .and_is(match_arm_separator.not())
             .to(function::BinOp::BitOr)
             .map_with(|op, e| ParsedSpanned::new(op, e.span()));
@@ -1645,6 +1660,8 @@ where
     let comptime_typed = comptime_kw_parser()
         .then(ident_parser())
         .then_ignore(just(Token::Colon))
+        // First probe the longer `comptime name: Type` shape. Rewinding keeps
+        // the actual parser branch from consuming input during the lookahead.
         .rewind()
         .ignore_then(comptime_kw_parser())
         .then(ident_parser())
@@ -1661,6 +1678,8 @@ where
     let comptime_untyped = comptime_kw_parser()
         .then(ident_parser())
         .then_ignore(param_end.rewind())
+        // `comptime name` is accepted only at a parameter boundary; otherwise
+        // `comptime name: Type` must be parsed by the typed branch above.
         .rewind()
         .ignore_then(comptime_kw_parser())
         .then(ident_parser())
@@ -2689,6 +2708,11 @@ fn span_contains(outer: LexSpan, inner: LexSpan) -> bool {
     outer.start <= inner.start && inner.end <= outer.end
 }
 
+/// Parses the top-level items currently supported by the front end.
+///
+/// Invalid top-level spans are represented as `ParsedTopItem::Error` and also
+/// converted into user-facing parse errors. The function never panics on
+/// malformed source.
 pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedTopItem<'src>> {
     let (tokens, mut errors) = tokenize(src);
     let stream = chumsky::input::Stream::from_iter(tokens)
@@ -2746,6 +2770,11 @@ fn tokenize_with_base<'src>(
     (tokens, errors)
 }
 
+/// Parses statements inside a function or lambda body span.
+///
+/// `body_span` is the absolute span of the outer braces in `source`. Returned
+/// statement spans remain absolute to the source file; lowering later converts
+/// them to offsets relative to the body anchor.
 pub(crate) fn parse_body_statements<'src>(
     source: &'src str,
     body_span: LexSpan,

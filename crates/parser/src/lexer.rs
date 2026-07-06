@@ -1,174 +1,258 @@
+//! Lexical tokens for the Solcore parser.
+//!
+//! Logos produces token spans in absolute byte offsets over the input string.
+//! Comments and whitespace are skipped; invalid characters are reported by the
+//! parser's tokenization wrapper so the rest of the grammar can recover.
+
 use logos::Logos;
 
+/// Token recognized by the Solcore lexer.
+///
+/// Literal and identifier variants borrow slices from the input source. Token
+/// ordering matters for overlapping operators: multi-character operators are
+/// defined before their single-character prefixes.
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
 pub enum Token<'a> {
-    // Keywords.
+    /// `contract`.
     #[token("contract")]
     Contract,
+    /// `import`.
     #[token("import")]
     Import,
+    /// `export`.
     #[token("export")]
     Export,
+    /// `as`.
     #[token("as")]
     As,
+    /// `let`.
     #[token("let")]
     Let,
+    /// `data`.
     #[token("data")]
     Data,
+    /// `class`.
     #[token("class")]
     Class,
+    /// `forall`.
     #[token("forall")]
     Forall,
+    /// `instance`.
     #[token("instance")]
     Instance,
+    /// `if`.
     #[token("if")]
     If,
+    /// `else`.
     #[token("else")]
     Else,
+    /// `for`.
     #[token("for")]
     For,
+    /// `switch`.
     #[token("switch")]
     Switch,
+    /// `type`.
     #[token("type")]
     Type,
+    /// `case`.
     #[token("case")]
     Case,
+    /// `default`.
     #[token("default")]
     Default,
+    /// `match`.
     #[token("match")]
     Match,
+    /// `public`.
     #[token("public")]
     Public,
+    /// `payable`.
     #[token("payable")]
     Payable,
+    /// `function`.
     #[token("function")]
     Function,
+    /// `constructor`.
     #[token("constructor")]
     Constructor,
+    /// `fallback`.
     #[token("fallback")]
     Fallback,
+    /// `return`.
     #[token("return")]
     Return,
+    /// `leave`.
     #[token("leave")]
     Leave,
+    /// `continue`.
     #[token("continue")]
     Continue,
+    /// `break`.
     #[token("break")]
     Break,
+    /// `lam`.
     #[token("lam")]
     Lam,
+    /// `assembly`.
     #[token("assembly")]
     Assembly,
+    /// `pragma`.
     #[token("pragma")]
     Pragma,
+    /// `true`.
     #[token("true")]
     True,
+    /// `false`.
     #[token("false")]
     False,
 
-    // Multi-character operators (must be defined before single-character ones).
+    /// `:=`.
     #[token(":=")]
     ColonEq,
+    /// `->`.
     #[token("->")]
     Arrow,
+    /// `=>`.
     #[token("=>")]
     FatArrow,
+    /// `==`.
     #[token("==")]
     EqEq,
+    /// `!=`.
     #[token("!=")]
     NotEq,
+    /// `>=`.
     #[token(">=")]
     GreaterEq,
+    /// `<=`.
     #[token("<=")]
     LessEq,
+    /// `&&`.
     #[token("&&")]
     AndAnd,
+    /// `||`.
     #[token("||")]
     OrOr,
+    /// `+=`.
     #[token("+=")]
     PlusEq,
+    /// `-=`.
     #[token("-=")]
     MinusEq,
+    /// `^=`.
     #[token("^=")]
     CaretEq,
+    /// `&=`.
     #[token("&=")]
     AmpEq,
+    /// `|=`.
     #[token("|=")]
     PipeEq,
+    /// `%=`.
     #[token("%=")]
     PercentEq,
 
-    // Single-character operators.
+    /// `+`.
     #[token("+")]
     Plus,
+    /// `-`.
     #[token("-")]
     Minus,
+    /// `*`.
     #[token("*")]
     Star,
+    /// `/`.
     #[token("/")]
     Slash,
+    /// `%`.
     #[token("%")]
     Percent,
+    /// `!`.
     #[token("!")]
     Bang,
+    /// `<`.
     #[token("<")]
     Less,
+    /// `>`.
     #[token(">")]
     Greater,
+    /// `=`.
     #[token("=")]
     Eq,
+    /// `|`.
     #[token("|")]
     Pipe,
+    /// `&`.
     #[token("&")]
     Amp,
+    /// `^`.
     #[token("^")]
     Caret,
+    /// `@`.
     #[token("@")]
     At,
 
-    // Punctuation.
+    /// `.`.
     #[token(".")]
     Dot,
+    /// `:`.
     #[token(":")]
     Colon,
+    /// `;`.
     #[token(";")]
     Semi,
+    /// `,`.
     #[token(",")]
     Comma,
+    /// `(`.
     #[token("(")]
     LParen,
+    /// `)`.
     #[token(")")]
     RParen,
+    /// `{`.
     #[token("{")]
     LBrace,
+    /// `}`.
     #[token("}")]
     RBrace,
+    /// `[`.
     #[token("[")]
     LBracket,
+    /// `]`.
     #[token("]")]
     RBracket,
+    /// `_`.
     #[token("_")]
     Underscore,
 
-    // Literals.
+    /// Hexadecimal literal text.
     #[regex(r"0x[0-9a-fA-F]+", |lex| lex.slice())]
     HexLit(&'a str),
 
+    /// Decimal number literal text.
     #[regex(r"[0-9]+", |lex| lex.slice())]
     Number(&'a str),
 
+    /// Quoted string literal text, including quotes and escapes.
     #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice())]
     String(&'a str),
 
-    // Identifier (allows hyphens for pragma names like `no-bounded-variable-condition`).
+    /// Identifier or pragma-name text.
+    ///
+    /// The lexer accepts hyphens so pragma names such as
+    /// `no-bounded-variable-condition` tokenize as one item. The parser rejects
+    /// hyphenated text in normal identifier positions.
     #[regex(r"[a-zA-Z][a-zA-Z0-9_]*(-[a-zA-Z][a-zA-Z0-9_]*)*", |lex| lex.slice())]
     Ident(&'a str),
 
-    // Comments (skipped).
+    /// Line comment skipped by the lexer.
     #[token("//", line_comment)]
     LineComment,
 
+    /// Block comment skipped by the lexer.
     #[token("/*", block_comment)]
     BlockComment,
 }

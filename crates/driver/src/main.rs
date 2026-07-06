@@ -1,3 +1,10 @@
+//! Command-line driver for parsing and resolving Solcore modules.
+//!
+//! The driver owns filesystem concerns: argument parsing, root selection,
+//! loading reachable modules into the Salsa database, and rendering accumulated
+//! diagnostics. Compiler crates stay pure and receive source files through
+//! database inputs.
+
 use std::{
     collections::{BTreeMap, VecDeque},
     env, fs,
@@ -13,11 +20,18 @@ use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use url::Url;
 
+/// Concrete Salsa database used by the command-line driver.
+///
+/// The database wires HIR, parser, and inter-module name-resolution traits
+/// together and stores the loaded module files discovered from imports.
 #[salsa::db]
 #[derive(Clone, Default)]
 struct DriverDb {
+    /// Salsa storage.
     storage: salsa::Storage<Self>,
+    /// Module roots for the current run.
     module_tree: Option<ModuleTree>,
+    /// Loaded source file for each logical module key.
     module_files: FxHashMap<ModuleKey, SourceFile>,
 }
 
@@ -49,6 +63,7 @@ impl nameres::Db for DriverDb {
     }
 }
 
+/// Entry point for the CLI driver.
 fn main() {
     let program = env::args()
         .next()
@@ -142,11 +157,19 @@ fn main() {
     std::process::exit(1);
 }
 
+/// Parsed command-line arguments.
 struct Args {
+    /// Input source file.
     input: PathBuf,
+    /// External library roots passed as `NAME=PATH`.
     external_roots: Vec<(String, PathBuf)>,
 }
 
+/// Parses command-line arguments.
+///
+/// The driver accepts exactly one input file and zero or more external library
+/// roots via `--external-lib NAME=PATH`, `--external-lib=NAME=PATH`, `--lib`, or
+/// `--lib=`.
 fn parse_args(args: Vec<String>) -> Result<Args, String> {
     let mut input = None;
     let mut external_roots = Vec::new();
@@ -185,6 +208,7 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
     })
 }
 
+/// Parses one external library root argument.
 fn parse_external_root(value: &str) -> Result<(String, PathBuf), String> {
     let Some((name, path)) = value.split_once('=') else {
         return Err(format!("external library must be NAME=PATH, got `{value}`"));
@@ -195,6 +219,10 @@ fn parse_external_root(value: &str) -> Result<(String, PathBuf), String> {
     Ok((name.to_owned(), PathBuf::from(path)))
 }
 
+/// Loads all modules reachable from `entry` by following import/export references.
+///
+/// Missing or unreadable modules are left unloaded so the name-resolution graph
+/// can emit normal diagnostics for them.
 fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) {
     let mut queue = VecDeque::from([entry]);
     let mut visited = FxHashSet::default();
@@ -232,12 +260,14 @@ fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) {
     }
 }
 
+/// Creates a `SourceFile` input for `path` and in-memory `source`.
 fn source_file_for_path(db: &DriverDb, path: &Path, source: String) -> Result<SourceFile, String> {
     let url = Url::from_file_path(path)
         .map_err(|()| format!("failed to convert `{}` into file URL", path.display()))?;
     Ok(SourceFile::new(db, url, Some(source)))
 }
 
+/// Converts a possibly relative path to an absolute path without resolving symlinks.
 fn absolutize(path: &Path) -> std::io::Result<PathBuf> {
     if path.is_absolute() {
         Ok(path.to_path_buf())
@@ -246,6 +276,7 @@ fn absolutize(path: &Path) -> std::io::Result<PathBuf> {
     }
 }
 
+/// Returns the repository root derived from the driver crate location.
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

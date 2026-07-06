@@ -1,3 +1,17 @@
+//! Diagnostic values and source rendering.
+//!
+//! Diagnostics outlive the tracked query stack that creates them, so labels
+//! cannot store a `Span<'db>` directly. Instead each label snapshots the span
+//! into a lifetime-free `LabelSpan`: root anchors keep their `SourceFile`,
+//! and def anchors keep a structural `DefKey`. Rendering rehydrates that key
+//! against the current database and resolves it through the def-location table.
+//!
+//! This preserves the anchor-relative design while making accumulated
+//! diagnostics portable through Salsa's accumulator API. It also means label
+//! resolution follows the same edge-only rule as other absolute span work:
+//! diagnostics are resolved when they are rendered, not while semantic results
+//! are cached.
+
 use annotate_snippets::{Annotation, AnnotationKind, Group, Level, Renderer, Snippet};
 use salsa::Accumulator;
 
@@ -8,6 +22,10 @@ use crate::{
 };
 
 /// A diagnostic emitted during compilation.
+///
+/// Diagnostics are value objects accumulated by Salsa queries. Their labels are
+/// stored in a lifetime-free representation so callers can render them after the
+/// producing query has returned.
 #[salsa::accumulator]
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct Diagnostic {
@@ -24,15 +42,26 @@ pub struct Diagnostic {
 }
 
 /// Severity level for diagnostics.
+///
+/// The level determines both the headline styling and how renderers categorize
+/// the message. Notes and help may also appear as secondary lines on an error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum DiagnosticLevel {
+    /// A compilation-blocking error.
     Error,
+    /// A recoverable issue that should be reported to the user.
     Warning,
+    /// Informational context.
     Note,
+    /// Suggested remediation or explanatory help.
     Help,
 }
 
 /// Lifetime-free anchor used by diagnostics.
+///
+/// This mirrors `AnchorKind<'db>` without storing database-lifetime values.
+/// Def anchors are stored as structural keys so they can be interned again when
+/// a diagnostic is rendered.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 enum LabelAnchor {
     Root(SourceFile),
@@ -40,6 +69,10 @@ enum LabelAnchor {
 }
 
 /// Lifetime-free span snapshot stored in diagnostics.
+///
+/// The snapshot keeps relative offsets and enough anchor identity to resolve
+/// later. It intentionally avoids absolute offsets so byte-shift invariance is
+/// preserved until rendering.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 struct LabelSpan {
     anchor: LabelAnchor,
@@ -81,6 +114,9 @@ impl LabelSpan {
 }
 
 /// Span label attached to a diagnostic.
+///
+/// Labels keep their span private so construction always goes through helpers
+/// that snapshot HIR spans correctly.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct DiagnosticLabel {
     /// Where this label points to in source.
@@ -92,6 +128,9 @@ pub struct DiagnosticLabel {
 }
 
 /// Proof token that a diagnostic has been accumulated.
+///
+/// The token prevents callers from silently discarding a diagnostic-producing
+/// expression without acknowledging that reporting happened.
 #[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AccumulatedProof {
@@ -99,13 +138,22 @@ pub struct AccumulatedProof {
 }
 
 /// Style of a diagnostic label.
+///
+/// Primary labels highlight the main source range; secondary labels provide
+/// related context such as a previous declaration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum LabelStyle {
+    /// Main source location for the diagnostic.
     Primary,
+    /// Supporting source location.
     Secondary,
 }
 
 /// Byte offset into a source file.
+///
+/// Offsets are byte-based, not character-based. The `u32` storage keeps span
+/// values compact inside HIR and diagnostics; conversion from larger indices is
+/// fallible through [`Offset::try_from_usize`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, salsa::Update)]
 pub struct Offset(u32);
 
@@ -132,10 +180,17 @@ impl Offset {
 }
 
 /// Span represented as absolute offsets in a specific file.
+///
+/// This type is used only after an anchor-relative span has crossed an output
+/// boundary. Semantic queries should generally carry [`Span`]
+/// instead.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AbsoluteSpan {
+    /// File containing the absolute byte range.
     pub file: SourceFile,
+    /// Inclusive start byte offset.
     pub start: Offset,
+    /// Exclusive end byte offset.
     pub end: Offset,
 }
 
@@ -175,7 +230,11 @@ impl AbsoluteSpan {
 }
 
 impl Diagnostic {
-    /// Creates a new diagnostic with the given severity and message.
+    /// Creates a new diagnostic with the given severity and headline message.
+    ///
+    /// The diagnostic starts without labels, notes, or code. Builders consume
+    /// and return `self` so query code can construct diagnostics inline before
+    /// accumulation.
     pub fn new(level: DiagnosticLevel, message: impl Into<String>) -> Self {
         Self {
             level,
@@ -186,7 +245,7 @@ impl Diagnostic {
         }
     }
 
-    /// Creates an error diagnostic.
+    /// Creates a compilation-blocking error diagnostic.
     pub fn error(message: impl Into<String>) -> Self {
         Self::new(DiagnosticLevel::Error, message)
     }
@@ -196,7 +255,7 @@ impl Diagnostic {
         Self::new(DiagnosticLevel::Warning, message)
     }
 
-    /// Creates a note diagnostic.
+    /// Creates an informational diagnostic.
     pub fn note(message: impl Into<String>) -> Self {
         Self::new(DiagnosticLevel::Note, message)
     }
@@ -206,13 +265,13 @@ impl Diagnostic {
         Self::new(DiagnosticLevel::Help, message)
     }
 
-    /// Adds a diagnostic code.
+    /// Adds a diagnostic code such as `SC0101`.
     pub fn with_code(mut self, code: impl Into<String>) -> Self {
         self.code = Some(code.into());
         self
     }
 
-    /// Appends a label.
+    /// Appends an already-snapshotted label.
     pub fn with_label(mut self, label: DiagnosticLabel) -> Self {
         self.labels.push(label);
         self
@@ -223,7 +282,11 @@ impl Diagnostic {
         self.with_label(DiagnosticLabel::primary(span, message))
     }
 
-    /// Appends a primary label.
+    /// Appends a primary label from a HIR span.
+    ///
+    /// The span is snapshotted immediately into a lifetime-free representation;
+    /// absolute file offsets are still resolved only when the diagnostic is
+    /// rendered.
     pub fn with_primary_label<'db>(
         self,
         db: &'db dyn crate::Db,
@@ -242,7 +305,10 @@ impl Diagnostic {
         self.with_label(DiagnosticLabel::secondary(span, message))
     }
 
-    /// Appends a secondary label.
+    /// Appends a secondary label from a HIR span.
+    ///
+    /// Use this for related locations such as the first declaration in a
+    /// duplicate-definition diagnostic.
     pub fn with_secondary_label<'db>(
         self,
         db: &'db dyn crate::Db,
@@ -252,19 +318,22 @@ impl Diagnostic {
         self.with_secondary_label_span(LabelSpan::from_span(db, span), message)
     }
 
-    /// Appends a note/help text line.
+    /// Appends a note/help text line below the rendered source snippets.
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
     }
 
-    /// Accumulate this diagnostic and returns proof that reporting happened.
+    /// Accumulates this diagnostic and returns proof that reporting happened.
     pub fn accumulate(self, db: &dyn crate::Db) -> AccumulatedProof {
         <Self as Accumulator>::accumulate(self, db);
         AccumulatedProof { _private: () }
     }
 
-    /// Converts this diagnostic into an `annotate_snippets` report.
+    /// Converts this diagnostic into `annotate_snippets` groups.
+    ///
+    /// This is where label spans are resolved to absolute file offsets. Labels
+    /// whose files have no available content are skipped, but notes still render.
     pub fn to_annotate_report<'db>(&self, db: &'db dyn crate::Db) -> Vec<Group<'db>> {
         let mut title = self
             .level
@@ -333,12 +402,15 @@ impl Diagnostic {
         vec![group]
     }
 
-    /// Renders this diagnostic using the default styled renderer.
+    /// Renders this diagnostic using the default styled terminal renderer.
     pub fn render(&self, db: &dyn crate::Db) -> String {
         self.render_with(db, &Renderer::styled())
     }
 
     /// Renders this diagnostic using the provided `annotate_snippets` renderer.
+    ///
+    /// This performs absolute span resolution and may panic if a def-relative
+    /// label no longer has a location table entry.
     pub fn render_with(&self, db: &dyn crate::Db, renderer: &Renderer) -> String {
         let report = self.to_annotate_report(db);
         renderer.render(&report)

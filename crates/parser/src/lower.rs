@@ -1,3 +1,10 @@
+//! Lowering from parsed syntax into HIR.
+//!
+//! Lowering is where source-level parsed DTOs gain HIR identity. It allocates
+//! structural `DefId`s, records def-anchor base offsets, converts absolute
+//! lexical spans into anchor-relative spans, and builds function-body arenas.
+//! This is also where parse errors become accumulated diagnostics.
+
 use hir::{
     anchor::{DefId, DefKind, DefLocation, DefLocationTable, KeyCanonicalizer},
     arena::Arena,
@@ -205,6 +212,9 @@ fn import_fingerprint(
     selector: Option<&ParsedImportSelector<'_>>,
     hiding: &[ParsedImportName],
 ) -> String {
+    // Import identity is based on normalized import semantics, not the byte
+    // location of the declaration. Selector and hiding lists are sorted so
+    // reordering names does not churn the DefId.
     let mut fingerprint = if external.is_some() {
         "@".to_owned()
     } else {
@@ -537,6 +547,8 @@ fn instance_head_fingerprint(
 }
 
 fn structural_fingerprint(label: &str, components: &[String]) -> String {
+    // Length prefixes make the encoding unambiguous even when component strings
+    // contain punctuation used by the fingerprint syntax.
     let mut fingerprint = format!("{label}[{}]", components.len());
     for component in components {
         fingerprint.push('|');
@@ -555,6 +567,9 @@ fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> O
             args,
         } => {
             let name = if args.is_empty() && qualifiers.is_empty() {
+                // Instance identity is alpha-equivalent over its declared type
+                // variables, so binders are encoded by position rather than by
+                // surface spelling.
                 type_vars
                     .iter()
                     .find_map(|(var, index)| (*var == name.0).then_some(format!("${index}")))
@@ -1671,6 +1686,16 @@ fn lower_contract<'db>(
     item::ContractDef::new(ctx.db, contract_def, span, name, ty_params, fields, items)
 }
 
+/// Parses and lowers one source file into HIR.
+///
+/// The returned `ParseHirOutput` contains both the lowered module and the
+/// def-location table required for later absolute span resolution. This function
+/// assumes parsed spans are absolute byte offsets into the same source file.
+///
+/// # Panics
+///
+/// Panics if a parsed span cannot fit into the compact `Offset` representation
+/// or if lowering observes a span that starts before its chosen anchor base.
 pub(crate) fn parse_file_to_hir_impl<'db>(
     db: &'db dyn Db,
     file: SourceFile,
