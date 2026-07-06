@@ -2804,19 +2804,22 @@ mod tests {
         nameres as hir_nameres,
         span::SpannedElem,
     };
-    use nameres::{ModuleId, ModuleTree};
+    use nameres::{
+        LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
+    };
     use parser::parse_file_to_hir;
 
     use super::*;
     use crate::{
         BinderEnv, Solution, TraitEnvId, TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal,
-        solve, trait_env_from_module_resolution, trait_env_with_givens,
+        solve, trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens,
     };
 
     #[salsa::db]
     #[derive(Default, Clone)]
     struct TestDb {
         storage: salsa::Storage<Self>,
+        module_files: FxHashMap<ModuleKey, SourceFile>,
     }
 
     #[salsa::db]
@@ -2843,8 +2846,8 @@ mod tests {
             )
         }
 
-        fn module_file<'db>(&'db self, _module: ModuleId<'db>) -> Option<SourceFile> {
-            None
+        fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
+            self.module_files.get(&module.key(self)).copied()
         }
     }
 
@@ -2853,6 +2856,11 @@ mod tests {
 
     fn source_file(db: &TestDb, name: &str, src: &str) -> SourceFile {
         let url = format!("memory:///{name}.solc").parse().expect("valid url");
+        SourceFile::new(db, url, Some(src.to_owned()))
+    }
+
+    fn source_file_at_path(db: &TestDb, path: &std::path::Path, src: &str) -> SourceFile {
+        let url = url::Url::from_file_path(path).expect("file url");
         SourceFile::new(db, url, Some(src.to_owned()))
     }
 
@@ -3742,6 +3750,231 @@ instance word:C {}
         assert!(matches!(
             solution,
             Solution::Ambiguous { candidates } if candidates.len() == 2
+        ));
+    }
+
+    #[test]
+    fn local_given_rigid_var_does_not_solve_unrelated_type() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:C {
+  function c(x:a) -> word;
+}
+
+forall a . a:C => function bad() -> word {
+  return C.c(1);
+}
+"#,
+        );
+
+        let result = infer_all_functions_with_solver(&db, module)
+            .into_iter()
+            .find(|(name, _)| name == "bad")
+            .map(|(_, result)| result)
+            .expect("bad result");
+
+        assert!(result.diagnostics.iter().any(|diag| {
+            matches!(
+                diag,
+                TypeckDiagnostic::UnsatisfiedConstraint { pred }
+                    if pred.contains("word") && pred.contains("C")
+            )
+        }));
+    }
+
+    #[test]
+    fn trait_solver_unifies_weak_class_args_across_conditions() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+data Uint = Uint(word);
+
+forall abs rep . class abs:Typedef(rep) {}
+instance Uint:Typedef(word) {}
+
+forall a . class a:StorageSize {}
+instance word:StorageSize {}
+
+forall a b . a:Typedef(b), b:StorageSize => instance a:StorageSize {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+        let uint = adt_ty(&db, module, "Uint", Vec::new());
+
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "StorageSize"),
+            uint,
+            Vec::new(),
+        );
+
+        let Solution::Unique { evidence, .. } = solution else {
+            panic!("expected weak class argument unification, got {solution:?}");
+        };
+        let Evidence::Instance { args, .. } = evidence else {
+            panic!("expected generic StorageSize instance evidence");
+        };
+        assert_eq!(args, vec![uint, Ty::word(&db)]);
+    }
+
+    #[test]
+    fn default_instance_is_blocked_by_unifying_normal_head() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:C {}
+instance word:C {}
+forall a . default instance a:C {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "C"),
+            Ty::bound(&db, 0),
+            Vec::new(),
+        );
+
+        assert!(matches!(solution, Solution::NoSolution));
+    }
+
+    #[test]
+    fn imported_class_origin_contributes_superclass_clauses() {
+        let mut db = TestDb::default();
+        let lib_path = PathBuf::from("/main/lib.solc");
+        let main_path = PathBuf::from("/main/main.solc");
+        let lib_file = source_file_at_path(
+            &db,
+            &lib_path,
+            r#"
+export { Eq, Ord };
+
+forall a . class a:Eq {}
+forall a . a:Eq => class a:Ord {}
+"#,
+        );
+        let main_file = source_file_at_path(
+            &db,
+            &main_path,
+            r#"
+import lib.{Eq, Ord};
+
+instance word:Ord {}
+"#,
+        );
+        let lib_key =
+            module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &lib_path).unwrap();
+        let main_key =
+            module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &main_path).unwrap();
+        db.module_files.insert(lib_key.clone(), lib_file);
+        db.module_files.insert(main_key.clone(), main_file);
+        let lib_module = module_id_from_key(&db, &lib_key);
+        let main_module = module_id_from_key(&db, &main_key);
+        let lib_hir = parse_file_to_hir(&db, lib_file).module(&db);
+
+        let env = trait_env_for_module(&db, main_module);
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, lib_hir, "Eq"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            solution,
+            Solution::Unique {
+                evidence: Evidence::Superclass { .. },
+                ..
+            }
+        ));
+        assert_eq!(lib_module.display(&db), "lib");
+    }
+
+    #[test]
+    fn superclass_solution_records_projection_evidence() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:Eq {}
+forall a . a:Eq => class a:Ord {}
+instance word:Ord {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "Eq"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            solution,
+            Solution::Unique {
+                evidence: Evidence::Superclass {
+                    child,
+                    ..
+                },
+                ..
+            } if matches!(*child, Evidence::Instance { .. })
+        ));
+    }
+
+    #[test]
+    fn local_givens_and_superclasses_precede_global_instances() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:Eq {}
+forall a . a:Eq => class a:Ord {}
+instance word:Eq {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+        let env = trait_env_with_givens(
+            &db,
+            env,
+            vec![Pred::in_class(
+                &db,
+                class_id(&db, module, "Ord"),
+                Ty::word(&db),
+                Vec::new(),
+            )],
+        );
+
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "Eq"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+
+        assert!(matches!(
+            solution,
+            Solution::Unique {
+                evidence: Evidence::Superclass {
+                    child,
+                    ..
+                },
+                ..
+            } if matches!(*child, Evidence::Builtin { .. })
         ));
     }
 

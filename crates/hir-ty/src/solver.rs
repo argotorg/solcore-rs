@@ -15,7 +15,7 @@ use hir::{
     nameres as hir_nameres,
     span::SpannedElem,
 };
-use nameres::ModuleId;
+use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
@@ -88,6 +88,16 @@ pub enum Evidence<'db> {
         /// Predicate discharged directly.
         pred: Pred<'db>,
     },
+    /// Evidence obtained by projecting a superclass dictionary from evidence
+    /// for the subclass.
+    Superclass {
+        /// Class declaration that introduced the superclass relationship.
+        class: DefId<'db>,
+        /// Predicate discharged by the projection.
+        pred: Pred<'db>,
+        /// Evidence for the subclass predicate.
+        child: Box<Evidence<'db>>,
+    },
 }
 
 /// Substitution snapshot attached to a solution candidate.
@@ -142,6 +152,7 @@ pub fn trait_env_for_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Trai
     let mut modules = Vec::new();
     modules.push(module);
     modules.extend(env.instances.iter().map(|origin| origin.module));
+    modules.extend(visible_class_modules(db, &env));
     let modules = unique_modules(modules);
 
     for visible_module in &modules {
@@ -200,9 +211,9 @@ pub fn trait_env_with_givens<'db>(
     TraitEnvId::new(db, env.clauses(db).clone(), unique_preds(local_givens))
 }
 
-/// Canonicalizes a predicate into a solver goal.
+/// Wraps a predicate as a solver goal.
 pub fn canonical_goal<'db>(db: &'db dyn Db, pred: Pred<'db>) -> CanonicalGoal<'db> {
-    CanonicalGoal::new(db, canonical_pred(db, pred))
+    CanonicalGoal::new(db, pred)
 }
 
 /// Tracked solver query required by the trait-solving interface.
@@ -252,6 +263,17 @@ impl<'db> Evidence<'db> {
                 }
             }
             Evidence::Builtin { pred } => format!("builtin {}", pred.display(db)),
+            Evidence::Superclass { class, pred, child } => {
+                let name = class
+                    .name(db)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or_else(|| format!("{:?}", class.kind(db)));
+                format!(
+                    "superclass {name} => {} via {}",
+                    pred.display(db),
+                    child.display(db)
+                )
+            }
         }
     }
 }
@@ -358,9 +380,15 @@ impl<'db> TraitEnvBuilder<'db> {
 struct Solver<'db> {
     db: &'db dyn Db,
     env: TraitEnvId<'db>,
-    memo: FxHashMap<Pred<'db>, SolverReport<'db>>,
-    active: FxHashSet<Pred<'db>>,
+    memo: FxHashMap<(SolveMode, Pred<'db>), SolverReport<'db>>,
+    active: FxHashSet<(SolveMode, Pred<'db>)>,
     fuel: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum SolveMode {
+    Normal,
+    GivensOnly,
 }
 
 impl<'db> Solver<'db> {
@@ -375,8 +403,18 @@ impl<'db> Solver<'db> {
     }
 
     fn solve_pred(&mut self, goal: Pred<'db>) -> SolverReport<'db> {
-        let goal = canonical_pred(self.db, goal);
-        if let Some(report) = self.memo.get(&goal) {
+        self.solve_pred_with_allowed(goal, SolveMode::Normal, &FxHashSet::default())
+    }
+
+    fn solve_pred_with_allowed(
+        &mut self,
+        goal: Pred<'db>,
+        mode: SolveMode,
+        allowed_goal_vars: &FxHashSet<u32>,
+    ) -> SolverReport<'db> {
+        let key = (mode, goal);
+        let can_memo = allowed_goal_vars.is_empty();
+        if can_memo && let Some(report) = self.memo.get(&key) {
             return report.clone();
         }
         if self.fuel == 0 {
@@ -386,47 +424,99 @@ impl<'db> Solver<'db> {
             };
         }
         self.fuel -= 1;
-        if self.active.contains(&goal) {
+        if self.active.contains(&key) {
             return SolverReport {
                 solution: Solution::NoSolution,
                 exhausted: false,
             };
         }
 
-        self.active.insert(goal);
-        let report = self.solve_uncached(goal);
-        self.active.remove(&goal);
-        self.memo.insert(goal, report.clone());
+        self.active.insert(key);
+        let report = self.solve_uncached(goal, mode, allowed_goal_vars);
+        self.active.remove(&key);
+        if can_memo {
+            self.memo.insert(key, report.clone());
+        }
         report
     }
 
-    fn solve_uncached(&mut self, goal: Pred<'db>) -> SolverReport<'db> {
+    fn solve_uncached(
+        &mut self,
+        goal: Pred<'db>,
+        mode: SolveMode,
+        allowed_goal_vars: &FxHashSet<u32>,
+    ) -> SolverReport<'db> {
+        let (given_candidates, given_exhausted) =
+            self.solve_from_local_assumptions(goal, allowed_goal_vars);
+        if !given_candidates.is_empty() || mode == SolveMode::GivensOnly {
+            return SolverReport {
+                solution: solution_from_candidates(given_candidates),
+                exhausted: given_exhausted,
+            };
+        }
+
         let (normal_candidates, normal_matched, normal_exhausted) =
-            self.solve_with_clause_set(goal, false);
+            self.solve_with_clause_set(goal, false, allowed_goal_vars, SolveMode::Normal);
         if !normal_candidates.is_empty() {
             return SolverReport {
                 solution: solution_from_candidates(normal_candidates),
                 exhausted: normal_exhausted,
             };
         }
-        if normal_matched {
+        if normal_matched || self.has_non_default_unifying_head(goal, allowed_goal_vars) {
             return SolverReport {
                 solution: Solution::NoSolution,
                 exhausted: normal_exhausted,
             };
         }
 
-        let (default_candidates, _, default_exhausted) = self.solve_with_clause_set(goal, true);
+        let (default_candidates, _, default_exhausted) =
+            self.solve_with_clause_set(goal, true, allowed_goal_vars, SolveMode::Normal);
         SolverReport {
             solution: solution_from_candidates(default_candidates),
             exhausted: normal_exhausted || default_exhausted,
         }
     }
 
+    fn solve_from_local_assumptions(
+        &mut self,
+        goal: Pred<'db>,
+        allowed_goal_vars: &FxHashSet<u32>,
+    ) -> (Vec<Candidate<'db>>, bool) {
+        let mut candidates = Vec::new();
+        let mut exhausted = false;
+
+        for given in self.env.local_givens(self.db).clone() {
+            let clause = ProgramClause {
+                binder_count: 0,
+                head: given,
+                conditions: Vec::new(),
+                origin: ClauseOrigin::Given,
+                is_default: false,
+            };
+            let outcome = self.try_clause(goal, &clause, allowed_goal_vars, SolveMode::GivensOnly);
+            exhausted |= outcome.exhausted;
+            candidates.extend(outcome.candidates);
+        }
+
+        for clause in self.env.clauses(self.db).clone() {
+            if !matches!(clause.origin, ClauseOrigin::Superclass(_)) {
+                continue;
+            }
+            let outcome = self.try_clause(goal, &clause, allowed_goal_vars, SolveMode::GivensOnly);
+            exhausted |= outcome.exhausted;
+            candidates.extend(outcome.candidates);
+        }
+
+        (unique_candidates(candidates), exhausted)
+    }
+
     fn solve_with_clause_set(
         &mut self,
         goal: Pred<'db>,
         is_default: bool,
+        allowed_goal_vars: &FxHashSet<u32>,
+        mode: SolveMode,
     ) -> (Vec<Candidate<'db>>, bool, bool) {
         let mut candidates = Vec::new();
         let mut matched = false;
@@ -436,71 +526,85 @@ impl<'db> Solver<'db> {
             if clause.is_default != is_default {
                 continue;
             }
-            let outcome = self.try_clause(goal, &clause);
+            let outcome = self.try_clause(goal, &clause, allowed_goal_vars, mode);
             matched |= outcome.matched;
             exhausted |= outcome.exhausted;
             candidates.extend(outcome.candidates);
-        }
-
-        if !is_default {
-            for given in self.env.local_givens(self.db).clone() {
-                let clause = ProgramClause {
-                    binder_count: 0,
-                    head: given,
-                    conditions: Vec::new(),
-                    origin: ClauseOrigin::Given,
-                    is_default: false,
-                };
-                let outcome = self.try_clause(goal, &clause);
-                matched |= outcome.matched;
-                exhausted |= outcome.exhausted;
-                candidates.extend(outcome.candidates);
-            }
         }
 
         candidates = unique_candidates(candidates);
         (candidates, matched, exhausted)
     }
 
-    fn try_clause(&mut self, goal: Pred<'db>, clause: &ProgramClause<'db>) -> ClauseOutcome<'db> {
-        let Some(subst) = match_head(self.db, clause.head, goal) else {
+    fn has_non_default_unifying_head(
+        &self,
+        goal: Pred<'db>,
+        allowed_goal_vars: &FxHashSet<u32>,
+    ) -> bool {
+        let mut goal_vars = allowed_goal_vars.clone();
+        collect_pred_vars(self.db, goal, &mut goal_vars);
+        self.env.clauses(self.db).iter().any(|clause| {
+            !clause.is_default
+                && !matches!(clause.origin, ClauseOrigin::Superclass(_))
+                && head_can_unify(self.db, clause, goal, &goal_vars)
+        })
+    }
+
+    fn try_clause(
+        &mut self,
+        goal: Pred<'db>,
+        clause: &ProgramClause<'db>,
+        allowed_goal_vars: &FxHashSet<u32>,
+        mode: SolveMode,
+    ) -> ClauseOutcome<'db> {
+        let instantiated = instantiate_clause(self.db, clause, goal, allowed_goal_vars);
+        let Some(subst) = match_head(
+            self.db,
+            instantiated.head,
+            goal,
+            &instantiated.binder_vars,
+            allowed_goal_vars,
+        ) else {
             return ClauseOutcome::default();
         };
-        let conditions = clause
-            .conditions
-            .iter()
-            .map(|pred| subst.apply_pred(self.db, *pred))
-            .collect::<Vec<_>>();
-        let mut sub_evidence_sets = vec![Vec::new()];
+
+        let mut condition_vars = allowed_goal_vars.clone();
+        condition_vars.extend(instantiated.binder_vars.iter().copied());
+        let mut states = vec![(subst, Vec::new())];
         let mut exhausted = false;
-        for condition in conditions {
-            let report = self.solve_pred(condition);
-            exhausted |= report.exhausted;
-            let alternatives = match report.solution {
-                Solution::Unique { evidence, .. } => vec![evidence],
-                Solution::Ambiguous { candidates } => candidates
-                    .into_iter()
-                    .map(|candidate| candidate.evidence)
-                    .collect(),
-                Solution::NoSolution => return ClauseOutcome::matched(exhausted),
-            };
+        for condition in &instantiated.conditions {
             let mut next = Vec::new();
-            for existing in &sub_evidence_sets {
-                for alternative in &alternatives {
-                    let mut combined = existing.clone();
-                    combined.push(alternative.clone());
-                    next.push(combined);
+            for (state_subst, existing_evidence) in states {
+                let condition = state_subst.apply_pred(self.db, *condition);
+                let report = self.solve_pred_with_allowed(condition, mode, &condition_vars);
+                exhausted |= report.exhausted;
+                let alternatives = candidates_from_solution(report.solution);
+                for alternative in alternatives {
+                    let mut combined_subst = state_subst.clone();
+                    if !combined_subst.merge(self.db, &alternative.subst) {
+                        continue;
+                    }
+                    let mut combined_evidence = existing_evidence.clone();
+                    combined_evidence.push(apply_evidence(
+                        self.db,
+                        alternative.evidence,
+                        &combined_subst,
+                    ));
+                    next.push((combined_subst, combined_evidence));
                 }
             }
-            sub_evidence_sets = next;
+            if next.is_empty() {
+                return ClauseOutcome::matched(exhausted);
+            }
+            states = next;
         }
 
         let mut candidates = Vec::new();
-        for sub_evidence in sub_evidence_sets {
-            let evidence = clause_evidence(self.db, goal, clause, &subst, sub_evidence);
+        for (subst, sub_evidence) in states {
+            let evidence = clause_evidence(self.db, goal, &instantiated, &subst, sub_evidence);
             candidates.push(Candidate {
                 subst: subst.snapshot(),
-                evidence,
+                evidence: apply_evidence(self.db, evidence, &subst),
             });
         }
         ClauseOutcome {
@@ -534,14 +638,35 @@ struct MatchSubst<'db> {
 }
 
 impl<'db> MatchSubst<'db> {
-    fn bind(&mut self, db: &'db dyn Db, var: u32, ty: Ty<'db>) -> bool {
+    fn bind_flex(&mut self, db: &'db dyn Db, var: u32, ty: Ty<'db>) -> bool {
+        let ty = self.apply_ty(db, ty);
+        if matches!(ty.kind(db), TyKind::BoundVar(bound) if bound.index == var) {
+            return true;
+        }
+        if occurs_in_ty(db, var, ty) {
+            return false;
+        }
         match self.values.get(&var).copied() {
-            Some(existing) => ty_equal(db, existing, ty),
+            Some(existing) => unify_ty(db, existing, ty, self, &FxHashSet::default()),
             None => {
                 self.values.insert(var, ty);
                 true
             }
         }
+    }
+
+    fn merge(&mut self, db: &'db dyn Db, subst: &Substitution<'db>) -> bool {
+        for (var, ty) in &subst.values {
+            let ty = self.apply_ty(db, *ty);
+            match self.values.get(var).copied() {
+                Some(existing) if !ty_equal(db, self.apply_ty(db, existing), ty) => return false,
+                Some(_) => {}
+                None => {
+                    self.values.insert(*var, ty);
+                }
+            }
+        }
+        true
     }
 
     fn apply_pred(&self, db: &'db dyn Db, pred: Pred<'db>) -> Pred<'db> {
@@ -561,7 +686,12 @@ impl<'db> MatchSubst<'db> {
 
     fn apply_ty(&self, db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
         match ty.kind(db) {
-            TyKind::BoundVar(var) => self.values.get(&var.index).copied().unwrap_or(ty),
+            TyKind::BoundVar(var) => self
+                .values
+                .get(&var.index)
+                .copied()
+                .map(|ty| self.apply_ty(db, ty))
+                .unwrap_or(ty),
             TyKind::Named { ctor, args } => Ty::named(
                 db,
                 *ctor,
@@ -584,14 +714,9 @@ impl<'db> MatchSubst<'db> {
         }
     }
 
-    fn args_for_binders(&self, db: &'db dyn Db, count: u32) -> Vec<Ty<'db>> {
-        (0..count)
-            .map(|index| {
-                self.values
-                    .get(&index)
-                    .copied()
-                    .unwrap_or_else(|| Ty::bound(db, index))
-            })
+    fn args_for_vars(&self, db: &'db dyn Db, vars: &[u32]) -> Vec<Ty<'db>> {
+        vars.iter()
+            .map(|index| self.apply_ty(db, Ty::bound(db, *index)))
             .collect()
     }
 
@@ -617,34 +742,145 @@ fn solution_from_candidates<'db>(candidates: Vec<Candidate<'db>>) -> Solution<'d
     }
 }
 
+fn candidates_from_solution<'db>(solution: Solution<'db>) -> Vec<Candidate<'db>> {
+    match solution {
+        Solution::Unique { subst, evidence } => vec![Candidate { subst, evidence }],
+        Solution::Ambiguous { candidates } => candidates,
+        Solution::NoSolution => Vec::new(),
+    }
+}
+
 fn clause_evidence<'db>(
     db: &'db dyn Db,
     goal: Pred<'db>,
-    clause: &ProgramClause<'db>,
+    clause: &InstantiatedClause<'db>,
     subst: &MatchSubst<'db>,
     sub_evidence: Vec<Evidence<'db>>,
 ) -> Evidence<'db> {
     match clause.origin {
         ClauseOrigin::Instance(instance) => Evidence::Instance {
             instance,
-            args: subst.args_for_binders(db, clause.binder_count),
+            args: subst.args_for_vars(db, &clause.binder_vars),
             sub_evidence,
         },
         ClauseOrigin::Builtin | ClauseOrigin::Given => Evidence::Builtin { pred: goal },
-        ClauseOrigin::Superclass(_) => sub_evidence
-            .into_iter()
-            .next()
-            .unwrap_or(Evidence::Builtin { pred: goal }),
+        ClauseOrigin::Superclass(class) => Evidence::Superclass {
+            class,
+            pred: goal,
+            child: Box::new(
+                sub_evidence
+                    .into_iter()
+                    .next()
+                    .unwrap_or(Evidence::Builtin { pred: goal }),
+            ),
+        },
     }
+}
+
+#[derive(Clone)]
+struct InstantiatedClause<'db> {
+    head: Pred<'db>,
+    conditions: Vec<Pred<'db>>,
+    origin: ClauseOrigin<'db>,
+    binder_vars: Vec<u32>,
+}
+
+fn instantiate_clause<'db>(
+    db: &'db dyn Db,
+    clause: &ProgramClause<'db>,
+    goal: Pred<'db>,
+    avoid_vars: &FxHashSet<u32>,
+) -> InstantiatedClause<'db> {
+    let base = next_var_index_for_clause(db, clause, goal, avoid_vars);
+    let mut rewriter = ClauseInstantiator {
+        db,
+        binder_count: clause.binder_count,
+        base,
+    };
+    InstantiatedClause {
+        head: rewriter.pred(clause.head),
+        conditions: clause
+            .conditions
+            .iter()
+            .map(|condition| rewriter.pred(*condition))
+            .collect(),
+        origin: clause.origin.clone(),
+        binder_vars: (0..clause.binder_count).map(|index| base + index).collect(),
+    }
+}
+
+struct ClauseInstantiator<'db> {
+    db: &'db dyn Db,
+    binder_count: u32,
+    base: u32,
+}
+
+impl<'db> ClauseInstantiator<'db> {
+    fn pred(&mut self, pred: Pred<'db>) -> Pred<'db> {
+        match pred.kind(self.db) {
+            PredKind::InClass { class, main, args } => Pred::in_class(
+                self.db,
+                *class,
+                self.ty(*main),
+                args.iter().map(|arg| self.ty(*arg)).collect(),
+            ),
+            PredKind::Eq { lhs, rhs } => Pred::eq(self.db, self.ty(*lhs), self.ty(*rhs)),
+            PredKind::Error => Pred::error(self.db),
+        }
+    }
+
+    fn ty(&mut self, ty: Ty<'db>) -> Ty<'db> {
+        match ty.kind(self.db) {
+            TyKind::BoundVar(var) if var.index < self.binder_count => {
+                Ty::bound(self.db, self.base + var.index)
+            }
+            TyKind::Named { ctor, args } => Ty::named(
+                self.db,
+                *ctor,
+                args.iter().map(|arg| self.ty(*arg)).collect(),
+            ),
+            TyKind::Function { params, ret } => Ty::function(
+                self.db,
+                params.iter().map(|param| self.ty(*param)).collect(),
+                self.ty(*ret),
+            ),
+            TyKind::Tuple(elems) => {
+                Ty::tuple(self.db, elems.iter().map(|elem| self.ty(*elem)).collect())
+            }
+            TyKind::Comptime(inner) => Ty::comptime(self.db, self.ty(*inner)),
+            TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => ty,
+        }
+    }
+}
+
+fn next_var_index_for_clause<'db>(
+    db: &'db dyn Db,
+    clause: &ProgramClause<'db>,
+    goal: Pred<'db>,
+    avoid_vars: &FxHashSet<u32>,
+) -> u32 {
+    let mut max = None;
+    for var in avoid_vars {
+        max = Some(max.map_or(*var, |current: u32| current.max(*var)));
+    }
+    collect_max_pred_var(db, goal, &mut max);
+    collect_max_pred_var(db, clause.head, &mut max);
+    for condition in &clause.conditions {
+        collect_max_pred_var(db, *condition, &mut max);
+    }
+    max.map_or(0, |index| index + 1)
 }
 
 fn match_head<'db>(
     db: &'db dyn Db,
     pattern: Pred<'db>,
     goal: Pred<'db>,
+    pattern_vars: &[u32],
+    goal_vars: &FxHashSet<u32>,
 ) -> Option<MatchSubst<'db>> {
     let mut subst = MatchSubst::default();
-    if match_pred(db, pattern, goal, &mut subst) {
+    let pattern_vars = pattern_vars.iter().copied().collect::<FxHashSet<_>>();
+    if match_pred(db, pattern, goal, &mut subst, &pattern_vars, goal_vars) {
         Some(subst)
     } else {
         None
@@ -656,6 +892,8 @@ fn match_pred<'db>(
     pattern: Pred<'db>,
     goal: Pred<'db>,
     subst: &mut MatchSubst<'db>,
+    pattern_vars: &FxHashSet<u32>,
+    goal_vars: &FxHashSet<u32>,
 ) -> bool {
     match (pattern.kind(db), goal.kind(db)) {
         (
@@ -670,11 +908,15 @@ fn match_pred<'db>(
                 args: goal_args,
             },
         ) if pattern_class == goal_class && pattern_args.len() == goal_args.len() => {
-            match_ty(db, *pattern_main, *goal_main, subst)
+            let mut weak_vars = pattern_vars.clone();
+            weak_vars.extend(goal_vars.iter().copied());
+            match_ty(db, *pattern_main, *goal_main, subst, pattern_vars)
                 && pattern_args
                     .iter()
                     .zip(goal_args)
-                    .all(|(pattern_arg, goal_arg)| match_ty(db, *pattern_arg, *goal_arg, subst))
+                    .all(|(pattern_arg, goal_arg)| {
+                        unify_ty(db, *pattern_arg, *goal_arg, subst, &weak_vars)
+                    })
         }
         (
             PredKind::Eq {
@@ -685,7 +927,12 @@ fn match_pred<'db>(
                 lhs: lhs2,
                 rhs: rhs2,
             },
-        ) => match_ty(db, *lhs1, *lhs2, subst) && match_ty(db, *rhs1, *rhs2, subst),
+        ) => {
+            let mut weak_vars = pattern_vars.clone();
+            weak_vars.extend(goal_vars.iter().copied());
+            unify_ty(db, *lhs1, *lhs2, subst, &weak_vars)
+                && unify_ty(db, *rhs1, *rhs2, subst, &weak_vars)
+        }
         (PredKind::Error, PredKind::Error) => true,
         _ => false,
     }
@@ -696,9 +943,15 @@ fn match_ty<'db>(
     pattern: Ty<'db>,
     goal: Ty<'db>,
     subst: &mut MatchSubst<'db>,
+    pattern_vars: &FxHashSet<u32>,
 ) -> bool {
+    let pattern = subst.apply_ty(db, pattern);
+    let goal = subst.apply_ty(db, goal);
     match pattern.kind(db) {
-        TyKind::BoundVar(var) => subst.bind(db, var.index, goal),
+        TyKind::BoundVar(var) if pattern_vars.contains(&var.index) => {
+            subst.bind_flex(db, var.index, goal)
+        }
+        TyKind::BoundVar(_) => ty_equal(db, pattern, goal),
         TyKind::Error => matches!(goal.kind(db), TyKind::Error),
         TyKind::Unknown => matches!(goal.kind(db), TyKind::Unknown),
         TyKind::Named {
@@ -711,7 +964,9 @@ fn match_ty<'db>(
             } if pattern_ctor == goal_ctor && pattern_args.len() == goal_args.len() => pattern_args
                 .iter()
                 .zip(goal_args)
-                .all(|(pattern_arg, goal_arg)| match_ty(db, *pattern_arg, *goal_arg, subst)),
+                .all(|(pattern_arg, goal_arg)| {
+                    match_ty(db, *pattern_arg, *goal_arg, subst, pattern_vars)
+                }),
             TyKind::Tuple(elems)
                 if matches!(pattern_ctor, TyCtor::Builtin(crate::BuiltinTyCtor::Unit))
                     && pattern_args.is_empty()
@@ -733,9 +988,9 @@ fn match_ty<'db>(
                     .iter()
                     .zip(goal_params)
                     .all(|(pattern_param, goal_param)| {
-                        match_ty(db, *pattern_param, *goal_param, subst)
+                        match_ty(db, *pattern_param, *goal_param, subst, pattern_vars)
                     })
-                    && match_ty(db, *pattern_ret, *goal_ret, subst)
+                    && match_ty(db, *pattern_ret, *goal_ret, subst, pattern_vars)
             }
             _ => false,
         },
@@ -743,7 +998,9 @@ fn match_ty<'db>(
             TyKind::Tuple(goal_elems) if pattern_elems.len() == goal_elems.len() => pattern_elems
                 .iter()
                 .zip(goal_elems)
-                .all(|(pattern_elem, goal_elem)| match_ty(db, *pattern_elem, *goal_elem, subst)),
+                .all(|(pattern_elem, goal_elem)| {
+                    match_ty(db, *pattern_elem, *goal_elem, subst, pattern_vars)
+                }),
             TyKind::Named {
                 ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
                 args,
@@ -751,9 +1008,148 @@ fn match_ty<'db>(
             _ => false,
         },
         TyKind::Comptime(pattern_inner) => match goal.kind(db) {
-            TyKind::Comptime(goal_inner) => match_ty(db, *pattern_inner, *goal_inner, subst),
+            TyKind::Comptime(goal_inner) => {
+                match_ty(db, *pattern_inner, *goal_inner, subst, pattern_vars)
+            }
             _ => false,
         },
+    }
+}
+
+fn head_can_unify<'db>(
+    db: &'db dyn Db,
+    clause: &ProgramClause<'db>,
+    goal: Pred<'db>,
+    goal_vars: &FxHashSet<u32>,
+) -> bool {
+    let instantiated = instantiate_clause(db, clause, goal, goal_vars);
+    let mut bindable = instantiated
+        .binder_vars
+        .iter()
+        .copied()
+        .collect::<FxHashSet<_>>();
+    bindable.extend(goal_vars.iter().copied());
+    let mut subst = MatchSubst::default();
+    unify_pred(db, instantiated.head, goal, &mut subst, &bindable)
+}
+
+fn unify_pred<'db>(
+    db: &'db dyn Db,
+    lhs: Pred<'db>,
+    rhs: Pred<'db>,
+    subst: &mut MatchSubst<'db>,
+    bindable: &FxHashSet<u32>,
+) -> bool {
+    match (lhs.kind(db), rhs.kind(db)) {
+        (
+            PredKind::InClass {
+                class: lhs_class,
+                main: lhs_main,
+                args: lhs_args,
+            },
+            PredKind::InClass {
+                class: rhs_class,
+                main: rhs_main,
+                args: rhs_args,
+            },
+        ) if lhs_class == rhs_class && lhs_args.len() == rhs_args.len() => {
+            unify_ty(db, *lhs_main, *rhs_main, subst, bindable)
+                && lhs_args
+                    .iter()
+                    .zip(rhs_args)
+                    .all(|(lhs_arg, rhs_arg)| unify_ty(db, *lhs_arg, *rhs_arg, subst, bindable))
+        }
+        (
+            PredKind::Eq {
+                lhs: lhs_l,
+                rhs: lhs_r,
+            },
+            PredKind::Eq {
+                lhs: rhs_l,
+                rhs: rhs_r,
+            },
+        ) => {
+            unify_ty(db, *lhs_l, *rhs_l, subst, bindable)
+                && unify_ty(db, *lhs_r, *rhs_r, subst, bindable)
+        }
+        (PredKind::Error, PredKind::Error) => true,
+        _ => false,
+    }
+}
+
+fn unify_ty<'db>(
+    db: &'db dyn Db,
+    lhs: Ty<'db>,
+    rhs: Ty<'db>,
+    subst: &mut MatchSubst<'db>,
+    bindable: &FxHashSet<u32>,
+) -> bool {
+    let lhs = subst.apply_ty(db, lhs);
+    let rhs = subst.apply_ty(db, rhs);
+    match (lhs.kind(db), rhs.kind(db)) {
+        (TyKind::BoundVar(lhs_var), _) if bindable.contains(&lhs_var.index) => {
+            subst.bind_flex(db, lhs_var.index, rhs)
+        }
+        (_, TyKind::BoundVar(rhs_var)) if bindable.contains(&rhs_var.index) => {
+            subst.bind_flex(db, rhs_var.index, lhs)
+        }
+        (TyKind::Error, TyKind::Error) | (TyKind::Unknown, TyKind::Unknown) => true,
+        (TyKind::BoundVar(lhs_var), TyKind::BoundVar(rhs_var)) => lhs_var == rhs_var,
+        (
+            TyKind::Named {
+                ctor: lhs_ctor,
+                args: lhs_args,
+            },
+            TyKind::Named {
+                ctor: rhs_ctor,
+                args: rhs_args,
+            },
+        ) if lhs_ctor == rhs_ctor && lhs_args.len() == rhs_args.len() => lhs_args
+            .iter()
+            .zip(rhs_args)
+            .all(|(lhs_arg, rhs_arg)| unify_ty(db, *lhs_arg, *rhs_arg, subst, bindable)),
+        (
+            TyKind::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                args,
+            },
+            TyKind::Tuple(elems),
+        )
+        | (
+            TyKind::Tuple(elems),
+            TyKind::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                args,
+            },
+        ) if args.is_empty() && elems.is_empty() => true,
+        (
+            TyKind::Function {
+                params: lhs_params,
+                ret: lhs_ret,
+            },
+            TyKind::Function {
+                params: rhs_params,
+                ret: rhs_ret,
+            },
+        ) if lhs_params.len() == rhs_params.len() => {
+            lhs_params
+                .iter()
+                .zip(rhs_params)
+                .all(|(lhs_param, rhs_param)| unify_ty(db, *lhs_param, *rhs_param, subst, bindable))
+                && unify_ty(db, *lhs_ret, *rhs_ret, subst, bindable)
+        }
+        (TyKind::Tuple(lhs_elems), TyKind::Tuple(rhs_elems))
+            if lhs_elems.len() == rhs_elems.len() =>
+        {
+            lhs_elems
+                .iter()
+                .zip(rhs_elems)
+                .all(|(lhs_elem, rhs_elem)| unify_ty(db, *lhs_elem, *rhs_elem, subst, bindable))
+        }
+        (TyKind::Comptime(lhs_inner), TyKind::Comptime(rhs_inner)) => {
+            unify_ty(db, *lhs_inner, *rhs_inner, subst, bindable)
+        }
+        _ => false,
     }
 }
 
@@ -761,6 +1157,20 @@ fn ty_equal<'db>(db: &'db dyn Db, lhs: Ty<'db>, rhs: Ty<'db>) -> bool {
     match (lhs.kind(db), rhs.kind(db)) {
         (TyKind::Error, TyKind::Error) | (TyKind::Unknown, TyKind::Unknown) => true,
         (TyKind::BoundVar(lhs), TyKind::BoundVar(rhs)) => lhs == rhs,
+        (
+            TyKind::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                args,
+            },
+            TyKind::Tuple(elems),
+        )
+        | (
+            TyKind::Tuple(elems),
+            TyKind::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                args,
+            },
+        ) if args.is_empty() && elems.is_empty() => true,
         (
             TyKind::Named {
                 ctor: lhs_ctor,
@@ -807,58 +1217,167 @@ fn ty_equal<'db>(db: &'db dyn Db, lhs: Ty<'db>, rhs: Ty<'db>) -> bool {
     }
 }
 
-fn canonical_pred<'db>(db: &'db dyn Db, pred: Pred<'db>) -> Pred<'db> {
-    let mut state = CanonicalState::default();
-    state.pred(db, pred)
+fn apply_evidence<'db>(
+    db: &'db dyn Db,
+    evidence: Evidence<'db>,
+    subst: &MatchSubst<'db>,
+) -> Evidence<'db> {
+    match evidence {
+        Evidence::Instance {
+            instance,
+            args,
+            sub_evidence,
+        } => Evidence::Instance {
+            instance,
+            args: args
+                .into_iter()
+                .map(|arg| subst.apply_ty(db, arg))
+                .collect(),
+            sub_evidence: sub_evidence
+                .into_iter()
+                .map(|evidence| apply_evidence(db, evidence, subst))
+                .collect(),
+        },
+        Evidence::Builtin { pred } => Evidence::Builtin {
+            pred: subst.apply_pred(db, pred),
+        },
+        Evidence::Superclass { class, pred, child } => Evidence::Superclass {
+            class,
+            pred: subst.apply_pred(db, pred),
+            child: Box::new(apply_evidence(db, *child, subst)),
+        },
+    }
 }
 
-#[derive(Default)]
-struct CanonicalState {
-    vars: FxHashMap<u32, u32>,
-    next: u32,
+fn occurs_in_ty<'db>(db: &'db dyn Db, var: u32, ty: Ty<'db>) -> bool {
+    match ty.kind(db) {
+        TyKind::BoundVar(bound) => bound.index == var,
+        TyKind::Named { args, .. } => args.iter().any(|arg| occurs_in_ty(db, var, *arg)),
+        TyKind::Function { params, ret } => {
+            params.iter().any(|param| occurs_in_ty(db, var, *param)) || occurs_in_ty(db, var, *ret)
+        }
+        TyKind::Tuple(elems) => elems.iter().any(|elem| occurs_in_ty(db, var, *elem)),
+        TyKind::Comptime(inner) => occurs_in_ty(db, var, *inner),
+        TyKind::Error | TyKind::Unknown => false,
+    }
 }
 
-impl CanonicalState {
-    fn pred<'db>(&mut self, db: &'db dyn Db, pred: Pred<'db>) -> Pred<'db> {
-        match pred.kind(db) {
-            PredKind::InClass { class, main, args } => Pred::in_class(
-                db,
-                *class,
-                self.ty(db, *main),
-                args.iter().map(|arg| self.ty(db, *arg)).collect(),
-            ),
-            PredKind::Eq { lhs, rhs } => Pred::eq(db, self.ty(db, *lhs), self.ty(db, *rhs)),
-            PredKind::Error => Pred::error(db),
+fn collect_pred_vars<'db>(db: &'db dyn Db, pred: Pred<'db>, vars: &mut FxHashSet<u32>) {
+    match pred.kind(db) {
+        PredKind::InClass { main, args, .. } => {
+            collect_ty_vars(db, *main, vars);
+            for arg in args {
+                collect_ty_vars(db, *arg, vars);
+            }
         }
+        PredKind::Eq { lhs, rhs } => {
+            collect_ty_vars(db, *lhs, vars);
+            collect_ty_vars(db, *rhs, vars);
+        }
+        PredKind::Error => {}
     }
+}
 
-    fn ty<'db>(&mut self, db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
-        match ty.kind(db) {
-            TyKind::BoundVar(var) => {
-                let index = *self.vars.entry(var.index).or_insert_with(|| {
-                    let next = self.next;
-                    self.next += 1;
-                    next
-                });
-                Ty::bound(db, index)
+fn collect_ty_vars<'db>(db: &'db dyn Db, ty: Ty<'db>, vars: &mut FxHashSet<u32>) {
+    match ty.kind(db) {
+        TyKind::BoundVar(var) => {
+            vars.insert(var.index);
+        }
+        TyKind::Named { args, .. } => {
+            for arg in args {
+                collect_ty_vars(db, *arg, vars);
             }
-            TyKind::Named { ctor, args } => Ty::named(
-                db,
-                *ctor,
-                args.iter().map(|arg| self.ty(db, *arg)).collect(),
-            ),
-            TyKind::Function { params, ret } => Ty::function(
-                db,
-                params.iter().map(|param| self.ty(db, *param)).collect(),
-                self.ty(db, *ret),
-            ),
-            TyKind::Tuple(elems) => {
-                Ty::tuple(db, elems.iter().map(|elem| self.ty(db, *elem)).collect())
+        }
+        TyKind::Function { params, ret } => {
+            for param in params {
+                collect_ty_vars(db, *param, vars);
             }
-            TyKind::Comptime(inner) => Ty::comptime(db, self.ty(db, *inner)),
-            TyKind::Error | TyKind::Unknown => ty,
+            collect_ty_vars(db, *ret, vars);
+        }
+        TyKind::Tuple(elems) => {
+            for elem in elems {
+                collect_ty_vars(db, *elem, vars);
+            }
+        }
+        TyKind::Comptime(inner) => collect_ty_vars(db, *inner, vars),
+        TyKind::Error | TyKind::Unknown => {}
+    }
+}
+
+fn collect_max_pred_var<'db>(db: &'db dyn Db, pred: Pred<'db>, max: &mut Option<u32>) {
+    match pred.kind(db) {
+        PredKind::InClass { main, args, .. } => {
+            collect_max_ty_var(db, *main, max);
+            for arg in args {
+                collect_max_ty_var(db, *arg, max);
+            }
+        }
+        PredKind::Eq { lhs, rhs } => {
+            collect_max_ty_var(db, *lhs, max);
+            collect_max_ty_var(db, *rhs, max);
+        }
+        PredKind::Error => {}
+    }
+}
+
+fn collect_max_ty_var<'db>(db: &'db dyn Db, ty: Ty<'db>, max: &mut Option<u32>) {
+    match ty.kind(db) {
+        TyKind::BoundVar(var) => {
+            *max = Some(max.map_or(var.index, |current| current.max(var.index)));
+        }
+        TyKind::Named { args, .. } => {
+            for arg in args {
+                collect_max_ty_var(db, *arg, max);
+            }
+        }
+        TyKind::Function { params, ret } => {
+            for param in params {
+                collect_max_ty_var(db, *param, max);
+            }
+            collect_max_ty_var(db, *ret, max);
+        }
+        TyKind::Tuple(elems) => {
+            for elem in elems {
+                collect_max_ty_var(db, *elem, max);
+            }
+        }
+        TyKind::Comptime(inner) => collect_max_ty_var(db, *inner, max),
+        TyKind::Error | TyKind::Unknown => {}
+    }
+}
+
+fn visible_class_modules<'db>(
+    db: &'db dyn Db,
+    env: &nameres::ModuleEnv<'db>,
+) -> Vec<ModuleId<'db>> {
+    env.types
+        .values()
+        .filter_map(|resolution| match resolution {
+            hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Class,
+            } => module_for_def(db, *def),
+            _ => None,
+        })
+        .collect()
+}
+
+fn module_for_def<'db>(db: &'db dyn Db, def: DefId<'db>) -> Option<ModuleId<'db>> {
+    let path = def.file(db).url(db).to_file_path().ok()?;
+    let tree = db.module_tree();
+    let candidates = std::iter::once((LibraryId::Main, tree.main_root(db).clone()))
+        .chain(std::iter::once((LibraryId::Std, tree.std_root(db).clone())))
+        .chain(
+            tree.external_roots(db)
+                .iter()
+                .map(|(name, root)| (LibraryId::External(name.clone()), root.clone())),
+        );
+    for (library, root) in candidates {
+        if let Some(key) = module_key_for_path(library, &root, &path) {
+            return Some(module_id_from_key(db, &key));
         }
     }
+    None
 }
 
 fn scope_resolution_for_module_id<'db>(
