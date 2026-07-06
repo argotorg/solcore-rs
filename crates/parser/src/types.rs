@@ -353,6 +353,22 @@ pub(crate) enum ParsedStmtKind<'src> {
         lhs: ParsedExpr<'src>,
         rhs: ParsedExpr<'src>,
     },
+    BitXorAssign {
+        lhs: ParsedExpr<'src>,
+        rhs: ParsedExpr<'src>,
+    },
+    BitAndAssign {
+        lhs: ParsedExpr<'src>,
+        rhs: ParsedExpr<'src>,
+    },
+    BitOrAssign {
+        lhs: ParsedExpr<'src>,
+        rhs: ParsedExpr<'src>,
+    },
+    ModAssign {
+        lhs: ParsedExpr<'src>,
+        rhs: ParsedExpr<'src>,
+    },
     Match {
         scrutinees: Vec<ParsedExpr<'src>>,
         arms: Vec<ParsedMatchArm<'src>>,

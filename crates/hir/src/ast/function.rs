@@ -82,6 +82,22 @@ pub enum StmtKind<'db> {
         lhs: Id<Expr<'db>>,
         rhs: Id<Expr<'db>>,
     },
+    BitXorAssign {
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    },
+    BitAndAssign {
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    },
+    BitOrAssign {
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    },
+    ModAssign {
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    },
     Match {
         scrutinees: Vec<Id<Expr<'db>>>,
         arms: Vec<MatchArm<'db>>,
@@ -208,6 +224,9 @@ pub enum BinOp {
     Mul,
     Div,
     Mod,
+    BitAnd,
+    BitXor,
+    BitOr,
     Eq,
     NotEq,
     Lt,

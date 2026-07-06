@@ -69,6 +69,10 @@ where
         Token::OrOr => "||",
         Token::PlusEq => "+=",
         Token::MinusEq => "-=",
+        Token::CaretEq => "^=",
+        Token::AmpEq => "&=",
+        Token::PipeEq => "|=",
+        Token::PercentEq => "%=",
         Token::Plus => "+",
         Token::Minus => "-",
         Token::Star => "*",
@@ -79,6 +83,7 @@ where
         Token::Greater => ">",
         Token::Eq => "=",
         Token::Pipe => "|",
+        Token::Amp => "&",
         Token::Caret => "^",
         Token::Colon => ":",
     }
@@ -614,6 +619,10 @@ enum ParsedAssignOp {
     Eq,
     AddEq,
     SubEq,
+    BitXorEq,
+    BitAndEq,
+    BitOrEq,
+    ModEq,
 }
 
 fn assign_op_parser<'src, I>() -> impl Parser<'src, I, ParsedAssignOp, ParserErr<'src>>
@@ -624,6 +633,10 @@ where
         .to(ParsedAssignOp::Eq)
         .or(just(Token::PlusEq).to(ParsedAssignOp::AddEq))
         .or(just(Token::MinusEq).to(ParsedAssignOp::SubEq))
+        .or(just(Token::CaretEq).to(ParsedAssignOp::BitXorEq))
+        .or(just(Token::AmpEq).to(ParsedAssignOp::BitAndEq))
+        .or(just(Token::PipeEq).to(ParsedAssignOp::BitOrEq))
+        .or(just(Token::PercentEq).to(ParsedAssignOp::ModEq))
 }
 
 fn assign_stmt_kind<'src>(
@@ -634,6 +647,10 @@ fn assign_stmt_kind<'src>(
         Some((ParsedAssignOp::Eq, rhs)) => ParsedStmtKind::Assign { lhs, rhs },
         Some((ParsedAssignOp::AddEq, rhs)) => ParsedStmtKind::AddAssign { lhs, rhs },
         Some((ParsedAssignOp::SubEq, rhs)) => ParsedStmtKind::SubAssign { lhs, rhs },
+        Some((ParsedAssignOp::BitXorEq, rhs)) => ParsedStmtKind::BitXorAssign { lhs, rhs },
+        Some((ParsedAssignOp::BitAndEq, rhs)) => ParsedStmtKind::BitAndAssign { lhs, rhs },
+        Some((ParsedAssignOp::BitOrEq, rhs)) => ParsedStmtKind::BitOrAssign { lhs, rhs },
+        Some((ParsedAssignOp::ModEq, rhs)) => ParsedStmtKind::ModAssign { lhs, rhs },
         None => ParsedStmtKind::Expr(lhs),
     }
 }
@@ -687,11 +704,47 @@ where
     .boxed()
 }
 
+fn parsed_bin_op_expr<'src>(
+    lhs: ParsedExpr<'src>,
+    op: ParsedSpanned<'src, function::BinOp>,
+    rhs: ParsedExpr<'src>,
+    span: LexSpan,
+) -> ParsedExpr<'src> {
+    ParsedExpr {
+        span,
+        kind: ParsedExprKind::BinOp {
+            lhs: Box::new(lhs),
+            op,
+            rhs: Box::new(rhs),
+        },
+    }
+}
+
 fn parsed_expr_parser<'src, I>() -> impl Parser<'src, I, ParsedExpr<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    recursive(|expr| {
+    expr_pat_parsers().0
+}
+
+fn parsed_pat_parser<'src, I>() -> impl Parser<'src, I, ParsedPat<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    expr_pat_parsers().1
+}
+
+fn expr_pat_parsers<'src, I>() -> (
+    impl Parser<'src, I, ParsedExpr<'src>, ParserErr<'src>>,
+    impl Parser<'src, I, ParsedPat<'src>, ParserErr<'src>>,
+)
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let mut expr = Recursive::declare();
+    let mut pat = Recursive::declare();
+
+    expr.define({
         let lambda_param = param_parser().boxed();
 
         let lambda_params = lambda_param
@@ -862,14 +915,7 @@ where
         .map_with(|op, e| ParsedSpanned::new(op, e.span()));
         let mul = unary.clone().foldl_with(
             mul_op.then(unary.clone()).repeated(),
-            |lhs, (op, rhs), e| ParsedExpr {
-                span: e.span(),
-                kind: ParsedExprKind::BinOp {
-                    lhs: Box::new(lhs),
-                    op,
-                    rhs: Box::new(rhs),
-                },
-            },
+            |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span()),
         );
 
         let add_op = select! {
@@ -880,52 +926,83 @@ where
         let add = mul
             .clone()
             .foldl_with(add_op.then(mul).repeated(), |lhs, (op, rhs), e| {
-                ParsedExpr {
-                    span: e.span(),
-                    kind: ParsedExprKind::BinOp {
-                        lhs: Box::new(lhs),
-                        op,
-                        rhs: Box::new(rhs),
-                    },
-                }
+                parsed_bin_op_expr(lhs, op, rhs, e.span())
             });
 
-        let cmp_op = select! {
-            Token::EqEq => function::BinOp::Eq,
-            Token::NotEq => function::BinOp::NotEq,
+        let bit_and_op = just(Token::Amp)
+            .to(function::BinOp::BitAnd)
+            .map_with(|op, e| ParsedSpanned::new(op, e.span()));
+        let bit_and = add.clone().foldl_with(
+            bit_and_op.then(add).repeated(),
+            |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span()),
+        );
+
+        let bit_xor_op = just(Token::Caret)
+            .to(function::BinOp::BitXor)
+            .map_with(|op, e| ParsedSpanned::new(op, e.span()));
+        let bit_xor = bit_and.clone().foldl_with(
+            bit_xor_op.then(bit_and).repeated(),
+            |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span()),
+        );
+
+        let match_arm_separator = just(Token::Pipe)
+            .ignore_then(
+                pat.clone()
+                    .separated_by(just(Token::Comma))
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .then_ignore(just(Token::FatArrow))
+            .ignored();
+        let bit_or_op = just(Token::Pipe)
+            .and_is(match_arm_separator.not())
+            .to(function::BinOp::BitOr)
+            .map_with(|op, e| ParsedSpanned::new(op, e.span()));
+        let bit_or = bit_xor
+            .clone()
+            .foldl_with(
+                bit_or_op.then(bit_xor).repeated(),
+                |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span()),
+            )
+            .boxed();
+
+        let rel_op = select! {
             Token::Less => function::BinOp::Lt,
             Token::Greater => function::BinOp::Gt,
             Token::LessEq => function::BinOp::LtEq,
             Token::GreaterEq => function::BinOp::GtEq,
         }
         .map_with(|op, e| ParsedSpanned::new(op, e.span()));
-        let cmp = add
+        let rel = bit_or
             .clone()
-            .foldl_with(cmp_op.then(add).repeated(), |lhs, (op, rhs), e| {
-                ParsedExpr {
-                    span: e.span(),
-                    kind: ParsedExprKind::BinOp {
-                        lhs: Box::new(lhs),
-                        op,
-                        rhs: Box::new(rhs),
-                    },
-                }
-            });
+            .then(rel_op.then(bit_or).or_not())
+            .map_with(|(lhs, rhs), e| match rhs {
+                Some((op, rhs)) => parsed_bin_op_expr(lhs, op, rhs, e.span()),
+                None => lhs,
+            })
+            .boxed();
+
+        let eq_op = select! {
+            Token::EqEq => function::BinOp::Eq,
+            Token::NotEq => function::BinOp::NotEq,
+        }
+        .map_with(|op, e| ParsedSpanned::new(op, e.span()));
+        let eq = rel
+            .clone()
+            .then(eq_op.then(rel).or_not())
+            .map_with(|(lhs, rhs), e| match rhs {
+                Some((op, rhs)) => parsed_bin_op_expr(lhs, op, rhs, e.span()),
+                None => lhs,
+            })
+            .boxed();
 
         let and_op = just(Token::AndAnd)
             .to(function::BinOp::And)
             .map_with(|op, e| ParsedSpanned::new(op, e.span()));
-        let and = cmp
+        let and = eq
             .clone()
-            .foldl_with(and_op.then(cmp).repeated(), |lhs, (op, rhs), e| {
-                ParsedExpr {
-                    span: e.span(),
-                    kind: ParsedExprKind::BinOp {
-                        lhs: Box::new(lhs),
-                        op,
-                        rhs: Box::new(rhs),
-                    },
-                }
+            .foldl_with(and_op.then(eq).repeated(), |lhs, (op, rhs), e| {
+                parsed_bin_op_expr(lhs, op, rhs, e.span())
             });
 
         let or_op = just(Token::OrOr)
@@ -933,13 +1010,8 @@ where
             .map_with(|op, e| ParsedSpanned::new(op, e.span()));
         let or = and
             .clone()
-            .foldl_with(or_op.then(and).repeated(), |lhs, (op, rhs), e| ParsedExpr {
-                span: e.span(),
-                kind: ParsedExprKind::BinOp {
-                    lhs: Box::new(lhs),
-                    op,
-                    rhs: Box::new(rhs),
-                },
+            .foldl_with(or_op.then(and).repeated(), |lhs, (op, rhs), e| {
+                parsed_bin_op_expr(lhs, op, rhs, e.span())
             });
 
         let type_annot = just(Token::Colon).ignore_then(type_parser()).or_not();
@@ -955,15 +1027,9 @@ where
                 None => expr,
             })
             .boxed()
-    })
-    .labelled("expression")
-}
+    });
 
-fn parsed_pat_parser<'src, I>() -> impl Parser<'src, I, ParsedPat<'src>, ParserErr<'src>>
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
-{
-    recursive(|pat| {
+    pat.define({
         let wildcard = just(Token::Underscore)
             .map_with(|_, e| ParsedPat {
                 span: e.span(),
@@ -1021,7 +1087,7 @@ where
             .boxed();
 
         let comptime_pat = comptime_kw_parser()
-            .then(parsed_expr_parser())
+            .then(expr.clone())
             .map_with(|(kw, expr), e| ParsedPat {
                 span: e.span(),
                 kind: ParsedPatKind::ComptimeLabel { kw, expr },
@@ -1081,8 +1147,9 @@ where
             .or(comptime_pat)
             .or(ctor_or_var)
             .recover_with(via_parser(recovery))
-    })
-    .labelled("pattern")
+    });
+
+    (expr.labelled("expression"), pat.labelled("pattern"))
 }
 
 fn parsed_yul_lit_parser<'src, I>() -> impl Parser<'src, I, ParsedYulLitKind<'src>, ParserErr<'src>>
@@ -2425,6 +2492,10 @@ fn token_spelling(token: &Token<'_>) -> &'static str {
         Token::OrOr => "||",
         Token::PlusEq => "+=",
         Token::MinusEq => "-=",
+        Token::CaretEq => "^=",
+        Token::AmpEq => "&=",
+        Token::PipeEq => "|=",
+        Token::PercentEq => "%=",
         Token::Plus => "+",
         Token::Minus => "-",
         Token::Star => "*",
@@ -2435,6 +2506,7 @@ fn token_spelling(token: &Token<'_>) -> &'static str {
         Token::Greater => ">",
         Token::Eq => "=",
         Token::Pipe => "|",
+        Token::Amp => "&",
         Token::Caret => "^",
         Token::At => "@",
         Token::Dot => ".",

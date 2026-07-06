@@ -90,6 +90,14 @@ pub enum Token<'a> {
     PlusEq,
     #[token("-=")]
     MinusEq,
+    #[token("^=")]
+    CaretEq,
+    #[token("&=")]
+    AmpEq,
+    #[token("|=")]
+    PipeEq,
+    #[token("%=")]
+    PercentEq,
 
     // Single-character operators.
     #[token("+")]
@@ -112,6 +120,8 @@ pub enum Token<'a> {
     Eq,
     #[token("|")]
     Pipe,
+    #[token("&")]
+    Amp,
     #[token("^")]
     Caret,
     #[token("@")]
@@ -262,6 +272,10 @@ mod tests {
         assert_eq!(tokenize("||"), vec![Token::OrOr]);
         assert_eq!(tokenize("+="), vec![Token::PlusEq]);
         assert_eq!(tokenize("-="), vec![Token::MinusEq]);
+        assert_eq!(tokenize("^="), vec![Token::CaretEq]);
+        assert_eq!(tokenize("&="), vec![Token::AmpEq]);
+        assert_eq!(tokenize("|="), vec![Token::PipeEq]);
+        assert_eq!(tokenize("%="), vec![Token::PercentEq]);
     }
 
     #[test]
@@ -276,6 +290,7 @@ mod tests {
         assert_eq!(tokenize(">"), vec![Token::Greater]);
         assert_eq!(tokenize("="), vec![Token::Eq]);
         assert_eq!(tokenize("|"), vec![Token::Pipe]);
+        assert_eq!(tokenize("&"), vec![Token::Amp]);
         assert_eq!(tokenize("^"), vec![Token::Caret]);
         assert_eq!(tokenize("@"), vec![Token::At]);
     }

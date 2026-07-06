@@ -1150,6 +1150,22 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
                 lhs: self.lower_expr(anchor, base_start, lhs, arenas),
                 rhs: self.lower_expr(anchor, base_start, rhs, arenas),
             },
+            ParsedStmtKind::BitXorAssign { lhs, rhs } => function::StmtKind::BitXorAssign {
+                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
+                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
+            },
+            ParsedStmtKind::BitAndAssign { lhs, rhs } => function::StmtKind::BitAndAssign {
+                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
+                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
+            },
+            ParsedStmtKind::BitOrAssign { lhs, rhs } => function::StmtKind::BitOrAssign {
+                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
+                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
+            },
+            ParsedStmtKind::ModAssign { lhs, rhs } => function::StmtKind::ModAssign {
+                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
+                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
+            },
             ParsedStmtKind::Match { scrutinees, arms } => {
                 self.lower_match_stmt(anchor, base_start, scrutinees, arms, arenas)
             }
