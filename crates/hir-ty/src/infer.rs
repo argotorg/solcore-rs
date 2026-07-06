@@ -403,6 +403,20 @@ pub enum TypeckDiagnostic {
         /// Predicate snapshot.
         pred: String,
     },
+    /// `SC0210`: a `return` appears before the final statement in a body.
+    NonFinalReturn,
+    /// `SC0211`: a Yul identifier or function name could not be resolved.
+    UnknownYulName {
+        /// Referenced Yul name.
+        name: String,
+    },
+    /// `SC0224`: shorthand constructor lookup failed.
+    ShorthandConstructor {
+        /// Constructor leaf name.
+        name: String,
+        /// Lookup failure reason.
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -411,6 +425,25 @@ struct PendingObligation<'db> {
     main: InferTy<'db>,
     args: Vec<InferTy<'db>>,
     source: ObligationSource<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct YulFunctionSig<'db> {
+    params: Vec<InferTy<'db>>,
+    ret: InferTy<'db>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct YulScope<'db> {
+    values: FxHashSet<String>,
+    functions: FxHashMap<String, YulFunctionSig<'db>>,
+}
+
+enum DotCtorLookup<'db> {
+    Match(InferTy<'db>),
+    NoExpected,
+    NoMatch,
+    Ambiguous(Vec<String>),
 }
 
 struct InferCtx<'db> {
@@ -517,6 +550,18 @@ impl TypeckDiagnostic {
                 "cannot solve class constraint {pred}: solver exceeded its iteration bound"
             ))
             .with_code("SC0209"),
+            TypeckDiagnostic::NonFinalReturn => {
+                Diagnostic::error("return statement must be the final statement in its body")
+                    .with_code("SC0210")
+            }
+            TypeckDiagnostic::UnknownYulName { name } => {
+                Diagnostic::error(format!("unknown Yul identifier or function: {name}"))
+                    .with_code("SC0211")
+            }
+            TypeckDiagnostic::ShorthandConstructor { name, reason } => Diagnostic::error(format!(
+                "cannot resolve shorthand constructor `.{name}`: {reason}"
+            ))
+            .with_code("SC0224"),
         }
     }
 }
@@ -1014,13 +1059,38 @@ impl<'db> InferCtx<'db> {
         result
     }
 
-    fn infer_body(&mut self, body: FuncBody<'db>) {
-        for stmt in body.top_level_stmts(self.db) {
-            self.infer_stmt(body, *stmt);
+    fn infer_body(&mut self, body: FuncBody<'db>) -> InferTy<'db> {
+        let ty = self.infer_stmt_sequence(body, body.top_level_stmts(self.db));
+        if let Some(expected) = self.return_stack.last().cloned() {
+            self.unify(expected, ty.clone());
         }
+        ty
     }
 
-    fn infer_stmt(&mut self, body: FuncBody<'db>, stmt_id: Id<Stmt<'db>>) {
+    fn infer_stmt_sequence(
+        &mut self,
+        body: FuncBody<'db>,
+        stmts: &[Id<Stmt<'db>>],
+    ) -> InferTy<'db> {
+        if stmts.is_empty() {
+            return self.engine.from_ty(Ty::unit(self.db));
+        }
+        let unit = self.engine.from_ty(Ty::unit(self.db));
+        let mut result = unit.clone();
+        for (index, stmt) in stmts.iter().enumerate() {
+            if index + 1 != stmts.len() && self.is_return_stmt(body, *stmt) {
+                self.diagnostics.push(TypeckDiagnostic::NonFinalReturn);
+            }
+            result = self.infer_stmt(body, *stmt);
+        }
+        result
+    }
+
+    fn is_return_stmt(&self, body: FuncBody<'db>, stmt_id: Id<Stmt<'db>>) -> bool {
+        matches!(&body.stmts(self.db).get(stmt_id).kind, StmtKind::Return(_))
+    }
+
+    fn infer_stmt(&mut self, body: FuncBody<'db>, stmt_id: Id<Stmt<'db>>) -> InferTy<'db> {
         let stmt = body.stmts(self.db).get(stmt_id);
         match &stmt.kind {
             StmtKind::Let {
@@ -1041,24 +1111,29 @@ impl<'db> InferCtx<'db> {
                 let name = (*name.atom()).text(self.db).to_owned();
                 let ty = self.let_ty(body, stmt_id);
                 self.add_sail_local(name, ty);
+                self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::Return(expr) => {
                 if let Some(expected) = self.return_stack.last().cloned() {
                     let actual = expr
                         .map(|expr| self.infer_expr_expected(body, expr, Some(expected.clone())))
                         .unwrap_or_else(|| self.engine.from_ty(Ty::unit(self.db)));
-                    self.unify(expected, actual);
-                } else if let Some(expr) = expr {
-                    self.infer_expr(body, *expr);
+                    self.unify(expected, actual.clone());
+                    actual
+                } else {
+                    expr.map(|expr| self.infer_expr(body, expr))
+                        .unwrap_or_else(|| self.engine.from_ty(Ty::unit(self.db)))
                 }
             }
             StmtKind::Expr(expr) => {
                 self.infer_expr(body, *expr);
+                self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::Assign { lhs, rhs } => {
                 let lhs = self.infer_expr(body, *lhs);
-                let rhs = self.infer_expr(body, *rhs);
+                let rhs = self.infer_expr_expected(body, *rhs, Some(lhs.clone()));
                 self.unify(lhs, rhs);
+                self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::AddAssign { lhs, rhs }
             | StmtKind::SubAssign { lhs, rhs }
@@ -1071,15 +1146,19 @@ impl<'db> InferCtx<'db> {
                 let word = self.engine.from_ty(Ty::word(self.db));
                 self.unify(lhs, word.clone());
                 self.unify(rhs, word);
+                self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::Match { scrutinees, arms } => {
                 let scrutinee_tys = scrutinees
                     .iter()
                     .map(|scrutinee| self.infer_expr(body, *scrutinee))
                     .collect::<Vec<_>>();
+                let result_ty = self.engine.fresh_var();
                 for arm in arms {
-                    self.infer_match_arm(body, arm, &scrutinee_tys);
+                    let arm_ty = self.infer_match_arm(body, arm, &scrutinee_tys);
+                    self.unify(result_ty.clone(), arm_ty);
                 }
+                result_ty
             }
             StmtKind::For {
                 init,
@@ -1087,18 +1166,13 @@ impl<'db> InferCtx<'db> {
                 post,
                 body: for_body,
             } => {
-                for stmt in init {
-                    self.infer_stmt(body, *stmt);
-                }
+                self.infer_stmt_sequence(body, init);
                 let cond = self.infer_expr(body, *cond);
                 let bool_ty = self.engine.from_ty(Ty::bool(self.db));
                 self.unify(cond, bool_ty);
-                for stmt in post {
-                    self.infer_stmt(body, *stmt);
-                }
-                for stmt in for_body {
-                    self.infer_stmt(body, *stmt);
-                }
+                self.infer_stmt_sequence(body, post);
+                self.infer_stmt_sequence(body, for_body);
+                self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::If {
                 cond,
@@ -1108,24 +1182,30 @@ impl<'db> InferCtx<'db> {
                 let cond = self.infer_expr(body, *cond);
                 let bool_ty = self.engine.from_ty(Ty::bool(self.db));
                 self.unify(cond, bool_ty);
-                for stmt in then_body {
-                    self.infer_stmt(body, *stmt);
-                }
-                if let Some(else_body) = else_body {
-                    for stmt in else_body {
-                        self.infer_stmt(body, *stmt);
-                    }
-                }
+                let then_ty = self.infer_stmt_sequence(body, then_body);
+                let else_ty = else_body
+                    .as_ref()
+                    .map(|else_body| self.infer_stmt_sequence(body, else_body))
+                    .unwrap_or_else(|| then_ty.clone());
+                self.unify(then_ty.clone(), else_ty);
+                then_ty
             }
             StmtKind::Block { body: block } => {
                 self.push_sail_scope();
-                for stmt in block {
-                    self.infer_stmt(body, *stmt);
-                }
+                let ty = self.infer_stmt_sequence(body, block);
                 self.pop_sail_scope();
+                ty
             }
-            StmtKind::Assembly { body: yul_body } => self.infer_yul_block(yul_body),
-            StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
+            StmtKind::Assembly { body: yul_body } => {
+                let (new_binds, ty) = self.infer_yul_block(yul_body);
+                let word = self.engine.from_ty(Ty::word(self.db));
+                for name in new_binds {
+                    self.add_sail_local(name, word.clone());
+                }
+                ty
+            }
+            StmtKind::Break | StmtKind::Continue => self.engine.from_ty(Ty::unit(self.db)),
+            StmtKind::Error => InferTy::Error,
         }
     }
 
@@ -1134,7 +1214,7 @@ impl<'db> InferCtx<'db> {
         body: FuncBody<'db>,
         arm: &MatchArm<'db>,
         scrutinees: &[InferTy<'db>],
-    ) {
+    ) -> InferTy<'db> {
         if arm.pats.len() != scrutinees.len() {
             self.diagnostics.push(TypeckDiagnostic::WrongArity {
                 context: "match arm".to_owned(),
@@ -1147,10 +1227,9 @@ impl<'db> InferCtx<'db> {
             let pat_ty = self.infer_pat_expected(body, *pat, Some(scrutinee.clone()));
             self.unify(scrutinee.clone(), pat_ty);
         }
-        for stmt in &arm.body {
-            self.infer_stmt(body, *stmt);
-        }
+        let ty = self.infer_stmt_sequence(body, &arm.body);
         self.pop_sail_scope();
+        ty
     }
 
     fn infer_expr(&mut self, body: FuncBody<'db>, expr_id: Id<Expr<'db>>) -> InferTy<'db> {
@@ -1186,7 +1265,7 @@ impl<'db> InferCtx<'db> {
                 params,
                 ret,
                 body: lambda_body,
-            } => self.infer_lambda(params.atom(), *ret, *lambda_body),
+            } => self.infer_lambda(params.atom(), *ret, *lambda_body, expected.clone()),
             ExprKind::BinOp { lhs, op, rhs } => self.infer_bin_op(body, *lhs, *op.atom(), *rhs),
             ExprKind::Index { base, index } => {
                 let base_ty = self.infer_expr(body, *base);
@@ -1301,7 +1380,9 @@ impl<'db> InferCtx<'db> {
         params: &[FuncParam<'db>],
         ret: Option<hir::ast::ty::TypeRef<'db>>,
         body: FuncBody<'db>,
+        expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
+        let (expected_params, expected_ret) = self.expected_lambda_parts(expected, params.len());
         let param_tys = params
             .iter()
             .enumerate()
@@ -1309,10 +1390,20 @@ impl<'db> InferCtx<'db> {
                 let ty = match param {
                     FuncParam::Typed { comptime, ty, .. } => {
                         let ty = self.engine.from_ty(self.lowerer.lower_type(*ty));
-                        self.maybe_comptime(*comptime, ty)
+                        let ty = self.maybe_comptime(*comptime, ty);
+                        if let Some(expected) = expected_params
+                            .as_ref()
+                            .and_then(|params| params.get(index))
+                        {
+                            self.unify(expected.clone(), ty.clone());
+                        }
+                        ty
                     }
                     FuncParam::Untyped { comptime, .. } => {
-                        let ty = self.engine.fresh_var();
+                        let ty = expected_params
+                            .as_ref()
+                            .and_then(|params| params.get(index).cloned())
+                            .unwrap_or_else(|| self.engine.fresh_var());
                         self.maybe_comptime(*comptime, ty)
                     }
                     FuncParam::Error { .. } => InferTy::Error,
@@ -1321,9 +1412,15 @@ impl<'db> InferCtx<'db> {
                 ty
             })
             .collect::<Vec<_>>();
-        let ret = ret
-            .map(|ret| self.engine.from_ty(self.lowerer.lower_type(ret)))
-            .unwrap_or_else(|| self.engine.fresh_var());
+        let ret = if let Some(ret) = ret {
+            let annotated = self.engine.from_ty(self.lowerer.lower_type(ret));
+            if let Some(expected_ret) = expected_ret {
+                self.unify(expected_ret, annotated.clone());
+            }
+            annotated
+        } else {
+            expected_ret.unwrap_or_else(|| self.engine.fresh_var())
+        };
         self.push_sail_scope();
         for (index, param) in params.iter().enumerate() {
             if let Some(name) = param_name(self.db, param) {
@@ -1338,6 +1435,50 @@ impl<'db> InferCtx<'db> {
         InferTy::Function {
             params: param_tys,
             ret: Box::new(ret),
+        }
+    }
+
+    fn expected_lambda_parts(
+        &mut self,
+        expected: Option<InferTy<'db>>,
+        param_count: usize,
+    ) -> (Option<Vec<InferTy<'db>>>, Option<InferTy<'db>>) {
+        let Some(expected) = expected else {
+            return (None, None);
+        };
+        match self.engine.resolve(expected.clone()) {
+            InferTy::Function { params, ret } => {
+                if params.len() != param_count {
+                    self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                        context: "lambda".to_owned(),
+                        expected: params.len(),
+                        actual: param_count,
+                    });
+                }
+                (Some(params), Some(*ret))
+            }
+            InferTy::Var(_) | InferTy::Unknown => {
+                let params = (0..param_count)
+                    .map(|_| self.engine.fresh_var())
+                    .collect::<Vec<_>>();
+                let ret = self.engine.fresh_var();
+                self.unify(
+                    expected,
+                    InferTy::Function {
+                        params: params.clone(),
+                        ret: Box::new(ret.clone()),
+                    },
+                );
+                (Some(params), Some(ret))
+            }
+            InferTy::Error => (None, None),
+            other => {
+                self.diagnostics.push(TypeckDiagnostic::Mismatch {
+                    expected: "function".to_owned(),
+                    actual: self.engine.display(other),
+                });
+                (None, None)
+            }
         }
     }
 
@@ -1633,15 +1774,44 @@ impl<'db> InferCtx<'db> {
             for arg in args {
                 self.infer_expr(body, *arg);
             }
-            return self.engine.fresh_var();
+            self.shorthand_ctor_diag(
+                name,
+                "cannot resolve without expected constructor type".to_owned(),
+            );
+            return InferTy::Error;
         };
-        let Some(ctor_ty) = self.ctor_for_expected(name, expected.clone()) else {
-            for arg in args {
-                self.infer_expr(body, *arg);
+        match self.ctor_for_expected(name, expected.clone()) {
+            DotCtorLookup::Match(ctor_ty) => {
+                self.apply_ctor_expr_scheme(body, expr, ctor_ty, args, expected)
             }
-            return expected;
-        };
-        self.apply_ctor_expr_scheme(body, expr, ctor_ty, args, expected)
+            DotCtorLookup::NoExpected => {
+                for arg in args {
+                    self.infer_expr(body, *arg);
+                }
+                self.shorthand_ctor_diag(
+                    name,
+                    "cannot resolve without expected constructor type".to_owned(),
+                );
+                InferTy::Error
+            }
+            DotCtorLookup::NoMatch => {
+                for arg in args {
+                    self.infer_expr(body, *arg);
+                }
+                self.shorthand_ctor_diag(name, "no matching constructor".to_owned());
+                InferTy::Error
+            }
+            DotCtorLookup::Ambiguous(candidates) => {
+                for arg in args {
+                    self.infer_expr(body, *arg);
+                }
+                self.shorthand_ctor_diag(
+                    name,
+                    format!("ambiguous candidates: {}", candidates.join(", ")),
+                );
+                InferTy::Error
+            }
+        }
     }
 
     fn apply_ctor_expr_scheme(
@@ -1695,7 +1865,7 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn ctor_for_expected(&mut self, name: &str, expected: InferTy<'db>) -> Option<InferTy<'db>> {
+    fn ctor_for_expected(&mut self, name: &str, expected: InferTy<'db>) -> DotCtorLookup<'db> {
         let expected = self.engine.resolve(expected);
         let InferTy::Named {
             ctor:
@@ -1706,16 +1876,37 @@ impl<'db> InferCtx<'db> {
             ..
         } = expected
         else {
-            return None;
+            return DotCtorLookup::NoExpected;
         };
-        let entry = self
+        let matches = self
             .catalog
             .adt_ctors
             .iter()
-            .find(|entry| entry.ty == def && entry.name == name)?;
-        let instantiated = self.engine.instantiate_scheme(entry.scheme);
-        self.pending.extend(instantiated.obligations);
-        Some(instantiated.ty)
+            .filter(|entry| entry.ty == def && entry.name == name)
+            .cloned()
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [] => DotCtorLookup::NoMatch,
+            [entry] => {
+                let instantiated = self.engine.instantiate_scheme(entry.scheme);
+                self.pending.extend(instantiated.obligations);
+                DotCtorLookup::Match(instantiated.ty)
+            }
+            entries => DotCtorLookup::Ambiguous(
+                entries
+                    .iter()
+                    .map(|entry| entry.name.clone())
+                    .collect::<Vec<_>>(),
+            ),
+        }
+    }
+
+    fn shorthand_ctor_diag(&mut self, name: &str, reason: String) {
+        self.diagnostics
+            .push(TypeckDiagnostic::ShorthandConstructor {
+                name: name.to_owned(),
+                reason,
+            });
     }
 
     fn infer_tuple_expr(
@@ -1839,23 +2030,52 @@ impl<'db> InferCtx<'db> {
                 self.apply_ctor_pat_scheme(body, args, ctor_ty, ret)
             }
             hir_nameres::Resolution::DotCtorDeferred => {
-                let Some(expected) = expected else {
-                    for arg in args {
-                        self.infer_pat_expected(body, *arg, None);
-                    }
-                    return self.engine.fresh_var();
-                };
                 let name = match &body.pats(self.db).get(pat).kind {
                     PatKind::Ctor { name, .. } => (*name.atom()).text(self.db),
                     _ => "",
                 };
-                let Some(ctor_ty) = self.ctor_for_expected(name, expected.clone()) else {
+                let Some(expected) = expected else {
                     for arg in args {
                         self.infer_pat_expected(body, *arg, None);
                     }
-                    return expected;
+                    self.shorthand_ctor_diag(
+                        name,
+                        "cannot resolve without expected constructor type".to_owned(),
+                    );
+                    return InferTy::Error;
                 };
-                self.apply_ctor_pat_scheme(body, args, ctor_ty, expected)
+                match self.ctor_for_expected(name, expected.clone()) {
+                    DotCtorLookup::Match(ctor_ty) => {
+                        self.apply_ctor_pat_scheme(body, args, ctor_ty, expected)
+                    }
+                    DotCtorLookup::NoExpected => {
+                        for arg in args {
+                            self.infer_pat_expected(body, *arg, None);
+                        }
+                        self.shorthand_ctor_diag(
+                            name,
+                            "cannot resolve without expected constructor type".to_owned(),
+                        );
+                        InferTy::Error
+                    }
+                    DotCtorLookup::NoMatch => {
+                        for arg in args {
+                            self.infer_pat_expected(body, *arg, None);
+                        }
+                        self.shorthand_ctor_diag(name, "no matching constructor".to_owned());
+                        InferTy::Error
+                    }
+                    DotCtorLookup::Ambiguous(candidates) => {
+                        for arg in args {
+                            self.infer_pat_expected(body, *arg, None);
+                        }
+                        self.shorthand_ctor_diag(
+                            name,
+                            format!("ambiguous candidates: {}", candidates.join(", ")),
+                        );
+                        InferTy::Error
+                    }
+                }
             }
             hir_nameres::Resolution::Err => InferTy::Error,
             _ => {
@@ -2024,47 +2244,70 @@ impl<'db> InferCtx<'db> {
             .find_map(|scope| scope.get(name).cloned())
     }
 
-    fn infer_yul_block(&mut self, body: &[YulStmt<'db>]) {
-        let mut scopes = vec![FxHashSet::default()];
-        for stmt in body {
-            self.infer_yul_stmt(stmt, &mut scopes);
-        }
+    fn infer_yul_block(&mut self, body: &[YulStmt<'db>]) -> (Vec<String>, InferTy<'db>) {
+        let mut scopes = vec![YulScope::default()];
+        self.infer_yul_block_scoped(body, &mut scopes)
     }
 
-    fn infer_yul_stmt(&mut self, stmt: &YulStmt<'db>, scopes: &mut Vec<FxHashSet<String>>) {
+    fn infer_yul_block_scoped(
+        &mut self,
+        body: &[YulStmt<'db>],
+        scopes: &mut Vec<YulScope<'db>>,
+    ) -> (Vec<String>, InferTy<'db>) {
+        let mut binds = Vec::new();
+        let mut ty = self.engine.from_ty(Ty::unit(self.db));
+        for stmt in body {
+            let (new_binds, stmt_ty) = self.infer_yul_stmt(stmt, scopes);
+            binds.extend(new_binds);
+            ty = stmt_ty;
+        }
+        (binds, ty)
+    }
+
+    fn infer_yul_stmt(
+        &mut self,
+        stmt: &YulStmt<'db>,
+        scopes: &mut Vec<YulScope<'db>>,
+    ) -> (Vec<String>, InferTy<'db>) {
         match &stmt.kind {
             YulStmtKind::Block(body) => {
-                scopes.push(FxHashSet::default());
-                for stmt in body {
-                    self.infer_yul_stmt(stmt, scopes);
-                }
+                scopes.push(YulScope::default());
+                self.infer_yul_block_scoped(body, scopes);
                 scopes.pop();
+                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
             }
             YulStmtKind::Let { names, init } => {
                 if let Some(init) = init {
-                    self.infer_yul_expr(init, scopes);
+                    let init_ty = self.infer_yul_expr(init, scopes);
+                    self.check_yul_assign_arity("Yul let", names.len(), init_ty);
                 }
-                for name in names {
-                    self.add_yul_local(scopes, (*name.atom()).text(self.db));
+                let binds = names
+                    .iter()
+                    .map(|name| (*name.atom()).text(self.db).to_owned())
+                    .collect::<Vec<_>>();
+                for name in &binds {
+                    self.add_yul_local(scopes, name);
                 }
+                (binds, self.engine.from_ty(Ty::unit(self.db)))
             }
             YulStmtKind::Assign { names, value } => {
-                self.infer_yul_expr(value, scopes);
+                let value_ty = self.infer_yul_expr(value, scopes);
+                self.check_yul_assign_arity("Yul assignment", names.len(), value_ty);
                 for name in names {
                     let text = (*name.atom()).text(self.db);
                     if !self.is_yul_local(scopes, text) {
-                        self.check_yul_sail_var(text);
+                        self.check_yul_sail_var_write(text);
                     }
                 }
+                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
             }
-            YulStmtKind::Expr(expr) => self.infer_yul_expr(expr, scopes),
+            YulStmtKind::Expr(expr) => (Vec::new(), self.infer_yul_expr(expr, scopes)),
             YulStmtKind::If { cond, body } => {
                 self.infer_yul_expr(cond, scopes);
-                scopes.push(FxHashSet::default());
-                for stmt in body {
-                    self.infer_yul_stmt(stmt, scopes);
-                }
+                scopes.push(YulScope::default());
+                self.infer_yul_block_scoped(body, scopes);
                 scopes.pop();
+                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
             }
             YulStmtKind::For {
                 init,
@@ -2072,18 +2315,13 @@ impl<'db> InferCtx<'db> {
                 post,
                 body,
             } => {
-                scopes.push(FxHashSet::default());
-                for stmt in init {
-                    self.infer_yul_stmt(stmt, scopes);
-                }
+                scopes.push(YulScope::default());
+                self.infer_yul_block_scoped(init, scopes);
                 self.infer_yul_expr(cond, scopes);
-                for stmt in post {
-                    self.infer_yul_stmt(stmt, scopes);
-                }
-                for stmt in body {
-                    self.infer_yul_stmt(stmt, scopes);
-                }
+                self.infer_yul_block_scoped(body, scopes);
+                self.infer_yul_block_scoped(post, scopes);
                 scopes.pop();
+                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
             }
             YulStmtKind::Switch {
                 expr,
@@ -2095,72 +2333,154 @@ impl<'db> InferCtx<'db> {
                     self.infer_yul_case(case, scopes);
                 }
                 if let Some(default) = default {
-                    scopes.push(FxHashSet::default());
-                    for stmt in default {
-                        self.infer_yul_stmt(stmt, scopes);
-                    }
+                    scopes.push(YulScope::default());
+                    self.infer_yul_block_scoped(default, scopes);
                     scopes.pop();
                 }
+                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
             }
             YulStmtKind::FunctionDef {
-                params, rets, body, ..
+                name,
+                params,
+                rets,
+                body,
             } => {
-                scopes.push(FxHashSet::default());
+                let fn_name = (*name.atom()).text(self.db).to_owned();
+                let sig = YulFunctionSig {
+                    params: self.yul_word_tys(params.len()),
+                    ret: self.yul_return_ty(rets.len()),
+                };
+                self.add_yul_function(scopes, fn_name, sig);
+                scopes.push(YulScope::default());
                 for name in params.iter().chain(rets) {
                     self.add_yul_local(scopes, (*name.atom()).text(self.db));
                 }
-                for stmt in body {
-                    self.infer_yul_stmt(stmt, scopes);
-                }
+                self.infer_yul_block_scoped(body, scopes);
                 scopes.pop();
+                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
             }
-            YulStmtKind::Leave
-            | YulStmtKind::Break
-            | YulStmtKind::Continue
-            | YulStmtKind::Error => {}
+            YulStmtKind::Leave | YulStmtKind::Break | YulStmtKind::Continue => {
+                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
+            }
+            YulStmtKind::Error => (Vec::new(), InferTy::Error),
         }
     }
 
-    fn infer_yul_case(&mut self, case: &YulCase<'db>, scopes: &mut Vec<FxHashSet<String>>) {
+    fn infer_yul_case(&mut self, case: &YulCase<'db>, scopes: &mut Vec<YulScope<'db>>) {
         self.infer_yul_lit(&case.lit);
-        scopes.push(FxHashSet::default());
-        for stmt in &case.body {
-            self.infer_yul_stmt(stmt, scopes);
-        }
+        scopes.push(YulScope::default());
+        self.infer_yul_block_scoped(&case.body, scopes);
         scopes.pop();
     }
 
-    fn infer_yul_expr(&mut self, expr: &YulExpr<'db>, scopes: &mut Vec<FxHashSet<String>>) {
+    fn infer_yul_expr(
+        &mut self,
+        expr: &YulExpr<'db>,
+        scopes: &mut Vec<YulScope<'db>>,
+    ) -> InferTy<'db> {
         match &expr.kind {
             YulExprKind::Lit(lit) => self.infer_yul_lit(lit),
             YulExprKind::Ident(name) => {
                 let text = (*name.atom()).text(self.db);
-                if !self.is_yul_local(scopes, text) {
-                    self.check_yul_sail_var(text);
+                if self.is_yul_local(scopes, text) {
+                    self.engine.from_ty(Ty::word(self.db))
+                } else {
+                    self.check_yul_sail_var_read(text)
                 }
             }
-            YulExprKind::Call { args, .. } => {
-                for arg in args {
-                    self.infer_yul_expr(arg, scopes);
+            YulExprKind::Call { name, args } => {
+                let text = (*name.atom()).text(self.db);
+                let arg_tys = args
+                    .iter()
+                    .map(|arg| self.infer_yul_expr(arg, scopes))
+                    .collect::<Vec<_>>();
+                let sig = self
+                    .lookup_yul_function(scopes, text)
+                    .or_else(|| self.yul_builtin_sig(text));
+                let Some(sig) = sig else {
+                    self.diagnostics.push(TypeckDiagnostic::UnknownYulName {
+                        name: text.to_owned(),
+                    });
+                    return InferTy::Error;
+                };
+                if sig.params.len() != arg_tys.len() {
+                    self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                        context: format!("Yul call `{text}`"),
+                        expected: sig.params.len(),
+                        actual: arg_tys.len(),
+                    });
                 }
+                for (expected, actual) in sig.params.iter().cloned().zip(arg_tys) {
+                    self.unify(expected, actual);
+                }
+                sig.ret
             }
-            YulExprKind::Error => {}
+            YulExprKind::Error => InferTy::Error,
         }
     }
 
-    fn infer_yul_lit(&mut self, _lit: &YulLitKind) {}
+    fn infer_yul_lit(&mut self, lit: &YulLitKind) -> InferTy<'db> {
+        match lit {
+            YulLitKind::Number(_) | YulLitKind::Hex(_) | YulLitKind::Bool(_) => {
+                self.engine.from_ty(Ty::word(self.db))
+            }
+            YulLitKind::String(_) => self.engine.from_ty(Ty::string(self.db)),
+            YulLitKind::Error => InferTy::Error,
+        }
+    }
 
-    fn add_yul_local(&self, scopes: &mut [FxHashSet<String>], name: &str) {
+    fn add_yul_local(&self, scopes: &mut [YulScope<'db>], name: &str) {
         if let Some(scope) = scopes.last_mut() {
-            scope.insert(name.to_owned());
+            scope.values.insert(name.to_owned());
         }
     }
 
-    fn is_yul_local(&self, scopes: &[FxHashSet<String>], name: &str) -> bool {
-        scopes.iter().rev().any(|scope| scope.contains(name))
+    fn add_yul_function(
+        &self,
+        scopes: &mut [YulScope<'db>],
+        name: String,
+        sig: YulFunctionSig<'db>,
+    ) {
+        if let Some(scope) = scopes.last_mut() {
+            scope.functions.insert(name, sig);
+        }
     }
 
-    fn check_yul_sail_var(&mut self, name: &str) {
+    fn is_yul_local(&self, scopes: &[YulScope<'db>], name: &str) -> bool {
+        scopes.iter().rev().any(|scope| scope.values.contains(name))
+    }
+
+    fn lookup_yul_function(
+        &self,
+        scopes: &[YulScope<'db>],
+        name: &str,
+    ) -> Option<YulFunctionSig<'db>> {
+        scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.functions.get(name).cloned())
+    }
+
+    fn check_yul_sail_var_read(&mut self, name: &str) -> InferTy<'db> {
+        let Some(ty) = self.lookup_sail_local(name) else {
+            self.diagnostics.push(TypeckDiagnostic::UnknownYulName {
+                name: name.to_owned(),
+            });
+            return InferTy::Error;
+        };
+        let word = self.engine.from_ty(Ty::word(self.db));
+        if self.engine.can_unify(ty.clone(), word.clone()) {
+            self.unify(ty, word.clone());
+        } else {
+            self.diagnostics.push(TypeckDiagnostic::NonWordYulVar {
+                name: name.to_owned(),
+                actual: self.engine.display(ty),
+            });
+        }
+        word
+    }
+
+    fn check_yul_sail_var_write(&mut self, name: &str) {
         let Some(ty) = self.lookup_sail_local(name) else {
             return;
         };
@@ -2173,6 +2493,158 @@ impl<'db> InferCtx<'db> {
                 actual: self.engine.display(ty),
             });
         }
+    }
+
+    fn check_yul_assign_arity(&mut self, context: &str, expected: usize, actual_ty: InferTy<'db>) {
+        let actual = self.yul_return_arity(actual_ty);
+        if expected != actual {
+            self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                context: context.to_owned(),
+                expected,
+                actual,
+            });
+        }
+    }
+
+    fn yul_return_arity(&mut self, ty: InferTy<'db>) -> usize {
+        match self.engine.resolve(ty) {
+            InferTy::Error => 0,
+            InferTy::Tuple(elems) => elems.len(),
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                args,
+            } if args.is_empty() => 0,
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+                args,
+            } if args.len() == 2 => 1 + self.yul_return_arity(args[1].clone()),
+            _ => 1,
+        }
+    }
+
+    fn yul_word_tys(&mut self, count: usize) -> Vec<InferTy<'db>> {
+        let word = self.engine.from_ty(Ty::word(self.db));
+        vec![word; count]
+    }
+
+    fn yul_return_ty(&mut self, count: usize) -> InferTy<'db> {
+        match count {
+            0 => self.engine.from_ty(Ty::unit(self.db)),
+            1 => self.engine.from_ty(Ty::word(self.db)),
+            _ => InferTy::Tuple(self.yul_word_tys(count)),
+        }
+    }
+
+    fn yul_builtin_sig(&mut self, name: &str) -> Option<YulFunctionSig<'db>> {
+        let word = self.engine.from_ty(Ty::word(self.db));
+        let string = self.engine.from_ty(Ty::string(self.db));
+        let unit = self.engine.from_ty(Ty::unit(self.db));
+        let word_params = |count: usize| vec![word.clone(); count];
+        let sig = match name {
+            "stop" | "invalid" => YulFunctionSig {
+                params: Vec::new(),
+                ret: unit.clone(),
+            },
+            "add" | "mul" | "sub" | "div" | "sdiv" | "mod" | "smod" | "exp" | "signextend"
+            | "lt" | "gt" | "slt" | "sgt" | "eq" | "and" | "or" | "xor" | "byte" | "shl"
+            | "shr" | "sar" => YulFunctionSig {
+                params: word_params(2),
+                ret: word.clone(),
+            },
+            "addmod" | "mulmod" => YulFunctionSig {
+                params: word_params(3),
+                ret: word.clone(),
+            },
+            "iszero" | "not" | "clz" | "balance" | "calldataload" | "extcodesize"
+            | "extcodehash" | "blockhash" | "blobhash" | "pop" | "mload" | "sload" | "tload"
+            | "selfdestruct" => {
+                let ret = if matches!(name, "pop" | "selfdestruct") {
+                    unit.clone()
+                } else {
+                    word.clone()
+                };
+                YulFunctionSig {
+                    params: word_params(1),
+                    ret,
+                }
+            }
+            "address" | "origin" | "caller" | "callvalue" | "calldatasize" | "codesize"
+            | "gasprice" | "returndatasize" | "coinbase" | "timestamp" | "number"
+            | "prevrandao" | "gaslimit" | "chainid" | "selfbalance" | "basefee" | "blobbasefee"
+            | "msize" | "gas" => YulFunctionSig {
+                params: Vec::new(),
+                ret: word.clone(),
+            },
+            "calldatacopy" | "codecopy" | "returndatacopy" | "mstore" | "mstore8" | "sstore"
+            | "tstore" | "mcopy" | "datacopy" => YulFunctionSig {
+                params: word_params(3)
+                    .into_iter()
+                    .take(match name {
+                        "mstore" | "mstore8" | "sstore" | "tstore" => 2,
+                        _ => 3,
+                    })
+                    .collect(),
+                ret: unit.clone(),
+            },
+            "extcodecopy" => YulFunctionSig {
+                params: word_params(4),
+                ret: unit.clone(),
+            },
+            "log0" => YulFunctionSig {
+                params: word_params(2),
+                ret: unit.clone(),
+            },
+            "log1" => YulFunctionSig {
+                params: word_params(3),
+                ret: unit.clone(),
+            },
+            "log2" => YulFunctionSig {
+                params: word_params(4),
+                ret: unit.clone(),
+            },
+            "log3" => YulFunctionSig {
+                params: word_params(5),
+                ret: unit.clone(),
+            },
+            "log4" => YulFunctionSig {
+                params: word_params(6),
+                ret: unit.clone(),
+            },
+            "create" => YulFunctionSig {
+                params: word_params(3),
+                ret: word.clone(),
+            },
+            "create2" => YulFunctionSig {
+                params: word_params(4),
+                ret: word.clone(),
+            },
+            "call" | "callcode" => YulFunctionSig {
+                params: word_params(7),
+                ret: word.clone(),
+            },
+            "delegatecall" | "staticcall" => YulFunctionSig {
+                params: word_params(6),
+                ret: word.clone(),
+            },
+            "return" | "revert" => YulFunctionSig {
+                params: word_params(2),
+                ret: self.engine.fresh_var(),
+            },
+            "datasize" | "dataoffset" | "loadimmutable" | "linkersymbol" => YulFunctionSig {
+                params: vec![string.clone()],
+                ret: word.clone(),
+            },
+            "setimmutable" => YulFunctionSig {
+                params: vec![word.clone(), string.clone(), word.clone()],
+                ret: unit.clone(),
+            },
+            "memoryguard" => YulFunctionSig {
+                params: word_params(1),
+                ret: word.clone(),
+            },
+            _ => return None,
+        };
+        Some(sig)
     }
 
     fn unify(&mut self, expected: InferTy<'db>, actual: InferTy<'db>) {
@@ -2878,6 +3350,14 @@ mod tests {
         );
     }
 
+    fn assert_typeck(result: &InferenceResult<'_>, matches: impl Fn(&TypeckDiagnostic) -> bool) {
+        assert!(
+            result.diagnostics.iter().any(matches),
+            "expected diagnostic, got {:?}",
+            result.diagnostics
+        );
+    }
+
     #[test]
     fn unify_occurs_check_rejects_recursive_type() {
         let db = TestDb::default();
@@ -2989,6 +3469,124 @@ function fromOption(x: Option) -> word {
         assert_no_typeck(&mk_result);
         let (_, match_result) = infer_function(&db, module, "fromOption");
         assert_no_typeck(&match_result);
+    }
+
+    #[test]
+    fn nested_generic_adt_constructor_result_uses_adt_params_only() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+contract Box(t) {
+  data Option(u) = None | Some(u);
+
+  public function mk(x: word) -> Option(word) {
+    return .Some(x);
+  }
+}
+"#,
+        );
+
+        let (_, result) = infer_function(&db, module, "mk");
+        assert_no_typeck(&result);
+    }
+
+    #[test]
+    fn lambda_body_receives_expected_function_type_before_inference() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+data Option = None | Some(word);
+
+function apply(f: (word) -> Option) -> Option {
+  return f(1);
+}
+
+function main() -> Option {
+  return apply(lam(x) { return .Some(x); });
+}
+"#,
+        );
+
+        let (_, result) = infer_function(&db, module, "main");
+        assert_no_typeck(&result);
+    }
+
+    #[test]
+    fn shorthand_constructor_assignment_uses_lhs_expected_type() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+data Option = None | Some(word);
+
+function bad() -> word {
+  let x : Option;
+  x = .Some(true);
+  return 0;
+}
+"#,
+        );
+
+        let (_, result) = infer_function(&db, module, "bad");
+        assert_typeck(&result, |diag| {
+            matches!(diag, TypeckDiagnostic::Mismatch { .. })
+        });
+    }
+
+    #[test]
+    fn shorthand_constructor_lookup_fails_closed() {
+        let db = TestDb::default();
+
+        let module = parse_module(
+            &db,
+            r#"
+data Option = None | Some(word);
+
+function noContext() -> word {
+  let x = .Some(1);
+  return 0;
+}
+"#,
+        );
+        let (_, result) = infer_function(&db, module, "noContext");
+        assert_typeck(
+            &result,
+            |diag| matches!(diag, TypeckDiagnostic::ShorthandConstructor { reason, .. } if reason.contains("expected constructor type")),
+        );
+
+        let module = parse_module(
+            &db,
+            r#"
+data Other = Other;
+
+function noMatch() -> Other {
+  return .Some(1);
+}
+"#,
+        );
+        let (_, result) = infer_function(&db, module, "noMatch");
+        assert_typeck(
+            &result,
+            |diag| matches!(diag, TypeckDiagnostic::ShorthandConstructor { reason, .. } if reason.contains("no matching")),
+        );
+
+        let module = parse_module(
+            &db,
+            r#"
+data Choice = Same(word) | Same(bool);
+
+function ambiguous() -> Choice {
+  return .Same(1);
+}
+"#,
+        );
+        let (_, result) = infer_function(&db, module, "ambiguous");
+        assert_typeck(
+            &result,
+            |diag| matches!(diag, TypeckDiagnostic::ShorthandConstructor { reason, .. } if reason.contains("ambiguous")),
+        );
     }
 
     #[test]
@@ -3194,6 +3792,54 @@ function main() -> word {
     }
 
     #[test]
+    fn body_result_typing_rejects_bad_final_if_match_and_nonfinal_return() {
+        let db = TestDb::default();
+
+        let module = parse_module(
+            &db,
+            r#"
+function f(x : bool) -> word {
+  if x { 1; } else { true; }
+}
+"#,
+        );
+        let (_, result) = infer_function(&db, module, "f");
+        assert_typeck(&result, |diag| {
+            matches!(diag, TypeckDiagnostic::Mismatch { .. })
+        });
+
+        let module = parse_module(
+            &db,
+            r#"
+function g() -> word {
+  return 1;
+  return 2;
+}
+"#,
+        );
+        let (_, result) = infer_function(&db, module, "g");
+        assert_typeck(&result, |diag| {
+            matches!(diag, TypeckDiagnostic::NonFinalReturn)
+        });
+
+        let module = parse_module(
+            &db,
+            r#"
+function h(x : bool) -> word {
+  match x {
+  | true => return 1;
+  | false => return true;
+  }
+}
+"#,
+        );
+        let (_, result) = infer_function(&db, module, "h");
+        assert_typeck(&result, |diag| {
+            matches!(diag, TypeckDiagnostic::Mismatch { .. })
+        });
+    }
+
+    #[test]
     fn integer_literal_pattern_adopts_scrutinee_numeric_type() {
         let db = TestDb::default();
         let module = parse_module(
@@ -3228,6 +3874,90 @@ function main() -> word {
         assert!(result.diagnostics.iter().any(
             |diag| matches!(diag, TypeckDiagnostic::NonWordYulVar { name, .. } if name == "b")
         ));
+    }
+
+    #[test]
+    fn yul_typing_rejects_builtin_and_user_function_arity_errors() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+contract YulMultiRetBad {
+  public function main() -> word {
+    let x : word;
+    let y : word;
+    let z : word;
+    assembly {
+      function pair() -> a, b {
+        a := 1
+        b := 2
+      }
+      x, y, z := pair()
+    }
+    return x;
+  }
+}
+"#,
+        );
+
+        let (_, result) = infer_function(&db, module, "main");
+        assert_typeck(&result, |diag| {
+            matches!(
+                diag,
+                TypeckDiagnostic::WrongArity {
+                    context,
+                    expected: 3,
+                    actual: 2,
+                } if context == "Yul assignment"
+            )
+        });
+    }
+
+    #[test]
+    fn yul_typing_checks_opcode_arity_identifiers_and_literal_types() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+function badYul() -> word {
+  let x : word;
+  assembly {
+    let one := add(1)
+    let two := add("bad", 1)
+    x := mstore(1, 1)
+    x := add(missing, 1)
+  }
+  return x;
+}
+"#,
+        );
+
+        let (_, result) = infer_function(&db, module, "badYul");
+        assert_typeck(&result, |diag| {
+            matches!(
+                diag,
+                TypeckDiagnostic::WrongArity { context, expected: 2, actual: 1 }
+                    if context == "Yul call `add`"
+            )
+        });
+        assert_typeck(
+            &result,
+            |diag| matches!(diag, TypeckDiagnostic::Mismatch { expected, actual } if expected == "word" && actual == "string"),
+        );
+        assert_typeck(&result, |diag| {
+            matches!(
+                diag,
+                TypeckDiagnostic::WrongArity {
+                    context,
+                    expected: 1,
+                    actual: 0,
+                } if context == "Yul assignment"
+            )
+        });
+        assert_typeck(
+            &result,
+            |diag| matches!(diag, TypeckDiagnostic::UnknownYulName { name } if name == "missing"),
+        );
     }
 
     #[test]

@@ -102,6 +102,10 @@ impl<'db> BinderEnv<'db> {
         self.binder_count
     }
 
+    fn resolve_def_param(&self, def: DefId<'db>, index: u32) -> Option<BoundTyVar> {
+        self.binders.get(&(def, index)).copied()
+    }
+
     fn resolve(&self, var: &hir_nameres::TypeVarId<'db>) -> Option<BoundTyVar> {
         self.binders.get(&(var.owner, var.index)).copied()
     }
@@ -297,13 +301,22 @@ impl<'db> TypeLowering<'db> {
     pub fn lower_adt_ctor(&self, adt: AdtDef<'db>, ctor: &AdtCtor<'db>) -> LoweredAdtCtor<'db> {
         let fields = self.lower_type(*ctor.fields.atom());
         let params = tuple_params(self.db, fields);
-        let ret_args = (0..self.binders.binder_count())
-            .map(|index| Ty::bound(self.db, index))
+        let adt_def = adt.def_id_value(self.db);
+        let ret_args = adt
+            .ty_param_elems(self.db)
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                self.binders
+                    .resolve_def_param(adt_def, index as u32)
+                    .map(|bound| Ty::bound(self.db, bound.index))
+                    .unwrap_or_else(|| Ty::error(self.db))
+            })
             .collect::<Vec<_>>();
         let ret = Ty::named(
             self.db,
             TyCtor::User(UserTyCtor {
-                def: adt.def_id_value(self.db),
+                def: adt_def,
                 kind: UserTyCtorKind::Adt,
             }),
             ret_args,
