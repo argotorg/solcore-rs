@@ -1,7 +1,6 @@
-use std::{
-    collections::HashMap,
-    hash::{DefaultHasher, Hash, Hasher},
-};
+use std::hash::{DefaultHasher, Hash, Hasher};
+
+use rustc_hash::FxHashMap;
 
 use crate::{diag::Offset, input::SourceFile};
 
@@ -151,6 +150,7 @@ pub fn resolve_def_location<'db>(
 }
 
 fn def_id_hash<'db>(def: DefId<'db>) -> u64 {
+    // This stable DefLocationTable key intentionally uses std SipHash rather than FxHash.
     let mut hasher = DefaultHasher::new();
     def.hash(&mut hasher);
     hasher.finish()
@@ -168,7 +168,7 @@ struct DefBaseKey {
 /// Stateful allocator for deterministic disambiguators during lowering/parsing.
 #[derive(Debug, Default)]
 pub struct KeyCanonicalizer {
-    def_counts: HashMap<DefBaseKey, u32>,
+    def_counts: FxHashMap<DefBaseKey, u32>,
 }
 
 impl KeyCanonicalizer {

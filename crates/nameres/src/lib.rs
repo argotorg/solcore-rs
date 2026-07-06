@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     path::{Path, PathBuf},
 };
 
@@ -18,6 +18,7 @@ use hir::{
     span::{Span, Spanned, SpannedElem},
 };
 use parser::parse_file_to_hir;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 #[salsa::db]
 pub trait Db: parser::Db {
@@ -365,7 +366,7 @@ pub fn module_imports<'db>(db: &'db dyn Db, file: SourceFile) -> ModuleImports<'
 #[salsa::tracked]
 pub fn module_graph<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'db> {
     let mut modules = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut queue = VecDeque::from([entry]);
     let mut import_edges = Vec::new();
     let mut reference_edges = Vec::new();
@@ -425,7 +426,7 @@ pub fn module_graph<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'
 }
 
 pub fn strongly_connected_components<'db>(graph: &ModuleGraph<'db>) -> Vec<Vec<ModuleId<'db>>> {
-    let mut adjacency: HashMap<ModuleId<'db>, Vec<ModuleId<'db>>> = HashMap::new();
+    let mut adjacency: FxHashMap<ModuleId<'db>, Vec<ModuleId<'db>>> = FxHashMap::default();
     for module in &graph.modules {
         adjacency.entry(*module).or_default();
     }
@@ -436,9 +437,9 @@ pub fn strongly_connected_components<'db>(graph: &ModuleGraph<'db>) -> Vec<Vec<M
     let mut state = TarjanState {
         next_index: 0,
         stack: Vec::new(),
-        on_stack: HashSet::new(),
-        indices: HashMap::new(),
-        lowlinks: HashMap::new(),
+        on_stack: FxHashSet::default(),
+        indices: FxHashMap::default(),
+        lowlinks: FxHashMap::default(),
         components: Vec::new(),
     };
 
@@ -582,11 +583,11 @@ struct ModuleEnvBuilder<'db> {
     db: &'db dyn Db,
     module: ModuleId<'db>,
     env: ModuleEnv<'db>,
-    local_terms: HashMap<String, Span<'db>>,
-    local_types: HashMap<String, Span<'db>>,
-    imported_terms: HashMap<String, Span<'db>>,
-    conflict_diagnostics: HashSet<(hir_nameres::Namespace, String)>,
-    module_conflict_diagnostics: HashSet<String>,
+    local_terms: FxHashMap<String, Span<'db>>,
+    local_types: FxHashMap<String, Span<'db>>,
+    imported_terms: FxHashMap<String, Span<'db>>,
+    conflict_diagnostics: FxHashSet<(hir_nameres::Namespace, String)>,
+    module_conflict_diagnostics: FxHashSet<String>,
 }
 
 impl<'db> ModuleEnvBuilder<'db> {
@@ -623,9 +624,9 @@ impl<'db> ModuleEnvBuilder<'db> {
             },
             local_terms,
             local_types,
-            imported_terms: HashMap::new(),
-            conflict_diagnostics: HashSet::new(),
-            module_conflict_diagnostics: HashSet::new(),
+            imported_terms: FxHashMap::default(),
+            conflict_diagnostics: FxHashSet::default(),
+            module_conflict_diagnostics: FxHashSet::default(),
         }
     }
 
@@ -653,8 +654,8 @@ impl<'db> ModuleEnvBuilder<'db> {
         }
 
         for qualifier in import_module_qualifiers(self.db, import, &path) {
-            let mut seen = HashSet::new();
-            let mut stack = HashSet::new();
+            let mut seen = FxHashSet::default();
+            let mut stack = FxHashSet::default();
             self.add_module_surface(
                 &qualifier,
                 target,
@@ -705,8 +706,8 @@ impl<'db> ModuleEnvBuilder<'db> {
         qualifier: &str,
         target: ModuleId<'db>,
         span: Span<'db>,
-        seen: &mut HashSet<(String, ModuleId<'db>)>,
-        stack: &mut HashSet<ModuleId<'db>>,
+        seen: &mut FxHashSet<(String, ModuleId<'db>)>,
+        stack: &mut FxHashSet<ModuleId<'db>>,
     ) {
         self.add_module_binding(qualifier, target, span);
 
@@ -1509,7 +1510,7 @@ fn select_import_refs<'db>(
     selector: &ImportSelector<'db>,
     hiding: &[ImportHiddenName<'db>],
 ) -> Vec<ItemRef<'db>> {
-    let hidden: HashSet<_> = hiding
+    let hidden: FxHashSet<_> = hiding
         .iter()
         .map(|hidden| spanned_name_text(db, &hidden.name))
         .collect();
@@ -1550,7 +1551,7 @@ fn select_import_refs<'db>(
 }
 
 fn unique_import_bindings<'db>(refs: Vec<ItemRef<'db>>) -> Vec<ItemRef<'db>> {
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut result = Vec::new();
     for item_ref in refs {
         if seen.insert((item_ref.namespace, item_ref.public_name.clone())) {
@@ -1714,7 +1715,7 @@ fn validate_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) {
 }
 
 fn validate_duplicate_qualifiers<'db>(db: &'db dyn Db, imports: &[Import<'db>]) {
-    let mut seen: HashMap<String, Span<'db>> = HashMap::new();
+    let mut seen: FxHashMap<String, Span<'db>> = FxHashMap::default();
     for import in imports {
         let Some((name, span)) = import_qualifier(db, *import) else {
             continue;
@@ -1740,9 +1741,9 @@ fn validate_duplicate_selectors<'db>(db: &'db dyn Db, imports: &[Import<'db>]) {
 }
 
 fn validate_duplicate_selected_names<'db>(db: &'db dyn Db, names: &[SelectedName<'db>]) {
-    let mut sources: HashMap<String, Span<'db>> = HashMap::new();
-    let mut locals: HashMap<String, Span<'db>> = HashMap::new();
-    let mut emitted: HashSet<(String, Span<'db>, Span<'db>)> = HashSet::new();
+    let mut sources: FxHashMap<String, Span<'db>> = FxHashMap::default();
+    let mut locals: FxHashMap<String, Span<'db>> = FxHashMap::default();
+    let mut emitted: FxHashSet<(String, Span<'db>, Span<'db>)> = FxHashSet::default();
     for selected in names {
         let source = spanned_name_text(db, &selected.name);
         if let Some(first_span) = sources.get(&source) {
@@ -1771,7 +1772,7 @@ fn validate_duplicate_selected_names<'db>(db: &'db dyn Db, names: &[SelectedName
 
 fn emit_duplicate_selector_once<'db>(
     db: &'db dyn Db,
-    emitted: &mut HashSet<(String, Span<'db>, Span<'db>)>,
+    emitted: &mut FxHashSet<(String, Span<'db>, Span<'db>)>,
     first: Span<'db>,
     second: Span<'db>,
     name: &str,
@@ -1782,7 +1783,7 @@ fn emit_duplicate_selector_once<'db>(
 }
 
 fn validate_duplicate_hidden_names<'db>(db: &'db dyn Db, names: &[ImportHiddenName<'db>]) {
-    let mut seen: HashMap<String, Span<'db>> = HashMap::new();
+    let mut seen: FxHashMap<String, Span<'db>> = FxHashMap::default();
     for hidden in names {
         let name = spanned_name_text(db, &hidden.name);
         if let Some(first_span) = seen.get(&name) {
@@ -1832,8 +1833,8 @@ fn validate_ambiguous_selected_imports<'db>(
     module: ModuleId<'db>,
     imports: &[Import<'db>],
 ) {
-    let mut imported: HashMap<(Namespace, String), Vec<ModuleId<'db>>> = HashMap::new();
-    let mut spans: HashMap<(Namespace, String), Span<'db>> = HashMap::new();
+    let mut imported: FxHashMap<(Namespace, String), Vec<ModuleId<'db>>> = FxHashMap::default();
+    let mut spans: FxHashMap<(Namespace, String), Span<'db>> = FxHashMap::default();
     for import in imports {
         let Some(selector) = import.selector(db) else {
             continue;
@@ -1853,18 +1854,24 @@ fn validate_ambiguous_selected_imports<'db>(
         }
     }
 
-    for ((_, name), targets) in imported {
+    let mut imported = imported.into_iter().collect::<Vec<_>>();
+    imported.sort_by(
+        |((left_namespace, left_name), _), ((right_namespace, right_name), _)| {
+            (namespace_sort_key(*left_namespace), left_name)
+                .cmp(&(namespace_sort_key(*right_namespace), right_name))
+        },
+    );
+
+    for (key, targets) in imported {
+        let name = &key.1;
         if targets.len() > 1 {
-            let span = spans
-                .iter()
-                .find_map(|((_, span_name), span)| (span_name == &name).then_some(*span))
-                .unwrap_or_else(|| {
-                    db.module_file(module).map_or_else(
-                        || panic!("validated module missing file"),
-                        |file| parse_file_to_hir(db, file).module(db).span(db),
-                    )
-                });
-            let _ = ambiguous_import_diag(db, span, &name, targets).accumulate(db);
+            let span = spans.get(&key).copied().unwrap_or_else(|| {
+                db.module_file(module).map_or_else(
+                    || panic!("validated module missing file"),
+                    |file| parse_file_to_hir(db, file).module(db).span(db),
+                )
+            });
+            let _ = ambiguous_import_diag(db, span, name, targets).accumulate(db);
         }
     }
 }
@@ -1877,13 +1884,21 @@ fn validate_duplicate_exports<'db>(
     let module_span = db
         .module_file(module)
         .map(|file| parse_file_to_hir(db, file).module(db).span(db));
-    let mut items: HashMap<(Namespace, String), Vec<&ItemRef<'db>>> = HashMap::new();
+    let mut items: FxHashMap<(Namespace, String), Vec<&ItemRef<'db>>> = FxHashMap::default();
     for item_ref in &raw.item_refs {
         items
             .entry((item_ref.namespace, item_ref.public_name.clone()))
             .or_default()
             .push(item_ref);
     }
+    let mut items = items.into_iter().collect::<Vec<_>>();
+    items.sort_by(
+        |((left_namespace, left_name), _), ((right_namespace, right_name), _)| {
+            (namespace_sort_key(*left_namespace), left_name)
+                .cmp(&(namespace_sort_key(*right_namespace), right_name))
+        },
+    );
+
     for ((_, name), refs) in items {
         let mut unique = Vec::<(&Origin<'db>, &str)>::new();
         for item_ref in refs {
@@ -1900,13 +1915,16 @@ fn validate_duplicate_exports<'db>(
         }
     }
 
-    let mut modules: HashMap<String, Vec<ModuleId<'db>>> = HashMap::new();
+    let mut modules: FxHashMap<String, Vec<ModuleId<'db>>> = FxHashMap::default();
     for alias in &raw.module_aliases {
         let targets = modules.entry(alias.public_name.clone()).or_default();
         if !targets.contains(&alias.target) {
             targets.push(alias.target);
         }
     }
+    let mut modules = modules.into_iter().collect::<Vec<_>>();
+    modules.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
+
     for (name, targets) in modules {
         if targets.len() > 1 {
             let _ = duplicate_export_module_diag(db, module_span, &name).accumulate(db);
@@ -1936,7 +1954,7 @@ fn default_module_binding_name<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) 
         .unwrap_or_else(|| module_path_display(db, path))
 }
 
-fn interface_names<'db>(interface: &Interface<'db>) -> HashSet<String> {
+fn interface_names<'db>(interface: &Interface<'db>) -> FxHashSet<String> {
     interface
         .item_refs
         .iter()
@@ -1953,7 +1971,7 @@ fn spanned_name_text<'db>(db: &'db dyn Db, name: &SpannedElem<'db, Ident<'db>>) 
 }
 
 fn unique_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut result = Vec::new();
     for value in values {
         if seen.insert(value.clone()) {
@@ -1964,7 +1982,7 @@ fn unique_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
 }
 
 fn unique_origins<'db>(values: impl IntoIterator<Item = Origin<'db>>) -> Vec<Origin<'db>> {
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut result = Vec::new();
     for value in values {
         if seen.insert(value.clone()) {
@@ -2138,15 +2156,15 @@ fn duplicate_export_module_diag<'db>(
 struct TarjanState<'db> {
     next_index: usize,
     stack: Vec<ModuleId<'db>>,
-    on_stack: HashSet<ModuleId<'db>>,
-    indices: HashMap<ModuleId<'db>, usize>,
-    lowlinks: HashMap<ModuleId<'db>, usize>,
+    on_stack: FxHashSet<ModuleId<'db>>,
+    indices: FxHashMap<ModuleId<'db>, usize>,
+    lowlinks: FxHashMap<ModuleId<'db>, usize>,
     components: Vec<Vec<ModuleId<'db>>>,
 }
 
 fn strong_connect<'db>(
     module: ModuleId<'db>,
-    adjacency: &HashMap<ModuleId<'db>, Vec<ModuleId<'db>>>,
+    adjacency: &FxHashMap<ModuleId<'db>, Vec<ModuleId<'db>>>,
     state: &mut TarjanState<'db>,
 ) {
     let index = state.next_index;

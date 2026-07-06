@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 
 use crate::{
     Db,
@@ -23,7 +23,7 @@ pub fn collect_error_nodes<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<Err
     let mut collector = ErrorCollector {
         db,
         errors: Vec::new(),
-        seen_types: HashSet::new(),
+        seen_types: FxHashSet::default(),
     };
     for item in module.items(db) {
         collector.item(*item);
@@ -34,7 +34,7 @@ pub fn collect_error_nodes<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<Err
 struct ErrorCollector<'db> {
     db: &'db dyn Db,
     errors: Vec<ErrorNode<'db>>,
-    seen_types: HashSet<TypeRef<'db>>,
+    seen_types: FxHashSet<TypeRef<'db>>,
 }
 
 impl<'db> ErrorCollector<'db> {

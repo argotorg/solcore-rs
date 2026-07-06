@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -7,6 +7,7 @@ use std::{
 use annotate_snippets::Renderer;
 use hir::{diag::Diagnostic, input::SourceFile};
 use parser::parse_file_to_hir;
+use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_nameres::{
     LibraryId, ModuleGraph, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
     module_key_for_path, public_interface, resolve_module_path_candidate, resolve_reachable_full,
@@ -19,7 +20,7 @@ use url::Url;
 struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
-    module_files: HashMap<ModuleKey, SourceFile>,
+    module_files: FxHashMap<ModuleKey, SourceFile>,
 }
 
 #[salsa::db]
@@ -298,7 +299,7 @@ fn load_entry(
 
 fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) {
     let mut queue = vec![entry];
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = FxHashSet::default();
 
     while let Some(key) = queue.pop() {
         if !visited.insert(key.clone()) {

@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 salsa = { workspace = true }
+rustc-hash = { workspace = true }
 url = { workspace = true }
 hir = { workspace = true }
 parser = { workspace = true }

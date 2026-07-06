@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     env, fs,
     path::{Path, PathBuf},
 };
@@ -10,6 +10,7 @@ use nameres::{
     resolve_module_path_candidate, resolve_reachable_full,
 };
 use parser::parse_file_to_hir;
+use rustc_hash::{FxHashMap, FxHashSet};
 use url::Url;
 
 #[salsa::db]
@@ -17,7 +18,7 @@ use url::Url;
 struct DriverDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
-    module_files: HashMap<ModuleKey, SourceFile>,
+    module_files: FxHashMap<ModuleKey, SourceFile>,
 }
 
 #[salsa::db]
@@ -196,7 +197,7 @@ fn parse_external_root(value: &str) -> Result<(String, PathBuf), String> {
 
 fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) {
     let mut queue = VecDeque::from([entry]);
-    let mut visited = HashSet::new();
+    let mut visited = FxHashSet::default();
 
     while let Some(key) = queue.pop_front() {
         if !visited.insert(key.clone()) {

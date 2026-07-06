@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     Db,
@@ -611,8 +611,8 @@ struct ItemScopeBuilder<'db> {
     ctor_lists: Vec<CtorList<'db>>,
     contracts: Vec<ContractScope<'db>>,
     instances: Vec<InstanceDef<'db>>,
-    type_names: HashMap<String, Span<'db>>,
-    term_names: HashMap<String, Span<'db>>,
+    type_names: FxHashMap<String, Span<'db>>,
+    term_names: FxHashMap<String, Span<'db>>,
 }
 
 impl<'db> ItemScopeBuilder<'db> {
@@ -626,8 +626,8 @@ impl<'db> ItemScopeBuilder<'db> {
             ctor_lists: Vec::new(),
             contracts: Vec::new(),
             instances: Vec::new(),
-            type_names: HashMap::new(),
-            term_names: HashMap::new(),
+            type_names: FxHashMap::default(),
+            term_names: FxHashMap::default(),
         }
     }
 
@@ -894,8 +894,8 @@ struct ContractScopeBuilder<'db> {
     terms: Vec<ScopeEntry<'db>>,
     fields: Vec<FieldEntry<'db>>,
     ctor_lists: Vec<CtorList<'db>>,
-    type_names: HashMap<String, Span<'db>>,
-    term_names: HashMap<String, Span<'db>>,
+    type_names: FxHashMap<String, Span<'db>>,
+    term_names: FxHashMap<String, Span<'db>>,
 }
 
 impl<'db> ContractScopeBuilder<'db> {
@@ -908,8 +908,8 @@ impl<'db> ContractScopeBuilder<'db> {
             terms: Vec::new(),
             fields: Vec::new(),
             ctor_lists: Vec::new(),
-            type_names: HashMap::new(),
-            term_names: HashMap::new(),
+            type_names: FxHashMap::default(),
+            term_names: FxHashMap::default(),
         }
     }
 
@@ -982,8 +982,8 @@ struct TypeResolver<'db, 'a> {
     imports: &'a dyn ImportedNames<'db>,
     contract: Option<DefId<'db>>,
     type_vars: Vec<TypeVarBinding<'db>>,
-    seen_types: HashSet<TypeRef<'db>>,
-    seen_preds: HashSet<PredRef<'db>>,
+    seen_types: FxHashSet<TypeRef<'db>>,
+    seen_preds: FxHashSet<PredRef<'db>>,
     map: ItemResolutionMap<'db>,
 }
 
@@ -999,8 +999,8 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
             imports,
             contract: None,
             type_vars: Vec::new(),
-            seen_types: HashSet::new(),
-            seen_preds: HashSet::new(),
+            seen_types: FxHashSet::default(),
+            seen_preds: FxHashSet::default(),
             map: ItemResolutionMap::default(),
         }
     }
@@ -1241,7 +1241,7 @@ struct BodyResolver<'db, 'a> {
     scope: &'a ItemScope<'db>,
     imports: &'a dyn ImportedNames<'db>,
     contract: Option<DefId<'db>>,
-    local_scopes: Vec<HashMap<String, Resolution<'db>>>,
+    local_scopes: Vec<FxHashMap<String, Resolution<'db>>>,
     type_vars: Vec<TypeVarBinding<'db>>,
     map: BodyResolutionMap<'db>,
 }
@@ -1746,7 +1746,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         if let Some(scope) = self.local_scopes.last_mut() {
             scope.insert(name.to_owned(), resolution);
         } else {
-            let mut scope = HashMap::new();
+            let mut scope = FxHashMap::default();
             scope.insert(name.to_owned(), resolution);
             self.local_scopes.push(scope);
         }
@@ -1760,7 +1760,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     }
 
     fn with_scope(&mut self, f: impl FnOnce(&mut Self)) {
-        self.local_scopes.push(HashMap::new());
+        self.local_scopes.push(FxHashMap::default());
         f(self);
         self.local_scopes.pop();
     }
