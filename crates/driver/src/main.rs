@@ -7,7 +7,7 @@ use std::{
 use hir::{diag::Diagnostic, input::SourceFile};
 use nameres::{
     LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
-    resolve_module_path_candidate, validate_reachable,
+    resolve_module_path_candidate, resolve_reachable_full,
 };
 use parser::parse_file_to_hir;
 use url::Url;
@@ -129,8 +129,8 @@ fn main() {
     load_reachable_modules(&mut db, entry_key.clone());
 
     let entry = module_id_from_key(&db, &entry_key);
-    let _ = validate_reachable(&db, entry);
-    let diagnostics = validate_reachable::accumulated::<Diagnostic>(&db, entry);
+    let _ = resolve_reachable_full(&db, entry);
+    let diagnostics = resolve_reachable_full::accumulated::<Diagnostic>(&db, entry);
     if diagnostics.is_empty() {
         return;
     }

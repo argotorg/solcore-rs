@@ -4,7 +4,7 @@ use std::{
 };
 
 use hir::{
-    anchor::DefId,
+    anchor::{DefId, DefKind},
     ast::{
         Ident,
         item::{
@@ -14,6 +14,7 @@ use hir::{
     },
     diag::Diagnostic,
     input::SourceFile,
+    nameres as hir_nameres,
     span::{Span, Spanned, SpannedElem},
 };
 use parser::parse_file_to_hir;
@@ -156,6 +157,67 @@ pub struct ValidationSummary {
 pub struct InstanceImports<'db> {
     pub local: Vec<Origin<'db>>,
     pub imported: Vec<Origin<'db>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ModuleEnv<'db> {
+    pub owner: Option<DefId<'db>>,
+    pub item_scope: Option<hir_nameres::ItemScope<'db>>,
+    pub terms: BTreeMap<String, hir_nameres::Resolution<'db>>,
+    pub types: BTreeMap<String, hir_nameres::Resolution<'db>>,
+    pub modules: BTreeMap<String, ModuleId<'db>>,
+    pub constructor_leaves: BTreeSet<String>,
+    pub constructor_visibility: BTreeMap<String, BTreeSet<String>>,
+    pub partial_data: BTreeMap<String, BTreeSet<String>>,
+    pub instances: Vec<Origin<'db>>,
+}
+
+impl<'db> ModuleEnv<'db> {
+    fn empty() -> Self {
+        Self {
+            owner: None,
+            item_scope: None,
+            terms: BTreeMap::new(),
+            types: BTreeMap::new(),
+            modules: BTreeMap::new(),
+            constructor_leaves: BTreeSet::new(),
+            constructor_visibility: BTreeMap::new(),
+            partial_data: BTreeMap::new(),
+            instances: Vec::new(),
+        }
+    }
+}
+
+impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
+    fn imported(
+        &self,
+        _db: &'db dyn hir::Db,
+        namespace: hir_nameres::Namespace,
+        name: &str,
+    ) -> Option<hir_nameres::Resolution<'db>> {
+        match namespace {
+            hir_nameres::Namespace::Type => self.types.get(name).cloned(),
+            hir_nameres::Namespace::Term => self.terms.get(name).cloned(),
+            hir_nameres::Namespace::Module => self.owner.and_then(|owner| {
+                self.modules.contains_key(name).then(|| {
+                    hir_nameres::Resolution::Module(hir_nameres::ModuleRef {
+                        owner,
+                        name: name.to_owned(),
+                    })
+                })
+            }),
+            hir_nameres::Namespace::Field => None,
+        }
+    }
+
+    fn has_constructor_leaf(&self, _db: &'db dyn hir::Db, leaf: &str) -> bool {
+        self.constructor_leaves.contains(leaf)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct FullResolutionSummary {
+    pub checked: bool,
 }
 
 #[derive(Default)]
@@ -435,6 +497,48 @@ pub fn validate_reachable<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleG
 }
 
 #[salsa::tracked]
+pub fn module_env<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ModuleEnv<'db> {
+    let Some(file) = db.module_file(module) else {
+        return ModuleEnv::empty();
+    };
+    let hir_module = parse_file_to_hir(db, file).module(db);
+    let item_scope = hir_nameres::item_scope(db, hir_module);
+    let imports = module_imports(db, file);
+    let instances = instance_imports(db, module);
+    let mut builder = ModuleEnvBuilder::new(db, module, item_scope, instances);
+    for import in imports.imports {
+        builder.add_import(import);
+    }
+    builder.finish()
+}
+
+#[salsa::tracked]
+pub fn resolve_module_full<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> FullResolutionSummary {
+    let _ = validate_module(db, module);
+    if matches!(module.library(db), LibraryId::Std) {
+        return FullResolutionSummary { checked: true };
+    }
+    let Some(file) = db.module_file(module) else {
+        return FullResolutionSummary { checked: true };
+    };
+    let hir_module = parse_file_to_hir(db, file).module(db);
+    let env = module_env(db, module);
+    if let Some(item_scope) = env.item_scope.clone() {
+        let _ = hir_nameres::resolve_module_with_imports(db, hir_module, item_scope, &env);
+    }
+    FullResolutionSummary { checked: true }
+}
+
+#[salsa::tracked]
+pub fn resolve_reachable_full<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'db> {
+    let graph = module_graph(db, entry);
+    for module in &graph.modules {
+        let _ = resolve_module_full(db, *module);
+    }
+    graph
+}
+
+#[salsa::tracked]
 pub fn module_instances<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<Origin<'db>> {
     let Some(file) = db.module_file(module) else {
         return Vec::new();
@@ -472,6 +576,254 @@ pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Instance
     }
     imported = unique_origins(imported);
     InstanceImports { local, imported }
+}
+
+struct ModuleEnvBuilder<'db> {
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    env: ModuleEnv<'db>,
+    local_terms: HashMap<String, Span<'db>>,
+    local_types: HashMap<String, Span<'db>>,
+    imported_terms: HashMap<String, Span<'db>>,
+    conflict_diagnostics: HashSet<(hir_nameres::Namespace, String)>,
+    module_conflict_diagnostics: HashSet<String>,
+}
+
+impl<'db> ModuleEnvBuilder<'db> {
+    fn new(
+        db: &'db dyn Db,
+        module: ModuleId<'db>,
+        item_scope: hir_nameres::ItemScope<'db>,
+        instances: InstanceImports<'db>,
+    ) -> Self {
+        let owner = item_scope.module.def_id_value(db);
+        let local_terms = item_scope
+            .terms
+            .iter()
+            .map(|entry| (entry.name.clone(), entry.span))
+            .collect();
+        let local_types = item_scope
+            .types
+            .iter()
+            .map(|entry| (entry.name.clone(), entry.span))
+            .collect();
+        Self {
+            db,
+            module,
+            env: ModuleEnv {
+                owner: Some(owner),
+                item_scope: Some(item_scope),
+                terms: BTreeMap::new(),
+                types: BTreeMap::new(),
+                modules: BTreeMap::new(),
+                constructor_leaves: BTreeSet::new(),
+                constructor_visibility: BTreeMap::new(),
+                partial_data: BTreeMap::new(),
+                instances: unique_origins(instances.local.into_iter().chain(instances.imported)),
+            },
+            local_terms,
+            local_types,
+            imported_terms: HashMap::new(),
+            conflict_diagnostics: HashSet::new(),
+            module_conflict_diagnostics: HashSet::new(),
+        }
+    }
+
+    fn finish(self) -> ModuleEnv<'db> {
+        self.env
+    }
+
+    fn add_import(&mut self, import: Import<'db>) {
+        let path = path_ref_from_import(self.db, import);
+        let Ok(target) = resolve_module_path(self.db, self.module, path.clone()) else {
+            return;
+        };
+
+        if let Some(selector) = import.selector(self.db) {
+            let interface = public_interface(self.db, target);
+            for item_ref in select_import_refs(
+                self.db,
+                &interface.item_refs,
+                selector,
+                import.hiding(self.db),
+            ) {
+                self.add_selected_item_ref(item_ref, import.span(self.db));
+            }
+            return;
+        }
+
+        for qualifier in import_module_qualifiers(self.db, import, &path) {
+            let mut seen = HashSet::new();
+            let mut stack = HashSet::new();
+            self.add_module_surface(
+                &qualifier,
+                target,
+                import.span(self.db),
+                &mut seen,
+                &mut stack,
+            );
+        }
+    }
+
+    fn add_selected_item_ref(&mut self, item_ref: ItemRef<'db>, span: Span<'db>) {
+        self.check_selected_conflict(&item_ref, span);
+        if item_ref.namespace == Namespace::Term && !item_ref.public_name.contains('.') {
+            self.imported_terms
+                .entry(item_ref.public_name.clone())
+                .or_insert(span);
+        }
+        self.add_item_ref_surface(&item_ref, None);
+    }
+
+    fn check_selected_conflict(&mut self, item_ref: &ItemRef<'db>, span: Span<'db>) {
+        let namespace = match item_ref.namespace {
+            Namespace::Term => hir_nameres::Namespace::Term,
+            Namespace::Type | Namespace::Class => hir_nameres::Namespace::Type,
+        };
+        let local_span = match namespace {
+            hir_nameres::Namespace::Term => self.local_terms.get(&item_ref.public_name),
+            hir_nameres::Namespace::Type => self.local_types.get(&item_ref.public_name),
+            hir_nameres::Namespace::Field | hir_nameres::Namespace::Module => None,
+        };
+        if let Some(local_span) = local_span
+            && self
+                .conflict_diagnostics
+                .insert((namespace, item_ref.public_name.clone()))
+        {
+            let _ = conflicting_unqualified_name_diag(
+                self.db,
+                span,
+                *local_span,
+                &item_ref.public_name,
+            )
+            .accumulate(self.db);
+        }
+    }
+
+    fn add_module_surface(
+        &mut self,
+        qualifier: &str,
+        target: ModuleId<'db>,
+        span: Span<'db>,
+        seen: &mut HashSet<(String, ModuleId<'db>)>,
+        stack: &mut HashSet<ModuleId<'db>>,
+    ) {
+        self.add_module_binding(qualifier, target, span);
+
+        if !seen.insert((qualifier.to_owned(), target)) {
+            return;
+        }
+
+        let interface = public_interface(self.db, target);
+        for item_ref in &interface.item_refs {
+            self.add_item_ref_surface(item_ref, Some(qualifier));
+        }
+
+        if !stack.insert(target) {
+            return;
+        }
+        for (alias, nested) in interface.module_aliases {
+            let nested_qualifier = qualify(qualifier, &alias);
+            self.add_module_surface(&nested_qualifier, nested, span, seen, stack);
+        }
+        stack.remove(&target);
+    }
+
+    fn add_module_binding(&mut self, name: &str, target: ModuleId<'db>, span: Span<'db>) {
+        for prefix in module_prefixes(name) {
+            self.env.modules.entry(prefix.clone()).or_insert(target);
+            self.check_module_name_conflict(&prefix, span);
+        }
+    }
+
+    fn check_module_name_conflict(&mut self, name: &str, span: Span<'db>) {
+        let local_span = self
+            .local_terms
+            .get(name)
+            .copied()
+            .or_else(|| self.imported_terms.get(name).copied());
+        if let Some(local_span) = local_span
+            && self.module_conflict_diagnostics.insert(name.to_owned())
+        {
+            let _ = conflicting_unqualified_name_diag(self.db, span, local_span, name)
+                .accumulate(self.db);
+        }
+    }
+
+    fn add_item_ref_surface(&mut self, item_ref: &ItemRef<'db>, qualifier: Option<&str>) {
+        let name = qualified_surface_name(qualifier, &item_ref.public_name);
+        match item_ref.namespace {
+            Namespace::Term => {
+                if let Some(resolution) = resolution_for_item_ref(self.db, item_ref) {
+                    self.insert_term(name, resolution);
+                }
+            }
+            Namespace::Type => {
+                if let Some(resolution) = resolution_for_item_ref(self.db, item_ref) {
+                    self.env.types.entry(name.clone()).or_insert(resolution);
+                }
+                self.add_constructor_surface(item_ref, &name);
+            }
+            Namespace::Class => {
+                if let Some(resolution) = resolution_for_item_ref(self.db, item_ref) {
+                    self.env.types.entry(name.clone()).or_insert(resolution);
+                }
+                self.add_class_method_surface(item_ref, &name);
+            }
+        }
+    }
+
+    fn add_constructor_surface(&mut self, item_ref: &ItemRef<'db>, type_name: &str) {
+        let Some(visible) = &item_ref.constructors else {
+            return;
+        };
+        let all = constructor_entries_for_ref(self.db, item_ref);
+        let all_names = all
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<BTreeSet<_>>();
+        self.env
+            .constructor_visibility
+            .entry(type_name.to_owned())
+            .or_default()
+            .extend(visible.iter().cloned());
+        if visible != &all_names {
+            self.env
+                .partial_data
+                .entry(type_name.to_owned())
+                .or_default()
+                .extend(visible.iter().cloned());
+        }
+        for (ctor_name, index) in all {
+            if !visible.contains(&ctor_name) {
+                continue;
+            }
+            self.env.constructor_leaves.insert(ctor_name.clone());
+            self.insert_term(
+                qualify(type_name, &ctor_name),
+                hir_nameres::Resolution::Ctor {
+                    ty: item_ref.origin.def_id,
+                    index,
+                },
+            );
+        }
+    }
+
+    fn add_class_method_surface(&mut self, item_ref: &ItemRef<'db>, class_name: &str) {
+        for method in class_methods_for_ref(self.db, item_ref) {
+            self.insert_term(
+                qualify(class_name, &method),
+                hir_nameres::Resolution::ClassMethod {
+                    class: item_ref.origin.def_id,
+                    name: method,
+                },
+            );
+        }
+    }
+
+    fn insert_term(&mut self, name: String, resolution: hir_nameres::Resolution<'db>) {
+        self.env.terms.entry(name).or_insert(resolution);
+    }
 }
 
 fn root_for_library<'db>(
@@ -1178,6 +1530,16 @@ fn select_import_refs<'db>(
                     .cloned()
                     .map(move |mut item_ref| {
                         item_ref.public_name = local_name.clone();
+                        if let Some(selector) = &selected.constructors
+                            && let Some(visible) = &item_ref.constructors
+                        {
+                            let visible = visible.iter().cloned().collect::<Vec<_>>();
+                            item_ref.constructors = Some(
+                                select_constructors(db, selector, &visible)
+                                    .into_iter()
+                                    .collect(),
+                            );
+                        }
                         item_ref
                     })
             })
@@ -1196,6 +1558,148 @@ fn unique_import_bindings<'db>(refs: Vec<ItemRef<'db>>) -> Vec<ItemRef<'db>> {
         }
     }
     result
+}
+
+fn import_module_qualifiers<'db>(
+    db: &'db dyn Db,
+    import: Import<'db>,
+    path: &ModulePathRef<'db>,
+) -> Vec<String> {
+    if let Some(alias) = import.alias(db) {
+        return vec![spanned_name_text(db, &alias)];
+    }
+    let visible = visible_module_segments(db, path);
+    let Some(leaf) = visible.last().cloned() else {
+        return Vec::new();
+    };
+    unique_strings([leaf, visible.join(".")])
+}
+
+fn visible_module_segments<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> Vec<String> {
+    let segments = path_segments(db, path);
+    if path.external.is_some() && segments.len() > 1 {
+        return segments[1..].to_vec();
+    }
+    if segments.first().is_some_and(|segment| segment == "lib") && segments.len() > 1 {
+        return segments[1..].to_vec();
+    }
+    segments
+}
+
+fn module_prefixes(name: &str) -> Vec<String> {
+    let mut prefixes = Vec::new();
+    let mut current = String::new();
+    for segment in name.split('.').filter(|segment| !segment.is_empty()) {
+        if !current.is_empty() {
+            current.push('.');
+        }
+        current.push_str(segment);
+        prefixes.push(current.clone());
+    }
+    prefixes
+}
+
+fn qualified_surface_name(qualifier: Option<&str>, name: &str) -> String {
+    qualifier
+        .map(|qualifier| qualify(qualifier, name))
+        .unwrap_or_else(|| name.to_owned())
+}
+
+fn qualify(qualifier: &str, name: &str) -> String {
+    format!("{qualifier}.{name}")
+}
+
+fn resolution_for_item_ref<'db>(
+    db: &'db dyn Db,
+    item_ref: &ItemRef<'db>,
+) -> Option<hir_nameres::Resolution<'db>> {
+    match item_ref.namespace {
+        Namespace::Term => Some(hir_nameres::Resolution::Def {
+            def: item_ref.origin.def_id,
+            kind: hir_nameres::DefResolutionKind::Function,
+        }),
+        Namespace::Type => def_resolution_kind(db, item_ref.origin.def_id).map(|kind| {
+            hir_nameres::Resolution::Def {
+                def: item_ref.origin.def_id,
+                kind,
+            }
+        }),
+        Namespace::Class => Some(hir_nameres::Resolution::Def {
+            def: item_ref.origin.def_id,
+            kind: hir_nameres::DefResolutionKind::Class,
+        }),
+    }
+}
+
+fn def_resolution_kind<'db>(
+    db: &'db dyn Db,
+    def_id: DefId<'db>,
+) -> Option<hir_nameres::DefResolutionKind> {
+    match def_id.kind(db) {
+        DefKind::Function => Some(hir_nameres::DefResolutionKind::Function),
+        DefKind::Contract => Some(hir_nameres::DefResolutionKind::Contract),
+        DefKind::Adt => Some(hir_nameres::DefResolutionKind::Adt),
+        DefKind::TypeAlias => Some(hir_nameres::DefResolutionKind::TypeAlias),
+        DefKind::Class => Some(hir_nameres::DefResolutionKind::Class),
+        DefKind::Instance => Some(hir_nameres::DefResolutionKind::Instance),
+        DefKind::Module
+        | DefKind::FuncBody
+        | DefKind::AdtCtor
+        | DefKind::Field
+        | DefKind::Import
+        | DefKind::Export
+        | DefKind::Pragma => None,
+    }
+}
+
+fn constructor_entries_for_ref<'db>(
+    db: &'db dyn Db,
+    item_ref: &ItemRef<'db>,
+) -> Vec<(String, u32)> {
+    let Some(def) = find_origin_adt(db, item_ref.origin.module, item_ref.origin.def_id) else {
+        return Vec::new();
+    };
+    def.ctors(db)
+        .iter()
+        .enumerate()
+        .map(|(index, ctor)| (spanned_name_text(db, &ctor.name), index as u32))
+        .collect()
+}
+
+fn class_methods_for_ref<'db>(db: &'db dyn Db, item_ref: &ItemRef<'db>) -> Vec<String> {
+    let Some(def) = find_origin_class(db, item_ref.origin.module, item_ref.origin.def_id) else {
+        return Vec::new();
+    };
+    def.methods(db)
+        .iter()
+        .map(|method| spanned_name_text(db, &method.name))
+        .collect()
+}
+
+fn find_origin_adt<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    def_id: DefId<'db>,
+) -> Option<AdtDef<'db>> {
+    let file = db.module_file(module)?;
+    let hir_module = parse_file_to_hir(db, file).module(db);
+    hir_module.items(db).iter().find_map(|item| match item {
+        Item::AdtDef(def) if def.def_id(db) == def_id => Some(*def),
+        _ => None,
+    })
+}
+
+fn find_origin_class<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    def_id: DefId<'db>,
+) -> Option<ClassDef<'db>> {
+    let file = db.module_file(module)?;
+    let hir_module = parse_file_to_hir(db, file).module(db);
+    hir_module.items(db).iter().find_map(|item| match item {
+        Item::ClassDef(def) if def.def_id(db) == def_id => Some(*def),
+        _ => None,
+    })
 }
 
 fn validate_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) {
@@ -1544,6 +2048,19 @@ fn ambiguous_import_diag<'db>(
         .with_primary_label(db, span, Some("ambiguous selected import"))
         .with_note(format!("`{name}` is imported from {module_list}"))
         .with_note("use an explicit module qualifier or narrow the selected imports")
+}
+
+fn conflicting_unqualified_name_diag<'db>(
+    db: &'db dyn Db,
+    import_span: Span<'db>,
+    local_span: Span<'db>,
+    name: &str,
+) -> Diagnostic {
+    Diagnostic::error(format!("conflicting unqualified name `{name}`"))
+        .with_code("SC0121")
+        .with_primary_label(db, import_span, Some("conflicting imported name"))
+        .with_secondary_label(db, local_span, Some("local binding with this name"))
+        .with_note("rename the local binding or use an import alias")
 }
 
 fn unknown_local_export_diag<'db>(db: &'db dyn Db, span: Span<'db>, name: &str) -> Diagnostic {

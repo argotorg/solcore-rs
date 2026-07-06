@@ -1,0 +1,13 @@
+---
+source: crates/nameres/tests/module_system.rs
+expression: rendered
+input_file: crates/nameres/tests/fixtures/fail/unresolved_qualified/main.solc
+---
+error[SC0101]: undefined name: missing
+ --> /main/main.solc:4:15
+  |
+3 | function main() -> word {
+4 |   return util.missing();
+  |               ^^^^^^^ unknown name
+5 | }
+  |

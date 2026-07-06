@@ -9,7 +9,8 @@ use hir::{diag::Diagnostic, input::SourceFile};
 use parser::parse_file_to_hir;
 use solcore_nameres::{
     LibraryId, ModuleGraph, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
-    module_key_for_path, public_interface, strongly_connected_components, validate_reachable,
+    module_key_for_path, public_interface, resolve_module_path_candidate, resolve_reachable_full,
+    strongly_connected_components,
 };
 use url::Url;
 
@@ -153,6 +154,8 @@ fn failure_diagnostics_match_snapshots() {
         "duplicate_qualifier",
         "duplicate_selector",
         "ambiguous",
+        "hidden_ctor",
+        "unresolved_qualified",
     ] {
         let fixture = fixture_dir(&format!("fail/{name}"));
         let (db, entry) = load_fixture(&fixture, BTreeMap::new());
@@ -166,10 +169,88 @@ fn failure_diagnostics_match_snapshots() {
     }
 }
 
+#[test]
+fn imports_corpus_matches_reference_expectations() {
+    std::thread::Builder::new()
+        .name("imports-corpus-validation".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(imports_corpus_matches_reference_expectations_impl)
+        .expect("spawn corpus validation")
+        .join()
+        .expect("corpus validation thread");
+}
+
+fn imports_corpus_matches_reference_expectations_impl() {
+    let root = parser_corpus_imports_dir();
+    let mut external_roots = BTreeMap::new();
+    external_roots.insert("extlib".to_owned(), root.join("extlib"));
+
+    let mut expected_pass_total = 0usize;
+    let mut expected_pass_passing = 0usize;
+    let mut expected_fail_total = 0usize;
+    let mut expected_fail_failing = 0usize;
+    let mut divergences = Vec::new();
+    let mut mismatches = Vec::new();
+
+    for case in IMPORT_CORPUS_CASES {
+        let path = root.join(case.path);
+        if !path.exists() {
+            continue;
+        }
+        let (db, entry) = load_entry(&root, &path, external_roots.clone());
+        let (_, diagnostics) = run(&db, &entry);
+        let actual_failed = !diagnostics.is_empty();
+        let expected_failed = case.expected_failure;
+
+        if expected_failed {
+            expected_fail_total += 1;
+            expected_fail_failing += usize::from(actual_failed);
+        } else {
+            expected_pass_total += 1;
+            expected_pass_passing += usize::from(!actual_failed);
+        }
+
+        if actual_failed != expected_failed {
+            if let Some(divergence) = known_divergence(case.path) {
+                divergences.push(format!("{}: {}", case.path, divergence.reason));
+            } else {
+                mismatches.push(format!(
+                    "{} expected {} but got {} diagnostics: {:?}",
+                    case.path,
+                    if expected_failed {
+                        "failure"
+                    } else {
+                        "success"
+                    },
+                    diagnostics.len(),
+                    diagnostics
+                        .iter()
+                        .filter_map(|diagnostic| diagnostic.code.as_deref())
+                        .collect::<Vec<_>>()
+                ));
+            }
+        }
+    }
+
+    println!(
+        "imports corpus scoreboard: {expected_pass_passing}/{expected_pass_total} expected-pass passing; {expected_fail_failing}/{expected_fail_total} expected-fail failing; {} known divergences",
+        divergences.len()
+    );
+    for divergence in &divergences {
+        println!("known divergence: {divergence}");
+    }
+
+    assert!(
+        mismatches.is_empty(),
+        "imports corpus verdict mismatches:\n{}",
+        mismatches.join("\n")
+    );
+}
+
 fn run<'db>(db: &'db TestDb, entry: &ModuleKey) -> (ModuleGraph<'db>, Vec<&'db Diagnostic>) {
     let entry = module_id_from_key(db, entry);
-    let graph = validate_reachable(db, entry);
-    let diagnostics = validate_reachable::accumulated::<Diagnostic>(db, entry);
+    let graph = resolve_reachable_full(db, entry);
+    let diagnostics = resolve_reachable_full::accumulated::<Diagnostic>(db, entry);
     (graph, diagnostics)
 }
 
@@ -178,7 +259,7 @@ fn load_fixture(root: &Path, external_roots: BTreeMap<String, PathBuf>) -> (Test
     db.module_tree = Some(ModuleTree::new(
         &db,
         root.to_path_buf(),
-        fixture_dir("std"),
+        repo_std_dir(),
         external_roots.clone(),
     ));
     load_library_files(&mut db, LibraryId::Main, root, root);
@@ -194,6 +275,67 @@ fn load_fixture(root: &Path, external_roots: BTreeMap<String, PathBuf>) -> (Test
     let entry_path = root.join("main.solc");
     let entry_key = module_key_for_path(LibraryId::Main, root, &entry_path).expect("entry key");
     (db, entry_key)
+}
+
+fn load_entry(
+    root: &Path,
+    entry_path: &Path,
+    external_roots: BTreeMap<String, PathBuf>,
+) -> (TestDb, ModuleKey) {
+    let mut db = TestDb::default();
+    db.module_tree = Some(ModuleTree::new(
+        &db,
+        root.to_path_buf(),
+        repo_std_dir(),
+        external_roots,
+    ));
+    let entry_key = module_key_for_path(LibraryId::Main, root, entry_path).expect("entry key");
+    let entry_file = source_file_for_path(&db, entry_path);
+    db.module_files.insert(entry_key.clone(), entry_file);
+    load_reachable_modules(&mut db, entry_key.clone());
+    (db, entry_key)
+}
+
+fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) {
+    let mut queue = vec![entry];
+    let mut visited = std::collections::HashSet::new();
+
+    while let Some(key) = queue.pop() {
+        if !visited.insert(key.clone()) {
+            continue;
+        }
+        let Some(file) = db.module_files.get(&key).copied() else {
+            continue;
+        };
+        let targets = {
+            let module = module_id_from_key(&*db, &key);
+            let refs = solcore_nameres::module_imports(&*db, file);
+            refs.import_refs
+                .into_iter()
+                .chain(refs.export_refs)
+                .filter_map(|path| {
+                    let resolved = resolve_module_path_candidate(&*db, module, &path).ok()?;
+                    Some((resolved.module.key(&*db), resolved.file_path))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (target_key, file_path) in targets {
+            if !db.module_files.contains_key(&target_key) && file_path.exists() {
+                let file = source_file_for_path(db, &file_path);
+                db.module_files.insert(target_key.clone(), file);
+            }
+            if db.module_files.contains_key(&target_key) {
+                queue.push(target_key);
+            }
+        }
+    }
+}
+
+fn source_file_for_path(db: &TestDb, path: &Path) -> SourceFile {
+    let source = fs::read_to_string(path).expect("source file");
+    let url = Url::from_file_path(path).expect("file URL");
+    SourceFile::new(db, url, Some(source))
 }
 
 fn load_library_files(db: &mut TestDb, library: LibraryId, root: &Path, dir: &Path) {
@@ -263,3 +405,444 @@ fn fixture_dir(relative: &str) -> PathBuf {
         .join("fixtures")
         .join(relative)
 }
+
+fn parser_corpus_imports_dir() -> PathBuf {
+    repo_root()
+        .join("crates")
+        .join("parser")
+        .join("tests")
+        .join("fixtures")
+        .join("corpus")
+        .join("ok")
+        .join("test")
+        .join("imports")
+}
+
+fn repo_std_dir() -> PathBuf {
+    repo_root().join("std")
+}
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("nameres crate lives under <repo>/crates/nameres")
+        .to_path_buf()
+}
+
+#[derive(Clone, Copy)]
+struct ImportCorpusCase {
+    path: &'static str,
+    expected_failure: bool,
+}
+
+#[derive(Clone, Copy)]
+struct KnownDivergence {
+    path: &'static str,
+    reason: &'static str,
+}
+
+fn known_divergence(path: &str) -> Option<KnownDivergence> {
+    KNOWN_DIVERGENCES
+        .iter()
+        .copied()
+        .find(|divergence| divergence.path == path)
+}
+
+const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
+    KnownDivergence {
+        path: "hidden_ctor_nonexhaustive_fail.solc",
+        reason: "reference fails later exhaustiveness checking for partial constructor visibility; Rust nameres records partial-data metadata but does not run exhaustiveness",
+    },
+    KnownDivergence {
+        path: "symlink_identity_fail.solc",
+        reason: "reference rejects distinct module identities for equivalent helper sources; Rust nameres does not canonicalize/symlink-check type identity in this pass",
+    },
+    KnownDivergence {
+        path: "private_bad_main.solc",
+        reason: "reference type-checks private helper bodies and rejects the unexported broken function; Rust nameres intentionally reports only name-resolution diagnostics",
+    },
+    KnownDivergence {
+        path: "pragma_scope_main.solc",
+        reason: "reference fails pragma-scoped typeclass/termination validation; Rust nameres does not implement that semantic check",
+    },
+];
+
+const IMPORT_CORPUS_CASES: &[ImportCorpusCase] = &[
+    ImportCorpusCase {
+        path: "booldef.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "boolmain.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "unordered_imports_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "boolalias.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "alias_hides_original_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "boolalias_open_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "boolqualified.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "boolqualifiedtype.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "boolaliastype.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "module_unqualified_fun_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "alias_unqualified_fun_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "module_unqualified_type_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "alias_unqualified_type_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "module_unqualified_constr_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "alias_unqualified_constr_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "selective_unqualified_fun_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "transitive_dep_main_module.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "transitive_dep_main_select.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "opaque_alias_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "opaque_select_alias_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "opaque_alias_leak_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "opaque_alias_qualifier_leak_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "opaque_select_direct_leak_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "module_name_shadow.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "wrapper_shadow_success.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "ns_cross_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "ns_constr_dup.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "strict_open_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "boolselect.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "boolconselect_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "boolconselect_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "nested_alias.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "nested_select.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "nested_foo_and_bar.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "nested_direct_qualifier.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "nested_deep_qualifier.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "glob_import_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "glob_import_mixed.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "glob_import_hiding.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "glob_hiding_amb_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "glob_import_dup.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "glob_export_mixed.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "glob_amb_main_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "glob_import_hiding_unknown_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "select_hiding_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "select_hiding_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "export_item_dup_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "export_module_dup_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "select_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "select_shadow_local.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "select_shadow_param_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "select_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "select_unknown.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "select_dup_item.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "alias_dup.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "amb_main.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "amb_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "dupqual_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "dupqual_module_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "private_helper_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "module_qualified_constructor.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "module_qualified_constructor_pattern.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "module_qualified_constructor_alias.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "type_collision_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "dot_context_expr.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "reexport_items_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "reexport_select_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "reexport_select_alias_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "reexport_module_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "reexport_module_alias_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "reexport_ctor_pattern.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "reexport_ctor_expr_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "reexport_ctor_expr_hidden_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "reexport_ctor_hidden_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "hidden_ctor_expr_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "hidden_ctor_dot_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "hidden_ctor_pattern_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "hidden_ctor_nonexhaustive_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "hidden_ctor_wildcard_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "rootcheck/nested/main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "rootcheck/nested/relative_and_lib_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "external_lib_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "external_lib_alias_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "import_std_minimal.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "select_alias_item_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "select_alias_multi_ok.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "external_lib_missing_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "symlink_identity_fail.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "private_bad_main.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "pragma_scope_main.solc",
+        expected_failure: true,
+    },
+    ImportCorpusCase {
+        path: "selfcycle.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "cycle_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "wild_main.solc",
+        expected_failure: false,
+    },
+    ImportCorpusCase {
+        path: "leak_main.solc",
+        expected_failure: true,
+    },
+];

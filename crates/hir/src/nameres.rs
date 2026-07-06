@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
+    Db,
     anchor::DefId,
     arena::Id,
     ast::{
+        Ident,
         function::{
             Expr, ExprKind, FuncBody, FuncParam, FuncSig, MatchArm, Pat, PatKind, Stmt, StmtKind,
         },
@@ -12,11 +14,9 @@ use crate::{
             Module, TypeAlias,
         },
         ty::{PredRef, TypeRef, TypeRefKind},
-        Ident,
     },
     diag::Diagnostic,
     span::{Span, Spanned, SpannedElem},
-    Db,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
@@ -287,6 +287,10 @@ pub trait ImportedNames<'db> {
         namespace: Namespace,
         name: &str,
     ) -> Option<Resolution<'db>>;
+
+    fn has_constructor_leaf(&self, _db: &'db dyn Db, _leaf: &str) -> bool {
+        false
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -424,7 +428,16 @@ pub fn item_scope<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemScope<'db> {
 pub fn resolve_item_types<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemResolutionMap<'db> {
     let scope = item_scope(db, module);
     let imports = EmptyImportedNames;
-    let mut resolver = TypeResolver::new(db, &scope, &imports);
+    resolve_item_types_with_imports(db, module, &scope, &imports)
+}
+
+pub fn resolve_item_types_with_imports<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    scope: &ItemScope<'db>,
+    imports: &dyn ImportedNames<'db>,
+) -> ItemResolutionMap<'db> {
+    let mut resolver = TypeResolver::new(db, scope, imports);
     for item in module.items(db) {
         resolver.item(*item, None, &[]);
     }
@@ -463,10 +476,20 @@ pub fn resolve_body_with_imports<'db>(
 #[salsa::tracked]
 pub fn resolve_module<'db>(db: &'db dyn Db, module: Module<'db>) -> ModuleResolutionMap<'db> {
     let scope = item_scope(db, module);
-    let item_resolutions = resolve_item_types(db, module);
+    let imports = EmptyImportedNames;
+    resolve_module_with_imports(db, module, scope, &imports)
+}
+
+pub fn resolve_module_with_imports<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    scope: ItemScope<'db>,
+    imports: &dyn ImportedNames<'db>,
+) -> ModuleResolutionMap<'db> {
+    let item_resolutions = resolve_item_types_with_imports(db, module, &scope, imports);
     let mut bodies = Vec::new();
     for item in module.items(db) {
-        collect_item_body_resolutions(db, module, *item, None, &[], &mut bodies);
+        collect_item_body_resolutions(db, module, *item, None, &[], imports, &mut bodies);
     }
     ModuleResolutionMap {
         item_scope: scope,
@@ -481,6 +504,7 @@ fn collect_item_body_resolutions<'db>(
     item: Item<'db>,
     enclosing_contract: Option<ContractDef<'db>>,
     inherited_type_vars: &[TypeVarBinding<'db>],
+    imports: &dyn ImportedNames<'db>,
     bodies: &mut Vec<BodyResolutionMap<'db>>,
 ) {
     match item {
@@ -491,6 +515,7 @@ fn collect_item_body_resolutions<'db>(
                 def,
                 enclosing_contract.map(|contract| contract.def_id_value(db)),
                 inherited_type_vars,
+                imports,
                 bodies,
             );
         }
@@ -508,6 +533,7 @@ fn collect_item_body_resolutions<'db>(
                     *method,
                     enclosing_contract.map(|contract| contract.def_id_value(db)),
                     &inherited,
+                    imports,
                     bodies,
                 );
             }
@@ -528,6 +554,7 @@ fn collect_item_body_resolutions<'db>(
                             defn,
                             Some(def.def_id_value(db)),
                             &inherited,
+                            imports,
                             bodies,
                         );
                     }
@@ -553,6 +580,7 @@ fn collect_function_body_resolution<'db>(
     function: FunctionDef<'db>,
     enclosing_contract: Option<DefId<'db>>,
     inherited_type_vars: &[TypeVarBinding<'db>],
+    imports: &dyn ImportedNames<'db>,
     bodies: &mut Vec<BodyResolutionMap<'db>>,
 ) {
     let Some(body) = function.body(db) else {
@@ -571,7 +599,7 @@ fn collect_function_body_resolution<'db>(
         params: param_bindings(sig.params.atom()),
         type_vars,
     };
-    bodies.push(resolve_body(db, body, context));
+    bodies.push(resolve_body_with_imports(db, body, &context, imports));
 }
 
 struct ItemScopeBuilder<'db> {
@@ -1128,9 +1156,11 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                     self.ty(*arg);
                 }
                 let resolution = if let Some(qualifier) = qualifier {
-                    Resolution::Module(ModuleRef {
-                        owner: self.scope.module.def_id_value(self.db),
-                        name: qualify(ident_text(self.db, qualifier), ident_text(self.db, name)),
+                    let qualified =
+                        qualify(ident_text(self.db, qualifier), ident_text(self.db, name));
+                    self.lookup_type(&qualified).unwrap_or_else(|| {
+                        undefined_type_ctor(self.db, &qualified, name.span(self.db));
+                        Resolution::Err
                     })
                 } else {
                     let name_text = ident_text(self.db, name);
@@ -1343,12 +1373,18 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 let resolution = self.resolve_ident(name);
                 self.map.record_expr(body, expr_id, resolution);
             }
-            ExprKind::DotCtor { args, .. } => {
+            ExprKind::DotCtor { name, args, .. } => {
                 for arg in args {
                     self.expr(body, *arg);
                 }
-                self.map
-                    .record_expr(body, expr_id, Resolution::DotCtorDeferred);
+                let leaf = ident_text(self.db, name);
+                let resolution = if self.has_constructor_leaf(leaf) {
+                    Resolution::DotCtorDeferred
+                } else {
+                    undefined_name(self.db, leaf, name.span(self.db));
+                    Resolution::Err
+                };
+                self.map.record_expr(body, expr_id, resolution);
             }
             ExprKind::Proxy { ty, .. } => self.ty(*ty),
             ExprKind::Lambda {
@@ -1481,9 +1517,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     self.ty(*arg);
                 }
                 let resolution = if let Some(qualifier) = qualifier {
-                    Resolution::Module(ModuleRef {
-                        owner: self.scope.module.def_id_value(self.db),
-                        name: qualify(ident_text(self.db, qualifier), ident_text(self.db, name)),
+                    let qualified =
+                        qualify(ident_text(self.db, qualifier), ident_text(self.db, name));
+                    self.lookup_type(&qualified).unwrap_or_else(|| {
+                        undefined_type_ctor(self.db, &qualified, name.span(self.db));
+                        Resolution::Err
                     })
                 } else {
                     let name_text = ident_text(self.db, name);
@@ -1581,6 +1619,10 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             return Some(resolution);
         }
 
+        if let Some(resolution) = self.lookup_type(&qualified) {
+            return Some(resolution);
+        }
+
         if matches!(
             self.lookup_type(&qualifier),
             Some(
@@ -1598,6 +1640,10 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         }
 
         if self.lookup_module(&qualifier).is_some() {
+            if self.lookup_module(&qualified).is_none() {
+                undefined_name(self.db, field_text, field.span(self.db));
+                return Some(Resolution::Err);
+            }
             return Some(Resolution::Module(ModuleRef {
                 owner: self.scope.module.def_id_value(self.db),
                 name: qualified,
@@ -1670,6 +1716,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .and_then(|contract| self.scope.contract_scope(contract))
             .is_some_and(|contract| contract.has_constructor_leaf(leaf))
             || self.scope.has_constructor_leaf(leaf)
+            || self.imports.has_constructor_leaf(self.db, leaf)
     }
 
     fn has_same_name_constructor(&self, name: &str) -> bool {
