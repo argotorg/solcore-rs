@@ -24,6 +24,7 @@
 //!   while unqualified call callees resolve callable terms before fields.
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use tracing::{Level, field};
 
 use crate::{
     Db,
@@ -839,13 +840,60 @@ impl<'db> ModuleResolutionMap<'db> {
     }
 }
 
+fn record_module_fields<'db>(db: &'db dyn Db, module: Module<'db>) {
+    if tracing::enabled!(Level::DEBUG) {
+        record_def_fields(db, module.def_id_value(db));
+    }
+}
+
+fn record_body_fields<'db>(db: &'db dyn Db, body: FuncBody<'db>) {
+    if tracing::enabled!(Level::DEBUG) {
+        record_def_fields(db, body.def_id(db));
+    }
+}
+
+fn record_def_fields<'db>(db: &'db dyn Db, def: DefId<'db>) {
+    let span = tracing::Span::current();
+    span.record("file", field::display(file_url_tail(db, def.file(db))));
+    span.record("def", field::display(def_name(db, def)));
+}
+
+fn def_name<'db>(db: &'db dyn Db, def: DefId<'db>) -> String {
+    def.name(db)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| format!("{:?}", def.kind(db)))
+}
+
+fn file_url_tail(db: &dyn Db, file: crate::input::SourceFile) -> String {
+    let url = file.url(db);
+    if let Some(mut segments) = url.path_segments()
+        && let Some(last) = segments.next_back()
+        && !last.is_empty()
+    {
+        return last.to_owned();
+    }
+    url.as_str()
+        .rsplit('/')
+        .next()
+        .filter(|tail| !tail.is_empty())
+        .unwrap_or(url.as_str())
+        .to_owned()
+}
+
 /// Builds the item-level scope for `module`.
 ///
 /// This query collects declarations before resolving bodies so forward
 /// references between top-level items are legal. It also emits duplicate-name
 /// diagnostics for the type and term namespaces.
 #[salsa::tracked]
+#[tracing::instrument(
+    target = "hir::query",
+    level = "debug",
+    skip(db, module),
+    fields(file = field::Empty, def = field::Empty)
+)]
 pub fn item_scope<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemScope<'db> {
+    record_module_fields(db, module);
     let mut builder = ItemScopeBuilder::new(db, module);
     for item in module.items(db) {
         builder.add_item(*item);
@@ -858,7 +906,14 @@ pub fn item_scope<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemScope<'db> {
 /// This is the standalone HIR query. Inter-module callers should use
 /// [`resolve_item_types_with_imports`] so imported names participate in lookup.
 #[salsa::tracked]
+#[tracing::instrument(
+    target = "hir::query",
+    level = "debug",
+    skip(db, module),
+    fields(file = field::Empty, def = field::Empty)
+)]
 pub fn resolve_item_types<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemResolutionMap<'db> {
+    record_module_fields(db, module);
     let scope = item_scope(db, module);
     let imports = EmptyImportedNames;
     resolve_item_types_with_imports(db, module, &scope, &imports)
@@ -887,11 +942,18 @@ pub fn resolve_item_types_with_imports<'db>(
 /// inherited type variables. The returned map is silent for parser `Error`
 /// nodes; parse diagnostics are produced during lowering.
 #[salsa::tracked]
+#[tracing::instrument(
+    target = "hir::query",
+    level = "debug",
+    skip(db, body, context),
+    fields(file = field::Empty, def = field::Empty)
+)]
 pub fn resolve_body<'db>(
     db: &'db dyn Db,
     body: FuncBody<'db>,
     context: BodyResolutionContext<'db>,
 ) -> BodyResolutionMap<'db> {
+    record_body_fields(db, body);
     let imports = EmptyImportedNames;
     resolve_body_with_imports(db, body, &context, &imports)
 }
@@ -935,7 +997,14 @@ pub fn resolve_body_with_imports_and_policy<'db>(
 
 /// Resolves all item signatures and function bodies in a module without imports.
 #[salsa::tracked]
+#[tracing::instrument(
+    target = "hir::query",
+    level = "debug",
+    skip(db, module),
+    fields(file = field::Empty, def = field::Empty)
+)]
 pub fn resolve_module<'db>(db: &'db dyn Db, module: Module<'db>) -> ModuleResolutionMap<'db> {
+    record_module_fields(db, module);
     let scope = item_scope(db, module);
     let imports = EmptyImportedNames;
     resolve_module_with_imports(db, module, scope, &imports)

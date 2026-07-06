@@ -8,6 +8,7 @@
 use hir::{
     Db as HirDb, anchor::DefLocationTable, ast::item, diag::AnyDiagnostic, input::SourceFile,
 };
+use tracing::{Level, field};
 
 /// Token definitions used by the parser.
 pub mod lexer;
@@ -51,8 +52,37 @@ pub struct ParseHirOutput<'db> {
 /// at diagnostic/LSP edges. Parse diagnostics are exposed through
 /// [`parse_diagnostics`].
 #[salsa::tracked]
+#[tracing::instrument(
+    target = "parser::query",
+    level = "debug",
+    skip(db, file),
+    fields(file = field::Empty)
+)]
 pub fn parse_file_to_hir<'db>(db: &'db dyn Db, file: SourceFile) -> ParseHirOutput<'db> {
+    record_source_file_field(db, file);
     lower::parse_file_to_hir_impl(db, file)
+}
+
+fn record_source_file_field(db: &dyn Db, file: SourceFile) {
+    if tracing::enabled!(Level::DEBUG) {
+        tracing::Span::current().record("file", field::display(file_url_tail(db, file)));
+    }
+}
+
+fn file_url_tail(db: &dyn Db, file: SourceFile) -> String {
+    let url = file.url(db);
+    if let Some(mut segments) = url.path_segments()
+        && let Some(last) = segments.next_back()
+        && !last.is_empty()
+    {
+        return last.to_owned();
+    }
+    url.as_str()
+        .rsplit('/')
+        .next()
+        .filter(|tail| !tail.is_empty())
+        .unwrap_or(url.as_str())
+        .to_owned()
 }
 
 /// Returns parser/lowering diagnostics for one source file.

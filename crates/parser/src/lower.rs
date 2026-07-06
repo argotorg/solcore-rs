@@ -1804,6 +1804,12 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
 
     let parsed_items = parse_supported_items(source);
     let mut parse_errors = parsed_items.errors;
+    tracing::debug!(
+        target: "parser",
+        items = parsed_items.output.len(),
+        errors = parse_errors.len(),
+        "lowering parsed file"
+    );
 
     {
         let mut ctx = LoweringCtx::new(

@@ -15,6 +15,17 @@ use crate::{
     types::*,
 };
 
+#[inline]
+fn trace_recovery(kind: &'static str, span: LexSpan) {
+    tracing::trace!(
+        target: "parser::recovery",
+        kind,
+        start = span.start,
+        end = span.end,
+        "parser recovery"
+    );
+}
+
 fn ident_parser<'src, I>() -> impl Parser<'src, I, SpannedStr<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -887,9 +898,13 @@ where
             .and_is(boundary.not())
             .repeated()
             .at_least(1)
-            .map_with(|_, e| ParsedExpr {
-                span: e.span(),
-                kind: ParsedExprKind::Error,
+            .map_with(|_, e| {
+                let span = e.span();
+                trace_recovery("expr_atom", span);
+                ParsedExpr {
+                    span,
+                    kind: ParsedExprKind::Error,
+                }
             });
 
         let tuple_or_paren_expr = expr
@@ -1254,9 +1269,13 @@ where
             .and_is(boundary.not())
             .repeated()
             .at_least(1)
-            .map_with(|_, e| ParsedPat {
-                span: e.span(),
-                kind: ParsedPatKind::Error,
+            .map_with(|_, e| {
+                let span = e.span();
+                trace_recovery("pattern", span);
+                ParsedPat {
+                    span,
+                    kind: ParsedPatKind::Error,
+                }
             });
 
         wildcard
@@ -1324,9 +1343,13 @@ where
             )
             .repeated()
             .at_least(1)
-            .map_with(|_, e| ParsedYulExpr {
-                span: e.span(),
-                kind: ParsedYulExprKind::Error,
+            .map_with(|_, e| {
+                let span = e.span();
+                trace_recovery("assembly_expr", span);
+                ParsedYulExpr {
+                    span,
+                    kind: ParsedYulExprKind::Error,
+                }
             });
 
         choice((lit, ident_or_call)).recover_with(via_parser(recovery))
@@ -1511,9 +1534,13 @@ where
             .and_is(just(Token::RBrace).not())
             .repeated()
             .at_least(1)
-            .map_with(|_, e| ParsedYulStmt {
-                span: e.span(),
-                kind: ParsedYulStmtKind::Error,
+            .map_with(|_, e| {
+                let span = e.span();
+                trace_recovery("assembly_stmt", span);
+                ParsedYulStmt {
+                    span,
+                    kind: ParsedYulStmtKind::Error,
+                }
             });
 
         choice((
@@ -1799,7 +1826,11 @@ where
         .and_is(just(Token::RParen).not())
         .repeated()
         .at_least(1)
-        .map_with(|_, e| ParsedFuncParam::Error { span: e.span() });
+        .map_with(|_, e| {
+            let span = e.span();
+            trace_recovery("function_param", span);
+            ParsedFuncParam::Error { span }
+        });
 
     choice((comptime_typed, comptime_untyped, typed, untyped))
         .recover_with(via_parser(recovery))
@@ -2153,9 +2184,13 @@ where
         .and_is(just(Token::Semi).not())
         .repeated()
         .at_least(1)
-        .map_with(|_, e| ParsedTy {
-            span: e.span(),
-            kind: ParsedTyKind::Error,
+        .map_with(|_, e| {
+            let span = e.span();
+            trace_recovery("type_alias_type", span);
+            ParsedTy {
+                span,
+                kind: ParsedTyKind::Error,
+            }
         });
 
     just(Token::Type)
@@ -2475,7 +2510,11 @@ where
         .and_is(item_start.not())
         .repeated()
         .at_least(1)
-        .map_with(|_, e| ParsedContractItem::Error { span: e.span() });
+        .map_with(|_, e| {
+            let span = e.span();
+            trace_recovery("contract_member", span);
+            ParsedContractItem::Error { span }
+        });
 
     choice((
         function_def,
@@ -2566,7 +2605,11 @@ where
         .and_is(item_start.not())
         .repeated()
         .at_least(1)
-        .map_with(|_, e| ParsedTopItem::Error { span: e.span() });
+        .map_with(|_, e| {
+            let span = e.span();
+            trace_recovery("top_level_item", span);
+            ParsedTopItem::Error { span }
+        });
 
     choice((
         import_parser(),
@@ -2593,10 +2636,13 @@ fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedErr
         let span = LexSpan::from(span);
         match tok {
             Ok(tok) => tokens.push((tok, span)),
-            Err(err) => errors.push(ParsedError {
-                span,
-                message: lex_error_message(src, raw_span.start, raw_span.end, err),
-            }),
+            Err(err) => {
+                trace_recovery("invalid_token", span);
+                errors.push(ParsedError {
+                    span,
+                    message: lex_error_message(src, raw_span.start, raw_span.end, err),
+                });
+            }
         }
     }
 
@@ -2840,6 +2886,7 @@ fn span_contains(outer: LexSpan, inner: LexSpan) -> bool {
 /// malformed source.
 pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedTopItem<'src>> {
     let (tokens, mut errors) = tokenize(src);
+    let token_count = tokens.len();
     let stream = chumsky::input::Stream::from_iter(tokens)
         .map((0..src.len()).into(), |(tok, span): (_, _)| (tok, span));
 
@@ -2857,6 +2904,16 @@ pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedT
             _ => None,
         })
         .collect::<Vec<_>>();
+    tracing::debug!(
+        target: "parser",
+        bytes = src.len(),
+        tokens = token_count,
+        items = output.len(),
+        recovered_items = recovery_spans.len(),
+        parse_errors = parse_errors.len(),
+        lex_errors = errors.len(),
+        "parsed top-level items"
+    );
 
     errors.extend(
         parse_errors
@@ -2888,10 +2945,13 @@ fn tokenize_with_base<'src>(
         let span = LexSpan::from((span.start + base_offset)..(span.end + base_offset));
         match tok {
             Ok(tok) => tokens.push((tok, span)),
-            Err(err) => errors.push(ParsedError {
-                span,
-                message: lex_error_message(src, raw_span.start, raw_span.end, err),
-            }),
+            Err(err) => {
+                trace_recovery("invalid_token", span);
+                errors.push(ParsedError {
+                    span,
+                    message: lex_error_message(src, raw_span.start, raw_span.end, err),
+                });
+            }
         }
     }
 
@@ -2908,6 +2968,12 @@ pub(crate) fn parse_body_statements<'src>(
     body_span: LexSpan,
 ) -> ParseOutput<ParsedStmt<'src>> {
     if body_span.end <= body_span.start + 2 {
+        tracing::debug!(
+            target: "parser",
+            start = body_span.start,
+            end = body_span.end,
+            "parsed empty body"
+        );
         return ParseOutput {
             output: Vec::new(),
             errors: Vec::new(),
@@ -2917,6 +2983,7 @@ pub(crate) fn parse_body_statements<'src>(
     let inner_start = body_span.start + 1;
     let inner_end = body_span.end - 1;
     let Some(inner_source) = source.get(inner_start..inner_end) else {
+        trace_recovery("invalid_body_span", body_span);
         return ParseOutput {
             output: vec![ParsedStmt {
                 span: body_span,
@@ -2930,6 +2997,7 @@ pub(crate) fn parse_body_statements<'src>(
     };
 
     let (tokens, mut errors) = tokenize_with_base(inner_source, inner_start);
+    let token_count = tokens.len();
     let stream = chumsky::input::Stream::from_iter(tokens)
         .map((inner_start..inner_end).into(), |(tok, span): (_, _)| {
             (tok, span)
@@ -2939,6 +3007,16 @@ pub(crate) fn parse_body_statements<'src>(
         .collect::<Vec<_>>()
         .parse(stream)
         .into_output_errors();
+    tracing::debug!(
+        target: "parser",
+        start = body_span.start,
+        end = body_span.end,
+        tokens = token_count,
+        statements = output.as_ref().map_or(0, Vec::len),
+        parse_errors = parse_errors.len(),
+        lex_errors = errors.len(),
+        "parsed body statements"
+    );
     errors.extend(parse_errors.into_iter().map(parse_error_from_rich));
 
     ParseOutput {

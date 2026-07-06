@@ -10,3 +10,5 @@ url = { workspace = true }
 hir = { workspace = true }
 parser = { workspace = true }
 nameres = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

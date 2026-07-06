@@ -21,14 +21,25 @@ use nameres::{
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
+use tracing::Level;
+use tracing_subscriber::EnvFilter;
 use url::Url;
+
+const TRACE_DEFAULT_FILTER: &str = concat!(
+    "warn,",
+    "driver::modules=debug,",
+    "parser=debug,parser::query=debug,parser::recovery=trace,",
+    "hir::query=debug,",
+    "nameres=debug,nameres::query=debug,nameres::imports=trace,nameres::fixpoint=debug,",
+    "salsa=debug"
+);
 
 /// Concrete Salsa database used by the command-line driver.
 ///
 /// The database wires HIR, parser, and inter-module name-resolution traits
 /// together and stores the loaded module files discovered from imports.
 #[salsa::db]
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct DriverDb {
     /// Salsa storage.
     storage: salsa::Storage<Self>,
@@ -36,6 +47,26 @@ struct DriverDb {
     module_tree: Option<ModuleTree>,
     /// Loaded source file for each logical module key.
     module_files: FxHashMap<ModuleKey, SourceFile>,
+}
+
+impl DriverDb {
+    fn new() -> Self {
+        Self {
+            storage: salsa::Storage::new(if tracing::enabled!(target: "salsa", Level::DEBUG) {
+                Some(Box::new(emit_salsa_event))
+            } else {
+                None
+            }),
+            module_tree: None,
+            module_files: FxHashMap::default(),
+        }
+    }
+}
+
+impl Default for DriverDb {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[salsa::db]
@@ -75,10 +106,11 @@ fn main() {
         Ok(args) => args,
         Err(message) => {
             eprintln!("{message}");
-            eprintln!("usage: {program} [--external-lib NAME=PATH] <input.solc>");
+            eprintln!("usage: {program} [--trace] [--external-lib NAME=PATH] <input.solc>");
             std::process::exit(2);
         }
     };
+    init_tracing(args.trace);
 
     let input_path = match absolutize(&args.input) {
         Ok(path) => path,
@@ -117,7 +149,7 @@ fn main() {
         }
     };
 
-    let mut db = DriverDb::default();
+    let mut db = DriverDb::new();
     db.module_tree = Some(ModuleTree::new(
         &db,
         main_root.clone(),
@@ -196,6 +228,8 @@ struct Args {
     input: PathBuf,
     /// External library roots passed as `NAME=PATH`.
     external_roots: Vec<(String, PathBuf)>,
+    /// Enables compact tracing output when `RUST_LOG` is not set.
+    trace: bool,
 }
 
 /// Parses command-line arguments.
@@ -206,9 +240,13 @@ struct Args {
 fn parse_args(args: Vec<String>) -> Result<Args, String> {
     let mut input = None;
     let mut external_roots = Vec::new();
+    let mut trace = false;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
+            "--trace" => {
+                trace = true;
+            }
             "--external-lib" | "--lib" => {
                 let Some(value) = iter.next() else {
                     return Err(format!("{arg} requires NAME=PATH"));
@@ -238,7 +276,94 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
     Ok(Args {
         input,
         external_roots,
+        trace,
     })
+}
+
+fn init_tracing(trace: bool) {
+    let has_rust_log = env::var_os("RUST_LOG").is_some();
+    if !trace && !has_rust_log {
+        return;
+    }
+
+    let filter = if has_rust_log {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(TRACE_DEFAULT_FILTER))
+    } else {
+        EnvFilter::new(TRACE_DEFAULT_FILTER)
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .compact()
+        .init();
+}
+
+fn emit_salsa_event(event: salsa::Event) {
+    match event.kind {
+        salsa::EventKind::WillExecute { database_key } => {
+            tracing::debug!(
+                target: "salsa",
+                event = "WillExecute",
+                thread = ?event.thread_id,
+                key = ?database_key,
+                "salsa query will execute"
+            );
+        }
+        salsa::EventKind::DidValidateMemoizedValue { database_key } => {
+            tracing::debug!(
+                target: "salsa",
+                event = "DidValidateMemoizedValue",
+                thread = ?event.thread_id,
+                key = ?database_key,
+                "salsa memoized value validated"
+            );
+        }
+        salsa::EventKind::DidValidateInternedValue { key, revision } => {
+            tracing::debug!(
+                target: "salsa",
+                event = "DidValidateInternedValue",
+                thread = ?event.thread_id,
+                key = ?key,
+                revision = ?revision,
+                "salsa interned value validated"
+            );
+        }
+        salsa::EventKind::WillIterateCycle {
+            database_key,
+            iteration,
+        } => {
+            tracing::debug!(
+                target: "salsa",
+                event = "WillIterateCycle",
+                thread = ?event.thread_id,
+                key = ?database_key,
+                iteration,
+                "salsa cycle will iterate"
+            );
+        }
+        salsa::EventKind::DidFinalizeCycle {
+            database_key,
+            iteration,
+        } => {
+            tracing::debug!(
+                target: "salsa",
+                event = "DidFinalizeCycle",
+                thread = ?event.thread_id,
+                key = ?database_key,
+                iteration,
+                "salsa cycle finalized"
+            );
+        }
+        kind => {
+            tracing::trace!(
+                target: "salsa",
+                thread = ?event.thread_id,
+                kind = ?kind,
+                "salsa event"
+            );
+        }
+    }
 }
 
 /// Parses one external library root argument.
@@ -264,6 +389,11 @@ fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) {
         if !visited.insert(key.clone()) {
             continue;
         }
+        tracing::debug!(
+            target: "driver::modules",
+            module = %module_key_display(&key),
+            "visiting reachable module"
+        );
         let Some(file) = db.module_files.get(&key).copied() else {
             continue;
         };
@@ -273,23 +403,80 @@ fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) {
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
-                .filter_map(|path| {
-                    let resolved = resolve_module_path_candidate(&*db, module, &path).ok()?;
-                    Some((resolved.module.key(&*db), resolved.file_path))
-                })
+                .filter_map(
+                    |path| match resolve_module_path_candidate(&*db, module, &path) {
+                        Ok(resolved) => {
+                            tracing::trace!(
+                                target: "driver::modules",
+                                module = %module.display(&*db),
+                                path = %nameres::module_path_display(&*db, &path),
+                                target = %resolved.module.display(&*db),
+                                file = %resolved.file_path.display(),
+                                "discovered module reference"
+                            );
+                            Some((resolved.module.key(&*db), resolved.file_path))
+                        }
+                        Err(_) => {
+                            tracing::trace!(
+                                target: "driver::modules",
+                                module = %module.display(&*db),
+                                path = %nameres::module_path_display(&*db, &path),
+                                "ignored unresolved module reference"
+                            );
+                            None
+                        }
+                    },
+                )
                 .collect::<Vec<_>>()
         };
         for (target_key, file_path) in targets {
-            if !db.module_files.contains_key(&target_key)
-                && let Ok(source) = fs::read_to_string(&file_path)
-                && let Ok(file) = source_file_for_path(db, &file_path, source)
-            {
-                db.module_files.insert(target_key.clone(), file);
+            if !db.module_files.contains_key(&target_key) {
+                match fs::read_to_string(&file_path) {
+                    Ok(source) => match source_file_for_path(db, &file_path, source) {
+                        Ok(file) => {
+                            tracing::debug!(
+                                target: "driver::modules",
+                                module = %module_key_display(&target_key),
+                                file = %file_path.display(),
+                                "loaded module source"
+                            );
+                            db.module_files.insert(target_key.clone(), file);
+                        }
+                        Err(message) => {
+                            tracing::debug!(
+                                target: "driver::modules",
+                                module = %module_key_display(&target_key),
+                                file = %file_path.display(),
+                                error = %message,
+                                "failed to create source file input"
+                            );
+                        }
+                    },
+                    Err(err) => {
+                        tracing::debug!(
+                            target: "driver::modules",
+                            module = %module_key_display(&target_key),
+                            file = %file_path.display(),
+                            error = %err,
+                            "failed to read module source"
+                        );
+                    }
+                }
             }
             if db.module_files.contains_key(&target_key) {
                 queue.push_back(target_key);
             }
         }
+    }
+}
+
+fn module_key_display(key: &ModuleKey) -> String {
+    let path = key.logical_path.join(".");
+    match &key.library {
+        LibraryId::Main => path,
+        LibraryId::Std if key.logical_path.as_slice() == ["std"] => "std".to_owned(),
+        LibraryId::Std => format!("std.{path}"),
+        LibraryId::External(name) => format!("@{name}.{path}"),
     }
 }
 

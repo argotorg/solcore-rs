@@ -8,6 +8,7 @@ salsa = { workspace = true }
 hir = { workspace = true }
 chumsky = "0.12"
 logos = "0.16"
+tracing = { workspace = true }
 
 [dev-dependencies]
 dir-test = "0.4.1"

@@ -40,6 +40,7 @@ use hir::{
 };
 use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
+use tracing::{Level, field};
 
 /// Database contract for inter-module name resolution.
 #[salsa::db]
@@ -717,6 +718,82 @@ pub fn module_id_from_key<'db>(db: &'db dyn Db, key: &ModuleKey) -> ModuleId<'db
     ModuleId::new(db, key.library.clone(), key.logical_path.clone())
 }
 
+fn record_source_file_field(db: &dyn Db, file: SourceFile) {
+    if tracing::enabled!(Level::DEBUG) {
+        tracing::Span::current().record("file", field::display(file_url_tail(db, file)));
+    }
+}
+
+fn record_module_field<'db>(db: &'db dyn Db, module: ModuleId<'db>) {
+    if tracing::enabled!(Level::DEBUG) {
+        let span = tracing::Span::current();
+        span.record("module", field::display(module.display(db)));
+        if let Some(file) = db.module_file(module) {
+            span.record("file", field::display(file_url_tail(db, file)));
+        }
+    }
+}
+
+fn record_body_field<'db>(db: &'db dyn Db, body: FuncBody<'db>) {
+    if tracing::enabled!(Level::DEBUG) {
+        let def = body.def_id(db);
+        let span = tracing::Span::current();
+        span.record("file", field::display(file_url_tail(db, def.file(db))));
+        span.record("def", field::display(def_name(db, def)));
+    }
+}
+
+fn def_name<'db>(db: &'db dyn Db, def: DefId<'db>) -> String {
+    def.name(db)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| format!("{:?}", def.kind(db)))
+}
+
+fn file_url_tail(db: &dyn hir::Db, file: SourceFile) -> String {
+    let url = file.url(db);
+    if let Some(mut segments) = url.path_segments()
+        && let Some(last) = segments.next_back()
+        && !last.is_empty()
+    {
+        return last.to_owned();
+    }
+    url.as_str()
+        .rsplit('/')
+        .next()
+        .filter(|tail| !tail.is_empty())
+        .unwrap_or(url.as_str())
+        .to_owned()
+}
+
+fn trace_import_decision<'db>(
+    db: &'db dyn Db,
+    importing: ModuleId<'db>,
+    path: &ModulePathRef<'db>,
+    target: Option<ModuleId<'db>>,
+    status: &'static str,
+) {
+    if tracing::enabled!(target: "nameres::imports", Level::TRACE) {
+        let target = target
+            .map(|module| module.display(db))
+            .unwrap_or_else(|| "<none>".to_owned());
+        tracing::trace!(
+            target: "nameres::imports",
+            module = %importing.display(db),
+            path = %module_path_display(db, path),
+            target = %target,
+            status,
+            "import resolution decision"
+        );
+    }
+}
+
+fn selector_kind<'db>(selector: &ImportSelector<'db>) -> &'static str {
+    match selector {
+        ImportSelector::Wildcard => "wildcard",
+        ImportSelector::Names(_) => "names",
+    }
+}
+
 /// Resolves a module path reference to a logical module and candidate file path.
 ///
 /// This function does not require the target module to already be loaded. The
@@ -772,15 +849,30 @@ pub fn resolve_module_path_candidate<'db>(
 /// Returns a diagnostic when the path cannot be mapped to a library root or when
 /// the target source file has not been loaded into the database.
 #[salsa::tracked]
+#[tracing::instrument(
+    target = "nameres::query",
+    level = "debug",
+    skip(db, importing, path),
+    fields(module = field::Empty)
+)]
 pub fn resolve_module_path<'db>(
     db: &'db dyn Db,
     importing: ModuleId<'db>,
     path: ModulePathRef<'db>,
 ) -> Result<ModuleId<'db>, Box<ModuleDiagnostic<'db>>> {
-    let resolved = resolve_module_path_candidate(db, importing, &path)?;
+    record_module_field(db, importing);
+    let resolved = match resolve_module_path_candidate(db, importing, &path) {
+        Ok(resolved) => resolved,
+        Err(diagnostic) => {
+            trace_import_decision(db, importing, &path, None, "candidate-error");
+            return Err(diagnostic);
+        }
+    };
     if db.module_file(resolved.module).is_some() {
+        trace_import_decision(db, importing, &path, Some(resolved.module), "loaded");
         Ok(resolved.module)
     } else {
+        trace_import_decision(db, importing, &path, Some(resolved.module), "not-loaded");
         Err(Box::new(module_not_found_diag(db, &path)))
     }
 }
@@ -790,7 +882,14 @@ pub fn resolve_module_path<'db>(
 /// The parser/lowerer owns syntax diagnostics; this query only classifies the
 /// lowered import/export items for graph construction.
 #[salsa::tracked]
+#[tracing::instrument(
+    target = "nameres::query",
+    level = "debug",
+    skip(db, file),
+    fields(file = field::Empty)
+)]
 pub fn module_imports<'db>(db: &'db dyn Db, file: SourceFile) -> ModuleImports<'db> {
+    record_source_file_field(db, file);
     let module = parse_file_to_hir(db, file).module(db);
     let mut imports = Vec::new();
     let mut exports = Vec::new();
@@ -914,7 +1013,14 @@ pub fn strongly_connected_components<'db>(graph: &ModuleGraph<'db>) -> Vec<Vec<M
 /// re-running until interface equality stabilizes; diagnostics that require the
 /// final fixed point are emitted by [`validate_module`].
 #[salsa::tracked(cycle_fn = public_interface_cycle, cycle_initial = public_interface_initial)]
+#[tracing::instrument(
+    target = "nameres::query",
+    level = "debug",
+    skip(db, module),
+    fields(module = field::Empty, file = field::Empty)
+)]
 pub fn public_interface<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Interface<'db> {
+    record_module_field(db, module);
     // This query is intentionally side-effect free: during salsa fixed-point
     // iteration dependencies in the same recursive module group may still have
     // provisional empty interfaces. Strict unknown-name diagnostics are emitted
@@ -924,24 +1030,37 @@ pub fn public_interface<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Interfac
 }
 
 fn public_interface_initial<'db>(
-    _db: &'db dyn Db,
+    db: &'db dyn Db,
     _id: salsa::Id,
-    _module: ModuleId<'db>,
+    module: ModuleId<'db>,
 ) -> Interface<'db> {
     // Empty is the least assumption for export cycles: no imported name is
     // visible until a later iteration can prove it from a concrete interface.
+    tracing::debug!(
+        target: "nameres::fixpoint",
+        module = %module.display(db),
+        "public interface fixed-point initial value"
+    );
     Interface::default()
 }
 
 fn public_interface_cycle<'db>(
-    _db: &'db dyn Db,
+    db: &'db dyn Db,
     _cycle: &salsa::Cycle,
-    _last_provisional_value: &Interface<'db>,
+    last_provisional_value: &Interface<'db>,
     value: Interface<'db>,
-    _module: ModuleId<'db>,
+    module: ModuleId<'db>,
 ) -> Interface<'db> {
     // Salsa compares this returned value with the last provisional interface and
     // continues the cycle only while it changes.
+    tracing::debug!(
+        target: "nameres::fixpoint",
+        module = %module.display(db),
+        changed = last_provisional_value != &value,
+        items = value.item_refs.len(),
+        module_aliases = value.module_aliases.len(),
+        "public interface fixed-point iteration"
+    );
     value
 }
 
@@ -973,7 +1092,14 @@ pub fn validate_reachable<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleG
 /// Missing source files produce an empty environment so graph/load errors can be
 /// reported separately without panicking downstream HIR resolution.
 #[salsa::tracked]
+#[tracing::instrument(
+    target = "nameres::query",
+    level = "debug",
+    skip(db, module),
+    fields(module = field::Empty, file = field::Empty)
+)]
 pub fn module_env<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ModuleEnv<'db> {
+    record_module_field(db, module);
     let Some(file) = db.module_file(module) else {
         return ModuleEnv::empty();
     };
@@ -1033,7 +1159,14 @@ pub fn resolve_reachable_full<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Mod
 
 /// Returns parse, module, and local name-resolution diagnostics for one module.
 #[salsa::tracked(returns(ref))]
+#[tracing::instrument(
+    target = "nameres::query",
+    level = "debug",
+    skip(db, module),
+    fields(module = field::Empty, file = field::Empty)
+)]
 pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<AnyDiagnostic> {
+    record_module_field(db, module);
     let Some(file) = db.module_file(module) else {
         return Vec::new();
     };
@@ -1087,6 +1220,12 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
 
 /// Returns local name-resolution diagnostics for one function body.
 #[salsa::tracked(returns(ref))]
+#[tracing::instrument(
+    target = "nameres::query",
+    level = "debug",
+    skip(db, body, context, env),
+    fields(file = field::Empty, def = field::Empty)
+)]
 pub fn body_diagnostics<'db>(
     db: &'db dyn Db,
     body: FuncBody<'db>,
@@ -1094,6 +1233,7 @@ pub fn body_diagnostics<'db>(
     env: ModuleEnv<'db>,
     suppress_for_parse_errors: bool,
 ) -> Vec<AnyDiagnostic> {
+    record_body_field(db, body);
     let policy = if suppress_for_parse_errors {
         hir_nameres::NameresDiagnosticPolicy::SuppressForParseErrors
     } else {
@@ -1222,7 +1362,14 @@ impl<'a, 'db> BodyDiagnosticCollector<'a, 'db> {
 
 /// Returns diagnostics for every module reachable from `entry`.
 #[salsa::tracked(returns(ref))]
+#[tracing::instrument(
+    target = "nameres::query",
+    level = "debug",
+    skip(db, entry),
+    fields(module = field::Empty, file = field::Empty)
+)]
 pub fn reachable_diagnostics<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Vec<AnyDiagnostic> {
+    record_module_field(db, entry);
     let graph = module_graph(db, entry);
     let mut diagnostics = Vec::new();
     for module in graph.modules {
@@ -1404,24 +1551,50 @@ impl<'db> ModuleEnvBuilder<'db> {
             return;
         };
         let target_has_parse_errors = module_has_parse_errors(self.db, target);
+        let selector = import.selector(self.db);
+        tracing::trace!(
+            target: "nameres::imports",
+            module = %self.module.display(self.db),
+            path = %module_path_display(self.db, &path),
+            target = %target.display(self.db),
+            selector = selector.as_ref().map(selector_kind).unwrap_or("module"),
+            target_has_parse_errors,
+            "building import surface"
+        );
 
-        if let Some(selector) = import.selector(self.db) {
+        if let Some(selector) = selector.as_ref() {
             if target_has_parse_errors {
                 self.add_unknown_selector_imports(selector);
             }
             let interface = public_interface(self.db, target);
-            for item_ref in select_import_refs(
+            let item_refs = select_import_refs(
                 self.db,
                 &interface.item_refs,
                 selector,
                 import.hiding(self.db),
-            ) {
+            );
+            tracing::trace!(
+                target: "nameres::imports",
+                module = %self.module.display(self.db),
+                target = %target.display(self.db),
+                selected = item_refs.len(),
+                "selected import refs"
+            );
+            for item_ref in item_refs {
                 self.add_selected_item_ref(item_ref, import.span(self.db));
             }
             return;
         }
 
-        for qualifier in import_module_qualifiers(self.db, import, &path) {
+        let qualifiers = import_module_qualifiers(self.db, import, &path);
+        tracing::trace!(
+            target: "nameres::imports",
+            module = %self.module.display(self.db),
+            target = %target.display(self.db),
+            qualifiers = qualifiers.len(),
+            "resolved module import qualifiers"
+        );
+        for qualifier in qualifiers {
             let mut seen = FxHashSet::default();
             let mut stack = FxHashSet::default();
             self.add_module_surface(
@@ -1497,6 +1670,13 @@ impl<'db> ModuleEnvBuilder<'db> {
         self.add_module_binding(qualifier, target, span);
 
         if !seen.insert((qualifier.to_owned(), target)) {
+            tracing::trace!(
+                target: "nameres::imports",
+                module = %self.module.display(self.db),
+                qualifier,
+                target = %target.display(self.db),
+                "skipped repeated module surface"
+            );
             return;
         }
 
@@ -1506,6 +1686,13 @@ impl<'db> ModuleEnvBuilder<'db> {
         }
 
         if !stack.insert(target) {
+            tracing::trace!(
+                target: "nameres::imports",
+                module = %self.module.display(self.db),
+                qualifier,
+                target = %target.display(self.db),
+                "stopped recursive module surface"
+            );
             return;
         }
         for (alias, nested) in interface.module_aliases {
@@ -2428,7 +2615,16 @@ fn select_import_refs<'db>(
             .collect(),
     };
     selected.retain(|item_ref| !hidden.contains(&item_ref.source_name));
-    unique_import_bindings(selected)
+    let selected = unique_import_bindings(selected);
+    tracing::trace!(
+        target: "nameres::imports",
+        selector = selector_kind(selector),
+        available = available.len(),
+        hidden = hidden.len(),
+        selected = selected.len(),
+        "filtered import refs"
+    );
+    selected
 }
 
 fn unique_import_bindings<'db>(refs: Vec<ItemRef<'db>>) -> Vec<ItemRef<'db>> {
@@ -2732,6 +2928,13 @@ fn validate_import_items_exist<'db>(
             for selected in names {
                 let name = spanned_name_text(db, &selected.name);
                 if !available.contains(&name) {
+                    tracing::trace!(
+                        target: "nameres::imports",
+                        module = %module.display(db),
+                        target = %target.display(db),
+                        name = %name,
+                        "unknown selected import item"
+                    );
                     diagnostics.push(unknown_import_item_diag(db, selected.name.span(db), &name));
                 }
             }
@@ -2739,6 +2942,13 @@ fn validate_import_items_exist<'db>(
         for hidden in import.hiding(db) {
             let name = spanned_name_text(db, &hidden.name);
             if !available.contains(&name) {
+                tracing::trace!(
+                    target: "nameres::imports",
+                    module = %module.display(db),
+                    target = %target.display(db),
+                    name = %name,
+                    "unknown hidden import item"
+                );
                 diagnostics.push(unknown_import_item_diag(db, hidden.name.span(db), &name));
             }
         }
