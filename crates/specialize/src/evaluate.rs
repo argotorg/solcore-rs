@@ -16,8 +16,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     ir::{
-        MonoArm, MonoExpr, MonoExprKind, MonoFunction, MonoId, MonoItem, MonoModule, MonoParam,
-        MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+        MonoArm, MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoId, MonoIntrinsic,
+        MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
     },
     specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind},
 };
@@ -49,6 +49,7 @@ pub(crate) fn evaluate_module<'db>(
 }
 
 type VEnv<'db> = FxHashMap<String, MonoExpr<'db>>;
+type CEnv = FxHashSet<String>;
 type TypeReg<'db> = FxHashMap<String, MonoId<'db>>;
 type YulState = FxHashMap<String, BigInt>;
 
@@ -91,14 +92,20 @@ impl<'db> Evaluator<'db> {
     fn eval_function(&mut self, mut function: MonoFunction<'db>) -> MonoFunction<'db> {
         self.memory.clear();
         let type_reg = build_type_reg(&function.params, &function.body);
-        let old_enforce = self.enforce_comptime;
-        self.enforce_comptime = !function
+        let ret_comptime = ty_is_comptime(self.db, function.ret.ty());
+        let comptime_env = function
             .params
             .iter()
-            .any(|param| param_is_comptime(self.db, param));
-        let ret_comptime = self.enforce_comptime && ty_is_comptime(self.db, function.ret.ty());
-        let (_, body) = self.eval_stmts(&type_reg, VEnv::default(), function.body, ret_comptime);
-        self.enforce_comptime = old_enforce;
+            .filter(|param| ret_comptime || param_is_comptime(self.db, param))
+            .map(|param| param.name.clone())
+            .collect::<CEnv>();
+        let (_, _, body) = self.eval_stmts(
+            &type_reg,
+            VEnv::default(),
+            comptime_env,
+            function.body,
+            ret_comptime,
+        );
         function.body = body;
         self.functions
             .insert(function.name.clone(), function.clone());
@@ -109,25 +116,29 @@ impl<'db> Evaluator<'db> {
         &mut self,
         type_reg: &TypeReg<'db>,
         mut env: VEnv<'db>,
+        mut comptime_env: CEnv,
         stmts: Vec<MonoStmt<'db>>,
         ret_comptime: bool,
-    ) -> (VEnv<'db>, Vec<MonoStmt<'db>>) {
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
         let mut out = Vec::new();
         for stmt in stmts {
-            let (next_env, mut stmts) = self.eval_stmt(type_reg, env, stmt, ret_comptime);
+            let (next_env, next_comptime_env, mut stmts) =
+                self.eval_stmt(type_reg, env, comptime_env, stmt, ret_comptime);
             env = next_env;
+            comptime_env = next_comptime_env;
             out.append(&mut stmts);
         }
-        (env, out)
+        (env, comptime_env, out)
     }
 
     fn eval_stmt(
         &mut self,
         type_reg: &TypeReg<'db>,
         env: VEnv<'db>,
+        comptime_env: CEnv,
         stmt: MonoStmt<'db>,
         ret_comptime: bool,
-    ) -> (VEnv<'db>, Vec<MonoStmt<'db>>) {
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
         let span = stmt.span;
         match stmt.kind {
             MonoStmtKind::Let {
@@ -137,19 +148,34 @@ impl<'db> Evaluator<'db> {
                 init,
             } => {
                 let init = if comptime {
-                    init.map(|expr| self.with_comptime_mode(|this| this.eval_expr(&env, expr)))
+                    init.map(|expr| {
+                        self.with_comptime_mode(|this| this.eval_expr(&env, &comptime_env, expr))
+                    })
                 } else {
-                    init.map(|expr| self.eval_expr(&env, expr))
+                    init.map(|expr| self.eval_expr(&env, &comptime_env, expr))
                 };
                 let mut env = env;
+                let mut comptime_env = comptime_env;
                 if let Some(expr) = init.as_ref().filter(|expr| is_known_value(expr)) {
                     env.insert(id.name.clone(), expr.clone());
                 } else {
                     env.remove(&id.name);
                 }
+                let init_is_comptime = init
+                    .as_ref()
+                    .is_some_and(|expr| self.expr_is_comptime(expr, &comptime_env));
+                if comptime || init_is_comptime {
+                    comptime_env.insert(id.name.clone());
+                } else {
+                    comptime_env.remove(&id.name);
+                }
                 if self.enforce_comptime && comptime {
                     match init.as_ref() {
-                        Some(expr) if is_known_value(expr) => return (env, Vec::new()),
+                        Some(expr) if self.expr_is_comptime(expr, &comptime_env) => {
+                            if is_known_value(expr) {
+                                return (env, comptime_env, Vec::new());
+                            }
+                        }
                         Some(_) => self.comptime_failed(
                             format!(
                                 "comptime let '{}' is bound to a runtime expression",
@@ -165,6 +191,7 @@ impl<'db> Evaluator<'db> {
                 }
                 (
                     env,
+                    comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::Let {
@@ -177,11 +204,11 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Return(expr) => {
-                let expr = expr.map(|expr| self.eval_expr(&env, expr));
+                let expr = expr.map(|expr| self.eval_expr(&env, &comptime_env, expr));
                 if self.enforce_comptime
                     && ret_comptime
                     && let Some(expr) = &expr
-                    && !is_known_value(expr)
+                    && !self.expr_is_comptime(expr, &comptime_env)
                 {
                     self.comptime_failed(
                         "function annotated '-> comptime' returns a runtime expression",
@@ -190,6 +217,7 @@ impl<'db> Evaluator<'db> {
                 }
                 (
                     env,
+                    comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::Return(expr),
@@ -197,12 +225,13 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Expr(expr) => {
-                let expr = self.eval_expr(&env, expr);
+                let expr = self.eval_expr(&env, &comptime_env, expr);
                 if is_known_value(&expr) {
-                    (env, Vec::new())
+                    (env, comptime_env, Vec::new())
                 } else {
                     (
                         env,
+                        comptime_env,
                         vec![MonoStmt {
                             span,
                             kind: MonoStmtKind::Expr(expr),
@@ -211,18 +240,36 @@ impl<'db> Evaluator<'db> {
                 }
             }
             MonoStmtKind::Assign { lhs, rhs } => {
-                let lhs = self.eval_expr(&env, lhs);
-                let rhs = self.eval_expr(&env, rhs);
+                let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
+                let rhs = self.eval_expr(&env, &comptime_env, rhs);
                 let mut env = env;
-                if let MonoExprKind::Var(id) = &lhs.kind {
+                let mut comptime_env = comptime_env;
+                if let Some(id) = target {
+                    let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
                     if is_known_value(&rhs) {
-                        env.insert(id.name.clone(), rhs.clone());
+                        if matches!(&lhs.kind, MonoExprKind::Var(_)) {
+                            env.insert(id.name.clone(), rhs.clone());
+                            if rhs_is_comptime {
+                                comptime_env.insert(id.name);
+                            } else {
+                                comptime_env.remove(&id.name);
+                            }
+                        } else {
+                            env.remove(&id.name);
+                            comptime_env.remove(&id.name);
+                        }
                     } else {
                         env.remove(&id.name);
+                        if rhs_is_comptime && matches!(&lhs.kind, MonoExprKind::Var(_)) {
+                            comptime_env.insert(id.name);
+                        } else {
+                            comptime_env.remove(&id.name);
+                        }
                     }
                 }
                 (
                     env,
+                    comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::Assign { lhs, rhs },
@@ -230,36 +277,33 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::AddAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, span, lhs, rhs, |lhs, rhs| MonoStmtKind::AddAssign {
-                    lhs,
-                    rhs,
+                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
+                    MonoStmtKind::AddAssign { lhs, rhs }
                 })
             }
             MonoStmtKind::SubAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, span, lhs, rhs, |lhs, rhs| MonoStmtKind::SubAssign {
-                    lhs,
-                    rhs,
+                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
+                    MonoStmtKind::SubAssign { lhs, rhs }
                 })
             }
             MonoStmtKind::BitXorAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, span, lhs, rhs, |lhs, rhs| {
+                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
                     MonoStmtKind::BitXorAssign { lhs, rhs }
                 })
             }
             MonoStmtKind::BitAndAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, span, lhs, rhs, |lhs, rhs| {
+                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
                     MonoStmtKind::BitAndAssign { lhs, rhs }
                 })
             }
             MonoStmtKind::BitOrAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, span, lhs, rhs, |lhs, rhs| {
+                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
                     MonoStmtKind::BitOrAssign { lhs, rhs }
                 })
             }
             MonoStmtKind::ModAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, span, lhs, rhs, |lhs, rhs| MonoStmtKind::ModAssign {
-                    lhs,
-                    rhs,
+                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
+                    MonoStmtKind::ModAssign { lhs, rhs }
                 })
             }
             MonoStmtKind::If {
@@ -267,33 +311,48 @@ impl<'db> Evaluator<'db> {
                 then_body,
                 else_body,
             } => {
-                let cond = self.eval_expr(&env, cond);
+                let cond = self.eval_expr(&env, &comptime_env, cond);
                 if let Some(value) = known_bool(&cond) {
                     let selected = if value {
                         then_body
                     } else {
                         else_body.unwrap_or_default()
                     };
-                    return self.eval_stmts(type_reg, env, selected, ret_comptime);
+                    return self.eval_stmts(type_reg, env, comptime_env, selected, ret_comptime);
                 }
-                let (_, then_body) = self.eval_stmts(
+                let assigned = assigned_in_stmts(&then_body)
+                    .into_iter()
+                    .chain(
+                        else_body
+                            .as_deref()
+                            .map(assigned_in_stmts)
+                            .unwrap_or_default(),
+                    )
+                    .collect::<FxHashSet<_>>();
+                let branch_env = remove_names(env.clone(), &assigned);
+                let branch_comptime_env = remove_comptime_names(comptime_env.clone(), &assigned);
+                let (_, _, then_body) = self.eval_stmts(
                     type_reg,
-                    env_without_assigned(&env, &then_body),
+                    branch_env.clone(),
+                    branch_comptime_env.clone(),
                     then_body,
                     ret_comptime,
                 );
                 let else_body = else_body.map(|body| {
-                    let (_, body) = self.eval_stmts(
+                    let (_, _, body) = self.eval_stmts(
                         type_reg,
-                        env_without_assigned(&env, &body),
+                        branch_env.clone(),
+                        branch_comptime_env.clone(),
                         body,
                         ret_comptime,
                     );
                     body
                 });
-                let env = remove_assigned(env, &then_body);
+                let env = remove_names(env, &assigned);
+                let comptime_env = remove_comptime_names(comptime_env, &assigned);
                 (
                     env,
+                    comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::If {
@@ -307,34 +366,49 @@ impl<'db> Evaluator<'db> {
             MonoStmtKind::Match { scrutinees, arms } => {
                 let scrutinees = scrutinees
                     .into_iter()
-                    .map(|expr| self.eval_expr(&env, expr))
+                    .map(|expr| self.eval_expr(&env, &comptime_env, expr))
                     .collect::<Vec<_>>();
                 let arms = arms
                     .into_iter()
-                    .map(|arm| self.eval_arm_labels(&env, arm))
+                    .map(|arm| self.eval_arm_labels(&env, &comptime_env, arm))
                     .collect::<Vec<_>>();
                 if scrutinees.iter().all(is_known_value)
                     && let Some((matched_env, body)) = match_arms(&env, &scrutinees, &arms)
                 {
-                    return self.eval_stmts(type_reg, matched_env, body, ret_comptime);
+                    return self.eval_stmts(
+                        type_reg,
+                        matched_env,
+                        comptime_env,
+                        body,
+                        ret_comptime,
+                    );
                 }
+                let assigned = arms
+                    .iter()
+                    .flat_map(|arm| assigned_in_stmts(&arm.body))
+                    .collect::<FxHashSet<_>>();
                 let arms = arms
                     .into_iter()
                     .map(|arm| {
-                        let (_, body) = self.eval_stmts(
+                        let mut masked = assigned_in_stmts(&arm.body);
+                        for pat in &arm.pats {
+                            collect_pat_binders(pat, &mut masked);
+                        }
+                        let (_, _, body) = self.eval_stmts(
                             type_reg,
-                            env_without_assigned(&env, &arm.body),
+                            remove_names(env.clone(), &masked),
+                            remove_comptime_names(comptime_env.clone(), &masked),
                             arm.body,
                             ret_comptime,
                         );
                         MonoArm { body, ..arm }
                     })
                     .collect::<Vec<_>>();
-                let env = arms
-                    .iter()
-                    .fold(env, |env, arm| remove_assigned(env, &arm.body));
+                let env = remove_names(env, &assigned);
+                let comptime_env = remove_comptime_names(comptime_env, &assigned);
                 (
                     env,
+                    comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::Match { scrutinees, arms },
@@ -342,9 +416,16 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Block(body) => {
-                let (_, body) = self.eval_stmts(type_reg, env.clone(), body, ret_comptime);
+                let (_, _, body) = self.eval_stmts(
+                    type_reg,
+                    env.clone(),
+                    comptime_env.clone(),
+                    body,
+                    ret_comptime,
+                );
                 (
                     env,
+                    comptime_env,
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::Block(body),
@@ -358,12 +439,28 @@ impl<'db> Evaluator<'db> {
                 body,
             } => {
                 let loop_env = env_without_assigned(&env, &body);
-                let (_, init) = self.eval_stmts(type_reg, loop_env.clone(), init, ret_comptime);
-                let cond = self.eval_expr(&loop_env, cond);
-                let (_, post) = self.eval_stmts(type_reg, loop_env.clone(), post, ret_comptime);
-                let (_, body) = self.eval_stmts(type_reg, loop_env, body, ret_comptime);
+                let assigned = assigned_in_stmts(&body);
+                let loop_comptime_env = remove_comptime_names(comptime_env, &assigned);
+                let (_, _, init) = self.eval_stmts(
+                    type_reg,
+                    loop_env.clone(),
+                    loop_comptime_env.clone(),
+                    init,
+                    ret_comptime,
+                );
+                let cond = self.eval_expr(&loop_env, &loop_comptime_env, cond);
+                let (_, _, post) = self.eval_stmts(
+                    type_reg,
+                    loop_env.clone(),
+                    loop_comptime_env.clone(),
+                    post,
+                    ret_comptime,
+                );
+                let (_, _, body) =
+                    self.eval_stmts(type_reg, loop_env, loop_comptime_env, body, ret_comptime);
                 (
                     VEnv::default(),
+                    CEnv::default(),
                     vec![MonoStmt {
                         span,
                         kind: MonoStmtKind::For {
@@ -382,6 +479,7 @@ impl<'db> Evaluator<'db> {
                 if let Some(state) = self.eval_yul_block(state, &body) {
                     (
                         merge_yul_state(type_reg, state, env),
+                        comptime_env,
                         vec![MonoStmt {
                             span,
                             kind: MonoStmtKind::Assembly(body),
@@ -390,6 +488,7 @@ impl<'db> Evaluator<'db> {
                 } else {
                     (
                         VEnv::default(),
+                        CEnv::default(),
                         vec![MonoStmt {
                             span,
                             kind: MonoStmtKind::Assembly(body),
@@ -399,6 +498,7 @@ impl<'db> Evaluator<'db> {
             }
             MonoStmtKind::Break => (
                 env,
+                comptime_env,
                 vec![MonoStmt {
                     span,
                     kind: MonoStmtKind::Break,
@@ -406,6 +506,7 @@ impl<'db> Evaluator<'db> {
             ),
             MonoStmtKind::Continue => (
                 env,
+                comptime_env,
                 vec![MonoStmt {
                     span,
                     kind: MonoStmtKind::Continue,
@@ -413,6 +514,7 @@ impl<'db> Evaluator<'db> {
             ),
             MonoStmtKind::Error => (
                 env,
+                comptime_env,
                 vec![MonoStmt {
                     span,
                     kind: MonoStmtKind::Error,
@@ -424,19 +526,23 @@ impl<'db> Evaluator<'db> {
     fn eval_compound_assign(
         &mut self,
         env: VEnv<'db>,
+        comptime_env: CEnv,
         span: Span<'db>,
         lhs: MonoExpr<'db>,
         rhs: MonoExpr<'db>,
         make_kind: impl FnOnce(MonoExpr<'db>, MonoExpr<'db>) -> MonoStmtKind<'db>,
-    ) -> (VEnv<'db>, Vec<MonoStmt<'db>>) {
-        let lhs = self.eval_expr(&env, lhs);
-        let rhs = self.eval_expr(&env, rhs);
+    ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
+        let rhs = self.eval_expr(&env, &comptime_env, rhs);
         let mut env = env;
-        if let MonoExprKind::Var(id) = &lhs.kind {
+        let mut comptime_env = comptime_env;
+        if let Some(id) = target {
             env.remove(&id.name);
+            comptime_env.remove(&id.name);
         }
         (
             env,
+            comptime_env,
             vec![MonoStmt {
                 span,
                 kind: make_kind(lhs, rhs),
@@ -444,7 +550,76 @@ impl<'db> Evaluator<'db> {
         )
     }
 
-    fn eval_expr(&mut self, env: &VEnv<'db>, expr: MonoExpr<'db>) -> MonoExpr<'db> {
+    fn eval_lvalue(
+        &mut self,
+        env: &VEnv<'db>,
+        comptime_env: &CEnv,
+        expr: MonoExpr<'db>,
+    ) -> (MonoExpr<'db>, Option<MonoId<'db>>) {
+        let span = expr.span;
+        let ty = expr.ty;
+        match expr.kind {
+            MonoExprKind::Var(id) => (
+                MonoExpr {
+                    span,
+                    ty,
+                    kind: MonoExprKind::Var(id.clone()),
+                },
+                Some(id),
+            ),
+            MonoExprKind::Index { base, index } => {
+                let (base, target) = self.eval_lvalue(env, comptime_env, *base);
+                let index = self.eval_expr(env, comptime_env, *index);
+                (
+                    MonoExpr {
+                        span,
+                        ty,
+                        kind: MonoExprKind::Index {
+                            base: Box::new(base),
+                            index: Box::new(index),
+                        },
+                    },
+                    target,
+                )
+            }
+            MonoExprKind::Field { base, field } => {
+                let (base, target) = self.eval_lvalue(env, comptime_env, *base);
+                (
+                    MonoExpr {
+                        span,
+                        ty,
+                        kind: MonoExprKind::Field {
+                            base: Box::new(base),
+                            field,
+                        },
+                    },
+                    target,
+                )
+            }
+            MonoExprKind::TypeAnnot { expr, ty: annot_ty } => {
+                let (expr, target) = self.eval_lvalue(env, comptime_env, *expr);
+                (
+                    MonoExpr {
+                        span,
+                        ty,
+                        kind: MonoExprKind::TypeAnnot {
+                            expr: Box::new(expr),
+                            ty: annot_ty,
+                        },
+                    },
+                    target,
+                )
+            }
+            kind => (MonoExpr { span, ty, kind }, None),
+        }
+    }
+
+    fn eval_expr(
+        &mut self,
+        env: &VEnv<'db>,
+        comptime_env: &CEnv,
+        expr: MonoExpr<'db>,
+    ) -> MonoExpr<'db> {
         let span = expr.span;
         let ty = expr.ty;
         match expr.kind {
@@ -464,26 +639,38 @@ impl<'db> Evaluator<'db> {
                 kind: MonoExprKind::Tuple(
                     elems
                         .into_iter()
-                        .map(|expr| self.eval_expr(env, expr))
+                        .map(|expr| self.eval_expr(env, comptime_env, expr))
                         .collect(),
                 ),
             },
-            MonoExprKind::Call { callee, args } => {
+            MonoExprKind::Call {
+                callee,
+                args,
+                origin,
+            } => {
                 let args = args
                     .into_iter()
-                    .map(|arg| self.eval_expr(env, arg))
+                    .map(|arg| self.eval_expr(env, comptime_env, arg))
                     .collect::<Vec<_>>();
-                if let Some(result) = self.eval_primitive(&callee.name, &args, ty, span) {
+                if let MonoCallOrigin::Builtin(intrinsic) = origin
+                    && let Some(result) = self.eval_primitive(intrinsic, &args, ty, span)
+                {
                     return result;
                 }
-                self.check_comptime_params(&callee.name, &args, span);
-                if let Some(result) = self.try_inline(&callee.name, &args, span) {
-                    return result;
+                if !matches!(origin, MonoCallOrigin::Builtin(_)) {
+                    self.check_comptime_params(&callee.name, &args, comptime_env, span);
+                    if let Some(result) = self.try_inline(&callee.name, &args, span) {
+                        return result;
+                    }
                 }
                 MonoExpr {
                     span,
                     ty,
-                    kind: MonoExprKind::Call { callee, args },
+                    kind: MonoExprKind::Call {
+                        callee,
+                        args,
+                        origin,
+                    },
                 }
             }
             MonoExprKind::Con { ctor, args } => MonoExpr {
@@ -493,7 +680,7 @@ impl<'db> Evaluator<'db> {
                     ctor,
                     args: args
                         .into_iter()
-                        .map(|arg| self.eval_expr(env, arg))
+                        .map(|arg| self.eval_expr(env, comptime_env, arg))
                         .collect(),
                 },
             },
@@ -501,16 +688,16 @@ impl<'db> Evaluator<'db> {
                 span,
                 ty,
                 kind: MonoExprKind::ClosureDispatch {
-                    callee: Box::new(self.eval_expr(env, *callee)),
+                    callee: Box::new(self.eval_expr(env, comptime_env, *callee)),
                     args: args
                         .into_iter()
-                        .map(|arg| self.eval_expr(env, arg))
+                        .map(|arg| self.eval_expr(env, comptime_env, arg))
                         .collect(),
                 },
             },
             MonoExprKind::BinOp { lhs, op, rhs } => {
-                let lhs = self.eval_expr(env, *lhs);
-                let rhs = self.eval_expr(env, *rhs);
+                let lhs = self.eval_expr(env, comptime_env, *lhs);
+                let rhs = self.eval_expr(env, comptime_env, *rhs);
                 if let Some(result) = self.eval_binop(&lhs, op, &rhs, ty, span) {
                     return result;
                 }
@@ -525,7 +712,7 @@ impl<'db> Evaluator<'db> {
                 }
             }
             MonoExprKind::UnaryOp { op, expr } => {
-                let expr = self.eval_expr(env, *expr);
+                let expr = self.eval_expr(env, comptime_env, *expr);
                 if let Some(result) = self.eval_unary(op, &expr, ty, span) {
                     return result;
                 }
@@ -542,15 +729,15 @@ impl<'db> Evaluator<'db> {
                 span,
                 ty,
                 kind: MonoExprKind::Index {
-                    base: Box::new(self.eval_expr(env, *base)),
-                    index: Box::new(self.eval_expr(env, *index)),
+                    base: Box::new(self.eval_expr(env, comptime_env, *base)),
+                    index: Box::new(self.eval_expr(env, comptime_env, *index)),
                 },
             },
             MonoExprKind::Field { base, field } => MonoExpr {
                 span,
                 ty,
                 kind: MonoExprKind::Field {
-                    base: Box::new(self.eval_expr(env, *base)),
+                    base: Box::new(self.eval_expr(env, comptime_env, *base)),
                     field,
                 },
             },
@@ -560,7 +747,7 @@ impl<'db> Evaluator<'db> {
                 kind: MonoExprKind::Proxy(proxy_ty),
             },
             MonoExprKind::TypeAnnot { expr, ty: annot_ty } => {
-                let expr = self.eval_expr(env, *expr);
+                let expr = self.eval_expr(env, comptime_env, *expr);
                 if is_known_value(&expr) {
                     MonoExpr {
                         span,
@@ -583,12 +770,12 @@ impl<'db> Evaluator<'db> {
                 then_expr,
                 else_expr,
             } => {
-                let cond = self.eval_expr(env, *cond);
+                let cond = self.eval_expr(env, comptime_env, *cond);
                 if let Some(value) = known_bool(&cond) {
                     return if value {
-                        self.eval_expr(env, *then_expr)
+                        self.eval_expr(env, comptime_env, *then_expr)
                     } else {
-                        self.eval_expr(env, *else_expr)
+                        self.eval_expr(env, comptime_env, *else_expr)
                     };
                 }
                 MonoExpr {
@@ -596,29 +783,39 @@ impl<'db> Evaluator<'db> {
                     ty,
                     kind: MonoExprKind::If {
                         cond: Box::new(cond),
-                        then_expr: Box::new(self.eval_expr(env, *then_expr)),
-                        else_expr: Box::new(self.eval_expr(env, *else_expr)),
+                        then_expr: Box::new(self.eval_expr(env, comptime_env, *then_expr)),
+                        else_expr: Box::new(self.eval_expr(env, comptime_env, *else_expr)),
                     },
                 }
             }
         }
     }
 
-    fn eval_arm_labels(&mut self, env: &VEnv<'db>, mut arm: MonoArm<'db>) -> MonoArm<'db> {
+    fn eval_arm_labels(
+        &mut self,
+        env: &VEnv<'db>,
+        comptime_env: &CEnv,
+        mut arm: MonoArm<'db>,
+    ) -> MonoArm<'db> {
         arm.pats = arm
             .pats
             .into_iter()
-            .map(|pat| self.eval_pat_label(env, pat))
+            .map(|pat| self.eval_pat_label(env, comptime_env, pat))
             .collect();
         arm
     }
 
-    fn eval_pat_label(&mut self, env: &VEnv<'db>, pat: MonoPat<'db>) -> MonoPat<'db> {
+    fn eval_pat_label(
+        &mut self,
+        env: &VEnv<'db>,
+        comptime_env: &CEnv,
+        pat: MonoPat<'db>,
+    ) -> MonoPat<'db> {
         let span = pat.span;
         let ty = pat.ty;
         match pat.kind {
             MonoPatKind::ComptimeLabel(expr) => {
-                let expr = self.eval_expr(env, expr);
+                let expr = self.eval_expr(env, comptime_env, expr);
                 match literal_from_known_expr(&expr) {
                     Some(lit) => MonoPat {
                         span,
@@ -647,7 +844,7 @@ impl<'db> Evaluator<'db> {
                     ctor,
                     args: args
                         .into_iter()
-                        .map(|arg| self.eval_pat_label(env, arg))
+                        .map(|arg| self.eval_pat_label(env, comptime_env, arg))
                         .collect(),
                 },
             },
@@ -657,7 +854,7 @@ impl<'db> Evaluator<'db> {
                 kind: MonoPatKind::Tuple(
                     elems
                         .into_iter()
-                        .map(|elem| self.eval_pat_label(env, elem))
+                        .map(|elem| self.eval_pat_label(env, comptime_env, elem))
                         .collect(),
                 ),
             },
@@ -667,58 +864,88 @@ impl<'db> Evaluator<'db> {
 
     fn eval_primitive(
         &self,
-        name: &str,
+        intrinsic: MonoIntrinsic,
         args: &[MonoExpr<'db>],
         ty: MonoTy<'db>,
         span: Span<'db>,
     ) -> Option<MonoExpr<'db>> {
-        match (name, args) {
-            ("wordToInteger", [arg]) => known_int(arg).map(|value| int_expr(value, ty, span)),
-            ("wordFromInteger", [arg]) => {
+        match (intrinsic, args) {
+            (MonoIntrinsic::WordToInteger, [arg]) => {
+                known_int(arg).map(|value| int_expr(value, ty, span))
+            }
+            (MonoIntrinsic::WordFromInteger, [arg]) => {
                 known_int(arg).map(|value| int_expr(value.mod_word(), ty, span))
             }
-            ("integerAdd", [lhs, rhs]) => {
+            (MonoIntrinsic::IntegerAdd, [lhs, rhs]) => {
                 Some(int_expr(known_int(lhs)?.add(&known_int(rhs)?), ty, span))
             }
-            ("integerSub", [lhs, rhs]) => {
+            (MonoIntrinsic::IntegerSub, [lhs, rhs]) => {
                 Some(int_expr(known_int(lhs)?.sub(&known_int(rhs)?), ty, span))
             }
-            ("integerMul", [lhs, rhs]) => {
+            (MonoIntrinsic::IntegerMul, [lhs, rhs]) => {
                 Some(int_expr(known_int(lhs)?.mul(&known_int(rhs)?), ty, span))
             }
-            ("integerLt", [lhs, rhs]) => Some(bool_expr(
+            (MonoIntrinsic::IntegerLt, [lhs, rhs]) => Some(bool_expr(
                 known_int(lhs)?.cmp(&known_int(rhs)?) == Ordering::Less,
                 ty,
                 span,
             )),
-            ("integerEq", [lhs, rhs]) => {
+            (MonoIntrinsic::IntegerEq, [lhs, rhs]) => {
                 Some(bool_expr(known_int(lhs)? == known_int(rhs)?, ty, span))
             }
-            ("Int.fromInteger", [arg]) | ("Int_fromInteger", [arg]) => Some(MonoExpr {
-                span,
-                ty,
-                kind: arg.kind.clone(),
-            }),
-            ("concatLit", [lhs, rhs]) => Some(string_expr(
+            (MonoIntrinsic::ConcatLit, [lhs, rhs]) => Some(string_expr(
                 format!("{}{}", known_string(lhs)?, known_string(rhs)?),
                 ty,
                 span,
             )),
-            ("strlenLit", [arg]) => {
+            (MonoIntrinsic::StrlenLit, [arg]) => {
                 let len = known_string(arg)?.len() as u64;
                 Some(int_expr(BigInt::from_u64(len), ty, span))
             }
-            ("keccakLit", [arg]) => {
+            (MonoIntrinsic::KeccakLit, [arg]) => {
                 let hash = hir::keccak::keccak256(known_string(arg)?.as_bytes());
                 Some(int_expr(BigInt::from_be_bytes(&hash), ty, span))
             }
-            (name, [lhs, rhs]) if word_binary_primitive(name).is_some() => {
-                let op = word_binary_primitive(name)?;
-                self.eval_word_binary(op, known_int(lhs)?, known_int(rhs)?, ty, span)
+            (MonoIntrinsic::PrimAddWord, [lhs, rhs]) => self.eval_word_binary(
+                WordBinaryOp::Add,
+                known_int(lhs)?,
+                known_int(rhs)?,
+                ty,
+                span,
+            ),
+            (MonoIntrinsic::SubWord, [lhs, rhs]) => self.eval_word_binary(
+                WordBinaryOp::Sub,
+                known_int(lhs)?,
+                known_int(rhs)?,
+                ty,
+                span,
+            ),
+            (MonoIntrinsic::GtWord, [lhs, rhs]) => {
+                self.eval_word_binary(WordBinaryOp::Gt, known_int(lhs)?, known_int(rhs)?, ty, span)
             }
-            (name, [arg]) if word_unary_primitive(name).is_some() => {
-                let op = word_unary_primitive(name)?;
-                self.eval_word_unary(op, known_int(arg)?, ty, span)
+            (MonoIntrinsic::BxorWord, [lhs, rhs]) => self.eval_word_binary(
+                WordBinaryOp::BitXor,
+                known_int(lhs)?,
+                known_int(rhs)?,
+                ty,
+                span,
+            ),
+            (MonoIntrinsic::BandWord, [lhs, rhs]) => self.eval_word_binary(
+                WordBinaryOp::BitAnd,
+                known_int(lhs)?,
+                known_int(rhs)?,
+                ty,
+                span,
+            ),
+            (MonoIntrinsic::BorWord, [lhs, rhs]) => self.eval_word_binary(
+                WordBinaryOp::BitOr,
+                known_int(lhs)?,
+                known_int(rhs)?,
+                ty,
+                span,
+            ),
+            (MonoIntrinsic::PrimEqWord, [lhs, rhs]) => {
+                self.eval_word_binary(WordBinaryOp::Eq, known_int(lhs)?, known_int(rhs)?, ty, span)
             }
             _ => None,
         }
@@ -732,6 +959,11 @@ impl<'db> Evaluator<'db> {
         ty: MonoTy<'db>,
         span: Span<'db>,
     ) -> Option<MonoExpr<'db>> {
+        if op == BinOp::Add
+            && let (Some(lhs), Some(rhs)) = (known_string(lhs), known_string(rhs))
+        {
+            return Some(string_expr(format!("{lhs}{rhs}"), ty, span));
+        }
         let lhs_int = known_int(lhs)?;
         let rhs_int = known_int(rhs)?;
         if ty_is_builtin(self.db, ty.ty(), BuiltinTyCtor::Integer) {
@@ -807,31 +1039,11 @@ impl<'db> Evaluator<'db> {
         let expr = match op {
             WordBinaryOp::Add => int_expr(lhs.add(&rhs).mod_word(), ty, span),
             WordBinaryOp::Sub => int_expr(lhs.sub(&rhs).mod_word(), ty, span),
-            WordBinaryOp::Mul => int_expr(lhs.mul(&rhs).mod_word(), ty, span),
-            WordBinaryOp::Div => int_expr(word_div(lhs, rhs), ty, span),
-            WordBinaryOp::Mod => int_expr(word_mod(lhs, rhs), ty, span),
-            WordBinaryOp::Eq => bool_expr(lhs.mod_word() == rhs.mod_word(), ty, span),
             WordBinaryOp::Gt => bool_expr(lhs.mod_word() > rhs.mod_word(), ty, span),
-            WordBinaryOp::Lt => bool_expr(lhs.mod_word() < rhs.mod_word(), ty, span),
-            WordBinaryOp::And => int_expr(bitand_word(&lhs, &rhs), ty, span),
-            WordBinaryOp::Or => int_expr(bitor_word(&lhs, &rhs), ty, span),
-            WordBinaryOp::Xor => int_expr(bitxor_word(&lhs, &rhs), ty, span),
-            WordBinaryOp::Shl => int_expr(shl_word(&lhs, &rhs), ty, span),
-            WordBinaryOp::Shr => int_expr(shr_word(&lhs, &rhs), ty, span),
-        };
-        Some(expr)
-    }
-
-    fn eval_word_unary(
-        &self,
-        op: WordUnaryOp,
-        arg: BigInt,
-        ty: MonoTy<'db>,
-        span: Span<'db>,
-    ) -> Option<MonoExpr<'db>> {
-        let expr = match op {
-            WordUnaryOp::Not => int_expr(not_word(&arg), ty, span),
-            WordUnaryOp::IsZero => bool_expr(arg.mod_word().is_zero(), ty, span),
+            WordBinaryOp::BitXor => int_expr(bitxor_word(&lhs, &rhs), ty, span),
+            WordBinaryOp::BitAnd => int_expr(bitand_word(&lhs, &rhs), ty, span),
+            WordBinaryOp::BitOr => int_expr(bitor_word(&lhs, &rhs), ty, span),
+            WordBinaryOp::Eq => bool_expr(lhs.mod_word() == rhs.mod_word(), ty, span),
         };
         Some(expr)
     }
@@ -861,13 +1073,18 @@ impl<'db> Evaluator<'db> {
         }
         self.fuel -= 1;
         let mut env = VEnv::default();
+        let mut comptime_env = CEnv::default();
+        let ret_comptime = ty_is_comptime(self.db, function.ret.ty());
         for (param, arg) in function.params.iter().zip(args) {
             if is_known_value(arg) {
                 env.insert(param.name.clone(), arg.clone());
             }
+            if ret_comptime || param_is_comptime(self.db, param) || is_known_value(arg) {
+                comptime_env.insert(param.name.clone());
+            }
         }
         let type_reg = build_type_reg(&function.params, &function.body);
-        let result = self.eval_fun_body(&type_reg, env, function.body);
+        let result = self.eval_fun_body(&type_reg, env, comptime_env, function.body);
         self.fuel += 1;
         result
     }
@@ -876,47 +1093,76 @@ impl<'db> Evaluator<'db> {
         &mut self,
         type_reg: &TypeReg<'db>,
         mut env: VEnv<'db>,
+        mut comptime_env: CEnv,
         body: Vec<MonoStmt<'db>>,
     ) -> Option<MonoExpr<'db>> {
         for stmt in body {
             match stmt.kind {
-                MonoStmtKind::Let { id, init, .. } => {
-                    let init = init.map(|expr| self.eval_expr(&env, expr));
+                MonoStmtKind::Let {
+                    id, comptime, init, ..
+                } => {
+                    let init = init.map(|expr| self.eval_expr(&env, &comptime_env, expr));
+                    let init_is_comptime = init
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_is_comptime(expr, &comptime_env));
                     if let Some(expr) = init.filter(is_known_value) {
                         env.insert(id.name.clone(), expr);
                     } else {
                         env.remove(&id.name);
                     }
+                    if comptime || init_is_comptime {
+                        comptime_env.insert(id.name);
+                    } else {
+                        comptime_env.remove(&id.name);
+                    }
                 }
                 MonoStmtKind::Assign { lhs, rhs } => {
-                    let lhs = self.eval_expr(&env, lhs);
-                    let rhs = self.eval_expr(&env, rhs);
-                    if let MonoExprKind::Var(id) = &lhs.kind {
+                    let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
+                    let rhs = self.eval_expr(&env, &comptime_env, rhs);
+                    if let Some(id) = target {
+                        let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
                         if is_known_value(&rhs) {
-                            env.insert(id.name.clone(), rhs);
+                            if matches!(&lhs.kind, MonoExprKind::Var(_)) {
+                                env.insert(id.name.clone(), rhs);
+                                if rhs_is_comptime {
+                                    comptime_env.insert(id.name);
+                                } else {
+                                    comptime_env.remove(&id.name);
+                                }
+                            } else {
+                                env.remove(&id.name);
+                                comptime_env.remove(&id.name);
+                            }
                         } else {
                             env.remove(&id.name);
+                            if rhs_is_comptime && matches!(&lhs.kind, MonoExprKind::Var(_)) {
+                                comptime_env.insert(id.name);
+                            } else {
+                                comptime_env.remove(&id.name);
+                            }
                         }
                     }
                 }
                 MonoStmtKind::Return(expr) => {
-                    let expr = expr.map(|expr| self.eval_expr(&env, expr))?;
+                    let expr = expr.map(|expr| self.eval_expr(&env, &comptime_env, expr))?;
                     return is_known_value(&expr).then_some(expr);
                 }
                 MonoStmtKind::Expr(_) => {}
                 MonoStmtKind::Match { scrutinees, arms } => {
                     let scrutinees = scrutinees
                         .into_iter()
-                        .map(|expr| self.eval_expr(&env, expr))
+                        .map(|expr| self.eval_expr(&env, &comptime_env, expr))
                         .collect::<Vec<_>>();
                     let arms = arms
                         .into_iter()
-                        .map(|arm| self.eval_arm_labels(&env, arm))
+                        .map(|arm| self.eval_arm_labels(&env, &comptime_env, arm))
                         .collect::<Vec<_>>();
                     if scrutinees.iter().all(is_known_value)
                         && let Some((matched_env, body)) = match_arms(&env, &scrutinees, &arms)
                     {
-                        if let Some(result) = self.eval_fun_body(type_reg, matched_env, body) {
+                        if let Some(result) =
+                            self.eval_fun_body(type_reg, matched_env, comptime_env.clone(), body)
+                        {
                             return Some(result);
                         }
                     } else {
@@ -928,18 +1174,22 @@ impl<'db> Evaluator<'db> {
                     then_body,
                     else_body,
                 } => {
-                    let cond = self.eval_expr(&env, cond);
+                    let cond = self.eval_expr(&env, &comptime_env, cond);
                     let body = if known_bool(&cond)? {
                         then_body
                     } else {
                         else_body.unwrap_or_default()
                     };
-                    if let Some(result) = self.eval_fun_body(type_reg, env.clone(), body) {
+                    if let Some(result) =
+                        self.eval_fun_body(type_reg, env.clone(), comptime_env.clone(), body)
+                    {
                         return Some(result);
                     }
                 }
                 MonoStmtKind::Block(body) => {
-                    if let Some(result) = self.eval_fun_body(type_reg, env.clone(), body) {
+                    if let Some(result) =
+                        self.eval_fun_body(type_reg, env.clone(), comptime_env.clone(), body)
+                    {
                         return Some(result);
                     }
                 }
@@ -963,7 +1213,13 @@ impl<'db> Evaluator<'db> {
         None
     }
 
-    fn check_comptime_params(&mut self, name: &str, args: &[MonoExpr<'db>], span: Span<'db>) {
+    fn check_comptime_params(
+        &mut self,
+        name: &str,
+        args: &[MonoExpr<'db>],
+        comptime_env: &CEnv,
+        span: Span<'db>,
+    ) {
         if !self.enforce_comptime {
             return;
         }
@@ -976,7 +1232,8 @@ impl<'db> Evaluator<'db> {
                     .iter()
                     .zip(args)
                     .filter(|(param, arg)| {
-                        param_is_comptime(self.db, param) && !is_known_value(arg)
+                        param_is_comptime(self.db, param)
+                            && !self.expr_is_comptime(arg, comptime_env)
                     })
                     .map(|(param, _)| param.name.clone())
                     .collect::<Vec<_>>()
@@ -990,6 +1247,60 @@ impl<'db> Evaluator<'db> {
                 ),
                 Some(span),
             );
+        }
+    }
+
+    fn expr_is_comptime(&self, expr: &MonoExpr<'db>, comptime_env: &CEnv) -> bool {
+        if is_known_value(expr) {
+            return true;
+        }
+        match &expr.kind {
+            MonoExprKind::Var(id) => comptime_env.contains(&id.name),
+            MonoExprKind::Lit(_) | MonoExprKind::Proxy(_) => true,
+            MonoExprKind::Tuple(elems) => elems
+                .iter()
+                .all(|expr| self.expr_is_comptime(expr, comptime_env)),
+            MonoExprKind::Call {
+                callee,
+                args,
+                origin,
+            } => {
+                let callee_is_comptime = match origin {
+                    MonoCallOrigin::Builtin(intrinsic) => intrinsic_is_pure(*intrinsic),
+                    MonoCallOrigin::Source(_) | MonoCallOrigin::Unknown => {
+                        self.pure_funs.contains(&callee.name)
+                    }
+                };
+                callee_is_comptime
+                    && args
+                        .iter()
+                        .all(|arg| self.expr_is_comptime(arg, comptime_env))
+            }
+            MonoExprKind::Con { args, .. } => args
+                .iter()
+                .all(|arg| self.expr_is_comptime(arg, comptime_env)),
+            MonoExprKind::ClosureDispatch { .. } => false,
+            MonoExprKind::BinOp { lhs, rhs, .. } => {
+                self.expr_is_comptime(lhs, comptime_env) && self.expr_is_comptime(rhs, comptime_env)
+            }
+            MonoExprKind::UnaryOp { expr, .. } => self.expr_is_comptime(expr, comptime_env),
+            MonoExprKind::Index { base, index } => {
+                self.expr_is_comptime(base, comptime_env)
+                    && self.expr_is_comptime(index, comptime_env)
+            }
+            MonoExprKind::Field { base, .. } => self.expr_is_comptime(base, comptime_env),
+            MonoExprKind::TypeAnnot { expr, .. } => self.expr_is_comptime(expr, comptime_env),
+            MonoExprKind::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
+                self.expr_is_comptime(cond, comptime_env)
+                    && self.expr_is_comptime(then_expr, comptime_env)
+                    && self.expr_is_comptime(else_expr, comptime_env)
+            }
+            MonoExprKind::Lambda { .. } => true,
+            MonoExprKind::Error => false,
         }
     }
 
@@ -1103,21 +1414,17 @@ impl<'db> Evaluator<'db> {
             let MonoItem::Function(function) = item else {
                 continue;
             };
-            if ty_is_integer(self.db, function.ret.ty()) {
-                self.integer_erasure(
-                    format!("integer-typed return in '{}'", function.name),
-                    function.ret.ty(),
-                    Some(function.span),
-                );
-            }
+            self.check_erasure_ty(
+                format!("return type in '{}'", function.name),
+                function.ret.ty(),
+                Some(function.span),
+            );
             for param in &function.params {
-                if ty_is_integer(self.db, param.ty.ty()) {
-                    self.integer_erasure(
-                        format!("integer-typed parameter '{}'", param.name),
-                        param.ty.ty(),
-                        Some(param.span),
-                    );
-                }
+                self.check_erasure_ty(
+                    format!("parameter '{}'", param.name),
+                    param.ty.ty(),
+                    Some(param.span),
+                );
             }
             self.check_integer_erasure_stmts(&function.body);
         }
@@ -1126,38 +1433,191 @@ impl<'db> Evaluator<'db> {
     fn check_integer_erasure_stmts(&mut self, stmts: &[MonoStmt<'db>]) {
         for stmt in stmts {
             match &stmt.kind {
-                MonoStmtKind::Let { id, .. } if ty_is_integer(self.db, id.ty.ty()) => {
-                    self.integer_erasure(
-                        format!("integer-typed let '{}'", id.name),
+                MonoStmtKind::Let { id, ty, init, .. } => {
+                    self.check_erasure_ty(
+                        format!("let '{}'", id.name),
                         id.ty.ty(),
                         Some(stmt.span),
                     );
+                    if let Some(ty) = ty {
+                        self.check_erasure_ty(
+                            format!("let annotation '{}'", id.name),
+                            ty.ty(),
+                            Some(stmt.span),
+                        );
+                    }
+                    if let Some(init) = init {
+                        self.check_erasure_expr(init);
+                    }
                 }
-                MonoStmtKind::Match { arms, .. } => {
+                MonoStmtKind::Return(expr) => {
+                    if let Some(expr) = expr {
+                        self.check_erasure_expr(expr);
+                    }
+                }
+                MonoStmtKind::Expr(expr) => self.check_erasure_expr(expr),
+                MonoStmtKind::Assign { lhs, rhs }
+                | MonoStmtKind::AddAssign { lhs, rhs }
+                | MonoStmtKind::SubAssign { lhs, rhs }
+                | MonoStmtKind::BitXorAssign { lhs, rhs }
+                | MonoStmtKind::BitAndAssign { lhs, rhs }
+                | MonoStmtKind::BitOrAssign { lhs, rhs }
+                | MonoStmtKind::ModAssign { lhs, rhs } => {
+                    self.check_erasure_expr(lhs);
+                    self.check_erasure_expr(rhs);
+                }
+                MonoStmtKind::Match { scrutinees, arms } => {
+                    for scrutinee in scrutinees {
+                        self.check_erasure_expr(scrutinee);
+                    }
                     for arm in arms {
+                        for pat in &arm.pats {
+                            self.check_erasure_pat(pat);
+                        }
                         self.check_integer_erasure_stmts(&arm.body);
                     }
                 }
                 MonoStmtKind::For {
-                    init, post, body, ..
+                    init,
+                    cond,
+                    post,
+                    body,
                 } => {
                     self.check_integer_erasure_stmts(init);
+                    self.check_erasure_expr(cond);
                     self.check_integer_erasure_stmts(post);
                     self.check_integer_erasure_stmts(body);
                 }
                 MonoStmtKind::If {
+                    cond,
                     then_body,
                     else_body,
                     ..
                 } => {
+                    self.check_erasure_expr(cond);
                     self.check_integer_erasure_stmts(then_body);
                     if let Some(else_body) = else_body {
                         self.check_integer_erasure_stmts(else_body);
                     }
                 }
                 MonoStmtKind::Block(body) => self.check_integer_erasure_stmts(body),
-                _ => {}
+                MonoStmtKind::Assembly(_)
+                | MonoStmtKind::Break
+                | MonoStmtKind::Continue
+                | MonoStmtKind::Error => {}
             }
+        }
+    }
+
+    fn check_erasure_expr(&mut self, expr: &MonoExpr<'db>) {
+        self.check_erasure_ty("expression", expr.ty.ty(), Some(expr.span));
+        match &expr.kind {
+            MonoExprKind::Var(id) => {
+                self.check_erasure_ty(
+                    format!("variable '{}'", id.name),
+                    id.ty.ty(),
+                    Some(expr.span),
+                );
+            }
+            MonoExprKind::Lit(_) | MonoExprKind::Lambda { .. } | MonoExprKind::Error => {}
+            MonoExprKind::Tuple(elems) => {
+                for elem in elems {
+                    self.check_erasure_expr(elem);
+                }
+            }
+            MonoExprKind::Call { callee, args, .. } => {
+                self.check_erasure_ty(
+                    format!("callee '{}'", callee.name),
+                    callee.ty.ty(),
+                    Some(expr.span),
+                );
+                for arg in args {
+                    self.check_erasure_expr(arg);
+                }
+            }
+            MonoExprKind::Con { ctor, args } => {
+                self.check_erasure_ty(
+                    format!("constructor '{}'", ctor.name),
+                    ctor.ty.ty(),
+                    Some(expr.span),
+                );
+                for arg in args {
+                    self.check_erasure_expr(arg);
+                }
+            }
+            MonoExprKind::ClosureDispatch { callee, args } => {
+                self.check_erasure_expr(callee);
+                for arg in args {
+                    self.check_erasure_expr(arg);
+                }
+            }
+            MonoExprKind::BinOp { lhs, rhs, .. } => {
+                self.check_erasure_expr(lhs);
+                self.check_erasure_expr(rhs);
+            }
+            MonoExprKind::UnaryOp { expr, .. } => self.check_erasure_expr(expr),
+            MonoExprKind::Index { base, index } => {
+                self.check_erasure_expr(base);
+                self.check_erasure_expr(index);
+            }
+            MonoExprKind::Field { base, .. } => self.check_erasure_expr(base),
+            MonoExprKind::Proxy(ty) => {
+                self.check_erasure_ty("proxy", ty.ty(), Some(expr.span));
+            }
+            MonoExprKind::TypeAnnot { expr, ty } => {
+                self.check_erasure_expr(expr);
+                self.check_erasure_ty("type annotation", ty.ty(), Some(expr.span));
+            }
+            MonoExprKind::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
+                self.check_erasure_expr(cond);
+                self.check_erasure_expr(then_expr);
+                self.check_erasure_expr(else_expr);
+            }
+        }
+    }
+
+    fn check_erasure_pat(&mut self, pat: &MonoPat<'db>) {
+        self.check_erasure_ty("pattern", pat.ty.ty(), Some(pat.span));
+        match &pat.kind {
+            MonoPatKind::Var(id) => {
+                self.check_erasure_ty(
+                    format!("pattern variable '{}'", id.name),
+                    id.ty.ty(),
+                    Some(pat.span),
+                );
+            }
+            MonoPatKind::Con { ctor, args } => {
+                self.check_erasure_ty(
+                    format!("pattern constructor '{}'", ctor.name),
+                    ctor.ty.ty(),
+                    Some(pat.span),
+                );
+                for arg in args {
+                    self.check_erasure_pat(arg);
+                }
+            }
+            MonoPatKind::Tuple(elems) => {
+                for elem in elems {
+                    self.check_erasure_pat(elem);
+                }
+            }
+            MonoPatKind::ComptimeLabel(expr) => self.check_erasure_expr(expr),
+            MonoPatKind::Wildcard | MonoPatKind::Lit(_) | MonoPatKind::Error => {}
+        }
+    }
+
+    fn check_erasure_ty(
+        &mut self,
+        context: impl Into<String>,
+        ty: Ty<'db>,
+        span: Option<Span<'db>>,
+    ) {
+        if ty_needs_erasure(self.db, ty) {
+            self.integer_erasure(context.into(), ty, span);
         }
     }
 
@@ -1176,57 +1636,18 @@ impl<'db> Evaluator<'db> {
 enum WordBinaryOp {
     Add,
     Sub,
-    Mul,
-    Div,
-    Mod,
-    Eq,
     Gt,
-    Lt,
-    And,
-    Or,
-    Xor,
-    Shl,
-    Shr,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum WordUnaryOp {
-    Not,
-    IsZero,
-}
-
-fn word_binary_primitive(name: &str) -> Option<WordBinaryOp> {
-    match name {
-        "primAddWord" | "addWord" | "add" => Some(WordBinaryOp::Add),
-        "subWord" | "sub" => Some(WordBinaryOp::Sub),
-        "mulWord" | "mul" => Some(WordBinaryOp::Mul),
-        "div" | "divWord" => Some(WordBinaryOp::Div),
-        "mod" | "modWord" => Some(WordBinaryOp::Mod),
-        "primEqWord" | "eqWord" | "eq" => Some(WordBinaryOp::Eq),
-        "gtWord" | "gt" | "gt_" => Some(WordBinaryOp::Gt),
-        "ltWord" | "lt" => Some(WordBinaryOp::Lt),
-        "bandWord" | "and" | "and_" => Some(WordBinaryOp::And),
-        "borWord" | "or" | "or_" => Some(WordBinaryOp::Or),
-        "bxorWord" | "xor" | "xor_" => Some(WordBinaryOp::Xor),
-        "bshlWord" | "shl" => Some(WordBinaryOp::Shl),
-        "bshrWord" | "shr" => Some(WordBinaryOp::Shr),
-        _ => None,
-    }
-}
-
-fn word_unary_primitive(name: &str) -> Option<WordUnaryOp> {
-    match name {
-        "bnotWord" | "not" | "not_" => Some(WordUnaryOp::Not),
-        "iszero" => Some(WordUnaryOp::IsZero),
-        _ => None,
-    }
+    BitXor,
+    BitAnd,
+    BitOr,
+    Eq,
 }
 
 fn compute_pure_funs<'db>(
     db: &'db dyn Db,
     functions: &FxHashMap<String, MonoFunction<'db>>,
 ) -> FxHashSet<String> {
-    let mut pure = builtin_pure_funs();
+    let mut pure = FxHashSet::default();
     loop {
         let before = pure.len();
         for (name, function) in functions {
@@ -1249,34 +1670,27 @@ fn compute_pure_funs<'db>(
     }
 }
 
-fn builtin_pure_funs() -> FxHashSet<String> {
-    [
-        "wordToInteger",
-        "wordFromInteger",
-        "integerAdd",
-        "integerSub",
-        "integerMul",
-        "integerLt",
-        "integerEq",
-        "Int.fromInteger",
-        "Int_fromInteger",
-        "concatLit",
-        "strlenLit",
-        "keccakLit",
-        "primAddWord",
-        "primEqWord",
-        "subWord",
-        "gtWord",
-        "eqWord",
-        "bandWord",
-        "borWord",
-        "bxorWord",
-        "addWord",
-        "mulWord",
-    ]
-    .into_iter()
-    .map(str::to_owned)
-    .collect()
+fn intrinsic_is_pure(intrinsic: MonoIntrinsic) -> bool {
+    matches!(
+        intrinsic,
+        MonoIntrinsic::PrimAddWord
+            | MonoIntrinsic::PrimEqWord
+            | MonoIntrinsic::SubWord
+            | MonoIntrinsic::GtWord
+            | MonoIntrinsic::BxorWord
+            | MonoIntrinsic::BandWord
+            | MonoIntrinsic::BorWord
+            | MonoIntrinsic::WordToInteger
+            | MonoIntrinsic::WordFromInteger
+            | MonoIntrinsic::IntegerAdd
+            | MonoIntrinsic::IntegerSub
+            | MonoIntrinsic::IntegerMul
+            | MonoIntrinsic::IntegerLt
+            | MonoIntrinsic::IntegerEq
+            | MonoIntrinsic::ConcatLit
+            | MonoIntrinsic::StrlenLit
+            | MonoIntrinsic::KeccakLit
+    )
 }
 
 fn stmt_is_pure<'db>(db: &'db dyn Db, stmt: &MonoStmt<'db>, pure: &FxHashSet<String>) -> bool {
@@ -1330,9 +1744,18 @@ fn expr_is_pure(expr: &MonoExpr<'_>, pure: &FxHashSet<String>) -> bool {
     match &expr.kind {
         MonoExprKind::Lit(_) | MonoExprKind::Var(_) | MonoExprKind::Proxy(_) => true,
         MonoExprKind::Tuple(elems) => elems.iter().all(|expr| expr_is_pure(expr, pure)),
-        MonoExprKind::Call { callee, args } => {
-            pure.contains(&callee.name) && args.iter().all(|arg| expr_is_pure(arg, pure))
-        }
+        MonoExprKind::Call {
+            callee,
+            args,
+            origin,
+        } => match origin {
+            MonoCallOrigin::Builtin(intrinsic) => {
+                intrinsic_is_pure(*intrinsic) && args.iter().all(|arg| expr_is_pure(arg, pure))
+            }
+            MonoCallOrigin::Source(_) | MonoCallOrigin::Unknown => {
+                pure.contains(&callee.name) && args.iter().all(|arg| expr_is_pure(arg, pure))
+            }
+        },
         MonoExprKind::Con { args, .. } => args.iter().all(|arg| expr_is_pure(arg, pure)),
         MonoExprKind::ClosureDispatch { .. } => false,
         MonoExprKind::BinOp { lhs, rhs, .. } => expr_is_pure(lhs, pure) && expr_is_pure(rhs, pure),
@@ -1607,19 +2030,30 @@ fn literal_bigint(lit: &LitKind) -> Option<BigInt> {
 }
 
 fn env_without_assigned<'db>(env: &VEnv<'db>, stmts: &[MonoStmt<'db>]) -> VEnv<'db> {
-    remove_assigned(env.clone(), stmts)
+    remove_names(env.clone(), &assigned_in_stmts(stmts))
 }
 
-fn remove_assigned<'db>(mut env: VEnv<'db>, stmts: &[MonoStmt<'db>]) -> VEnv<'db> {
-    let mut assigned = FxHashSet::default();
-    collect_assigned(stmts, &mut assigned);
-    for id in assigned {
-        env.remove(&id.name);
+fn remove_names<'db>(mut env: VEnv<'db>, names: &FxHashSet<String>) -> VEnv<'db> {
+    for name in names {
+        env.remove(name);
     }
     env
 }
 
-fn collect_assigned<'db>(stmts: &[MonoStmt<'db>], out: &mut FxHashSet<MonoId<'db>>) {
+fn remove_comptime_names(mut env: CEnv, names: &FxHashSet<String>) -> CEnv {
+    for name in names {
+        env.remove(name);
+    }
+    env
+}
+
+fn assigned_in_stmts(stmts: &[MonoStmt<'_>]) -> FxHashSet<String> {
+    let mut assigned = FxHashSet::default();
+    collect_assigned(stmts, &mut assigned);
+    assigned
+}
+
+fn collect_assigned(stmts: &[MonoStmt<'_>], out: &mut FxHashSet<String>) {
     for stmt in stmts {
         match &stmt.kind {
             MonoStmtKind::Assign { lhs, .. }
@@ -1629,8 +2063,8 @@ fn collect_assigned<'db>(stmts: &[MonoStmt<'db>], out: &mut FxHashSet<MonoId<'db
             | MonoStmtKind::BitAndAssign { lhs, .. }
             | MonoStmtKind::BitOrAssign { lhs, .. }
             | MonoStmtKind::ModAssign { lhs, .. } => {
-                if let MonoExprKind::Var(id) = &lhs.kind {
-                    out.insert(id.clone());
+                if let Some(name) = lvalue_root_name(lhs) {
+                    out.insert(name);
                 }
             }
             MonoStmtKind::Match { arms, .. } => {
@@ -1658,6 +2092,33 @@ fn collect_assigned<'db>(stmts: &[MonoStmt<'db>], out: &mut FxHashSet<MonoId<'db
             MonoStmtKind::Block(body) => collect_assigned(body, out),
             _ => {}
         }
+    }
+}
+
+fn lvalue_root_name(expr: &MonoExpr<'_>) -> Option<String> {
+    match &expr.kind {
+        MonoExprKind::Var(id) => Some(id.name.clone()),
+        MonoExprKind::Index { base, .. }
+        | MonoExprKind::Field { base, .. }
+        | MonoExprKind::TypeAnnot { expr: base, .. } => lvalue_root_name(base),
+        _ => None,
+    }
+}
+
+fn collect_pat_binders(pat: &MonoPat<'_>, out: &mut FxHashSet<String>) {
+    match &pat.kind {
+        MonoPatKind::Var(id) => {
+            out.insert(id.name.clone());
+        }
+        MonoPatKind::Con { args, .. } | MonoPatKind::Tuple(args) => {
+            for arg in args {
+                collect_pat_binders(arg, out);
+            }
+        }
+        MonoPatKind::Wildcard
+        | MonoPatKind::Lit(_)
+        | MonoPatKind::ComptimeLabel(_)
+        | MonoPatKind::Error => {}
     }
 }
 
@@ -1945,8 +2406,14 @@ fn calls_in_stmts(stmts: &[MonoStmt<'_>]) -> BTreeSet<String> {
 fn calls_in_expr(expr: &MonoExpr<'_>) -> BTreeSet<String> {
     let mut calls = BTreeSet::new();
     match &expr.kind {
-        MonoExprKind::Call { callee, args } => {
-            calls.insert(callee.name.clone());
+        MonoExprKind::Call {
+            callee,
+            args,
+            origin,
+        } => {
+            if !matches!(origin, MonoCallOrigin::Builtin(_)) {
+                calls.insert(callee.name.clone());
+            }
             for arg in args {
                 calls.extend(calls_in_expr(arg));
             }
@@ -2004,17 +2471,6 @@ fn ty_is_comptime<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
     matches!(ty.kind(db), TyKind::Comptime(_))
 }
 
-fn ty_is_integer<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
-    let ty = strip_comptime(db, ty);
-    matches!(
-        ty.kind(db),
-        TyKind::Named {
-            ctor: TyCtor::Builtin(BuiltinTyCtor::Integer),
-            args,
-        } if args.is_empty()
-    )
-}
-
 fn ty_is_builtin<'db>(db: &'db dyn Db, ty: Ty<'db>, builtin: BuiltinTyCtor) -> bool {
     let ty = strip_comptime(db, ty);
     matches!(
@@ -2024,6 +2480,22 @@ fn ty_is_builtin<'db>(db: &'db dyn Db, ty: Ty<'db>, builtin: BuiltinTyCtor) -> b
             args,
         } if *ctor == builtin && args.is_empty()
     )
+}
+
+fn ty_needs_erasure<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    match ty.kind(db) {
+        TyKind::Comptime(_) => true,
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Integer),
+            args,
+        } if args.is_empty() => true,
+        TyKind::Named { args, .. } => args.iter().any(|arg| ty_needs_erasure(db, *arg)),
+        TyKind::Function { params, ret } => {
+            params.iter().any(|param| ty_needs_erasure(db, *param)) || ty_needs_erasure(db, *ret)
+        }
+        TyKind::Tuple(elems) => elems.iter().any(|elem| ty_needs_erasure(db, *elem)),
+        TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => false,
+    }
 }
 
 fn strip_comptime<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {

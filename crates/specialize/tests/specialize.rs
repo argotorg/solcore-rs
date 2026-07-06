@@ -722,6 +722,11 @@ fn specializes_comptime_evaluation_corpus_verdicts() {
         "comptime/ct_param_ok.solc",
         "comptime/integer-basic.solc",
         "comptime/integer-fib.solc",
+        "comptime/integer-lit-pat.solc",
+        "comptime/match_labels.solc",
+        "comptime/Plus.solc",
+        "comptime/string-lit-keccak.solc",
+        "comptime/string-lit-len.solc",
     ];
     for fixture in passing {
         let output = specialize_fixture(&corpus.join(fixture));
@@ -852,7 +857,7 @@ contract C {
 }
 
 #[test]
-fn folds_string_keccak_literal_primitive() {
+fn does_not_fold_user_function_shadowing_std_literal_intrinsic() {
     let (_db, output) = specialize_src(
         r#"
 function keccakLit(a:string) -> word {
@@ -869,6 +874,145 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     assert_eq!(main_return_number(&output), Some("0".to_owned()));
+}
+
+#[test]
+fn folds_resolved_std_string_keccak_literal_intrinsic() {
+    let repo = repo_root();
+    let fixture = repo.join(
+        "crates/parser/tests/fixtures/corpus/ok/test/examples/comptime/string-lit-keccak.solc",
+    );
+    let output = specialize_fixture(&fixture);
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(
+        main_return_number(&output),
+        Some(
+            "35286403120855365962805127237049809881669876751651884979611909062921250761797"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn does_not_fold_user_addword_shadowing_builtin_wrapper_name() {
+    let (_db, output) = specialize_src(
+        r#"
+function addWord(x: word, y: word) -> word {
+  let r : word;
+  assembly { r := sload(0) }
+  return r;
+}
+
+contract C {
+  public function main() -> word {
+    return addWord(1, 2);
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), None);
+}
+
+#[test]
+fn assignment_lhs_root_is_not_substituted() {
+    let repo = repo_root();
+    let fixture =
+        repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/comptime/Plus.solc");
+    let output = specialize_fixture(&fixture);
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), Some("4".to_owned()));
+}
+
+#[test]
+fn compound_assignment_invalidates_lhs_root() {
+    let (_db, output) = specialize_src(
+        r#"
+contract C {
+  public function main() -> word {
+    let x : word = 1;
+    x += 2;
+    return x;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), None);
+}
+
+#[test]
+fn unknown_if_invalidates_assignments_from_both_branches() {
+    let (_db, output) = specialize_src(
+        r#"
+contract C {
+  public function main(c: bool) -> word {
+    let x : word = 1;
+    if (c) {
+    } else {
+      x = 2;
+    }
+    return x;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), None);
+}
+
+#[test]
+fn unknown_match_pattern_binders_shadow_outer_constants() {
+    let (_db, output) = specialize_src(
+        r#"
+contract C {
+  public function main(n: word) -> word {
+    let x : word = 1;
+    match n {
+      | x => return x;
+    }
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(
+        function_return_numbers(&output, "main"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn enforces_comptime_return_in_comptime_param_function() {
+    let (_db, output) = specialize_src(
+        r#"
+function sloadWord() -> word {
+  let v : word;
+  assembly {
+    v := sload(0)
+  }
+  return v;
+}
+
+function leak(comptime x: word) -> comptime word {
+  return sloadWord();
+}
+
+contract C {
+  public function main() -> word {
+    return leak(1);
+  }
+}
+"#,
+    );
+
+    assert!(has_comptime_failure(&output), "{:?}", output.diagnostics);
 }
 
 fn main_return_number(output: &SpecializeOutput<'_>) -> Option<String> {
@@ -1008,6 +1152,58 @@ fn pat_has_closure_dispatch(pat: &solcore_specialize::MonoPat<'_>) -> bool {
             false
         }
     }
+}
+
+fn function_return_numbers(output: &SpecializeOutput<'_>, name: &str) -> Vec<String> {
+    output
+        .module
+        .items
+        .iter()
+        .find_map(|item| {
+            let MonoItem::Function(function) = item else {
+                return None;
+            };
+            (function.name == name).then(|| return_numbers_in_stmts(&function.body))
+        })
+        .unwrap_or_default()
+}
+
+fn return_numbers_in_stmts(stmts: &[solcore_specialize::MonoStmt<'_>]) -> Vec<String> {
+    let mut out = Vec::new();
+    for stmt in stmts {
+        match &stmt.kind {
+            MonoStmtKind::Return(Some(expr)) => {
+                if let MonoExprKind::Lit(hir::ast::function::LitKind::Number(value)) = &expr.kind {
+                    out.push(value.clone());
+                }
+            }
+            MonoStmtKind::Match { arms, .. } => {
+                for arm in arms {
+                    out.extend(return_numbers_in_stmts(&arm.body));
+                }
+            }
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                out.extend(return_numbers_in_stmts(then_body));
+                if let Some(else_body) = else_body {
+                    out.extend(return_numbers_in_stmts(else_body));
+                }
+            }
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                out.extend(return_numbers_in_stmts(init));
+                out.extend(return_numbers_in_stmts(post));
+                out.extend(return_numbers_in_stmts(body));
+            }
+            MonoStmtKind::Block(body) => out.extend(return_numbers_in_stmts(body)),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn has_comptime_failure(output: &SpecializeOutput<'_>) -> bool {

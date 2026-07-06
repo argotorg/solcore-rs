@@ -31,6 +31,36 @@ pub struct MonoId<'db> {
     pub span: Span<'db>,
 }
 
+/// Intrinsic call that may be folded by the evaluator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MonoIntrinsic {
+    PrimAddWord,
+    PrimEqWord,
+    SubWord,
+    GtWord,
+    BxorWord,
+    BandWord,
+    BorWord,
+    WordToInteger,
+    WordFromInteger,
+    IntegerAdd,
+    IntegerSub,
+    IntegerMul,
+    IntegerLt,
+    IntegerEq,
+    ConcatLit,
+    StrlenLit,
+    KeccakLit,
+}
+
+/// Resolved origin for a monomorphic call expression.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MonoCallOrigin<'db> {
+    Source(DefId<'db>),
+    Builtin(MonoIntrinsic),
+    Unknown,
+}
+
 /// Specialized module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonoModule<'db> {
@@ -251,6 +281,7 @@ pub enum MonoExprKind<'db> {
     Call {
         callee: MonoId<'db>,
         args: Vec<MonoExpr<'db>>,
+        origin: MonoCallOrigin<'db>,
     },
     Con {
         ctor: MonoId<'db>,

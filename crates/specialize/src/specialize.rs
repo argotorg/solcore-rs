@@ -11,7 +11,9 @@ use hir::{
     ast::{
         Ident,
         function::{Expr, ExprKind, FuncBody, FuncParam, MatchArm, Pat, PatKind, Stmt, StmtKind},
-        item::{AdtDef, ContractItem, FunctionDef, InstanceDef, Item, Module},
+        item::{
+            AdtDef, ContractItem, FunctionDef, Import, ImportSelector, InstanceDef, Item, Module,
+        },
     },
     input::SourceFile,
     nameres as hir_nameres,
@@ -33,10 +35,10 @@ use rustc_hash::FxHashMap;
 
 use crate::evaluate::{EvaluateOptions, evaluate_module};
 use crate::ir::{
-    MonoAbiParam, MonoArm, MonoComptimeObligation, MonoComptimeObligationKind, MonoConstructor,
-    MonoContract, MonoEntry, MonoEntryKind, MonoExpr, MonoExprKind, MonoFallback, MonoFunction,
-    MonoFunctionOrigin, MonoId, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt,
-    MonoStmtKind, MonoTy,
+    MonoAbiParam, MonoArm, MonoCallOrigin, MonoComptimeObligation, MonoComptimeObligationKind,
+    MonoConstructor, MonoContract, MonoEntry, MonoEntryKind, MonoExpr, MonoExprKind, MonoFallback,
+    MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem, MonoModule, MonoParam,
+    MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
 };
 
 /// Specialization resource limits.
@@ -830,6 +832,54 @@ impl<'db> Driver<'db> {
             .join("_")
     }
 
+    fn call_origin_for_def(&self, def: DefId<'db>) -> MonoCallOrigin<'db> {
+        self.std_intrinsic_for_def(def)
+            .map(MonoCallOrigin::Builtin)
+            .unwrap_or(MonoCallOrigin::Source(def))
+    }
+
+    fn std_intrinsic_for_def(&self, def: DefId<'db>) -> Option<MonoIntrinsic> {
+        let path = def.file(self.db).url(self.db).to_file_path().ok()?;
+        let std_key = module_key_for_path(
+            LibraryId::Std,
+            self.db.module_tree().std_root(self.db),
+            &path,
+        )?;
+        if std_key.logical_path.as_slice() != ["std"] {
+            return None;
+        }
+        match def.name(self.db).as_deref()? {
+            "addWord" => Some(MonoIntrinsic::PrimAddWord),
+            "subWord" => Some(MonoIntrinsic::SubWord),
+            "gtWord" => Some(MonoIntrinsic::GtWord),
+            "bxorWord" => Some(MonoIntrinsic::BxorWord),
+            "bandWord" => Some(MonoIntrinsic::BandWord),
+            "borWord" => Some(MonoIntrinsic::BorWord),
+            "eqWord" => Some(MonoIntrinsic::PrimEqWord),
+            "concatLit" => Some(MonoIntrinsic::ConcatLit),
+            "strlenLit" => Some(MonoIntrinsic::StrlenLit),
+            "keccakLit" => Some(MonoIntrinsic::KeccakLit),
+            _ => None,
+        }
+    }
+
+    fn std_intrinsic_named(&self, name: &str) -> Option<MonoIntrinsic> {
+        self.functions.iter().find_map(|(def, info)| {
+            (ident_text(self.db, &info.function.sig(self.db).name) == name)
+                .then(|| self.std_intrinsic_for_def(*def))
+                .flatten()
+        })
+    }
+
+    fn unique_class_named(&self, name: &str) -> Option<DefId<'db>> {
+        let mut matches = self.classes.iter().filter_map(|(def, info)| {
+            (ident_text(self.db, &info.class.head(self.db).kind(self.db).class) == name)
+                .then_some(*def)
+        });
+        let first = matches.next()?;
+        matches.next().is_none().then_some(first)
+    }
+
     fn lower_normalized_function(&self, info: &FunctionInfo<'db>) -> LoweredFunction<'db> {
         let resolution = self.module_resolution(info.module);
         let lowerer = TypeLowering::from_item_resolutions(
@@ -1025,6 +1075,26 @@ impl<'db> Driver<'db> {
         }
     }
 
+    fn solve_reachable_pred(&mut self, pred: Pred<'db>) -> Option<Evidence<'db>> {
+        if !pred_is_closed(self.db, pred) {
+            return None;
+        }
+        let mut found = None;
+        for module in self.modules.clone() {
+            let trait_env = self.module_trait_env(module);
+            let Solution::Unique { evidence, .. } =
+                solve(self.db, trait_env, canonical_goal(self.db, pred))
+            else {
+                continue;
+            };
+            if found.as_ref().is_some_and(|existing| existing != &evidence) {
+                return None;
+            }
+            found = Some(evidence);
+        }
+        found
+    }
+
     fn solve_class_method_pred(
         &mut self,
         class: DefId<'db>,
@@ -1068,6 +1138,7 @@ impl<'db> Driver<'db> {
                 )
             })?;
         self.solve_closed_pred(pred)
+            .or_else(|| self.solve_reachable_pred(pred))
     }
 
     fn resolve_mptc_from_preds(
@@ -1694,13 +1765,20 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 def,
                 kind: hir_nameres::DefResolutionKind::Function,
             }) => {
-                let name = self.specialize_direct_function(def, callee_ty, span);
+                let origin = self.driver.call_origin_for_def(def);
+                let name = if matches!(origin, MonoCallOrigin::Builtin(_)) {
+                    def.name(self.driver.db)
+                        .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
+                } else {
+                    self.specialize_direct_function(def, callee_ty, span)
+                };
                 Some(MonoExprKind::Call {
                     callee: MonoId {
                         name,
                         ty: mono_callee_ty,
                         span,
                     },
+                    origin,
                     args: arg_exprs,
                 })
             }
@@ -1748,6 +1826,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                             ty: mono_callee_ty,
                             span,
                         },
+                        origin: MonoCallOrigin::Unknown,
                         args: arg_exprs,
                     });
                 }
@@ -1774,6 +1853,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     ty: mono_callee_ty,
                     span,
                 };
+                let origin = builtin_intrinsic(kind)
+                    .map(MonoCallOrigin::Builtin)
+                    .unwrap_or(MonoCallOrigin::Unknown);
                 match kind {
                     hir_nameres::BuiltinKind::Constructor(_) => Some(MonoExprKind::Con {
                         ctor: builtin_callee,
@@ -1796,6 +1878,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                                     ty: mono_callee_ty,
                                     span,
                                 },
+                                origin: MonoCallOrigin::Unknown,
                                 args: arg_exprs,
                             });
                         }
@@ -1803,6 +1886,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     }
                     _ => Some(MonoExprKind::Call {
                         callee: builtin_callee,
+                        origin,
                         args: arg_exprs,
                     }),
                 }
@@ -1820,11 +1904,157 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         args: arg_exprs,
                     });
                 }
+                if let Some((class, name)) = self.qualified_class_method(callee) {
+                    let evidence = self
+                        .call_evidence(call_expr, callee)
+                        .map(|evidence| {
+                            self.subst.apply_evidence(self.driver.db, evidence.evidence)
+                        })
+                        .or_else(|| self.driver.solve_class_method_pred(class, &name, callee_ty));
+                    if let Some(evidence) = evidence
+                        && let Some(name) = self
+                            .driver
+                            .resolve_class_method_call(&name, evidence, callee_ty, span, self.depth)
+                    {
+                        return Some(MonoExprKind::Call {
+                            callee: MonoId {
+                                name,
+                                ty: mono_callee_ty,
+                                span,
+                            },
+                            origin: MonoCallOrigin::Unknown,
+                            args: arg_exprs,
+                        });
+                    }
+                    self.driver.diagnostics.push(SpecializeDiagnostic {
+                        kind: SpecializeDiagnosticKind::MissingEvidence { context: name },
+                        span: Some(span),
+                    });
+                    return Some(MonoExprKind::ClosureDispatch {
+                        callee: Box::new(self.expr(callee)?),
+                        args: arg_exprs,
+                    });
+                }
+                if let Some((name, intrinsic)) = self.qualified_std_intrinsic(callee) {
+                    return Some(MonoExprKind::Call {
+                        callee: MonoId {
+                            name,
+                            ty: mono_callee_ty,
+                            span,
+                        },
+                        origin: MonoCallOrigin::Builtin(intrinsic),
+                        args: arg_exprs,
+                    });
+                }
+                if let Some((name, intrinsic)) = self.unqualified_std_intrinsic(callee) {
+                    return Some(MonoExprKind::Call {
+                        callee: MonoId {
+                            name,
+                            ty: mono_callee_ty,
+                            span,
+                        },
+                        origin: MonoCallOrigin::Builtin(intrinsic),
+                        args: arg_exprs,
+                    });
+                }
                 Some(MonoExprKind::ClosureDispatch {
                     callee: Box::new(self.expr(callee)?),
                     args: arg_exprs,
                 })
             }
+        }
+    }
+
+    fn qualified_class_method(&self, callee: Id<Expr<'db>>) -> Option<(DefId<'db>, String)> {
+        let ExprKind::Field { base, field } = &self.body.exprs(self.driver.db).get(callee).kind
+        else {
+            return None;
+        };
+        match self.expr_resolution(*base)? {
+            hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Class,
+            } => Some((def, ident_text(self.driver.db, field))),
+            hir_nameres::Resolution::Err => {
+                let ExprKind::Ident(name) = &self.body.exprs(self.driver.db).get(*base).kind else {
+                    return None;
+                };
+                let name = ident_text(self.driver.db, name);
+                self.driver
+                    .unique_class_named(&name)
+                    .map(|def| (def, ident_text(self.driver.db, field)))
+            }
+            _ => None,
+        }
+    }
+
+    fn qualified_std_intrinsic(&self, callee: Id<Expr<'db>>) -> Option<(String, MonoIntrinsic)> {
+        let ExprKind::Field { base, field } = &self.body.exprs(self.driver.db).get(callee).kind
+        else {
+            return None;
+        };
+        let Some(hir_nameres::Resolution::Module(module_ref)) = self.expr_resolution(*base) else {
+            return None;
+        };
+        if module_ref.name != "std" {
+            return None;
+        }
+        let name = ident_text(self.driver.db, field);
+        self.driver
+            .std_intrinsic_named(&name)
+            .map(|intrinsic| (name, intrinsic))
+    }
+
+    fn unqualified_std_intrinsic(&self, callee: Id<Expr<'db>>) -> Option<(String, MonoIntrinsic)> {
+        let ExprKind::Ident(name) = &self.body.exprs(self.driver.db).get(callee).kind else {
+            return None;
+        };
+        if !matches!(
+            self.expr_resolution(callee),
+            Some(hir_nameres::Resolution::Err)
+        ) {
+            return None;
+        }
+        let local_name = ident_text(self.driver.db, name);
+        let source_name = self.std_selected_import_name(&local_name)?;
+        self.driver
+            .std_intrinsic_named(&source_name)
+            .map(|intrinsic| (source_name, intrinsic))
+    }
+
+    fn std_selected_import_name(&self, local_name: &str) -> Option<String> {
+        self.info
+            .module
+            .items(self.driver.db)
+            .iter()
+            .find_map(|item| match item {
+                Item::Import(import) => self.std_import_selected_name(*import, local_name),
+                _ => None,
+            })
+    }
+
+    fn std_import_selected_name(&self, import: Import<'db>, local_name: &str) -> Option<String> {
+        let path = import.path_elems(self.driver.db);
+        if path.len() != 1 || ident_text(self.driver.db, &path[0]) != "std" {
+            return None;
+        }
+        match import.selector(self.driver.db).as_ref()? {
+            ImportSelector::Wildcard => {
+                let hidden = import
+                    .hiding(self.driver.db)
+                    .iter()
+                    .any(|hidden| ident_text(self.driver.db, &hidden.name) == local_name);
+                (!hidden).then(|| local_name.to_owned())
+            }
+            ImportSelector::Names(names) => names.iter().find_map(|selected| {
+                let source_name = ident_text(self.driver.db, &selected.name);
+                let selected_local = selected
+                    .alias
+                    .as_ref()
+                    .map(|alias| ident_text(self.driver.db, alias))
+                    .unwrap_or_else(|| source_name.clone());
+                (selected_local == local_name).then_some(source_name)
+            }),
         }
     }
 
@@ -1917,6 +2147,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     ty: MonoTy::new_unchecked(ty),
                     span,
                 },
+                origin: MonoCallOrigin::Builtin(MonoIntrinsic::WordFromInteger),
                 args,
             });
         }
@@ -1939,6 +2170,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         )),
                         span,
                     },
+                    origin: MonoCallOrigin::Unknown,
                     args,
                 });
             }
@@ -1953,6 +2185,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 )),
                 span,
             },
+            origin: MonoCallOrigin::Unknown,
             args,
         })
     }
@@ -2009,11 +2242,29 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     fn expr_resolution(&self, expr: Id<Expr<'db>>) -> Option<hir_nameres::Resolution<'db>> {
-        self.body_map
+        let mut resolutions = self
+            .body_map
             .exprs
             .iter()
-            .find(|entry| entry.body == self.body && entry.expr == expr)
-            .map(|entry| entry.resolution.clone())
+            .filter(|entry| entry.body == self.body && entry.expr == expr)
+            .map(|entry| entry.resolution.clone());
+        resolutions
+            .clone()
+            .find(|resolution| {
+                matches!(
+                    resolution,
+                    hir_nameres::Resolution::Def {
+                        kind: hir_nameres::DefResolutionKind::Function,
+                        ..
+                    } | hir_nameres::Resolution::Def {
+                        kind: hir_nameres::DefResolutionKind::Class,
+                        ..
+                    } | hir_nameres::Resolution::Builtin(_)
+                        | hir_nameres::Resolution::ClassMethod { .. }
+                        | hir_nameres::Resolution::Ctor { .. }
+                )
+            })
+            .or_else(|| resolutions.next())
     }
 
     fn constructor_call_result_ty(&self, callee: Id<Expr<'db>>) -> Option<Ty<'db>> {
@@ -2664,6 +2915,39 @@ fn builtin_name(kind: hir_nameres::BuiltinKind) -> &'static str {
             hir_nameres::BuiltinClassMethod::IntFromInteger => "Int.fromInteger",
         },
         hir_nameres::BuiltinKind::Type(_) | hir_nameres::BuiltinKind::Class(_) => "<builtin>",
+    }
+}
+
+fn builtin_intrinsic(kind: hir_nameres::BuiltinKind) -> Option<MonoIntrinsic> {
+    match kind {
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::PrimAddWord) => {
+            Some(MonoIntrinsic::PrimAddWord)
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::PrimEqWord) => {
+            Some(MonoIntrinsic::PrimEqWord)
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::WordToInteger) => {
+            Some(MonoIntrinsic::WordToInteger)
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::WordFromInteger) => {
+            Some(MonoIntrinsic::WordFromInteger)
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerAdd) => {
+            Some(MonoIntrinsic::IntegerAdd)
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerSub) => {
+            Some(MonoIntrinsic::IntegerSub)
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerMul) => {
+            Some(MonoIntrinsic::IntegerMul)
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerLt) => {
+            Some(MonoIntrinsic::IntegerLt)
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerEq) => {
+            Some(MonoIntrinsic::IntegerEq)
+        }
+        _ => None,
     }
 }
 
