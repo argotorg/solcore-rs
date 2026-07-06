@@ -902,6 +902,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "solcore-specialize"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash",
+ "salsa",
+ "solcore-hir",
+ "solcore-hir-ty",
+ "solcore-nameres",
+ "solcore-parser",
+ "url",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

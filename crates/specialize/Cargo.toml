@@ -1,0 +1,15 @@
+[package]
+name = "solcore-specialize"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+hir = { workspace = true }
+hir-ty = { workspace = true }
+nameres = { workspace = true }
+rustc-hash = { workspace = true }
+
+[dev-dependencies]
+parser = { workspace = true }
+salsa = { workspace = true }
+url = { workspace = true }
