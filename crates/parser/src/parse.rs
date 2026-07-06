@@ -32,6 +32,16 @@ where
     select! { Token::Ident(name) => name }.map_with(|name, e| (name, e.span()))
 }
 
+fn qualified_ident_parser<'src, I>() -> impl Parser<'src, I, Vec<SpannedStr<'src>>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    ident_parser()
+        .separated_by(just(Token::Dot))
+        .at_least(1)
+        .collect::<Vec<_>>()
+}
+
 fn comptime_kw_parser<'src, I>() -> impl Parser<'src, I, LexSpan, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -197,14 +207,20 @@ where
             alias,
             constructors,
         });
-    let named_selector = selected_item
+    let selected_or_wildcard = just(Token::Star).to(None).or(selected_item.map(Some));
+    let named_selector = selected_or_wildcard
         .separated_by(just(Token::Comma))
         .at_least(1)
         .allow_trailing()
         .collect::<Vec<_>>()
-        .map(ParsedImportSelector::Names);
-    let wildcard_selector = just(Token::Star).to(ParsedImportSelector::Wildcard);
-    let selector = choice((wildcard_selector, named_selector))
+        .map(|entries| {
+            if entries.iter().any(Option::is_none) {
+                ParsedImportSelector::Wildcard
+            } else {
+                ParsedImportSelector::Names(entries.into_iter().flatten().collect())
+            }
+        });
+    let selector = named_selector
         .delimited_by(just(Token::LBrace), just(Token::RBrace))
         .boxed();
     let hiding = hiding_kw_parser()
@@ -392,20 +408,14 @@ where
             .map(|args| args.unwrap_or_default())
             .boxed();
 
-        let qualified_name =
-            ident_parser().then(just(Token::Dot).ignore_then(ident_parser()).or_not());
-
-        let named_type = qualified_name
+        let named_type = qualified_ident_parser()
             .then(args)
-            .map_with(|((head, leaf), args), e| {
-                let (qualifier, name) = match leaf {
-                    Some(name) => (Some(head), name),
-                    None => (None, head),
-                };
+            .map_with(|(mut path, args), e| {
+                let name = path.pop().expect("qualified path has at least one segment");
                 ParsedTy {
                     span: e.span(),
                     kind: ParsedTyKind::Named {
-                        qualifier,
+                        qualifiers: path,
                         name,
                         args,
                     },
@@ -549,7 +559,7 @@ where
             let ty = ParsedTy {
                 span: var.1,
                 kind: ParsedTyKind::Named {
-                    qualifier: None,
+                    qualifiers: Vec::new(),
                     name: var,
                     args: Vec::new(),
                 },
@@ -824,6 +834,15 @@ where
             })
             .boxed();
 
+        let proxy_expr = just(Token::At)
+            .map_with(|_, e| e.span())
+            .then(type_parser())
+            .map_with(|(at, ty), e| ParsedExpr {
+                span: e.span(),
+                kind: ParsedExprKind::Proxy { at, ty },
+            })
+            .boxed();
+
         let atom = parsed_lit_parser()
             .map_with(|lit, e| ParsedExpr {
                 span: e.span(),
@@ -849,6 +868,7 @@ where
                 span: ident.1,
                 kind: ParsedExprKind::Ident(ident),
             }))
+            .or(proxy_expr)
             .or(tuple_or_paren_expr)
             .or(lambda_expr)
             .or(if_expr)
@@ -932,18 +952,20 @@ where
         let bit_and_op = just(Token::Amp)
             .to(function::BinOp::BitAnd)
             .map_with(|op, e| ParsedSpanned::new(op, e.span()));
-        let bit_and = add.clone().foldl_with(
-            bit_and_op.then(add).repeated(),
-            |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span()),
-        );
+        let bit_and = add
+            .clone()
+            .foldl_with(bit_and_op.then(add).repeated(), |lhs, (op, rhs), e| {
+                parsed_bin_op_expr(lhs, op, rhs, e.span())
+            });
 
         let bit_xor_op = just(Token::Caret)
             .to(function::BinOp::BitXor)
             .map_with(|op, e| ParsedSpanned::new(op, e.span()));
-        let bit_xor = bit_and.clone().foldl_with(
-            bit_xor_op.then(bit_and).repeated(),
-            |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span()),
-        );
+        let bit_xor = bit_and
+            .clone()
+            .foldl_with(bit_xor_op.then(bit_and).repeated(), |lhs, (op, rhs), e| {
+                parsed_bin_op_expr(lhs, op, rhs, e.span())
+            });
 
         let match_arm_separator = just(Token::Pipe)
             .ignore_then(
@@ -960,10 +982,9 @@ where
             .map_with(|op, e| ParsedSpanned::new(op, e.span()));
         let bit_or = bit_xor
             .clone()
-            .foldl_with(
-                bit_or_op.then(bit_xor).repeated(),
-                |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span()),
-            )
+            .foldl_with(bit_or_op.then(bit_xor).repeated(), |lhs, (op, rhs), e| {
+                parsed_bin_op_expr(lhs, op, rhs, e.span())
+            })
             .boxed();
 
         let rel_op = select! {
@@ -1079,7 +1100,7 @@ where
                 span: e.span(),
                 kind: ParsedPatKind::Ctor {
                     leading_dot: Some(dot),
-                    qualifier: None,
+                    qualifiers: Vec::new(),
                     name,
                     args: args.unwrap_or_default(),
                 },
@@ -1094,16 +1115,11 @@ where
             })
             .boxed();
 
-        let qualified_name =
-            ident_parser().then(just(Token::Dot).ignore_then(ident_parser()).or_not());
-        let ctor_or_var = qualified_name
+        let ctor_or_var = qualified_ident_parser()
             .then(ctor_args)
-            .map_with(|((head, leaf), args), e| {
-                let (qualifier, name) = match leaf {
-                    Some(name) => (Some(head), name),
-                    None => (None, head),
-                };
-                let is_unqualified_var = qualifier.is_none()
+            .map_with(|(mut path, args), e| {
+                let name = path.pop().expect("qualified path has at least one segment");
+                let is_unqualified_var = path.is_empty()
                     && args.is_none()
                     && name
                         .0
@@ -1117,7 +1133,7 @@ where
                     } else {
                         ParsedPatKind::Ctor {
                             leading_dot: None,
-                            qualifier,
+                            qualifiers: path,
                             name,
                             args: args.unwrap_or_default(),
                         }
@@ -1564,6 +1580,17 @@ where
             })
             .boxed();
 
+        let block_stmt = stmt
+            .clone()
+            .repeated()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace))
+            .map_with(|body, e| ParsedStmt {
+                span: e.span(),
+                kind: ParsedStmtKind::Block { body },
+            })
+            .boxed();
+
         let break_stmt = just(Token::Break)
             .then_ignore(just(Token::Semi))
             .map_with(|_, e| ParsedStmt {
@@ -1602,6 +1629,7 @@ where
             for_stmt,
             if_stmt,
             assembly_stmt,
+            block_stmt,
             break_stmt,
             continue_stmt,
             assign_or_expr,
@@ -2847,7 +2875,7 @@ mod tests {
         };
 
         let ParsedPatKind::Ctor {
-            qualifier: Some((qualifier, _)),
+            qualifiers,
             name: (name, _),
             args,
             ..
@@ -2855,7 +2883,11 @@ mod tests {
         else {
             panic!("expected qualified nullary constructor pattern");
         };
-        assert_eq!((*qualifier, *name, args.len()), ("Option", "None", 0));
+        assert_eq!(
+            qualifiers.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
+            vec!["Option"]
+        );
+        assert_eq!((*name, args.len()), ("None", 0));
 
         let ParsedPatKind::Ctor { args, .. } = &arms[1].pats[0].kind else {
             panic!("expected qualified constructor pattern with args");
@@ -2863,9 +2895,9 @@ mod tests {
         assert!(matches!(
             args[0].kind,
             ParsedPatKind::Ctor {
-                qualifier: Some(_),
+                ref qualifiers,
                 ..
-            }
+            } if !qualifiers.is_empty()
         ));
 
         assert!(matches!(

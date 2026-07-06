@@ -131,7 +131,7 @@ pub(crate) struct ParsedTy<'src> {
 #[derive(Debug, Clone)]
 pub(crate) enum ParsedTyKind<'src> {
     Named {
-        qualifier: Option<SpannedStr<'src>>,
+        qualifiers: Vec<SpannedStr<'src>>,
         name: SpannedStr<'src>,
         args: Vec<ParsedTy<'src>>,
     },
@@ -253,6 +253,10 @@ pub(crate) enum ParsedExprKind<'src> {
         name: SpannedStr<'src>,
         args: Vec<ParsedExpr<'src>>,
     },
+    Proxy {
+        at: LexSpan,
+        ty: ParsedTy<'src>,
+    },
     Lambda {
         params: Vec<ParsedFuncParam<'src>>,
         params_span: LexSpan,
@@ -306,7 +310,7 @@ pub(crate) enum ParsedPatKind<'src> {
     Lit(ParsedLitKind<'src>),
     Ctor {
         leading_dot: Option<LexSpan>,
-        qualifier: Option<SpannedStr<'src>>,
+        qualifiers: Vec<SpannedStr<'src>>,
         name: SpannedStr<'src>,
         args: Vec<ParsedPat<'src>>,
     },
@@ -383,6 +387,9 @@ pub(crate) enum ParsedStmtKind<'src> {
         cond: ParsedExpr<'src>,
         then_body: Vec<ParsedStmt<'src>>,
         else_body: Option<Vec<ParsedStmt<'src>>>,
+    },
+    Block {
+        body: Vec<ParsedStmt<'src>>,
     },
     Assembly {
         body: Vec<ParsedYulStmt<'src>>,

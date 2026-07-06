@@ -1,12 +1,12 @@
 use crate::{
+    Db,
     anchor::DefId,
     arena::{Arena, Id},
     ast::{
-        ty::{PredRef, TypeRef},
         Ident,
+        ty::{PredRef, TypeRef},
     },
     span::{Span, Spanned, SpannedElem},
-    Db,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -113,6 +113,9 @@ pub enum StmtKind<'db> {
         then_body: Vec<Id<Stmt<'db>>>,
         else_body: Option<Vec<Id<Stmt<'db>>>>,
     },
+    Block {
+        body: Vec<Id<Stmt<'db>>>,
+    },
     Assembly {
         body: Vec<YulStmt<'db>>,
     },
@@ -135,6 +138,10 @@ pub enum ExprKind<'db> {
         dot: Span<'db>,
         name: SpannedElem<'db, Ident<'db>>,
         args: Vec<Id<Expr<'db>>>,
+    },
+    Proxy {
+        at: Span<'db>,
+        ty: TypeRef<'db>,
     },
     Lambda {
         params: SpannedElem<'db, Vec<FuncParam<'db>>>,

@@ -1,16 +1,16 @@
 use hir::{
     anchor::{DefId, DefKind, DefLocation, DefLocationTable, KeyCanonicalizer},
     arena::Arena,
-    ast::{function, item, ty, Ident},
+    ast::{Ident, function, item, ty},
     diag::{Diagnostic, Offset},
     input::SourceFile,
     span::{AnchorId, Span, Spanned, SpannedElem},
 };
 
 use crate::{
+    Db, ParseHirOutput,
     parse::{parse_body_statements, parse_supported_items},
     types::*,
-    Db, ParseHirOutput,
 };
 
 fn offset_from_usize(raw: usize) -> Offset {
@@ -72,6 +72,42 @@ fn lower_owned_ident<'db>(
         Ident::new(db, name),
         span_from_absolute(anchor, span, base_start),
     )
+}
+
+fn path_text(path: &[SpannedStr<'_>]) -> String {
+    path.iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn path_span(path: &[SpannedStr<'_>]) -> LexSpan {
+    let first = path.first().expect("qualified path is non-empty").1;
+    let last = path.last().expect("qualified path is non-empty").1;
+    LexSpan::from(first.start..last.end)
+}
+
+fn lower_spanned_path_ident<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    path: Vec<SpannedStr<'_>>,
+) -> SpannedElem<'db, Ident<'db>> {
+    let span = path_span(&path);
+    lower_owned_ident(db, anchor, base_start, path_text(&path), span)
+}
+
+fn lower_qualifier_path<'db>(
+    db: &'db dyn Db,
+    anchor: AnchorId<'db>,
+    base_start: usize,
+    qualifiers: Vec<SpannedStr<'_>>,
+) -> Option<SpannedElem<'db, Ident<'db>>> {
+    if qualifiers.is_empty() {
+        None
+    } else {
+        Some(lower_spanned_path_ident(db, anchor, base_start, qualifiers))
+    }
 }
 
 fn lower_import<'db>(
@@ -258,9 +294,9 @@ fn lower_export_kind<'db>(
     kind: ParsedExportKind<'_>,
 ) -> item::ExportKind<'db> {
     match kind {
-        ParsedExportKind::List(names) => item::ExportKind::List(
-            lower_exported_names(db, anchor, base_start, names),
-        ),
+        ParsedExportKind::List(names) => {
+            item::ExportKind::List(lower_exported_names(db, anchor, base_start, names))
+        }
         ParsedExportKind::Module(path) => {
             item::ExportKind::Module(lower_path(db, anchor, base_start, path))
         }
@@ -305,7 +341,10 @@ fn lower_exported_name<'db>(
 fn export_fingerprint(kind: &ParsedExportKind<'_>) -> String {
     match kind {
         ParsedExportKind::List(names) => {
-            format!("list{{{}}}", sorted_fingerprints(names, export_name_fingerprint))
+            format!(
+                "list{{{}}}",
+                sorted_fingerprints(names, export_name_fingerprint)
+            )
         }
         ParsedExportKind::Module(path) => format!("module {}", path_fingerprint(path)),
         ParsedExportKind::ModuleAs(path, alias) => {
@@ -369,12 +408,11 @@ fn lower_type_ref<'db>(
     let ty_span = parsed_ty.span;
     let kind = match parsed_ty.kind {
         ParsedTyKind::Named {
-            qualifier,
+            qualifiers,
             name,
             args,
         } => {
-            let qualifier =
-                qualifier.map(|qualifier| lower_spanned_ident(db, anchor, base_start, qualifier));
+            let qualifier = lower_qualifier_path(db, anchor, base_start, qualifiers);
             let name = lower_spanned_ident(db, anchor, base_start, name);
             let args = args
                 .into_iter()
@@ -512,19 +550,19 @@ fn structural_fingerprint(label: &str, components: &[String]) -> String {
 fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> Option<String> {
     match &ty.kind {
         ParsedTyKind::Named {
-            qualifier,
+            qualifiers,
             name,
             args,
         } => {
-            let name = if args.is_empty() && qualifier.is_none() {
+            let name = if args.is_empty() && qualifiers.is_empty() {
                 type_vars
                     .iter()
                     .find_map(|(var, index)| (*var == name.0).then_some(format!("${index}")))
                     .unwrap_or_else(|| name.0.to_owned())
-            } else if let Some((qualifier, _)) = qualifier {
-                format!("{}.{}", qualifier, name.0)
-            } else {
+            } else if qualifiers.is_empty() {
                 name.0.to_owned()
+            } else {
+                format!("{}.{}", path_text(qualifiers), name.0)
             };
 
             if args.is_empty() {
@@ -861,6 +899,10 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
                 let args = self.lower_exprs(anchor, base_start, args, arenas);
                 function::ExprKind::DotCtor { dot, name, args }
             }
+            ParsedExprKind::Proxy { at, ty } => function::ExprKind::Proxy {
+                at: span_from_absolute(anchor, at, base_start),
+                ty: lower_type_ref(self.db, anchor, base_start, ty),
+            },
             ParsedExprKind::Lambda {
                 params,
                 params_span,
@@ -1191,6 +1233,9 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
                 then_body,
                 else_body,
             } => self.lower_if_stmt(anchor, base_start, cond, then_body, else_body, arenas),
+            ParsedStmtKind::Block { body } => function::StmtKind::Block {
+                body: self.lower_stmt_block(anchor, base_start, body, arenas),
+            },
             ParsedStmtKind::Assembly { body } => function::StmtKind::Assembly {
                 body: body
                     .into_iter()
@@ -1293,13 +1338,12 @@ fn lower_parsed_pat<'db>(
         ParsedPatKind::Lit(lit) => function::PatKind::Lit(lower_parsed_lit(lit)),
         ParsedPatKind::Ctor {
             leading_dot,
-            qualifier,
+            qualifiers,
             name,
             args,
         } => {
             let leading_dot = leading_dot.map(|dot| span_from_absolute(anchor, dot, base_start));
-            let qualifier = qualifier
-                .map(|qualifier| lower_spanned_ident(ctx.db, anchor, base_start, qualifier));
+            let qualifier = lower_qualifier_path(ctx.db, anchor, base_start, qualifiers);
             let name = lower_spanned_ident(ctx.db, anchor, base_start, name);
             let args = args
                 .into_iter()
