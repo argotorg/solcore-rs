@@ -8,6 +8,7 @@ url = "2.5"
 annotate-snippets = "0.12"
 parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
+nameres = { path = "crates/nameres", package = "solcore-nameres" }
 
 [workspace.package]
 edition = "2024"

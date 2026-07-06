@@ -1,0 +1,12 @@
+---
+source: crates/nameres/tests/module_system.rs
+expression: rendered
+input_file: crates/nameres/tests/fixtures/fail/unknown_import/main.solc
+---
+error[SC0110]: unknown import item `missing`
+ --> /main/main.solc:1:14
+  |
+1 | import util.{missing};
+  |              ^^^^^^^ unknown import item
+  |
+  = note: check the imported module's exported names

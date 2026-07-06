@@ -5,5 +5,5 @@ pub mod ty;
 #[salsa::interned(debug)]
 pub struct Ident<'db> {
     #[returns(ref)]
-    name: String,
+    pub name: String,
 }

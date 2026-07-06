@@ -1,5 +1,5 @@
 [package]
-name = "solcore-driver"
+name = "solcore-nameres"
 version = "0.1.0"
 edition.workspace = true
 
@@ -8,4 +8,7 @@ salsa = { workspace = true }
 url = { workspace = true }
 hir = { workspace = true }
 parser = { workspace = true }
-nameres = { workspace = true }
+
+[dev-dependencies]
+annotate-snippets = { workspace = true }
+insta = "1.43.2"

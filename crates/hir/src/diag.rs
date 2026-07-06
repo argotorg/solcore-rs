@@ -9,7 +9,7 @@ use crate::{
 
 /// A diagnostic emitted during compilation.
 #[salsa::accumulator]
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct Diagnostic {
     /// Severity of this diagnostic.
     pub level: DiagnosticLevel,
@@ -24,7 +24,7 @@ pub struct Diagnostic {
 }
 
 /// Severity level for diagnostics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum DiagnosticLevel {
     Error,
     Warning,
@@ -81,7 +81,7 @@ impl LabelSpan {
 }
 
 /// Span label attached to a diagnostic.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct DiagnosticLabel {
     /// Where this label points to in source.
     span: LabelSpan,
@@ -99,7 +99,7 @@ pub struct AccumulatedProof {
 }
 
 /// Style of a diagnostic label.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub enum LabelStyle {
     Primary,
     Secondary,

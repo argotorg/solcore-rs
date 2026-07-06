@@ -1,0 +1,14 @@
+---
+source: crates/nameres/tests/module_system.rs
+expression: rendered
+input_file: crates/nameres/tests/fixtures/fail/ambiguous/main.solc
+---
+error[SC0120]: ambiguous selected import `value`
+ --> /main/main.solc:1:1
+  |
+1 | import a.{value};
+  | ^^^^^^^^^^^^^^^^^ ambiguous selected import
+2 | import b.{value};
+  |
+  = note: `value` is imported from a, b
+  = note: use an explicit module qualifier or narrow the selected imports

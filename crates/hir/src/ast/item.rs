@@ -13,18 +13,18 @@ use crate::{
 pub struct AdtDef<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
-    name: SpannedElem<'db, Ident<'db>>,
+    pub name: SpannedElem<'db, Ident<'db>>,
 
     #[tracked]
     #[returns(ref)]
-    ty_params: Vec<SpannedElem<'db, Ident<'db>>>,
+    pub ty_params: Vec<SpannedElem<'db, Ident<'db>>>,
 
     /// Data constructors declared for this ADT.
     #[tracked]
@@ -68,15 +68,15 @@ pub enum FuncKind {
 pub struct FunctionDef<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
     #[returns(copy)]
-    kind: FuncKind,
+    pub kind: FuncKind,
 
     #[tracked]
     #[returns(ref)]
@@ -98,19 +98,19 @@ impl<'db> Spanned<'db> for FunctionDef<'db> {
 pub struct TypeAlias<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
-    name: SpannedElem<'db, Ident<'db>>,
+    pub name: SpannedElem<'db, Ident<'db>>,
 
     /// Type parameters declared by this alias.
     #[tracked]
     #[returns(ref)]
-    ty_params: Vec<SpannedElem<'db, Ident<'db>>>,
+    pub ty_params: Vec<SpannedElem<'db, Ident<'db>>>,
 
     /// Aliased type.
     #[tracked]
@@ -128,15 +128,15 @@ impl<'db> Spanned<'db> for TypeAlias<'db> {
 pub struct ClassDef<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
     #[returns(ref)]
-    type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
+    pub type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
 
     #[tracked]
     #[returns(ref)]
@@ -160,15 +160,15 @@ impl<'db> Spanned<'db> for ClassDef<'db> {
 pub struct InstanceDef<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
     #[returns(ref)]
-    type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
+    pub type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
 
     #[tracked]
     #[returns(ref)]
@@ -176,7 +176,7 @@ pub struct InstanceDef<'db> {
 
     #[tracked]
     #[returns(copy)]
-    default_kw: Option<Span<'db>>,
+    pub default_kw: Option<Span<'db>>,
 
     #[tracked]
     pub head: PredRef<'db>,
@@ -242,18 +242,18 @@ impl<'db> Spanned<'db> for ContractItem<'db> {
 pub struct ContractDef<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
-    name: SpannedElem<'db, Ident<'db>>,
+    pub name: SpannedElem<'db, Ident<'db>>,
 
     #[tracked]
     #[returns(ref)]
-    ty_params: Vec<SpannedElem<'db, Ident<'db>>>,
+    pub ty_params: Vec<SpannedElem<'db, Ident<'db>>>,
 
     #[tracked]
     #[returns(ref)]
@@ -300,30 +300,30 @@ pub enum ImportSelector<'db> {
 pub struct Import<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
     #[returns(copy)]
-    external: Option<Span<'db>>,
+    pub external: Option<Span<'db>>,
 
     #[tracked]
     #[returns(ref)]
-    path: Vec<SpannedElem<'db, Ident<'db>>>,
+    pub path: Vec<SpannedElem<'db, Ident<'db>>>,
 
     #[tracked]
-    alias: Option<SpannedElem<'db, Ident<'db>>>,
-
-    #[tracked]
-    #[returns(ref)]
-    selector: Option<ImportSelector<'db>>,
+    pub alias: Option<SpannedElem<'db, Ident<'db>>>,
 
     #[tracked]
     #[returns(ref)]
-    hiding: Vec<ImportHiddenName<'db>>,
+    pub selector: Option<ImportSelector<'db>>,
+
+    #[tracked]
+    #[returns(ref)]
+    pub hiding: Vec<ImportHiddenName<'db>>,
 }
 
 impl<'db> Spanned<'db> for Import<'db> {
@@ -354,15 +354,15 @@ pub enum ExportKind<'db> {
 pub struct Export<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
     #[returns(ref)]
-    kind: ExportKind<'db>,
+    pub kind: ExportKind<'db>,
 }
 
 impl<'db> Spanned<'db> for Export<'db> {
@@ -375,18 +375,18 @@ impl<'db> Spanned<'db> for Export<'db> {
 pub struct Pragma<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
-    name: SpannedElem<'db, Ident<'db>>,
+    pub name: SpannedElem<'db, Ident<'db>>,
 
     #[tracked]
     #[returns(ref)]
-    items: Vec<SpannedElem<'db, Ident<'db>>>,
+    pub items: Vec<SpannedElem<'db, Ident<'db>>>,
 }
 
 impl<'db> Spanned<'db> for Pragma<'db> {
@@ -432,11 +432,11 @@ impl<'db> Spanned<'db> for Item<'db> {
 pub struct Module<'db> {
     #[tracked]
     #[returns(copy)]
-    def_id: DefId<'db>,
+    pub def_id: DefId<'db>,
 
     #[tracked]
     #[returns(copy)]
-    span: Span<'db>,
+    pub span: Span<'db>,
 
     #[tracked]
     #[returns(ref)]
