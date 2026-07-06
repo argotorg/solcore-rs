@@ -20,6 +20,7 @@ use tracing::field;
 use crate::{
     BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TyScheme,
     TypeLowering, builtin_scheme,
+    solver::{Evidence, Solution, TraitEnvId, solve_goal},
 };
 
 /// Ephemeral inference variable identifier.
@@ -168,6 +169,8 @@ pub struct BodyTyContext<'db> {
     pub ret: Option<Ty<'db>>,
     /// Semantic schemes for resolved items visible to this body.
     pub catalog: BodyTyCatalog<'db>,
+    /// Trait environment used to solve deferred class obligations.
+    pub trait_env: Option<TraitEnvId<'db>>,
 }
 
 /// Semantic typing data needed to interpret body name-resolution results.
@@ -288,6 +291,15 @@ pub struct DeferredObligation<'db> {
     pub source: ObligationSource<'db>,
 }
 
+/// Evidence recorded for a solved deferred obligation.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ObligationEvidence<'db> {
+    /// Index into [`InferenceResult::obligations`].
+    pub obligation: usize,
+    /// Solver evidence for the obligation.
+    pub evidence: Evidence<'db>,
+}
+
 /// Body inference result.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct InferenceResult<'db> {
@@ -297,6 +309,8 @@ pub struct InferenceResult<'db> {
     pub pat_tys: Vec<PatTy<'db>>,
     /// Deferred obligations that the future solver must resolve.
     pub obligations: Vec<DeferredObligation<'db>>,
+    /// Evidence for obligations solved by the trait solver.
+    pub obligation_evidence: Vec<ObligationEvidence<'db>>,
     /// Type-checking diagnostics found while inferring this body.
     pub diagnostics: Vec<TypeckDiagnostic>,
 }
@@ -372,6 +386,23 @@ pub enum TypeckDiagnostic {
         /// Callee type snapshot.
         callee: String,
     },
+    /// `SC0207`: a class constraint could not be solved.
+    UnsatisfiedConstraint {
+        /// Predicate snapshot.
+        pred: String,
+    },
+    /// `SC0208`: more than one non-default instance solved a class constraint.
+    AmbiguousConstraint {
+        /// Predicate snapshot.
+        pred: String,
+        /// Candidate evidence snapshots.
+        candidates: Vec<String>,
+    },
+    /// `SC0209`: trait solving exceeded its fuel bound.
+    SolverFuelExhausted {
+        /// Predicate snapshot.
+        pred: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -397,6 +428,7 @@ struct InferCtx<'db> {
     expr_tys: Vec<(FuncBody<'db>, Id<Expr<'db>>, InferTy<'db>)>,
     pat_tys: Vec<(FuncBody<'db>, Id<Pat<'db>>, InferTy<'db>)>,
     pending: Vec<PendingObligation<'db>>,
+    trait_env: Option<TraitEnvId<'db>>,
     integer_literal_vars: Vec<TyVid<'db>>,
     diagnostics: Vec<TypeckDiagnostic>,
 }
@@ -416,6 +448,7 @@ impl<'db> BodyTyContext<'db> {
             params,
             ret,
             catalog: BodyTyCatalog::default(),
+            trait_env: None,
         }
     }
 
@@ -428,6 +461,12 @@ impl<'db> BodyTyContext<'db> {
     /// Adds semantic item schemes to the context.
     pub fn with_catalog(mut self, catalog: BodyTyCatalog<'db>) -> Self {
         self.catalog = catalog;
+        self
+    }
+
+    /// Adds the trait environment used to solve deferred obligations.
+    pub fn with_trait_env(mut self, trait_env: TraitEnvId<'db>) -> Self {
+        self.trait_env = Some(trait_env);
         self
     }
 }
@@ -463,6 +502,21 @@ impl TypeckDiagnostic {
                 Diagnostic::error(format!("non-callable value of type {callee}"))
                     .with_code("SC0206")
             }
+            TypeckDiagnostic::UnsatisfiedConstraint { pred } => {
+                Diagnostic::error(format!("unsatisfied class constraint: {pred}"))
+                    .with_code("SC0207")
+            }
+            TypeckDiagnostic::AmbiguousConstraint { pred, candidates } => {
+                let mut message = format!("ambiguous class constraint: {pred}");
+                if !candidates.is_empty() {
+                    message.push_str(&format!("; candidates: {}", candidates.join(", ")));
+                }
+                Diagnostic::error(message).with_code("SC0208")
+            }
+            TypeckDiagnostic::SolverFuelExhausted { pred } => Diagnostic::error(format!(
+                "cannot solve class constraint {pred}: solver exceeded its iteration bound"
+            ))
+            .with_code("SC0209"),
         }
     }
 }
@@ -903,6 +957,7 @@ impl<'db> InferCtx<'db> {
             expr_tys: Vec::new(),
             pat_tys: Vec::new(),
             pending: Vec::new(),
+            trait_env: ctx.trait_env,
             integer_literal_vars: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -944,12 +999,19 @@ impl<'db> InferCtx<'db> {
                 }
             })
             .collect();
-        InferenceResult {
+        let mut result = InferenceResult {
             expr_tys,
             pat_tys,
             obligations,
+            obligation_evidence: Vec::new(),
             diagnostics: self.diagnostics,
+        };
+        if let Some(trait_env) = self.trait_env {
+            let solved = solve_deferred_obligations(self.db, trait_env, &result.obligations);
+            result.obligation_evidence = solved.evidence;
+            result.diagnostics.extend(solved.diagnostics);
         }
+        result
     }
 
     fn infer_body(&mut self, body: FuncBody<'db>) {
@@ -2129,6 +2191,56 @@ impl<'db> InferCtx<'db> {
     }
 }
 
+struct ObligationSolveOutput<'db> {
+    evidence: Vec<ObligationEvidence<'db>>,
+    diagnostics: Vec<TypeckDiagnostic>,
+}
+
+fn solve_deferred_obligations<'db>(
+    db: &'db dyn Db,
+    trait_env: TraitEnvId<'db>,
+    obligations: &[DeferredObligation<'db>],
+) -> ObligationSolveOutput<'db> {
+    let mut evidence = Vec::new();
+    let mut diagnostics = Vec::new();
+    for (index, obligation) in obligations.iter().enumerate() {
+        if matches!(obligation.pred.kind(db), PredKind::Error) {
+            continue;
+        }
+        let report = solve_goal(db, trait_env, obligation.pred);
+        if report.exhausted {
+            diagnostics.push(TypeckDiagnostic::SolverFuelExhausted {
+                pred: obligation.pred.display(db),
+            });
+            continue;
+        }
+        match report.solution {
+            Solution::Unique {
+                evidence: proof, ..
+            } => evidence.push(ObligationEvidence {
+                obligation: index,
+                evidence: proof,
+            }),
+            Solution::Ambiguous { candidates } => {
+                diagnostics.push(TypeckDiagnostic::AmbiguousConstraint {
+                    pred: obligation.pred.display(db),
+                    candidates: candidates
+                        .iter()
+                        .map(|candidate| candidate.evidence.display(db))
+                        .collect(),
+                });
+            }
+            Solution::NoSolution => diagnostics.push(TypeckDiagnostic::UnsatisfiedConstraint {
+                pred: obligation.pred.display(db),
+            }),
+        }
+    }
+    ObligationSolveOutput {
+        evidence,
+        diagnostics,
+    }
+}
+
 /// Infers expression and pattern types for one body.
 ///
 /// The ena table created by this query is local to the query execution. The
@@ -2224,7 +2336,10 @@ mod tests {
     use parser::parse_file_to_hir;
 
     use super::*;
-    use crate::{BinderEnv, TypeLowering};
+    use crate::{
+        BinderEnv, Solution, TraitEnvId, TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal,
+        solve, trait_env_from_module_resolution, trait_env_with_givens,
+    };
 
     #[salsa::db]
     #[derive(Default, Clone)]
@@ -2429,6 +2544,14 @@ mod tests {
             collect_catalog_item(db, module_resolution, *item, &[], &mut catalog);
         }
         catalog
+    }
+
+    fn trait_env<'db>(
+        db: &'db TestDb,
+        module: Module<'db>,
+        module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
+    ) -> TraitEnvId<'db> {
+        trait_env_from_module_resolution(db, module, module_resolution)
     }
 
     fn collect_catalog_item<'db>(
@@ -2654,6 +2777,91 @@ mod tests {
             .collect()
     }
 
+    fn infer_all_functions_with_solver<'db>(
+        db: &'db TestDb,
+        module: Module<'db>,
+    ) -> Vec<(String, InferenceResult<'db>)> {
+        let module_resolution = hir_nameres::resolve_module(db, module);
+        let catalog = catalog(db, module, &module_resolution);
+        let base_trait_env = trait_env(db, module, &module_resolution);
+        function_infos(db, module)
+            .into_iter()
+            .filter_map(|info| {
+                let body = info.function.body(db)?;
+                let lowered = TypeLowering::from_item_resolutions(
+                    db,
+                    &module_resolution.item_resolutions,
+                    BinderEnv::from_type_vars(&info.type_vars),
+                )
+                .lower_function(info.function);
+                let body_map = body_map(db, &module_resolution, body);
+                let trait_env = trait_env_with_givens(
+                    db,
+                    base_trait_env,
+                    lowered.scheme.body(db).preds(db).clone(),
+                );
+                let ctx =
+                    BodyTyContext::new(body_map, info.type_vars, lowered.params, Some(lowered.ret))
+                        .with_param_names(param_names(db, info.function.sig(db).params.atom()))
+                        .with_catalog(catalog.clone())
+                        .with_trait_env(trait_env);
+                Some((
+                    function_name(db, info.function).to_owned(),
+                    infer_body(db, body, ctx),
+                ))
+            })
+            .collect()
+    }
+
+    fn class_id<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> ClassId<'db> {
+        for item in module.items(db) {
+            if let Item::ClassDef(class) = item
+                && class.def_id_value(db).name(db).as_deref() == Some(name)
+            {
+                return ClassId::User(class.def_id_value(db));
+            }
+        }
+        panic!("class {name}");
+    }
+
+    fn adt_def<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> DefId<'db> {
+        for item in module.items(db) {
+            if let Item::AdtDef(adt) = item
+                && adt.def_id_value(db).name(db).as_deref() == Some(name)
+            {
+                return adt.def_id_value(db);
+            }
+        }
+        panic!("adt {name}");
+    }
+
+    fn adt_ty<'db>(
+        db: &'db TestDb,
+        module: Module<'db>,
+        name: &str,
+        args: Vec<Ty<'db>>,
+    ) -> Ty<'db> {
+        Ty::named(
+            db,
+            TyCtor::User(UserTyCtor {
+                def: adt_def(db, module, name),
+                kind: UserTyCtorKind::Adt,
+            }),
+            args,
+        )
+    }
+
+    fn solve_class_goal<'db>(
+        db: &'db TestDb,
+        env: TraitEnvId<'db>,
+        class: ClassId<'db>,
+        main: Ty<'db>,
+        args: Vec<Ty<'db>>,
+    ) -> Solution<'db> {
+        let goal = Pred::in_class(db, class, main, args);
+        solve(db, env, canonical_goal(db, goal))
+    }
+
     fn return_expr<'db>(db: &'db TestDb, body: FuncBody<'db>) -> Id<Expr<'db>> {
         let stmt = body.stmts(db).get(body.top_level_stmts(db)[0]);
         match &stmt.kind {
@@ -2810,6 +3018,133 @@ function main() -> word {
             "expected Enum obligation, got {:?}",
             result.obligations
         );
+    }
+
+    #[test]
+    fn trait_solver_rejects_unproductive_instance_cycle() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:C {}
+forall a . a:C => instance a:C {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "C"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+        assert!(matches!(solution, Solution::NoSolution));
+    }
+
+    #[test]
+    fn trait_solver_resolves_recursive_pair_instance() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+data Pair(a, b) = Pair(a, b);
+
+forall a . class a:StorageSize {}
+
+instance word:StorageSize {}
+
+forall a b . a:StorageSize, b:StorageSize => instance Pair(a, b):StorageSize {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+        let word = Ty::word(&db);
+        let pair_word_word = adt_ty(&db, module, "Pair", vec![word, word]);
+        let nested = adt_ty(&db, module, "Pair", vec![pair_word_word, word]);
+
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "StorageSize"),
+            nested,
+            Vec::new(),
+        );
+
+        let Solution::Unique { evidence, .. } = solution else {
+            panic!("expected unique solution, got {solution:?}");
+        };
+        let Evidence::Instance { sub_evidence, .. } = evidence else {
+            panic!("expected instance evidence");
+        };
+        assert_eq!(sub_evidence.len(), 2);
+        assert!(matches!(sub_evidence[0], Evidence::Instance { .. }));
+        assert!(matches!(sub_evidence[1], Evidence::Instance { .. }));
+    }
+
+    #[test]
+    fn trait_solver_prefers_specific_instance_over_default() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:Test {}
+forall a . default instance a:Test {}
+instance word:Test {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+        let class = class_id(&db, module, "Test");
+        let specific = module
+            .items(&db)
+            .iter()
+            .filter_map(|item| match item {
+                Item::InstanceDef(instance) if instance.default_kw(&db).is_none() => {
+                    Some(instance.def_id_value(&db))
+                }
+                _ => None,
+            })
+            .next()
+            .expect("specific instance");
+
+        let solution = solve_class_goal(&db, env, class, Ty::word(&db), Vec::new());
+        let Solution::Unique { evidence, .. } = solution else {
+            panic!("expected unique solution, got {solution:?}");
+        };
+        assert!(matches!(
+            evidence,
+            Evidence::Instance { instance, .. } if instance == specific
+        ));
+
+        let default_solution = solve_class_goal(&db, env, class, Ty::string(&db), Vec::new());
+        assert!(matches!(default_solution, Solution::Unique { .. }));
+    }
+
+    #[test]
+    fn trait_solver_reports_overlapping_non_default_instances_as_ambiguous() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:C {}
+instance word:C {}
+instance word:C {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+        let solution = solve_class_goal(
+            &db,
+            env,
+            class_id(&db, module, "C"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+        assert!(matches!(
+            solution,
+            Solution::Ambiguous { candidates } if candidates.len() == 2
+        ));
     }
 
     #[test]
@@ -2995,6 +3330,38 @@ function f() -> () {
                 module_resolution.diagnostics
             );
             let failures = infer_all_functions(&db, module)
+                .into_iter()
+                .filter(|(_, result)| !result.diagnostics.is_empty())
+                .collect::<Vec<_>>();
+            assert!(
+                failures.is_empty(),
+                "{file} produced type diagnostics: {:?}",
+                failures
+            );
+        }
+    }
+
+    #[test]
+    fn local_class_corpus_scoreboard_has_no_solved_typeck_diagnostics() {
+        let db = TestDb::default();
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let fixtures = manifest.join("../parser/tests/fixtures/corpus/ok/test/examples/cases");
+        let files = ["p4-local-instance.solc", "p4-default-instance.solc"];
+
+        for file in files {
+            let path = fixtures.join(file);
+            let (source, module) = parse_module_from_file(&db, &path);
+            assert!(
+                parser::parse_diagnostics(&db, source).is_empty(),
+                "{file} should parse cleanly"
+            );
+            let module_resolution = hir_nameres::resolve_module(&db, module);
+            assert!(
+                module_resolution.diagnostics.is_empty(),
+                "{file} should resolve cleanly: {:?}",
+                module_resolution.diagnostics
+            );
+            let failures = infer_all_functions_with_solver(&db, module)
                 .into_iter()
                 .filter(|(_, result)| !result.diagnostics.is_empty())
                 .collect::<Vec<_>>();
