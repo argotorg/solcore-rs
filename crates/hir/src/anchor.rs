@@ -116,14 +116,6 @@ impl<'db> DefLocationTable<'db> {
     }
 }
 
-#[salsa::tracked(returns(ref))]
-pub fn def_locations_for_file<'db>(
-    _db: &'db dyn crate::Db,
-    _file: SourceFile,
-) -> DefLocationTable<'db> {
-    todo!()
-}
-
 pub fn resolve_def_location<'db>(
     table: &DefLocationTable<'db>,
     def: DefId<'db>,

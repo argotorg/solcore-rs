@@ -2,7 +2,7 @@ use std::ops::Add;
 
 use crate::{
     Db,
-    anchor::{DefId, def_locations_for_file, resolve_def_location},
+    anchor::{DefId, resolve_def_location},
     diag::{AbsoluteSpan, Offset},
     input::SourceFile,
 };
@@ -36,7 +36,7 @@ impl<'db> AnchorId<'db> {
         match *self.kind(db) {
             AnchorKind::Root(file) => file,
             AnchorKind::Def(def) => {
-                let locations = def_locations_for_file(db, def.file(db));
+                let locations = db.def_location_table(def.file(db));
                 resolve_def_location(locations, def)
                     .unwrap_or_else(|| panic!("missing DefLocation for def anchor: {:?}", def))
                     .file
@@ -48,7 +48,7 @@ impl<'db> AnchorId<'db> {
         match *self.kind(db) {
             AnchorKind::Root(_) => Offset::new(0),
             AnchorKind::Def(def) => {
-                let locations = def_locations_for_file(db, def.file(db));
+                let locations = db.def_location_table(def.file(db));
                 resolve_def_location(locations, def)
                     .unwrap_or_else(|| panic!("missing DefLocation for def anchor: {:?}", def))
                     .base_offset

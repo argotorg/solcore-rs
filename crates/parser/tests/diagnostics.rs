@@ -15,7 +15,14 @@ struct TestDb {
 impl salsa::Database for TestDb {}
 
 #[salsa::db]
-impl hir::Db for TestDb {}
+impl hir::Db for TestDb {
+    fn def_location_table<'db>(
+        &'db self,
+        file: SourceFile,
+    ) -> &'db hir::anchor::DefLocationTable<'db> {
+        parse_file_to_hir(self, file).def_locations(self)
+    }
+}
 
 #[salsa::db]
 impl solcore_parser::Db for TestDb {}

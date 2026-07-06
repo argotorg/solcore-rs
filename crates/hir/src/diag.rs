@@ -2,7 +2,7 @@ use annotate_snippets::{Annotation, AnnotationKind, Group, Level, Renderer, Snip
 use salsa::Accumulator;
 
 use crate::{
-    anchor::{DefId, DefKey, def_locations_for_file, resolve_def_location},
+    anchor::{DefId, DefKey, resolve_def_location},
     input::SourceFile,
     span::{AnchorKind, Span},
 };
@@ -65,7 +65,7 @@ impl LabelSpan {
         let (file, base) = match &self.anchor {
             LabelAnchor::Root(file) => (*file, Offset::new(0)),
             LabelAnchor::Def(key) => {
-                let table = def_locations_for_file(db, key.file);
+                let table = db.def_location_table(key.file);
                 let def = DefId::from_key(db, key);
                 let loc = resolve_def_location(table, def)
                     .unwrap_or_else(|| panic!("missing DefLocation for def key: {:?}", key));

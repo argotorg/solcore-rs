@@ -14,7 +14,14 @@ struct DriverDb {
 impl salsa::Database for DriverDb {}
 
 #[salsa::db]
-impl hir::Db for DriverDb {}
+impl hir::Db for DriverDb {
+    fn def_location_table<'db>(
+        &'db self,
+        file: SourceFile,
+    ) -> &'db hir::anchor::DefLocationTable<'db> {
+        parse_file_to_hir(self, file).def_locations(self)
+    }
+}
 
 #[salsa::db]
 impl parser::Db for DriverDb {}
