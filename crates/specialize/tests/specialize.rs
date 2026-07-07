@@ -65,6 +65,14 @@ fn source_file(db: &TestDb, name: &str, src: &str) -> SourceFile {
     SourceFile::new(db, url, Some(src.to_owned()))
 }
 
+fn source_file_at_path(db: &TestDb, path: &Path, src: &str) -> SourceFile {
+    SourceFile::new(
+        db,
+        url::Url::from_file_path(path).expect("file URL"),
+        Some(src.to_owned()),
+    )
+}
+
 fn parse_module<'db>(db: &'db TestDb, src: &str) -> Module<'db> {
     parse_file_to_hir(db, source_file(db, "test", src)).module(db)
 }
@@ -207,6 +215,59 @@ contract C {
 }
 
 #[test]
+fn evidence_replay_resolves_imported_instance_methods() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        PathBuf::from("/std"),
+        BTreeMap::new(),
+    ));
+    let lib_path = main_root.join("lib.solc");
+    let main_path = main_root.join("main.solc");
+    let lib_file = source_file_at_path(
+        db,
+        &lib_path,
+        r#"
+export { Boxed };
+
+forall a . class a:Boxed {
+  function id(x:a) -> a;
+}
+
+instance word:Boxed {
+  function id(x:word) -> word { return x; }
+}
+"#,
+    );
+    let main_file = source_file_at_path(
+        db,
+        &main_path,
+        r#"
+import lib.{Boxed};
+
+contract C {
+  public function main(x:word) -> word {
+    return Boxed.id(x);
+  }
+}
+"#,
+    );
+    let lib_key = module_key_for_path(LibraryId::Main, &main_root, &lib_path).unwrap();
+    let main_key = module_key_for_path(LibraryId::Main, &main_root, &main_path).unwrap();
+    db.module_files.insert(lib_key, lib_file);
+    db.module_files.insert(main_key, main_file);
+
+    let module = parse_file_to_hir(db, main_file).module(db);
+    let output = specialize_module(db, module, SpecializeOptions::default());
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(names.contains(&"Boxed_id$word".to_owned()), "{names:?}");
+}
+
+#[test]
 fn invokable_invoke_replays_call_site_evidence() {
     let (_db, output) = specialize_src(
         r#"
@@ -313,11 +374,39 @@ contract C {
 
 #[test]
 fn instance_method_names_use_only_class_head_main_type() {
-    let repo = repo_root();
-    let fixture = repo.join(
-        "crates/parser/tests/fixtures/corpus/ok/test/examples/cases/mptc-both-templates.solc",
+    let (_db, output) = specialize_src(
+        r#"
+data Box = Box(word);
+
+forall self rep.
+class self:Convert(rep) {
+    function toRep(x:self) -> rep;
+    function fromRep(x:rep) -> self;
+}
+
+instance Box:Convert(word) {
+    function toRep(x:Box) -> word {
+        match x { | Box(w) => return w; }
+    }
+    function fromRep(x:word) -> Box {
+        return Box(x);
+    }
+}
+
+forall a rep . a:Convert(rep) =>
+function roundtrip(x:a) -> a {
+    let r : rep = Convert.toRep(x);
+    return Convert.fromRep(r);
+}
+
+contract C {
+    public function main(x:word) -> word {
+        let b : Box = roundtrip(Box(x));
+        match b { | Box(w) => return w; }
+    }
+}
+"#,
     );
-    let output = specialize_fixture(&fixture);
 
     assert_eq!(output.diagnostics, Vec::new());
     let names = function_names(&output);
@@ -888,6 +977,25 @@ contract C {
         function_return_numbers(&output, "main"),
         Vec::<String>::new()
     );
+}
+
+#[test]
+fn folds_qualified_constructor_matches_before_wildcard_defaults() {
+    let repo = repo_root();
+    let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec");
+    for (fixture, expected) in [
+        ("037dwarves.solc", "5"),
+        ("038food0.solc", "42"),
+        ("039food.solc", "42"),
+    ] {
+        let output = specialize_fixture(&corpus.join(fixture));
+        assert_eq!(output.diagnostics, Vec::new(), "{fixture}");
+        assert_eq!(
+            main_return_number(&output),
+            Some(expected.to_owned()),
+            "{fixture}"
+        );
+    }
 }
 
 fn main_return_number(output: &SpecializeOutput<'_>) -> Option<String> {

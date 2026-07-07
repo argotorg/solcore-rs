@@ -1,6 +1,5 @@
 ---
 source: crates/yul/tests/snapshots.rs
-assertion_line: 125
 expression: render_fixture(&fixture)
 ---
 object "Add1Deploy" {
@@ -19,13 +18,13 @@ object "Add1Deploy" {
   }
   object "Add1" {
     code {
-      function usr$Add1_Add1_main_d481571bb() -> gen$result_1 {
+      function usr$Add1_Add1_main_d32c90845() -> gen$result_1 {
         let src$res_2
         src$res_2 := add(40, 2)
         gen$result_1 := 42
         leave
       }
-      /* selector 0xdffeadd0 -> Add1_Add1_main_d481571bb */
+      /* selector 0xdffeadd0 -> Add1_Add1_main_d32c90845 */
       mstore(0x40, memoryguard(128))
       let _v0
       _v0 := calldatasize()
@@ -51,7 +50,7 @@ object "Add1Deploy" {
               }
               let src$dispatch_ret0_4
               let _v2
-              _v2 := usr$Add1_Add1_main_d481571bb()
+              _v2 := usr$Add1_Add1_main_d32c90845()
               src$dispatch_ret0_4 := _v2
               let src$dispatch_ret0_word_5
               src$dispatch_ret0_word_5 := 0

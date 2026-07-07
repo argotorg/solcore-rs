@@ -1,6 +1,5 @@
 ---
 source: crates/yul/tests/snapshots.rs
-assertion_line: 90
 expression: "render_source(\"doc_option_maybe\",\nr#\"\ncontract OptionDoc {\n  data Option(a) = None | Some(a);\n\n  function maybe(n : word, o : Option(word)) -> word {\n    match o {\n      | Option.None => return n;\n      | Option.Some(x) => return x;\n    }\n  }\n\n  public function main() -> word {\n    return maybe(0, Option.Some(42));\n  }\n}\n\"#,)"
 ---
 object "OptionDocDeploy" {
@@ -20,35 +19,16 @@ object "OptionDocDeploy" {
   object "OptionDoc" {
     code {
       function usr$doc_option_maybe_OptionDoc_main_dd6304f4c() -> gen$result_1 {
-        let _v0
-        _v0 := usr$doc_option_maybe_OptionDoc_maybe_d7fca80fc(0, true, 42)
-        gen$result_1 := _v0
+        gen$result_1 := 42
         leave
-      }
-      function usr$doc_option_maybe_OptionDoc_maybe_d7fca80fc(src$n_2, _v1, _v2) -> gen$result_3 {
-        switch _v1
-          case false {
-            /* None */
-            gen$result_3 := src$n_2
-            leave
-          }
-          case true {
-            {
-              /* Some */
-              let src$x_4
-              src$x_4 := _v2
-              gen$result_3 := src$x_4
-              leave
-            }
-          }
       }
       /* selector 0xdffeadd0 -> doc_option_maybe_OptionDoc_main_dd6304f4c */
       mstore(0x40, memoryguard(128))
-      let _v3
-      _v3 := calldatasize()
-      let _v4
-      _v4 := lt(_v3, 4)
-      switch _v4
+      let _v0
+      _v0 := calldatasize()
+      let _v1
+      _v1 := lt(_v0, 4)
+      switch _v1
         case true {
           if callvalue() {
             mstore(0, 0xb5988ea3)
@@ -58,22 +38,22 @@ object "OptionDocDeploy" {
           revert(28, 4)
         }
         case false {
-          let src$OptionDoc_dispatch_selector_5
-          src$OptionDoc_dispatch_selector_5 := shr(224, calldataload(0))
-          switch src$OptionDoc_dispatch_selector_5
+          let src$OptionDoc_dispatch_selector_2
+          src$OptionDoc_dispatch_selector_2 := shr(224, calldataload(0))
+          switch src$OptionDoc_dispatch_selector_2
             case 0xdffeadd0 {
               if callvalue() {
                 mstore(0, 0xb5988ea3)
                 revert(28, 4)
               }
-              let src$dispatch_ret0_6
-              let _v5
-              _v5 := usr$doc_option_maybe_OptionDoc_main_dd6304f4c()
-              src$dispatch_ret0_6 := _v5
-              let src$dispatch_ret0_word_7
-              src$dispatch_ret0_word_7 := 0
-              src$dispatch_ret0_word_7 := src$dispatch_ret0_6
-              mstore(0, src$dispatch_ret0_word_7)
+              let src$dispatch_ret0_3
+              let _v2
+              _v2 := usr$doc_option_maybe_OptionDoc_main_dd6304f4c()
+              src$dispatch_ret0_3 := _v2
+              let src$dispatch_ret0_word_4
+              src$dispatch_ret0_word_4 := 0
+              src$dispatch_ret0_word_4 := src$dispatch_ret0_3
+              mstore(0, src$dispatch_ret0_word_4)
               return(0, 32)
             }
             default {

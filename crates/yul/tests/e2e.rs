@@ -526,6 +526,15 @@ fn blocked_category_from_specialize(
     }) {
         return Some(BlockedCategory::UnannotatedEntrySpecialization);
     }
+    if diagnostics.iter().any(|diagnostic| {
+        matches!(
+            &diagnostic.kind,
+            SpecializeDiagnosticKind::MissingResolution { context }
+                if context.contains("<error>") && context.contains("cannot match")
+        )
+    }) {
+        return Some(BlockedCategory::NeedsStorageIndexLowering);
+    }
     None
 }
 
@@ -1423,6 +1432,7 @@ enum SpecExpectation {
 enum BlockedCategory {
     UnannotatedEntrySpecialization,
     NeedsStdInstances,
+    NeedsStorageIndexLowering,
     NonWordAbiDispatch,
     UnsupportedMonoConstruct,
     MissingSpecializedFunction,
@@ -1433,6 +1443,7 @@ impl BlockedCategory {
         match self {
             Self::UnannotatedEntrySpecialization => "unannotated-entry-specialization",
             Self::NeedsStdInstances => "needs-std-instances",
+            Self::NeedsStorageIndexLowering => "needs-storage-index-lowering",
             Self::NonWordAbiDispatch => "non-word-abi-dispatch",
             Self::UnsupportedMonoConstruct => "unsupported-mono-construct",
             Self::MissingSpecializedFunction => "missing-specialized-function",
@@ -1511,6 +1522,7 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
     }
     let unannotated = BlockedCategory::UnannotatedEntrySpecialization;
     let std_instances = BlockedCategory::NeedsStdInstances;
+    let storage_index = BlockedCategory::NeedsStorageIndexLowering;
     let non_word_abi = BlockedCategory::NonWordAbiDispatch;
     let unsupported_mono = BlockedCategory::UnsupportedMonoConstruct;
     let missing_specialized = BlockedCategory::MissingSpecializedFunction;
@@ -1546,7 +1558,7 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
             "051expreturn.solc",
             skip("no assigned P9 E2E oracle for experimental return encoding"),
         ),
-        ("051negBool.solc", blocked(non_word_abi)),
+        ("051negBool.solc", run(1)),
         ("052negPair.solc", blocked(std_instances)),
         (
             "052return.solc",
@@ -1574,9 +1586,9 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("121counter.solc", run(1)),
         ("122counters.solc", run(3)),
         ("123stackAndStorage.solc", run(3)),
-        ("126nanoerc20.solc", blocked(std_instances)),
-        ("127microerc20.solc", blocked(std_instances)),
-        ("128minierc20.solc", blocked(std_instances)),
+        ("126nanoerc20.solc", blocked(storage_index)),
+        ("127microerc20.solc", blocked(storage_index)),
+        ("128minierc20.solc", blocked(storage_index)),
         ("131constructor.solc", blocked(missing_specialized)),
         (
             "135cons3.solc",

@@ -447,6 +447,103 @@ fn decision_tree_match_lowering_preserves_priority_nested_and_multi_scrutinee_ca
 }
 
 #[test]
+fn decision_tree_shape_preserves_specific_constructors_before_wildcard_defaults() {
+    let dwarves = pretty_fixture_hull("spec/037dwarves.solc");
+    assert_contains_in_order(
+        "037dwarves",
+        &dwarves,
+        &[
+            "/* Doc */",
+            "return 1",
+            "/* Grumpy */",
+            "return 2",
+            "/* Sleepy */",
+            "return 3",
+            "/* Bashful */",
+            "return 4",
+            "/* Happy */",
+            "return 5",
+            "return 0",
+        ],
+    );
+
+    let food0_actual = pretty_fixture_hull("spec/038food0.solc");
+    assert!(
+        food0_actual.contains("function 038food0_FoodContract_main"),
+        "{food0_actual}"
+    );
+    assert!(food0_actual.contains("return 42"), "{food0_actual}");
+
+    let food0_shape = pretty_src_hull(
+        "food0_runtime_shape",
+        r#"
+data Food = Curry | Beans | Other;
+data CFood = Red(Food) | Green(Food) | Nocolor;
+
+function fromEnum(x : CFood) -> word {
+  match x {
+    | CFood.Red(Food.Curry) => return 1;
+    | CFood.Green(Food.Beans) => return 42;
+    | _ => return 3;
+  }
+}
+
+contract FoodContract {
+  public function main(x : CFood) -> word {
+    return fromEnum(x);
+  }
+}
+"#,
+    );
+    assert_contains_in_order(
+        "food0 runtime shape",
+        &food0_shape,
+        &[
+            "/* Red */",
+            "/* Curry */",
+            "return 1",
+            "/* Green */",
+            "/* Beans */",
+            "return 42",
+        ],
+    );
+
+    let food = pretty_fixture_hull("spec/039food.solc");
+    assert_contains_in_order(
+        "039food",
+        &food,
+        &[
+            "/* Green */",
+            "let f : Food",
+            "return f",
+            "function 039food_FoodContract_main",
+            "return 42",
+        ],
+    );
+
+    let wildcard_after_ctor = pretty_src_hull(
+        "wildcard_after_ctor",
+        r#"
+data Tiny = A | B | C;
+
+contract C {
+  public function pick(t : Tiny) -> word {
+    match t {
+      | Tiny.B => return 2;
+      | _ => return 9;
+    }
+  }
+}
+"#,
+    );
+    assert_contains_in_order(
+        "minimal wildcard after constructor",
+        &wildcard_after_ctor,
+        &["/* B */", "return 2", "return 9"],
+    );
+}
+
+#[test]
 fn cited_terminal_yul_fixtures_do_not_fail_missing_terminator() {
     for fixture in [
         "cases/yul-return.solc",
@@ -839,6 +936,64 @@ fn assert_fixture_emits_and_checks(relative: &str) {
         Vec::new(),
         "check diagnostics for {relative:?}"
     );
+}
+
+fn pretty_fixture_hull(relative: &str) -> String {
+    let fixture = repo_root()
+        .join("crates/parser/tests/fixtures/corpus/ok/test/examples")
+        .join(relative);
+    let (db, output) = specialize_fixture(&fixture);
+    pretty_output_hull(db, output, relative)
+}
+
+fn pretty_src_hull(name: &str, src: &str) -> String {
+    let (db, output) = specialize_src(name, src);
+    pretty_output_hull(db, output, name)
+}
+
+fn pretty_output_hull(
+    db: &'static TestDb,
+    output: SpecializeOutput<'static>,
+    label: &str,
+) -> String {
+    assert_eq!(
+        output.diagnostics,
+        Vec::new(),
+        "specialize diagnostics for {label:?}"
+    );
+    let emitted = emit_module(
+        db,
+        &output.module,
+        EmitOptions {
+            emit_dispatcher_comments: false,
+        },
+    );
+    let non_dispatch: Vec<_> = emitted
+        .diagnostics
+        .iter()
+        .filter(|d| !matches!(d.kind, EmitDiagnosticKind::UnsupportedDispatchEntry { .. }))
+        .collect();
+    assert_eq!(
+        non_dispatch,
+        Vec::<&EmitDiagnostic>::new(),
+        "emit diagnostics for {label:?}"
+    );
+    assert_eq!(
+        check_program_with_db(db, &emitted.program),
+        Vec::new(),
+        "check diagnostics for {label:?}"
+    );
+    pretty_program(db, &emitted.program)
+}
+
+fn assert_contains_in_order(label: &str, haystack: &str, needles: &[&str]) {
+    let mut offset = 0;
+    for needle in needles {
+        let Some(found) = haystack[offset..].find(needle) else {
+            panic!("{label}: missing ordered snippet {needle:?}\n{haystack}");
+        };
+        offset += found + needle.len();
+    }
 }
 
 fn assert_fixture_emits_without_match_lowering_regressions(relative: &str) {

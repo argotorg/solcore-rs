@@ -25,7 +25,8 @@ use hir_ty::{
     InferenceResult, LoweredFunction, Pred, PredKind, Solution, Ty, TyCtor, TyKind, TypeLowering,
     UserTyCtor, UserTyCtorKind, canonical_goal, contract_dispatch_surface, derived_generic_plan,
     frontend_desugar_plan, infer_body, lower_normalized_function_with_inferred_signature, solve,
-    solver::DerivedClauseKind, trait_env_from_module_resolution, trait_env_with_givens,
+    solver::DerivedClauseKind, trait_env_for_module, trait_env_from_module_resolution,
+    trait_env_with_givens,
 };
 use nameres::{
     LibraryId, ModuleId, module_id_from_key, module_key_for_path, resolve_reachable_full,
@@ -220,7 +221,7 @@ impl<'db> Driver<'db> {
         let mut module_trait_envs = FxHashMap::default();
         for indexed in &modules {
             let resolution = resolve_specialize_module(db, *indexed);
-            let trait_env = trait_env_from_module_resolution(db, *indexed, &resolution);
+            let trait_env = specialization_trait_env(db, *indexed, &resolution);
             module_resolutions.insert(indexed.def_id_value(db), resolution);
             module_trait_envs.insert(indexed.def_id_value(db), trait_env);
         }
@@ -2683,6 +2684,22 @@ fn reachable_modules<'db>(db: &'db dyn Db, entry: Module<'db>) -> Vec<Module<'db
         modules.push(entry);
     }
     modules
+}
+
+fn specialization_trait_env<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    resolution: &hir_nameres::ModuleResolutionMap<'db>,
+) -> hir_ty::TraitEnvId<'db> {
+    if module
+        .items(db)
+        .iter()
+        .any(|item| matches!(item, Item::Import(_)))
+        && let Some(module_id) = module_id_for_source_file(db, module.def_id_value(db).file(db))
+    {
+        return trait_env_for_module(db, module_id);
+    }
+    trait_env_from_module_resolution(db, module, resolution)
 }
 
 fn module_id_for_source_file<'db>(db: &'db dyn Db, file: SourceFile) -> Option<ModuleId<'db>> {

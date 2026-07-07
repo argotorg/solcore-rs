@@ -1986,7 +1986,9 @@ fn match_pat<'db>(
             MonoExprKind::Con {
                 ctor: value_ctor,
                 args: value_args,
-            } if ctor.name == value_ctor.name && args.len() == value_args.len() => {
+            } if constructor_matches(pat.ty, &ctor.name, value.ty, &value_ctor.name)
+                && args.len() == value_args.len() =>
+            {
                 for (pat, value) in args.iter().zip(value_args) {
                     env = match_pat(env, pat, value)?;
                 }
@@ -2008,6 +2010,21 @@ fn match_pat<'db>(
             .then_some(env),
         MonoPatKind::Error => None,
     }
+}
+
+fn constructor_matches(
+    pat_ty: MonoTy<'_>,
+    pat_ctor: &str,
+    value_ty: MonoTy<'_>,
+    value_ctor: &str,
+) -> bool {
+    pat_ty == value_ty && constructor_names_match(pat_ctor, value_ctor)
+}
+
+fn constructor_names_match(lhs: &str, rhs: &str) -> bool {
+    let lhs = lhs.replace('.', "_");
+    let rhs = rhs.replace('.', "_");
+    lhs == rhs || lhs.ends_with(&format!("_{rhs}")) || rhs.ends_with(&format!("_{lhs}"))
 }
 
 fn literal_matches(lit: &LitKind, value: &MonoExpr<'_>) -> bool {
