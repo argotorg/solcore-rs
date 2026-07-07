@@ -396,6 +396,42 @@ fn contract_field_initializers_are_typed() {
 }
 
 #[test]
+fn storage_mapping_compound_assign_requires_numeric_element() {
+    let common = "data mapping(key, value) = mapping(word);\ndata uint256 = uint256(word);\n";
+
+    let ok_word = diagnostics(&format!(
+        "{common}contract C {{ m : mapping(word, word); function f(k: word) {{ m[k] += 1; }} }}"
+    ));
+    assert!(ok_word.is_empty(), "{ok_word:?}");
+
+    let ok_uint = diagnostics(&format!(
+        "{common}contract C {{ m : mapping(word, uint256); \
+         function f(k: word, v: uint256) {{ m[k] += v; }} }}"
+    ));
+    assert!(ok_uint.is_empty(), "{ok_uint:?}");
+
+    let bad_add = diagnostics(&format!(
+        "{common}contract C {{ m : mapping(word, bool); function f(k: word) {{ m[k] += true; }} }}"
+    ));
+    assert!(
+        bad_add
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0201")),
+        "{bad_add:?}"
+    );
+
+    let bad_sub = diagnostics(&format!(
+        "{common}contract C {{ m : mapping(word, bool); function f(k: word) {{ m[k] -= true; }} }}"
+    ));
+    assert!(
+        bad_sub
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0201")),
+        "{bad_sub:?}"
+    );
+}
+
+#[test]
 fn frontend_desugar_plan_records_if_bool_and_storage_field_hooks() {
     let db = TestDb::default();
     let module = parse_module(

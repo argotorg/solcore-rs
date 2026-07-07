@@ -1959,6 +1959,14 @@ impl<'db> InferCtx<'db> {
                 if self.is_storage_index_expr(body, *lhs) =>
             {
                 let lhs_ty = self.infer_expr(body, *lhs);
+                // The reference elaborates `m[k] += v` to `m[k] = m[k] + v`, so
+                // the element type carries the same numeric obligation as `+`/`-`:
+                // it must be a word-shaped numeric newtype (uint/uint256) or word
+                // itself. Anything else (bool, address, ...) is a type error.
+                if !self.is_word_numeric_adt(lhs_ty.clone()) {
+                    let word = self.engine.from_ty(Ty::word(self.db));
+                    self.unify_expr(body, *lhs, lhs_ty.clone(), word);
+                }
                 let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));
                 self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
                 self.engine.from_ty(Ty::unit(self.db))
