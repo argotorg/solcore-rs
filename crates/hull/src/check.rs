@@ -165,10 +165,12 @@ impl<'db> Env<'db> {
             }
             env.check_body(&object.code.stmts);
         });
+        // Yul object scoping: an inner object's code does not see the outer
+        // object's functions, so restore before recursing.
+        self.funs = saved_funs;
         for inner in &object.inners {
             self.check_object(inner);
         }
-        self.funs = saved_funs;
     }
 
     fn check_function(&mut self, function: &Function<'db>) {
