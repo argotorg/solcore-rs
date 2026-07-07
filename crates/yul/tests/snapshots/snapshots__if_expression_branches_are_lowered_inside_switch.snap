@@ -1,0 +1,32 @@
+---
+source: crates/yul/tests/snapshots.rs
+expression: "solcore_yul::render_hull_program(&db, &program).expect(\"Yul translation\")"
+---
+object "LazyIf" {
+  code {
+    function usr$then_value() -> _result {
+      _result := 1
+      leave
+    }
+    function usr$else_value() -> _result {
+      _result := 2
+      leave
+    }
+    function usr$main() -> _result {
+      let _v0
+      switch true
+        case 0 {
+          let _v2
+          _v2 := usr$else_value()
+          _v0 := _v2
+        }
+        default {
+          let _v1
+          _v1 := usr$then_value()
+          _v0 := _v1
+        }
+      _result := _v0
+      leave
+    }
+  }
+}

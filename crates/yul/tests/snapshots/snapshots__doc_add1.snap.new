@@ -1,47 +1,31 @@
 ---
 source: crates/yul/tests/snapshots.rs
+assertion_line: 125
 expression: render_fixture(&fixture)
 ---
-object "RGBDeploy" {
+object "Add1Deploy" {
   code {
     mstore(64, memoryguard(128))
-    if lt(codesize(), datasize("RGBDeploy")) {
+    if lt(codesize(), datasize("Add1Deploy")) {
       revert(0, 0)
     }
     if callvalue() {
       mstore(0, 0xb5988ea3)
       revert(28, 4)
     }
-    let size := datasize("RGB")
-    codecopy(0, dataoffset("RGB"), datasize("RGB"))
+    let size := datasize("Add1")
+    codecopy(0, dataoffset("Add1"), datasize("Add1"))
     return(0, size)
   }
-  object "RGB" {
+  object "Add1" {
     code {
-      function usr$047rgb_RGB_main_d6956f92a() -> _result {
-        switch true
-          case false {
-            /* R */
-            _result := 4
-            leave
-          }
-          case true {
-            switch true
-              case false {
-                /* G */
-                _result := 2
-                leave
-              }
-              case true {
-                {
-                  /* B */
-                  _result := 42
-                  leave
-                }
-              }
-          }
+      function usr$Add1_Add1_main_d32c90845() -> _result {
+        let res
+        res := add(40, 2)
+        _result := 42
+        leave
       }
-      /* selector 0xdffeadd0 -> 047rgb_RGB_main_d6956f92a */
+      /* selector 0xdffeadd0 -> Add1_Add1_main_d32c90845 */
       mstore(0x40, memoryguard(128))
       let _v0
       _v0 := calldatasize()
@@ -57,9 +41,9 @@ object "RGBDeploy" {
           revert(28, 4)
         }
         case false {
-          let RGB_dispatch_selector
-          RGB_dispatch_selector := shr(224, calldataload(0))
-          switch RGB_dispatch_selector
+          let Add1_dispatch_selector
+          Add1_dispatch_selector := shr(224, calldataload(0))
+          switch Add1_dispatch_selector
             case 0xdffeadd0 {
               if callvalue() {
                 mstore(0, 0xb5988ea3)
@@ -67,7 +51,7 @@ object "RGBDeploy" {
               }
               let dispatch_ret0
               let _v2
-              _v2 := usr$047rgb_RGB_main_d6956f92a()
+              _v2 := usr$Add1_Add1_main_d32c90845()
               dispatch_ret0 := _v2
               let dispatch_ret0_0
               dispatch_ret0_0 := dispatch_ret0

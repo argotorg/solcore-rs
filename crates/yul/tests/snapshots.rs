@@ -5,7 +5,18 @@ use std::{
     process::Command,
 };
 
-use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
+use hir::{
+    anchor::DefLocationTable,
+    ast::item::Module,
+    diag::Offset,
+    input::SourceFile,
+    span::{AnchorId, Span},
+};
+use hull::{
+    Arg as HullArg, CodeBlock as HullCodeBlock, Expr as HullExpr, ExprKind as HullExprKind,
+    Function as HullFunction, Object as HullObject, Program as HullProgram, Stmt as HullStmt,
+    StmtKind as HullStmtKind, Ty as HullTy,
+};
 use nameres::{
     LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
     module_path_display, resolve_module_path_candidate,
@@ -132,6 +143,304 @@ contract DispatchBasicShape {
 }
 "#,
         )
+    );
+}
+
+#[test]
+fn ink_binary_sum_preserves_nested_layout_snapshot() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let unit = HullTy::unit(sp);
+    let target = HullTy::sum(
+        sp,
+        unit.clone(),
+        HullTy::sum(sp, unit.clone(), unit.clone()),
+    );
+    let program = HullProgram {
+        span: sp,
+        functions: Vec::new(),
+        objects: vec![HullObject {
+            span: sp,
+            name: "InkBinarySum".to_owned(),
+            code: HullCodeBlock {
+                span: sp,
+                stmts: Vec::new(),
+                functions: vec![HullFunction {
+                    span: sp,
+                    name: "pick_third".to_owned(),
+                    args: Vec::new(),
+                    ret: target.clone(),
+                    body: vec![HullStmt {
+                        span: sp,
+                        kind: HullStmtKind::Return(HullExpr {
+                            span: sp,
+                            ty: target.clone(),
+                            kind: HullExprKind::InK {
+                                index: 2,
+                                target: target.clone(),
+                                value: Box::new(HullExpr::unit(sp)),
+                            },
+                        }),
+                    }],
+                }],
+            },
+            inners: Vec::new(),
+        }],
+    };
+
+    assert_eq!(hull::check_program_with_db(&db, &program), Vec::new());
+    insta::assert_snapshot!(
+        "ink_binary_sum_preserves_nested_layout",
+        solcore_yul::render_hull_program(&db, &program).expect("Yul translation")
+    );
+}
+
+#[test]
+fn if_expression_branches_are_lowered_inside_switch_snapshot() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let word = HullTy::word(sp);
+    let bool_ty = HullTy::bool(sp);
+    let program = HullProgram {
+        span: sp,
+        functions: Vec::new(),
+        objects: vec![HullObject {
+            span: sp,
+            name: "LazyIf".to_owned(),
+            code: HullCodeBlock {
+                span: sp,
+                stmts: Vec::new(),
+                functions: vec![
+                    HullFunction {
+                        span: sp,
+                        name: "then_value".to_owned(),
+                        args: Vec::new(),
+                        ret: word.clone(),
+                        body: vec![HullStmt {
+                            span: sp,
+                            kind: HullStmtKind::Return(HullExpr::word(sp, "1")),
+                        }],
+                    },
+                    HullFunction {
+                        span: sp,
+                        name: "else_value".to_owned(),
+                        args: Vec::new(),
+                        ret: word.clone(),
+                        body: vec![HullStmt {
+                            span: sp,
+                            kind: HullStmtKind::Return(HullExpr::word(sp, "2")),
+                        }],
+                    },
+                    HullFunction {
+                        span: sp,
+                        name: "main".to_owned(),
+                        args: Vec::new(),
+                        ret: word.clone(),
+                        body: vec![HullStmt {
+                            span: sp,
+                            kind: HullStmtKind::Return(HullExpr {
+                                span: sp,
+                                ty: word.clone(),
+                                kind: HullExprKind::If {
+                                    target: word.clone(),
+                                    cond: Box::new(HullExpr {
+                                        span: sp,
+                                        ty: bool_ty,
+                                        kind: HullExprKind::Bool(true),
+                                    }),
+                                    then_expr: Box::new(HullExpr {
+                                        span: sp,
+                                        ty: word.clone(),
+                                        kind: HullExprKind::Call {
+                                            callee: "then_value".to_owned(),
+                                            args: Vec::new(),
+                                        },
+                                    }),
+                                    else_expr: Box::new(HullExpr {
+                                        span: sp,
+                                        ty: word.clone(),
+                                        kind: HullExprKind::Call {
+                                            callee: "else_value".to_owned(),
+                                            args: Vec::new(),
+                                        },
+                                    }),
+                                },
+                            }),
+                        }],
+                    },
+                ],
+            },
+            inners: Vec::new(),
+        }],
+    };
+
+    assert_eq!(hull::check_program_with_db(&db, &program), Vec::new());
+    insta::assert_snapshot!(
+        "if_expression_branches_are_lowered_inside_switch",
+        solcore_yul::render_hull_program(&db, &program).expect("Yul translation")
+    );
+}
+
+#[test]
+fn copy_locs_rejects_arity_mismatch() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let unit = HullTy::unit(sp);
+    let target = HullTy::sum(
+        sp,
+        unit.clone(),
+        HullTy::sum(sp, unit.clone(), unit.clone()),
+    );
+    let program = HullProgram {
+        span: sp,
+        functions: Vec::new(),
+        objects: vec![HullObject {
+            span: sp,
+            name: "BadCopy".to_owned(),
+            code: HullCodeBlock {
+                span: sp,
+                functions: vec![HullFunction {
+                    span: sp,
+                    name: "bad".to_owned(),
+                    args: Vec::new(),
+                    ret: HullTy::unit(sp),
+                    body: vec![
+                        HullStmt {
+                            span: sp,
+                            kind: HullStmtKind::Let {
+                                name: "x".to_owned(),
+                                ty: target.clone(),
+                            },
+                        },
+                        HullStmt {
+                            span: sp,
+                            kind: HullStmtKind::Assign {
+                                lhs: HullExpr::var(sp, "x", target),
+                                rhs: HullExpr::word(sp, "0"),
+                            },
+                        },
+                    ],
+                }],
+                stmts: Vec::new(),
+            },
+            inners: Vec::new(),
+        }],
+    };
+
+    let err = solcore_yul::render_hull_program(&db, &program).expect_err("arity mismatch");
+    assert!(
+        err.message().contains("location copy arity mismatch"),
+        "{}",
+        err.message()
+    );
+}
+
+#[test]
+fn assembly_let_shadowing_does_not_substitute_shadowed_name() {
+    let yul = render_source(
+        "assembly_let_shadowing",
+        r#"
+contract AssemblyLetShadowing {
+  public function main() -> word {
+    let x : bool = false;
+    let r : word = 0;
+    assembly {
+      let x := 1
+      r := x
+    }
+    return r;
+  }
+}
+"#,
+    );
+
+    assert!(yul.contains("let x := 1"), "{yul}");
+    assert!(yul.contains("r := x"), "{yul}");
+    assert!(!yul.contains("r := _v0"), "{yul}");
+}
+
+#[test]
+fn assembly_nested_block_shadowing_is_block_local() {
+    let yul = render_source(
+        "assembly_nested_block_shadowing",
+        r#"
+contract AssemblyNestedBlockShadowing {
+  public function main() -> word {
+    let x : bool = false;
+    let r : word = 0;
+    assembly {
+      {
+        let x := 1
+        r := x
+      }
+      r := x
+    }
+    return r;
+  }
+}
+"#,
+    );
+
+    assert!(yul.contains("r := x"), "{yul}");
+    assert!(yul.contains("r := _v0"), "{yul}");
+}
+
+#[test]
+fn assembly_function_params_and_returns_shadow_hull_locals() {
+    let yul = render_source(
+        "assembly_function_shadowing",
+        r#"
+contract AssemblyFunctionShadowing {
+  public function main() -> word {
+    let x : bool = false;
+    let y : bool = true;
+    let r : word = 0;
+    assembly {
+      function f(x) -> y {
+        y := x
+      }
+      r := f(7)
+    }
+    return r;
+  }
+}
+"#,
+    );
+
+    assert!(yul.contains("function f(x) -> y"), "{yul}");
+    assert!(yul.contains("y := x"), "{yul}");
+    assert!(!yul.contains("y := _v0"), "{yul}");
+    assert!(!yul.contains("_v1 := x"), "{yul}");
+}
+
+#[test]
+fn top_level_no_object_hull_wraps_like_assemble_hs_snapshot() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let word = HullTy::word(sp);
+    let program = HullProgram {
+        span: sp,
+        functions: vec![HullFunction {
+            span: sp,
+            name: "main".to_owned(),
+            args: vec![HullArg {
+                span: sp,
+                name: "x".to_owned(),
+                ty: word.clone(),
+            }],
+            ret: word.clone(),
+            body: vec![HullStmt {
+                span: sp,
+                kind: HullStmtKind::Return(HullExpr::var(sp, "x", word)),
+            }],
+        }],
+        objects: Vec::new(),
+    };
+
+    assert_eq!(hull::check_program_with_db(&db, &program), Vec::new());
+    insta::assert_snapshot!(
+        "top_level_no_object_hull_wraps_like_assemble_hs",
+        solcore_yul::render_hull_program(&db, &program).expect("Yul translation")
     );
 }
 
@@ -316,6 +625,17 @@ fn parse_module<'db>(db: &'db TestDb, name: &str, src: &str) -> Module<'db> {
     let url = format!("memory:///{name}.solc").parse().expect("valid URL");
     let file = SourceFile::new(db, url, Some(src.to_owned()));
     parse_file_to_hir(db, file).module(db)
+}
+
+fn test_span<'db>(db: &'db TestDb) -> Span<'db> {
+    let file = SourceFile::new(
+        db,
+        "memory:///yul_snapshots_hull.solc"
+            .parse()
+            .expect("valid URL"),
+        Some(String::new()),
+    );
+    Span::new(AnchorId::root(db, file), Offset::new(0), Offset::new(0))
 }
 
 fn specialize_fixture(path: &Path) -> (&'static TestDb, SpecializeOutput<'static>) {

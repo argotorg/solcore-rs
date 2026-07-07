@@ -1,5 +1,6 @@
 ---
 source: crates/yul/tests/snapshots.rs
+assertion_line: 118
 expression: render_fixture(&fixture)
 ---
 object "RGBDeploy" {
@@ -18,7 +19,7 @@ object "RGBDeploy" {
   }
   object "RGB" {
     code {
-      function usr$047rgb_RGB_main_d6956f92a() -> _result {
+      function usr$047rgb_RGB_main_d9bbcf828() -> _result {
         switch true
           case false {
             /* R */
@@ -41,7 +42,7 @@ object "RGBDeploy" {
               }
           }
       }
-      /* selector 0xdffeadd0 -> 047rgb_RGB_main_d6956f92a */
+      /* selector 0xdffeadd0 -> 047rgb_RGB_main_d9bbcf828 */
       mstore(0x40, memoryguard(128))
       let _v0
       _v0 := calldatasize()
@@ -67,7 +68,7 @@ object "RGBDeploy" {
               }
               let dispatch_ret0
               let _v2
-              _v2 := usr$047rgb_RGB_main_d6956f92a()
+              _v2 := usr$047rgb_RGB_main_d9bbcf828()
               dispatch_ret0 := _v2
               let dispatch_ret0_0
               dispatch_ret0_0 := dispatch_ret0

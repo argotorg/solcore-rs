@@ -1,0 +1,20 @@
+---
+source: crates/yul/tests/snapshots.rs
+expression: "solcore_yul::render_hull_program(&db, &program).expect(\"Yul translation\")"
+---
+object "OutputDeploy" {
+  code {
+  }
+  object "Output" {
+    code {
+      function usr$main(x) -> _result {
+        _result := x
+        leave
+      }
+      {
+        mstore(0, _mainresult)
+        return(0, 32)
+      }
+    }
+  }
+}

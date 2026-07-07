@@ -18,13 +18,13 @@ object "Add1Deploy" {
   }
   object "Add1" {
     code {
-      function usr$Add1_Add1_main_d32c90845() -> _result {
+      function usr$Add1_Add1_main_d1907d542() -> _result {
         let res
         res := add(40, 2)
         _result := 42
         leave
       }
-      /* selector 0xdffeadd0 -> Add1_Add1_main_d32c90845 */
+      /* selector 0xdffeadd0 -> Add1_Add1_main_d1907d542 */
       mstore(0x40, memoryguard(128))
       let _v0
       _v0 := calldatasize()
@@ -50,7 +50,7 @@ object "Add1Deploy" {
               }
               let dispatch_ret0
               let _v2
-              _v2 := usr$Add1_Add1_main_d32c90845()
+              _v2 := usr$Add1_Add1_main_d1907d542()
               dispatch_ret0 := _v2
               let dispatch_ret0_0
               dispatch_ret0_0 := dispatch_ret0

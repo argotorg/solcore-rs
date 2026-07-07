@@ -128,6 +128,18 @@ fn evm_e2e_execution_harness() {
         Err(failure) => scoreboard.record_failure("dispatch/basic-shape", failure),
     }
 
+    scoreboard.files_run += 1;
+    match run_if_unselected_revert_branch(&solc, &cast, runtime.url()) {
+        Ok(()) => scoreboard.files_passed += 1,
+        Err(failure) => scoreboard.record_failure("if/unselected-revert-branch", failure),
+    }
+
+    scoreboard.files_run += 1;
+    match run_if_mutually_exclusive_storage_writes(&solc, &cast, runtime.url()) {
+        Ok(()) => scoreboard.files_passed += 1,
+        Err(failure) => scoreboard.record_failure("if/mutually-exclusive-storage-writes", failure),
+    }
+
     eprintln!("{}", scoreboard.render());
     assert!(
         scoreboard.failures.is_empty(),
@@ -191,6 +203,77 @@ contract DispatchBasicShapeE2E {
         "truth()",
         Expected::Bool(true),
         &call(cast, rpc_url, &address, "0x9e9f51d2")?,
+    )
+}
+
+fn run_if_unselected_revert_branch(
+    solc: &Path,
+    cast: &Path,
+    rpc_url: &str,
+) -> Result<(), E2eFailure> {
+    let yul = render_source(
+        "if_unselected_revert_branch_e2e",
+        r#"
+contract IfUnselectedRevertBranchE2E {
+  function boom() -> word {
+    assembly {
+      revert(0, 0)
+    }
+    return 0;
+  }
+
+  public function main() -> word {
+    return (if true then 1 else boom());
+  }
+}
+"#,
+    )?;
+    let bytecode = compile_yul(solc, "if_unselected_revert_branch_e2e", &yul)?;
+    let address = deploy(cast, rpc_url, &bytecode)?;
+    assert_return(
+        "main() lazy if skips revert",
+        Expected::Word(1),
+        &call(cast, rpc_url, &address, MAIN_SELECTOR)?,
+    )
+}
+
+fn run_if_mutually_exclusive_storage_writes(
+    solc: &Path,
+    cast: &Path,
+    rpc_url: &str,
+) -> Result<(), E2eFailure> {
+    let yul = render_source(
+        "if_mutually_exclusive_storage_writes_e2e",
+        r#"
+import std.{*};
+
+contract IfMutuallyExclusiveStorageWritesE2E {
+  a : word;
+  b : word;
+
+  function writeA() -> word {
+    a = 11;
+    return a;
+  }
+
+  function writeB() -> word {
+    b = 100;
+    return b;
+  }
+
+  public function main() -> word {
+    let chosen : word = if true then writeA() else writeB();
+    return a + b;
+  }
+}
+"#,
+    )?;
+    let bytecode = compile_yul(solc, "if_mutually_exclusive_storage_writes_e2e", &yul)?;
+    let address = deploy(cast, rpc_url, &bytecode)?;
+    assert_return(
+        "main() lazy if writes only the selected slot",
+        Expected::Word(11),
+        &call(cast, rpc_url, &address, MAIN_SELECTOR)?,
     )
 }
 

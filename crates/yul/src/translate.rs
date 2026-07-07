@@ -99,11 +99,16 @@ impl<'db> Translator<'db> {
         program: &HullProgram<'db>,
     ) -> Result<Program, TranslationError> {
         if program.objects.is_empty() {
-            let code = self.translate_code_parts(&program.functions, &[])?;
+            let mut code = self.translate_code_parts(&program.functions, &[])?;
+            code.stmts.extend(main_result_return_block());
             return Ok(Program::single_object(Object {
-                name: "Output".to_owned(),
-                code,
-                inners: Vec::new(),
+                name: "OutputDeploy".to_owned(),
+                code: Code::new(Vec::new()),
+                inners: vec![Inner::Object(Object {
+                    name: "Output".to_owned(),
+                    code,
+                    inners: Vec::new(),
+                })],
             }));
         }
 
@@ -290,7 +295,9 @@ impl<'db> Translator<'db> {
             }
             StmtKind::Assembly(stmts) => Ok(stmts
                 .iter()
-                .map(|stmt| self.convert_yul_stmt(stmt))
+                .scan(BTreeSet::new(), |shadowed, stmt| {
+                    Some(self.convert_yul_stmt(stmt, shadowed))
+                })
                 .collect()),
             StmtKind::Revert(message) => Ok(revert_stmts(message)),
             StmtKind::Comment(comment) => Ok(vec![Stmt::Comment(comment.clone())]),
@@ -346,21 +353,7 @@ impl<'db> Translator<'db> {
                 value,
             } => {
                 let (stmts, loc) = self.gen_expr(value)?;
-                let payloads = sum_payloads(target.strip_named());
-                let max_payload = payloads
-                    .iter()
-                    .map(|ty| size_of_ty(ty))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .max()
-                    .unwrap_or(0);
-                Ok((
-                    stmts,
-                    Location::Seq(vec![
-                        Location::Word(index.to_string()),
-                        pad_to_size(loc, max_payload),
-                    ]),
-                ))
+                Ok((stmts, lower_in_k_loc(target, *index, loc)?))
             }
             ExprKind::Call { callee, args } => {
                 let mut out = Vec::new();
@@ -410,15 +403,17 @@ impl<'db> Translator<'db> {
                 let (then_stmts, then_loc) = self.gen_expr(then_expr)?;
                 let (else_stmts, else_loc) = self.gen_expr(else_expr)?;
                 out.extend(cond_stmts);
-                out.extend(then_stmts);
-                out.extend(else_stmts);
+                let mut then_body = then_stmts;
+                then_body.extend(copy_locs(&result_loc, &then_loc)?);
+                let mut else_body = else_stmts;
+                else_body.extend(copy_locs(&result_loc, &else_loc)?);
                 out.push(Stmt::Switch {
                     expr: load_loc(&normalize_loc(cond_loc))?,
                     cases: vec![Case {
                         lit: Literal::Number("0".to_owned()),
-                        body: copy_locs(&result_loc, &else_loc)?,
+                        body: else_body,
                     }],
-                    default: Some(copy_locs(&result_loc, &then_loc)?),
+                    default: Some(then_body),
                 });
                 Ok((out, result_loc))
             }
@@ -436,15 +431,13 @@ impl<'db> Translator<'db> {
         for alt in alts {
             match &alt.pat.kind {
                 PatKind::Con(con) => {
+                    let lit = con_lit(target, *con)?;
                     let payload = con_payload(target, *con, &payload)?;
                     let body = self.with_local_env(|this| {
                         this.insert_var(alt.binder.clone(), payload);
                         this.gen_stmts(&alt.body)
                     })?;
-                    cases.push(Case {
-                        lit: con_lit(*con),
-                        body,
-                    });
+                    cases.push(Case { lit, body });
                 }
                 PatKind::IntLit(value) => {
                     let body = self.with_local_env(|this| {
@@ -530,67 +523,69 @@ impl<'db> Translator<'db> {
         Ok(lhs_stmts)
     }
 
-    fn convert_yul_stmt(&self, stmt: &HirYulStmt<'db>) -> Stmt {
+    fn convert_yul_stmt(&self, stmt: &HirYulStmt<'db>, shadowed: &mut BTreeSet<String>) -> Stmt {
         match &stmt.kind {
-            YulStmtKind::Block(stmts) => Stmt::Block(
-                stmts
+            YulStmtKind::Block(stmts) => {
+                let mut block_shadowed = shadowed.clone();
+                Stmt::Block(self.convert_yul_stmts(stmts, &mut block_shadowed))
+            }
+            YulStmtKind::Let { names, init } => {
+                let init = init
+                    .as_ref()
+                    .map(|expr| self.convert_yul_expr(expr, shadowed));
+                let names = names
                     .iter()
-                    .map(|stmt| self.convert_yul_stmt(stmt))
-                    .collect(),
-            ),
-            YulStmtKind::Let { names, init } => Stmt::Let {
-                names: names.iter().map(|name| yul_name(self.db, name)).collect(),
-                init: init.as_ref().map(|expr| self.convert_yul_expr(expr)),
-            },
+                    .map(|name| yul_name(self.db, name))
+                    .collect::<Vec<_>>();
+                shadowed.extend(names.iter().cloned());
+                Stmt::Let { names, init }
+            }
             YulStmtKind::Assign { names, value } => Stmt::Assign {
                 names: names
                     .iter()
-                    .map(|name| self.subst_asm_lhs_name(&yul_name(self.db, name)))
+                    .map(|name| self.subst_asm_lhs_name(&yul_name(self.db, name), shadowed))
                     .collect(),
-                value: self.convert_yul_expr(value),
+                value: self.convert_yul_expr(value, shadowed),
             },
-            YulStmtKind::Expr(expr) => Stmt::Expr(self.convert_yul_expr(expr)),
+            YulStmtKind::Expr(expr) => Stmt::Expr(self.convert_yul_expr(expr, shadowed)),
             YulStmtKind::If { cond, body } => Stmt::If {
-                cond: self.convert_yul_expr(cond),
-                body: body
-                    .iter()
-                    .map(|stmt| self.convert_yul_stmt(stmt))
-                    .collect(),
+                cond: self.convert_yul_expr(cond, shadowed),
+                body: {
+                    let mut body_shadowed = shadowed.clone();
+                    self.convert_yul_stmts(body, &mut body_shadowed)
+                },
             },
             YulStmtKind::For {
                 init,
                 cond,
                 post,
                 body,
-            } => Stmt::For {
-                init: init
-                    .iter()
-                    .map(|stmt| self.convert_yul_stmt(stmt))
-                    .collect(),
-                cond: self.convert_yul_expr(cond),
-                post: post
-                    .iter()
-                    .map(|stmt| self.convert_yul_stmt(stmt))
-                    .collect(),
-                body: body
-                    .iter()
-                    .map(|stmt| self.convert_yul_stmt(stmt))
-                    .collect(),
-            },
+            } => {
+                let mut loop_shadowed = shadowed.clone();
+                let init = self.convert_yul_stmts(init, &mut loop_shadowed);
+                let cond = self.convert_yul_expr(cond, &loop_shadowed);
+                let mut post_shadowed = loop_shadowed.clone();
+                let mut body_shadowed = loop_shadowed;
+                Stmt::For {
+                    init,
+                    cond,
+                    post: self.convert_yul_stmts(post, &mut post_shadowed),
+                    body: self.convert_yul_stmts(body, &mut body_shadowed),
+                }
+            }
             YulStmtKind::Switch {
                 expr,
                 cases,
                 default,
             } => Stmt::Switch {
-                expr: self.convert_yul_expr(expr),
+                expr: self.convert_yul_expr(expr, shadowed),
                 cases: cases
                     .iter()
-                    .map(|case| self.convert_yul_case(case))
+                    .map(|case| self.convert_yul_case(case, shadowed))
                     .collect(),
                 default: default.as_ref().map(|body| {
-                    body.iter()
-                        .map(|stmt| self.convert_yul_stmt(stmt))
-                        .collect()
+                    let mut default_shadowed = shadowed.clone();
+                    self.convert_yul_stmts(body, &mut default_shadowed)
                 }),
             },
             YulStmtKind::FunctionDef {
@@ -602,10 +597,12 @@ impl<'db> Translator<'db> {
                 name: yul_name(self.db, name),
                 params: params.iter().map(|name| yul_name(self.db, name)).collect(),
                 returns: rets.iter().map(|name| yul_name(self.db, name)).collect(),
-                body: body
-                    .iter()
-                    .map(|stmt| self.convert_yul_stmt(stmt))
-                    .collect(),
+                body: {
+                    let mut body_shadowed = shadowed.clone();
+                    body_shadowed.extend(params.iter().map(|name| yul_name(self.db, name)));
+                    body_shadowed.extend(rets.iter().map(|name| yul_name(self.db, name)));
+                    self.convert_yul_stmts(body, &mut body_shadowed)
+                },
             },
             YulStmtKind::Leave => Stmt::Leave,
             YulStmtKind::Break => Stmt::Break,
@@ -614,33 +611,46 @@ impl<'db> Translator<'db> {
         }
     }
 
-    fn convert_yul_case(&self, case: &HirYulCase<'db>) -> Case {
+    fn convert_yul_stmts(
+        &self,
+        stmts: &[HirYulStmt<'db>],
+        shadowed: &mut BTreeSet<String>,
+    ) -> Vec<Stmt> {
+        stmts
+            .iter()
+            .map(|stmt| self.convert_yul_stmt(stmt, shadowed))
+            .collect()
+    }
+
+    fn convert_yul_case(&self, case: &HirYulCase<'db>, shadowed: &BTreeSet<String>) -> Case {
+        let mut case_shadowed = shadowed.clone();
         Case {
             lit: convert_yul_lit(&case.lit),
-            body: case
-                .body
-                .iter()
-                .map(|stmt| self.convert_yul_stmt(stmt))
-                .collect(),
+            body: self.convert_yul_stmts(&case.body, &mut case_shadowed),
         }
     }
 
-    fn convert_yul_expr(&self, expr: &HirYulExpr<'db>) -> Expr {
+    fn convert_yul_expr(&self, expr: &HirYulExpr<'db>, shadowed: &BTreeSet<String>) -> Expr {
         match &expr.kind {
             YulExprKind::Lit(lit) => Expr::Lit(convert_yul_lit(lit)),
             YulExprKind::Ident(name) => {
                 let name = yul_name(self.db, name);
-                self.subst_asm_expr_name(&name)
+                self.subst_asm_expr_name(&name, shadowed)
             }
             YulExprKind::Call { name, args } => Expr::call(
                 yul_name(self.db, name),
-                args.iter().map(|arg| self.convert_yul_expr(arg)).collect(),
+                args.iter()
+                    .map(|arg| self.convert_yul_expr(arg, shadowed))
+                    .collect(),
             ),
             YulExprKind::Error => Expr::ident("error"),
         }
     }
 
-    fn subst_asm_expr_name(&self, name: &str) -> Expr {
+    fn subst_asm_expr_name(&self, name: &str, shadowed: &BTreeSet<String>) -> Expr {
+        if shadowed.contains(name) {
+            return Expr::ident(name);
+        }
         match self.lookup_var_opt(name).and_then(|loc| {
             let flattened = flatten_rhs(&loc);
             match flattened.as_slice() {
@@ -653,7 +663,10 @@ impl<'db> Translator<'db> {
         }
     }
 
-    fn subst_asm_lhs_name(&self, name: &str) -> String {
+    fn subst_asm_lhs_name(&self, name: &str, shadowed: &BTreeSet<String>) -> String {
+        if shadowed.contains(name) {
+            return name.to_owned();
+        }
         match self.lookup_var_opt(name).and_then(|loc| {
             let flattened = flatten_lhs(&loc).ok()?;
             match flattened.as_slice() {
@@ -744,6 +757,29 @@ fn zero_sized_type(ty: &HullTy<'_>) -> bool {
     size_of_ty(ty).is_ok_and(|size| size == 0)
 }
 
+fn lower_in_k_loc(
+    target: &HullTy<'_>,
+    index: usize,
+    payload: Location,
+) -> Result<Location, TranslationError> {
+    match &target.strip_named().kind {
+        TyKind::Named { inner, .. } => lower_in_k_loc(inner, index, payload),
+        TyKind::Sum(lhs, rhs) if index == 0 => {
+            let padded = pad_to_size(payload, size_of_ty(lhs)?.max(size_of_ty(rhs)?));
+            Ok(Location::Seq(vec![Location::Bool(false), padded]))
+        }
+        TyKind::Sum(lhs, rhs) => {
+            let nested = lower_in_k_loc(rhs, index - 1, payload)?;
+            let padded = pad_to_size(nested, size_of_ty(lhs)?.max(size_of_ty(rhs)?));
+            Ok(Location::Seq(vec![Location::Bool(true), padded]))
+        }
+        _ if index == 0 => Ok(payload),
+        _ => Err(TranslationError::new(format!(
+            "bad injection index {index} for non-sum target"
+        ))),
+    }
+}
+
 fn size_of_ty(ty: &HullTy<'_>) -> Result<usize, TranslationError> {
     match &ty.strip_named().kind {
         TyKind::Word | TyKind::Bool | TyKind::NamedRef { .. } | TyKind::Function { .. } => Ok(1),
@@ -821,9 +857,18 @@ fn load_loc(loc: &Location) -> Result<Expr, TranslationError> {
 
 fn copy_locs(lhs: &Location, rhs: &Location) -> Result<Vec<Stmt>, TranslationError> {
     if matches!(lhs, Location::Seq(_)) || matches!(rhs, Location::Seq(_)) {
-        return flatten_locs(lhs)
+        let lhs = flatten_locs(lhs);
+        let rhs = flatten_locs(rhs);
+        if lhs.len() != rhs.len() {
+            return Err(TranslationError::new(format!(
+                "location copy arity mismatch: lhs={} rhs={}",
+                lhs.len(),
+                rhs.len()
+            )));
+        }
+        return lhs
             .into_iter()
-            .zip(flatten_locs(rhs))
+            .zip(rhs)
             .map(|(lhs, rhs)| copy_locs(&lhs, &rhs))
             .collect::<Result<Vec<_>, _>>()
             .map(|chunks| chunks.into_iter().flatten().collect());
@@ -849,6 +894,7 @@ fn copy_locs(lhs: &Location, rhs: &Location) -> Result<Vec<Stmt>, TranslationErr
 
 fn flatten_locs(loc: &Location) -> Vec<Location> {
     match loc {
+        Location::Empty(size) => (0..*size).map(|_| Location::Empty(1)).collect(),
         Location::Seq(locs) => locs.iter().flat_map(flatten_locs).collect(),
         loc => vec![loc.clone()],
     }
@@ -954,22 +1000,16 @@ fn nth_sum_payload<'db>(target: &HullTy<'db>, index: usize) -> Option<HullTy<'db
     }
 }
 
-fn sum_payloads<'db>(target: &'db HullTy<'db>) -> Vec<&'db HullTy<'db>> {
-    match &target.strip_named().kind {
-        TyKind::Sum(lhs, rhs) => {
-            let mut out = vec![lhs.as_ref()];
-            out.extend(sum_payloads(rhs));
-            out
-        }
-        _ => vec![target],
-    }
-}
-
-fn con_lit(con: Con) -> Literal {
+fn con_lit(target: &HullTy<'_>, con: Con) -> Result<Literal, TranslationError> {
     match con {
-        Con::Inl => Literal::Bool(false),
-        Con::Inr => Literal::Bool(true),
-        Con::InK(index) => Literal::Number(index.to_string()),
+        Con::Inl => Ok(Literal::Bool(false)),
+        Con::Inr => Ok(Literal::Bool(true)),
+        Con::InK(index) if matches!(target.strip_named().kind, TyKind::Sum(_, _)) => {
+            Err(TranslationError::new(format!(
+                "in({index}) patterns require nested binary inl/inr matches"
+            )))
+        }
+        Con::InK(index) => Ok(Literal::Number(index.to_string())),
     }
 }
 
@@ -981,6 +1021,19 @@ fn partition_allocs(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<Stmt>) {
 
 fn is_unit_loc(loc: &Location) -> bool {
     matches!(loc, Location::Seq(locs) if locs.is_empty())
+}
+
+fn main_result_return_block() -> Vec<Stmt> {
+    vec![Stmt::Block(vec![
+        Stmt::Expr(Expr::call(
+            "mstore",
+            vec![Expr::number("0"), Expr::ident("_mainresult")],
+        )),
+        Stmt::Expr(Expr::call(
+            "return",
+            vec![Expr::number("0"), Expr::number("32")],
+        )),
+    ])]
 }
 
 fn revert_stmts(message: &str) -> Vec<Stmt> {
