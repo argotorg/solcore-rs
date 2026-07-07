@@ -1,3 +1,0 @@
-export {y};
-
-function y() -> () {return ();}

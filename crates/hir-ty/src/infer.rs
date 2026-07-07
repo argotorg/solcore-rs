@@ -6129,7 +6129,8 @@ mod tests {
     use super::*;
     use crate::{
         BinderEnv, Solution, TraitEnvId, TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal,
-        solve, trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens,
+        solve, solve_report, trait_env_for_module, trait_env_from_module_resolution,
+        trait_env_with_givens,
     };
 
     #[salsa::db]
@@ -6525,6 +6526,17 @@ mod tests {
     ) -> Solution<'db> {
         let goal = Pred::in_class(db, class, main, args);
         solve(db, env, canonical_goal(db, goal))
+    }
+
+    fn solve_class_report<'db>(
+        db: &'db TestDb,
+        env: TraitEnvId<'db>,
+        class: ClassId<'db>,
+        main: Ty<'db>,
+        args: Vec<Ty<'db>>,
+    ) -> crate::SolverReport<'db> {
+        let goal = Pred::in_class(db, class, main, args);
+        solve_report(db, env, canonical_goal(db, goal))
     }
 
     fn return_expr<'db>(db: &'db TestDb, body: FuncBody<'db>) -> Id<Expr<'db>> {
@@ -7098,6 +7110,189 @@ forall a . a:C => instance a:C {}
             Vec::new(),
         );
         assert!(matches!(solution, Solution::NoSolution));
+    }
+
+    #[test]
+    fn tabled_solver_cycle_saturates_without_fuel_diagnostic() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:C {}
+forall a . a:C => instance a:C {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+        let report = solve_class_report(
+            &db,
+            env,
+            class_id(&db, module, "C"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+
+        assert!(matches!(report.solution, Solution::NoSolution));
+        assert!(!report.exhausted, "{report:?}");
+
+        let diagnostics = lowered_module_typeck_diagnostics(
+            r#"
+pragma no-patterson-condition C;
+
+forall a . class a:C {}
+
+forall a . a:C => instance a:C {}
+
+forall a . a:C => function needsC(x:a) -> () {
+  return ();
+}
+
+function main(x: word) -> () {
+  return needsC(x);
+}
+"#,
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code.as_deref() != Some("SC0209")),
+            "{diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn tabled_solver_mutual_recursion_saturates_without_answers() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:C {}
+forall a . class a:D {}
+
+forall a . a:D => instance a:C {}
+forall a . a:C => instance a:D {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+
+        let report = solve_class_report(
+            &db,
+            env,
+            class_id(&db, module, "C"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+
+        assert!(matches!(report.solution, Solution::NoSolution));
+        assert!(!report.exhausted, "{report:?}");
+        assert_eq!(report.stats.answers_found, 0, "{report:?}");
+    }
+
+    #[test]
+    fn tabled_solver_shares_diamond_subgoals() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:Leaf {}
+forall a . class a:Left {}
+forall a . class a:Right {}
+forall a . class a:Top {}
+
+instance word:Leaf {}
+
+forall a . a:Leaf => instance a:Left {}
+forall a . a:Leaf => instance a:Right {}
+forall a . a:Left, a:Right => instance a:Top {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+
+        let report = solve_class_report(
+            &db,
+            env,
+            class_id(&db, module, "Top"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+
+        assert!(
+            matches!(report.solution, Solution::Unique { .. }),
+            "{report:?}"
+        );
+        assert!(!report.exhausted, "{report:?}");
+        assert_eq!(report.stats.table_size, 4, "{report:?}");
+        assert_eq!(report.stats.answers_found, 4, "{report:?}");
+    }
+
+    #[test]
+    fn tabled_solver_dedups_replayed_identical_answer() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:Seed {}
+forall a . class a:Derived {}
+
+instance word:Seed {}
+
+forall a . a:Seed, a:Seed => instance a:Derived {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+
+        let report = solve_class_report(
+            &db,
+            env,
+            class_id(&db, module, "Derived"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+
+        assert!(
+            matches!(report.solution, Solution::Unique { .. }),
+            "{report:?}"
+        );
+        assert_eq!(report.stats.table_size, 2, "{report:?}");
+        assert_eq!(report.stats.answers_found, 2, "{report:?}");
+    }
+
+    #[test]
+    fn tabled_solver_replays_answers_to_late_consumers() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+forall a . class a:Seed {}
+forall a . class a:Derived {}
+forall a . class a:Needs {}
+
+instance word:Seed {}
+
+forall a . a:Seed => instance a:Derived {}
+forall a . a:Seed, a:Derived => instance a:Needs {}
+"#,
+        );
+        let module_resolution = hir_nameres::resolve_module(&db, module);
+        let env = trait_env(&db, module, &module_resolution);
+
+        let report = solve_class_report(
+            &db,
+            env,
+            class_id(&db, module, "Needs"),
+            Ty::word(&db),
+            Vec::new(),
+        );
+
+        assert!(
+            matches!(report.solution, Solution::Unique { .. }),
+            "{report:?}"
+        );
+        assert_eq!(report.stats.table_size, 3, "{report:?}");
+        assert_eq!(report.stats.answers_found, 3, "{report:?}");
     }
 
     #[test]

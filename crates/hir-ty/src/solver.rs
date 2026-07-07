@@ -5,6 +5,8 @@
 //! environment. It deliberately leaves the P5 instance soundness checks as hook
 //! points; this wave only consumes the resulting clauses.
 
+use std::collections::VecDeque;
+
 use hir::{
     Db as HirDb,
     anchor::DefId,
@@ -26,7 +28,7 @@ use crate::{
     alias::{AliasError, AliasNormalizer, normalize_pred_aliases},
 };
 
-const DEFAULT_SOLVER_FUEL: usize = 256;
+const DEFAULT_SOLVER_FUEL: usize = 16_384;
 
 /// Canonicalized solver goal.
 #[salsa::interned(debug)]
@@ -231,6 +233,19 @@ pub struct SolverReport<'db> {
     pub exhausted: bool,
     /// Fuel remaining after the top-level solve finished.
     pub fuel_remaining: usize,
+    /// Tabled-engine counters, exposed for solver regression tests.
+    pub stats: SolverStats,
+}
+
+/// Internal tabled-engine counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, salsa::Update)]
+pub struct SolverStats {
+    /// Number of table entries allocated during this solve.
+    pub table_size: usize,
+    /// Number of generator clause attempts.
+    pub generator_steps: usize,
+    /// Number of fresh answers admitted to tables.
+    pub answers_found: usize,
 }
 
 /// Builds the trait environment visible from `module`.
@@ -1656,8 +1671,9 @@ fn solve_goal<'db>(
 ) -> SolverReport<'db> {
     let mut solver = Solver::new(db, env, DEFAULT_SOLVER_FUEL);
     let allowed_vars = allowed_vars.iter().copied().collect();
-    let mut report = solver.solve_pred_with_allowed(goal, SolveMode::Normal, &allowed_vars);
+    let mut report = solver.solve_pred_with_allowed(goal, &allowed_vars);
     report.fuel_remaining = solver.fuel;
+    report.stats = solver.stats;
     report
 }
 
@@ -1667,6 +1683,7 @@ impl<'db> SolverReport<'db> {
             solution,
             exhausted,
             fuel_remaining: 0,
+            stats: SolverStats::default(),
         }
     }
 }
@@ -1932,15 +1949,8 @@ impl<'db> TraitEnvBuilder<'db> {
 struct Solver<'db> {
     db: &'db dyn Db,
     env: TraitEnvId<'db>,
-    memo: FxHashMap<(SolveMode, Pred<'db>), SolverReport<'db>>,
-    active: FxHashSet<(SolveMode, Pred<'db>)>,
     fuel: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum SolveMode {
-    Normal,
-    GivensOnly,
+    stats: SolverStats,
 }
 
 impl<'db> Solver<'db> {
@@ -1948,163 +1958,40 @@ impl<'db> Solver<'db> {
         Self {
             db,
             env,
-            memo: FxHashMap::default(),
-            active: FxHashSet::default(),
             fuel,
+            stats: SolverStats::default(),
         }
     }
 
     fn solve_pred_with_allowed(
         &mut self,
         goal: Pred<'db>,
-        mode: SolveMode,
         allowed_goal_vars: &FxHashSet<u32>,
     ) -> SolverReport<'db> {
-        let key = (mode, goal);
-        let can_memo = allowed_goal_vars.is_empty();
-        if can_memo && let Some(report) = self.memo.get(&key) {
-            return report.clone();
-        }
-        if self.fuel == 0 {
-            return SolverReport::new(Solution::NoSolution, true);
-        }
-        self.fuel -= 1;
-        if self.active.contains(&key) {
-            return SolverReport::new(Solution::NoSolution, false);
+        let mut non_default = TabledEngine::new(self.db, self.env, false, self.fuel);
+        let mut result = non_default.run(goal, allowed_goal_vars);
+        self.fuel = result.fuel_remaining;
+        self.stats.add(result.stats);
+
+        if result.answers.is_empty()
+            && !result.exhausted
+            && !self.has_non_default_unifying_head(goal, allowed_goal_vars)
+        {
+            let mut with_defaults = TabledEngine::new(self.db, self.env, true, self.fuel);
+            let default_result = with_defaults.run(goal, allowed_goal_vars);
+            self.fuel = default_result.fuel_remaining;
+            self.stats.add(default_result.stats);
+            result.exhausted |= default_result.exhausted;
+            result.answers = default_result.answers;
         }
 
-        self.active.insert(key);
-        let report = self.solve_uncached(goal, mode, allowed_goal_vars);
-        self.active.remove(&key);
-        if can_memo {
-            self.memo.insert(key, report.clone());
-        }
+        let mut report = SolverReport::new(
+            solution_from_answers(self.db, self.env, result.answers),
+            result.exhausted,
+        );
+        report.fuel_remaining = self.fuel;
+        report.stats = self.stats;
         report
-    }
-
-    fn solve_uncached(
-        &mut self,
-        goal: Pred<'db>,
-        mode: SolveMode,
-        allowed_goal_vars: &FxHashSet<u32>,
-    ) -> SolverReport<'db> {
-        let (given_candidates, given_exhausted) =
-            self.solve_from_local_assumptions(goal, allowed_goal_vars);
-        if !given_candidates.is_empty() || mode == SolveMode::GivensOnly {
-            return SolverReport::new(solution_from_candidates(given_candidates), given_exhausted);
-        }
-
-        let (normal_candidates, normal_matched, normal_exhausted) =
-            self.solve_with_clause_set(goal, false, allowed_goal_vars, SolveMode::Normal);
-        if !normal_candidates.is_empty() {
-            return SolverReport::new(
-                solution_from_candidates(normal_candidates),
-                normal_exhausted,
-            );
-        }
-        if normal_matched || self.has_non_default_unifying_head(goal, allowed_goal_vars) {
-            return SolverReport::new(Solution::NoSolution, normal_exhausted);
-        }
-
-        let (default_candidates, default_matched, default_exhausted) =
-            self.solve_with_clause_set(goal, true, allowed_goal_vars, SolveMode::Normal);
-        if !default_candidates.is_empty() {
-            return SolverReport::new(
-                solution_from_candidates(default_candidates),
-                normal_exhausted || default_exhausted,
-            );
-        }
-        if default_matched {
-            return SolverReport::new(Solution::NoSolution, normal_exhausted || default_exhausted);
-        }
-
-        let (superclass_candidates, superclass_exhausted) =
-            self.solve_from_superclass_projection(goal, allowed_goal_vars);
-        SolverReport::new(
-            solution_from_candidates(superclass_candidates),
-            normal_exhausted || default_exhausted || superclass_exhausted,
-        )
-    }
-
-    fn solve_from_local_assumptions(
-        &mut self,
-        goal: Pred<'db>,
-        allowed_goal_vars: &FxHashSet<u32>,
-    ) -> (Vec<Candidate<'db>>, bool) {
-        let mut candidates = Vec::new();
-        let mut exhausted = false;
-
-        for given in self.env.local_givens(self.db).clone() {
-            let clause = ProgramClause {
-                binder_count: 0,
-                head: given,
-                conditions: Vec::new(),
-                origin: ClauseOrigin::Given,
-                is_default: false,
-            };
-            let outcome = self.try_clause(goal, &clause, allowed_goal_vars, SolveMode::GivensOnly);
-            exhausted |= outcome.exhausted;
-            candidates.extend(outcome.candidates);
-        }
-
-        for clause in self.env.clauses(self.db).clone() {
-            if !matches!(clause.origin, ClauseOrigin::Superclass(_)) {
-                continue;
-            }
-            let outcome = self.try_clause(goal, &clause, allowed_goal_vars, SolveMode::GivensOnly);
-            exhausted |= outcome.exhausted;
-            candidates.extend(outcome.candidates);
-        }
-
-        (unique_candidates(candidates), exhausted)
-    }
-
-    fn solve_with_clause_set(
-        &mut self,
-        goal: Pred<'db>,
-        is_default: bool,
-        allowed_goal_vars: &FxHashSet<u32>,
-        mode: SolveMode,
-    ) -> (Vec<Candidate<'db>>, bool, bool) {
-        let mut candidates = Vec::new();
-        let mut matched = false;
-        let mut exhausted = false;
-
-        for clause in self.env.clauses(self.db).clone() {
-            if clause.is_default != is_default {
-                continue;
-            }
-            if matches!(clause.origin, ClauseOrigin::Superclass(_)) {
-                continue;
-            }
-            let outcome = self.try_clause(goal, &clause, allowed_goal_vars, mode);
-            matched |= outcome.matched;
-            exhausted |= outcome.exhausted;
-            candidates.extend(outcome.candidates);
-        }
-
-        candidates = unique_candidates(candidates);
-        (candidates, matched, exhausted)
-    }
-
-    fn solve_from_superclass_projection(
-        &mut self,
-        goal: Pred<'db>,
-        allowed_goal_vars: &FxHashSet<u32>,
-    ) -> (Vec<Candidate<'db>>, bool) {
-        let mut candidates = Vec::new();
-        let mut exhausted = false;
-
-        for clause in self.env.clauses(self.db).clone() {
-            if !matches!(clause.origin, ClauseOrigin::Superclass(_)) {
-                continue;
-            }
-            let outcome = self.try_clause(goal, &clause, allowed_goal_vars, SolveMode::Normal);
-            exhausted |= outcome.exhausted;
-            candidates.extend(outcome.candidates);
-        }
-
-        (unique_candidates(candidates), exhausted)
     }
 
     fn has_non_default_unifying_head(
@@ -2120,85 +2007,669 @@ impl<'db> Solver<'db> {
                 && head_can_unify(self.db, clause, goal, &goal_vars)
         })
     }
+}
 
-    fn try_clause(
-        &mut self,
-        goal: Pred<'db>,
-        clause: &ProgramClause<'db>,
-        allowed_goal_vars: &FxHashSet<u32>,
-        mode: SolveMode,
-    ) -> ClauseOutcome<'db> {
-        let instantiated = instantiate_clause(self.db, clause, goal, allowed_goal_vars);
+impl SolverStats {
+    fn add(&mut self, other: Self) {
+        self.table_size += other.table_size;
+        self.generator_steps += other.generator_steps;
+        self.answers_found += other.answers_found;
+    }
+}
+
+struct TabledEngine<'db> {
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    include_defaults: bool,
+    local_context_vars: FxHashSet<u32>,
+    table: FxHashMap<TableKey<'db>, TableEntry<'db>>,
+    worklist: VecDeque<WorkItem<'db>>,
+    fuel: usize,
+    exhausted: bool,
+    stats: SolverStats,
+}
+
+impl<'db> TabledEngine<'db> {
+    fn new(db: &'db dyn Db, env: TraitEnvId<'db>, include_defaults: bool, fuel: usize) -> Self {
+        let mut local_context_vars = FxHashSet::default();
+        for pred in env.local_givens(db) {
+            collect_pred_vars(db, *pred, &mut local_context_vars);
+        }
+        Self {
+            db,
+            env,
+            include_defaults,
+            local_context_vars,
+            table: FxHashMap::default(),
+            worklist: VecDeque::new(),
+            fuel,
+            exhausted: false,
+            stats: SolverStats::default(),
+        }
+    }
+
+    fn run(&mut self, goal: Pred<'db>, allowed_goal_vars: &FxHashSet<u32>) -> EngineResult<'db> {
+        let (top_key, top_renaming) =
+            canonicalize_goal(self.db, goal, allowed_goal_vars, &self.local_context_vars);
+        self.ensure_entry(top_key.clone());
+        while let Some(item) = self.worklist.pop_front() {
+            if self.fuel == 0 {
+                self.exhausted = true;
+                break;
+            }
+            self.fuel -= 1;
+            match item {
+                WorkItem::Generator(node) => self.step_generator(node),
+                WorkItem::Resume { consumer, answer } => {
+                    self.resume_consumer(*consumer, answer);
+                }
+            }
+        }
+
+        self.stats.table_size = self.table.len();
+        let answers = self
+            .table
+            .get(&top_key)
+            .map(|entry| {
+                entry
+                    .answers
+                    .iter()
+                    .map(|answer| actualize_answer(self.db, answer, &top_renaming))
+                    .collect()
+            })
+            .unwrap_or_default();
+        EngineResult {
+            answers,
+            exhausted: self.exhausted,
+            fuel_remaining: self.fuel,
+            stats: self.stats,
+        }
+    }
+
+    fn ensure_entry(&mut self, key: TableKey<'db>) {
+        if self.table.contains_key(&key) {
+            return;
+        }
+        let clauses = self.applicable_clauses(&key);
+        self.table.insert(key.clone(), TableEntry::default());
+        self.worklist.push_back(WorkItem::Generator(GeneratorNode {
+            key,
+            clauses,
+            next_clause: 0,
+        }));
+    }
+
+    fn applicable_clauses(&self, key: &TableKey<'db>) -> Vec<ProgramClause<'db>> {
+        let mut clauses = Vec::new();
+        clauses.extend(
+            self.env
+                .local_givens(self.db)
+                .iter()
+                .copied()
+                .map(|given| ProgramClause {
+                    binder_count: 0,
+                    head: canonicalize_local_given(self.db, given, key),
+                    conditions: Vec::new(),
+                    origin: ClauseOrigin::Given,
+                    is_default: false,
+                }),
+        );
+        clauses.extend(self.env.clauses(self.db).iter().filter_map(|clause| {
+            (!clause.is_default && !matches!(clause.origin, ClauseOrigin::Superclass(_)))
+                .then_some(clause.clone())
+        }));
+        clauses.extend(self.env.clauses(self.db).iter().filter_map(|clause| {
+            (!clause.is_default && matches!(clause.origin, ClauseOrigin::Superclass(_)))
+                .then_some(clause.clone())
+        }));
+        if self.include_defaults && !self.has_non_default_unifying_head(key) {
+            clauses.extend(
+                self.env
+                    .clauses(self.db)
+                    .iter()
+                    .filter(|clause| clause.is_default)
+                    .cloned(),
+            );
+        }
+        clauses
+    }
+
+    fn has_non_default_unifying_head(&self, key: &TableKey<'db>) -> bool {
+        let mut goal_vars = key.allowed_vars();
+        collect_pred_vars(self.db, key.pred, &mut goal_vars);
+        self.env.clauses(self.db).iter().any(|clause| {
+            !clause.is_default
+                && !matches!(clause.origin, ClauseOrigin::Superclass(_))
+                && head_can_unify(self.db, clause, key.pred, &goal_vars)
+        })
+    }
+
+    fn step_generator(&mut self, mut node: GeneratorNode<'db>) {
+        if node.next_clause >= node.clauses.len() {
+            return;
+        }
+        let key = node.key.clone();
+        let clause = node.clauses[node.next_clause].clone();
+        node.next_clause += 1;
+        if node.next_clause < node.clauses.len() {
+            self.worklist.push_back(WorkItem::Generator(node));
+        }
+        self.stats.generator_steps += 1;
+        self.try_clause(key, &clause);
+    }
+
+    fn try_clause(&mut self, key: TableKey<'db>, clause: &ProgramClause<'db>) {
+        let allowed_goal_vars = key.allowed_vars();
+        let avoid_vars = key.canonical_context_vars();
+        let instantiated = instantiate_clause(self.db, clause, key.pred, &avoid_vars);
         let Some(subst) = match_head(
             self.db,
             instantiated.head,
-            goal,
+            key.pred,
             &instantiated.binder_vars,
-            allowed_goal_vars,
+            &allowed_goal_vars,
         ) else {
-            return ClauseOutcome::default();
+            return;
         };
 
-        let mut condition_vars = allowed_goal_vars.clone();
+        let mut condition_vars = allowed_goal_vars;
         condition_vars.extend(instantiated.binder_vars.iter().copied());
-        let mut states = vec![(subst, Vec::new())];
-        let mut exhausted = false;
-        for condition in &instantiated.conditions {
-            let mut next = Vec::new();
-            for (state_subst, existing_evidence) in states {
-                let condition = state_subst.apply_pred(self.db, *condition);
-                let report = self.solve_pred_with_allowed(condition, mode, &condition_vars);
-                exhausted |= report.exhausted;
-                let alternatives = candidates_from_solution(report.solution);
-                for alternative in alternatives {
-                    let mut combined_subst = state_subst.clone();
-                    if !combined_subst.merge(self.db, &alternative.subst) {
-                        continue;
-                    }
-                    let mut combined_evidence = existing_evidence.clone();
-                    combined_evidence.push(apply_evidence(
-                        self.db,
-                        alternative.evidence,
-                        &combined_subst,
-                    ));
-                    next.push((combined_subst, combined_evidence));
-                }
-            }
-            if next.is_empty() {
-                return ClauseOutcome::matched(exhausted);
-            }
-            states = next;
+        if instantiated.conditions.is_empty() {
+            self.emit_answer(key, &instantiated, subst, Vec::new());
+            return;
         }
 
-        let mut candidates = Vec::new();
-        for (subst, sub_evidence) in states {
-            let evidence = clause_evidence(self.db, goal, &instantiated, &subst, sub_evidence);
-            candidates.push(Candidate {
-                subst: subst.snapshot(),
-                evidence: apply_evidence(self.db, evidence, &subst),
+        self.register_for_next_condition(ConsumerNode {
+            parent: key,
+            clause: instantiated,
+            subst,
+            sub_evidence: Vec::new(),
+            next_condition: 0,
+            condition_vars,
+            waiting_renaming: GoalRenaming::default(),
+        });
+    }
+
+    fn register_for_next_condition(&mut self, mut consumer: ConsumerNode<'db>) {
+        let condition = consumer
+            .subst
+            .apply_pred(self.db, consumer.clause.conditions[consumer.next_condition]);
+        let (key, renaming) = canonicalize_goal(
+            self.db,
+            condition,
+            &consumer.condition_vars,
+            &self.local_context_vars,
+        );
+        consumer.waiting_renaming = renaming;
+        self.ensure_entry(key.clone());
+        let answers = {
+            let entry = self
+                .table
+                .get_mut(&key)
+                .expect("table entry must exist after ensure_entry");
+            let answers = entry.answers.clone();
+            entry.consumers.push(consumer.clone());
+            answers
+        };
+        for answer in answers {
+            self.worklist.push_back(WorkItem::Resume {
+                consumer: Box::new(consumer.clone()),
+                answer,
             });
         }
-        ClauseOutcome {
-            matched: true,
-            exhausted,
-            candidates,
+    }
+
+    fn resume_consumer(&mut self, mut consumer: ConsumerNode<'db>, answer: Answer<'db>) {
+        let alternative = actualize_answer(self.db, &answer, &consumer.waiting_renaming);
+        let mut combined_subst = consumer.subst.clone();
+        if !combined_subst.merge(self.db, &alternative.candidate.subst) {
+            return;
+        }
+        for (_, ty) in &alternative.candidate.subst.values {
+            collect_ty_vars(self.db, *ty, &mut consumer.condition_vars);
+        }
+        consumer.sub_evidence.push(apply_evidence(
+            self.db,
+            alternative.candidate.evidence,
+            &combined_subst,
+        ));
+        consumer.subst = combined_subst;
+        consumer.next_condition += 1;
+        if consumer.next_condition < consumer.clause.conditions.len() {
+            self.register_for_next_condition(consumer);
+        } else {
+            self.emit_answer(
+                consumer.parent,
+                &consumer.clause,
+                consumer.subst,
+                consumer.sub_evidence,
+            );
+        }
+    }
+
+    fn emit_answer(
+        &mut self,
+        key: TableKey<'db>,
+        clause: &InstantiatedClause<'db>,
+        subst: MatchSubst<'db>,
+        sub_evidence: Vec<Evidence<'db>>,
+    ) {
+        let evidence = clause_evidence(self.db, key.pred, clause, &subst, sub_evidence);
+        let candidate = Candidate {
+            subst: subst.snapshot_for_vars(self.db, key.flex_count),
+            evidence: apply_evidence(self.db, evidence, &subst),
+        };
+        self.produce_answer(
+            key,
+            Answer {
+                candidate,
+                origin: clause.origin.clone(),
+                is_default: clause.is_default,
+            },
+        );
+    }
+
+    fn produce_answer(&mut self, key: TableKey<'db>, answer: Answer<'db>) {
+        let consumers = {
+            let entry = self
+                .table
+                .get_mut(&key)
+                .expect("answer produced for an existing table entry");
+            if entry
+                .answers
+                .iter()
+                .any(|existing| same_table_answer(existing, &answer))
+            {
+                return;
+            }
+            entry.answers.push(answer.clone());
+            self.stats.answers_found += 1;
+            entry.consumers.clone()
+        };
+        for consumer in consumers {
+            self.worklist.push_back(WorkItem::Resume {
+                consumer: Box::new(consumer),
+                answer: answer.clone(),
+            });
         }
     }
 }
 
-#[derive(Default)]
-struct ClauseOutcome<'db> {
-    matched: bool,
+struct EngineResult<'db> {
+    answers: Vec<Answer<'db>>,
     exhausted: bool,
-    candidates: Vec<Candidate<'db>>,
+    fuel_remaining: usize,
+    stats: SolverStats,
 }
 
-impl<'db> ClauseOutcome<'db> {
-    fn matched(exhausted: bool) -> Self {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct TableKey<'db> {
+    pred: Pred<'db>,
+    flex_count: u32,
+    flex_actuals: Vec<u32>,
+    context_actuals: Vec<u32>,
+}
+
+impl<'db> TableKey<'db> {
+    fn allowed_vars(&self) -> FxHashSet<u32> {
+        (0..self.flex_count).collect()
+    }
+
+    fn canonical_context_vars(&self) -> FxHashSet<u32> {
+        let flex_map = self
+            .flex_actuals
+            .iter()
+            .enumerate()
+            .map(|(index, actual)| (*actual, index as u32))
+            .collect::<FxHashMap<_, _>>();
+        self.context_actuals
+            .iter()
+            .map(|actual| {
+                flex_map
+                    .get(actual)
+                    .copied()
+                    .unwrap_or(self.flex_count + *actual)
+            })
+            .collect()
+    }
+}
+
+#[derive(Default)]
+struct TableEntry<'db> {
+    answers: Vec<Answer<'db>>,
+    consumers: Vec<ConsumerNode<'db>>,
+}
+
+#[derive(Clone)]
+struct GeneratorNode<'db> {
+    key: TableKey<'db>,
+    clauses: Vec<ProgramClause<'db>>,
+    next_clause: usize,
+}
+
+#[derive(Clone)]
+struct ConsumerNode<'db> {
+    parent: TableKey<'db>,
+    clause: InstantiatedClause<'db>,
+    subst: MatchSubst<'db>,
+    sub_evidence: Vec<Evidence<'db>>,
+    next_condition: usize,
+    condition_vars: FxHashSet<u32>,
+    waiting_renaming: GoalRenaming,
+}
+
+enum WorkItem<'db> {
+    Generator(GeneratorNode<'db>),
+    Resume {
+        consumer: Box<ConsumerNode<'db>>,
+        answer: Answer<'db>,
+    },
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Answer<'db> {
+    candidate: Candidate<'db>,
+    origin: ClauseOrigin<'db>,
+    is_default: bool,
+}
+
+fn same_table_answer<'db>(lhs: &Answer<'db>, rhs: &Answer<'db>) -> bool {
+    lhs.candidate.subst == rhs.candidate.subst
+        && lhs.origin == rhs.origin
+        && lhs.is_default == rhs.is_default
+}
+
+#[derive(Clone, Default)]
+struct GoalRenaming {
+    flex_actuals: Vec<u32>,
+    context_vars: FxHashSet<u32>,
+    fresh_base: u32,
+}
+
+impl GoalRenaming {
+    fn flex_count(&self) -> u32 {
+        self.flex_actuals.len() as u32
+    }
+
+    fn actual_var(&self, key_var: u32) -> u32 {
+        if key_var < self.flex_count() {
+            self.flex_actuals[key_var as usize]
+        } else {
+            let actual = key_var - self.flex_count();
+            if self.context_vars.contains(&actual) {
+                actual
+            } else {
+                key_var
+            }
+        }
+    }
+
+    fn is_context_var(&self, key_var: u32) -> bool {
+        if key_var < self.flex_count() {
+            true
+        } else {
+            self.context_vars.contains(&(key_var - self.flex_count()))
+        }
+    }
+}
+
+fn canonicalize_goal<'db>(
+    db: &'db dyn Db,
+    pred: Pred<'db>,
+    allowed_vars: &FxHashSet<u32>,
+    context_vars: &FxHashSet<u32>,
+) -> (TableKey<'db>, GoalRenaming) {
+    let mut pred_vars = FxHashSet::default();
+    collect_pred_vars(db, pred, &mut pred_vars);
+    let mut flex_actuals = allowed_vars
+        .iter()
+        .copied()
+        .filter(|var| pred_vars.contains(var))
+        .collect::<Vec<_>>();
+    flex_actuals.sort_unstable();
+    flex_actuals.dedup();
+    let flex_map = flex_actuals
+        .iter()
+        .enumerate()
+        .map(|(index, actual)| (*actual, index as u32))
+        .collect::<FxHashMap<_, _>>();
+    let canonicalizer = GoalCanonicalizer {
+        db,
+        flex_count: flex_actuals.len() as u32,
+        flex_map,
+    };
+    let canonical_pred = canonicalizer.pred(pred);
+    let mut context_actuals = context_vars.clone();
+    context_actuals.extend(pred_vars.iter().copied());
+    let mut context_actuals = context_actuals.into_iter().collect::<Vec<_>>();
+    context_actuals.sort_unstable();
+    context_actuals.dedup();
+    let fresh_base = context_actuals
+        .iter()
+        .copied()
+        .chain(allowed_vars.iter().copied())
+        .max()
+        .map_or(0, |var| var + 1);
+    (
+        TableKey {
+            pred: canonical_pred,
+            flex_count: flex_actuals.len() as u32,
+            flex_actuals: flex_actuals.clone(),
+            context_actuals: context_actuals.clone(),
+        },
+        GoalRenaming {
+            flex_actuals,
+            context_vars: context_actuals.into_iter().collect(),
+            fresh_base,
+        },
+    )
+}
+
+struct GoalCanonicalizer<'db> {
+    db: &'db dyn Db,
+    flex_count: u32,
+    flex_map: FxHashMap<u32, u32>,
+}
+
+impl<'db> GoalCanonicalizer<'db> {
+    fn pred(&self, pred: Pred<'db>) -> Pred<'db> {
+        match pred.kind(self.db) {
+            PredKind::InClass { class, main, args } => Pred::in_class(
+                self.db,
+                *class,
+                self.ty(*main),
+                args.iter().map(|arg| self.ty(*arg)).collect(),
+            ),
+            PredKind::Eq { lhs, rhs } => Pred::eq(self.db, self.ty(*lhs), self.ty(*rhs)),
+            PredKind::Error => Pred::error(self.db),
+        }
+    }
+
+    fn ty(&self, ty: Ty<'db>) -> Ty<'db> {
+        match ty.kind(self.db) {
+            TyKind::BoundVar(var) => {
+                let index = self
+                    .flex_map
+                    .get(&var.index)
+                    .copied()
+                    .unwrap_or(self.flex_count + var.index);
+                Ty::bound(self.db, index)
+            }
+            TyKind::Named { ctor, args } => Ty::named(
+                self.db,
+                *ctor,
+                args.iter().map(|arg| self.ty(*arg)).collect(),
+            ),
+            TyKind::Function { params, ret } => Ty::function(
+                self.db,
+                params.iter().map(|param| self.ty(*param)).collect(),
+                self.ty(*ret),
+            ),
+            TyKind::Tuple(elems) => {
+                Ty::tuple(self.db, elems.iter().map(|elem| self.ty(*elem)).collect())
+            }
+            TyKind::Comptime(inner) => Ty::comptime(self.db, self.ty(*inner)),
+            TyKind::Error | TyKind::Unknown => ty,
+        }
+    }
+}
+
+fn canonicalize_local_given<'db>(
+    db: &'db dyn Db,
+    pred: Pred<'db>,
+    key: &TableKey<'db>,
+) -> Pred<'db> {
+    let flex_map = key
+        .flex_actuals
+        .iter()
+        .enumerate()
+        .map(|(index, actual)| (*actual, index as u32))
+        .collect::<FxHashMap<_, _>>();
+    GoalCanonicalizer {
+        db,
+        flex_count: key.flex_count,
+        flex_map,
+    }
+    .pred(pred)
+}
+
+fn actualize_answer<'db>(
+    db: &'db dyn Db,
+    answer: &Answer<'db>,
+    renaming: &GoalRenaming,
+) -> Answer<'db> {
+    let actualizer = AnswerActualizer::new(db, answer, renaming);
+    Answer {
+        candidate: Candidate {
+            subst: Substitution {
+                values: answer
+                    .candidate
+                    .subst
+                    .values
+                    .iter()
+                    .filter_map(|(var, ty)| {
+                        let var = renaming.actual_var(*var);
+                        let ty = actualizer.ty(*ty);
+                        (!matches!(ty.kind(db), TyKind::BoundVar(bound) if bound.index == var))
+                            .then_some((var, ty))
+                    })
+                    .collect(),
+            },
+            evidence: actualizer.evidence(answer.candidate.evidence.clone()),
+        },
+        origin: answer.origin.clone(),
+        is_default: answer.is_default,
+    }
+}
+
+struct AnswerActualizer<'db, 'a> {
+    db: &'db dyn Db,
+    renaming: &'a GoalRenaming,
+    local_vars: FxHashMap<u32, u32>,
+}
+
+impl<'db, 'a> AnswerActualizer<'db, 'a> {
+    fn new(db: &'db dyn Db, answer: &Answer<'db>, renaming: &'a GoalRenaming) -> Self {
+        let mut vars = FxHashSet::default();
+        for (_, ty) in &answer.candidate.subst.values {
+            collect_ty_vars(db, *ty, &mut vars);
+        }
+        collect_evidence_vars(db, &answer.candidate.evidence, &mut vars);
+
+        let mut local_vars = vars
+            .into_iter()
+            .filter(|var| !renaming.is_context_var(*var))
+            .collect::<Vec<_>>();
+        local_vars.sort_unstable();
+        let local_vars = local_vars
+            .into_iter()
+            .enumerate()
+            .map(|(index, var)| (var, renaming.fresh_base + index as u32))
+            .collect();
+
         Self {
-            matched: true,
-            exhausted,
-            candidates: Vec::new(),
+            db,
+            renaming,
+            local_vars,
+        }
+    }
+
+    fn var(&self, var: u32) -> u32 {
+        if let Some(actual) = self.local_vars.get(&var) {
+            *actual
+        } else {
+            self.renaming.actual_var(var)
+        }
+    }
+
+    fn pred(&self, pred: Pred<'db>) -> Pred<'db> {
+        match pred.kind(self.db) {
+            PredKind::InClass { class, main, args } => Pred::in_class(
+                self.db,
+                *class,
+                self.ty(*main),
+                args.iter().map(|arg| self.ty(*arg)).collect(),
+            ),
+            PredKind::Eq { lhs, rhs } => Pred::eq(self.db, self.ty(*lhs), self.ty(*rhs)),
+            PredKind::Error => Pred::error(self.db),
+        }
+    }
+
+    fn ty(&self, ty: Ty<'db>) -> Ty<'db> {
+        match ty.kind(self.db) {
+            TyKind::BoundVar(var) => Ty::bound(self.db, self.var(var.index)),
+            TyKind::Named { ctor, args } => Ty::named(
+                self.db,
+                *ctor,
+                args.iter().map(|arg| self.ty(*arg)).collect(),
+            ),
+            TyKind::Function { params, ret } => Ty::function(
+                self.db,
+                params.iter().map(|param| self.ty(*param)).collect(),
+                self.ty(*ret),
+            ),
+            TyKind::Tuple(elems) => {
+                Ty::tuple(self.db, elems.iter().map(|elem| self.ty(*elem)).collect())
+            }
+            TyKind::Comptime(inner) => Ty::comptime(self.db, self.ty(*inner)),
+            TyKind::Error | TyKind::Unknown => ty,
+        }
+    }
+
+    fn evidence(&self, evidence: Evidence<'db>) -> Evidence<'db> {
+        match evidence {
+            Evidence::Instance {
+                instance,
+                args,
+                sub_evidence,
+            } => Evidence::Instance {
+                instance,
+                args: args.into_iter().map(|arg| self.ty(arg)).collect(),
+                sub_evidence: sub_evidence
+                    .into_iter()
+                    .map(|evidence| self.evidence(evidence))
+                    .collect(),
+            },
+            Evidence::Builtin { pred } => Evidence::Builtin {
+                pred: self.pred(pred),
+            },
+            Evidence::Superclass { class, pred, child } => Evidence::Superclass {
+                class,
+                pred: self.pred(pred),
+                child: Box::new(self.evidence(*child)),
+            },
+            Evidence::Derived {
+                kind,
+                pred,
+                sub_evidence,
+            } => Evidence::Derived {
+                kind,
+                pred: self.pred(pred),
+                sub_evidence: sub_evidence
+                    .into_iter()
+                    .map(|evidence| self.evidence(evidence))
+                    .collect(),
+            },
         }
     }
 }
@@ -2256,31 +2727,50 @@ impl<'db> MatchSubst<'db> {
     }
 
     fn apply_ty(&self, db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
+        self.apply_ty_inner(db, ty, &mut FxHashSet::default())
+    }
+
+    fn apply_ty_inner(
+        &self,
+        db: &'db dyn Db,
+        ty: Ty<'db>,
+        visiting: &mut FxHashSet<u32>,
+    ) -> Ty<'db> {
         match ty.kind(db) {
-            TyKind::BoundVar(var) => self
-                .values
-                .get(&var.index)
-                .copied()
-                .map(|ty| self.apply_ty(db, ty))
-                .unwrap_or(ty),
+            TyKind::BoundVar(var) => {
+                let Some(value) = self.values.get(&var.index).copied() else {
+                    return ty;
+                };
+                if !visiting.insert(var.index) {
+                    return ty;
+                }
+                let value = self.apply_ty_inner(db, value, visiting);
+                visiting.remove(&var.index);
+                value
+            }
             TyKind::Named { ctor, args } => Ty::named(
                 db,
                 *ctor,
-                args.iter().map(|arg| self.apply_ty(db, *arg)).collect(),
+                args.iter()
+                    .map(|arg| self.apply_ty_inner(db, *arg, visiting))
+                    .collect(),
             ),
             TyKind::Function { params, ret } => Ty::function(
                 db,
                 params
                     .iter()
-                    .map(|param| self.apply_ty(db, *param))
+                    .map(|param| self.apply_ty_inner(db, *param, visiting))
                     .collect(),
-                self.apply_ty(db, *ret),
+                self.apply_ty_inner(db, *ret, visiting),
             ),
             TyKind::Tuple(elems) => Ty::tuple(
                 db,
-                elems.iter().map(|elem| self.apply_ty(db, *elem)).collect(),
+                elems
+                    .iter()
+                    .map(|elem| self.apply_ty_inner(db, *elem, visiting))
+                    .collect(),
             ),
-            TyKind::Comptime(inner) => Ty::comptime(db, self.apply_ty(db, *inner)),
+            TyKind::Comptime(inner) => Ty::comptime(db, self.apply_ty_inner(db, *inner, visiting)),
             TyKind::Error | TyKind::Unknown => ty,
         }
     }
@@ -2291,18 +2781,47 @@ impl<'db> MatchSubst<'db> {
             .collect()
     }
 
-    fn snapshot(&self) -> Substitution<'db> {
-        let mut values = self
-            .values
-            .iter()
-            .map(|(index, ty)| (*index, *ty))
-            .collect::<Vec<_>>();
-        values.sort_by_key(|(index, _)| *index);
+    fn snapshot_for_vars(&self, db: &'db dyn Db, flex_count: u32) -> Substitution<'db> {
+        let mut values = Vec::new();
+        for index in 0..flex_count {
+            let value = self.apply_ty(db, Ty::bound(db, index));
+            if !matches!(value.kind(db), TyKind::BoundVar(var) if var.index == index) {
+                values.push((index, value));
+            }
+        }
         Substitution { values }
     }
 }
 
-fn solution_from_candidates<'db>(candidates: Vec<Candidate<'db>>) -> Solution<'db> {
+fn solution_from_answers<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    answers: Vec<Answer<'db>>,
+) -> Solution<'db> {
+    let mut seen_answers = FxHashSet::default();
+    let answers = answers
+        .into_iter()
+        .filter(|answer| seen_answers.insert(answer.clone()))
+        .collect::<Vec<_>>();
+    let Some(best_priority) = answers
+        .iter()
+        .map(|answer| answer_priority(db, env, answer))
+        .min()
+    else {
+        return Solution::NoSolution;
+    };
+
+    let mut seen_roots = FxHashSet::default();
+    let mut candidates = Vec::new();
+    for answer in answers {
+        if answer_priority(db, env, &answer) != best_priority {
+            continue;
+        }
+        if seen_roots.insert(answer_root(db, env, &answer)) {
+            candidates.push(answer.candidate);
+        }
+    }
+
     match candidates.as_slice() {
         [] => Solution::NoSolution,
         [candidate] => Solution::Unique {
@@ -2313,11 +2832,77 @@ fn solution_from_candidates<'db>(candidates: Vec<Candidate<'db>>) -> Solution<'d
     }
 }
 
-fn candidates_from_solution<'db>(solution: Solution<'db>) -> Vec<Candidate<'db>> {
-    match solution {
-        Solution::Unique { subst, evidence } => vec![Candidate { subst, evidence }],
-        Solution::Ambiguous { candidates } => candidates,
-        Solution::NoSolution => Vec::new(),
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum AnswerRoot<'db> {
+    Local(Pred<'db>),
+    Builtin(Pred<'db>),
+    Instance(DefId<'db>),
+    DefaultInstance(DefId<'db>),
+    Derived(DerivedClauseKind<'db>),
+    Superclass(DefId<'db>),
+    Other,
+}
+
+fn answer_priority<'db>(db: &'db dyn Db, env: TraitEnvId<'db>, answer: &Answer<'db>) -> u8 {
+    if evidence_root_is_local_given(db, env, &answer.candidate.evidence) {
+        return 0;
+    }
+    if answer.is_default {
+        return 3;
+    }
+    match &answer.origin {
+        ClauseOrigin::Superclass(_) => 2,
+        ClauseOrigin::Instance(_)
+        | ClauseOrigin::Builtin
+        | ClauseOrigin::Derived(_)
+        | ClauseOrigin::Given => 1,
+    }
+}
+
+fn answer_root<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    answer: &Answer<'db>,
+) -> AnswerRoot<'db> {
+    if evidence_root_is_local_given(db, env, &answer.candidate.evidence) {
+        return evidence_root_pred(&answer.candidate.evidence)
+            .map(AnswerRoot::Local)
+            .unwrap_or(AnswerRoot::Other);
+    }
+    match &answer.origin {
+        ClauseOrigin::Instance(instance) if answer.is_default => {
+            AnswerRoot::DefaultInstance(*instance)
+        }
+        ClauseOrigin::Instance(instance) => AnswerRoot::Instance(*instance),
+        ClauseOrigin::Builtin => evidence_root_pred(&answer.candidate.evidence)
+            .map(AnswerRoot::Builtin)
+            .unwrap_or(AnswerRoot::Other),
+        ClauseOrigin::Derived(kind) => AnswerRoot::Derived(*kind),
+        ClauseOrigin::Given => evidence_root_pred(&answer.candidate.evidence)
+            .map(AnswerRoot::Local)
+            .unwrap_or(AnswerRoot::Other),
+        ClauseOrigin::Superclass(class) => AnswerRoot::Superclass(*class),
+    }
+}
+
+fn evidence_root_is_local_given<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    evidence: &Evidence<'db>,
+) -> bool {
+    match evidence {
+        Evidence::Builtin { pred } => env.local_givens(db).contains(pred),
+        Evidence::Superclass { child, .. } => evidence_root_is_local_given(db, env, child),
+        Evidence::Instance { .. } | Evidence::Derived { .. } => false,
+    }
+}
+
+fn evidence_root_pred<'db>(evidence: &Evidence<'db>) -> Option<Pred<'db>> {
+    match evidence {
+        Evidence::Builtin { pred }
+        | Evidence::Superclass { pred, .. }
+        | Evidence::Derived { pred, .. } => Some(*pred),
+        Evidence::Instance { .. } => None,
     }
 }
 
@@ -2358,6 +2943,7 @@ struct InstantiatedClause<'db> {
     head: Pred<'db>,
     conditions: Vec<Pred<'db>>,
     origin: ClauseOrigin<'db>,
+    is_default: bool,
     binder_vars: Vec<u32>,
 }
 
@@ -2381,6 +2967,7 @@ fn instantiate_clause<'db>(
             .map(|condition| rewriter.pred(*condition))
             .collect(),
         origin: clause.origin.clone(),
+        is_default: clause.is_default,
         binder_vars: (0..clause.binder_count).map(|index| base + index).collect(),
     }
 }
@@ -2890,6 +3477,38 @@ fn collect_pred_vars<'db>(db: &'db dyn Db, pred: Pred<'db>, vars: &mut FxHashSet
     }
 }
 
+fn collect_evidence_vars<'db>(
+    db: &'db dyn Db,
+    evidence: &Evidence<'db>,
+    vars: &mut FxHashSet<u32>,
+) {
+    match evidence {
+        Evidence::Instance {
+            args, sub_evidence, ..
+        } => {
+            for arg in args {
+                collect_ty_vars(db, *arg, vars);
+            }
+            for evidence in sub_evidence {
+                collect_evidence_vars(db, evidence, vars);
+            }
+        }
+        Evidence::Builtin { pred } => collect_pred_vars(db, *pred, vars),
+        Evidence::Superclass { pred, child, .. } => {
+            collect_pred_vars(db, *pred, vars);
+            collect_evidence_vars(db, child, vars);
+        }
+        Evidence::Derived {
+            pred, sub_evidence, ..
+        } => {
+            collect_pred_vars(db, *pred, vars);
+            for evidence in sub_evidence {
+                collect_evidence_vars(db, evidence, vars);
+            }
+        }
+    }
+}
+
 fn collect_ty_vars<'db>(db: &'db dyn Db, ty: Ty<'db>, vars: &mut FxHashSet<u32>) {
     match ty.kind(db) {
         TyKind::BoundVar(var) => {
@@ -3036,17 +3655,6 @@ fn unique_preds<'db>(values: impl IntoIterator<Item = Pred<'db>>) -> Vec<Pred<'d
     let mut result = Vec::new();
     for value in values {
         if seen.insert(value) {
-            result.push(value);
-        }
-    }
-    result
-}
-
-fn unique_candidates<'db>(values: impl IntoIterator<Item = Candidate<'db>>) -> Vec<Candidate<'db>> {
-    let mut seen = FxHashSet::default();
-    let mut result = Vec::new();
-    for value in values {
-        if seen.insert(value.clone()) {
             result.push(value);
         }
     }
