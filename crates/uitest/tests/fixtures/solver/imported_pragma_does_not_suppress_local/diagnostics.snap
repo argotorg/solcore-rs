@@ -33,7 +33,7 @@ error[SC0218]: Overlapping instances are not supported
                instance:
                x : C(word, word)
                overlaps with:
-               adt:List($1):class:C($0, adt:List($0))
+               adt:List(_):class:C(_, adt:List(_))
  --> /main/main.solc:8:40
   |
 6 |

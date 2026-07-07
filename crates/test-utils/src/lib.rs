@@ -1,7 +1,6 @@
 use std::{
     collections::BTreeMap,
-    fs,
-    panic,
+    fs, panic,
     path::{Path, PathBuf},
     thread,
 };
@@ -228,7 +227,10 @@ where
 {
     let entry = module_id_from_key(db, entry);
     let _ = nameres::resolve_reachable_full(db, entry);
-    lower_any_diagnostics(db, nameres::reachable_diagnostics(db, entry).iter().cloned())
+    lower_any_diagnostics(
+        db,
+        nameres::reachable_diagnostics(db, entry).iter().cloned(),
+    )
 }
 
 pub fn lower_any_diagnostics(

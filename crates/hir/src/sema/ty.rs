@@ -339,8 +339,7 @@ impl<'db> Ty<'db> {
     pub fn display(self, db: &'db dyn Db) -> String {
         match self.kind(db) {
             TyKind::Error => "<error>".to_owned(),
-            TyKind::Unknown => "<unknown>".to_owned(),
-            TyKind::BoundVar(var) => format!("${}", var.index),
+            TyKind::Unknown | TyKind::BoundVar(_) => "_".to_owned(),
             TyKind::Named { ctor, args } => {
                 let name = match ctor {
                     TyCtor::Builtin(ctor) => ctor.name().to_owned(),
@@ -486,7 +485,7 @@ impl<'db> TyScheme<'db> {
             qualified
         } else {
             let vars = (0..self.binder_count(db))
-                .map(|index| format!("${index}"))
+                .map(|_| "_".to_owned())
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("forall {vars}. {qualified}")

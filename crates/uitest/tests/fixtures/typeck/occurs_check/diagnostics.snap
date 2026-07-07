@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/occurs_check/main.solc
 ---
-error[SC0202]: recursive type: ?1 occurs in (?1) -> ?2
+error[SC0202]: recursive type: _ occurs in (_) -> _
  --> /main/main.solc:2:30
   |
 1 | function f() -> () {

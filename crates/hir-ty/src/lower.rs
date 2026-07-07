@@ -1,5 +1,7 @@
 //! Lowering from nameres-resolved HIR type references into semantic schemes.
 
+use std::cell::RefCell;
+
 use hir::{
     Db as HirDb,
     anchor::DefId,
@@ -8,7 +10,9 @@ use hir::{
         item::{AdtCtor, AdtDef, ClassDef, FieldDef, FuncKind, FunctionDef, TypeAlias},
         ty::{PredRef, TypeRef, TypeRefKind},
     },
+    diag::LabelSpan,
     nameres as hir_nameres,
+    span::Spanned,
 };
 use rustc_hash::FxHashMap;
 
@@ -74,6 +78,19 @@ pub struct TypeLowering<'db> {
     type_resolutions: FxHashMap<TypeRef<'db>, hir_nameres::Resolution<'db>>,
     pred_resolutions: FxHashMap<PredRef<'db>, hir_nameres::Resolution<'db>>,
     binders: BinderEnv<'db>,
+    diagnostics: RefCell<Vec<TypeLoweringDiagnostic>>,
+}
+
+/// Diagnostic produced while lowering syntactically valid type references.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeLoweringDiagnostic {
+    /// A class name was resolved where a type constructor was required.
+    ClassAsType {
+        /// Source span for the class name.
+        span: LabelSpan,
+        /// Class name as written or resolved.
+        class: String,
+    },
 }
 
 impl<'db> BinderEnv<'db> {
@@ -130,6 +147,7 @@ impl<'db> TypeLowering<'db> {
                 .map(|entry| (entry.pred, entry.resolution.clone()))
                 .collect(),
             binders,
+            diagnostics: RefCell::new(Vec::new()),
         }
     }
 
@@ -161,6 +179,15 @@ impl<'db> TypeLowering<'db> {
                 if let Some(bound) = self.lower_type_var_resolution(resolution) {
                     return Ty::bound(self.db, bound.index);
                 }
+                if let Some(class) = self.class_name_from_type_resolution(resolution) {
+                    self.diagnostics
+                        .borrow_mut()
+                        .push(TypeLoweringDiagnostic::ClassAsType {
+                            span: LabelSpan::from_span(self.db, ty.span(self.db)),
+                            class,
+                        });
+                    return Ty::error(self.db);
+                }
                 let Some(ctor) = self.lower_type_ctor_resolution(resolution) else {
                     return Ty::error(self.db);
                 };
@@ -191,6 +218,11 @@ impl<'db> TypeLowering<'db> {
             ),
             TypeRefKind::Error { .. } => Ty::error(self.db),
         }
+    }
+
+    /// Drains diagnostics produced by previous lowering calls.
+    pub fn take_diagnostics(&self) -> Vec<TypeLoweringDiagnostic> {
+        std::mem::take(&mut *self.diagnostics.borrow_mut())
     }
 
     /// Lowers one predicate reference to a semantic predicate.
@@ -403,6 +435,22 @@ impl<'db> TypeLowering<'db> {
         }
     }
 
+    fn class_name_from_type_resolution(
+        &self,
+        resolution: &hir_nameres::Resolution<'db>,
+    ) -> Option<String> {
+        match resolution {
+            hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Class(class)) => {
+                Some(builtin_class_name(*class).to_owned())
+            }
+            hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Class,
+            } => Some(def.name(self.db).unwrap_or_else(|| "class".to_owned())),
+            _ => None,
+        }
+    }
+
     fn lower_class_resolution(
         &self,
         resolution: &hir_nameres::Resolution<'db>,
@@ -568,6 +616,13 @@ fn builtin_class(class: hir_nameres::BuiltinClass) -> BuiltinClassId {
     match class {
         hir_nameres::BuiltinClass::Invokable => BuiltinClassId::Invokable,
         hir_nameres::BuiltinClass::Int => BuiltinClassId::Int,
+    }
+}
+
+fn builtin_class_name(class: hir_nameres::BuiltinClass) -> &'static str {
+    match class {
+        hir_nameres::BuiltinClass::Invokable => "invokable",
+        hir_nameres::BuiltinClass::Int => "Int",
     }
 }
 

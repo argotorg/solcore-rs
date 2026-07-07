@@ -197,7 +197,7 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "examples/cases/dispatch.solc",
         "needs-dispatch-lowering",
         typeck,
-        "SC0201"
+        "SC0203"
     ),
     known!(
         "examples/cases/for-let-post.solc",
@@ -258,10 +258,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!("examples/cases/vartyped.solc", "missing-negative-typecheck"),
     known!(
-        "examples/cases/weird-error-foo.solc",
-        "missing-negative-typecheck"
-    ),
-    known!(
         "examples/comptime/ct_asm_ret.solc",
         "needs-backend-comptime-obligation-check",
         no
@@ -301,8 +297,8 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!(
         "examples/comptime/fromInt3.solc",
         "needs-std-comptime-surface",
-        typeck,
-        "SC0207"
+        pre,
+        "SC0101"
     ),
     known!(
         "examples/comptime/fromLit.solc",

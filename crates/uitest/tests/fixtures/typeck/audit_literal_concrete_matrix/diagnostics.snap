@@ -1,0 +1,93 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/audit_literal_concrete_matrix/main.solc
+---
+error[SC0201]: type mismatch: expected numeric, got adt:Opt
+ --> /main/main.solc:5:10
+  |
+4 | function opt_ret() -> Opt {
+5 |   return 1;
+  |          ^ expression has mismatched type
+6 | }
+  |
+---
+
+error[SC0201]: type mismatch: expected numeric, got bool
+  --> /main/main.solc:9:10
+   |
+ 8 | function bool_ret() -> bool {
+ 9 |   return 1;
+   |          ^ expression has mismatched type
+10 | }
+   |
+---
+
+error[SC0201]: type mismatch: expected numeric, got string
+  --> /main/main.solc:13:10
+   |
+12 | function string_ret() -> string {
+13 |   return 1;
+   |          ^ expression has mismatched type
+14 | }
+   |
+---
+
+error[SC0201]: type mismatch: expected numeric, got ()
+  --> /main/main.solc:17:10
+   |
+16 | function unit_ret() -> () {
+17 |   return 1;
+   |          ^ expression has mismatched type
+18 | }
+   |
+---
+
+error[SC0201]: type mismatch: expected numeric, got contract:K
+  --> /main/main.solc:21:10
+   |
+20 | function contract_ret() -> K {
+21 |   return 1;
+   |          ^ expression has mismatched type
+22 | }
+   |
+---
+
+error[SC0201]: type mismatch: expected numeric, got pair(word, word)
+  --> /main/main.solc:25:10
+   |
+24 | function pair_ret() -> pair(word, word) {
+25 |   return 1;
+   |          ^ expression has mismatched type
+26 | }
+   |
+---
+
+error[SC0201]: type mismatch: expected numeric, got sum(word, word)
+  --> /main/main.solc:29:10
+   |
+28 | function sum_ret() -> sum(word, word) {
+29 |   return 1;
+   |          ^ expression has mismatched type
+30 | }
+   |
+---
+
+error[SC0201]: type mismatch: expected numeric, got (word, word)
+  --> /main/main.solc:33:10
+   |
+32 | function tuple_ret() -> (word, word) {
+33 |   return 1;
+   |          ^ expression has mismatched type
+34 | }
+   |
+---
+
+error[SC0201]: type mismatch: expected numeric, got (()) -> word
+  --> /main/main.solc:37:10
+   |
+36 | function function_ret() -> () -> word {
+37 |   return 1;
+   |          ^ expression has mismatched type
+38 | }
+   |

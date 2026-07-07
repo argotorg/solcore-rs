@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/audit_class_as_type_lowering/main.solc
+---
+error[SC0229]: class name used as type: `C`
+ --> /main/main.solc:4:10
+  |
+3 | function class_annotation() -> word {
+4 |   let x: C;
+  |          ^ class is not a type
+5 |   return 0;
+  |
+---
+
+error[SC0229]: class name used as type: `Int`
+  --> /main/main.solc:9:10
+   |
+ 8 | function builtin_class_annotation() -> word {
+ 9 |   let x: Int = 1;
+   |          ^^^ class is not a type
+10 |   return x;
+   |

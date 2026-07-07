@@ -1,0 +1,113 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/audit_value_namespace_matrix/main.solc
+---
+error[SC0228]: type name used as value: `Opt`
+  --> /main/main.solc:9:10
+   |
+ 8 | function adt_value() -> word {
+ 9 |   return Opt;
+   |          ^^^ not a value
+10 | }
+   |
+---
+
+error[SC0228]: type name used as value: `Alias`
+  --> /main/main.solc:13:10
+   |
+12 | function alias_value() -> word {
+13 |   return Alias;
+   |          ^^^^^ not a value
+14 | }
+   |
+---
+
+error[SC0228]: type name used as value: `K`
+  --> /main/main.solc:17:10
+   |
+16 | function contract_value() -> word {
+17 |   return K;
+   |          ^ not a value
+18 | }
+   |
+---
+
+error[SC0228]: class name used as value: `C`
+  --> /main/main.solc:21:10
+   |
+20 | function class_value() -> word {
+21 |   return C;
+   |          ^ not a value
+22 | }
+   |
+---
+
+error[SC0228]: type name used as value: `word`
+  --> /main/main.solc:25:10
+   |
+24 | function builtin_type_value() -> word {
+25 |   return word;
+   |          ^^^^ not a value
+26 | }
+   |
+---
+
+error[SC0228]: class name used as value: `Int`
+  --> /main/main.solc:29:10
+   |
+28 | function builtin_class_value() -> word {
+29 |   return Int;
+   |          ^^^ not a value
+30 | }
+   |
+---
+
+error[SC0228]: type variable used as value: `a`
+  --> /main/main.solc:33:10
+   |
+32 | forall a . function type_var_value() -> word {
+33 |   return a;
+   |          ^ not a value
+34 | }
+   |
+---
+
+error[SC0228]: module used as value: `U`
+  --> /main/main.solc:37:10
+   |
+36 | function module_value() -> word {
+37 |   return U;
+   |          ^ not a value
+38 | }
+   |
+---
+
+error[SC0228]: type name used as callee: `Opt`
+  --> /main/main.solc:41:10
+   |
+40 | function type_as_callee() -> word {
+41 |   return Opt();
+   |          ^^^ not a value
+42 | }
+   |
+---
+
+error[SC0228]: module used as callee: `U`
+  --> /main/main.solc:45:10
+   |
+44 | function module_as_callee() -> word {
+45 |   return U();
+   |          ^ not a value
+46 | }
+   |
+---
+
+error[SC0228]: type name used as value: `Opt`
+  --> /main/main.solc:49:10
+   |
+48 | function type_in_binop() -> word {
+49 |   return Opt + 1;
+   |          ^^^ not a value
+50 | }
+   |

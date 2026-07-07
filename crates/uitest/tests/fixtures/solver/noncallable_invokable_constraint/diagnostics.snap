@@ -3,11 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/noncallable_invokable_constraint/main.solc
 ---
-error[SC0207]: unsatisfied class constraint: word:invokable((), word)
+error[SC0206]: non-callable value of type word
  --> /main/main.solc:3:10
   |
 2 |   let x : word = 1;
 3 |   return x();
-  |          ^^^ constraint originates here
+  |          ^ callee is not callable
 4 | }
   |

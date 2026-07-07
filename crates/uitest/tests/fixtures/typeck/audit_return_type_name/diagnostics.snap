@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/audit_return_type_name/main.solc
+---
+error[SC0228]: type name used as value: `Opt`
+ --> /main/main.solc:4:10
+  |
+3 | function f() -> Opt {
+4 |   return Opt;
+  |          ^^^ not a value
+5 | }
+  |

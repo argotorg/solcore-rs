@@ -25,7 +25,11 @@ fn parse_fail_diagnostics(fixture: Fixture<&str>) {
     run_in_large_stack(move || {
         let db = TestDb::default();
         let diagnostics = parse_diagnostics_for_source(&db, "main.solc", &source);
-        assert_failure_snapshot(&db, Path::new(&path).parent().expect("case dir"), diagnostics);
+        assert_failure_snapshot(
+            &db,
+            Path::new(&path).parent().expect("case dir"),
+            diagnostics,
+        );
     });
 }
 
@@ -111,7 +115,8 @@ fn specialize_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
         return Vec::new();
     };
     let module = parser::parse_file_to_hir(db, file).module(db);
-    let output = specialize::specialize_module(db, module, specialize::SpecializeOptions::default());
+    let output =
+        specialize::specialize_module(db, module, specialize::SpecializeOptions::default());
     let mut diagnostics = output
         .diagnostics
         .iter()
@@ -135,7 +140,8 @@ fn hull_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
         return Vec::new();
     };
     let module = parser::parse_file_to_hir(db, file).module(db);
-    let output = specialize::specialize_module(db, module, specialize::SpecializeOptions::default());
+    let output =
+        specialize::specialize_module(db, module, specialize::SpecializeOptions::default());
     let mut diagnostics = output
         .diagnostics
         .iter()
@@ -161,13 +167,15 @@ fn hull_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
             .with_primary_label(db, diagnostic.span, Some("emit failed here"))
     }));
     if diagnostics.is_empty() {
-        diagnostics.extend(hull::check_program_with_db(db, &emitted.program).iter().map(
-            |diagnostic| {
-                Diagnostic::error(format_hull_kind(&diagnostic.kind))
-                    .with_code("HULL-CHECK")
-                    .with_primary_label(db, diagnostic.span, Some("check failed here"))
-            },
-        ));
+        diagnostics.extend(
+            hull::check_program_with_db(db, &emitted.program)
+                .iter()
+                .map(|diagnostic| {
+                    Diagnostic::error(format_hull_kind(&diagnostic.kind))
+                        .with_code("HULL-CHECK")
+                        .with_primary_label(db, diagnostic.span, Some("check failed here"))
+                }),
+        );
     }
     sort_dedup_diagnostics(db, &mut diagnostics);
     diagnostics

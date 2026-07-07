@@ -118,6 +118,7 @@ pub fn specialize_name<'db>(db: &'db dyn HirDb, base: &str, tys: &[Ty<'db>]) -> 
 struct Driver<'db> {
     db: &'db dyn Db,
     module: Module<'db>,
+    entry_module: Option<ModuleId<'db>>,
     modules: Vec<Module<'db>>,
     options: SpecializeOptions,
     module_resolutions: FxHashMap<DefId<'db>, hir_nameres::ModuleResolutionMap<'db>>,
@@ -213,11 +214,12 @@ struct BodyCtx<'a, 'db> {
 
 impl<'db> Driver<'db> {
     fn new(db: &'db dyn Db, module: Module<'db>, options: SpecializeOptions) -> Self {
+        let entry_module = module_id_for_source_file(db, module.def_id_value(db).file(db));
         let modules = reachable_modules(db, module);
         let mut module_resolutions = FxHashMap::default();
         let mut module_trait_envs = FxHashMap::default();
         for indexed in &modules {
-            let resolution = hir_nameres::resolve_module(db, *indexed);
+            let resolution = resolve_specialize_module(db, *indexed);
             let trait_env = trait_env_from_module_resolution(db, *indexed, &resolution);
             module_resolutions.insert(indexed.def_id_value(db), resolution);
             module_trait_envs.insert(indexed.def_id_value(db), trait_env);
@@ -225,6 +227,7 @@ impl<'db> Driver<'db> {
         let mut driver = Self {
             db,
             module,
+            entry_module,
             modules,
             options,
             module_resolutions,
@@ -953,6 +956,10 @@ impl<'db> Driver<'db> {
             info.function.sig(self.db).params.atom(),
         ))
         .with_trait_env(trait_env);
+        if let Some(entry_module) = self.entry_module {
+            let ctx = ctx.with_entry_module(entry_module);
+            return infer_body(self.db, body, ctx);
+        }
         infer_body(self.db, body, ctx)
     }
 
@@ -2682,6 +2689,26 @@ fn module_id_for_source_file<'db>(db: &'db dyn Db, file: SourceFile) -> Option<M
             })
         })
         .map(|key| module_id_from_key(db, &key))
+}
+
+fn resolve_specialize_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+) -> hir_nameres::ModuleResolutionMap<'db> {
+    let Some(module_id) = module_id_for_source_file(db, module.def_id_value(db).file(db)) else {
+        return hir_nameres::resolve_module(db, module);
+    };
+    let env = nameres::module_env(db, module_id);
+    let Some(item_scope) = env.item_scope.clone() else {
+        return hir_nameres::resolve_module(db, module);
+    };
+    hir_nameres::resolve_module_with_imports_and_policy(
+        db,
+        module,
+        item_scope,
+        &env,
+        hir_nameres::NameresDiagnosticPolicy::Emit,
+    )
 }
 
 fn flatten_name(name: &str) -> String {

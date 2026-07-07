@@ -30,7 +30,7 @@ use tracing::field;
 
 use crate::{
     BinderEnv, BuiltinClassId, BuiltinTyCtor, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind,
-    TyScheme, TypeLowering, UserTyCtorKind,
+    TyScheme, TypeLowering, TypeLoweringDiagnostic, UserTyCtorKind,
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
     builtin_scheme, canonical_goal_with_allowed,
     contract::module_contract_diagnostics,
@@ -212,6 +212,7 @@ pub struct Instantiated<'db> {
     /// Instantiated body type.
     pub ty: InferTy<'db>,
     obligations: Vec<PendingObligation<'db>>,
+    equality_errors: Vec<PendingEqualityError<'db>>,
 }
 
 /// Ephemeral ena-backed unification table.
@@ -550,6 +551,24 @@ pub enum TypeckDiagnostic {
         /// Callee type snapshot.
         callee: String,
     },
+    /// `SC0228`: a non-value namespace item appeared in value position.
+    NamespaceAsValue {
+        /// Source span for the invalid value occurrence.
+        span: LabelSpan,
+        /// Name used in value position.
+        name: String,
+        /// Namespace that the name belongs to.
+        namespace: ValueNamespace,
+        /// Value-position context.
+        position: ValuePosition,
+    },
+    /// `SC0229`: a class name appeared where a type was required.
+    ClassAsType {
+        /// Source span for the class name.
+        span: LabelSpan,
+        /// Class name.
+        class: String,
+    },
     /// `SC0207`: a class constraint could not be solved.
     UnsatisfiedConstraint {
         /// Source span for the obligation that could not be solved.
@@ -744,12 +763,47 @@ pub enum TypeckDiagnostic {
     },
 }
 
+/// Non-value namespace used as a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ValueNamespace {
+    /// Type constructor namespace.
+    Type,
+    /// Type class namespace.
+    Class,
+    /// Module namespace.
+    Module,
+    /// Type-variable namespace.
+    TypeVariable,
+}
+
+/// Expression context for namespace-as-value diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ValuePosition {
+    /// Ordinary expression position.
+    Value,
+    /// Callee of a call expression.
+    Callee,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingObligation<'db> {
     class: ClassId<'db>,
     main: InferTy<'db>,
     args: Vec<InferTy<'db>>,
     source: ObligationSource<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingEqualityError<'db> {
+    source: ObligationSource<'db>,
+    error: UnifyError<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InstantiatedPred<'db> {
+    Obligation(PendingObligation<'db>),
+    EqualityError(PendingEqualityError<'db>),
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -815,6 +869,8 @@ struct InferCtx<'db> {
     partial_data: Vec<(String, Vec<String>)>,
     closure_sigs: FxHashMap<DefId<'db>, ClosureSig<'db>>,
     integer_literal_vars: Vec<TyVid<'db>>,
+    poisoned_exprs: FxHashSet<(FuncBody<'db>, Id<Expr<'db>>)>,
+    poisoned_pats: FxHashSet<(FuncBody<'db>, Id<Pat<'db>>)>,
     diagnostics: Vec<TypeckDiagnostic>,
 }
 
@@ -907,6 +963,31 @@ impl TypeckDiagnostic {
                 Diagnostic::error(format!("non-callable value of type {callee}"))
                     .with_code("SC0206")
                     .with_primary_label_span(span.clone(), Some("callee is not callable"))
+            }
+            TypeckDiagnostic::NamespaceAsValue {
+                span,
+                name,
+                namespace,
+                position,
+            } => {
+                let subject = match namespace {
+                    ValueNamespace::Type => "type name",
+                    ValueNamespace::Class => "class name",
+                    ValueNamespace::Module => "module",
+                    ValueNamespace::TypeVariable => "type variable",
+                };
+                let message = match position {
+                    ValuePosition::Value => format!("{subject} used as value: `{name}`"),
+                    ValuePosition::Callee => format!("{subject} used as callee: `{name}`"),
+                };
+                Diagnostic::error(message)
+                    .with_code("SC0228")
+                    .with_primary_label_span(span.clone(), Some("not a value"))
+            }
+            TypeckDiagnostic::ClassAsType { span, class } => {
+                Diagnostic::error(format!("class name used as type: `{class}`"))
+                    .with_code("SC0229")
+                    .with_primary_label_span(span.clone(), Some("class is not a type"))
             }
             TypeckDiagnostic::UnsatisfiedConstraint { span, pred } => {
                 Diagnostic::error(format!("unsatisfied class constraint: {pred}"))
@@ -1111,6 +1192,14 @@ fn alias_error_to_diagnostic(error: AliasError) -> TypeckDiagnostic {
     }
 }
 
+fn lowering_diagnostic_to_typeck(diagnostic: TypeLoweringDiagnostic) -> TypeckDiagnostic {
+    match diagnostic {
+        TypeLoweringDiagnostic::ClassAsType { span, class } => {
+            TypeckDiagnostic::ClassAsType { span, class }
+        }
+    }
+}
+
 fn infer_ty_mentions_alias<'db>(ty: &InferTy<'db>) -> bool {
     match ty {
         InferTy::Named { ctor, args } => {
@@ -1192,12 +1281,20 @@ impl<'db> InferTable<'db> {
             .collect::<Vec<_>>();
         let body = scheme.body(self.db);
         let ty = self.instantiate_ty(body.ty(self.db), &vars);
-        let obligations = body
-            .preds(self.db)
-            .iter()
-            .map(|pred| self.instantiate_pred(*pred, &vars, source.clone()))
-            .collect();
-        Instantiated { ty, obligations }
+        let mut obligations = Vec::new();
+        let mut equality_errors = Vec::new();
+        for pred in body.preds(self.db) {
+            match self.instantiate_pred(*pred, &vars, source.clone()) {
+                InstantiatedPred::Obligation(obligation) => obligations.push(obligation),
+                InstantiatedPred::EqualityError(error) => equality_errors.push(error),
+                InstantiatedPred::None => {}
+            }
+        }
+        Instantiated {
+            ty,
+            obligations,
+            equality_errors,
+        }
     }
 
     /// Attempts to unify two inference types transactionally.
@@ -1290,9 +1387,7 @@ impl<'db> InferTable<'db> {
     pub fn display(&mut self, ty: InferTy<'db>) -> String {
         match self.resolve(ty) {
             InferTy::Error => "<error>".to_owned(),
-            InferTy::Unknown => "<unknown>".to_owned(),
-            InferTy::Var(var) => format!("?{}", var.index()),
-            InferTy::BoundVar(index) => format!("${index}"),
+            InferTy::Unknown | InferTy::Var(_) | InferTy::BoundVar(_) => "_".to_owned(),
             InferTy::Named { ctor, args } => {
                 let ty = Ty::named(
                     self.db,
@@ -1389,34 +1484,30 @@ impl<'db> InferTable<'db> {
         pred: Pred<'db>,
         vars: &[InferTy<'db>],
         source: ObligationSource<'db>,
-    ) -> PendingObligation<'db> {
+    ) -> InstantiatedPred<'db> {
         match pred.kind(self.db) {
-            PredKind::InClass { class, main, args } => PendingObligation {
-                class: *class,
-                main: self.instantiate_ty(*main, vars),
-                args: args
-                    .iter()
-                    .map(|arg| self.instantiate_ty(*arg, vars))
-                    .collect(),
-                source,
-            },
+            PredKind::InClass { class, main, args } => {
+                InstantiatedPred::Obligation(PendingObligation {
+                    class: *class,
+                    main: self.instantiate_ty(*main, vars),
+                    args: args
+                        .iter()
+                        .map(|arg| self.instantiate_ty(*arg, vars))
+                        .collect(),
+                    source,
+                })
+            }
             PredKind::Eq { lhs, rhs } => {
                 let lhs = self.instantiate_ty(*lhs, vars);
                 let rhs = self.instantiate_ty(*rhs, vars);
-                let _ = self.unify(lhs.clone(), rhs);
-                PendingObligation {
-                    class: ClassId::Builtin(BuiltinClassId::Int),
-                    main: lhs,
-                    args: Vec::new(),
-                    source,
+                match self.unify(lhs, rhs) {
+                    Ok(()) => InstantiatedPred::None,
+                    Err(error) => {
+                        InstantiatedPred::EqualityError(PendingEqualityError { source, error })
+                    }
                 }
             }
-            PredKind::Error => PendingObligation {
-                class: ClassId::Builtin(BuiltinClassId::Int),
-                main: InferTy::Error,
-                args: Vec::new(),
-                source,
-            },
+            PredKind::Error => InstantiatedPred::None,
         }
     }
 
@@ -1537,9 +1628,9 @@ impl<'db> UnifyError<'db> {
                 expected: engine.display(expected),
                 actual: engine.display(actual),
             },
-            UnifyError::Occurs { var, ty } => TypeckDiagnostic::OccursCheck {
+            UnifyError::Occurs { var: _, ty } => TypeckDiagnostic::OccursCheck {
                 span,
-                var: format!("?{}", var.index()),
+                var: "_".to_owned(),
                 ty: engine.display(ty),
             },
         }
@@ -1600,6 +1691,8 @@ impl<'db> InferCtx<'db> {
             partial_data: ctx.partial_data,
             closure_sigs: FxHashMap::default(),
             integer_literal_vars: Vec::new(),
+            poisoned_exprs: FxHashSet::default(),
+            poisoned_pats: FxHashSet::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -1611,13 +1704,21 @@ impl<'db> InferCtx<'db> {
         } else {
             ObligationSolveOutput::default()
         };
+        let poisoned_exprs = self.poisoned_exprs.clone();
+        let poisoned_pats = self.poisoned_pats.clone();
         let expr_tys = self
             .expr_tys
             .into_iter()
             .map(|(body, expr, ty)| ExprTy {
                 body,
                 expr,
-                ty: self.engine.ground_ty(ty),
+                ty: self
+                    .engine
+                    .ground_ty(if poisoned_exprs.contains(&(body, expr)) {
+                        InferTy::Error
+                    } else {
+                        ty
+                    }),
             })
             .collect();
         let pat_tys = self
@@ -1626,7 +1727,13 @@ impl<'db> InferCtx<'db> {
             .map(|(body, pat, ty)| PatTy {
                 body,
                 pat,
-                ty: self.engine.ground_ty(ty),
+                ty: self
+                    .engine
+                    .ground_ty(if poisoned_pats.contains(&(body, pat)) {
+                        InferTy::Error
+                    } else {
+                        ty
+                    }),
             })
             .collect();
         let let_tys = self
@@ -1722,6 +1829,17 @@ impl<'db> InferCtx<'db> {
         matches!(&body.stmts(self.db).get(stmt_id).kind, StmtKind::Return(_))
     }
 
+    fn lower_type_ref(&mut self, ty: TypeRef<'db>) -> InferTy<'db> {
+        let lowered = self.lowerer.lower_type(ty);
+        self.diagnostics.extend(
+            self.lowerer
+                .take_diagnostics()
+                .into_iter()
+                .map(lowering_diagnostic_to_typeck),
+        );
+        self.engine.from_ty(lowered)
+    }
+
     fn infer_stmt(&mut self, body: FuncBody<'db>, stmt_id: Id<Stmt<'db>>) -> InferTy<'db> {
         let stmt = body.stmts(self.db).get(stmt_id);
         match &stmt.kind {
@@ -1737,7 +1855,7 @@ impl<'db> InferCtx<'db> {
                         .as_ref()
                         .is_some_and(|ty| type_ref_is_integer(self.db, *ty));
                 let local_ty = ty
-                    .map(|ty| self.engine.from_ty(self.lowerer.lower_type(ty)))
+                    .map(|ty| self.lower_type_ref(ty))
                     .unwrap_or_else(|| self.engine.fresh_var());
                 let local_ty = self.maybe_comptime(*comptime, local_ty);
                 if let Some(init) = init {
@@ -1975,7 +2093,7 @@ impl<'db> InferCtx<'db> {
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
         let expr = body.exprs(self.db).get(expr_id);
-        let ty = match &expr.kind {
+        let mut ty = match &expr.kind {
             ExprKind::Lit(lit) => self.infer_lit(body, expr_id, lit),
             ExprKind::Ident(name) => {
                 let resolution = self
@@ -2051,12 +2169,13 @@ impl<'db> InferCtx<'db> {
                         span: self.expr_label_span(body, expr_id),
                         field: self.field_name(body, expr_id),
                     });
+                    self.poison_expr(body, expr_id);
                     hir_nameres::Resolution::Err
                 };
                 self.infer_resolution(body, expr_id, resolution)
             }
             ExprKind::TypeAnnot { expr, ty } => {
-                let annot = self.engine.from_ty(self.lowerer.lower_type(*ty));
+                let annot = self.lower_type_ref(*ty);
                 let expr_ty = self.infer_expr_expected(body, *expr, Some(annot.clone()));
                 self.unify_expr(body, *expr, annot.clone(), expr_ty);
                 annot
@@ -2078,8 +2197,13 @@ impl<'db> InferCtx<'db> {
             ExprKind::Tuple(elems) => self.infer_tuple_expr(body, expr_id, elems, expected.clone()),
             ExprKind::Error => InferTy::Error,
         };
-        if let Some(expected) = expected {
-            self.unify_expr(body, expr_id, expected, ty.clone());
+        if let Some(expected) = expected
+            && !self.unify_expr(body, expr_id, expected, ty.clone())
+        {
+            ty = InferTy::Error;
+        }
+        if self.expr_is_poisoned(body, expr_id) {
+            ty = InferTy::Error;
         }
         self.expr_tys.push((body, expr_id, ty.clone()));
         ty
@@ -2124,9 +2248,9 @@ impl<'db> InferCtx<'db> {
                     scheme,
                     source.unwrap_or(ObligationSource::Scheme),
                 );
-                self.pending.extend(instantiated.obligations);
+                let ctor_ty = self.accept_instantiated(instantiated);
                 let expected = expected.unwrap_or_else(|| self.engine.fresh_var());
-                Some(self.apply_ctor_expr_scheme(body, call_expr, instantiated.ty, args, expected))
+                Some(self.apply_ctor_expr_scheme(body, call_expr, ctor_ty, args, expected))
             }
             hir_nameres::Resolution::DotCtorDeferred => {
                 let name = self.expr_constructor_name(body, callee_expr)?;
@@ -2151,6 +2275,13 @@ impl<'db> InferCtx<'db> {
             call_expr,
             callee_expr,
         };
+        if matches!(resolved, InferTy::Error) {
+            for arg in args {
+                self.infer_expr(body, *arg);
+            }
+            self.poison_expr(body, call_expr);
+            return InferTy::Error;
+        }
         if self.is_direct_call_callee(body, callee_expr) {
             if let InferTy::Function { params, .. } = resolved {
                 self.infer_direct_call(body, site, callee_ty, Some(params), args, expected)
@@ -2185,6 +2316,11 @@ impl<'db> InferCtx<'db> {
                 expected: params.len(),
                 actual: args.len(),
             });
+            self.poison_expr(body, site.call_expr);
+            for (index, arg) in args.iter().enumerate() {
+                self.infer_expr_expected(body, *arg, params.get(index).cloned());
+            }
+            return InferTy::Error;
         }
         let callee_name = self.comptime_callee_name(body, site.callee_expr);
         let args = args
@@ -2246,6 +2382,11 @@ impl<'db> InferCtx<'db> {
                 expected: sig.params.len(),
                 actual: args.len(),
             });
+            self.poison_expr(body, call_expr);
+            for (index, arg) in args.iter().enumerate() {
+                self.infer_expr_expected(body, *arg, sig.params.get(index).cloned());
+            }
+            return InferTy::Error;
         }
         let inferred_args = args
             .iter()
@@ -2297,7 +2438,13 @@ impl<'db> InferCtx<'db> {
                     .cloned()
                     .unwrap_or(hir_nameres::Resolution::Err);
                 let source = self.call_site_source(body, call_expr, callee_expr, &resolution);
-                self.infer_resolution_with_source(body, callee_expr, resolution, source)
+                self.infer_resolution_with_source(
+                    body,
+                    callee_expr,
+                    resolution,
+                    source,
+                    ValuePosition::Callee,
+                )
             }
             ExprKind::Field { base, .. } => {
                 if !self.is_namespace_expr(body, *base) {
@@ -2311,10 +2458,17 @@ impl<'db> InferCtx<'db> {
                         span: self.expr_label_span(body, callee_expr),
                         field: self.field_name(body, callee_expr),
                     });
+                    self.poison_expr(body, callee_expr);
                     hir_nameres::Resolution::Err
                 };
                 let source = self.call_site_source(body, call_expr, callee_expr, &resolution);
-                self.infer_resolution_with_source(body, callee_expr, resolution, source)
+                self.infer_resolution_with_source(
+                    body,
+                    callee_expr,
+                    resolution,
+                    source,
+                    ValuePosition::Callee,
+                )
             }
             _ => self.infer_expr(body, callee_expr),
         }
@@ -2472,7 +2626,7 @@ impl<'db> InferCtx<'db> {
             .map(|(index, param)| {
                 let ty = match param {
                     FuncParam::Typed { comptime, ty, .. } => {
-                        let ty = self.engine.from_ty(self.lowerer.lower_type(*ty));
+                        let ty = self.lower_type_ref(*ty);
                         let ty = self.maybe_comptime(*comptime, ty);
                         if let Some(expected) = expected_params
                             .as_ref()
@@ -2496,7 +2650,7 @@ impl<'db> InferCtx<'db> {
             })
             .collect::<Vec<_>>();
         let ret = if let Some(ret) = ret {
-            let annotated = self.engine.from_ty(self.lowerer.lower_type(ret));
+            let annotated = self.lower_type_ref(ret);
             if let Some(expected_ret) = expected_ret {
                 self.unify_span(ret.span(self.db), expected_ret, annotated.clone());
             }
@@ -2654,7 +2808,7 @@ impl<'db> InferCtx<'db> {
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
         let pat = body.pats(self.db).get(pat_id);
-        let ty = match &pat.kind {
+        let mut ty = match &pat.kind {
             PatKind::Wildcard => expected.clone().unwrap_or_else(|| self.engine.fresh_var()),
             PatKind::Var(_) => {
                 let ty = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
@@ -2675,6 +2829,7 @@ impl<'db> InferCtx<'db> {
                         expected: "numeric".to_owned(),
                         actual: self.engine.display(label_ty),
                     });
+                    self.poison_expr(body, *expr);
                 }
                 self.comptime_obligations.push(ComptimeObligation {
                     body,
@@ -2685,8 +2840,13 @@ impl<'db> InferCtx<'db> {
             }
             PatKind::Error => InferTy::Error,
         };
-        if let Some(expected) = expected {
-            self.unify_pat(body, pat_id, expected, ty.clone());
+        if let Some(expected) = expected
+            && !self.unify_pat(body, pat_id, expected, ty.clone())
+        {
+            ty = InferTy::Error;
+        }
+        if self.pat_is_poisoned(body, pat_id) {
+            ty = InferTy::Error;
         }
         self.pat_tys.push((body, pat_id, ty.clone()));
         ty
@@ -2720,7 +2880,8 @@ impl<'db> InferCtx<'db> {
                             expected: "numeric".to_owned(),
                             actual: self.engine.display(expected.clone()),
                         });
-                        expected
+                        self.poison_pat(body, pat);
+                        InferTy::Error
                     }
                 } else {
                     ty
@@ -2737,7 +2898,7 @@ impl<'db> InferCtx<'db> {
         expr: Id<Expr<'db>>,
         resolution: hir_nameres::Resolution<'db>,
     ) -> InferTy<'db> {
-        self.infer_resolution_with_source(body, expr, resolution, None)
+        self.infer_resolution_with_source(body, expr, resolution, None, ValuePosition::Value)
     }
 
     fn infer_resolution_with_source(
@@ -2746,6 +2907,7 @@ impl<'db> InferCtx<'db> {
         expr: Id<Expr<'db>>,
         resolution: hir_nameres::Resolution<'db>,
         source: Option<ObligationSource<'db>>,
+        position: ValuePosition,
     ) -> InferTy<'db> {
         match resolution {
             hir_nameres::Resolution::Param(param) => self.param_ty(param.body, param.index),
@@ -2755,21 +2917,31 @@ impl<'db> InferCtx<'db> {
             hir_nameres::Resolution::Local(hir_nameres::LocalBinding::Pattern { body, pat }) => {
                 self.pattern_local_ty(body, pat)
             }
-            hir_nameres::Resolution::Builtin(kind) => {
-                if let Some(scheme) = builtin_scheme(self.db, kind) {
-                    let source = source.unwrap_or(match kind {
-                        hir_nameres::BuiltinKind::ClassMethod(_) => {
-                            ObligationSource::ClassMethod { body, expr }
-                        }
-                        _ => ObligationSource::Scheme,
-                    });
-                    let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
-                    self.pending.extend(instantiated.obligations);
-                    instantiated.ty
-                } else {
-                    self.engine.fresh_var()
+            hir_nameres::Resolution::Builtin(kind) => match kind {
+                hir_nameres::BuiltinKind::Constructor(_)
+                | hir_nameres::BuiltinKind::Function(_)
+                | hir_nameres::BuiltinKind::ClassMethod(_) => {
+                    if let Some(scheme) = builtin_scheme(self.db, kind) {
+                        let source = source.unwrap_or(match kind {
+                            hir_nameres::BuiltinKind::ClassMethod(_) => {
+                                ObligationSource::ClassMethod { body, expr }
+                            }
+                            _ => ObligationSource::Scheme,
+                        });
+                        let instantiated =
+                            self.engine.instantiate_scheme_with_source(scheme, source);
+                        self.accept_instantiated(instantiated)
+                    } else {
+                        InferTy::Error
+                    }
                 }
-            }
+                hir_nameres::BuiltinKind::Type(_) => {
+                    self.namespace_as_value(body, expr, ValueNamespace::Type, position)
+                }
+                hir_nameres::BuiltinKind::Class(_) => {
+                    self.namespace_as_value(body, expr, ValueNamespace::Class, position)
+                }
+            },
             hir_nameres::Resolution::Def {
                 def,
                 kind: hir_nameres::DefResolutionKind::Function,
@@ -2788,12 +2960,72 @@ impl<'db> InferCtx<'db> {
                 source.unwrap_or(ObligationSource::ClassMethod { body, expr }),
             ),
             hir_nameres::Resolution::Err => InferTy::Error,
-            hir_nameres::Resolution::Def { .. }
-            | hir_nameres::Resolution::Module(_)
-            | hir_nameres::Resolution::DotCtorDeferred
-            | hir_nameres::Resolution::Local(hir_nameres::LocalBinding::TypeVar(_)) => {
-                self.engine.fresh_var()
+            hir_nameres::Resolution::Def { kind, .. } => match kind {
+                hir_nameres::DefResolutionKind::Function => unreachable!("handled above"),
+                hir_nameres::DefResolutionKind::Adt
+                | hir_nameres::DefResolutionKind::TypeAlias
+                | hir_nameres::DefResolutionKind::Contract
+                | hir_nameres::DefResolutionKind::Instance => {
+                    self.namespace_as_value(body, expr, ValueNamespace::Type, position)
+                }
+                hir_nameres::DefResolutionKind::Class => {
+                    self.namespace_as_value(body, expr, ValueNamespace::Class, position)
+                }
+            },
+            hir_nameres::Resolution::Module(_) => {
+                self.namespace_as_value(body, expr, ValueNamespace::Module, position)
             }
+            hir_nameres::Resolution::Local(hir_nameres::LocalBinding::TypeVar(_)) => {
+                self.namespace_as_value(body, expr, ValueNamespace::TypeVariable, position)
+            }
+            hir_nameres::Resolution::DotCtorDeferred => InferTy::Error,
+        }
+    }
+
+    fn namespace_as_value(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        namespace: ValueNamespace,
+        position: ValuePosition,
+    ) -> InferTy<'db> {
+        self.diagnostics.push(TypeckDiagnostic::NamespaceAsValue {
+            span: self.expr_label_span(body, expr),
+            name: self.expr_display_name(body, expr),
+            namespace,
+            position,
+        });
+        self.poison_expr(body, expr);
+        InferTy::Error
+    }
+
+    fn expr_display_name(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> String {
+        match &body.exprs(self.db).get(expr).kind {
+            ExprKind::Ident(name) => (*name.atom()).text(self.db).to_owned(),
+            ExprKind::Field { base, field } => {
+                format!(
+                    "{}.{}",
+                    self.expr_display_name(body, *base),
+                    (*field.atom()).text(self.db)
+                )
+            }
+            ExprKind::DotCtor { name, .. } => format!(".{}", (*name.atom()).text(self.db)),
+            _ => "expression".to_owned(),
+        }
+    }
+
+    fn accept_instantiated(&mut self, instantiated: Instantiated<'db>) -> InferTy<'db> {
+        let has_equality_errors = !instantiated.equality_errors.is_empty();
+        for equality_error in instantiated.equality_errors {
+            let span = self.obligation_source_label_span(&equality_error.source);
+            self.diagnostics
+                .push(equality_error.error.diagnostic(&mut self.engine, span));
+        }
+        self.pending.extend(instantiated.obligations);
+        if has_equality_errors {
+            InferTy::Error
+        } else {
+            instantiated.ty
         }
     }
 
@@ -2804,8 +3036,7 @@ impl<'db> InferCtx<'db> {
     ) -> InferTy<'db> {
         if let Some(scheme) = self.lookup_function_scheme(def) {
             let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
-            self.pending.extend(instantiated.obligations);
-            instantiated.ty
+            self.accept_instantiated(instantiated)
         } else {
             self.engine.fresh_var()
         }
@@ -2818,8 +3049,7 @@ impl<'db> InferCtx<'db> {
     ) -> InferTy<'db> {
         if let Some(scheme) = self.lookup_field_scheme(field) {
             let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
-            self.pending.extend(instantiated.obligations);
-            instantiated.ty
+            self.accept_instantiated(instantiated)
         } else {
             self.engine.fresh_var()
         }
@@ -2833,8 +3063,7 @@ impl<'db> InferCtx<'db> {
     ) -> InferTy<'db> {
         if let Some(scheme) = self.lookup_adt_ctor_scheme(ty, index) {
             let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
-            self.pending.extend(instantiated.obligations);
-            instantiated.ty
+            self.accept_instantiated(instantiated)
         } else {
             self.engine.fresh_var()
         }
@@ -2861,8 +3090,7 @@ impl<'db> InferCtx<'db> {
     ) -> InferTy<'db> {
         if let Some(scheme) = self.lookup_class_method_scheme(class, name) {
             let instantiated = self.engine.instantiate_scheme_with_source(scheme, source);
-            self.pending.extend(instantiated.obligations);
-            instantiated.ty
+            self.accept_instantiated(instantiated)
         } else {
             self.engine.fresh_var()
         }
@@ -2976,6 +3204,11 @@ impl<'db> InferCtx<'db> {
                         expected: params.len(),
                         actual: args.len(),
                     });
+                    self.poison_expr(body, expr);
+                    for (index, arg) in args.iter().enumerate() {
+                        self.infer_expr_expected(body, *arg, params.get(index).cloned());
+                    }
+                    return InferTy::Error;
                 }
                 let expected_params = args
                     .iter()
@@ -3014,8 +3247,17 @@ impl<'db> InferCtx<'db> {
                 expected
             }
             non_function => {
+                if matches!(non_function, InferTy::Error) {
+                    for arg in args {
+                        self.infer_expr(body, *arg);
+                    }
+                    self.poison_expr(body, expr);
+                    return InferTy::Error;
+                }
                 if args.is_empty() {
-                    self.unify_expr(body, expr, non_function.clone(), expected.clone());
+                    if !self.unify_expr(body, expr, non_function.clone(), expected.clone()) {
+                        return InferTy::Error;
+                    }
                 } else if !matches!(
                     non_function,
                     InferTy::Error | InferTy::Unknown | InferTy::Var(_)
@@ -3024,6 +3266,11 @@ impl<'db> InferCtx<'db> {
                         span: self.expr_label_span(body, expr),
                         callee: self.engine.display(non_function),
                     });
+                    self.poison_expr(body, expr);
+                    for arg in args {
+                        self.infer_expr(body, *arg);
+                    }
+                    return InferTy::Error;
                 }
                 for arg in args {
                     self.infer_expr(body, *arg);
@@ -3056,8 +3303,8 @@ impl<'db> InferCtx<'db> {
             [] => DotCtorLookup::NoMatch,
             [entry] => {
                 let instantiated = self.engine.instantiate_scheme(entry.scheme);
-                self.pending.extend(instantiated.obligations);
-                DotCtorLookup::Match(instantiated.ty)
+                let ctor_ty = self.accept_instantiated(instantiated);
+                DotCtorLookup::Match(ctor_ty)
             }
             entries => DotCtorLookup::Ambiguous(
                 entries
@@ -3170,8 +3417,8 @@ impl<'db> InferCtx<'db> {
         let instantiated = self.engine.instantiate_scheme(scheme);
         let result = ctor_result_ty(&instantiated.ty);
         if self.can_unify(expected, result) {
-            self.pending.extend(instantiated.obligations);
-            DotCtorLookup::Match(instantiated.ty)
+            let ctor_ty = self.accept_instantiated(instantiated);
+            DotCtorLookup::Match(ctor_ty)
         } else {
             DotCtorLookup::NoMatch
         }
@@ -3219,26 +3466,30 @@ impl<'db> InferCtx<'db> {
                         expected: expected_elems.len(),
                         actual: elems.len(),
                     });
+                    self.poison_expr(body, expr);
                     Some(expected_elems)
                 }
                 _ => None,
             }
         });
-        InferTy::Tuple(
-            elems
-                .iter()
-                .enumerate()
-                .map(|(index, elem)| {
-                    self.infer_expr_expected(
-                        body,
-                        *elem,
-                        expected_elems
-                            .as_ref()
-                            .and_then(|expected| expected.get(index).cloned()),
-                    )
-                })
-                .collect(),
-        )
+        let inferred = elems
+            .iter()
+            .enumerate()
+            .map(|(index, elem)| {
+                self.infer_expr_expected(
+                    body,
+                    *elem,
+                    expected_elems
+                        .as_ref()
+                        .and_then(|expected| expected.get(index).cloned()),
+                )
+            })
+            .collect();
+        if self.expr_is_poisoned(body, expr) {
+            InferTy::Error
+        } else {
+            InferTy::Tuple(inferred)
+        }
     }
 
     fn infer_tuple_pat(
@@ -3260,6 +3511,7 @@ impl<'db> InferCtx<'db> {
                             expected: expected_elems.len(),
                             actual: elems.len(),
                         });
+                        self.poison_pat(body, pat);
                     }
                     Some(expected_elems)
                 }
@@ -3270,6 +3522,7 @@ impl<'db> InferCtx<'db> {
                         expected: "tuple".to_owned(),
                         actual: self.engine.display(other),
                     });
+                    self.poison_pat(body, pat);
                     None
                 }
             }
@@ -3287,7 +3540,11 @@ impl<'db> InferCtx<'db> {
                 )
             })
             .collect::<Vec<_>>();
-        let ty = InferTy::Tuple(inferred);
+        let ty = if self.pat_is_poisoned(body, pat) {
+            InferTy::Error
+        } else {
+            InferTy::Tuple(inferred)
+        };
         if let Some(expected) = expected {
             self.unify_pat(body, pat, expected, ty.clone());
         }
@@ -3383,10 +3640,11 @@ impl<'db> InferCtx<'db> {
                         span: self.pat_label_span(body, pat),
                         name,
                     });
+                self.poison_pat(body, pat);
                 for arg in args {
                     self.infer_pat_expected(body, *arg, None);
                 }
-                expected.unwrap_or(InferTy::Error)
+                InferTy::Error
             }
         }
     }
@@ -3394,8 +3652,7 @@ impl<'db> InferCtx<'db> {
     fn infer_resolution_for_pat_builtin(&mut self, kind: hir_nameres::BuiltinKind) -> InferTy<'db> {
         if let Some(scheme) = builtin_scheme(self.db, kind) {
             let instantiated = self.engine.instantiate_scheme(scheme);
-            self.pending.extend(instantiated.obligations);
-            instantiated.ty
+            self.accept_instantiated(instantiated)
         } else {
             self.engine.fresh_var()
         }
@@ -3418,6 +3675,11 @@ impl<'db> InferCtx<'db> {
                         expected: params.len(),
                         actual: args.len(),
                     });
+                    self.poison_pat(body, pat);
+                    for (index, arg) in args.iter().enumerate() {
+                        self.infer_pat_expected(body, *arg, params.get(index).cloned());
+                    }
+                    return InferTy::Error;
                 }
                 let expected_params = args
                     .iter()
@@ -3456,13 +3718,27 @@ impl<'db> InferCtx<'db> {
                 expected
             }
             concrete => {
+                if matches!(concrete, InferTy::Error) {
+                    for arg in args {
+                        self.infer_pat_expected(body, *arg, None);
+                    }
+                    self.poison_pat(body, pat);
+                    return InferTy::Error;
+                }
                 if args.is_empty() {
-                    self.unify_pat(body, pat, concrete.clone(), expected.clone());
+                    if !self.unify_pat(body, pat, concrete.clone(), expected.clone()) {
+                        return InferTy::Error;
+                    }
                 } else {
                     self.diagnostics.push(TypeckDiagnostic::NonCallable {
                         span: self.pat_label_span(body, pat),
                         callee: self.engine.display(concrete.clone()),
                     });
+                    self.poison_pat(body, pat);
+                    for arg in args {
+                        self.infer_pat_expected(body, *arg, None);
+                    }
+                    return InferTy::Error;
                 }
                 for arg in args {
                     self.infer_pat_expected(body, *arg, None);
@@ -3532,6 +3808,22 @@ impl<'db> InferCtx<'db> {
 
     fn label_span(&self, span: Span<'db>) -> LabelSpan {
         LabelSpan::from_span(self.db, span)
+    }
+
+    fn poison_expr(&mut self, body: FuncBody<'db>, expr: Id<Expr<'db>>) {
+        self.poisoned_exprs.insert((body, expr));
+    }
+
+    fn poison_pat(&mut self, body: FuncBody<'db>, pat: Id<Pat<'db>>) {
+        self.poisoned_pats.insert((body, pat));
+    }
+
+    fn expr_is_poisoned(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> bool {
+        self.poisoned_exprs.contains(&(body, expr))
+    }
+
+    fn pat_is_poisoned(&self, body: FuncBody<'db>, pat: Id<Pat<'db>>) -> bool {
+        self.poisoned_pats.contains(&(body, pat))
     }
 
     fn body_label_span(&self, body: FuncBody<'db>) -> LabelSpan {
@@ -4054,12 +4346,21 @@ impl<'db> InferCtx<'db> {
         Some(sig)
     }
 
-    fn unify_at(&mut self, span: LabelSpan, expected: InferTy<'db>, actual: InferTy<'db>) {
+    fn unify_at(&mut self, span: LabelSpan, expected: InferTy<'db>, actual: InferTy<'db>) -> bool {
+        if matches!(expected, InferTy::Error) || matches!(actual, InferTy::Error) {
+            return true;
+        }
         let expected = self.normalize_aliases(expected);
         let actual = self.normalize_aliases(actual);
+        if matches!(expected, InferTy::Error) || matches!(actual, InferTy::Error) {
+            return true;
+        }
         if let Err(err) = self.engine.unify(expected, actual) {
             self.diagnostics
                 .push(err.diagnostic(&mut self.engine, span));
+            false
+        } else {
+            true
         }
     }
 
@@ -4077,8 +4378,8 @@ impl<'db> InferCtx<'db> {
         stmt: Id<Stmt<'db>>,
         expected: InferTy<'db>,
         actual: InferTy<'db>,
-    ) {
-        self.unify_at(self.stmt_label_span(body, stmt), expected, actual);
+    ) -> bool {
+        self.unify_at(self.stmt_label_span(body, stmt), expected, actual)
     }
 
     fn unify_expr(
@@ -4087,8 +4388,12 @@ impl<'db> InferCtx<'db> {
         expr: Id<Expr<'db>>,
         expected: InferTy<'db>,
         actual: InferTy<'db>,
-    ) {
-        self.unify_at(self.expr_label_span(body, expr), expected, actual);
+    ) -> bool {
+        let ok = self.unify_at(self.expr_label_span(body, expr), expected, actual);
+        if !ok {
+            self.poison_expr(body, expr);
+        }
+        ok
     }
 
     fn unify_pat(
@@ -4097,8 +4402,12 @@ impl<'db> InferCtx<'db> {
         pat: Id<Pat<'db>>,
         expected: InferTy<'db>,
         actual: InferTy<'db>,
-    ) {
-        self.unify_at(self.pat_label_span(body, pat), expected, actual);
+    ) -> bool {
+        let ok = self.unify_at(self.pat_label_span(body, pat), expected, actual);
+        if !ok {
+            self.poison_pat(body, pat);
+        }
+        ok
     }
 
     fn unify(&mut self, expected: InferTy<'db>, actual: InferTy<'db>) {
@@ -4106,8 +4415,14 @@ impl<'db> InferCtx<'db> {
     }
 
     fn can_unify(&mut self, expected: InferTy<'db>, actual: InferTy<'db>) -> bool {
+        if matches!(expected, InferTy::Error) || matches!(actual, InferTy::Error) {
+            return true;
+        }
         let expected = self.normalize_aliases(expected);
         let actual = self.normalize_aliases(actual);
+        if matches!(expected, InferTy::Error) || matches!(actual, InferTy::Error) {
+            return true;
+        }
         self.engine.can_unify(expected, actual)
     }
 
@@ -4167,6 +4482,11 @@ impl<'db> InferCtx<'db> {
         let mut diagnostics = Vec::new();
 
         for (index, pending) in self.pending.clone().into_iter().enumerate() {
+            if self.obligation_source_poisoned(&pending.source)
+                || self.pending_obligation_has_error(&pending)
+            {
+                continue;
+            }
             if let Some(proof) = self.solve_local_closure_obligation(&pending) {
                 evidence.push(ObligationEvidence {
                     obligation: index,
@@ -4244,10 +4564,16 @@ impl<'db> InferCtx<'db> {
                             .collect(),
                     });
                 }
-                Solution::NoSolution => diagnostics.push(TypeckDiagnostic::UnsatisfiedConstraint {
-                    span,
-                    pred: pred.pred.display(self.db),
-                }),
+                Solution::NoSolution => {
+                    if let Some(diagnostic) = self.classify_no_solution(&pending) {
+                        diagnostics.push(diagnostic);
+                    } else {
+                        diagnostics.push(TypeckDiagnostic::UnsatisfiedConstraint {
+                            span,
+                            pred: pred.pred.display(self.db),
+                        });
+                    }
+                }
             }
         }
 
@@ -4289,6 +4615,129 @@ impl<'db> InferCtx<'db> {
             pred,
             sub_evidence: Vec::new(),
         })
+    }
+
+    fn classify_no_solution(
+        &mut self,
+        pending: &PendingObligation<'db>,
+    ) -> Option<TypeckDiagnostic> {
+        if pending.class == ClassId::Builtin(BuiltinClassId::Int)
+            && pending.args.is_empty()
+            && self.is_concrete_non_numeric(pending.main.clone())
+        {
+            let actual_ty = self.normalize_aliases(pending.main.clone());
+            let actual = self.engine.display(actual_ty);
+            return match pending.source {
+                ObligationSource::IntegerLiteral { body, expr } => {
+                    self.poison_expr(body, expr);
+                    Some(TypeckDiagnostic::Mismatch {
+                        span: self.expr_label_span(body, expr),
+                        expected: "numeric".to_owned(),
+                        actual,
+                    })
+                }
+                ObligationSource::IntegerLiteralPattern { body, pat } => {
+                    self.poison_pat(body, pat);
+                    Some(TypeckDiagnostic::Mismatch {
+                        span: self.pat_label_span(body, pat),
+                        expected: "numeric".to_owned(),
+                        actual,
+                    })
+                }
+                _ => None,
+            };
+        }
+
+        if pending.class == ClassId::Builtin(BuiltinClassId::Invokable)
+            && pending.args.len() == 2
+            && self.is_concrete_non_callable(pending.main.clone())
+            && let ObligationSource::CallSite {
+                body,
+                call_expr,
+                callee_expr,
+                ..
+            } = pending.source
+        {
+            self.poison_expr(body, callee_expr);
+            self.poison_expr(body, call_expr);
+            let callee_ty = self.normalize_aliases(pending.main.clone());
+            let callee = self.engine.display(callee_ty);
+            return Some(TypeckDiagnostic::NonCallable {
+                span: self.expr_label_span(body, callee_expr),
+                callee,
+            });
+        }
+
+        None
+    }
+
+    fn obligation_source_poisoned(&self, source: &ObligationSource<'db>) -> bool {
+        match source {
+            ObligationSource::IntegerLiteral { body, expr }
+            | ObligationSource::ClassMethod { body, expr } => self.expr_is_poisoned(*body, *expr),
+            ObligationSource::CallSite {
+                body,
+                call_expr,
+                callee_expr,
+                ..
+            } => {
+                self.expr_is_poisoned(*body, *call_expr)
+                    || self.expr_is_poisoned(*body, *callee_expr)
+            }
+            ObligationSource::IntegerLiteralPattern { body, pat } => {
+                self.pat_is_poisoned(*body, *pat)
+            }
+            ObligationSource::Scheme => false,
+        }
+    }
+
+    fn pending_obligation_has_error(&mut self, pending: &PendingObligation<'db>) -> bool {
+        self.infer_ty_contains_error(pending.main.clone())
+            || pending
+                .args
+                .iter()
+                .cloned()
+                .any(|arg| self.infer_ty_contains_error(arg))
+    }
+
+    fn infer_ty_contains_error(&mut self, ty: InferTy<'db>) -> bool {
+        match self.engine.resolve(ty) {
+            InferTy::Error => true,
+            InferTy::Named { args, .. } | InferTy::Tuple(args) => args
+                .into_iter()
+                .any(|arg| self.infer_ty_contains_error(arg)),
+            InferTy::Function { params, ret } => {
+                params
+                    .into_iter()
+                    .any(|param| self.infer_ty_contains_error(param))
+                    || self.infer_ty_contains_error(*ret)
+            }
+            InferTy::Comptime(inner) => self.infer_ty_contains_error(*inner),
+            InferTy::Unknown | InferTy::Var(_) | InferTy::BoundVar(_) => false,
+        }
+    }
+
+    fn is_concrete_non_numeric(&mut self, ty: InferTy<'db>) -> bool {
+        let ty = self.normalize_aliases(ty);
+        match self.engine.resolve(ty) {
+            InferTy::Error | InferTy::Unknown | InferTy::Var(_) | InferTy::BoundVar(_) => false,
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Word | crate::BuiltinTyCtor::Integer),
+                args,
+            } => !args.is_empty(),
+            _ => true,
+        }
+    }
+
+    fn is_concrete_non_callable(&mut self, ty: InferTy<'db>) -> bool {
+        if self.callable_sig_for_ty(ty.clone()).is_some() {
+            return false;
+        }
+        let ty = self.normalize_aliases(ty);
+        !matches!(
+            self.engine.resolve(ty),
+            InferTy::Error | InferTy::Unknown | InferTy::Var(_) | InferTy::BoundVar(_)
+        )
     }
 
     fn pending_obligation_pred(
@@ -5761,6 +6210,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                         .map(alias_error_to_diagnostic)
                         .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
                 );
+                self.extend_lowering_diagnostics(&instance_lowerer);
                 for method in instance.methods(self.db) {
                     self.function(
                         *method,
@@ -5772,6 +6222,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 }
             }
             Item::ClassDef(class) => {
+                self.class_signature_items(class, inherited_type_vars);
                 for method in class.methods(self.db) {
                     self.require_complete_signature(method);
                 }
@@ -5792,19 +6243,85 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                             &[],
                             SignatureRequirement::LegacyInference,
                         ),
-                        ContractItem::TypeAlias(_)
-                        | ContractItem::AdtDef(_)
-                        | ContractItem::Error { .. } => {}
+                        ContractItem::TypeAlias(alias) => {
+                            self.type_alias_signature(alias, &inherited);
+                        }
+                        ContractItem::AdtDef(adt) => {
+                            self.adt_signature(adt, &inherited);
+                        }
+                        ContractItem::Error { .. } => {}
                     }
                 }
             }
-            Item::TypeAlias(_)
-            | Item::AdtDef(_)
-            | Item::Import(_)
-            | Item::Export(_)
-            | Item::Pragma(_)
-            | Item::Error { .. } => {}
+            Item::TypeAlias(alias) => self.type_alias_signature(alias, inherited_type_vars),
+            Item::AdtDef(adt) => self.adt_signature(adt, inherited_type_vars),
+            Item::Import(_) | Item::Export(_) | Item::Pragma(_) | Item::Error { .. } => {}
         }
+    }
+
+    fn type_alias_signature(
+        &mut self,
+        alias: TypeAlias<'db>,
+        inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    ) {
+        let mut type_vars = inherited_type_vars.to_vec();
+        type_vars.extend(type_var_bindings(
+            alias.def_id_value(self.db),
+            alias.ty_param_elems(self.db),
+        ));
+        let lowerer = TypeLowering::from_item_resolutions(
+            self.db,
+            &self.item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        lowerer.lower_type_alias(alias);
+        self.extend_lowering_diagnostics(&lowerer);
+    }
+
+    fn adt_signature(
+        &mut self,
+        adt: AdtDef<'db>,
+        inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    ) {
+        let mut type_vars = inherited_type_vars.to_vec();
+        type_vars.extend(type_var_bindings(
+            adt.def_id_value(self.db),
+            adt.ty_param_elems(self.db),
+        ));
+        let lowerer = TypeLowering::from_item_resolutions(
+            self.db,
+            &self.item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        for ctor in adt.ctors(self.db) {
+            lowerer.lower_adt_ctor(adt, ctor);
+        }
+        self.extend_lowering_diagnostics(&lowerer);
+    }
+
+    fn class_signature_items(
+        &mut self,
+        class: ClassDef<'db>,
+        inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
+    ) {
+        let mut type_vars = inherited_type_vars.to_vec();
+        type_vars.extend(type_var_bindings(
+            class.def_id_value(self.db),
+            class.type_var_elems(self.db),
+        ));
+        let lowerer = TypeLowering::from_item_resolutions(
+            self.db,
+            &self.item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        lowerer.lower_pred(class.head(self.db));
+        for pred in class.super_preds(self.db) {
+            lowerer.lower_pred(*pred);
+        }
+        for method in class.methods(self.db) {
+            lowerer.lower_class_method(class, method);
+        }
+        self.extend_lowering_diagnostics(&lowerer);
     }
 
     fn function(
@@ -5833,6 +6350,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
             BinderEnv::from_type_vars(&type_vars),
         );
         let mut lowered = lowerer.lower_function(function);
+        self.extend_lowering_diagnostics(&lowerer);
         let mut normalizer = AliasNormalizer::new(self.db, self.hir_module, &self.item_resolutions);
         lowered.scheme = normalizer.normalize_scheme(lowered.scheme);
         lowered.params = lowered
@@ -5908,13 +6426,13 @@ impl<'db> TypeckDiagnosticCollector<'db> {
             if field.init().is_none() {
                 continue;
             }
-            let field_ty = TypeLowering::from_item_resolutions(
+            let field_lowerer = TypeLowering::from_item_resolutions(
                 self.db,
                 &self.item_resolutions,
                 BinderEnv::from_type_vars(inherited_type_vars),
-            )
-            .lower_field(field)
-            .ty;
+            );
+            let field_ty = field_lowerer.lower_field(field).ty;
+            self.extend_lowering_diagnostics(&field_lowerer);
             let mut normalizer =
                 AliasNormalizer::new(self.db, self.hir_module, &self.item_resolutions);
             let field_ty = normalizer.normalize_ty(field_ty);
@@ -6000,6 +6518,16 @@ impl<'db> TypeckDiagnosticCollector<'db> {
             init.exprs.clone(),
             Arena::new(),
         )
+    }
+
+    fn extend_lowering_diagnostics(&mut self, lowerer: &TypeLowering<'db>) {
+        self.diagnostics.extend(
+            lowerer
+                .take_diagnostics()
+                .into_iter()
+                .map(lowering_diagnostic_to_typeck)
+                .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+        );
     }
 
     fn should_require_complete_signature(
@@ -7700,5 +8228,4 @@ instance word:Eq {}
             );
         }
     }
-
 }

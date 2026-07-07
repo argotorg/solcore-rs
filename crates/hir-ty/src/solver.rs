@@ -1615,7 +1615,7 @@ fn display_var(var: u32, names: &[String]) -> String {
     names
         .get(var as usize)
         .cloned()
-        .unwrap_or_else(|| format!("${var}"))
+        .unwrap_or_else(|| "_".to_owned())
 }
 
 fn display_pred_source<'db>(db: &'db dyn Db, pred: Pred<'db>, names: &[String]) -> String {
@@ -1646,7 +1646,7 @@ fn display_pred_source<'db>(db: &'db dyn Db, pred: Pred<'db>, names: &[String]) 
 fn display_ty_source<'db>(db: &'db dyn Db, ty: Ty<'db>, names: &[String]) -> String {
     match ty.kind(db) {
         TyKind::Error => "<error>".to_owned(),
-        TyKind::Unknown => "<unknown>".to_owned(),
+        TyKind::Unknown => "_".to_owned(),
         TyKind::BoundVar(var) => display_var(var.index, names),
         TyKind::Named { ctor, args } => {
             let name = display_ty_ctor_source(db, *ctor);

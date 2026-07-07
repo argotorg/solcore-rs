@@ -32,7 +32,7 @@ pub use infer::{
 };
 pub use lower::{
     BinderEnv, LoweredAdtCtor, LoweredField, LoweredFunction, LoweredTypeAlias, TypeLowering,
-    builtin_scheme,
+    TypeLoweringDiagnostic, builtin_scheme,
 };
 pub use solver::{
     BaseTraitEnvId, Candidate, CanonicalGoal, ClauseOrigin, DerivedGenericFromArm,

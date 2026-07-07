@@ -704,7 +704,6 @@ fn specializes_comptime_evaluation_corpus_verdicts() {
         let output = specialize_fixture(&corpus.join(fixture));
         assert_eq!(output.diagnostics, Vec::new(), "{fixture}");
     }
-
 }
 
 #[test]

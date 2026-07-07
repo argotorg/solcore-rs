@@ -1,0 +1,43 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/audit_obligation_classification/main.solc
+---
+error[SC0201]: type mismatch: expected numeric, got () -> word
+ --> /main/main.solc:2:10
+  |
+1 | function literal_as_callee() -> word {
+2 |   return 1();
+  |          ^ expression has mismatched type
+3 | }
+  |
+---
+
+error[SC0206]: non-callable value of type word
+ --> /main/main.solc:7:10
+  |
+6 |   let x: word;
+7 |   return x();
+  |          ^ callee is not callable
+8 | }
+  |
+---
+
+error[SC0201]: type mismatch: expected integer, got bool
+  --> /main/main.solc:11:26
+   |
+10 | function from_integer_bad_arg() -> word {
+11 |   return Int.fromInteger(true);
+   |                          ^^^^ expression has mismatched type
+12 | }
+   |
+---
+
+error[SC0207]: unsatisfied class constraint: _:invokable((), word)
+  --> /main/main.solc:15:10
+   |
+14 | forall a . function open_invokable(x: a) -> word {
+15 |   return invoke(x, ());
+   |          ^^^^^^^^^^^^^ constraint originates here
+16 | }
+   |
