@@ -12,29 +12,29 @@ object "OptionDocDeploy" {
       mstore(0, 0xb5988ea3)
       revert(28, 4)
     }
-    let size := datasize("OptionDoc")
+    let asm$size_0 := datasize("OptionDoc")
     codecopy(0, dataoffset("OptionDoc"), datasize("OptionDoc"))
-    return(0, size)
+    return(0, asm$size_0)
   }
   object "OptionDoc" {
     code {
-      function usr$doc_option_maybe_OptionDoc_main_dd6304f4c() -> _result {
+      function usr$doc_option_maybe_OptionDoc_main_dd6304f4c() -> gen$result_1 {
         let _v0
         _v0 := usr$doc_option_maybe_OptionDoc_maybe_d7fca80fc(0, true, 42)
-        _result := _v0
+        gen$result_1 := _v0
         leave
       }
-      function usr$doc_option_maybe_OptionDoc_maybe_d7fca80fc(n, _v1, _v2) -> _result {
+      function usr$doc_option_maybe_OptionDoc_maybe_d7fca80fc(src$n_2, _v1, _v2) -> gen$result_3 {
         switch _v1
           case false {
             /* None */
-            _result := n
+            gen$result_3 := src$n_2
             leave
           }
           case true {
             {
               /* Some */
-              _result := _v2
+              gen$result_3 := _v2
               leave
             }
           }
@@ -55,21 +55,21 @@ object "OptionDocDeploy" {
           revert(28, 4)
         }
         case false {
-          let OptionDoc_dispatch_selector
-          OptionDoc_dispatch_selector := shr(224, calldataload(0))
-          switch OptionDoc_dispatch_selector
+          let src$OptionDoc_dispatch_selector_4
+          src$OptionDoc_dispatch_selector_4 := shr(224, calldataload(0))
+          switch src$OptionDoc_dispatch_selector_4
             case 0xdffeadd0 {
               if callvalue() {
                 mstore(0, 0xb5988ea3)
                 revert(28, 4)
               }
-              let dispatch_ret0
+              let src$dispatch_ret0_5
               let _v5
               _v5 := usr$doc_option_maybe_OptionDoc_main_dd6304f4c()
-              dispatch_ret0 := _v5
-              let dispatch_ret0_0
-              dispatch_ret0_0 := dispatch_ret0
-              mstore(0, dispatch_ret0_0)
+              src$dispatch_ret0_5 := _v5
+              let src$dispatch_ret0_0_6
+              src$dispatch_ret0_0_6 := src$dispatch_ret0_5
+              mstore(0, src$dispatch_ret0_0_6)
               return(0, 32)
             }
             default {

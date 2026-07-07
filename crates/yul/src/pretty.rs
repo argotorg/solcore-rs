@@ -10,6 +10,10 @@ pub fn pretty_program(program: &Program) -> String {
     program.to_yul_string()
 }
 
+pub fn pretty_object(object: &Object) -> String {
+    object.to_yul_string()
+}
+
 impl PrettyYul for Program {
     fn to_yul_string(&self) -> String {
         let mut out = String::new();
@@ -213,11 +217,45 @@ fn render_expr(expr: &Expr) -> String {
 
 fn lit(lit: &Literal) -> String {
     match lit {
-        Literal::Number(value) | Literal::Hex(value) => value.clone(),
+        Literal::Number(value) => canonical_numeric_for_print(value),
+        Literal::Hex(value) => canonical_hex_for_print(value),
         Literal::String(value) => format!("\"{}\"", escape_string(value)),
         Literal::Bool(true) => "true".to_owned(),
         Literal::Bool(false) => "false".to_owned(),
     }
+}
+
+fn canonical_numeric_for_print(value: &str) -> String {
+    if value.starts_with("0x") || value.starts_with("0X") {
+        canonical_hex_for_print(value)
+    } else {
+        canonical_decimal_for_print(value)
+    }
+}
+
+fn canonical_decimal_for_print(value: &str) -> String {
+    if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
+        return value.to_owned();
+    }
+    let trimmed = value.trim_start_matches('0');
+    if trimmed.is_empty() {
+        "0".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn canonical_hex_for_print(value: &str) -> String {
+    let Some(digits) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    else {
+        return value.to_owned();
+    };
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return value.to_owned();
+    }
+    format!("0x{digits}")
 }
 
 fn line(out: &mut String, indent: usize, text: &str) {

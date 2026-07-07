@@ -19,7 +19,7 @@ use hull::{
 
 use crate::{
     ast::{Case, Code, Expr, Inner, Literal, Object, Program, Stmt},
-    pretty::pretty_program,
+    pretty::pretty_object,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +59,16 @@ pub fn render_hull_program<'db>(
     db: &'db dyn HirDb,
     program: &HullProgram<'db>,
 ) -> Result<String, TranslationError> {
-    translate_hull_program(db, program).map(|program| pretty_program(&program))
+    render_hull_program_object(db, program, None)
+}
+
+pub fn render_hull_program_object<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    object_name: Option<&str>,
+) -> Result<String, TranslationError> {
+    let program = translate_hull_program(db, program)?;
+    render_strict_assembly_program(&program, object_name)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,8 +84,16 @@ enum Location {
 struct Translator<'db> {
     db: &'db dyn HirDb,
     counter: usize,
+    name_counter: usize,
+    used_yul_names: BTreeSet<String>,
     vars: Vec<BTreeMap<String, Location>>,
     user_functions: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AsmScopes {
+    values: Vec<BTreeMap<String, String>>,
+    functions: Vec<BTreeMap<String, String>>,
 }
 
 enum LoweredCallee {
@@ -89,6 +106,8 @@ impl<'db> Translator<'db> {
         Self {
             db,
             counter: 0,
+            name_counter: 0,
+            used_yul_names: BTreeSet::new(),
             vars: vec![BTreeMap::new()],
             user_functions: BTreeSet::new(),
         }
@@ -177,8 +196,9 @@ impl<'db> Translator<'db> {
             let mut params = Vec::new();
             for arg in &function.args {
                 if is_word_type(&arg.ty) {
-                    self.insert_var(arg.name.clone(), Location::Named(arg.name.clone()));
-                    params.push(arg.name.clone());
+                    let name = self.fresh_source_name(&arg.name);
+                    self.insert_var(arg.name.clone(), Location::Named(name.clone()));
+                    params.push(name);
                 } else {
                     let loc = self.build_loc(&arg.ty)?;
                     params.extend(flatten_lhs(&loc)?);
@@ -189,8 +209,9 @@ impl<'db> Translator<'db> {
             let returns = match function.ret.strip_named().kind {
                 TyKind::Unit => Vec::new(),
                 TyKind::Word => {
-                    self.insert_var("_result".to_owned(), Location::Named("_result".to_owned()));
-                    vec!["_result".to_owned()]
+                    let name = self.fresh_internal_name("result");
+                    self.insert_var("_result".to_owned(), Location::Named(name.clone()));
+                    vec![name]
                 }
                 _ if zero_sized_type(&function.ret) => Vec::new(),
                 _ => {
@@ -293,12 +314,10 @@ impl<'db> Translator<'db> {
                 });
                 Ok(out)
             }
-            StmtKind::Assembly(stmts) => Ok(stmts
-                .iter()
-                .scan(BTreeSet::new(), |shadowed, stmt| {
-                    Some(self.convert_yul_stmt(stmt, shadowed))
-                })
-                .collect()),
+            StmtKind::Assembly(stmts) => {
+                let mut asm = AsmScopes::new();
+                self.convert_yul_stmts(stmts, &mut asm)
+            }
             StmtKind::Revert(message) => Ok(revert_stmts(message)),
             StmtKind::Comment(comment) => Ok(vec![Stmt::Comment(comment.clone())]),
         }
@@ -309,7 +328,9 @@ impl<'db> Translator<'db> {
         expr: &HullExpr<'db>,
     ) -> Result<(Vec<Stmt>, Location), TranslationError> {
         match &expr.kind {
-            ExprKind::Word(value) => Ok((Vec::new(), Location::Word(value.clone()))),
+            ExprKind::Word(value) => {
+                Ok((Vec::new(), Location::Word(canonical_numeric_lit(value)?)))
+            }
             ExprKind::Bool(value) => Ok((Vec::new(), Location::Bool(*value))),
             ExprKind::Unit => Ok((Vec::new(), Location::Seq(Vec::new()))),
             ExprKind::Var(name) => self.lookup_var(name).map(|loc| (Vec::new(), loc)),
@@ -445,7 +466,7 @@ impl<'db> Translator<'db> {
                         this.gen_stmts(&alt.body)
                     })?;
                     cases.push(Case {
-                        lit: Literal::Number(value.clone()),
+                        lit: Literal::Number(canonical_numeric_lit(value)?),
                         body,
                     });
                 }
@@ -471,9 +492,10 @@ impl<'db> Translator<'db> {
 
     fn alloc_var(&mut self, name: &str, ty: &HullTy<'db>) -> Result<Vec<Stmt>, TranslationError> {
         if is_word_type(ty) {
-            self.insert_var(name.to_owned(), Location::Named(name.to_owned()));
+            let yul_name = self.fresh_source_name(name);
+            self.insert_var(name.to_owned(), Location::Named(yul_name.clone()));
             return Ok(vec![Stmt::Let {
-                names: vec![name.to_owned()],
+                names: vec![yul_name],
                 init: None,
             }]);
         }
@@ -523,134 +545,204 @@ impl<'db> Translator<'db> {
         Ok(lhs_stmts)
     }
 
-    fn convert_yul_stmt(&self, stmt: &HirYulStmt<'db>, shadowed: &mut BTreeSet<String>) -> Stmt {
+    fn convert_yul_stmts(
+        &mut self,
+        stmts: &[HirYulStmt<'db>],
+        asm: &mut AsmScopes,
+    ) -> Result<Vec<Stmt>, TranslationError> {
+        stmts
+            .iter()
+            .map(|stmt| self.convert_yul_stmt(stmt, asm))
+            .collect()
+    }
+
+    fn convert_yul_stmt(
+        &mut self,
+        stmt: &HirYulStmt<'db>,
+        asm: &mut AsmScopes,
+    ) -> Result<Stmt, TranslationError> {
         match &stmt.kind {
             YulStmtKind::Block(stmts) => {
-                let mut block_shadowed = shadowed.clone();
-                Stmt::Block(self.convert_yul_stmts(stmts, &mut block_shadowed))
+                asm.push_scope();
+                let body = self.convert_yul_stmts(stmts, asm);
+                asm.pop_scope();
+                Ok(Stmt::Block(body?))
             }
             YulStmtKind::Let { names, init } => {
                 let init = init
                     .as_ref()
-                    .map(|expr| self.convert_yul_expr(expr, shadowed));
+                    .map(|expr| self.convert_yul_expr(expr, asm))
+                    .transpose()?;
                 let names = names
                     .iter()
-                    .map(|name| yul_name(self.db, name))
-                    .collect::<Vec<_>>();
-                shadowed.extend(names.iter().cloned());
-                Stmt::Let { names, init }
+                    .map(|name| {
+                        let raw = yul_name(self.db, name);
+                        let emitted = self.fresh_asm_name(&raw);
+                        asm.insert_value(raw, emitted.clone());
+                        emitted
+                    })
+                    .collect();
+                Ok(Stmt::Let { names, init })
             }
-            YulStmtKind::Assign { names, value } => Stmt::Assign {
-                names: names
+            YulStmtKind::Assign { names, value } => {
+                let names = names
                     .iter()
-                    .map(|name| self.subst_asm_lhs_name(&yul_name(self.db, name), shadowed))
-                    .collect(),
-                value: self.convert_yul_expr(value, shadowed),
-            },
-            YulStmtKind::Expr(expr) => Stmt::Expr(self.convert_yul_expr(expr, shadowed)),
-            YulStmtKind::If { cond, body } => Stmt::If {
-                cond: self.convert_yul_expr(cond, shadowed),
-                body: {
-                    let mut body_shadowed = shadowed.clone();
-                    self.convert_yul_stmts(body, &mut body_shadowed)
-                },
-            },
+                    .map(|name| {
+                        let raw = yul_name(self.db, name);
+                        asm.lookup_value(&raw)
+                            .unwrap_or_else(|| self.subst_asm_lhs_name(&raw))
+                    })
+                    .collect();
+                Ok(Stmt::Assign {
+                    names,
+                    value: self.convert_yul_expr(value, asm)?,
+                })
+            }
+            YulStmtKind::Expr(expr) => Ok(Stmt::Expr(self.convert_yul_expr(expr, asm)?)),
+            YulStmtKind::If { cond, body } => {
+                asm.push_scope();
+                let body = self.convert_yul_stmts(body, asm);
+                asm.pop_scope();
+                Ok(Stmt::If {
+                    cond: self.convert_yul_expr(cond, asm)?,
+                    body: body?,
+                })
+            }
             YulStmtKind::For {
                 init,
                 cond,
                 post,
                 body,
             } => {
-                let mut loop_shadowed = shadowed.clone();
-                let init = self.convert_yul_stmts(init, &mut loop_shadowed);
-                let cond = self.convert_yul_expr(cond, &loop_shadowed);
-                let mut post_shadowed = loop_shadowed.clone();
-                let mut body_shadowed = loop_shadowed;
-                Stmt::For {
+                asm.push_scope();
+                let init = self.convert_yul_stmts(init, asm)?;
+                let cond = self.convert_yul_expr(cond, asm)?;
+
+                asm.push_scope();
+                let post = self.convert_yul_stmts(post, asm);
+                asm.pop_scope();
+
+                asm.push_scope();
+                let body = self.convert_yul_stmts(body, asm);
+                asm.pop_scope();
+                asm.pop_scope();
+
+                Ok(Stmt::For {
                     init,
                     cond,
-                    post: self.convert_yul_stmts(post, &mut post_shadowed),
-                    body: self.convert_yul_stmts(body, &mut body_shadowed),
-                }
+                    post: post?,
+                    body: body?,
+                })
             }
             YulStmtKind::Switch {
                 expr,
                 cases,
                 default,
-            } => Stmt::Switch {
-                expr: self.convert_yul_expr(expr, shadowed),
+            } => Ok(Stmt::Switch {
+                expr: self.convert_yul_expr(expr, asm)?,
                 cases: cases
                     .iter()
-                    .map(|case| self.convert_yul_case(case, shadowed))
-                    .collect(),
-                default: default.as_ref().map(|body| {
-                    let mut default_shadowed = shadowed.clone();
-                    self.convert_yul_stmts(body, &mut default_shadowed)
-                }),
-            },
+                    .map(|case| self.convert_yul_case(case, asm))
+                    .collect::<Result<Vec<_>, _>>()?,
+                default: default
+                    .as_ref()
+                    .map(|body| {
+                        asm.push_scope();
+                        let converted = self.convert_yul_stmts(body, asm);
+                        asm.pop_scope();
+                        converted
+                    })
+                    .transpose()?,
+            }),
             YulStmtKind::FunctionDef {
                 name,
                 params,
                 rets,
                 body,
-            } => Stmt::Function {
-                name: yul_name(self.db, name),
-                params: params.iter().map(|name| yul_name(self.db, name)).collect(),
-                returns: rets.iter().map(|name| yul_name(self.db, name)).collect(),
-                body: {
-                    let mut body_shadowed = shadowed.clone();
-                    body_shadowed.extend(params.iter().map(|name| yul_name(self.db, name)));
-                    body_shadowed.extend(rets.iter().map(|name| yul_name(self.db, name)));
-                    self.convert_yul_stmts(body, &mut body_shadowed)
-                },
-            },
-            YulStmtKind::Leave => Stmt::Leave,
-            YulStmtKind::Break => Stmt::Break,
-            YulStmtKind::Continue => Stmt::Continue,
-            YulStmtKind::Error => Stmt::Comment("error".to_owned()),
+            } => {
+                let raw_name = yul_name(self.db, name);
+                let name = self.fresh_asm_name(&raw_name);
+                asm.insert_function(raw_name, name.clone());
+
+                asm.push_scope();
+                let params = params
+                    .iter()
+                    .map(|param| {
+                        let raw = yul_name(self.db, param);
+                        let emitted = self.fresh_asm_name(&raw);
+                        asm.insert_value(raw, emitted.clone());
+                        emitted
+                    })
+                    .collect();
+                let returns = rets
+                    .iter()
+                    .map(|ret| {
+                        let raw = yul_name(self.db, ret);
+                        let emitted = self.fresh_asm_name(&raw);
+                        asm.insert_value(raw, emitted.clone());
+                        emitted
+                    })
+                    .collect();
+                let body = self.convert_yul_stmts(body, asm);
+                asm.pop_scope();
+
+                Ok(Stmt::Function {
+                    name,
+                    params,
+                    returns,
+                    body: body?,
+                })
+            }
+            YulStmtKind::Leave => Ok(Stmt::Leave),
+            YulStmtKind::Break => Ok(Stmt::Break),
+            YulStmtKind::Continue => Ok(Stmt::Continue),
+            YulStmtKind::Error => Ok(Stmt::Comment("error".to_owned())),
         }
     }
 
-    fn convert_yul_stmts(
+    fn convert_yul_case(
+        &mut self,
+        case: &HirYulCase<'db>,
+        asm: &mut AsmScopes,
+    ) -> Result<Case, TranslationError> {
+        asm.push_scope();
+        let body = self.convert_yul_stmts(&case.body, asm);
+        asm.pop_scope();
+        Ok(Case {
+            lit: convert_yul_lit(&case.lit)?,
+            body: body?,
+        })
+    }
+
+    fn convert_yul_expr(
         &self,
-        stmts: &[HirYulStmt<'db>],
-        shadowed: &mut BTreeSet<String>,
-    ) -> Vec<Stmt> {
-        stmts
-            .iter()
-            .map(|stmt| self.convert_yul_stmt(stmt, shadowed))
-            .collect()
-    }
-
-    fn convert_yul_case(&self, case: &HirYulCase<'db>, shadowed: &BTreeSet<String>) -> Case {
-        let mut case_shadowed = shadowed.clone();
-        Case {
-            lit: convert_yul_lit(&case.lit),
-            body: self.convert_yul_stmts(&case.body, &mut case_shadowed),
-        }
-    }
-
-    fn convert_yul_expr(&self, expr: &HirYulExpr<'db>, shadowed: &BTreeSet<String>) -> Expr {
-        match &expr.kind {
-            YulExprKind::Lit(lit) => Expr::Lit(convert_yul_lit(lit)),
+        expr: &HirYulExpr<'db>,
+        asm: &AsmScopes,
+    ) -> Result<Expr, TranslationError> {
+        Ok(match &expr.kind {
+            YulExprKind::Lit(lit) => Expr::Lit(convert_yul_lit(lit)?),
             YulExprKind::Ident(name) => {
                 let name = yul_name(self.db, name);
-                self.subst_asm_expr_name(&name, shadowed)
+                match asm.lookup_value(&name) {
+                    Some(name) => Expr::ident(name),
+                    None => self.subst_asm_expr_name(&name),
+                }
             }
-            YulExprKind::Call { name, args } => Expr::call(
-                yul_name(self.db, name),
-                args.iter()
-                    .map(|arg| self.convert_yul_expr(arg, shadowed))
-                    .collect(),
-            ),
+            YulExprKind::Call { name, args } => {
+                let raw_name = yul_name(self.db, name);
+                let name = asm.lookup_function(&raw_name).unwrap_or(raw_name);
+                Expr::call(
+                    name,
+                    args.iter()
+                        .map(|arg| self.convert_yul_expr(arg, asm))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            }
             YulExprKind::Error => Expr::ident("error"),
-        }
+        })
     }
 
-    fn subst_asm_expr_name(&self, name: &str, shadowed: &BTreeSet<String>) -> Expr {
-        if shadowed.contains(name) {
-            return Expr::ident(name);
-        }
+    fn subst_asm_expr_name(&self, name: &str) -> Expr {
         match self.lookup_var_opt(name).and_then(|loc| {
             let flattened = flatten_rhs(&loc);
             match flattened.as_slice() {
@@ -663,10 +755,7 @@ impl<'db> Translator<'db> {
         }
     }
 
-    fn subst_asm_lhs_name(&self, name: &str, shadowed: &BTreeSet<String>) -> String {
-        if shadowed.contains(name) {
-            return name.to_owned();
-        }
+    fn subst_asm_lhs_name(&self, name: &str) -> String {
         match self.lookup_var_opt(name).and_then(|loc| {
             let flattened = flatten_lhs(&loc).ok()?;
             match flattened.as_slice() {
@@ -683,6 +772,29 @@ impl<'db> Translator<'db> {
         let loc = Location::Stack(self.counter);
         self.counter += 1;
         loc
+    }
+
+    fn fresh_source_name(&mut self, source: &str) -> String {
+        self.fresh_yul_name("src", source)
+    }
+
+    fn fresh_asm_name(&mut self, source: &str) -> String {
+        self.fresh_yul_name("asm", source)
+    }
+
+    fn fresh_internal_name(&mut self, source: &str) -> String {
+        self.fresh_yul_name("gen", source)
+    }
+
+    fn fresh_yul_name(&mut self, prefix: &str, source: &str) -> String {
+        let source = yul_ident_fragment(source);
+        loop {
+            let name = format!("{prefix}${source}_{}", self.name_counter);
+            self.name_counter += 1;
+            if !is_forbidden_yul_identifier(&name) && self.used_yul_names.insert(name.clone()) {
+                return name;
+            }
+        }
     }
 
     fn lookup_var(&self, name: &str) -> Result<Location, TranslationError> {
@@ -714,6 +826,270 @@ impl<'db> Translator<'db> {
         self.vars = saved;
         result
     }
+}
+
+impl AsmScopes {
+    fn new() -> Self {
+        Self {
+            values: vec![BTreeMap::new()],
+            functions: vec![BTreeMap::new()],
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.values.push(BTreeMap::new());
+        self.functions.push(BTreeMap::new());
+    }
+
+    fn pop_scope(&mut self) {
+        self.values.pop().expect("assembly value scope");
+        self.functions.pop().expect("assembly function scope");
+    }
+
+    fn insert_value(&mut self, source: String, emitted: String) {
+        self.values
+            .last_mut()
+            .expect("assembly value scope")
+            .insert(source, emitted);
+    }
+
+    fn insert_function(&mut self, source: String, emitted: String) {
+        self.functions
+            .last_mut()
+            .expect("assembly function scope")
+            .insert(source, emitted);
+    }
+
+    fn lookup_value(&self, name: &str) -> Option<String> {
+        self.values
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
+    }
+
+    fn lookup_function(&self, name: &str) -> Option<String> {
+        self.functions
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).cloned())
+    }
+}
+
+fn render_strict_assembly_program(
+    program: &Program,
+    object_name: Option<&str>,
+) -> Result<String, TranslationError> {
+    let object = select_strict_object(program, object_name)?;
+    validate_object(object)?;
+    Ok(pretty_object(object))
+}
+
+fn select_strict_object<'a>(
+    program: &'a Program,
+    object_name: Option<&str>,
+) -> Result<&'a Object, TranslationError> {
+    if let Some(name) = object_name {
+        return program
+            .objects
+            .iter()
+            .find(|object| object.name == name)
+            .ok_or_else(|| {
+                TranslationError::new(format!(
+                    "Yul object `{name}` not found; available top-level objects: {}",
+                    top_level_object_list(program)
+                ))
+            });
+    }
+
+    match program.objects.as_slice() {
+        [object] => Ok(object),
+        [] => Err(TranslationError::new(
+            "strict-assembly output requires one top-level object; found none",
+        )),
+        _ => Err(TranslationError::new(format!(
+            "strict-assembly output requires one top-level object; found {} ({})",
+            program.objects.len(),
+            top_level_object_list(program)
+        ))),
+    }
+}
+
+fn top_level_object_list(program: &Program) -> String {
+    program
+        .objects
+        .iter()
+        .map(|object| object.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ControlRegion {
+    Outside,
+    LoopInit,
+    LoopPost,
+    LoopBody,
+}
+
+fn validate_object(object: &Object) -> Result<(), TranslationError> {
+    validate_code(&object.code)?;
+    for inner in &object.inners {
+        match inner {
+            Inner::Object(object) => validate_object(object)?,
+            Inner::Data(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_code(code: &Code) -> Result<(), TranslationError> {
+    validate_stmts(&code.stmts, ControlRegion::Outside)
+}
+
+fn validate_stmts(stmts: &[Stmt], region: ControlRegion) -> Result<(), TranslationError> {
+    for stmt in stmts {
+        validate_stmt(stmt, region)?;
+    }
+    Ok(())
+}
+
+fn validate_stmt(stmt: &Stmt, region: ControlRegion) -> Result<(), TranslationError> {
+    match stmt {
+        Stmt::Block(stmts) => validate_stmts(stmts, region),
+        Stmt::Function {
+            name,
+            params,
+            returns,
+            body,
+        } => {
+            validate_decl_name(name)?;
+            for name in params.iter().chain(returns) {
+                validate_decl_name(name)?;
+            }
+            validate_stmts(body, ControlRegion::Outside)
+        }
+        Stmt::Let { names, init } => {
+            for name in names {
+                validate_decl_name(name)?;
+            }
+            if let Some(init) = init {
+                validate_expr(init)?;
+            }
+            Ok(())
+        }
+        Stmt::Assign { names, value } => {
+            for name in names {
+                validate_decl_name(name)?;
+            }
+            validate_expr(value)
+        }
+        Stmt::If { cond, body } => {
+            validate_expr(cond)?;
+            validate_stmts(body, region)
+        }
+        Stmt::Switch {
+            expr,
+            cases,
+            default,
+        } => {
+            validate_expr(expr)?;
+            for case in cases {
+                validate_lit(&case.lit)?;
+                validate_stmts(&case.body, region)?;
+            }
+            if let Some(default) = default {
+                validate_stmts(default, region)?;
+            }
+            Ok(())
+        }
+        Stmt::For {
+            init,
+            cond,
+            post,
+            body,
+        } => {
+            validate_stmts(init, ControlRegion::LoopInit)?;
+            validate_expr(cond)?;
+            validate_stmts(post, ControlRegion::LoopPost)?;
+            validate_stmts(body, ControlRegion::LoopBody)
+        }
+        Stmt::Break => validate_break_continue("break", region),
+        Stmt::Continue => validate_break_continue("continue", region),
+        Stmt::Leave | Stmt::Comment(_) => Ok(()),
+        Stmt::Expr(expr) => validate_expr(expr),
+    }
+}
+
+fn validate_break_continue(keyword: &str, region: ControlRegion) -> Result<(), TranslationError> {
+    match region {
+        ControlRegion::LoopBody => Ok(()),
+        ControlRegion::LoopInit => Err(TranslationError::new(format!(
+            "`{keyword}` in for-loop init block is not allowed"
+        ))),
+        ControlRegion::LoopPost => Err(TranslationError::new(format!(
+            "`{keyword}` in for-loop post block is not allowed"
+        ))),
+        ControlRegion::Outside => Err(TranslationError::new(format!(
+            "`{keyword}` must be inside a for-loop body"
+        ))),
+    }
+}
+
+fn validate_expr(expr: &Expr) -> Result<(), TranslationError> {
+    match expr {
+        Expr::Call { name, args } => {
+            validate_call_name(name)?;
+            for arg in args {
+                validate_expr(arg)?;
+            }
+            Ok(())
+        }
+        Expr::Ident(name) => validate_decl_name(name),
+        Expr::Lit(lit) => validate_lit(lit),
+    }
+}
+
+fn validate_lit(lit: &Literal) -> Result<(), TranslationError> {
+    match lit {
+        Literal::Number(value) => canonical_numeric_lit(value).map(|_| ()),
+        Literal::Hex(value) => canonical_hex_lit(value).map(|_| ()),
+        Literal::String(_) | Literal::Bool(_) => Ok(()),
+    }
+}
+
+fn validate_decl_name(name: &str) -> Result<(), TranslationError> {
+    if !is_valid_yul_identifier(name) {
+        return Err(TranslationError::new(format!(
+            "invalid Yul identifier `{name}`"
+        )));
+    }
+    if is_forbidden_yul_identifier(name) {
+        return Err(TranslationError::new(format!(
+            "Yul identifier `{name}` is reserved or builtin"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_call_name(name: &str) -> Result<(), TranslationError> {
+    if is_valid_yul_identifier(name) {
+        Ok(())
+    } else {
+        Err(TranslationError::new(format!(
+            "invalid Yul function name `{name}`"
+        )))
+    }
+}
+
+fn is_valid_yul_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || matches!(first, '_' | '$')) {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'))
 }
 
 fn yul_fun_name(name: &str) -> String {
@@ -1049,14 +1425,14 @@ fn revert_stmts(message: &str) -> Vec<Stmt> {
     ]
 }
 
-fn convert_yul_lit(lit: &YulLitKind) -> Literal {
-    match lit {
-        YulLitKind::Number(value) => Literal::Number(value.clone()),
-        YulLitKind::Hex(value) => Literal::Hex(value.clone()),
+fn convert_yul_lit(lit: &YulLitKind) -> Result<Literal, TranslationError> {
+    Ok(match lit {
+        YulLitKind::Number(value) => Literal::Number(canonical_numeric_lit(value)?),
+        YulLitKind::Hex(value) => Literal::Hex(canonical_hex_lit(value)?),
         YulLitKind::String(value) => Literal::String(strip_quotes(value).to_owned()),
         YulLitKind::Bool(value) => Literal::Bool(*value),
         YulLitKind::Error => Literal::Number("0".to_owned()),
-    }
+    })
 }
 
 fn strip_quotes(value: &str) -> &str {
@@ -1071,4 +1447,170 @@ fn yul_name<'db>(
     name: &hir::span::SpannedElem<'db, hir::ast::Ident<'db>>,
 ) -> String {
     (*name.atom()).text(db).to_owned()
+}
+
+fn canonical_decimal_lit(value: &str) -> Result<String, TranslationError> {
+    if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_digit()) {
+        return Err(TranslationError::new(format!(
+            "invalid decimal Yul literal `{value}`"
+        )));
+    }
+    let trimmed = value.trim_start_matches('0');
+    Ok(if trimmed.is_empty() {
+        "0".to_owned()
+    } else {
+        trimmed.to_owned()
+    })
+}
+
+fn canonical_numeric_lit(value: &str) -> Result<String, TranslationError> {
+    if value.starts_with("0x") || value.starts_with("0X") {
+        canonical_hex_lit(value)
+    } else {
+        canonical_decimal_lit(value)
+    }
+}
+
+fn canonical_hex_lit(value: &str) -> Result<String, TranslationError> {
+    let Some(digits) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    else {
+        return Err(TranslationError::new(format!(
+            "hex Yul literal `{value}` must use a 0x prefix"
+        )));
+    };
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(TranslationError::new(format!(
+            "invalid hex Yul literal `{value}`"
+        )));
+    }
+    Ok(format!("0x{digits}"))
+}
+
+fn yul_ident_fragment(source: &str) -> String {
+    let mut out = String::new();
+    for ch in source.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$') {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "anon".to_owned()
+    } else {
+        out
+    }
+}
+
+fn is_forbidden_yul_identifier(name: &str) -> bool {
+    matches!(
+        name,
+        "object"
+            | "code"
+            | "data"
+            | "function"
+            | "let"
+            | "if"
+            | "switch"
+            | "case"
+            | "default"
+            | "for"
+            | "break"
+            | "continue"
+            | "leave"
+            | "true"
+            | "false"
+            | "stop"
+            | "add"
+            | "sub"
+            | "mul"
+            | "div"
+            | "sdiv"
+            | "mod"
+            | "smod"
+            | "exp"
+            | "not"
+            | "lt"
+            | "gt"
+            | "slt"
+            | "sgt"
+            | "eq"
+            | "iszero"
+            | "and"
+            | "or"
+            | "xor"
+            | "byte"
+            | "shl"
+            | "shr"
+            | "sar"
+            | "addmod"
+            | "mulmod"
+            | "signextend"
+            | "keccak256"
+            | "pc"
+            | "pop"
+            | "mload"
+            | "mstore"
+            | "mstore8"
+            | "sload"
+            | "sstore"
+            | "tload"
+            | "tstore"
+            | "msize"
+            | "gas"
+            | "address"
+            | "balance"
+            | "selfbalance"
+            | "caller"
+            | "callvalue"
+            | "calldataload"
+            | "calldatasize"
+            | "calldatacopy"
+            | "codesize"
+            | "codecopy"
+            | "extcodesize"
+            | "extcodecopy"
+            | "returndatasize"
+            | "returndatacopy"
+            | "extcodehash"
+            | "create"
+            | "create2"
+            | "call"
+            | "callcode"
+            | "delegatecall"
+            | "staticcall"
+            | "return"
+            | "revert"
+            | "selfdestruct"
+            | "invalid"
+            | "log0"
+            | "log1"
+            | "log2"
+            | "log3"
+            | "log4"
+            | "chainid"
+            | "origin"
+            | "gasprice"
+            | "blockhash"
+            | "coinbase"
+            | "timestamp"
+            | "number"
+            | "difficulty"
+            | "prevrandao"
+            | "gaslimit"
+            | "basefee"
+            | "blobhash"
+            | "blobbasefee"
+            | "memoryguard"
+            | "dataoffset"
+            | "datasize"
+            | "datacopy"
+            | "setimmutable"
+            | "loadimmutable"
+            | "linkersymbol"
+            | "mcopy"
+            | "clz"
+    )
 }

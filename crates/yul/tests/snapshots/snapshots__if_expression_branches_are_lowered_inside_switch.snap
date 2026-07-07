@@ -4,15 +4,15 @@ expression: "solcore_yul::render_hull_program(&db, &program).expect(\"Yul transl
 ---
 object "LazyIf" {
   code {
-    function usr$then_value() -> _result {
-      _result := 1
+    function usr$then_value() -> gen$result_0 {
+      gen$result_0 := 1
       leave
     }
-    function usr$else_value() -> _result {
-      _result := 2
+    function usr$else_value() -> gen$result_1 {
+      gen$result_1 := 2
       leave
     }
-    function usr$main() -> _result {
+    function usr$main() -> gen$result_2 {
       let _v0
       switch true
         case 0 {
@@ -25,7 +25,7 @@ object "LazyIf" {
           _v1 := usr$then_value()
           _v0 := _v1
         }
-      _result := _v0
+      gen$result_2 := _v0
       leave
     }
   }

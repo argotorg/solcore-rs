@@ -12,36 +12,36 @@ object "RGBDeploy" {
       mstore(0, 0xb5988ea3)
       revert(28, 4)
     }
-    let size := datasize("RGB")
+    let asm$size_0 := datasize("RGB")
     codecopy(0, dataoffset("RGB"), datasize("RGB"))
-    return(0, size)
+    return(0, asm$size_0)
   }
   object "RGB" {
     code {
-      function usr$047rgb_RGB_main_d6956f92a() -> _result {
+      function usr$047rgb_RGB_main_d9bbcf828() -> gen$result_1 {
         switch true
           case false {
             /* R */
-            _result := 4
+            gen$result_1 := 4
             leave
           }
           case true {
             switch true
               case false {
                 /* G */
-                _result := 2
+                gen$result_1 := 2
                 leave
               }
               case true {
                 {
                   /* B */
-                  _result := 42
+                  gen$result_1 := 42
                   leave
                 }
               }
           }
       }
-      /* selector 0xdffeadd0 -> 047rgb_RGB_main_d6956f92a */
+      /* selector 0xdffeadd0 -> 047rgb_RGB_main_d9bbcf828 */
       mstore(0x40, memoryguard(128))
       let _v0
       _v0 := calldatasize()
@@ -57,21 +57,21 @@ object "RGBDeploy" {
           revert(28, 4)
         }
         case false {
-          let RGB_dispatch_selector
-          RGB_dispatch_selector := shr(224, calldataload(0))
-          switch RGB_dispatch_selector
+          let src$RGB_dispatch_selector_2
+          src$RGB_dispatch_selector_2 := shr(224, calldataload(0))
+          switch src$RGB_dispatch_selector_2
             case 0xdffeadd0 {
               if callvalue() {
                 mstore(0, 0xb5988ea3)
                 revert(28, 4)
               }
-              let dispatch_ret0
+              let src$dispatch_ret0_3
               let _v2
-              _v2 := usr$047rgb_RGB_main_d6956f92a()
-              dispatch_ret0 := _v2
-              let dispatch_ret0_0
-              dispatch_ret0_0 := dispatch_ret0
-              mstore(0, dispatch_ret0_0)
+              _v2 := usr$047rgb_RGB_main_d9bbcf828()
+              src$dispatch_ret0_3 := _v2
+              let src$dispatch_ret0_0_4
+              src$dispatch_ret0_0_4 := src$dispatch_ret0_3
+              mstore(0, src$dispatch_ret0_0_4)
               return(0, 32)
             }
             default {

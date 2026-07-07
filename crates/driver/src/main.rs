@@ -110,7 +110,7 @@ fn main() {
         Err(message) => {
             eprintln!("{message}");
             eprintln!(
-                "usage: {program} [--trace] [--external-lib NAME=PATH] [--emit-hull[=FILE]] [--emit-yul[=FILE]] <input.solc>"
+                "usage: {program} [--trace] [--external-lib NAME=PATH] [--emit-hull[=FILE]] [--emit-yul[=FILE]] [--emit-yul-object NAME] <input.solc>"
             );
             std::process::exit(2);
         }
@@ -248,6 +248,8 @@ struct Args {
     emit_hull: Option<EmitTarget>,
     /// Optional Yul output target.
     emit_yul: Option<EmitTarget>,
+    /// Optional top-level Yul object selection for strict-assembly output.
+    emit_yul_object: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -267,6 +269,7 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
     let mut trace = false;
     let mut emit_hull = None;
     let mut emit_yul = None;
+    let mut emit_yul_object = None;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -278,6 +281,15 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
             }
             "--emit-yul" => {
                 emit_yul = Some(EmitTarget::Stdout);
+            }
+            "--emit-yul-object" => {
+                let Some(value) = iter.next() else {
+                    return Err("--emit-yul-object requires NAME".to_owned());
+                };
+                if value.is_empty() {
+                    return Err("--emit-yul-object requires NAME".to_owned());
+                }
+                emit_yul_object = Some(value);
             }
             "--external-lib" | "--lib" => {
                 let Some(value) = iter.next() else {
@@ -299,6 +311,13 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
                 }
                 emit_yul = Some(EmitTarget::File(PathBuf::from(value)));
             }
+            _ if arg.starts_with("--emit-yul-object=") => {
+                let value = &arg["--emit-yul-object=".len()..];
+                if value.is_empty() {
+                    return Err("--emit-yul-object= requires NAME".to_owned());
+                }
+                emit_yul_object = Some(value.to_owned());
+            }
             _ if arg.starts_with("--external-lib=") => {
                 external_roots.push(parse_external_root(&arg["--external-lib=".len()..])?);
             }
@@ -319,12 +338,16 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
     let Some(input) = input else {
         return Err("missing input file".to_owned());
     };
+    if emit_yul_object.is_some() && emit_yul.is_none() {
+        return Err("--emit-yul-object requires --emit-yul".to_owned());
+    }
     Ok(Args {
         input,
         external_roots,
         trace,
         emit_hull,
         emit_yul,
+        emit_yul_object,
     })
 }
 
@@ -386,8 +409,9 @@ fn maybe_emit_backend_outputs(
         write_emit_output(target, &hull::pretty_program(db, &emitted.program))?;
     }
     if let Some(target) = &args.emit_yul {
-        let yul = yul::render_hull_program(db, &emitted.program)
-            .map_err(|err| format!("Yul translation failed:\n  {err}"))?;
+        let yul =
+            yul::render_hull_program_object(db, &emitted.program, args.emit_yul_object.as_deref())
+                .map_err(|err| format!("Yul translation failed:\n  {err}"))?;
         write_emit_output(target, &yul)?;
     }
     Ok(())

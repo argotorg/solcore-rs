@@ -98,7 +98,7 @@ contract C {
     let yul_stdout = String::from_utf8_lossy(&yul.stdout);
     assert!(yul_stdout.contains("object \"CDeploy\""), "{yul_stdout}");
     assert!(
-        yul_stdout.contains("switch C_dispatch_selector"),
+        yul_stdout.contains("switch src$C_dispatch_selector_"),
         "{yul_stdout}"
     );
 
@@ -116,6 +116,63 @@ contract C {
     let hull_text = fs::read_to_string(&hull_output).expect("read hull output");
     assert!(hull_text.contains("object \"CDeploy\""), "{hull_text}");
     assert!(hull_text.contains("match<word>"), "{hull_text}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_emit_yul_requires_one_top_level_object_or_selection() {
+    let dir = temp_dir("emit-yul-multi-object");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    fs::write(
+        &input,
+        r#"
+contract A {
+  public function main() -> word { return 1; }
+}
+
+contract B {
+  public function main() -> word { return 2; }
+}
+"#,
+    )
+    .expect("write source");
+
+    let multi = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--emit-yul")
+        .arg(&input)
+        .output()
+        .expect("run driver yul");
+    assert!(
+        !multi.status.success(),
+        "driver unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&multi.stdout),
+        String::from_utf8_lossy(&multi.stderr)
+    );
+    let stderr = strip_ansi(&String::from_utf8_lossy(&multi.stderr));
+    assert!(
+        stderr.contains("strict-assembly output requires one top-level object"),
+        "stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("ADeploy"), "stderr:\n{stderr}");
+    assert!(stderr.contains("BDeploy"), "stderr:\n{stderr}");
+
+    let selected = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--emit-yul")
+        .arg("--emit-yul-object=ADeploy")
+        .arg(&input)
+        .output()
+        .expect("run driver selected yul");
+    assert!(
+        selected.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&selected.stdout),
+        String::from_utf8_lossy(&selected.stderr)
+    );
+    let yul = String::from_utf8_lossy(&selected.stdout);
+    assert!(yul.contains("object \"ADeploy\""), "{yul}");
+    assert!(!yul.contains("object \"BDeploy\""), "{yul}");
 
     let _ = fs::remove_dir_all(&dir);
 }

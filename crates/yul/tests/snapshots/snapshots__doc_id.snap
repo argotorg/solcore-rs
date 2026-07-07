@@ -12,14 +12,14 @@ object "IdDocDeploy" {
       mstore(0, 0xb5988ea3)
       revert(28, 4)
     }
-    let size := datasize("IdDoc")
+    let asm$size_0 := datasize("IdDoc")
     codecopy(0, dataoffset("IdDoc"), datasize("IdDoc"))
-    return(0, size)
+    return(0, asm$size_0)
   }
   object "IdDoc" {
     code {
-      function usr$doc_id_IdDoc_id_de5a55c43(x) -> _result {
-        _result := x
+      function usr$doc_id_IdDoc_id_de5a55c43(src$x_1) -> gen$result_2 {
+        gen$result_2 := src$x_1
         leave
       }
       /* selector 0x7d3c40c8 -> doc_id_IdDoc_id_de5a55c43 */
@@ -38,9 +38,9 @@ object "IdDocDeploy" {
           revert(28, 4)
         }
         case false {
-          let IdDoc_dispatch_selector
-          IdDoc_dispatch_selector := shr(224, calldataload(0))
-          switch IdDoc_dispatch_selector
+          let src$IdDoc_dispatch_selector_3
+          src$IdDoc_dispatch_selector_3 := shr(224, calldataload(0))
+          switch src$IdDoc_dispatch_selector_3
             case 0x7d3c40c8 {
               if callvalue() {
                 mstore(0, 0xb5988ea3)
@@ -50,15 +50,15 @@ object "IdDocDeploy" {
                 mstore(0, 0x08638556)
                 revert(28, 4)
               }
-              let dispatch_arg0_0
-              dispatch_arg0_0 := calldataload(4)
-              let dispatch_ret0
+              let src$dispatch_arg0_0_4
+              src$dispatch_arg0_0_4 := calldataload(4)
+              let src$dispatch_ret0_5
               let _v2
-              _v2 := usr$doc_id_IdDoc_id_de5a55c43(dispatch_arg0_0)
-              dispatch_ret0 := _v2
-              let dispatch_ret0_0
-              dispatch_ret0_0 := dispatch_ret0
-              mstore(0, dispatch_ret0_0)
+              _v2 := usr$doc_id_IdDoc_id_de5a55c43(src$dispatch_arg0_0_4)
+              src$dispatch_ret0_5 := _v2
+              let src$dispatch_ret0_0_6
+              src$dispatch_ret0_0_6 := src$dispatch_ret0_5
+              mstore(0, src$dispatch_ret0_0_6)
               return(0, 32)
             }
             default {

@@ -7,8 +7,8 @@ object "OutputDeploy" {
   }
   object "Output" {
     code {
-      function usr$main(x) -> _result {
-        _result := x
+      function usr$main(src$x_0) -> gen$result_1 {
+        gen$result_1 := src$x_0
         leave
       }
       {

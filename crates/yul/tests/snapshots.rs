@@ -354,9 +354,21 @@ contract AssemblyLetShadowing {
 "#,
     );
 
-    assert!(yul.contains("let x := 1"), "{yul}");
-    assert!(yul.contains("r := x"), "{yul}");
-    assert!(!yul.contains("r := _v0"), "{yul}");
+    assert!(
+        yul.lines()
+            .any(|line| line.trim_start().starts_with("let asm$x_") && line.contains(" := 1")),
+        "{yul}"
+    );
+    assert!(
+        yul.lines()
+            .any(|line| line.contains("src$r_") && line.contains(":= asm$x_")),
+        "{yul}"
+    );
+    assert!(
+        !yul.lines()
+            .any(|line| line.contains("src$r_") && line.contains(":= _v0")),
+        "{yul}"
+    );
 }
 
 #[test]
@@ -381,8 +393,16 @@ contract AssemblyNestedBlockShadowing {
 "#,
     );
 
-    assert!(yul.contains("r := x"), "{yul}");
-    assert!(yul.contains("r := _v0"), "{yul}");
+    assert!(
+        yul.lines()
+            .any(|line| line.contains("src$r_") && line.contains(":= asm$x_")),
+        "{yul}"
+    );
+    assert!(
+        yul.lines()
+            .any(|line| line.contains("src$r_") && line.contains(":= _v0")),
+        "{yul}"
+    );
 }
 
 #[test]
@@ -407,10 +427,29 @@ contract AssemblyFunctionShadowing {
 "#,
     );
 
-    assert!(yul.contains("function f(x) -> y"), "{yul}");
-    assert!(yul.contains("y := x"), "{yul}");
-    assert!(!yul.contains("y := _v0"), "{yul}");
-    assert!(!yul.contains("_v1 := x"), "{yul}");
+    assert!(
+        yul.lines().any(|line| {
+            line.contains("function asm$f_")
+                && line.contains("(asm$x_")
+                && line.contains(") -> asm$y_")
+        }),
+        "{yul}"
+    );
+    assert!(
+        yul.lines()
+            .any(|line| line.contains("asm$y_") && line.contains(":= asm$x_")),
+        "{yul}"
+    );
+    assert!(
+        !yul.lines()
+            .any(|line| line.contains("asm$y_") && line.contains(":= _v0")),
+        "{yul}"
+    );
+    assert!(
+        !yul.lines()
+            .any(|line| { line.trim_start().starts_with("_v") && line.contains(":= asm$x_") }),
+        "{yul}"
+    );
 }
 
 #[test]
@@ -446,48 +485,194 @@ fn top_level_no_object_hull_wraps_like_assemble_hs_snapshot() {
 
 #[test]
 fn ast_printer_data_hex_string_and_for_snapshot() {
-    let program = Program::single_object(Object {
-        name: "PrinterShapes".to_owned(),
-        code: Code::new(vec![
-            Stmt::Let {
-                names: vec!["i".to_owned()],
-                init: Some(Expr::number("0")),
-            },
-            Stmt::For {
-                init: Vec::new(),
-                cond: Expr::call("lt", vec![Expr::ident("i"), Expr::number("3")]),
-                post: vec![Stmt::Assign {
-                    names: vec!["i".to_owned()],
-                    value: Expr::call("add", vec![Expr::ident("i"), Expr::number("1")]),
-                }],
-                body: vec![Stmt::If {
-                    cond: Expr::call("eq", vec![Expr::ident("i"), Expr::number("2")]),
-                    body: vec![Stmt::Expr(Expr::call(
-                        "mstore",
-                        vec![
-                            Expr::number("0"),
-                            Expr::Lit(Literal::Hex("0x2a".to_owned())),
-                        ],
-                    ))],
-                }],
-            },
-            Stmt::Expr(Expr::call(
-                "mstore",
-                vec![Expr::number("32"), Expr::string("done")],
-            )),
-        ]),
-        inners: vec![
-            Inner::Data(Data {
-                name: "blob".to_owned(),
-                value: DataValue::Hex("60016002".to_owned()),
-            }),
-            Inner::Data(Data {
-                name: "label".to_owned(),
-                value: DataValue::String("hello".to_owned()),
-            }),
-        ],
-    });
+    let program = printer_shapes_program();
     insta::assert_snapshot!("ast_printer_shapes", solcore_yul::pretty_program(&program));
+}
+
+#[test]
+fn hygienic_names_canonical_literals_and_break_validation() {
+    let add_name_yul = render_source(
+        "reserved_add_name",
+        r#"
+contract ReservedAddName {
+  public function main() -> word {
+    let add : word = 1;
+    return add;
+  }
+}
+"#,
+    );
+    assert!(!add_name_yul.contains("let add"), "{add_name_yul}");
+    assert!(!add_name_yul.contains("-> add"), "{add_name_yul}");
+
+    let asm_shadow_yul = render_source(
+        "asm_shadow",
+        r#"
+contract AsmShadow {
+  public function main() -> word {
+    let x : bool = false;
+    let r : word = 0;
+    assembly {
+      let x := 1
+      r := x
+    }
+    return r;
+  }
+}
+"#,
+    );
+    assert!(asm_shadow_yul.contains("let asm$x_"), "{asm_shadow_yul}");
+    assert!(asm_shadow_yul.contains("src$r_"), "{asm_shadow_yul}");
+
+    let decimal_yul = render_source(
+        "leading_zero_decimal",
+        r#"
+contract LeadingZeroDecimal {
+  public function main() -> word {
+    return 01;
+  }
+}
+"#,
+    );
+    assert!(decimal_yul.contains(":= 1"), "{decimal_yul}");
+    assert!(!decimal_yul.contains(" 01"), "{decimal_yul}");
+
+    let hex_program = Program::single_object(Object {
+        name: "HexPrinter".to_owned(),
+        code: Code::new(vec![Stmt::Let {
+            names: vec!["x".to_owned()],
+            init: Some(Expr::Lit(Literal::Hex("0X2a".to_owned()))),
+        }]),
+        inners: Vec::new(),
+    });
+    assert!(
+        solcore_yul::pretty_program(&hex_program).contains("0x2a"),
+        "{}",
+        solcore_yul::pretty_program(&hex_program)
+    );
+
+    let break_error = render_source_error(
+        "asm_break_outside_loop",
+        r#"
+contract BadBreak {
+  public function main() -> word {
+    assembly { break }
+    return 0;
+  }
+}
+"#,
+    );
+    assert!(
+        break_error.contains("`break` must be inside a for-loop body"),
+        "{break_error}"
+    );
+
+    let continue_error = render_source_error(
+        "asm_continue_post",
+        r#"
+contract BadContinuePost {
+  public function main() -> word {
+    assembly { for {} 1 { continue } {} }
+    return 0;
+  }
+}
+"#,
+    );
+    assert!(
+        continue_error.contains("`continue` in for-loop post block is not allowed"),
+        "{continue_error}"
+    );
+}
+
+#[test]
+fn strict_assembly_artifact_requires_one_top_level_object_or_selection() {
+    let multi_contract = r#"
+contract A {
+  public function main() -> word { return 1; }
+}
+
+contract B {
+  public function main() -> word { return 2; }
+}
+"#;
+    let error = render_source_error("multi_contract_yul", multi_contract);
+    assert!(
+        error.contains("strict-assembly output requires one top-level object"),
+        "{error}"
+    );
+    assert!(error.contains("ADeploy"), "{error}");
+    assert!(error.contains("BDeploy"), "{error}");
+
+    let selected = render_source_with_object("multi_contract_yul", multi_contract, Some("ADeploy"))
+        .expect("selected object renders");
+    assert!(selected.contains("object \"ADeploy\""), "{selected}");
+    assert!(!selected.contains("object \"BDeploy\""), "{selected}");
+}
+
+#[test]
+fn solc_strict_assembly_compiles_snapshots_and_repros_when_present() {
+    let Some(solc) = solc_strict_assembly_path() else {
+        eprintln!("solc not found; skipping strict-assembly compile regression");
+        return;
+    };
+
+    let mut cases = snapshot_yul_cases();
+    let fixtures = repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases");
+    cases.push((
+        "repro_for_body_shadow".to_owned(),
+        render_fixture(&fixtures.join("for-body-shadow.solc")),
+    ));
+    cases.push((
+        "repro_for_init_shadow".to_owned(),
+        render_fixture(&fixtures.join("for-init-shadow.solc")),
+    ));
+    cases.push((
+        "repro_reserved_add_name".to_owned(),
+        render_source(
+            "repro_reserved_add_name",
+            r#"
+contract C {
+  public function main() -> word {
+    let add : word = 1;
+    return add;
+  }
+}
+"#,
+        ),
+    ));
+    cases.push((
+        "repro_decimal_leading_zero".to_owned(),
+        render_source(
+            "repro_decimal_leading_zero",
+            r#"
+contract C {
+  public function main() -> word {
+    return 01;
+  }
+}
+"#,
+        ),
+    ));
+    cases.push((
+        "repro_assembly_shadow_lvalue".to_owned(),
+        render_source(
+            "repro_assembly_shadow_lvalue",
+            r#"
+contract C {
+  public function main() -> word {
+    let x : bool = false;
+    let r : word = 0;
+    assembly { let x := 1 r := x }
+    return r;
+  }
+}
+"#,
+        ),
+    ));
+
+    for (label, yul) in cases {
+        assert_solc_strict_assembly(&solc, &label, &yul);
+    }
 }
 
 #[test]
@@ -603,6 +788,27 @@ fn render_fixture(path: &Path) -> String {
 }
 
 fn render_output(db: &'static TestDb, output: SpecializeOutput<'static>) -> String {
+    render_output_with_object(db, output, None).expect("Yul translation")
+}
+
+fn render_source_with_object(
+    name: &str,
+    src: &str,
+    object_name: Option<&str>,
+) -> Result<String, String> {
+    let (db, output) = specialize_src(name, src);
+    render_output_with_object(db, output, object_name)
+}
+
+fn render_source_error(name: &str, src: &str) -> String {
+    render_source_with_object(name, src, None).expect_err("Yul translation should fail")
+}
+
+fn render_output_with_object(
+    db: &'static TestDb,
+    output: SpecializeOutput<'static>,
+    object_name: Option<&str>,
+) -> Result<String, String> {
     assert_eq!(output.diagnostics, Vec::new(), "specialization diagnostics");
     let emitted = hull::emit_module(db, &output.module, hull::EmitOptions::default());
     assert_eq!(emitted.diagnostics, Vec::new(), "Hull emission diagnostics");
@@ -611,7 +817,8 @@ fn render_output(db: &'static TestDb, output: SpecializeOutput<'static>) -> Stri
         Vec::new(),
         "Hull check diagnostics"
     );
-    solcore_yul::render_hull_program(db, &emitted.program).expect("Yul translation")
+    solcore_yul::render_hull_program_object(db, &emitted.program, object_name)
+        .map_err(|err| err.message().to_owned())
 }
 
 fn specialize_src(name: &str, src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {
@@ -735,4 +942,170 @@ fn repo_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("crate is under repo/crates/yul")
         .to_path_buf()
+}
+
+fn printer_shapes_program() -> Program {
+    Program::single_object(Object {
+        name: "PrinterShapes".to_owned(),
+        code: Code::new(vec![
+            Stmt::Let {
+                names: vec!["i".to_owned()],
+                init: Some(Expr::number("0")),
+            },
+            Stmt::For {
+                init: Vec::new(),
+                cond: Expr::call("lt", vec![Expr::ident("i"), Expr::number("3")]),
+                post: vec![Stmt::Assign {
+                    names: vec!["i".to_owned()],
+                    value: Expr::call("add", vec![Expr::ident("i"), Expr::number("1")]),
+                }],
+                body: vec![Stmt::If {
+                    cond: Expr::call("eq", vec![Expr::ident("i"), Expr::number("2")]),
+                    body: vec![Stmt::Expr(Expr::call(
+                        "mstore",
+                        vec![
+                            Expr::number("0"),
+                            Expr::Lit(Literal::Hex("0x2a".to_owned())),
+                        ],
+                    ))],
+                }],
+            },
+            Stmt::Expr(Expr::call(
+                "mstore",
+                vec![Expr::number("32"), Expr::string("done")],
+            )),
+        ]),
+        inners: vec![
+            Inner::Data(Data {
+                name: "blob".to_owned(),
+                value: DataValue::Hex("60016002".to_owned()),
+            }),
+            Inner::Data(Data {
+                name: "label".to_owned(),
+                value: DataValue::String("hello".to_owned()),
+            }),
+        ],
+    })
+}
+
+fn snapshot_yul_cases() -> Vec<(String, String)> {
+    let repo = repo_root();
+    vec![
+        (
+            "snapshot_doc_id".to_owned(),
+            render_source(
+                "doc_id",
+                r#"
+contract IdDoc {
+  public function id(x : word) -> word {
+    return x;
+  }
+}
+"#,
+            ),
+        ),
+        (
+            "snapshot_doc_option_maybe".to_owned(),
+            render_source(
+                "doc_option_maybe",
+                r#"
+contract OptionDoc {
+  data Option(a) = None | Some(a);
+
+  function maybe(n : word, o : Option(word)) -> word {
+    match o {
+      | Option.None => return n;
+      | Option.Some(x) => return x;
+    }
+  }
+
+  public function main() -> word {
+    return maybe(0, Option.Some(42));
+  }
+}
+"#,
+            ),
+        ),
+        (
+            "snapshot_doc_color".to_owned(),
+            render_fixture(
+                &repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec/047rgb.solc"),
+            ),
+        ),
+        (
+            "snapshot_doc_add1".to_owned(),
+            render_fixture(
+                &repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases/Add1.solc"),
+            ),
+        ),
+        (
+            "snapshot_dispatch_basic_shape".to_owned(),
+            render_source(
+                "dispatch_basic_shape",
+                r#"
+contract DispatchBasicShape {
+  public function id(x : word) -> word {
+    return x;
+  }
+
+  public function answer() -> word {
+    return 42;
+  }
+}
+"#,
+            ),
+        ),
+        (
+            "snapshot_ast_printer_shapes".to_owned(),
+            solcore_yul::pretty_program(&printer_shapes_program()),
+        ),
+    ]
+}
+
+fn solc_strict_assembly_path() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(path) = env::var_os("SOLC") {
+        candidates.push(PathBuf::from(path));
+    }
+    candidates.push(PathBuf::from("/opt/homebrew/bin/solc"));
+    candidates.push(PathBuf::from("solc"));
+
+    candidates.into_iter().find(|candidate| {
+        Command::new(candidate)
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+    })
+}
+
+fn assert_solc_strict_assembly(solc: &Path, label: &str, yul: &str) {
+    let safe_label = label
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let path = env::temp_dir().join(format!(
+        "solcore-yul-strict-{}-{safe_label}.yul",
+        std::process::id()
+    ));
+    fs::write(&path, yul).expect("write yul temp file");
+    let output = Command::new(solc)
+        .arg("--strict-assembly")
+        .arg("--bin")
+        .arg(&path)
+        .output()
+        .expect("run solc");
+    let _ = fs::remove_file(&path);
+    assert!(
+        output.status.success(),
+        "{label}: solc failed\nstdout:\n{}\nstderr:\n{}\nYul:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+        yul
+    );
 }

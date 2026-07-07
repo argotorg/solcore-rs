@@ -12,18 +12,18 @@ object "DispatchBasicShapeDeploy" {
       mstore(0, 0xb5988ea3)
       revert(28, 4)
     }
-    let size := datasize("DispatchBasicShape")
+    let asm$size_0 := datasize("DispatchBasicShape")
     codecopy(0, dataoffset("DispatchBasicShape"), datasize("DispatchBasicShape"))
-    return(0, size)
+    return(0, asm$size_0)
   }
   object "DispatchBasicShape" {
     code {
-      function usr$dispatch_basic_shape_DispatchBasicShape_answer_d321b495b() -> _result {
-        _result := 42
+      function usr$dispatch_basic_shape_DispatchBasicShape_answer_d321b495b() -> gen$result_1 {
+        gen$result_1 := 42
         leave
       }
-      function usr$dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94(x) -> _result {
-        _result := x
+      function usr$dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94(src$x_2) -> gen$result_3 {
+        gen$result_3 := src$x_2
         leave
       }
       /* selector 0x7d3c40c8 -> dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94 */
@@ -43,9 +43,9 @@ object "DispatchBasicShapeDeploy" {
           revert(28, 4)
         }
         case false {
-          let DispatchBasicShape_dispatch_selector
-          DispatchBasicShape_dispatch_selector := shr(224, calldataload(0))
-          switch DispatchBasicShape_dispatch_selector
+          let src$DispatchBasicShape_dispatch_selector_4
+          src$DispatchBasicShape_dispatch_selector_4 := shr(224, calldataload(0))
+          switch src$DispatchBasicShape_dispatch_selector_4
             case 0x7d3c40c8 {
               if callvalue() {
                 mstore(0, 0xb5988ea3)
@@ -55,15 +55,15 @@ object "DispatchBasicShapeDeploy" {
                 mstore(0, 0x08638556)
                 revert(28, 4)
               }
-              let dispatch_arg0_0
-              dispatch_arg0_0 := calldataload(4)
-              let dispatch_ret0
+              let src$dispatch_arg0_0_5
+              src$dispatch_arg0_0_5 := calldataload(4)
+              let src$dispatch_ret0_6
               let _v2
-              _v2 := usr$dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94(dispatch_arg0_0)
-              dispatch_ret0 := _v2
-              let dispatch_ret0_0
-              dispatch_ret0_0 := dispatch_ret0
-              mstore(0, dispatch_ret0_0)
+              _v2 := usr$dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94(src$dispatch_arg0_0_5)
+              src$dispatch_ret0_6 := _v2
+              let src$dispatch_ret0_0_7
+              src$dispatch_ret0_0_7 := src$dispatch_ret0_6
+              mstore(0, src$dispatch_ret0_0_7)
               return(0, 32)
             }
             case 0x85bb7d69 {
@@ -71,13 +71,13 @@ object "DispatchBasicShapeDeploy" {
                 mstore(0, 0xb5988ea3)
                 revert(28, 4)
               }
-              let dispatch_ret1
+              let src$dispatch_ret1_8
               let _v3
               _v3 := usr$dispatch_basic_shape_DispatchBasicShape_answer_d321b495b()
-              dispatch_ret1 := _v3
-              let dispatch_ret1_0
-              dispatch_ret1_0 := dispatch_ret1
-              mstore(0, dispatch_ret1_0)
+              src$dispatch_ret1_8 := _v3
+              let src$dispatch_ret1_0_9
+              src$dispatch_ret1_0_9 := src$dispatch_ret1_8
+              mstore(0, src$dispatch_ret1_0_9)
               return(0, 32)
             }
             default {
