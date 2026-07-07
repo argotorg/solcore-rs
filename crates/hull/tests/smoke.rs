@@ -255,11 +255,56 @@ contract C {
     let hull = pretty_program(db, &emitted.program);
     assert!(hull.contains("let constructor_arg0 : word"), "{hull}");
     assert!(
+        hull.contains("if lt(codesize(), add(datasize(\"CDeploy\"), 64))"),
+        "{hull}"
+    );
+    assert!(
         hull.contains("codecopy(0, datasize(\"CDeploy\"), 32)"),
         "{hull}"
     );
     assert!(
         hull.contains("codecopy(0, add(datasize(\"CDeploy\"), 32), 32)"),
+        "{hull}"
+    );
+}
+
+#[test]
+fn bool_dispatch_accepts_static_abi_word_and_canonicalizes_io() {
+    let (db, output) = specialize_src(
+        "bool_dispatch",
+        r#"
+contract C {
+  public function echo(x : bool) -> bool {
+    return x;
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(hull.contains("if gt(dispatch_arg0_0_word, 1)"), "{hull}");
+    assert!(
+        hull.contains("mstore(0, iszero(iszero(dispatch_ret0_0_word)))"),
+        "{hull}"
+    );
+}
+
+#[test]
+fn ltimp_bool_return_fixture_is_dispatchable() {
+    let fixture =
+        repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases/ltimp.solc");
+    let (db, output) = specialize_fixture(&fixture);
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(hull.contains("selector 0xdffeadd0"), "{hull}");
+    assert!(
+        hull.contains("mstore(0, iszero(iszero(dispatch_ret0_0_word)))"),
         "{hull}"
     );
 }
@@ -453,7 +498,14 @@ contract C {
     assert_eq!(non_dispatch, Vec::<&EmitDiagnostic>::new());
     assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
-    assert!(!hull.contains("iszero"), "{hull}");
+    assert!(
+        hull.contains("return if<(unit + unit)> primEqWord(x, y)"),
+        "{hull}"
+    );
+    assert!(
+        hull.contains("then (inl<(unit + unit)>(())) else (inr<(unit + unit)>(()))"),
+        "{hull}"
+    );
     assert!(hull.contains("if<"), "{hull}");
 }
 

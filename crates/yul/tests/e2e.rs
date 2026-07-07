@@ -1,26 +1,48 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    env, fs,
-    net::TcpListener,
+    env, fmt, fs,
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    sync::atomic::{AtomicUsize, Ordering},
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc, Arc, Mutex,
+    },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
-use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
+use hir::{
+    anchor::DefLocationTable,
+    ast::{
+        function::{YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
+        item::Module,
+        Ident,
+    },
+    input::SourceFile,
+    span::{Span, SpannedElem},
+};
+use hir_ty::AbiSignature;
+use hull::{
+    CodeBlock, EmitDiagnostic, EmitDiagnosticKind, Expr, ExprKind, Object, Program, Stmt, StmtKind,
+    Ty,
+};
 use nameres::{
-    LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
-    module_path_display, resolve_module_path_candidate,
+    module_id_from_key, module_key_for_path, module_path_display, resolve_module_path_candidate,
+    LibraryId, ModuleId, ModuleKey, ModuleTree,
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
-use specialize::{SpecializeOptions, SpecializeOutput, specialize_module};
+use specialize::{
+    specialize_module, MonoAbiParam, MonoEntryKind, MonoItem, SpecializeDiagnostic,
+    SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput,
+};
 
-const MAIN_SELECTOR: &str = "0xdffeadd0";
 const ANVIL_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const ANVIL_START_TIMEOUT: Duration = Duration::from_secs(15);
+const ANVIL_READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -73,6 +95,18 @@ fn evm_e2e_execution_harness() {
         return;
     }
 
+    if env::var_os("E2E_PIPELINE_ONLY").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        let mut scoreboard = Scoreboard::default();
+        run_pipeline_only_scoreboard(&mut scoreboard);
+        eprintln!("{}", scoreboard.render());
+        assert!(
+            scoreboard.is_clean(),
+            "E2E pipeline-only failures:\n{}",
+            scoreboard.render_failures()
+        );
+        return;
+    }
+
     let solc = solc_path();
     if !command_available(&solc) {
         eprintln!(
@@ -109,17 +143,34 @@ fn evm_e2e_execution_harness() {
     };
 
     let mut scoreboard = Scoreboard::default();
-    for case in spec_cases() {
-        match case.expected {
-            Some(expected) => {
-                scoreboard.files_run += 1;
-                match run_fixture_case(&solc, &cast, runtime.url(), &case.path, expected) {
-                    Ok(()) => scoreboard.files_passed += 1,
-                    Err(failure) => scoreboard.record_failure(case.label, failure),
-                }
+    match spec_cases() {
+        Ok(cases) => {
+            for case in cases {
+                run_spec_case(&mut scoreboard, &solc, &cast, runtime.url(), case);
             }
-            None => scoreboard.skipped_no_expectation += 1,
         }
+        Err(failure) => scoreboard.record_failure("spec/manifest", failure),
+    }
+
+    let bool_case =
+        repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases/ltimp.solc");
+    scoreboard.files_run += 1;
+    match run_fixture_case(
+        &solc,
+        &cast,
+        runtime.url(),
+        &bool_case,
+        RunMode::DeployedDispatch,
+        &Expected::Bool(true),
+    ) {
+        Ok(()) => scoreboard.files_passed += 1,
+        Err(failure) => scoreboard.record_failure("cases/ltimp-bool-dispatch", failure),
+    }
+
+    scoreboard.files_run += 1;
+    match run_reference_direct_smoke(&solc, &cast, runtime.url()) {
+        Ok(()) => scoreboard.files_passed += 1,
+        Err(failure) => scoreboard.record_failure("reference/direct-main", failure),
     }
 
     scoreboard.files_run += 1;
@@ -128,24 +179,135 @@ fn evm_e2e_execution_harness() {
         Err(failure) => scoreboard.record_failure("dispatch/basic-shape", failure),
     }
 
-    scoreboard.files_run += 1;
-    match run_if_unselected_revert_branch(&solc, &cast, runtime.url()) {
-        Ok(()) => scoreboard.files_passed += 1,
-        Err(failure) => scoreboard.record_failure("if/unselected-revert-branch", failure),
-    }
-
-    scoreboard.files_run += 1;
-    match run_if_mutually_exclusive_storage_writes(&solc, &cast, runtime.url()) {
-        Ok(()) => scoreboard.files_passed += 1,
-        Err(failure) => scoreboard.record_failure("if/mutually-exclusive-storage-writes", failure),
-    }
-
     eprintln!("{}", scoreboard.render());
     assert!(
-        scoreboard.failures.is_empty(),
-        "E2E failures:\n{}",
-        scoreboard.render_failures()
+        scoreboard.is_clean(),
+        "E2E failures:\n{}\nanvil logs:\n{}",
+        scoreboard.render_failures(),
+        runtime.logs()
     );
+}
+
+#[test]
+fn spec_expectation_manifest_covers_all_fixtures() {
+    let cases = spec_cases().expect("spec manifest covers every fixture");
+    assert!(cases.iter().any(|case| {
+        case.label.ends_with("010answer.solc")
+            && matches!(
+                case.expectation,
+                SpecExpectation::Blocked {
+                    category: BlockedCategory::UnannotatedEntrySpecialization
+                }
+            )
+    }));
+    assert!(cases.iter().any(|case| {
+        case.label.ends_with("StorageLib.solc")
+            && matches!(case.expectation, SpecExpectation::Skip { reason } if !reason.is_empty())
+    }));
+}
+
+fn run_spec_case(
+    scoreboard: &mut Scoreboard,
+    solc: &Path,
+    cast: &Path,
+    rpc_url: &str,
+    case: SpecCase,
+) {
+    match case.expectation {
+        SpecExpectation::Run { expected, mode } => {
+            scoreboard.files_run += 1;
+            match run_fixture_case(solc, cast, rpc_url, &case.path, mode, &expected) {
+                Ok(()) => scoreboard.files_passed += 1,
+                Err(failure) => scoreboard.record_failure(case.label, failure),
+            }
+        }
+        SpecExpectation::Blocked { category } => {
+            record_blocked_fixture(scoreboard, case.label, &case.path, category);
+        }
+        SpecExpectation::Skip { reason } => {
+            scoreboard.record_skip(reason);
+        }
+    }
+}
+
+fn run_spec_case_pipeline_only(scoreboard: &mut Scoreboard, case: SpecCase) {
+    match case.expectation {
+        SpecExpectation::Run { mode, .. } => {
+            scoreboard.files_run += 1;
+            match run_fixture_case_pipeline_only(&case.path, mode) {
+                Ok(()) => scoreboard.files_passed += 1,
+                Err(failure) => scoreboard.record_failure(case.label, failure),
+            }
+        }
+        SpecExpectation::Blocked { category } => {
+            record_blocked_fixture(scoreboard, case.label, &case.path, category);
+        }
+        SpecExpectation::Skip { reason } => {
+            scoreboard.record_skip(reason);
+        }
+    }
+}
+
+fn record_blocked_fixture(
+    scoreboard: &mut Scoreboard,
+    label: impl Into<String>,
+    path: &Path,
+    category: BlockedCategory,
+) {
+    scoreboard.files_run += 1;
+    let label = label.into();
+    match render_fixture(path) {
+        Ok(_) => scoreboard.record_stale_blocked(
+            label,
+            category,
+            "pipeline unexpectedly passed".to_owned(),
+        ),
+        Err(failure) if failure.blocked_category == Some(category) => {
+            scoreboard.record_blocked(category);
+        }
+        Err(failure) => scoreboard.record_stale_blocked(
+            label,
+            category,
+            format!(
+                "expected `{category}`, got `{}`: {}",
+                failure
+                    .blocked_category
+                    .map_or("unclassified".to_owned(), |category| category.to_string()),
+                failure.message
+            ),
+        ),
+    }
+}
+
+fn run_pipeline_only_scoreboard(scoreboard: &mut Scoreboard) {
+    match spec_cases() {
+        Ok(cases) => {
+            for case in cases {
+                run_spec_case_pipeline_only(scoreboard, case);
+            }
+        }
+        Err(failure) => scoreboard.record_failure("spec/manifest", failure),
+    }
+
+    let bool_case =
+        repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases/ltimp.solc");
+    scoreboard.files_run += 1;
+    match run_fixture_case_pipeline_only(&bool_case, RunMode::DeployedDispatch) {
+        Ok(()) => scoreboard.files_passed += 1,
+        Err(failure) => scoreboard.record_failure("cases/ltimp-bool-dispatch", failure),
+    }
+
+    scoreboard.files_run += 1;
+    match run_reference_direct_smoke_pipeline_only() {
+        Ok(()) => scoreboard.files_passed += 1,
+        Err(failure) => scoreboard.record_failure("reference/direct-main", failure),
+    }
+
+    scoreboard.files_run += 1;
+    match run_dispatch_basic_shape_pipeline_only() {
+        Ok(()) => scoreboard.files_passed += 1,
+        Err(failure) => scoreboard.record_failure("dispatch/basic-shape", failure),
+    }
 }
 
 fn run_fixture_case(
@@ -153,21 +315,71 @@ fn run_fixture_case(
     cast: &Path,
     rpc_url: &str,
     path: &Path,
-    expected: Expected,
+    mode: RunMode,
+    expected: &Expected,
 ) -> Result<(), E2eFailure> {
-    let yul = render_fixture(path)?;
-    let bytecode = compile_yul(solc, path.file_stem().unwrap_or_default(), &yul)?;
-    let address = deploy(cast, rpc_url, &bytecode)?;
-    let returndata = call(cast, rpc_url, &address, MAIN_SELECTOR)?;
-    assert_return("main()", expected, &returndata)
+    let module = render_fixture(path)?;
+    match mode {
+        RunMode::ReferenceDirect => {
+            let yul = render_reference_direct(&module, "main()")?;
+            let bytecode = compile_yul(solc, path.file_stem().unwrap_or_default(), &yul)?;
+            let returndata = execute_creation(cast, rpc_url, &bytecode)?;
+            assert_return("main() direct", expected, &returndata)
+        }
+        RunMode::DeployedDispatch => {
+            let bytecode = compile_yul(solc, path.file_stem().unwrap_or_default(), &module.yul)?;
+            let address = deploy(cast, rpc_url, &bytecode)?;
+            let main = module.entry("main()")?;
+            let calldata = calldata(main, &[])?;
+            let returndata = call(cast, rpc_url, &address, &calldata)?;
+            assert_return("main() dispatch", expected, &returndata)
+        }
+    }
 }
 
-fn run_dispatch_basic_shape(solc: &Path, cast: &Path, rpc_url: &str) -> Result<(), E2eFailure> {
-    let yul = render_source(
-        "dispatch_basic_shape_e2e",
-        r#"
+fn run_fixture_case_pipeline_only(path: &Path, mode: RunMode) -> Result<(), E2eFailure> {
+    let module = render_fixture(path)?;
+    match mode {
+        RunMode::ReferenceDirect => {
+            render_reference_direct(&module, "main()")?;
+        }
+        RunMode::DeployedDispatch => {
+            let main = module.entry("main()")?;
+            calldata(main, &[])?;
+        }
+    }
+    Ok(())
+}
+
+const REFERENCE_DIRECT_SMOKE_SRC: &str = r#"
+contract ReferenceDirectSmokeE2E {
+  public function main() -> word {
+    return 42;
+  }
+}
+"#;
+
+fn run_reference_direct_smoke(solc: &Path, cast: &Path, rpc_url: &str) -> Result<(), E2eFailure> {
+    let module = render_source("reference_direct_smoke_e2e", REFERENCE_DIRECT_SMOKE_SRC)?;
+    let yul = render_reference_direct(&module, "main()")?;
+    let bytecode = compile_yul(solc, "reference_direct_smoke_e2e", &yul)?;
+    let returndata = execute_creation(cast, rpc_url, &bytecode)?;
+    assert_return("main() direct", &Expected::Word(42), &returndata)
+}
+
+fn run_reference_direct_smoke_pipeline_only() -> Result<(), E2eFailure> {
+    let module = render_source("reference_direct_smoke_e2e", REFERENCE_DIRECT_SMOKE_SRC)?;
+    render_reference_direct(&module, "main()")?;
+    Ok(())
+}
+
+const DISPATCH_BASIC_SHAPE_SRC: &str = r#"
 contract DispatchBasicShapeE2E {
   public function id(x : word) -> word {
+    return x;
+  }
+
+  public function echo(x : bool) -> bool {
     return x;
   }
 
@@ -175,114 +387,75 @@ contract DispatchBasicShapeE2E {
     return 42;
   }
 
-  public function truth() -> word {
-    return 1;
+  public function pair() -> (word, word) {
+    return (1, 42);
   }
 }
-"#,
-    )?;
-    let bytecode = compile_yul(solc, "dispatch_basic_shape_e2e", &yul)?;
+"#;
+
+fn run_dispatch_basic_shape(solc: &Path, cast: &Path, rpc_url: &str) -> Result<(), E2eFailure> {
+    let module = render_source("dispatch_basic_shape_e2e", DISPATCH_BASIC_SHAPE_SRC)?;
+    let bytecode = compile_yul(solc, "dispatch_basic_shape_e2e", &module.yul)?;
     let address = deploy(cast, rpc_url, &bytecode)?;
 
+    let answer = module.entry("answer()")?;
     assert_return(
         "answer()",
-        Expected::Word(42),
-        &call(cast, rpc_url, &address, "0x85bb7d69")?,
+        &Expected::Word(42),
+        &call(cast, rpc_url, &address, &calldata(answer, &[])?)?,
     )?;
+
+    let id = module.entry("id(uint256)")?;
     assert_return(
         "id(uint256)",
-        Expected::Word(42),
+        &Expected::Word(42),
+        &call(cast, rpc_url, &address, &calldata(id, &[AbiArg::Word(42)])?)?,
+    )?;
+
+    let echo = module.entry("echo(bool)")?;
+    assert_return(
+        "echo(bool)",
+        &Expected::Bool(true),
         &call(
             cast,
             rpc_url,
             &address,
-            "0x7d3c40c8000000000000000000000000000000000000000000000000000000000000002a",
+            &calldata(echo, &[AbiArg::Bool(true)])?,
         )?,
     )?;
+
+    let pair = module.entry("pair()")?;
     assert_return(
-        "truth()",
-        Expected::Bool(true),
-        &call(cast, rpc_url, &address, "0x9e9f51d2")?,
+        "pair()",
+        &Expected::Words(vec![1, 42]),
+        &call(cast, rpc_url, &address, &calldata(pair, &[])?)?,
     )
 }
 
-fn run_if_unselected_revert_branch(
-    solc: &Path,
-    cast: &Path,
-    rpc_url: &str,
-) -> Result<(), E2eFailure> {
-    let yul = render_source(
-        "if_unselected_revert_branch_e2e",
-        r#"
-contract IfUnselectedRevertBranchE2E {
-  function boom() -> word {
-    assembly {
-      revert(0, 0)
-    }
-    return 0;
-  }
+fn run_dispatch_basic_shape_pipeline_only() -> Result<(), E2eFailure> {
+    let module = render_source("dispatch_basic_shape_e2e", DISPATCH_BASIC_SHAPE_SRC)?;
 
-  public function main() -> word {
-    return (if true then 1 else boom());
-  }
-}
-"#,
-    )?;
-    let bytecode = compile_yul(solc, "if_unselected_revert_branch_e2e", &yul)?;
-    let address = deploy(cast, rpc_url, &bytecode)?;
-    assert_return(
-        "main() lazy if skips revert",
-        Expected::Word(1),
-        &call(cast, rpc_url, &address, MAIN_SELECTOR)?,
-    )
+    let answer = module.entry("answer()")?;
+    calldata(answer, &[])?;
+
+    let id = module.entry("id(uint256)")?;
+    calldata(id, &[AbiArg::Word(42)])?;
+
+    let echo = module.entry("echo(bool)")?;
+    calldata(echo, &[AbiArg::Bool(true)])?;
+
+    let pair = module.entry("pair()")?;
+    calldata(pair, &[])?;
+
+    Ok(())
 }
 
-fn run_if_mutually_exclusive_storage_writes(
-    solc: &Path,
-    cast: &Path,
-    rpc_url: &str,
-) -> Result<(), E2eFailure> {
-    let yul = render_source(
-        "if_mutually_exclusive_storage_writes_e2e",
-        r#"
-import std.{*};
-
-contract IfMutuallyExclusiveStorageWritesE2E {
-  a : word;
-  b : word;
-
-  function writeA() -> word {
-    a = 11;
-    return a;
-  }
-
-  function writeB() -> word {
-    b = 100;
-    return b;
-  }
-
-  public function main() -> word {
-    let chosen : word = if true then writeA() else writeB();
-    return a + b;
-  }
-}
-"#,
-    )?;
-    let bytecode = compile_yul(solc, "if_mutually_exclusive_storage_writes_e2e", &yul)?;
-    let address = deploy(cast, rpc_url, &bytecode)?;
-    assert_return(
-        "main() lazy if writes only the selected slot",
-        Expected::Word(11),
-        &call(cast, rpc_url, &address, MAIN_SELECTOR)?,
-    )
-}
-
-fn render_source(name: &str, src: &str) -> Result<String, E2eFailure> {
+fn render_source(name: &str, src: &str) -> Result<RenderedModule, E2eFailure> {
     let (db, output) = specialize_src(name, src);
     render_output(db, output)
 }
 
-fn render_fixture(path: &Path) -> Result<String, E2eFailure> {
+fn render_fixture(path: &Path) -> Result<RenderedModule, E2eFailure> {
     let (db, output) = specialize_fixture(path)?;
     render_output(db, output)
 }
@@ -290,18 +463,20 @@ fn render_fixture(path: &Path) -> Result<String, E2eFailure> {
 fn render_output(
     db: &'static TestDb,
     output: SpecializeOutput<'static>,
-) -> Result<String, E2eFailure> {
+) -> Result<RenderedModule, E2eFailure> {
     if !output.diagnostics.is_empty() {
-        return Err(E2eFailure::new(
+        return Err(E2eFailure::with_blocked_category(
             FailureKind::Pipeline,
+            blocked_category_from_specialize(&output.diagnostics),
             format!("specialization diagnostics: {:?}", output.diagnostics),
         ));
     }
 
     let emitted = hull::emit_module(db, &output.module, hull::EmitOptions::default());
     if !emitted.diagnostics.is_empty() {
-        return Err(E2eFailure::new(
+        return Err(E2eFailure::with_blocked_category(
             FailureKind::Pipeline,
+            blocked_category_from_emit(&emitted.diagnostics),
             format!("Hull emission diagnostics: {:?}", emitted.diagnostics),
         ));
     }
@@ -314,12 +489,345 @@ fn render_output(
         ));
     }
 
-    solcore_yul::render_hull_program(db, &emitted.program).map_err(|err| {
+    let yul = solcore_yul::render_hull_program(db, &emitted.program).map_err(|err| {
         E2eFailure::new(
             FailureKind::Pipeline,
             format!("Yul translation failed: {}", err.message()),
         )
+    })?;
+    let entries = collect_abi_entries(db, &output.module, &yul)?;
+    Ok(RenderedModule {
+        db,
+        emitted,
+        yul,
+        entries,
     })
+}
+
+fn blocked_category_from_specialize(
+    diagnostics: &[SpecializeDiagnostic<'_>],
+) -> Option<BlockedCategory> {
+    if diagnostics.iter().any(|diagnostic| {
+        matches!(
+            &diagnostic.kind,
+            SpecializeDiagnosticKind::MissingEvidence { .. }
+        )
+    }) {
+        return Some(BlockedCategory::NeedsStdInstances);
+    }
+    if diagnostics.iter().any(|diagnostic| {
+        matches!(
+            &diagnostic.kind,
+            SpecializeDiagnosticKind::FreeTypeVariable { .. }
+        )
+    }) {
+        return Some(BlockedCategory::UnannotatedEntrySpecialization);
+    }
+    None
+}
+
+fn blocked_category_from_emit(diagnostics: &[EmitDiagnostic<'_>]) -> Option<BlockedCategory> {
+    diagnostics
+        .iter()
+        .find_map(|diagnostic| match &diagnostic.kind {
+            EmitDiagnosticKind::UnsupportedDispatchEntry { reason, .. }
+                if reason == "non-word ABI shape" =>
+            {
+                Some(BlockedCategory::NonWordAbiDispatch)
+            }
+            _ => None,
+        })
+}
+
+struct RenderedModule {
+    db: &'static TestDb,
+    emitted: hull::EmitOutput<'static>,
+    yul: String,
+    entries: Vec<AbiEntry>,
+}
+
+impl RenderedModule {
+    fn entry(&self, signature: &str) -> Result<&AbiEntry, E2eFailure> {
+        self.entries
+            .iter()
+            .find(|entry| entry.signature == signature)
+            .ok_or_else(|| {
+                E2eFailure::new(
+                    FailureKind::Pipeline,
+                    format!("ABI entry `{signature}` not found"),
+                )
+            })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AbiEntry {
+    contract: String,
+    specialized: String,
+    signature: String,
+    selector: [u8; 4],
+    inputs: Vec<MonoAbiParam>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AbiArg {
+    Word(u128),
+    Bool(bool),
+}
+
+fn collect_abi_entries(
+    db: &'static TestDb,
+    module: &specialize::MonoModule<'static>,
+    yul: &str,
+) -> Result<Vec<AbiEntry>, E2eFailure> {
+    let mut entries = Vec::new();
+    for item in &module.items {
+        let MonoItem::Contract(contract) = item else {
+            continue;
+        };
+        for entry in &contract.entries {
+            if !matches!(entry.kind, MonoEntryKind::Method) {
+                continue;
+            }
+            let Some(selector) = entry.selector else {
+                continue;
+            };
+            let signature = entry
+                .signature
+                .clone()
+                .unwrap_or_else(|| entry.name.clone());
+            let selector_hex = selector_hex(selector);
+            let derived = hir_ty::abi_selector(db, AbiSignature::new(db, signature.clone()));
+            if derived != selector_hex {
+                return Err(E2eFailure::new(
+                    FailureKind::Pipeline,
+                    format!(
+                        "{}: metadata selector {selector_hex} disagrees with hir_ty {derived}",
+                        signature
+                    ),
+                ));
+            }
+            let comment = format!("selector {selector_hex} -> {}", entry.specialized);
+            if !yul.contains(&comment) {
+                return Err(E2eFailure::new(
+                    FailureKind::Pipeline,
+                    format!("emitted Yul is missing selector metadata comment `{comment}`"),
+                ));
+            }
+            entries.push(AbiEntry {
+                contract: contract.name.clone(),
+                specialized: entry.specialized.clone(),
+                signature,
+                selector,
+                inputs: entry.inputs.clone(),
+            });
+        }
+    }
+    Ok(entries)
+}
+
+fn calldata(entry: &AbiEntry, args: &[AbiArg]) -> Result<String, E2eFailure> {
+    if entry.inputs.len() != args.len() {
+        return Err(E2eFailure::new(
+            FailureKind::Pipeline,
+            format!(
+                "{}: expected {} ABI args, got {}",
+                entry.signature,
+                entry.inputs.len(),
+                args.len()
+            ),
+        ));
+    }
+    let mut out = selector_hex(entry.selector);
+    for (param, arg) in entry.inputs.iter().zip(args) {
+        out.push_str(&encode_abi_arg(param, *arg)?);
+    }
+    Ok(out)
+}
+
+fn encode_abi_arg(param: &MonoAbiParam, arg: AbiArg) -> Result<String, E2eFailure> {
+    match (param.ty.as_str(), arg) {
+        ("uint256" | "uint" | "word" | "bytes32", AbiArg::Word(value)) => Ok(word_hex(value)),
+        ("bool", AbiArg::Bool(false)) => Ok(word_hex(0)),
+        ("bool", AbiArg::Bool(true)) => Ok(word_hex(1)),
+        _ => Err(E2eFailure::new(
+            FailureKind::Pipeline,
+            format!("cannot encode {arg:?} as ABI type `{}`", param.ty),
+        )),
+    }
+}
+
+fn render_reference_direct(module: &RenderedModule, signature: &str) -> Result<String, E2eFailure> {
+    let entry = module.entry(signature)?;
+    if !entry.inputs.is_empty() {
+        return Err(E2eFailure::new(
+            FailureKind::Pipeline,
+            format!("{signature}: reference-direct mode only supports no-arg entrypoints"),
+        ));
+    }
+    let Some((runtime, function)) = module
+        .emitted
+        .program
+        .objects
+        .iter()
+        .flat_map(|object| object.inners.iter())
+        .find_map(|runtime| {
+            runtime
+                .code
+                .functions
+                .iter()
+                .find(|function| function.name == entry.specialized)
+                .map(|function| (runtime, function))
+        })
+    else {
+        return Err(E2eFailure::new(
+            FailureKind::Pipeline,
+            format!("specialized function `{}` not found", entry.specialized),
+        ));
+    };
+
+    let span = function.span;
+    let ret_ty = function.ret.clone();
+    let program = Program {
+        span,
+        functions: Vec::new(),
+        objects: vec![Object {
+            span,
+            name: format!("{}ReferenceDirect", entry.contract),
+            code: CodeBlock {
+                span,
+                functions: runtime.code.functions.clone(),
+                stmts: direct_main_stmts(module.db, span, &function.name, ret_ty),
+            },
+            inners: Vec::new(),
+        }],
+    };
+    solcore_yul::render_hull_program(module.db, &program).map_err(|err| {
+        E2eFailure::new(
+            FailureKind::Pipeline,
+            format!("reference-direct Yul translation failed: {}", err.message()),
+        )
+    })
+}
+
+fn direct_main_stmts(
+    db: &'static TestDb,
+    span: Span<'static>,
+    callee: &str,
+    ret_ty: Ty<'static>,
+) -> Vec<Stmt<'static>> {
+    vec![
+        Stmt {
+            span,
+            kind: StmtKind::Assembly(vec![yul_expr_stmt(
+                db,
+                span,
+                yul_call(
+                    db,
+                    span,
+                    "mstore",
+                    vec![
+                        yul_number(span, "64"),
+                        yul_call(db, span, "memoryguard", vec![yul_number(span, "128")]),
+                    ],
+                ),
+            )]),
+        },
+        Stmt {
+            span,
+            kind: StmtKind::Let {
+                name: "_mainresult".to_owned(),
+                ty: ret_ty.clone(),
+            },
+        },
+        Stmt {
+            span,
+            kind: StmtKind::Assign {
+                lhs: Expr::var(span, "_mainresult", ret_ty.clone()),
+                rhs: Expr {
+                    span,
+                    ty: ret_ty,
+                    kind: ExprKind::Call {
+                        callee: callee.to_owned(),
+                        args: Vec::new(),
+                    },
+                },
+            },
+        },
+        Stmt {
+            span,
+            kind: StmtKind::Assembly(vec![
+                yul_expr_stmt(
+                    db,
+                    span,
+                    yul_call(
+                        db,
+                        span,
+                        "mstore",
+                        vec![yul_number(span, "0"), yul_ident(db, span, "_mainresult")],
+                    ),
+                ),
+                yul_expr_stmt(
+                    db,
+                    span,
+                    yul_call(
+                        db,
+                        span,
+                        "return",
+                        vec![yul_number(span, "0"), yul_number(span, "32")],
+                    ),
+                ),
+            ]),
+        },
+    ]
+}
+
+fn yul_expr_stmt(
+    _db: &'static TestDb,
+    span: Span<'static>,
+    expr: YulExpr<'static>,
+) -> YulStmt<'static> {
+    YulStmt {
+        span,
+        kind: YulStmtKind::Expr(expr),
+    }
+}
+
+fn yul_call(
+    db: &'static TestDb,
+    span: Span<'static>,
+    name: &str,
+    args: Vec<YulExpr<'static>>,
+) -> YulExpr<'static> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Call {
+            name: yul_name(db, span, name),
+            args,
+        },
+    }
+}
+
+fn yul_ident(db: &'static TestDb, span: Span<'static>, name: &str) -> YulExpr<'static> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Ident(yul_name(db, span, name)),
+    }
+}
+
+fn yul_number(span: Span<'static>, value: impl Into<String>) -> YulExpr<'static> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Lit(YulLitKind::Number(value.into())),
+    }
+}
+
+fn yul_name(
+    db: &'static TestDb,
+    span: Span<'static>,
+    name: &str,
+) -> SpannedElem<'static, Ident<'static>> {
+    SpannedElem::new(Ident::new(db, name.to_owned()), span)
 }
 
 fn specialize_src(name: &str, src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {
@@ -446,19 +954,14 @@ fn compile_yul(
         )
     })?;
 
-    let output = Command::new(solc)
-        .arg("--strict-assembly")
-        .arg("--optimize")
-        .arg("--bin")
-        .arg(&path)
-        .output();
+    let output = run_command(
+        solc,
+        &["--strict-assembly", "--optimize", "--bin"],
+        &[path.as_path()],
+        COMMAND_TIMEOUT,
+    );
     let _ = fs::remove_file(&path);
-    let output = output.map_err(|err| {
-        E2eFailure::new(
-            FailureKind::Solc,
-            format!("failed to run {}: {err}", solc.display()),
-        )
-    })?;
+    let output = output.map_err(|message| E2eFailure::new(FailureKind::Solc, message))?;
     if !output.status.success() {
         return Err(E2eFailure::new(
             FailureKind::Solc,
@@ -486,22 +989,23 @@ fn compile_yul(
 }
 
 fn deploy(cast: &Path, rpc_url: &str, bytecode: &str) -> Result<String, E2eFailure> {
-    let output = Command::new(cast)
-        .arg("send")
-        .arg("--rpc-url")
-        .arg(rpc_url)
-        .arg("--private-key")
-        .arg(ANVIL_PRIVATE_KEY)
-        .arg("--create")
-        .arg(format!("0x{bytecode}"))
-        .arg("--json")
-        .output()
-        .map_err(|err| {
-            E2eFailure::new(
-                FailureKind::Deploy,
-                format!("failed to run {} send: {err}", cast.display()),
-            )
-        })?;
+    let create_arg = format!("0x{bytecode}");
+    let output = run_command(
+        cast,
+        &[
+            "send",
+            "--rpc-url",
+            rpc_url,
+            "--private-key",
+            ANVIL_PRIVATE_KEY,
+            "--create",
+            &create_arg,
+            "--json",
+        ],
+        &[],
+        COMMAND_TIMEOUT,
+    )
+    .map_err(|message| E2eFailure::new(FailureKind::Deploy, message))?;
     if !output.status.success() {
         return Err(E2eFailure::new(
             FailureKind::Deploy,
@@ -523,20 +1027,13 @@ fn deploy(cast: &Path, rpc_url: &str, bytecode: &str) -> Result<String, E2eFailu
 }
 
 fn call(cast: &Path, rpc_url: &str, address: &str, calldata: &str) -> Result<String, E2eFailure> {
-    let output = Command::new(cast)
-        .arg("call")
-        .arg("--rpc-url")
-        .arg(rpc_url)
-        .arg(address)
-        .arg("--data")
-        .arg(calldata)
-        .output()
-        .map_err(|err| {
-            E2eFailure::new(
-                FailureKind::Call,
-                format!("failed to run {} call: {err}", cast.display()),
-            )
-        })?;
+    let output = run_command(
+        cast,
+        &["call", "--rpc-url", rpc_url, address, "--data", calldata],
+        &[],
+        COMMAND_TIMEOUT,
+    )
+    .map_err(|message| E2eFailure::new(FailureKind::Call, message))?;
     if !output.status.success() {
         return Err(E2eFailure::new(
             FailureKind::Call,
@@ -550,53 +1047,114 @@ fn call(cast: &Path, rpc_url: &str, address: &str, calldata: &str) -> Result<Str
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-fn assert_return(label: &str, expected: Expected, returndata: &str) -> Result<(), E2eFailure> {
-    let actual = decode_word(returndata).map_err(|message| {
+fn execute_creation(cast: &Path, rpc_url: &str, bytecode: &str) -> Result<String, E2eFailure> {
+    let tx = format!(r#"{{"data":"0x{bytecode}"}}"#);
+    let output = run_command(
+        cast,
+        &["rpc", "--rpc-url", rpc_url, "eth_call", &tx, "latest"],
+        &[],
+        COMMAND_TIMEOUT,
+    )
+    .map_err(|message| E2eFailure::new(FailureKind::Call, message))?;
+    if !output.status.success() {
+        return Err(E2eFailure::new(
+            FailureKind::Call,
+            format!(
+                "cast rpc eth_call failed\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_rpc_hex(&stdout).ok_or_else(|| {
+        E2eFailure::new(
+            FailureKind::Call,
+            format!("cast rpc eth_call output did not contain hex data:\n{stdout}"),
+        )
+    })
+}
+
+fn assert_return(label: &str, expected: &Expected, returndata: &str) -> Result<(), E2eFailure> {
+    let actual = decode_words(returndata).map_err(|message| {
         E2eFailure::new(
             FailureKind::Decode,
             format!("{label}: failed to decode `{returndata}`: {message}"),
         )
     })?;
-    let expected_word = match expected {
-        Expected::Word(value) => value,
-        Expected::Bool(false) => 0,
-        Expected::Bool(true) => 1,
+    let expected_words = match expected {
+        Expected::Word(value) => vec![*value],
+        Expected::Bool(false) => vec![0],
+        Expected::Bool(true) => vec![1],
+        Expected::Words(values) => values.clone(),
     };
-    if actual == expected_word {
+    if actual == expected_words {
         Ok(())
     } else {
         Err(E2eFailure::new(
             FailureKind::Mismatch,
-            format!("{label}: expected {expected:?}, got {actual} from {returndata}"),
+            format!("{label}: expected {expected:?}, got {actual:?} from {returndata}"),
         ))
     }
 }
 
-fn decode_word(returndata: &str) -> Result<u128, String> {
+fn decode_words(returndata: &str) -> Result<Vec<u128>, String> {
     let hex = returndata
         .trim()
         .strip_prefix("0x")
         .unwrap_or(returndata.trim());
-    if hex.len() != 64 {
+    if hex.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !hex.len().is_multiple_of(64) {
         return Err(format!(
-            "expected one 32-byte word, got {} hex chars",
+            "expected a whole number of 32-byte words, got {} hex chars",
             hex.len()
         ));
     }
     if !looks_like_hex(hex) {
         return Err("return data is not hex".to_owned());
     }
-    let (high, low) = hex.split_at(32);
-    if high != "00000000000000000000000000000000" {
-        return Err(format!("return word does not fit u128: 0x{hex}"));
+    let mut words = Vec::new();
+    for word in hex.as_bytes().chunks(64) {
+        let word = std::str::from_utf8(word).map_err(|err| err.to_string())?;
+        let (high, low) = word.split_at(32);
+        if high != "00000000000000000000000000000000" {
+            return Err(format!("return word does not fit u128: 0x{word}"));
+        }
+        words.push(u128::from_str_radix(low, 16).map_err(|err| err.to_string())?);
     }
-    u128::from_str_radix(low, 16).map_err(|err| err.to_string())
+    Ok(words)
 }
 
 fn looks_like_hex(value: &str) -> bool {
     !value.is_empty()
         && value.len().is_multiple_of(2)
         && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn selector_hex(selector: [u8; 4]) -> String {
+    format!(
+        "0x{:02x}{:02x}{:02x}{:02x}",
+        selector[0], selector[1], selector[2], selector[3]
+    )
+}
+
+fn word_hex(value: u128) -> String {
+    format!("{value:064x}")
+}
+
+fn parse_rpc_hex(output: &str) -> Option<String> {
+    let trimmed = output.trim();
+    let unquoted = trimmed
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(trimmed);
+    if unquoted.starts_with("0x") && unquoted[2..].bytes().all(|b| b.is_ascii_hexdigit()) {
+        Some(unquoted.to_owned())
+    } else {
+        extract_json_string(trimmed, "result")
+    }
 }
 
 fn extract_json_string(output: &str, key: &str) -> Option<String> {
@@ -608,27 +1166,110 @@ fn extract_json_string(output: &str, key: &str) -> Option<String> {
     Some(output[after_quote..end].to_owned())
 }
 
+struct CommandOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn run_command(
+    command: &Path,
+    args: &[&str],
+    path_args: &[&Path],
+    timeout: Duration,
+) -> Result<CommandOutput, String> {
+    let mut cmd = Command::new(command);
+    cmd.args(args);
+    for arg in path_args {
+        cmd.arg(arg);
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd
+        .spawn()
+        .map_err(|err| format!("failed to run {}: {err}", command.display()))?;
+    let mut stdout = child.stdout.take().expect("stdout piped");
+    let mut stderr = child.stderr.take().expect("stderr piped");
+    let stdout_reader = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr.read_to_end(&mut buf);
+        buf
+    });
+
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|err| format!("failed to poll {}: {err}", command.display()))?
+        {
+            break status;
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            let stdout = stdout_reader.join().unwrap_or_default();
+            let stderr = stderr_reader.join().unwrap_or_default();
+            return Err(format!(
+                "{} timed out after {:?}\nstdout:\n{}\nstderr:\n{}",
+                command.display(),
+                timeout,
+                String::from_utf8_lossy(&stdout),
+                String::from_utf8_lossy(&stderr)
+            ));
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    Ok(CommandOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
 struct Anvil {
     child: Child,
     url: String,
+    logs: Arc<Mutex<String>>,
+    readers: Vec<thread::JoinHandle<()>>,
 }
 
 impl Anvil {
     fn spawn(anvil: &Path, cast: &Path) -> Result<Self, String> {
-        let port = free_port()?;
-        let url = format!("http://127.0.0.1:{port}");
-        let child = Command::new(anvil)
+        let mut child = Command::new(anvil)
             .arg("--host")
             .arg("127.0.0.1")
             .arg("--port")
-            .arg(port.to_string())
-            .arg("--silent")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .arg("0")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|err| format!("failed to start {}: {err}", anvil.display()))?;
 
-        let anvil = Self { child, url };
+        let logs = Arc::new(Mutex::new(String::new()));
+        let (tx, rx) = mpsc::channel();
+        let mut readers = Vec::new();
+        if let Some(stdout) = child.stdout.take() {
+            readers.push(spawn_log_reader(stdout, logs.clone(), tx.clone()));
+        }
+        if let Some(stderr) = child.stderr.take() {
+            readers.push(spawn_log_reader(stderr, logs.clone(), tx));
+        }
+
+        let port = wait_for_anvil_port(&mut child, &rx, &logs)?;
+        let url = format!("http://127.0.0.1:{port}");
+        let anvil = Self {
+            child,
+            url,
+            logs,
+            readers,
+        };
         anvil.wait_until_ready(cast)?;
         Ok(anvil)
     }
@@ -637,21 +1278,29 @@ impl Anvil {
         &self.url
     }
 
+    fn logs(&self) -> String {
+        self.logs.lock().expect("anvil logs lock").clone()
+    }
+
     fn wait_until_ready(&self, cast: &Path) -> Result<(), String> {
-        for _ in 0..50 {
-            let output = Command::new(cast)
-                .arg("block-number")
-                .arg("--rpc-url")
-                .arg(&self.url)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            if output.is_ok_and(|status| status.success()) {
+        let start = Instant::now();
+        while start.elapsed() < ANVIL_READY_TIMEOUT {
+            let output = run_command(
+                cast,
+                &["block-number", "--rpc-url", &self.url],
+                &[],
+                Duration::from_secs(2),
+            );
+            if output.is_ok_and(|output| output.status.success()) {
                 return Ok(());
             }
             thread::sleep(Duration::from_millis(100));
         }
-        Err(format!("anvil did not become ready at {}", self.url))
+        Err(format!(
+            "anvil did not become ready at {}\nlogs:\n{}",
+            self.url,
+            self.logs()
+        ))
     }
 }
 
@@ -659,61 +1308,263 @@ impl Drop for Anvil {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        for reader in self.readers.drain(..) {
+            let _ = reader.join();
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+fn spawn_log_reader<R: Read + Send + 'static>(
+    reader: R,
+    logs: Arc<Mutex<String>>,
+    tx: mpsc::Sender<String>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let reader = BufReader::new(reader);
+        for line in reader.lines().map_while(Result::ok) {
+            {
+                let mut logs = logs.lock().expect("anvil logs lock");
+                logs.push_str(&line);
+                logs.push('\n');
+            }
+            let _ = tx.send(line);
+        }
+    })
+}
+
+fn wait_for_anvil_port(
+    child: &mut Child,
+    rx: &mpsc::Receiver<String>,
+    logs: &Arc<Mutex<String>>,
+) -> Result<u16, String> {
+    let start = Instant::now();
+    while start.elapsed() < ANVIL_START_TIMEOUT {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|err| format!("failed to poll anvil: {err}"))?
+        {
+            return Err(format!(
+                "anvil exited before printing a port: {status}\nlogs:\n{}",
+                logs.lock().expect("anvil logs lock")
+            ));
+        }
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(line) => {
+                if let Some(port) = parse_anvil_port(&line) {
+                    return Ok(port);
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    Err(format!(
+        "anvil did not print a listening port\nlogs:\n{}",
+        logs.lock().expect("anvil logs lock")
+    ))
+}
+
+fn parse_anvil_port(line: &str) -> Option<u16> {
+    for marker in ["127.0.0.1:", "localhost:"] {
+        let Some(start) = line.find(marker).map(|index| index + marker.len()) else {
+            continue;
+        };
+        let digits = line[start..]
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect::<String>();
+        if let Ok(port) = digits.parse() {
+            return Some(port);
+        }
+    }
+    None
+}
+
+#[derive(Debug, Clone)]
 enum Expected {
     Word(u128),
     Bool(bool),
+    Words(Vec<u128>),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum RunMode {
+    ReferenceDirect,
+    DeployedDispatch,
+}
+
+#[derive(Debug, Clone)]
+enum SpecExpectation {
+    Run { expected: Expected, mode: RunMode },
+    Blocked { category: BlockedCategory },
+    Skip { reason: &'static str },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum BlockedCategory {
+    UnannotatedEntrySpecialization,
+    NeedsStdInstances,
+    NonWordAbiDispatch,
+}
+
+impl BlockedCategory {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UnannotatedEntrySpecialization => "unannotated-entry-specialization",
+            Self::NeedsStdInstances => "needs-std-instances",
+            Self::NonWordAbiDispatch => "non-word-abi-dispatch",
+        }
+    }
+}
+
+impl fmt::Display for BlockedCategory {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 struct SpecCase {
     label: String,
     path: PathBuf,
-    expected: Option<Expected>,
+    expectation: SpecExpectation,
 }
 
-fn spec_cases() -> Vec<SpecCase> {
+fn spec_cases() -> Result<Vec<SpecCase>, E2eFailure> {
     let spec_dir = repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec");
+    let manifest = spec_manifest();
     let mut cases = fs::read_dir(&spec_dir)
         .expect("spec fixture directory")
-        .filter_map(|entry| {
+        .map(|entry| {
             let path = entry.expect("spec fixture").path();
             if path.extension().is_some_and(|ext| ext == "solc") {
-                let file_name = path.file_name()?.to_str()?.to_owned();
-                let expected = expected_spec_result(&file_name);
-                Some(SpecCase {
+                let file_name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("utf-8 fixture name")
+                    .to_owned();
+                let expectation = manifest.get(file_name.as_str()).cloned().ok_or_else(|| {
+                    E2eFailure::new(
+                        FailureKind::Pipeline,
+                        format!(
+                            "spec fixture `{file_name}` is missing from the explicit expectation manifest"
+                        ),
+                    )
+                })?;
+                if matches!(&expectation, SpecExpectation::Skip { reason } if reason.is_empty()) {
+                    return Err(E2eFailure::new(
+                        FailureKind::Pipeline,
+                        format!("spec fixture `{file_name}` has an empty skip reason"),
+                    ));
+                }
+                Ok(Some(SpecCase {
                     label: format!("spec/{file_name}"),
                     path,
-                    expected,
-                })
+                    expectation,
+                }))
             } else {
-                None
+                Ok(None)
             }
         })
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
         .collect::<Vec<_>>();
     cases.sort_by(|a, b| a.label.cmp(&b.label));
-    cases
+    Ok(cases)
 }
 
-fn expected_spec_result(file_name: &str) -> Option<Expected> {
-    match file_name {
-        "00answer.solc" => Some(Expected::Word(42)),
-        "02nid.solc" => Some(Expected::Word(42)),
-        "022add.solc" => Some(Expected::Word(42)),
-        "024arith.solc" => Some(Expected::Word(42)),
-        "043fstsnd.solc" => Some(Expected::Word(42)),
-        "047rgb.solc" => Some(Expected::Word(42)),
-        "06comp.solc" => Some(Expected::Word(42)),
-        "120basicCounter.solc" => Some(Expected::Word(42)),
-        "121counter.solc" => Some(Expected::Word(1)),
-        "122counters.solc" => Some(Expected::Word(3)),
-        "123stackAndStorage.solc" => Some(Expected::Word(3)),
-        "939badfood.solc" => Some(Expected::Word(2)),
-        "SimpleField.solc" => Some(Expected::Word(0)),
-        _ => None,
+fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
+    fn run(expected: u128) -> SpecExpectation {
+        SpecExpectation::Run {
+            expected: Expected::Word(expected),
+            mode: RunMode::ReferenceDirect,
+        }
     }
+    fn skip(reason: &'static str) -> SpecExpectation {
+        SpecExpectation::Skip { reason }
+    }
+    fn blocked(category: BlockedCategory) -> SpecExpectation {
+        SpecExpectation::Blocked { category }
+    }
+    let unannotated = BlockedCategory::UnannotatedEntrySpecialization;
+    let std_instances = BlockedCategory::NeedsStdInstances;
+    let non_word_abi = BlockedCategory::NonWordAbiDispatch;
+
+    BTreeMap::from([
+        ("00answer.solc", run(42)),
+        ("010answer.solc", blocked(unannotated)),
+        ("011id.solc", blocked(unannotated)),
+        ("012nid.solc", blocked(unannotated)),
+        ("013comp.solc", blocked(unannotated)),
+        ("01id.solc", blocked(non_word_abi)),
+        ("021not.solc", blocked(non_word_abi)),
+        ("022add.solc", run(42)),
+        ("024arith.solc", run(42)),
+        ("027sstore.solc", blocked(unannotated)),
+        ("02nid.solc", run(42)),
+        ("031maybe.solc", blocked(non_word_abi)),
+        ("032simplejoin.solc", blocked(non_word_abi)),
+        ("033join.solc", blocked(non_word_abi)),
+        ("034cojoin.solc", blocked(non_word_abi)),
+        ("035padding.solc", blocked(non_word_abi)),
+        ("036wildcard.solc", blocked(non_word_abi)),
+        ("037dwarves.solc", blocked(non_word_abi)),
+        ("038food0.solc", blocked(non_word_abi)),
+        ("039food.solc", blocked(non_word_abi)),
+        ("041pair.solc", blocked(non_word_abi)),
+        ("042triple.solc", blocked(non_word_abi)),
+        ("043fstsnd.solc", run(42)),
+        ("047rgb.solc", run(42)),
+        ("048rgb2.solc", blocked(non_word_abi)),
+        ("049rgb3.solc", blocked(non_word_abi)),
+        (
+            "051expreturn.solc",
+            skip("no assigned P9 E2E oracle for experimental return encoding"),
+        ),
+        ("051negBool.solc", blocked(unannotated)),
+        ("052negPair.solc", blocked(unannotated)),
+        (
+            "052return.solc",
+            skip("no assigned P9 E2E oracle for experimental return encoding"),
+        ),
+        (
+            "053return.solc",
+            skip("no assigned P9 E2E oracle for experimental return encoding"),
+        ),
+        ("06comp.solc", run(42)),
+        ("09not.solc", blocked(non_word_abi)),
+        (
+            "101struct1Field.solc",
+            skip("no assigned P9 E2E oracle for legacy struct-field experiment"),
+        ),
+        ("102uintField.solc", blocked(unannotated)),
+        ("103struct3Fields.solc", blocked(unannotated)),
+        ("105nestedStruct.solc", blocked(unannotated)),
+        ("10negBool.solc", blocked(non_word_abi)),
+        ("111storageStruct.solc", blocked(unannotated)),
+        ("112ContractStorage.solc", blocked(std_instances)),
+        ("113counter.solc", blocked(unannotated)),
+        ("11negPair.solc", blocked(non_word_abi)),
+        ("120basicCounter.solc", run(42)),
+        ("121counter.solc", run(1)),
+        ("122counters.solc", run(3)),
+        ("123stackAndStorage.solc", run(3)),
+        ("126nanoerc20.solc", blocked(std_instances)),
+        ("127microerc20.solc", blocked(std_instances)),
+        ("128minierc20.solc", blocked(std_instances)),
+        ("131constructor.solc", blocked(unannotated)),
+        (
+            "135cons3.solc",
+            skip("constructor requires explicit deployment calldata not covered by the P9 oracle"),
+        ),
+        ("903badassign.solc", blocked(non_word_abi)),
+        ("939badfood.solc", run(2)),
+        ("SimpleField.solc", run(0)),
+        (
+            "StorageLib.solc",
+            skip("support module imported by storage fixtures; no public main oracle"),
+        ),
+    ])
 }
 
 #[derive(Default)]
@@ -721,7 +1572,9 @@ struct Scoreboard {
     files_run: usize,
     files_passed: usize,
     files_failed: usize,
-    skipped_no_expectation: usize,
+    blocked_by_category: BTreeMap<BlockedCategory, usize>,
+    stale_blocked: Vec<String>,
+    skipped_with_reason: BTreeMap<&'static str, usize>,
     failures: BTreeMap<FailureKind, Vec<String>>,
 }
 
@@ -735,13 +1588,56 @@ impl Scoreboard {
         ));
     }
 
+    fn record_blocked(&mut self, category: BlockedCategory) {
+        *self.blocked_by_category.entry(category).or_default() += 1;
+    }
+
+    fn record_stale_blocked(
+        &mut self,
+        label: impl Into<String>,
+        expected: BlockedCategory,
+        message: String,
+    ) {
+        self.stale_blocked.push(format!(
+            "{}: expected blocked category `{expected}`; {message}",
+            label.into()
+        ));
+    }
+
+    fn record_skip(&mut self, reason: &'static str) {
+        *self.skipped_with_reason.entry(reason).or_default() += 1;
+    }
+
+    fn is_clean(&self) -> bool {
+        self.failures.is_empty() && self.stale_blocked.is_empty()
+    }
+
     fn render(&self) -> String {
+        let skipped = self.skipped_with_reason.values().sum::<usize>();
+        let blocked = self.blocked_by_category.values().sum::<usize>();
         let mut out = format!(
-            "E2E scoreboard: files run={} passed={} failed={} skipped-no-expectation={}",
-            self.files_run, self.files_passed, self.files_failed, self.skipped_no_expectation
+            "E2E scoreboard: files run={} passed={} blocked={} stale={} failed={} skipped-with-reason={}",
+            self.files_run,
+            self.files_passed,
+            blocked,
+            self.stale_blocked.len(),
+            self.files_failed,
+            skipped
         );
-        if !self.failures.is_empty() {
-            out.push_str("\nfailures by category:\n");
+        if !self.blocked_by_category.is_empty() {
+            out.push_str("\nblocked by category:\n");
+            for (category, count) in &self.blocked_by_category {
+                out.push_str(&format!("  {count}: {category}\n"));
+            }
+        }
+        if !self.skipped_with_reason.is_empty() {
+            out.push_str("\nskips by reason:\n");
+            for (reason, count) in &self.skipped_with_reason {
+                out.push_str(&format!("  {count}: {reason}\n"));
+            }
+        }
+        if !self.failures.is_empty() || !self.stale_blocked.is_empty() {
+            out.push_str("\nharness failures:\n");
             out.push_str(&self.render_failures());
         }
         out
@@ -749,6 +1645,17 @@ impl Scoreboard {
 
     fn render_failures(&self) -> String {
         let mut out = String::new();
+        if !self.stale_blocked.is_empty() {
+            out.push_str(&format!(
+                "stale blocked ledger: {}\n",
+                self.stale_blocked.len()
+            ));
+            for stale in &self.stale_blocked {
+                out.push_str("  ");
+                out.push_str(stale);
+                out.push('\n');
+            }
+        }
         for (kind, failures) in &self.failures {
             out.push_str(&format!("{kind:?}: {}\n", failures.len()));
             for failure in failures {
@@ -774,6 +1681,7 @@ enum FailureKind {
 #[derive(Debug)]
 struct E2eFailure {
     kind: FailureKind,
+    blocked_category: Option<BlockedCategory>,
     message: String,
 }
 
@@ -781,18 +1689,26 @@ impl E2eFailure {
     fn new(kind: FailureKind, message: impl Into<String>) -> Self {
         Self {
             kind,
+            blocked_category: None,
+            message: message.into(),
+        }
+    }
+
+    fn with_blocked_category(
+        kind: FailureKind,
+        blocked_category: Option<BlockedCategory>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            blocked_category,
             message: message.into(),
         }
     }
 }
 
 fn command_available(command: &Path) -> bool {
-    Command::new(command)
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
+    run_command(command, &["--version"], &[], Duration::from_secs(10)).is_ok()
 }
 
 fn solc_path() -> PathBuf {
@@ -812,15 +1728,6 @@ fn foundry_tool_path(env_var: &str, tool: &str) -> PathBuf {
         }
     }
     PathBuf::from(tool)
-}
-
-fn free_port() -> Result<u16, String> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|err| format!("failed to reserve localhost port: {err}"))?;
-    listener
-        .local_addr()
-        .map(|addr| addr.port())
-        .map_err(|err| format!("failed to read reserved localhost port: {err}"))
 }
 
 fn temp_yul_path(label: &std::ffi::OsStr) -> PathBuf {

@@ -29,6 +29,13 @@ use crate::ir::{
 const ADDRESS_MASK: &str = "0xffffffffffffffffffffffffffffffffffffffff";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbiWordKind {
+    Plain,
+    Address,
+    Bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EmitOptions {
     pub emit_dispatcher_comments: bool,
 }
@@ -327,7 +334,8 @@ impl<'db> Emitter<'db> {
         runtime_name: &str,
     ) -> Vec<Stmt<'db>> {
         let span = contract.span;
-        let mut body = vec![self.deployer_setup(span, deployer_name)];
+        let mut body =
+            vec![self.deployer_setup(span, deployer_name, contract.constructor.inputs.len())];
         if !contract.constructor.payable {
             body.push(self.nonpayable_check(span));
         }
@@ -365,20 +373,57 @@ impl<'db> Emitter<'db> {
             let mut args = Vec::new();
             for (index, arg) in function.args.iter().enumerate() {
                 let arg_name = format!("constructor_arg{index}");
-                body.push(Stmt {
-                    span,
-                    kind: StmtKind::Let {
-                        name: arg_name.clone(),
-                        ty: arg.ty.clone(),
-                    },
-                });
-                body.push(self.decode_constructor_arg(
-                    span,
-                    deployer_name,
-                    &arg_name,
-                    index,
-                    abi_param_is_address(&contract.constructor.inputs[index]),
-                ));
+                let abi_kind = abi_word_kind(&contract.constructor.inputs[index]);
+                if matches!(abi_kind, AbiWordKind::Bool) {
+                    let raw_name = format!("{arg_name}_word");
+                    body.push(Stmt {
+                        span,
+                        kind: StmtKind::Let {
+                            name: raw_name.clone(),
+                            ty: Ty::word(span),
+                        },
+                    });
+                    body.push(self.decode_constructor_arg(
+                        span,
+                        deployer_name,
+                        &raw_name,
+                        index,
+                        abi_kind,
+                    ));
+                    body.push(Stmt {
+                        span,
+                        kind: StmtKind::Let {
+                            name: arg_name.clone(),
+                            ty: arg.ty.clone(),
+                        },
+                    });
+                    body.push(Stmt {
+                        span,
+                        kind: StmtKind::Assign {
+                            lhs: Expr::var(span, arg_name.clone(), arg.ty.clone()),
+                            rhs: abi_word_to_bool_expr(
+                                span,
+                                Expr::var(span, raw_name, Ty::word(span)),
+                                arg.ty.clone(),
+                            ),
+                        },
+                    });
+                } else {
+                    body.push(Stmt {
+                        span,
+                        kind: StmtKind::Let {
+                            name: arg_name.clone(),
+                            ty: arg.ty.clone(),
+                        },
+                    });
+                    body.push(self.decode_constructor_arg(
+                        span,
+                        deployer_name,
+                        &arg_name,
+                        index,
+                        abi_kind,
+                    ));
+                }
                 args.push(Expr::var(span, arg_name, arg.ty.clone()));
             }
 
@@ -555,7 +600,7 @@ impl<'db> Emitter<'db> {
                 continue;
             };
             if !dispatcher_entry_inputs_are_static_word(entry)
-                || !dispatcher_return_is_static_word(&function.ret, entry.outputs.len())
+                || !dispatcher_return_is_static_word(&function.ret, &entry.outputs)
             {
                 self.push_unsupported_dispatch_entry(entry, "non-word ABI shape");
                 continue;
@@ -628,19 +673,45 @@ impl<'db> Emitter<'db> {
         let mut args = Vec::new();
         for (arg_index, arg) in function.args.iter().enumerate() {
             let arg_name = format!("dispatch_arg{index}_{arg_index}");
-            body.push(Stmt {
-                span,
-                kind: StmtKind::Let {
-                    name: arg_name.clone(),
-                    ty: arg.ty.clone(),
-                },
-            });
-            body.push(self.decode_calldata_arg(
-                span,
-                &arg_name,
-                arg_index,
-                abi_param_is_address(&entry.inputs[arg_index]),
-            ));
+            let abi_kind = abi_word_kind(&entry.inputs[arg_index]);
+            if matches!(abi_kind, AbiWordKind::Bool) {
+                let raw_name = format!("{arg_name}_word");
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Let {
+                        name: raw_name.clone(),
+                        ty: Ty::word(span),
+                    },
+                });
+                body.push(self.decode_calldata_arg(span, &raw_name, arg_index, abi_kind));
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Let {
+                        name: arg_name.clone(),
+                        ty: arg.ty.clone(),
+                    },
+                });
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Assign {
+                        lhs: Expr::var(span, arg_name.clone(), arg.ty.clone()),
+                        rhs: abi_word_to_bool_expr(
+                            span,
+                            Expr::var(span, raw_name, Ty::word(span)),
+                            arg.ty.clone(),
+                        ),
+                    },
+                });
+            } else {
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Let {
+                        name: arg_name.clone(),
+                        ty: arg.ty.clone(),
+                    },
+                });
+                body.push(self.decode_calldata_arg(span, &arg_name, arg_index, abi_kind));
+            }
             args.push(Expr::var(span, arg_name, arg.ty.clone()));
         }
 
@@ -682,21 +753,48 @@ impl<'db> Emitter<'db> {
                 let mut names = Vec::new();
                 for (component_index, component) in components.into_iter().enumerate() {
                     let component_name = format!("dispatch_ret{index}_{component_index}");
+                    let component_ty = component.ty.clone();
                     body.push(Stmt {
                         span,
                         kind: StmtKind::Let {
                             name: component_name.clone(),
-                            ty: component.ty.clone(),
+                            ty: component_ty.clone(),
                         },
                     });
                     body.push(Stmt {
                         span,
                         kind: StmtKind::Assign {
-                            lhs: Expr::var(span, component_name.clone(), component.ty.clone()),
+                            lhs: Expr::var(span, component_name.clone(), component_ty.clone()),
                             rhs: component,
                         },
                     });
-                    names.push(component_name);
+                    if entry
+                        .outputs
+                        .get(component_index)
+                        .is_some_and(abi_param_is_bool)
+                    {
+                        let word_name = format!("dispatch_ret{index}_{component_index}_word");
+                        body.push(Stmt {
+                            span,
+                            kind: StmtKind::Let {
+                                name: word_name.clone(),
+                                ty: Ty::word(span),
+                            },
+                        });
+                        body.push(Stmt {
+                            span,
+                            kind: StmtKind::Assign {
+                                lhs: Expr::var(span, word_name.clone(), Ty::word(span)),
+                                rhs: abi_bool_to_word_expr(
+                                    span,
+                                    Expr::var(span, component_name.clone(), component_ty.clone()),
+                                ),
+                            },
+                        });
+                        names.push(word_name);
+                    } else {
+                        names.push(component_name);
+                    }
                 }
                 body.push(self.return_abi_words(span, &names, &entry.outputs));
             }
@@ -770,7 +868,26 @@ impl<'db> Emitter<'db> {
         )
     }
 
-    fn deployer_setup(&self, span: Span<'db>, deployer_name: &str) -> Stmt<'db> {
+    fn deployer_setup(
+        &self,
+        span: Span<'db>,
+        deployer_name: &str,
+        constructor_arg_count: usize,
+    ) -> Stmt<'db> {
+        let deployer_size =
+            self.yul_call(span, "datasize", vec![self.yul_string(span, deployer_name)]);
+        let minimum_size = if constructor_arg_count == 0 {
+            deployer_size
+        } else {
+            self.yul_call(
+                span,
+                "add",
+                vec![
+                    deployer_size,
+                    self.yul_number(span, (constructor_arg_count * 32).to_string()),
+                ],
+            )
+        };
         self.assembly_stmt(
             span,
             vec![
@@ -791,14 +908,7 @@ impl<'db> Emitter<'db> {
                         cond: self.yul_call(
                             span,
                             "lt",
-                            vec![
-                                self.yul_call(span, "codesize", Vec::new()),
-                                self.yul_call(
-                                    span,
-                                    "datasize",
-                                    vec![self.yul_string(span, deployer_name)],
-                                ),
-                            ],
+                            vec![self.yul_call(span, "codesize", Vec::new()), minimum_size],
                         ),
                         body: vec![self.yul_expr_stmt(
                             span,
@@ -868,7 +978,7 @@ impl<'db> Emitter<'db> {
         deployer_name: &str,
         name: &str,
         index: usize,
-        is_address: bool,
+        kind: AbiWordKind,
     ) -> Stmt<'db> {
         let offset = if index == 0 {
             self.yul_call(span, "datasize", vec![self.yul_string(span, deployer_name)])
@@ -901,7 +1011,7 @@ impl<'db> Emitter<'db> {
                 self.yul_call(span, "mload", vec![self.yul_number(span, "0")]),
             ),
         ];
-        self.push_address_cleaning(span, name, is_address, &mut stmts);
+        self.push_abi_word_cleaning(span, name, kind, &mut stmts);
         self.assembly_stmt(span, stmts)
     }
 
@@ -950,7 +1060,7 @@ impl<'db> Emitter<'db> {
         span: Span<'db>,
         name: &str,
         index: usize,
-        is_address: bool,
+        kind: AbiWordKind,
     ) -> Stmt<'db> {
         let mut stmts = vec![self.yul_assign(
             span,
@@ -961,20 +1071,25 @@ impl<'db> Emitter<'db> {
                 vec![self.yul_number(span, (4 + index * 32).to_string())],
             ),
         )];
-        self.push_address_cleaning(span, name, is_address, &mut stmts);
+        self.push_abi_word_cleaning(span, name, kind, &mut stmts);
         self.assembly_stmt(span, stmts)
     }
 
-    fn push_address_cleaning(
+    fn push_abi_word_cleaning(
         &self,
         span: Span<'db>,
         name: &str,
-        is_address: bool,
+        kind: AbiWordKind,
         stmts: &mut Vec<YulStmt<'db>>,
     ) {
-        if !is_address {
-            return;
+        match kind {
+            AbiWordKind::Plain => {}
+            AbiWordKind::Address => self.push_address_cleaning(span, name, stmts),
+            AbiWordKind::Bool => self.push_bool_cleaning(span, name, stmts),
         }
+    }
+
+    fn push_address_cleaning(&self, span: Span<'db>, name: &str, stmts: &mut Vec<YulStmt<'db>>) {
         // Keep address ABI entries in the supported subset: reject dirty high
         // bits like std.solc and store/return the low 160-bit canonical value.
         stmts.push(YulStmt {
@@ -1023,6 +1138,27 @@ impl<'db> Emitter<'db> {
                 ],
             ),
         ));
+    }
+
+    fn push_bool_cleaning(&self, span: Span<'db>, name: &str, stmts: &mut Vec<YulStmt<'db>>) {
+        stmts.push(YulStmt {
+            span,
+            kind: YulStmtKind::If {
+                cond: self.yul_call(
+                    span,
+                    "gt",
+                    vec![self.yul_ident_expr(span, name), self.yul_number(span, "1")],
+                ),
+                body: vec![self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "revert",
+                        vec![self.yul_number(span, "0"), self.yul_number(span, "0")],
+                    ),
+                )],
+            },
+        });
     }
 
     fn nonpayable_check(&self, span: Span<'db>) -> Stmt<'db> {
@@ -1100,17 +1236,21 @@ impl<'db> Emitter<'db> {
     ) -> Stmt<'db> {
         let mut stmts = Vec::new();
         for (index, name) in names.iter().enumerate() {
-            let value = if outputs.get(index).is_some_and(abi_param_is_address) {
-                self.yul_call(
+            let value = match outputs.get(index).map(abi_word_kind) {
+                Some(AbiWordKind::Address) => self.yul_call(
                     span,
                     "and",
                     vec![
                         self.yul_ident_expr(span, name),
                         self.yul_number(span, ADDRESS_MASK),
                     ],
-                )
-            } else {
-                self.yul_ident_expr(span, name)
+                ),
+                Some(AbiWordKind::Bool) => self.yul_call(
+                    span,
+                    "iszero",
+                    vec![self.yul_call(span, "iszero", vec![self.yul_ident_expr(span, name)])],
+                ),
+                Some(AbiWordKind::Plain) | None => self.yul_ident_expr(span, name),
             };
             stmts.push(self.yul_expr_stmt(
                 span,
@@ -2790,12 +2930,16 @@ fn dispatcher_entry_inputs_are_static_word(entry: &MonoEntry<'_>) -> bool {
     entry.inputs.iter().all(abi_param_is_static_word)
 }
 
-fn dispatcher_return_is_static_word(ret: &Ty<'_>, output_count: usize) -> bool {
-    match output_count {
+fn dispatcher_return_is_static_word(ret: &Ty<'_>, outputs: &[MonoAbiParam]) -> bool {
+    match outputs.len() {
         0 => matches!(ret.strip_named().kind, TyKind::Unit),
-        1 => hull_ty_is_static_word(ret),
-        count => product_component_tys(ret.clone(), count)
-            .is_some_and(|components| components.iter().all(hull_ty_is_static_word)),
+        1 => hull_ty_matches_abi_static_word(ret, &outputs[0]),
+        count => product_component_tys(ret.clone(), count).is_some_and(|components| {
+            components
+                .iter()
+                .zip(outputs)
+                .all(|(component, output)| hull_ty_matches_abi_static_word(component, output))
+        }),
     }
 }
 
@@ -2807,8 +2951,34 @@ fn constructor_inputs_are_static_word(contract: &MonoContract<'_>) -> bool {
         .all(abi_param_is_static_word)
 }
 
-fn hull_ty_is_static_word(ty: &Ty<'_>) -> bool {
-    matches!(ty.strip_named().kind, TyKind::Word)
+fn hull_ty_matches_abi_static_word(ty: &Ty<'_>, param: &MonoAbiParam) -> bool {
+    if abi_param_is_bool(param) {
+        hull_ty_word_slots(ty) == Some(1) || hull_ty_is_bool_word(ty)
+    } else if hull_ty_is_bool_word(ty) {
+        false
+    } else {
+        hull_ty_word_slots(ty) == Some(1)
+    }
+}
+
+fn hull_ty_is_bool_word(ty: &Ty<'_>) -> bool {
+    match &ty.strip_named().kind {
+        TyKind::Sum(lhs, rhs) => {
+            matches!(lhs.strip_named().kind, TyKind::Unit)
+                && matches!(rhs.strip_named().kind, TyKind::Unit)
+        }
+        _ => false,
+    }
+}
+
+fn hull_ty_word_slots(ty: &Ty<'_>) -> Option<usize> {
+    match &ty.strip_named().kind {
+        TyKind::Word | TyKind::Bool | TyKind::NamedRef { .. } | TyKind::Function { .. } => Some(1),
+        TyKind::Unit => Some(0),
+        TyKind::Product(lhs, rhs) => Some(hull_ty_word_slots(lhs)? + hull_ty_word_slots(rhs)?),
+        TyKind::Sum(lhs, rhs) => Some(1 + hull_ty_word_slots(lhs)?.max(hull_ty_word_slots(rhs)?)),
+        TyKind::Named { inner, .. } => hull_ty_word_slots(inner),
+    }
 }
 
 fn ensure_unit_function_returns<'db>(mut function: Function<'db>) -> Function<'db> {
@@ -2825,12 +2995,26 @@ fn abi_param_is_static_word(param: &specialize::MonoAbiParam) -> bool {
     param.components.is_empty()
         && matches!(
             param.ty.as_str(),
-            "uint256" | "uint" | "word" | "bytes32" | "address"
+            "uint256" | "uint" | "word" | "bytes32" | "address" | "bool"
         )
 }
 
 fn abi_param_is_address(param: &MonoAbiParam) -> bool {
     param.components.is_empty() && param.ty == "address"
+}
+
+fn abi_param_is_bool(param: &MonoAbiParam) -> bool {
+    param.components.is_empty() && param.ty == "bool"
+}
+
+fn abi_word_kind(param: &MonoAbiParam) -> AbiWordKind {
+    if abi_param_is_address(param) {
+        AbiWordKind::Address
+    } else if abi_param_is_bool(param) {
+        AbiWordKind::Bool
+    } else {
+        AbiWordKind::Plain
+    }
 }
 
 fn selector_hex(selector: [u8; 4]) -> String {
@@ -2857,6 +3041,59 @@ fn product_components<'db>(expr: Expr<'db>, count: usize) -> Vec<Expr<'db>> {
     let mut out = vec![lhs];
     out.extend(product_components(rhs, count - 1));
     out
+}
+
+fn abi_word_to_bool_expr<'db>(span: Span<'db>, word: Expr<'db>, target: Ty<'db>) -> Expr<'db> {
+    Expr {
+        span,
+        ty: target.clone(),
+        kind: ExprKind::If {
+            target: target.clone(),
+            cond: Box::new(Expr {
+                span,
+                ty: bool_sum_ty(span),
+                kind: ExprKind::Call {
+                    callee: "primEqWord".to_owned(),
+                    args: vec![word, Expr::word(span, "0")],
+                },
+            }),
+            then_expr: Box::new(bool_expr(span, target.clone(), false)),
+            else_expr: Box::new(bool_expr(span, target, true)),
+        },
+    }
+}
+
+fn abi_bool_to_word_expr<'db>(span: Span<'db>, value: Expr<'db>) -> Expr<'db> {
+    Expr {
+        span,
+        ty: Ty::word(span),
+        kind: ExprKind::If {
+            target: Ty::word(span),
+            cond: Box::new(value),
+            then_expr: Box::new(Expr::word(span, "1")),
+            else_expr: Box::new(Expr::word(span, "0")),
+        },
+    }
+}
+
+fn bool_expr<'db>(span: Span<'db>, target: Ty<'db>, value: bool) -> Expr<'db> {
+    let payload = Expr::unit(span);
+    let kind = if value {
+        ExprKind::Inr {
+            target: target.clone(),
+            value: Box::new(payload),
+        }
+    } else {
+        ExprKind::Inl {
+            target: target.clone(),
+            value: Box::new(payload),
+        }
+    };
+    Expr {
+        span,
+        ty: target,
+        kind,
+    }
 }
 
 fn product_component_tys<'db>(ty: Ty<'db>, count: usize) -> Option<Vec<Ty<'db>>> {
