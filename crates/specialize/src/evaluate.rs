@@ -173,19 +173,21 @@ impl<'db> Evaluator<'db> {
                 ty,
                 init,
             } => {
-                let init = if comptime {
-                    init.map(|expr| {
-                        self.with_comptime_mode(|this| this.eval_expr(&env, &comptime_env, expr))
-                    })
-                } else {
-                    init.map(|expr| self.eval_expr(&env, &comptime_env, expr))
+                let (init, init_effects) = match init {
+                    Some(expr) if comptime => {
+                        let (expr, effects) = self.with_comptime_mode(|this| {
+                            this.eval_expr_stable(&env, &comptime_env, expr)
+                        });
+                        (Some(expr), effects)
+                    }
+                    Some(expr) => {
+                        let (expr, effects) = self.eval_expr_stable(&env, &comptime_env, expr);
+                        (Some(expr), effects)
+                    }
+                    None => (None, AssignedNames::empty()),
                 };
                 let mut env = env;
                 let mut comptime_env = comptime_env;
-                let init_effects = init
-                    .as_ref()
-                    .map(|expr| self.expr_write_effects(expr))
-                    .unwrap_or_else(AssignedNames::empty);
                 invalidate_assigned(&init_effects, &mut env, &mut comptime_env);
                 if let Some(expr) = init.as_ref().filter(|expr| self.expr_is_known_value(expr)) {
                     env.insert(id.name.clone(), expr.clone());
@@ -242,7 +244,7 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Return(expr) => {
-                let expr = expr.map(|expr| self.eval_expr(&env, &comptime_env, expr));
+                let expr = expr.map(|expr| self.eval_expr_stable(&env, &comptime_env, expr).0);
                 if self.enforce_comptime
                     && ret_comptime
                     && let Some(expr) = &expr
@@ -263,10 +265,9 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Expr(expr) => {
-                let expr = self.eval_expr(&env, &comptime_env, expr);
+                let (expr, effects) = self.eval_expr_stable(&env, &comptime_env, expr);
                 let mut env = env;
                 let mut comptime_env = comptime_env;
-                let effects = self.expr_write_effects(&expr);
                 invalidate_assigned(&effects, &mut env, &mut comptime_env);
                 if self.expr_is_known_value(&expr) {
                     (env, comptime_env, Vec::new())
@@ -283,11 +284,14 @@ impl<'db> Evaluator<'db> {
             }
             MonoStmtKind::Assign { lhs, rhs } => {
                 let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
-                let rhs = self.eval_expr(&env, &comptime_env, rhs);
+                let lhs_effects = self.expr_write_effects(&lhs);
+                let rhs_env = remove_assigned(env.clone(), &lhs_effects);
+                let rhs_comptime_env = remove_comptime_assigned(comptime_env.clone(), &lhs_effects);
+                let (rhs, rhs_effects) = self.eval_expr_stable(&rhs_env, &rhs_comptime_env, rhs);
                 let mut env = env;
                 let mut comptime_env = comptime_env;
-                let mut effects = self.expr_write_effects(&lhs);
-                effects.merge(self.expr_write_effects(&rhs));
+                let mut effects = lhs_effects;
+                effects.merge(rhs_effects);
                 invalidate_assigned(&effects, &mut env, &mut comptime_env);
                 if let Some(id) = target {
                     let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
@@ -356,10 +360,9 @@ impl<'db> Evaluator<'db> {
                 then_body,
                 else_body,
             } => {
-                let cond = self.eval_expr(&env, &comptime_env, cond);
+                let (cond, cond_effects) = self.eval_expr_stable(&env, &comptime_env, cond);
                 let mut env = env;
                 let mut comptime_env = comptime_env;
-                let cond_effects = self.expr_write_effects(&cond);
                 invalidate_assigned(&cond_effects, &mut env, &mut comptime_env);
                 if let Some(value) = known_bool(&cond) {
                     let selected = if value {
@@ -408,17 +411,16 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Match { scrutinees, arms } => {
-                let scrutinees = scrutinees
-                    .into_iter()
-                    .map(|expr| self.eval_expr(&env, &comptime_env, expr))
-                    .collect::<Vec<_>>();
                 let mut env = env;
                 let mut comptime_env = comptime_env;
-                let mut scrutinee_effects = AssignedNames::empty();
-                for scrutinee in &scrutinees {
-                    scrutinee_effects.merge(self.expr_write_effects(scrutinee));
+                let raw_scrutinees = scrutinees;
+                let mut scrutinees = Vec::with_capacity(raw_scrutinees.len());
+                for scrutinee in raw_scrutinees {
+                    let (scrutinee, effects) =
+                        self.eval_expr_stable(&env, &comptime_env, scrutinee);
+                    invalidate_assigned(&effects, &mut env, &mut comptime_env);
+                    scrutinees.push(scrutinee);
                 }
-                invalidate_assigned(&scrutinee_effects, &mut env, &mut comptime_env);
                 let arms = arms
                     .into_iter()
                     .map(|arm| self.eval_arm_labels(&env, &comptime_env, arm))
@@ -585,11 +587,14 @@ impl<'db> Evaluator<'db> {
         make_kind: impl FnOnce(MonoExpr<'db>, MonoExpr<'db>) -> MonoStmtKind<'db>,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
         let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
-        let rhs = self.eval_expr(&env, &comptime_env, rhs);
+        let lhs_effects = self.expr_write_effects(&lhs);
+        let rhs_env = remove_assigned(env.clone(), &lhs_effects);
+        let rhs_comptime_env = remove_comptime_assigned(comptime_env.clone(), &lhs_effects);
+        let (rhs, rhs_effects) = self.eval_expr_stable(&rhs_env, &rhs_comptime_env, rhs);
         let mut env = env;
         let mut comptime_env = comptime_env;
-        let mut effects = self.expr_write_effects(&lhs);
-        effects.merge(self.expr_write_effects(&rhs));
+        let mut effects = lhs_effects;
+        effects.merge(rhs_effects);
         invalidate_assigned(&effects, &mut env, &mut comptime_env);
         if let Some(id) = target {
             env.remove(&id.name);
@@ -890,6 +895,24 @@ impl<'db> Evaluator<'db> {
                 }
             }
         }
+    }
+
+    fn eval_expr_stable(
+        &mut self,
+        env: &VEnv<'db>,
+        comptime_env: &CEnv,
+        expr: MonoExpr<'db>,
+    ) -> (MonoExpr<'db>, AssignedNames) {
+        let evaluated = self.eval_expr(env, comptime_env, expr.clone());
+        let effects = self.expr_write_effects(&evaluated);
+        if effects.is_empty() {
+            return (evaluated, effects);
+        }
+        let masked_env = remove_assigned(env.clone(), &effects);
+        let masked_comptime_env = remove_comptime_assigned(comptime_env.clone(), &effects);
+        let evaluated = self.eval_expr(&masked_env, &masked_comptime_env, expr);
+        let effects = self.expr_write_effects(&evaluated);
+        (evaluated, effects)
     }
 
     fn expr_write_effects(&self, expr: &MonoExpr<'db>) -> AssignedNames {
@@ -3803,6 +3826,10 @@ enum AssignedNames {
 impl AssignedNames {
     fn empty() -> Self {
         AssignedNames::Names(FxHashSet::default())
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self, AssignedNames::Names(names) if names.is_empty())
     }
 
     fn insert(&mut self, name: String) {
