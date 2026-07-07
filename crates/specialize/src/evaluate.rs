@@ -492,7 +492,12 @@ impl<'db> Evaluator<'db> {
                 post,
                 body,
             } => {
-                let assigned = self.stmts_write_effects(&body);
+                // Names written anywhere in the loop (init/cond/post/body)
+                // must not fold to their pre-loop constants.
+                let mut assigned = self.stmts_write_effects(&body);
+                assigned.merge(self.stmts_write_effects(&init));
+                assigned.merge(self.expr_write_effects(&cond));
+                assigned.merge(self.stmts_write_effects(&post));
                 let loop_env = remove_assigned(env.clone(), &assigned);
                 let loop_comptime_env = remove_comptime_assigned(comptime_env, &assigned);
                 let (_, _, init) = self.eval_stmts(

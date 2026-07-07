@@ -1494,3 +1494,48 @@ contract C {
         output.module
     );
 }
+
+#[test]
+fn for_loop_post_assignments_are_not_folded_to_preloop_constants() {
+    let (_db, output) = specialize_src(
+        r#"
+data Flag = On | Off;
+
+function isOn(f: Flag) -> bool {
+  match f {
+  | Flag.On => return true;
+  | Flag.Off => return false;
+  };
+}
+
+contract C {
+  function main() -> word {
+    let f : Flag = Flag.On;
+    for (; isOn(f); f = Flag.Off) {
+    }
+    return 1;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let cond_is_residual = output.module.items.iter().any(|item| {
+        let MonoItem::Function(function) = item else {
+            return false;
+        };
+        function.body.iter().any(|stmt| {
+            fn stmt_has_residual_for_cond(stmt: &MonoStmt<'_>) -> bool {
+                match &stmt.kind {
+                    MonoStmtKind::For { cond, .. } => {
+                        !matches!(cond.kind, MonoExprKind::Con { .. } | MonoExprKind::Lit(_))
+                    }
+                    MonoStmtKind::Block(body) => body.iter().any(stmt_has_residual_for_cond),
+                    _ => false,
+                }
+            }
+            stmt_has_residual_for_cond(stmt)
+        })
+    });
+    assert!(cond_is_residual, "{:?}", output.module);
+}
