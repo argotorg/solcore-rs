@@ -1574,7 +1574,7 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
             neg("reference HEAD rejects: over-application of direct call `nid(42)` fails \
                 unification; superseded upstream by 02nid.solc (invoke-through-variable)"),
         ),
-        ("013comp.solc", blocked(unsupported_mono)),
+        ("013comp.solc", run(42)),
         ("01id.solc", run(42)),
         ("021not.solc", run(1)),
         ("022add.solc", run(42)),
