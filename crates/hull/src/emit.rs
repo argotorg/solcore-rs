@@ -192,7 +192,7 @@ struct Emitter<'db> {
     diagnostics: Vec<EmitDiagnostic<'db>>,
     scopes: Vec<BTreeMap<String, Expr<'db>>>,
     function_names: BTreeSet<String>,
-    layout_stack: Vec<DefId<'db>>,
+    layout_stack: Vec<(DefId<'db>, Vec<SemTy<'db>>)>,
     fresh: usize,
 }
 
@@ -1848,7 +1848,7 @@ impl<'db> Emitter<'db> {
             .map(|arg| self.emit_expr(arg))
             .collect::<Vec<_>>();
         let payload = product_expr(expr.span, payload_ty, payload_args);
-        encode_constructor(expr.span, layout.target, index, payload)
+        encode_constructor(expr.span, layout.target, index, layout.ctors.len(), payload)
     }
 
     fn emit_bin_op(
@@ -2625,7 +2625,8 @@ impl<'db> Emitter<'db> {
         let module = parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
         let adt = find_adt(self.db, module, def)?;
         let name = def.name(self.db).unwrap_or_else(|| "Adt".to_owned());
-        if self.layout_stack.contains(&def) {
+        let layout_key = (def, args.to_vec());
+        if self.layout_stack.contains(&layout_key) {
             return Some(AdtLayout {
                 name: name.clone(),
                 target: Ty::named_ref(span, name),
@@ -2633,7 +2634,7 @@ impl<'db> Emitter<'db> {
             });
         }
 
-        self.layout_stack.push(def);
+        self.layout_stack.push(layout_key);
         let Some(plan) = hir_ty::derived_generic_plan(self.db, module, adt) else {
             self.layout_stack.pop();
             return None;
@@ -3809,9 +3810,9 @@ fn encode_constructor<'db>(
     span: Span<'db>,
     target: Ty<'db>,
     index: usize,
+    arity: usize,
     payload: Expr<'db>,
 ) -> Expr<'db> {
-    let arity = sum_arity(&target);
     if arity <= 1 {
         let mut payload = payload;
         payload.ty = target;
@@ -3828,7 +3829,7 @@ fn encode_constructor<'db>(
         }
     } else {
         let right = sum_right_ty(&target);
-        let nested = encode_constructor(span, right, index - 1, payload);
+        let nested = encode_constructor(span, right, index - 1, arity - 1, payload);
         Expr {
             span,
             ty: target.clone(),
@@ -3891,13 +3892,6 @@ fn build_nested_sum_match<'db>(
                 },
             }
         }
-    }
-}
-
-fn sum_arity(ty: &Ty<'_>) -> usize {
-    match &ty.strip_named().kind {
-        TyKind::Sum(_, rhs) => 1 + sum_arity(rhs),
-        _ => 1,
     }
 }
 
