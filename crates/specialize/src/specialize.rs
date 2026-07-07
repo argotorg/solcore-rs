@@ -217,6 +217,16 @@ struct BodyCtx<'a, 'db> {
     locals: FxHashMap<String, Ty<'db>>,
 }
 
+#[derive(Clone, Copy)]
+struct BinOpExpr<'db> {
+    expr_id: Id<Expr<'db>>,
+    lhs: Id<Expr<'db>>,
+    op: BinOp,
+    rhs: Id<Expr<'db>>,
+    result_ty: Ty<'db>,
+    span: Span<'db>,
+}
+
 impl<'db> Driver<'db> {
     fn new(db: &'db dyn Db, module: Module<'db>, options: SpecializeOptions) -> Self {
         let entry_module = module_id_for_source_file(db, module.def_id_value(db).file(db));
@@ -1682,9 +1692,14 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     }
                 }
             }
-            ExprKind::BinOp { lhs, op, rhs } => {
-                self.bin_op_expr(expr_id, *lhs, *op.atom(), *rhs, ty, mono_ty, expr.span)?
-            }
+            ExprKind::BinOp { lhs, op, rhs } => self.bin_op_expr(BinOpExpr {
+                expr_id,
+                lhs: *lhs,
+                op: *op.atom(),
+                rhs: *rhs,
+                result_ty: ty,
+                span: expr.span,
+            })?,
             ExprKind::UnaryOp { op, expr } => MonoExprKind::UnaryOp {
                 op: *op.atom(),
                 expr: Box::new(self.expr(*expr)?),
@@ -1747,52 +1762,32 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         Some(mono_expr)
     }
 
-    fn bin_op_expr(
-        &mut self,
-        expr_id: Id<Expr<'db>>,
-        lhs: Id<Expr<'db>>,
-        op: BinOp,
-        rhs: Id<Expr<'db>>,
-        result_ty: Ty<'db>,
-        mono_ty: MonoTy<'db>,
-        span: Span<'db>,
-    ) -> Option<MonoExprKind<'db>> {
-        match op {
-            BinOp::Add | BinOp::Sub | BinOp::Gt => {
-                self.overloaded_bin_op_expr(expr_id, lhs, op, rhs, result_ty, mono_ty, span)
-            }
-            BinOp::Lt | BinOp::LtEq | BinOp::GtEq => {
-                self.operator_function_bin_op_expr(expr_id, lhs, op, rhs, result_ty, mono_ty, span)
-            }
+    fn bin_op_expr(&mut self, expr: BinOpExpr<'db>) -> Option<MonoExprKind<'db>> {
+        match expr.op {
+            BinOp::Add | BinOp::Sub | BinOp::Gt => self.overloaded_bin_op_expr(expr),
+            BinOp::Lt | BinOp::LtEq | BinOp::GtEq => self.operator_function_bin_op_expr(expr),
             _ => Some(MonoExprKind::BinOp {
-                lhs: Box::new(self.expr(lhs)?),
-                op,
-                rhs: Box::new(self.expr(rhs)?),
+                lhs: Box::new(self.expr(expr.lhs)?),
+                op: expr.op,
+                rhs: Box::new(self.expr(expr.rhs)?),
             }),
         }
     }
 
-    fn overloaded_bin_op_expr(
-        &mut self,
-        expr_id: Id<Expr<'db>>,
-        lhs: Id<Expr<'db>>,
-        op: BinOp,
-        rhs: Id<Expr<'db>>,
-        result_ty: Ty<'db>,
-        _mono_ty: MonoTy<'db>,
-        span: Span<'db>,
-    ) -> Option<MonoExprKind<'db>> {
-        let lhs_expr = self.expr(lhs)?;
-        let rhs_expr = self.expr(rhs)?;
-        let (class_name, method) = overloaded_operator_method(op)?;
+    fn overloaded_bin_op_expr(&mut self, expr: BinOpExpr<'db>) -> Option<MonoExprKind<'db>> {
+        let lhs_expr = self.expr(expr.lhs)?;
+        let rhs_expr = self.expr(expr.rhs)?;
+        let (class_name, method) = overloaded_operator_method(expr.op)?;
         let callee_ty = Ty::function(
             self.driver.db,
             vec![lhs_expr.ty.ty(), rhs_expr.ty.ty()],
-            result_ty,
+            expr.result_ty,
         );
-        let mono_callee_ty = self.driver.mono_ty(callee_ty, "operator callee", span)?;
+        let mono_callee_ty = self
+            .driver
+            .mono_ty(callee_ty, "operator callee", expr.span)?;
         let evidence = self
-            .call_evidence(expr_id, expr_id)
+            .call_evidence(expr.expr_id, expr.expr_id)
             .map(|evidence| self.subst.apply_evidence(self.driver.db, evidence.evidence))
             .or_else(|| {
                 self.driver
@@ -1803,33 +1798,33 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 kind: SpecializeDiagnosticKind::MissingEvidence {
                     context: method.to_owned(),
                 },
-                span: Some(span),
+                span: Some(expr.span),
             });
             return Some(MonoExprKind::BinOp {
                 lhs: Box::new(lhs_expr),
-                op,
+                op: expr.op,
                 rhs: Box::new(rhs_expr),
             });
         };
 
         let Some(name) = self
             .driver
-            .resolve_class_method_call(method, evidence, callee_ty, span, self.depth)
+            .resolve_class_method_call(method, evidence, callee_ty, expr.span, self.depth)
         else {
             self.driver.diagnostics.push(SpecializeDiagnostic {
                 kind: SpecializeDiagnosticKind::MissingEvidence {
                     context: method.to_owned(),
                 },
-                span: Some(span),
+                span: Some(expr.span),
             });
             return Some(MonoExprKind::BinOp {
                 lhs: Box::new(lhs_expr),
-                op,
+                op: expr.op,
                 rhs: Box::new(rhs_expr),
             });
         };
 
-        let args = match op {
+        let args = match expr.op {
             BinOp::Add | BinOp::Sub | BinOp::Gt => vec![lhs_expr, rhs_expr],
             _ => unreachable!("filtered by overloaded_operator_method"),
         };
@@ -1837,42 +1832,35 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             callee: MonoId {
                 name,
                 ty: mono_callee_ty,
-                span,
+                span: expr.span,
             },
             origin: MonoCallOrigin::Unknown,
             args,
         })
     }
 
-    fn operator_function_bin_op_expr(
-        &mut self,
-        _expr_id: Id<Expr<'db>>,
-        lhs: Id<Expr<'db>>,
-        op: BinOp,
-        rhs: Id<Expr<'db>>,
-        result_ty: Ty<'db>,
-        _mono_ty: MonoTy<'db>,
-        span: Span<'db>,
-    ) -> Option<MonoExprKind<'db>> {
-        let lhs_expr = self.expr(lhs)?;
-        let rhs_expr = self.expr(rhs)?;
-        let name = plain_operator_function(op)?;
+    fn operator_function_bin_op_expr(&mut self, expr: BinOpExpr<'db>) -> Option<MonoExprKind<'db>> {
+        let lhs_expr = self.expr(expr.lhs)?;
+        let rhs_expr = self.expr(expr.rhs)?;
+        let name = plain_operator_function(expr.op)?;
         let callee_ty = Ty::function(
             self.driver.db,
             vec![lhs_expr.ty.ty(), rhs_expr.ty.ty()],
-            result_ty,
+            expr.result_ty,
         );
-        let mono_callee_ty = self.driver.mono_ty(callee_ty, "operator callee", span)?;
+        let mono_callee_ty = self
+            .driver
+            .mono_ty(callee_ty, "operator callee", expr.span)?;
         let Some(resolution) = self.lookup_operator_function(name) else {
             self.driver.diagnostics.push(SpecializeDiagnostic {
                 kind: SpecializeDiagnosticKind::MissingResolution {
                     context: format!("operator {name}"),
                 },
-                span: Some(span),
+                span: Some(expr.span),
             });
             return Some(MonoExprKind::BinOp {
                 lhs: Box::new(lhs_expr),
-                op,
+                op: expr.op,
                 rhs: Box::new(rhs_expr),
             });
         };
@@ -1887,13 +1875,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     def.name(self.driver.db)
                         .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
                 } else {
-                    self.specialize_direct_function(def, callee_ty, span)
+                    self.specialize_direct_function(def, callee_ty, expr.span)
                 };
                 Some(MonoExprKind::Call {
                     callee: MonoId {
                         name: callee_name,
                         ty: mono_callee_ty,
-                        span,
+                        span: expr.span,
                     },
                     origin,
                     args: vec![lhs_expr, rhs_expr],
@@ -1907,7 +1895,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     callee: MonoId {
                         name: builtin_name(kind).to_owned(),
                         ty: mono_callee_ty,
-                        span,
+                        span: expr.span,
                     },
                     origin,
                     args: vec![lhs_expr, rhs_expr],
@@ -1918,11 +1906,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     kind: SpecializeDiagnosticKind::MissingResolution {
                         context: format!("operator {name}"),
                     },
-                    span: Some(span),
+                    span: Some(expr.span),
                 });
                 Some(MonoExprKind::BinOp {
                     lhs: Box::new(lhs_expr),
-                    op,
+                    op: expr.op,
                     rhs: Box::new(rhs_expr),
                 })
             }
