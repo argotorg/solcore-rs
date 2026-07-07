@@ -1160,11 +1160,13 @@ impl<'db> Evaluator<'db> {
                     if scrutinees.iter().all(is_known_value)
                         && let Some((matched_env, body)) = match_arms(&env, &scrutinees, &arms)
                     {
+                        let assigned = assigned_names(&body);
                         if let Some(result) =
                             self.eval_fun_body(type_reg, matched_env, comptime_env.clone(), body)
                         {
                             return Some(result);
                         }
+                        invalidate_assigned(&assigned, &mut env, &mut comptime_env);
                     } else {
                         return None;
                     }
@@ -1180,18 +1182,22 @@ impl<'db> Evaluator<'db> {
                     } else {
                         else_body.unwrap_or_default()
                     };
+                    let assigned = assigned_names(&body);
                     if let Some(result) =
                         self.eval_fun_body(type_reg, env.clone(), comptime_env.clone(), body)
                     {
                         return Some(result);
                     }
+                    invalidate_assigned(&assigned, &mut env, &mut comptime_env);
                 }
                 MonoStmtKind::Block(body) => {
+                    let assigned = assigned_names(&body);
                     if let Some(result) =
                         self.eval_fun_body(type_reg, env.clone(), comptime_env.clone(), body)
                     {
                         return Some(result);
                     }
+                    invalidate_assigned(&assigned, &mut env, &mut comptime_env);
                 }
                 MonoStmtKind::Assembly(body) => {
                     let state = venv_to_yul_state(&env);
@@ -3103,4 +3109,98 @@ fn two_pow_256() -> BigInt {
     let mut limbs = vec![0u32; 8];
     limbs.push(1);
     BigInt { sign: 1, limbs }
+}
+
+enum AssignedNames {
+    Names(FxHashSet<String>),
+    All,
+}
+
+fn collect_assigned_names(stmts: &[MonoStmt<'_>], out: &mut FxHashSet<String>) -> bool {
+    // Returns false if the body may mutate arbitrary state (assembly), in
+    // which case the caller must invalidate everything.
+    for stmt in stmts {
+        match &stmt.kind {
+            MonoStmtKind::Assign { lhs, .. }
+            | MonoStmtKind::AddAssign { lhs, .. }
+            | MonoStmtKind::SubAssign { lhs, .. }
+            | MonoStmtKind::BitXorAssign { lhs, .. }
+            | MonoStmtKind::BitAndAssign { lhs, .. }
+            | MonoStmtKind::BitOrAssign { lhs, .. }
+            | MonoStmtKind::ModAssign { lhs, .. } => {
+                if let Some(name) = lvalue_root_name(lhs) {
+                    out.insert(name);
+                }
+            }
+            MonoStmtKind::Assembly(_) => return false,
+            MonoStmtKind::Match { arms, .. } => {
+                for arm in arms {
+                    if !collect_assigned_names(&arm.body, out) {
+                        return false;
+                    }
+                }
+            }
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                if !collect_assigned_names(then_body, out) {
+                    return false;
+                }
+                if let Some(else_body) = else_body
+                    && !collect_assigned_names(else_body, out)
+                {
+                    return false;
+                }
+            }
+            MonoStmtKind::Block(body) => {
+                if !collect_assigned_names(body, out) {
+                    return false;
+                }
+            }
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                if !collect_assigned_names(init, out)
+                    || !collect_assigned_names(post, out)
+                    || !collect_assigned_names(body, out)
+                {
+                    return false;
+                }
+            }
+            MonoStmtKind::Let { .. }
+            | MonoStmtKind::Return(_)
+            | MonoStmtKind::Expr(_)
+            | MonoStmtKind::Break
+            | MonoStmtKind::Continue
+            | MonoStmtKind::Error => {}
+        }
+    }
+    true
+}
+
+fn assigned_names(stmts: &[MonoStmt<'_>]) -> AssignedNames {
+    let mut out = FxHashSet::default();
+    if collect_assigned_names(stmts, &mut out) {
+        AssignedNames::Names(out)
+    } else {
+        AssignedNames::All
+    }
+}
+
+
+fn invalidate_assigned<'db>(names: &AssignedNames, env: &mut VEnv<'db>, comptime_env: &mut CEnv) {
+    match names {
+        AssignedNames::All => {
+            env.clear();
+            comptime_env.clear();
+        }
+        AssignedNames::Names(names) => {
+            for name in names {
+                env.remove(name);
+                comptime_env.remove(name);
+            }
+        }
+    }
 }
