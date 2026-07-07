@@ -1523,9 +1523,7 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
     let unannotated = BlockedCategory::UnannotatedEntrySpecialization;
     let std_instances = BlockedCategory::NeedsStdInstances;
     let storage_index = BlockedCategory::NeedsStorageIndexLowering;
-    let non_word_abi = BlockedCategory::NonWordAbiDispatch;
     let unsupported_mono = BlockedCategory::UnsupportedMonoConstruct;
-    let missing_specialized = BlockedCategory::MissingSpecializedFunction;
 
     BTreeMap::from([
         ("00answer.solc", run(42)),
@@ -1540,9 +1538,9 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("027sstore.solc", run(42)),
         ("02nid.solc", run(42)),
         ("031maybe.solc", run(42)),
-        ("032simplejoin.solc", blocked(non_word_abi)),
-        ("033join.solc", blocked(non_word_abi)),
-        ("034cojoin.solc", blocked(non_word_abi)),
+        ("032simplejoin.solc", run(42)),
+        ("033join.solc", run(42)),
+        ("034cojoin.solc", run(42)),
         ("035padding.solc", run(7)),
         ("036wildcard.solc", run(7)),
         ("037dwarves.solc", run(5)),
@@ -1600,7 +1598,7 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
             "135cons3.solc",
             skip("constructor requires explicit deployment calldata not covered by the P9 oracle"),
         ),
-        ("903badassign.solc", blocked(non_word_abi)),
+        ("903badassign.solc", run(42)),
         ("939badfood.solc", run(2)),
         ("SimpleField.solc", run(0)),
         (
