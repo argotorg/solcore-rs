@@ -5594,8 +5594,14 @@ fn apply_solver_ty_subst<'db>(
     }
 }
 
+/// Fixpoint iterations after which recursive signature inference is declared
+/// divergent. A self-referential signature (e.g. `function f(x) { return f; }`)
+/// grows its inferred type every round and never converges; without a bound
+/// Salsa panics with "too many cycle iterations" instead of diagnosing.
+const FUNCTION_SCHEME_MAX_FIXPOINT_ITERATIONS: u32 = 32;
+
 /// Lowers the scheme for one function-like definition in `module`.
-#[salsa::tracked(cycle_initial = function_scheme_cycle_initial)]
+#[salsa::tracked(cycle_fn = function_scheme_cycle, cycle_initial = function_scheme_cycle_initial)]
 pub fn function_scheme<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -5620,6 +5626,23 @@ pub fn function_scheme<'db>(
         )
         .scheme,
     )
+}
+
+fn function_scheme_cycle<'db>(
+    db: &'db dyn Db,
+    cycle: &salsa::Cycle,
+    _last_provisional_value: &Option<TyScheme<'db>>,
+    value: Option<TyScheme<'db>>,
+    module: ModuleId<'db>,
+    def: DefId<'db>,
+) -> Option<TyScheme<'db>> {
+    if cycle.iteration() >= FUNCTION_SCHEME_MAX_FIXPOINT_ITERATIONS {
+        // Pin the syntactic scheme so the fixpoint terminates; body checking
+        // then reports an ordinary type error for the divergent signature
+        // instead of the whole compiler panicking.
+        return function_scheme_cycle_initial(db, cycle.id(), module, def);
+    }
+    value
 }
 
 fn function_scheme_cycle_initial<'db>(
@@ -5769,7 +5792,7 @@ fn item_resolutions_for_module<'db>(
     ))
 }
 
-#[salsa::tracked(cycle_initial = function_scheme_in_hir_module_cycle_initial)]
+#[salsa::tracked(cycle_fn = function_scheme_in_hir_module_cycle, cycle_initial = function_scheme_in_hir_module_cycle_initial)]
 fn function_scheme_in_hir_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -5777,6 +5800,20 @@ fn function_scheme_in_hir_module<'db>(
 ) -> Option<TyScheme<'db>> {
     let item_resolutions = hir_nameres::resolve_item_types(db, module);
     function_scheme_in_module(db, module, &item_resolutions, def)
+}
+
+fn function_scheme_in_hir_module_cycle<'db>(
+    db: &'db dyn Db,
+    cycle: &salsa::Cycle,
+    _last_provisional_value: &Option<TyScheme<'db>>,
+    value: Option<TyScheme<'db>>,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<TyScheme<'db>> {
+    if cycle.iteration() >= FUNCTION_SCHEME_MAX_FIXPOINT_ITERATIONS {
+        return function_scheme_in_hir_module_cycle_initial(db, cycle.id(), module, def);
+    }
+    value
 }
 
 fn function_scheme_in_hir_module_cycle_initial<'db>(
