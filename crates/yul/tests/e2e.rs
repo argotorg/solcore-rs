@@ -1451,6 +1451,10 @@ enum RunMode {
 #[derive(Debug, Clone)]
 enum SpecExpectation {
     Run { expected: Expected, mode: RunMode },
+    // No fixture is currently blocked; the variant and its category
+    // classifiers stay so a future vendored gap re-enters the ledger instead
+    // of becoming an untracked failure.
+    #[allow(dead_code)]
     Blocked { category: BlockedCategory },
     Neg { reason: &'static str },
     Skip { reason: &'static str },
@@ -1556,13 +1560,9 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
     fn neg(reason: &'static str) -> SpecExpectation {
         SpecExpectation::Neg { reason }
     }
-    fn blocked(category: BlockedCategory) -> SpecExpectation {
-        SpecExpectation::Blocked { category }
-    }
     let typedef_forall_neg = "reference HEAD rejects: class declarations lack forall binders \
         (unbound type variables, upstream commit 7ad5622); legacy pre-std StructField \
         experiment superseded by std/assign.solc";
-    let storage_index = BlockedCategory::NeedsStorageIndexLowering;
 
     BTreeMap::from([
         ("00answer.solc", run(42)),
@@ -1620,9 +1620,9 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("121counter.solc", run(1)),
         ("122counters.solc", run(3)),
         ("123stackAndStorage.solc", run(3)),
-        ("126nanoerc20.solc", blocked(storage_index)),
-        ("127microerc20.solc", blocked(storage_index)),
-        ("128minierc20.solc", blocked(storage_index)),
+        ("126nanoerc20.solc", run(42)),
+        ("127microerc20.solc", run(42)),
+        ("128minierc20.solc", run(958)),
         (
             "131constructor.solc",
             SpecExpectation::Run {

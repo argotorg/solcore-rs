@@ -323,18 +323,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!("examples/spec/051negBool.solc", "needs-trait-solver-parity"),
     known!(
-        "examples/spec/126nanoerc20.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
-        "examples/spec/127microerc20.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
-        "examples/spec/128minierc20.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
         "diagnostics/missing-signature.solc",
         "missing-negative-typecheck"
     ),
@@ -350,11 +338,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!(
         "examples/dispatch/basic.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/counter.solc",
         "needs-dispatch-abi-surface",
         typeck
     ),
@@ -385,16 +368,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!(
         "examples/dispatch/storage.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/sum_wide_product.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/weth9.solc",
         "needs-dispatch-abi-surface",
         typeck
     ),
