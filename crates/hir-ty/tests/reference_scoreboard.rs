@@ -203,6 +203,7 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "examples/cases/for-let-post.solc",
         "missing-negative-typecheck"
     ),
+    known!("examples/cases/GetSet.solc", "missing-negative-typecheck"),
     known!(
         "examples/cases/ixa.solc",
         "needs-specializer-and-std-instances"

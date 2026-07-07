@@ -27,7 +27,8 @@ use rustc_hash::FxHashMap;
 use crate::{
     AliasNormalizer, BinderEnv, BodyTyContext, BuiltinTyCtor, CallSiteCallee, CallSiteEvidence, Db,
     LoweredFunction, Ty, TyCtor, TyKind, TypeLowering, infer_body,
-    trait_env_from_module_resolution, trait_env_with_givens,
+    lower_normalized_function_with_inferred_signature, trait_env_from_module_resolution,
+    trait_env_with_givens,
 };
 
 /// Typed dispatch/ABI surface for one contract.
@@ -412,8 +413,14 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 }
                 let type_vars =
                     function_type_vars(db, &contract_type_vars, function.def_id_value(db), sig);
-                let lowered =
-                    lower_normalized_function(db, module, item_resolutions, function, &type_vars);
+                let lowered = lower_normalized_function(
+                    db,
+                    module,
+                    item_resolutions,
+                    contract.def_id_value(db),
+                    function,
+                    &type_vars,
+                );
                 let param_names = param_names(db, sig.params.atom());
                 let inputs = abi_params(
                     db,
@@ -454,8 +461,14 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 let sig = function.sig(db);
                 let type_vars =
                     function_type_vars(db, &contract_type_vars, function.def_id_value(db), sig);
-                let lowered =
-                    lower_normalized_function(db, module, item_resolutions, function, &type_vars);
+                let lowered = lower_normalized_function(
+                    db,
+                    module,
+                    item_resolutions,
+                    contract.def_id_value(db),
+                    function,
+                    &type_vars,
+                );
                 let inputs = abi_params(
                     db,
                     &param_names(db, sig.params.atom()),
@@ -478,8 +491,14 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 let sig = function.sig(db);
                 let type_vars =
                     function_type_vars(db, &contract_type_vars, function.def_id_value(db), sig);
-                let lowered =
-                    lower_normalized_function(db, module, item_resolutions, function, &type_vars);
+                let lowered = lower_normalized_function(
+                    db,
+                    module,
+                    item_resolutions,
+                    contract.def_id_value(db),
+                    function,
+                    &type_vars,
+                );
                 fallback = Some(DispatchFallback {
                     def: Some(function.def_id_value(db)),
                     explicit: true,
@@ -543,24 +562,28 @@ fn lower_normalized_function<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    enclosing_contract: DefId<'db>,
     function: FunctionDef<'db>,
     type_vars: &[hir_nameres::TypeVarBinding<'db>],
 ) -> LoweredFunction<'db> {
-    let lowerer = TypeLowering::from_item_resolutions(
+    let body_map = function.body(db).map(|body| {
+        let context = hir_nameres::BodyResolutionContext {
+            module,
+            enclosing_contract: Some(enclosing_contract),
+            params: param_bindings(function.sig(db).params.atom()),
+            type_vars: type_vars.to_vec(),
+        };
+        hir_nameres::resolve_body(db, body, context)
+    });
+    lower_normalized_function_with_inferred_signature(
         db,
+        module,
         item_resolutions,
-        BinderEnv::from_type_vars(type_vars),
-    );
-    let mut lowered = lowerer.lower_function(function);
-    let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
-    lowered.scheme = normalizer.normalize_scheme(lowered.scheme);
-    lowered.params = lowered
-        .params
-        .into_iter()
-        .map(|param| normalizer.normalize_ty(param))
-        .collect();
-    lowered.ret = normalizer.normalize_ty(lowered.ret);
-    lowered
+        function,
+        type_vars,
+        body_map.as_ref(),
+        None,
+    )
 }
 
 fn find_contract_by_def<'db>(
@@ -1543,6 +1566,18 @@ fn param_names<'db>(db: &'db dyn HirDb, params: &[FuncParam<'db>]) -> Vec<String
         .filter_map(|param| match param {
             FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => {
                 Some(ident_text(db, name))
+            }
+            FuncParam::Error { .. } => None,
+        })
+        .collect()
+}
+
+fn param_bindings<'db>(params: &[FuncParam<'db>]) -> Vec<hir_nameres::ParamBinding<'db>> {
+    params
+        .iter()
+        .filter_map(|param| match param {
+            FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => {
+                Some(hir_nameres::ParamBinding { name: *name })
             }
             FuncParam::Error { .. } => None,
         })

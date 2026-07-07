@@ -5,8 +5,9 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc,
     },
     thread,
     time::{Duration, Instant},
@@ -15,27 +16,27 @@ use std::{
 use hir::{
     anchor::DefLocationTable,
     ast::{
+        Ident,
         function::{YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
         item::Module,
-        Ident,
     },
     input::SourceFile,
     span::{Span, SpannedElem},
 };
 use hir_ty::AbiSignature;
 use hull::{
-    CodeBlock, EmitDiagnostic, EmitDiagnosticKind, Expr, ExprKind, Object, Program, Stmt, StmtKind,
-    Ty,
+    CheckDiagnostic, CheckDiagnosticKind, CodeBlock, EmitDiagnostic, EmitDiagnosticKind, Expr,
+    ExprKind, Object, Program, Stmt, StmtKind, Ty,
 };
 use nameres::{
-    module_id_from_key, module_key_for_path, module_path_display, resolve_module_path_candidate,
-    LibraryId, ModuleId, ModuleKey, ModuleTree,
+    LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
+    module_path_display, resolve_module_path_candidate,
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use specialize::{
-    specialize_module, MonoAbiParam, MonoEntryKind, MonoItem, SpecializeDiagnostic,
-    SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput,
+    MonoAbiParam, MonoEntryKind, MonoItem, SpecializeDiagnostic, SpecializeDiagnosticKind,
+    SpecializeOptions, SpecializeOutput, specialize_module,
 };
 
 const ANVIL_PRIVATE_KEY: &str =
@@ -195,8 +196,9 @@ fn spec_expectation_manifest_covers_all_fixtures() {
         case.label.ends_with("010answer.solc")
             && matches!(
                 case.expectation,
-                SpecExpectation::Blocked {
-                    category: BlockedCategory::UnannotatedEntrySpecialization
+                SpecExpectation::Run {
+                    expected: Expected::Word(42),
+                    mode: RunMode::ReferenceDirect
                 }
             )
     }));
@@ -483,8 +485,9 @@ fn render_output(
 
     let hull_diagnostics = hull::check_program_with_db(db, &emitted.program);
     if !hull_diagnostics.is_empty() {
-        return Err(E2eFailure::new(
+        return Err(E2eFailure::with_blocked_category(
             FailureKind::Pipeline,
+            blocked_category_from_hull_check(&hull_diagnostics),
             format!("Hull check diagnostics: {hull_diagnostics:?}"),
         ));
     }
@@ -534,6 +537,22 @@ fn blocked_category_from_emit(diagnostics: &[EmitDiagnostic<'_>]) -> Option<Bloc
                 if reason == "non-word ABI shape" =>
             {
                 Some(BlockedCategory::NonWordAbiDispatch)
+            }
+            EmitDiagnosticKind::UnsupportedMonoConstruct { .. } => {
+                Some(BlockedCategory::UnsupportedMonoConstruct)
+            }
+            _ => None,
+        })
+}
+
+fn blocked_category_from_hull_check(
+    diagnostics: &[CheckDiagnostic<'_>],
+) -> Option<BlockedCategory> {
+    diagnostics
+        .iter()
+        .find_map(|diagnostic| match &diagnostic.kind {
+            CheckDiagnosticKind::UndefinedFunction { .. } => {
+                Some(BlockedCategory::MissingSpecializedFunction)
             }
             _ => None,
         })
@@ -1405,6 +1424,8 @@ enum BlockedCategory {
     UnannotatedEntrySpecialization,
     NeedsStdInstances,
     NonWordAbiDispatch,
+    UnsupportedMonoConstruct,
+    MissingSpecializedFunction,
 }
 
 impl BlockedCategory {
@@ -1413,6 +1434,8 @@ impl BlockedCategory {
             Self::UnannotatedEntrySpecialization => "unannotated-entry-specialization",
             Self::NeedsStdInstances => "needs-std-instances",
             Self::NonWordAbiDispatch => "non-word-abi-dispatch",
+            Self::UnsupportedMonoConstruct => "unsupported-mono-construct",
+            Self::MissingSpecializedFunction => "missing-specialized-function",
         }
     }
 }
@@ -1489,18 +1512,20 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
     let unannotated = BlockedCategory::UnannotatedEntrySpecialization;
     let std_instances = BlockedCategory::NeedsStdInstances;
     let non_word_abi = BlockedCategory::NonWordAbiDispatch;
+    let unsupported_mono = BlockedCategory::UnsupportedMonoConstruct;
+    let missing_specialized = BlockedCategory::MissingSpecializedFunction;
 
     BTreeMap::from([
         ("00answer.solc", run(42)),
-        ("010answer.solc", blocked(unannotated)),
-        ("011id.solc", blocked(unannotated)),
+        ("010answer.solc", run(42)),
+        ("011id.solc", run(42)),
         ("012nid.solc", blocked(unannotated)),
-        ("013comp.solc", blocked(unannotated)),
+        ("013comp.solc", blocked(unsupported_mono)),
         ("01id.solc", blocked(non_word_abi)),
         ("021not.solc", blocked(non_word_abi)),
         ("022add.solc", run(42)),
         ("024arith.solc", run(42)),
-        ("027sstore.solc", blocked(unannotated)),
+        ("027sstore.solc", run(42)),
         ("02nid.solc", run(42)),
         ("031maybe.solc", blocked(non_word_abi)),
         ("032simplejoin.solc", blocked(non_word_abi)),
@@ -1521,8 +1546,8 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
             "051expreturn.solc",
             skip("no assigned P9 E2E oracle for experimental return encoding"),
         ),
-        ("051negBool.solc", blocked(unannotated)),
-        ("052negPair.solc", blocked(unannotated)),
+        ("051negBool.solc", blocked(non_word_abi)),
+        ("052negPair.solc", blocked(std_instances)),
         (
             "052return.solc",
             skip("no assigned P9 E2E oracle for experimental return encoding"),
@@ -1537,11 +1562,11 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
             "101struct1Field.solc",
             skip("no assigned P9 E2E oracle for legacy struct-field experiment"),
         ),
-        ("102uintField.solc", blocked(unannotated)),
-        ("103struct3Fields.solc", blocked(unannotated)),
-        ("105nestedStruct.solc", blocked(unannotated)),
+        ("102uintField.solc", blocked(std_instances)),
+        ("103struct3Fields.solc", blocked(std_instances)),
+        ("105nestedStruct.solc", blocked(std_instances)),
         ("10negBool.solc", blocked(non_word_abi)),
-        ("111storageStruct.solc", blocked(unannotated)),
+        ("111storageStruct.solc", blocked(std_instances)),
         ("112ContractStorage.solc", blocked(std_instances)),
         ("113counter.solc", blocked(unannotated)),
         ("11negPair.solc", blocked(non_word_abi)),
@@ -1552,7 +1577,7 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("126nanoerc20.solc", blocked(std_instances)),
         ("127microerc20.solc", blocked(std_instances)),
         ("128minierc20.solc", blocked(std_instances)),
-        ("131constructor.solc", blocked(unannotated)),
+        ("131constructor.solc", blocked(missing_specialized)),
         (
             "135cons3.solc",
             skip("constructor requires explicit deployment calldata not covered by the P9 oracle"),

@@ -24,8 +24,8 @@ use hir_ty::{
     CallSiteEvidence, ClassId, ComptimeObligationKind, Db, Evidence, InferResultExt,
     InferenceResult, LoweredFunction, Pred, PredKind, Solution, Ty, TyCtor, TyKind, TypeLowering,
     UserTyCtor, UserTyCtorKind, canonical_goal, contract_dispatch_surface, derived_generic_plan,
-    frontend_desugar_plan, infer_body, solve, solver::DerivedClauseKind,
-    trait_env_from_module_resolution, trait_env_with_givens,
+    frontend_desugar_plan, infer_body, lower_normalized_function_with_inferred_signature, solve,
+    solver::DerivedClauseKind, trait_env_from_module_resolution, trait_env_with_givens,
 };
 use nameres::{
     LibraryId, ModuleId, module_id_from_key, module_key_for_path, resolve_reachable_full,
@@ -479,6 +479,19 @@ impl<'db> Driver<'db> {
                 span: contract.span(self.db),
             };
             for method in surface.methods {
+                if self
+                    .functions
+                    .get(&method.def)
+                    .map(|info| {
+                        lowered_function_has_inferred_dispatch_placeholder(
+                            self.db,
+                            &self.lower_normalized_function(info),
+                        )
+                    })
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
                 if let Some(key) = self.root_for_def(method.def) {
                     entries.push(MonoEntry {
                         source: method.def,
@@ -885,22 +898,16 @@ impl<'db> Driver<'db> {
 
     fn lower_normalized_function(&self, info: &FunctionInfo<'db>) -> LoweredFunction<'db> {
         let resolution = self.module_resolution(info.module);
-        let lowerer = TypeLowering::from_item_resolutions(
+        let body_map = info.body.and_then(|body| self.body_resolution_for(body));
+        lower_normalized_function_with_inferred_signature(
             self.db,
+            info.module,
             &resolution.item_resolutions,
-            BinderEnv::from_type_vars(&info.type_vars),
-        );
-        let mut lowered = lowerer.lower_function(info.function);
-        let mut normalizer =
-            AliasNormalizer::new(self.db, info.module, &resolution.item_resolutions);
-        lowered.scheme = normalizer.normalize_scheme(lowered.scheme);
-        lowered.params = lowered
-            .params
-            .into_iter()
-            .map(|ty| normalizer.normalize_ty(ty))
-            .collect();
-        lowered.ret = normalizer.normalize_ty(lowered.ret);
-        lowered
+            info.function,
+            &info.type_vars,
+            body_map,
+            self.entry_module,
+        )
     }
 
     fn lower_pred_with_vars(
@@ -2724,6 +2731,31 @@ fn mono_abi_params(params: Vec<AbiParam>) -> Vec<MonoAbiParam> {
             components: mono_abi_params(param.components),
         })
         .collect()
+}
+
+fn lowered_function_has_inferred_dispatch_placeholder<'db>(
+    db: &'db dyn Db,
+    lowered: &LoweredFunction<'db>,
+) -> bool {
+    lowered
+        .params
+        .iter()
+        .chain(std::iter::once(&lowered.ret))
+        .any(|ty| ty_has_inferred_dispatch_placeholder(db, *ty))
+}
+
+fn ty_has_inferred_dispatch_placeholder<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    match ty.kind(db) {
+        TyKind::Unknown | TyKind::BoundVar(_) | TyKind::Function { .. } => true,
+        TyKind::Named { args, .. } => args
+            .iter()
+            .any(|arg| ty_has_inferred_dispatch_placeholder(db, *arg)),
+        TyKind::Tuple(elems) => elems
+            .iter()
+            .any(|elem| ty_has_inferred_dispatch_placeholder(db, *elem)),
+        TyKind::Comptime(inner) => ty_has_inferred_dispatch_placeholder(db, *inner),
+        TyKind::Error => false,
+    }
 }
 
 fn selector_bytes(selector: &str) -> Option<[u8; 4]> {
