@@ -7,13 +7,11 @@ use std::{
 
 use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
 use nameres::{
-    LibraryId, module_id_from_key, module_key_for_path, module_path_display,
-    resolve_module_path_candidate,
+    LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
+    module_path_display, resolve_module_path_candidate,
 };
-use nameres::{ModuleId, ModuleKey, ModuleTree};
 use parser::parse_file_to_hir;
-use rustc_hash::FxHashMap;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_hull::{
     CheckDiagnosticKind, EmitDiagnostic, EmitDiagnosticKind, EmitOptions, check_program_with_db,
     emit_module, pretty_program,

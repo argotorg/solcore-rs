@@ -105,8 +105,8 @@ pub struct DispatchFallback<'db> {
 /// ABI parameter or tuple component.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct AbiParam {
-    /// Parameter name. Outputs and tuple components use the empty name, matching
-    /// the reference ABI emitter.
+    /// Parameter name. Outputs and tuple components use the empty name,
+    /// matching the reference ABI emitter.
     pub name: String,
     /// Canonical ABI type string.
     pub ty: String,
@@ -187,7 +187,8 @@ pub enum FrontendTransform<'db> {
         /// Storage access hook for Hull/storage layout.
         hook: String,
     },
-    /// Non-direct call rewritten to `invokable.invoke(callee, indirectArgs(args))`.
+    /// Non-direct call rewritten to `invokable.invoke(callee,
+    /// indirectArgs(args))`.
     IndirectCall {
         /// Body containing the call.
         body: FuncBody<'db>,

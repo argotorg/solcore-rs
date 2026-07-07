@@ -5,7 +5,7 @@ use hir::{
     anchor::DefId,
     ast::{
         Ident,
-        function::{BinOp, LitKind, UnOp},
+        function::{BinOp, LitKind, UnOp, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
         item::{AdtDef, ContractDef, ContractItem, Item, Module},
         ty::TypeRefKind,
     },
@@ -18,8 +18,6 @@ use specialize::{
     MonoExprKind, MonoFunction, MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind,
     MonoStmt, MonoStmtKind,
 };
-
-use hir::ast::function::{YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind};
 
 use crate::ir::{
     Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
@@ -337,8 +335,8 @@ impl<'db> Emitter<'db> {
             runtime_functions.push(helper_function);
         }
         if mapping_value_helper_used {
-            let helper_function = self
-                .storage_mapping_value_function(contract.span, STORAGE_MAPPING_VALUE_HELPER);
+            let helper_function =
+                self.storage_mapping_value_function(contract.span, STORAGE_MAPPING_VALUE_HELPER);
             deployment_functions.push(helper_function.clone());
             runtime_functions.push(helper_function);
         }

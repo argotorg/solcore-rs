@@ -36,12 +36,14 @@ use nameres::{
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 
-use crate::evaluate::{EvaluateOptions, evaluate_module};
-use crate::ir::{
-    MonoAbiParam, MonoArm, MonoCallOrigin, MonoComptimeObligation, MonoComptimeObligationKind,
-    MonoConstructor, MonoContract, MonoEntry, MonoEntryKind, MonoExpr, MonoExprKind, MonoFallback,
-    MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem, MonoModule, MonoParam,
-    MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+use crate::{
+    evaluate::{EvaluateOptions, evaluate_module},
+    ir::{
+        MonoAbiParam, MonoArm, MonoCallOrigin, MonoComptimeObligation, MonoComptimeObligationKind,
+        MonoConstructor, MonoContract, MonoEntry, MonoEntryKind, MonoExpr, MonoExprKind,
+        MonoFallback, MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem,
+        MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+    },
 };
 
 /// Specialization resource limits.

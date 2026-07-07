@@ -1450,14 +1450,23 @@ enum RunMode {
 
 #[derive(Debug, Clone)]
 enum SpecExpectation {
-    Run { expected: Expected, mode: RunMode },
+    Run {
+        expected: Expected,
+        mode: RunMode,
+    },
     // No fixture is currently blocked; the variant and its category
     // classifiers stay so a future vendored gap re-enters the ledger instead
     // of becoming an untracked failure.
     #[allow(dead_code)]
-    Blocked { category: BlockedCategory },
-    Neg { reason: &'static str },
-    Skip { reason: &'static str },
+    Blocked {
+        category: BlockedCategory,
+    },
+    Neg {
+        reason: &'static str,
+    },
+    Skip {
+        reason: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1570,8 +1579,10 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("011id.solc", run(42)),
         (
             "012nid.solc",
-            neg("reference HEAD rejects: over-application of direct call `nid(42)` fails \
-                unification; superseded upstream by 02nid.solc (invoke-through-variable)"),
+            neg(
+                "reference HEAD rejects: over-application of direct call `nid(42)` fails \
+                unification; superseded upstream by 02nid.solc (invoke-through-variable)",
+            ),
         ),
         ("013comp.solc", run(42)),
         ("01id.solc", run(42)),
@@ -1599,9 +1610,11 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("051negBool.solc", run(1)),
         (
             "052negPair.solc",
-            neg("reference HEAD rejects: legacy `instance (ctx) => head` syntax removed from \
+            neg(
+                "reference HEAD rejects: legacy `instance (ctx) => head` syntax removed from \
                 grammar; instance methods also lack complete signatures (matches SC0226); \
-                superseded upstream by 11negPair.solc"),
+                superseded upstream by 11negPair.solc",
+            ),
         ),
         ("052return.solc", run(0)),
         ("053return.solc", run(0)),

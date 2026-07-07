@@ -521,7 +521,8 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0203`: function, constructor, or match arm arity mismatch.
     WrongArity {
-        /// Source span for the call, constructor, signature, or syntactic context.
+        /// Source span for the call, constructor, signature, or syntactic
+        /// context.
         span: LabelSpan,
         /// Callable or syntactic context.
         context: String,
@@ -606,7 +607,8 @@ pub enum TypeckDiagnostic {
         /// Referenced Yul name.
         name: String,
     },
-    /// `SC0212`: weak instance-head variables are not determined by the main type.
+    /// `SC0212`: weak instance-head variables are not determined by the main
+    /// type.
     CoverageCondition {
         /// Source span for the instance head.
         span: LabelSpan,
@@ -662,7 +664,8 @@ pub enum TypeckDiagnostic {
     OverlappingInstance {
         /// Source span for the later instance head.
         instance_span: LabelSpan,
-        /// Source span for the earlier overlapping instance head, when available.
+        /// Source span for the earlier overlapping instance head, when
+        /// available.
         overlaps_span: Option<LabelSpan>,
         /// New instance predicate.
         instance: String,
@@ -710,7 +713,8 @@ pub enum TypeckDiagnostic {
         /// Function or method name.
         function: String,
     },
-    /// `SC0222`: constructor-shaped pattern syntax did not resolve to a constructor.
+    /// `SC0222`: constructor-shaped pattern syntax did not resolve to a
+    /// constructor.
     InvalidConstructorPattern {
         /// Source span for the invalid constructor pattern.
         span: LabelSpan,
@@ -7832,11 +7836,8 @@ fn param_name<'db>(db: &'db dyn HirDb, param: &FuncParam<'db>) -> Option<&'db st
 mod tests {
     use std::{collections::BTreeMap, path::PathBuf};
 
-    use hir::sema::ty::QualTy;
-
     use hir::{
-        anchor::DefId,
-        anchor::DefLocationTable,
+        anchor::{DefId, DefLocationTable},
         ast::{
             Ident,
             function::{ExprKind, FuncParam, FuncSig, StmtKind},
@@ -7844,6 +7845,7 @@ mod tests {
         },
         input::SourceFile,
         nameres as hir_nameres,
+        sema::ty::QualTy,
         span::SpannedElem,
     };
     use nameres::{

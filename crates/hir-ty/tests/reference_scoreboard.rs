@@ -1358,4 +1358,3 @@ fn repo_root() -> PathBuf {
         .expect("hir-ty crate lives under <repo>/crates/hir-ty")
         .to_path_buf()
 }
-

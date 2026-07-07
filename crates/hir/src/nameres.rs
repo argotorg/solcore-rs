@@ -2189,24 +2189,25 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     {
                         Resolution::Err
                     } else if self.has_constructor_leaf(leaf) {
-                        self.same_name_constructor_resolution(leaf).unwrap_or_else(|| {
-                            if matches!(
-                                builtin_term(leaf),
-                                Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
-                            ) {
-                                // Primitive constructors (`pair`, `inl`, ...) stay
-                                // legal unqualified; their concrete constructor is
-                                // picked from the expected type during inference.
-                                Resolution::DotCtorDeferred
-                            } else {
-                                self.map.diagnostics.push(unqualified_constructor(
-                                    self.db,
-                                    leaf,
-                                    name.span(self.db),
-                                ));
-                                Resolution::Err
-                            }
-                        })
+                        self.same_name_constructor_resolution(leaf)
+                            .unwrap_or_else(|| {
+                                if matches!(
+                                    builtin_term(leaf),
+                                    Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
+                                ) {
+                                    // Primitive constructors (`pair`, `inl`, ...) stay
+                                    // legal unqualified; their concrete constructor is
+                                    // picked from the expected type during inference.
+                                    Resolution::DotCtorDeferred
+                                } else {
+                                    self.map.diagnostics.push(unqualified_constructor(
+                                        self.db,
+                                        leaf,
+                                        name.span(self.db),
+                                    ));
+                                    Resolution::Err
+                                }
+                            })
                     } else if args.is_empty() {
                         let resolution =
                             Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
