@@ -92,6 +92,14 @@ pub enum StmtKind<'db> {
     Expr(Expr<'db>),
     Return(Expr<'db>),
     Block(Vec<Stmt<'db>>),
+    For {
+        init: Vec<Stmt<'db>>,
+        cond: Expr<'db>,
+        post: Vec<Stmt<'db>>,
+        body: Vec<Stmt<'db>>,
+    },
+    Break,
+    Continue,
     Match {
         target: Ty<'db>,
         scrutinee: Expr<'db>,

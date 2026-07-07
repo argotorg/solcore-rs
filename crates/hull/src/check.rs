@@ -190,6 +190,18 @@ impl<'db> Env<'db> {
                 }
             }
             StmtKind::Block(stmts) => self.with_scope(|env| env.check_body(stmts)),
+            StmtKind::For {
+                init,
+                cond,
+                post,
+                body,
+            } => self.with_scope(|env| {
+                env.check_body(init);
+                env.check_expr(cond);
+                env.check_body(post);
+                env.check_body(body);
+            }),
+            StmtKind::Break | StmtKind::Continue => {}
             StmtKind::Match {
                 target,
                 scrutinee,
@@ -444,6 +456,15 @@ fn builtin_funs<'db>(span: Span<'db>) -> BTreeMap<String, FunSig<'db>> {
         let argc = if name == "wordFromInteger" { 1 } else { 2 };
         add(name, vec![word.clone(); argc], word.clone());
     }
+    for name in ["addmod", "mulmod"] {
+        add(name, vec![word.clone(); 3], word.clone());
+    }
+    for name in ["mload", "sload", "calldataload", "memoryguard"] {
+        add(name, vec![word.clone()], word.clone());
+    }
+    for name in ["calldatasize", "callvalue", "caller"] {
+        add(name, Vec::new(), word.clone());
+    }
     for name in [
         "lt",
         "gt",
@@ -558,6 +579,9 @@ fn stmt_terminates(stmt: &Stmt<'_>) -> bool {
         StmtKind::Let { .. }
         | StmtKind::Assign { .. }
         | StmtKind::Expr(_)
+        | StmtKind::For { .. }
+        | StmtKind::Break
+        | StmtKind::Continue
         | StmtKind::Assembly(_)
         | StmtKind::Comment(_) => false,
     }

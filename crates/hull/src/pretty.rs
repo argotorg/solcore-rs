@@ -130,6 +130,28 @@ fn write_stmt<'db>(db: &'db dyn HirDb, out: &mut String, stmt: &Stmt<'db>, inden
             }
             line(out, indent, "}");
         }
+        StmtKind::For {
+            init,
+            cond,
+            post,
+            body,
+        } => {
+            line(out, indent, "for {");
+            for stmt in init {
+                write_stmt(db, out, stmt, indent + 1);
+            }
+            line(out, indent, &format!("}} {} {{", write_expr(cond)));
+            for stmt in post {
+                write_stmt(db, out, stmt, indent + 1);
+            }
+            line(out, indent, "} {");
+            for stmt in body {
+                write_stmt(db, out, stmt, indent + 1);
+            }
+            line(out, indent, "}");
+        }
+        StmtKind::Break => line(out, indent, "break"),
+        StmtKind::Continue => line(out, indent, "continue"),
         StmtKind::Match {
             target,
             scrutinee,

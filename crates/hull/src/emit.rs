@@ -4,17 +4,22 @@ use hir::{
     Db as HirDb,
     anchor::DefId,
     ast::{
+        Ident,
         function::{BinOp, LitKind, UnOp},
-        item::{AdtDef, ContractItem, Item, Module},
+        item::{AdtDef, ContractDef, ContractItem, Item, Module},
+        ty::TypeRefKind,
     },
-    span::Span,
+    span::{Span, SpannedElem},
 };
 use hir_ty::{BuiltinTyCtor, Ty as SemTy, TyCtor, TyKind as SemTyKind, UserTyCtorKind};
 use parser::parse_file_to_hir;
 use specialize::{
-    MonoArm, MonoCallOrigin, MonoContract, MonoExpr, MonoExprKind, MonoFunction, MonoIntrinsic,
-    MonoItem, MonoModule, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind,
+    MonoArm, MonoCallOrigin, MonoContract, MonoEntry, MonoEntryKind, MonoExpr, MonoExprKind,
+    MonoFunction, MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind, MonoStmt,
+    MonoStmtKind,
 };
+
+use hir::ast::function::{YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind};
 
 use crate::ir::{
     Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
@@ -77,12 +82,18 @@ struct Branch<'db> {
     body: Vec<Stmt<'db>>,
 }
 
+#[derive(Debug, Clone)]
+struct StorageField {
+    slot: usize,
+}
+
 struct Emitter<'db> {
     db: &'db dyn hir_ty::Db,
     module: Module<'db>,
     options: EmitOptions,
     diagnostics: Vec<EmitDiagnostic<'db>>,
     scopes: Vec<BTreeMap<String, Expr<'db>>>,
+    function_names: BTreeSet<String>,
     fresh: usize,
 }
 
@@ -103,6 +114,7 @@ impl<'db> Emitter<'db> {
             options,
             diagnostics: Vec::new(),
             scopes: vec![BTreeMap::new()],
+            function_names: BTreeSet::new(),
             fresh: 0,
         }
     }
@@ -111,6 +123,14 @@ impl<'db> Emitter<'db> {
         let span = self.module.span(self.db);
         let mut functions = BTreeMap::<String, Function<'db>>::new();
         let mut contracts = Vec::new();
+        self.function_names = module
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MonoItem::Function(function) => Some(function.name.clone()),
+                _ => None,
+            })
+            .collect();
         for item in &module.items {
             match item {
                 MonoItem::Function(function) => {
@@ -162,30 +182,20 @@ impl<'db> Emitter<'db> {
             }
         }
 
+        let storage_fields = self.contract_word_storage_fields(contract.def);
+
         let deployment_functions = functions
             .iter()
             .filter(|function| constructor_names.contains(&function.name))
             .cloned()
+            .map(|function| self.lower_storage_fields_in_function(function, &storage_fields))
             .collect::<Vec<_>>();
         let runtime_functions = functions
             .iter()
             .filter(|function| !constructor_names.contains(&function.name))
             .cloned()
+            .map(|function| self.lower_storage_fields_in_function(function, &storage_fields))
             .collect::<Vec<_>>();
-
-        if self.options.emit_dispatcher_comments
-            && contract
-                .entries
-                .iter()
-                .any(|entry| entry.selector.is_some())
-        {
-            self.push(
-                contract.span,
-                EmitDiagnosticKind::DispatcherDeferred {
-                    contract: contract.name.clone(),
-                },
-            );
-        }
 
         let mut deploy_stmts = Vec::new();
         if contract.constructor.specialized.is_none() {
@@ -209,6 +219,7 @@ impl<'db> Emitter<'db> {
                 }
             }
         }
+        runtime_stmts.extend(self.emit_dispatcher(contract, &runtime_functions));
 
         Object {
             span: contract.span,
@@ -229,6 +240,493 @@ impl<'db> Emitter<'db> {
                 inners: Vec::new(),
             }],
         }
+    }
+
+    fn contract_word_storage_fields(&mut self, def: DefId<'db>) -> BTreeMap<String, StorageField> {
+        let module = parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
+        let Some(contract) = find_contract(self.db, module, def) else {
+            return BTreeMap::new();
+        };
+        contract
+            .fields(self.db)
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| field_type_is_word_slot(self.db, field.ty()))
+            .map(|(slot, field)| {
+                (
+                    field.name().atom().text(self.db).to_owned(),
+                    StorageField { slot },
+                )
+            })
+            .collect()
+    }
+
+    fn lower_storage_fields_in_function(
+        &self,
+        mut function: Function<'db>,
+        fields: &BTreeMap<String, StorageField>,
+    ) -> Function<'db> {
+        if fields.is_empty() {
+            return function;
+        }
+        let mut lowerer = StorageLowerer::new(self, fields, &function.args);
+        function.body = lowerer.stmts(function.body);
+        function
+    }
+
+    fn emit_dispatcher(
+        &mut self,
+        contract: &MonoContract<'db>,
+        functions: &[Function<'db>],
+    ) -> Vec<Stmt<'db>> {
+        let dispatch_entries = contract
+            .entries
+            .iter()
+            .filter(|entry| entry.selector.is_some() && matches!(entry.kind, MonoEntryKind::Method))
+            .collect::<Vec<_>>();
+        if dispatch_entries.is_empty() && contract.fallback.specialized.is_none() {
+            return Vec::new();
+        }
+
+        // The reference inserts SAIL `RunContract.exec` before typechecking and
+        // lets std/dispatch.solc specialize it. At mono time we already have
+        // selectors and specialized callees, so the Rust backend synthesizes the
+        // equivalent static-word dispatcher directly in Hull/Yul.
+        let function_map = functions
+            .iter()
+            .map(|function| (function.name.as_str(), function))
+            .collect::<BTreeMap<_, _>>();
+        let span = contract.span;
+        let selector_name = format!("{}_dispatch_selector", contract.name);
+        let mut out = vec![
+            self.assembly_stmt(
+                span,
+                vec![self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "mstore",
+                        vec![
+                            self.yul_number(span, "0x40"),
+                            self.yul_call(span, "memoryguard", vec![self.yul_number(span, "128")]),
+                        ],
+                    ),
+                )],
+            ),
+            Stmt {
+                span,
+                kind: StmtKind::Let {
+                    name: selector_name.clone(),
+                    ty: Ty::word(span),
+                },
+            },
+            self.assembly_stmt(
+                span,
+                vec![self.yul_assign(
+                    span,
+                    &selector_name,
+                    self.yul_call(
+                        span,
+                        "shr",
+                        vec![
+                            self.yul_number(span, "224"),
+                            self.yul_call(span, "calldataload", vec![self.yul_number(span, "0")]),
+                        ],
+                    ),
+                )],
+            ),
+        ];
+
+        let mut alts = Vec::new();
+        for (index, entry) in dispatch_entries.iter().enumerate() {
+            let Some(selector) = entry.selector else {
+                continue;
+            };
+            let Some(function) = function_map.get(entry.specialized.as_str()).copied() else {
+                alts.push(self.unsupported_dispatch_alt(entry, "missing specialized function"));
+                continue;
+            };
+            if !dispatcher_entry_inputs_are_static_word(entry)
+                || !dispatcher_return_is_static_word(&function.ret, entry.outputs.len())
+            {
+                alts.push(self.unsupported_dispatch_alt(entry, "non-word ABI shape"));
+                continue;
+            }
+            if function.args.len() != entry.inputs.len() {
+                alts.push(self.unsupported_dispatch_alt(entry, "ABI/function arity mismatch"));
+                continue;
+            }
+            alts.push(Alt {
+                span: entry.span,
+                pat: Pat {
+                    span: entry.span,
+                    kind: PatKind::IntLit(selector_hex(selector)),
+                },
+                binder: self.fresh_alt(),
+                body: self.emit_dispatch_entry(entry, function, index),
+            });
+        }
+
+        alts.push(Alt {
+            span,
+            pat: Pat {
+                span,
+                kind: PatKind::Wildcard,
+            },
+            binder: self.fresh_alt(),
+            body: self.emit_fallback_dispatch(contract, &function_map),
+        });
+
+        out.push(Stmt {
+            span,
+            kind: StmtKind::Match {
+                target: Ty::word(span),
+                scrutinee: Expr::var(span, selector_name, Ty::word(span)),
+                alts,
+            },
+        });
+        out
+    }
+
+    fn unsupported_dispatch_alt(&mut self, entry: &MonoEntry<'db>, reason: &str) -> Alt<'db> {
+        Alt {
+            span: entry.span,
+            pat: Pat {
+                span: entry.span,
+                kind: PatKind::IntLit(selector_hex(entry.selector.unwrap_or([0, 0, 0, 0]))),
+            },
+            binder: self.fresh_alt(),
+            body: vec![
+                Stmt {
+                    span: entry.span,
+                    kind: StmtKind::Comment(format!(
+                        "dispatcher skipped {}: {reason}",
+                        entry.signature.as_deref().unwrap_or(entry.name.as_str())
+                    )),
+                },
+                self.default_fallback_revert(entry.span),
+            ],
+        }
+    }
+
+    fn emit_dispatch_entry(
+        &mut self,
+        entry: &MonoEntry<'db>,
+        function: &Function<'db>,
+        index: usize,
+    ) -> Vec<Stmt<'db>> {
+        let span = entry.span;
+        let mut body = Vec::new();
+        if !entry.payable {
+            body.push(self.nonpayable_check(span));
+        }
+
+        let mut args = Vec::new();
+        for (arg_index, arg) in function.args.iter().enumerate() {
+            let arg_name = format!("dispatch_arg{index}_{arg_index}");
+            body.push(Stmt {
+                span,
+                kind: StmtKind::Let {
+                    name: arg_name.clone(),
+                    ty: arg.ty.clone(),
+                },
+            });
+            body.push(self.assembly_stmt(
+                span,
+                vec![self.yul_assign(
+                    span,
+                    &arg_name,
+                    self.yul_call(
+                        span,
+                        "calldataload",
+                        vec![self.yul_number(span, (4 + arg_index * 32).to_string())],
+                    ),
+                )],
+            ));
+            args.push(Expr::var(span, arg_name, arg.ty.clone()));
+        }
+
+        let call = Expr {
+            span,
+            ty: function.ret.clone(),
+            kind: ExprKind::Call {
+                callee: function.name.clone(),
+                args,
+            },
+        };
+
+        match entry.outputs.len() {
+            0 => {
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Expr(call),
+                });
+                body.push(self.return_words(span, &[]));
+            }
+            output_count => {
+                let ret_name = format!("dispatch_ret{index}");
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Let {
+                        name: ret_name.clone(),
+                        ty: function.ret.clone(),
+                    },
+                });
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Assign {
+                        lhs: Expr::var(span, ret_name.clone(), function.ret.clone()),
+                        rhs: call,
+                    },
+                });
+                let ret_expr = Expr::var(span, ret_name, function.ret.clone());
+                let components = product_components(ret_expr, output_count);
+                let mut names = Vec::new();
+                for (component_index, component) in components.into_iter().enumerate() {
+                    let component_name = format!("dispatch_ret{index}_{component_index}");
+                    body.push(Stmt {
+                        span,
+                        kind: StmtKind::Let {
+                            name: component_name.clone(),
+                            ty: component.ty.clone(),
+                        },
+                    });
+                    body.push(Stmt {
+                        span,
+                        kind: StmtKind::Assign {
+                            lhs: Expr::var(span, component_name.clone(), component.ty.clone()),
+                            rhs: component,
+                        },
+                    });
+                    names.push(component_name);
+                }
+                body.push(self.return_words(span, &names));
+            }
+        }
+        body
+    }
+
+    fn emit_fallback_dispatch(
+        &mut self,
+        contract: &MonoContract<'db>,
+        function_map: &BTreeMap<&str, &Function<'db>>,
+    ) -> Vec<Stmt<'db>> {
+        let span = contract.fallback.span;
+        let Some(name) = contract.fallback.specialized.as_deref() else {
+            return vec![self.default_fallback_revert(span)];
+        };
+        let Some(function) = function_map.get(name).copied() else {
+            return vec![self.default_fallback_revert(span)];
+        };
+        if !contract.fallback.inputs.is_empty()
+            || !dispatcher_outputs_are_static_word(&contract.fallback.outputs)
+        {
+            return vec![self.default_fallback_revert(span)];
+        }
+        let mut body = Vec::new();
+        if !contract.fallback.payable {
+            body.push(self.nonpayable_check(span));
+        }
+        let call = Expr {
+            span,
+            ty: function.ret.clone(),
+            kind: ExprKind::Call {
+                callee: function.name.clone(),
+                args: Vec::new(),
+            },
+        };
+        match contract.fallback.outputs.len() {
+            0 => {
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Expr(call),
+                });
+                body.push(self.return_words(span, &[]));
+            }
+            output_count => {
+                let ret_name = "dispatch_fallback_ret".to_owned();
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Let {
+                        name: ret_name.clone(),
+                        ty: function.ret.clone(),
+                    },
+                });
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Assign {
+                        lhs: Expr::var(span, ret_name.clone(), function.ret.clone()),
+                        rhs: call,
+                    },
+                });
+                let components = product_components(
+                    Expr::var(span, ret_name, function.ret.clone()),
+                    output_count,
+                );
+                let mut names = Vec::new();
+                for (component_index, component) in components.into_iter().enumerate() {
+                    let component_name = format!("dispatch_fallback_ret{component_index}");
+                    body.push(Stmt {
+                        span,
+                        kind: StmtKind::Let {
+                            name: component_name.clone(),
+                            ty: component.ty.clone(),
+                        },
+                    });
+                    body.push(Stmt {
+                        span,
+                        kind: StmtKind::Assign {
+                            lhs: Expr::var(span, component_name.clone(), component.ty.clone()),
+                            rhs: component,
+                        },
+                    });
+                    names.push(component_name);
+                }
+                body.push(self.return_words(span, &names));
+            }
+        }
+        body
+    }
+
+    fn nonpayable_check(&self, span: Span<'db>) -> Stmt<'db> {
+        self.assembly_stmt(
+            span,
+            vec![YulStmt {
+                span,
+                kind: YulStmtKind::If {
+                    cond: self.yul_call(span, "callvalue", Vec::new()),
+                    body: vec![
+                        self.yul_expr_stmt(
+                            span,
+                            self.yul_call(
+                                span,
+                                "mstore",
+                                vec![
+                                    self.yul_number(span, "0"),
+                                    self.yul_number(span, "0xb5988ea3"),
+                                ],
+                            ),
+                        ),
+                        self.yul_expr_stmt(
+                            span,
+                            self.yul_call(
+                                span,
+                                "revert",
+                                vec![self.yul_number(span, "28"), self.yul_number(span, "4")],
+                            ),
+                        ),
+                    ],
+                },
+            }],
+        )
+    }
+
+    fn default_fallback_revert(&self, span: Span<'db>) -> Stmt<'db> {
+        self.assembly_stmt(
+            span,
+            vec![
+                self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "mstore",
+                        vec![
+                            self.yul_number(span, "0"),
+                            self.yul_number(span, "0x4924aef0"),
+                        ],
+                    ),
+                ),
+                self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "revert",
+                        vec![self.yul_number(span, "28"), self.yul_number(span, "4")],
+                    ),
+                ),
+            ],
+        )
+    }
+
+    fn return_words(&self, span: Span<'db>, names: &[String]) -> Stmt<'db> {
+        let mut stmts = Vec::new();
+        for (index, name) in names.iter().enumerate() {
+            stmts.push(self.yul_expr_stmt(
+                span,
+                self.yul_call(
+                    span,
+                    "mstore",
+                    vec![
+                        self.yul_number(span, (index * 32).to_string()),
+                        self.yul_ident_expr(span, name),
+                    ],
+                ),
+            ));
+        }
+        stmts.push(self.yul_expr_stmt(
+            span,
+            self.yul_call(
+                span,
+                "return",
+                vec![
+                    self.yul_number(span, "0"),
+                    self.yul_number(span, (names.len() * 32).to_string()),
+                ],
+            ),
+        ));
+        self.assembly_stmt(span, stmts)
+    }
+
+    fn assembly_stmt(&self, span: Span<'db>, body: Vec<YulStmt<'db>>) -> Stmt<'db> {
+        Stmt {
+            span,
+            kind: StmtKind::Assembly(body),
+        }
+    }
+
+    fn yul_assign(&self, span: Span<'db>, name: &str, value: YulExpr<'db>) -> YulStmt<'db> {
+        YulStmt {
+            span,
+            kind: YulStmtKind::Assign {
+                names: vec![self.yul_ident(span, name)],
+                value,
+            },
+        }
+    }
+
+    fn yul_expr_stmt(&self, span: Span<'db>, expr: YulExpr<'db>) -> YulStmt<'db> {
+        YulStmt {
+            span,
+            kind: YulStmtKind::Expr(expr),
+        }
+    }
+
+    fn yul_call(&self, span: Span<'db>, name: &str, args: Vec<YulExpr<'db>>) -> YulExpr<'db> {
+        YulExpr {
+            span,
+            kind: YulExprKind::Call {
+                name: self.yul_ident(span, name),
+                args,
+            },
+        }
+    }
+
+    fn yul_number(&self, span: Span<'db>, value: impl Into<String>) -> YulExpr<'db> {
+        YulExpr {
+            span,
+            kind: YulExprKind::Lit(YulLitKind::Number(value.into())),
+        }
+    }
+
+    fn yul_ident_expr(&self, span: Span<'db>, name: &str) -> YulExpr<'db> {
+        YulExpr {
+            span,
+            kind: YulExprKind::Ident(self.yul_ident(span, name)),
+        }
+    }
+
+    fn yul_ident(&self, span: Span<'db>, name: &str) -> SpannedElem<'db, Ident<'db>> {
+        SpannedElem::new(Ident::new(self.db, name.to_owned()), span)
     }
 
     fn emit_function(&mut self, function: &MonoFunction<'db>) -> Function<'db> {
@@ -347,30 +845,30 @@ impl<'db> Emitter<'db> {
                 span: stmt.span,
                 kind: StmtKind::Assembly(body.clone()),
             }],
-            MonoStmtKind::For { .. } => {
-                self.push(
-                    stmt.span,
-                    EmitDiagnosticKind::UnsupportedMonoConstruct {
-                        construct: "for loop".to_owned(),
-                    },
-                );
+            MonoStmtKind::For {
+                init,
+                cond,
+                post,
+                body,
+            } => {
                 vec![Stmt {
                     span: stmt.span,
-                    kind: StmtKind::Revert("unsupported for loop".to_owned()),
-                }]
-            }
-            MonoStmtKind::Break | MonoStmtKind::Continue => {
-                self.push(
-                    stmt.span,
-                    EmitDiagnosticKind::UnsupportedMonoConstruct {
-                        construct: "loop control".to_owned(),
+                    kind: StmtKind::For {
+                        init: self.with_scope(|this| this.emit_stmts(init)),
+                        cond: self.emit_expr(cond),
+                        post: self.with_scope(|this| this.emit_stmts(post)),
+                        body: self.with_scope(|this| this.emit_stmts(body)),
                     },
-                );
-                vec![Stmt {
-                    span: stmt.span,
-                    kind: StmtKind::Revert("unsupported loop control".to_owned()),
                 }]
             }
+            MonoStmtKind::Break => vec![Stmt {
+                span: stmt.span,
+                kind: StmtKind::Break,
+            }],
+            MonoStmtKind::Continue => vec![Stmt {
+                span: stmt.span,
+                kind: StmtKind::Continue,
+            }],
             MonoStmtKind::Error => vec![Stmt {
                 span: stmt.span,
                 kind: StmtKind::Revert("error statement".to_owned()),
@@ -494,11 +992,37 @@ impl<'db> Emitter<'db> {
                     else_expr: Box::new(self.emit_expr(else_expr)),
                 },
             },
+            MonoExprKind::ClosureDispatch { callee, args } => {
+                if let Some(callee_name) = self.closure_callee_name(callee) {
+                    Expr {
+                        span: expr.span,
+                        ty,
+                        kind: ExprKind::Call {
+                            callee: callee_name,
+                            args: args.iter().map(|arg| self.emit_expr(arg)).collect(),
+                        },
+                    }
+                } else {
+                    self.push(
+                        expr.span,
+                        EmitDiagnosticKind::UnsupportedMonoConstruct {
+                            construct: mono_expr_name(&expr.kind).to_owned(),
+                        },
+                    );
+                    Expr {
+                        span: expr.span,
+                        ty,
+                        kind: ExprKind::Call {
+                            callee: "unsupported".to_owned(),
+                            args: Vec::new(),
+                        },
+                    }
+                }
+            }
             MonoExprKind::Field { .. }
             | MonoExprKind::Index { .. }
             | MonoExprKind::Proxy(_)
             | MonoExprKind::Lambda { .. }
-            | MonoExprKind::ClosureDispatch { .. }
             | MonoExprKind::Error => {
                 self.push(
                     expr.span,
@@ -516,6 +1040,16 @@ impl<'db> Emitter<'db> {
                 }
             }
         }
+    }
+
+    fn closure_callee_name(&self, callee: &MonoExpr<'db>) -> Option<String> {
+        let name = match &callee.kind {
+            MonoExprKind::Var(id) => &id.name,
+            MonoExprKind::Lambda { name } => name,
+            MonoExprKind::TypeAnnot { expr, .. } => return self.closure_callee_name(expr),
+            _ => return None,
+        };
+        self.function_names.contains(name).then(|| name.clone())
     }
 
     fn emit_lit(&mut self, span: Span<'db>, lit: &LitKind) -> Expr<'db> {
@@ -1127,10 +1661,356 @@ impl<'db> Emitter<'db> {
     }
 }
 
+struct StorageLowerer<'a, 'db> {
+    emitter: &'a Emitter<'db>,
+    fields: &'a BTreeMap<String, StorageField>,
+    shadows: Vec<BTreeSet<String>>,
+    fresh: usize,
+}
+
+impl<'a, 'db> StorageLowerer<'a, 'db> {
+    fn new(
+        emitter: &'a Emitter<'db>,
+        fields: &'a BTreeMap<String, StorageField>,
+        args: &[Arg<'db>],
+    ) -> Self {
+        Self {
+            emitter,
+            fields,
+            shadows: vec![args.iter().map(|arg| arg.name.clone()).collect()],
+            fresh: 0,
+        }
+    }
+
+    fn stmts(&mut self, stmts: Vec<Stmt<'db>>) -> Vec<Stmt<'db>> {
+        let mut out = Vec::new();
+        for stmt in stmts {
+            out.extend(self.stmt(stmt));
+        }
+        out
+    }
+
+    fn stmt(&mut self, stmt: Stmt<'db>) -> Vec<Stmt<'db>> {
+        match stmt.kind {
+            StmtKind::Let { name, ty } => {
+                self.shadows
+                    .last_mut()
+                    .expect("storage scope stack is never empty")
+                    .insert(name.clone());
+                vec![Stmt {
+                    span: stmt.span,
+                    kind: StmtKind::Let { name, ty },
+                }]
+            }
+            StmtKind::Assign { lhs, rhs } => {
+                if let ExprKind::Var(name) = &lhs.kind
+                    && let Some(slot) = self.field(name).map(|field| field.slot)
+                {
+                    let rhs = self.expr(rhs);
+                    let temp = self.fresh_temp(name);
+                    return vec![
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Let {
+                                name: temp.clone(),
+                                ty: lhs.ty.clone(),
+                            },
+                        },
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Assign {
+                                lhs: Expr::var(stmt.span, temp.clone(), lhs.ty),
+                                rhs,
+                            },
+                        },
+                        self.emitter.assembly_stmt(
+                            stmt.span,
+                            vec![self.emitter.yul_expr_stmt(
+                                stmt.span,
+                                self.emitter.yul_call(
+                                    stmt.span,
+                                    "sstore",
+                                    vec![
+                                        self.emitter.yul_number(stmt.span, slot.to_string()),
+                                        self.emitter.yul_ident_expr(stmt.span, &temp),
+                                    ],
+                                ),
+                            )],
+                        ),
+                    ];
+                }
+                vec![Stmt {
+                    span: stmt.span,
+                    kind: StmtKind::Assign {
+                        lhs: self.expr(lhs),
+                        rhs: self.expr(rhs),
+                    },
+                }]
+            }
+            StmtKind::Expr(expr) => vec![Stmt {
+                span: stmt.span,
+                kind: StmtKind::Expr(self.expr(expr)),
+            }],
+            StmtKind::Return(expr) => vec![Stmt {
+                span: stmt.span,
+                kind: StmtKind::Return(self.expr(expr)),
+            }],
+            StmtKind::Block(body) => self.with_scope(|this| {
+                vec![Stmt {
+                    span: stmt.span,
+                    kind: StmtKind::Block(this.stmts(body)),
+                }]
+            }),
+            StmtKind::For {
+                init,
+                cond,
+                post,
+                body,
+            } => self.with_scope(|this| {
+                let init = this.stmts(init);
+                let cond = this.expr(cond);
+                let post = this.stmts(post);
+                let body = this.stmts(body);
+                vec![Stmt {
+                    span: stmt.span,
+                    kind: StmtKind::For {
+                        init,
+                        cond,
+                        post,
+                        body,
+                    },
+                }]
+            }),
+            StmtKind::Match {
+                target,
+                scrutinee,
+                alts,
+            } => {
+                let scrutinee = self.expr(scrutinee);
+                let alts = alts
+                    .into_iter()
+                    .map(|alt| self.alt(alt))
+                    .collect::<Vec<_>>();
+                vec![Stmt {
+                    span: stmt.span,
+                    kind: StmtKind::Match {
+                        target,
+                        scrutinee,
+                        alts,
+                    },
+                }]
+            }
+            kind @ (StmtKind::Assembly(_)
+            | StmtKind::Revert(_)
+            | StmtKind::Comment(_)
+            | StmtKind::Break
+            | StmtKind::Continue) => vec![Stmt {
+                span: stmt.span,
+                kind,
+            }],
+        }
+    }
+
+    fn alt(&mut self, alt: Alt<'db>) -> Alt<'db> {
+        self.with_scope(|this| {
+            this.shadows
+                .last_mut()
+                .expect("storage scope stack is never empty")
+                .insert(alt.binder.clone());
+            Alt {
+                span: alt.span,
+                pat: alt.pat,
+                binder: alt.binder,
+                body: this.stmts(alt.body),
+            }
+        })
+    }
+
+    fn expr(&mut self, expr: Expr<'db>) -> Expr<'db> {
+        match expr.kind {
+            ExprKind::Var(name) => {
+                if let Some(slot) = self.field(&name).map(|field| field.slot) {
+                    Expr {
+                        span: expr.span,
+                        ty: expr.ty,
+                        kind: ExprKind::Call {
+                            callee: "sload".to_owned(),
+                            args: vec![Expr::word(expr.span, slot.to_string())],
+                        },
+                    }
+                } else {
+                    Expr {
+                        span: expr.span,
+                        ty: expr.ty,
+                        kind: ExprKind::Var(name),
+                    }
+                }
+            }
+            ExprKind::Pair(lhs, rhs) => Expr {
+                span: expr.span,
+                ty: expr.ty,
+                kind: ExprKind::Pair(Box::new(self.expr(*lhs)), Box::new(self.expr(*rhs))),
+            },
+            ExprKind::Fst(inner) => Expr {
+                span: expr.span,
+                ty: expr.ty,
+                kind: ExprKind::Fst(Box::new(self.expr(*inner))),
+            },
+            ExprKind::Snd(inner) => Expr {
+                span: expr.span,
+                ty: expr.ty,
+                kind: ExprKind::Snd(Box::new(self.expr(*inner))),
+            },
+            ExprKind::Inl { target, value } => Expr {
+                span: expr.span,
+                ty: expr.ty,
+                kind: ExprKind::Inl {
+                    target,
+                    value: Box::new(self.expr(*value)),
+                },
+            },
+            ExprKind::Inr { target, value } => Expr {
+                span: expr.span,
+                ty: expr.ty,
+                kind: ExprKind::Inr {
+                    target,
+                    value: Box::new(self.expr(*value)),
+                },
+            },
+            ExprKind::InK {
+                index,
+                target,
+                value,
+            } => Expr {
+                span: expr.span,
+                ty: expr.ty,
+                kind: ExprKind::InK {
+                    index,
+                    target,
+                    value: Box::new(self.expr(*value)),
+                },
+            },
+            ExprKind::Call { callee, args } => Expr {
+                span: expr.span,
+                ty: expr.ty,
+                kind: ExprKind::Call {
+                    callee,
+                    args: args.into_iter().map(|arg| self.expr(arg)).collect(),
+                },
+            },
+            ExprKind::If {
+                target,
+                cond,
+                then_expr,
+                else_expr,
+            } => Expr {
+                span: expr.span,
+                ty: expr.ty,
+                kind: ExprKind::If {
+                    target,
+                    cond: Box::new(self.expr(*cond)),
+                    then_expr: Box::new(self.expr(*then_expr)),
+                    else_expr: Box::new(self.expr(*else_expr)),
+                },
+            },
+            ExprKind::Word(_) | ExprKind::Bool(_) | ExprKind::Unit => expr,
+        }
+    }
+
+    fn field(&self, name: &str) -> Option<&StorageField> {
+        if self.shadows.iter().rev().any(|scope| scope.contains(name)) {
+            return None;
+        }
+        self.fields.get(name)
+    }
+
+    fn fresh_temp(&mut self, field: &str) -> String {
+        let name = format!("storage_store_{field}_{}", self.fresh);
+        self.fresh += 1;
+        name
+    }
+
+    fn with_scope<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.shadows.push(BTreeSet::new());
+        let out = f(self);
+        self.shadows.pop();
+        out
+    }
+}
+
 fn call_name(origin: &MonoCallOrigin<'_>, name: &str) -> String {
     match origin {
         MonoCallOrigin::Builtin(intrinsic) => intrinsic_name(*intrinsic).to_owned(),
         MonoCallOrigin::Source(_) | MonoCallOrigin::Unknown => name.to_owned(),
+    }
+}
+
+fn dispatcher_entry_inputs_are_static_word(entry: &MonoEntry<'_>) -> bool {
+    entry.inputs.iter().all(abi_param_is_static_word)
+}
+
+fn dispatcher_outputs_are_static_word(outputs: &[specialize::MonoAbiParam]) -> bool {
+    outputs.iter().all(abi_param_is_static_word)
+}
+
+fn dispatcher_return_is_static_word(ret: &Ty<'_>, output_count: usize) -> bool {
+    match output_count {
+        0 => matches!(ret.strip_named().kind, TyKind::Unit),
+        1 => hull_ty_is_static_word(ret),
+        count => product_component_tys(ret.clone(), count)
+            .is_some_and(|components| components.iter().all(hull_ty_is_static_word)),
+    }
+}
+
+fn hull_ty_is_static_word(ty: &Ty<'_>) -> bool {
+    matches!(ty.strip_named().kind, TyKind::Word)
+}
+
+fn abi_param_is_static_word(param: &specialize::MonoAbiParam) -> bool {
+    param.components.is_empty()
+        && matches!(
+            param.ty.as_str(),
+            "uint256" | "uint" | "word" | "bytes32" | "address"
+        )
+}
+
+fn selector_hex(selector: [u8; 4]) -> String {
+    format!(
+        "0x{:02x}{:02x}{:02x}{:02x}",
+        selector[0], selector[1], selector[2], selector[3]
+    )
+}
+
+fn product_components<'db>(expr: Expr<'db>, count: usize) -> Vec<Expr<'db>> {
+    if count <= 1 {
+        return vec![expr];
+    }
+    let lhs = Expr {
+        span: expr.span,
+        ty: product_left_ty(&expr.ty),
+        kind: ExprKind::Fst(Box::new(expr.clone())),
+    };
+    let rhs = Expr {
+        span: expr.span,
+        ty: product_right_ty(&expr.ty),
+        kind: ExprKind::Snd(Box::new(expr)),
+    };
+    let mut out = vec![lhs];
+    out.extend(product_components(rhs, count - 1));
+    out
+}
+
+fn product_component_tys<'db>(ty: Ty<'db>, count: usize) -> Option<Vec<Ty<'db>>> {
+    if count <= 1 {
+        return Some(vec![ty]);
+    }
+    match ty.strip_named().kind.clone() {
+        TyKind::Product(lhs, rhs) => {
+            let mut out = vec![*lhs];
+            out.extend(product_component_tys(*rhs, count - 1)?);
+            Some(out)
+        }
+        _ => None,
     }
 }
 
@@ -1342,6 +2222,28 @@ fn constructor_name_matches(actual: &str, adt: &str, ctor: &str) -> bool {
 
 fn source_constructor_comment(name: &str) -> String {
     name.rsplit('_').next().unwrap_or(name).to_owned()
+}
+
+fn field_type_is_word_slot<'db>(db: &'db dyn HirDb, ty: hir::ast::ty::TypeRef<'db>) -> bool {
+    let TypeRefKind::Named { name, args, .. } = ty.kind(db) else {
+        return false;
+    };
+    args.atom().is_empty()
+        && matches!(
+            name.atom().text(db),
+            "word" | "uint" | "uint256" | "bytes32" | "address"
+        )
+}
+
+fn find_contract<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<ContractDef<'db>> {
+    module.items(db).iter().find_map(|item| match item {
+        Item::ContractDef(contract) if contract.def_id_value(db) == def => Some(*contract),
+        _ => None,
+    })
 }
 
 fn find_adt<'db>(db: &'db dyn HirDb, module: Module<'db>, def: DefId<'db>) -> Option<AdtDef<'db>> {
