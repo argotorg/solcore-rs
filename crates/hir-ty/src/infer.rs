@@ -2954,23 +2954,33 @@ impl<'db> InferCtx<'db> {
         let pat = body.pats(self.db).get(pat_id);
         let mut ty = match &pat.kind {
             PatKind::Wildcard => expected.clone().unwrap_or_else(|| self.engine.fresh_var()),
-            PatKind::Var(name) => {
-                if let Some(hir_nameres::Resolution::Builtin(
+            PatKind::Var(name) => match self.pat_resolutions.get(&(body, pat_id)).cloned() {
+                Some(hir_nameres::Resolution::Builtin(
                     kind @ hir_nameres::BuiltinKind::Constructor(
                         hir_nameres::BuiltinCtor::True | hir_nameres::BuiltinCtor::False,
                     ),
-                )) = self.pat_resolutions.get(&(body, pat_id)).cloned()
-                {
+                )) => {
                     let ctor_ty = self.infer_resolution_for_pat_builtin(kind);
                     let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
                     self.apply_ctor_pat_scheme(body, pat_id, &[], ctor_ty, ret)
-                } else {
+                }
+                // A same-name constructor referenced without a qualifier:
+                // nameres resolved the identifier to the constructor, so treat
+                // the pattern as a nullary constructor pattern.
+                Some(hir_nameres::Resolution::Ctor { ty, index }) => {
+                    let ctor_ty = self.instantiate_adt_ctor(ty, index, ObligationSource::Scheme);
+                    let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
+                    self.apply_ctor_pat_scheme(body, pat_id, &[], ctor_ty, ret)
+                }
+                // Unqualified-constructor misuse already reported by nameres.
+                Some(hir_nameres::Resolution::Err) => InferTy::Error,
+                _ => {
                     let ty = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
                     self.pat_tys_for_locals.insert((body, pat_id), ty.clone());
                     self.add_sail_local((*name.atom()).text(self.db).to_owned(), ty.clone());
                     ty
                 }
-            }
+            },
             PatKind::Lit(lit) => self.infer_lit_pat(body, pat_id, lit, expected.clone()),
             PatKind::Tuple { elems } => self.infer_tuple_pat(body, pat_id, elems, expected.clone()),
             PatKind::Ctor { args, .. } => self.infer_ctor_pat(body, pat_id, args, expected.clone()),

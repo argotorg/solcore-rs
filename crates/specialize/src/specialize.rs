@@ -2322,6 +2322,16 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     },
                     args: Vec::new(),
                 },
+                // Same-name constructors resolve as nullary constructor
+                // patterns, not binders.
+                Some(hir_nameres::Resolution::Ctor { .. }) => MonoPatKind::Con {
+                    ctor: MonoId {
+                        name: ident_text(self.driver.db, name),
+                        ty: mono_ty,
+                        span: pat.span,
+                    },
+                    args: Vec::new(),
+                },
                 _ => MonoPatKind::Var(MonoId {
                     name: {
                         let name = ident_text(self.driver.db, name);
