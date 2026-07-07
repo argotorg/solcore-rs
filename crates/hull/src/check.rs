@@ -459,10 +459,17 @@ fn builtin_funs<'db>(span: Span<'db>) -> BTreeMap<String, FunSig<'db>> {
     for name in ["addmod", "mulmod"] {
         add(name, vec![word.clone(); 3], word.clone());
     }
-    for name in ["mload", "sload", "calldataload", "memoryguard"] {
+    for name in [
+        "mload",
+        "sload",
+        "calldataload",
+        "memoryguard",
+        "datasize",
+        "dataoffset",
+    ] {
         add(name, vec![word.clone()], word.clone());
     }
-    for name in ["calldatasize", "callvalue", "caller"] {
+    for name in ["calldatasize", "callvalue", "caller", "codesize"] {
         add(name, Vec::new(), word.clone());
     }
     for name in [
@@ -483,10 +490,12 @@ fn builtin_funs<'db>(span: Span<'db>) -> BTreeMap<String, FunSig<'db>> {
     }
     for name in [
         "stop", "invalid", "mstore", "mstore8", "sstore", "tstore", "return", "revert", "pop",
+        "codecopy",
     ] {
         let argc = match name {
             "stop" | "invalid" => 0,
             "pop" => 1,
+            "codecopy" => 3,
             _ => 2,
         };
         add(name, vec![word.clone(); argc], unit.clone());

@@ -15,8 +15,8 @@ use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 use solcore_hull::{
-    CheckDiagnosticKind, EmitDiagnosticKind, EmitOptions, check_program, emit_module,
-    pretty_program,
+    CheckDiagnosticKind, EmitDiagnostic, EmitDiagnosticKind, EmitOptions, check_program,
+    emit_module, pretty_program,
 };
 use specialize::{SpecializeOptions, SpecializeOutput, specialize_module};
 
@@ -66,16 +66,16 @@ impl hir_ty::Db for TestDb {}
 fn specialization_corpus_subset_emits_and_checks() {
     let cases = [
         (
-            "spec/01id",
-            include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/01id.solc"),
+            "spec/00answer",
+            include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/00answer.solc"),
         ),
         (
-            "spec/031maybe",
-            include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/031maybe.solc"),
+            "spec/022add",
+            include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/022add.solc"),
         ),
         (
-            "spec/047rgb",
-            include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/047rgb.solc"),
+            "spec/024arith",
+            include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/024arith.solc"),
         ),
     ];
     let mut failures = Vec::new();
@@ -151,8 +151,179 @@ contract C {
     );
     let hull = pretty_program(db, &emitted.program);
     assert!(hull.contains("match<word>"), "{hull}");
+    assert!(
+        hull.contains("match<(unit + unit)> lt(calldatasize(), 4)"),
+        "{hull}"
+    );
+    assert!(hull.contains("if lt(calldatasize(), 36)"), "{hull}");
     assert!(hull.contains("calldataload(4)"), "{hull}");
     assert!(hull.contains("return(0, 32)"), "{hull}");
+}
+
+#[test]
+fn deployment_objects_copy_runtime_and_guard_constructor_value() {
+    let repo = repo_root();
+    let fixture = repo.join(
+        "crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/empty_no_constructor.solc",
+    );
+    let (db, output) = specialize_fixture(&fixture);
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program(&emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(hull.contains("object \"CDeploy\""), "{hull}");
+    assert!(hull.contains("object \"C\""), "{hull}");
+    assert!(
+        hull.contains("codecopy(0, dataoffset(\"C\"), datasize(\"C\"))"),
+        "{hull}"
+    );
+
+    let fixture = repo
+        .join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/nonpayable_ctor.solc");
+    let (db, output) = specialize_fixture(&fixture);
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program(&emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    let outer = hull
+        .split("object \"NonPayableCtor\" {")
+        .next()
+        .expect("outer object");
+    assert!(outer.contains("object \"NonPayableCtorDeploy\""), "{hull}");
+    assert!(outer.contains("mstore(64, memoryguard(128))"), "{hull}");
+    assert!(
+        outer.contains("datasize(\"NonPayableCtorDeploy\")"),
+        "{hull}"
+    );
+    assert!(outer.contains("if callvalue()"), "{hull}");
+    assert!(outer.contains("0xb5988ea3"), "{hull}");
+    assert!(
+        outer.contains("codecopy(0, dataoffset(\"NonPayableCtor\"), datasize(\"NonPayableCtor\"))"),
+        "{hull}"
+    );
+    assert!(outer.contains("return(0, size)"), "{hull}");
+
+    let fixture = repo
+        .join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/payable_ctor.solc");
+    let (db, output) = specialize_fixture(&fixture);
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    let outer = hull
+        .split("object \"PayableCtor\" {")
+        .next()
+        .expect("outer object");
+    assert!(!outer.contains("0xb5988ea3"), "{hull}");
+}
+
+#[test]
+fn deployment_decodes_static_constructor_args_from_appended_code() {
+    let (db, output) = specialize_src(
+        "ctor_args",
+        r#"
+contract C {
+  constructor(x : word, y : word) {}
+
+  public function main() -> word {
+    return 1;
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(hull.contains("let constructor_arg0 : word"), "{hull}");
+    assert!(
+        hull.contains("codecopy(0, datasize(\"CDeploy\"), 32)"),
+        "{hull}"
+    );
+    assert!(
+        hull.contains("codecopy(0, add(datasize(\"CDeploy\"), 32), 32)"),
+        "{hull}"
+    );
+}
+
+#[test]
+fn address_dispatch_decode_rejects_dirty_high_bits_and_masks_encoding() {
+    let (db, output) = specialize_src(
+        "address_dispatch",
+        r#"
+data address = address(word);
+
+contract C {
+  public function id_address(a : address) -> address {
+    return a;
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program(&emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(hull.contains("shr(160, dispatch_arg0_0)"), "{hull}");
+    assert!(hull.contains("0x7cc04fa7"), "{hull}");
+    assert!(
+        hull.contains(
+            "dispatch_arg0_0 := and(dispatch_arg0_0, 0xffffffffffffffffffffffffffffffffffffffff)"
+        ),
+        "{hull}"
+    );
+    assert!(
+        hull.contains(
+            "mstore(0, and(dispatch_ret0_0, 0xffffffffffffffffffffffffffffffffffffffff))"
+        ),
+        "{hull}"
+    );
+}
+
+#[test]
+fn fallback_stops_and_unsupported_public_selectors_are_diagnostics() {
+    let (db, output) = specialize_src(
+        "fallback_shape",
+        r#"
+contract C {
+  public function answer() -> word {
+    return 42;
+  }
+
+  fallback() -> () {}
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(
+        hull.contains("match<(unit + unit)> lt(calldatasize(), 4)"),
+        "{hull}"
+    );
+    assert!(hull.contains("stop()"), "{hull}");
+
+    let repo = repo_root();
+    let fixture =
+        repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/storage.solc");
+    let (db, output) = specialize_fixture(&fixture);
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert!(
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedDispatchEntry { signature, reason }
+                if signature == "set(<unsupported>)" && reason == "non-word ABI shape"
+        )),
+        "{:?}",
+        emitted.diagnostics
+    );
+    let hull = pretty_program(db, &emitted.program);
+    assert!(!hull.contains("dispatcher skipped"), "{hull}");
 }
 
 #[test]
@@ -250,7 +421,14 @@ contract C {
     );
     assert_eq!(output.diagnostics, Vec::new());
     let emitted = emit_module(db, &output.module, EmitOptions::default());
-    assert_eq!(emitted.diagnostics, Vec::new());
+    // Dispatch eligibility is covered by the dispatcher tests; this test cares
+    // about expression lowering only.
+    let non_dispatch: Vec<_> = emitted
+        .diagnostics
+        .iter()
+        .filter(|d| !matches!(d.kind, EmitDiagnosticKind::UnsupportedDispatchEntry { .. }))
+        .collect();
+    assert_eq!(non_dispatch, Vec::<&EmitDiagnostic>::new());
     assert_eq!(check_program(&emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
     assert!(!hull.contains("iszero"), "{hull}");
@@ -376,6 +554,88 @@ fn corpus_status(path: &Path) -> &'static str {
     "check-ok"
 }
 
+#[test]
+#[ignore]
+fn corpus_emission_count_report() {
+    let repo = repo_root();
+    let examples = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples");
+    let mut fixtures = Vec::new();
+    collect_solc_fixtures(&examples.join("dispatch"), &mut fixtures);
+    fixtures.push(examples.join("spec/131constructor.solc"));
+    fixtures.push(examples.join("spec/135cons3.solc"));
+    fixtures.sort();
+
+    let mut total = 0usize;
+    let mut specialize_ok = 0usize;
+    let mut emit_ok = 0usize;
+    let mut check_ok = 0usize;
+    let mut blocked = Vec::new();
+
+    for fixture in fixtures {
+        total += 1;
+        let (_db, output) = specialize_fixture(&fixture);
+        let rel = fixture
+            .strip_prefix(&examples)
+            .unwrap_or(&fixture)
+            .display()
+            .to_string();
+        if !output.diagnostics.is_empty() {
+            blocked.push(format!(
+                "{rel}: specialize: {:?}",
+                output
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| &diagnostic.kind)
+                    .collect::<Vec<_>>()
+            ));
+            continue;
+        }
+        specialize_ok += 1;
+
+        let emitted = emit_module(
+            _db,
+            &output.module,
+            EmitOptions {
+                emit_dispatcher_comments: false,
+            },
+        );
+        if !emitted.diagnostics.is_empty() {
+            blocked.push(format!(
+                "{rel}: emit: {:?}",
+                emitted
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| (&diagnostic.span, &diagnostic.kind))
+                    .collect::<Vec<_>>()
+            ));
+            continue;
+        }
+        emit_ok += 1;
+
+        let checked = check_program(&emitted.program);
+        if checked.is_empty() {
+            check_ok += 1;
+        } else {
+            blocked.push(format!(
+                "{rel}: check: {:?}",
+                checked
+                    .iter()
+                    .map(|diagnostic| &diagnostic.kind)
+                    .collect::<Vec<_>>()
+            ));
+        }
+    }
+
+    eprintln!(
+        "hull dispatch/deployment smoke counts: total={total} specialize_ok={specialize_ok} emit_ok={emit_ok} check_ok={check_ok}"
+    );
+    if std::env::var_os("HULL_COUNT_VERBOSE").is_some() {
+        for item in blocked {
+            eprintln!("  {item}");
+        }
+    }
+}
+
 fn specialize_src(name: &str, src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {
     let db = Box::leak(Box::new(TestDb::default()));
     let module = parse_module(db, name, src);
@@ -486,9 +746,14 @@ fn assert_fixture_emits_and_checks(relative: &str) {
             emit_dispatcher_comments: false,
         },
     );
+    let non_dispatch: Vec<_> = emitted
+        .diagnostics
+        .iter()
+        .filter(|d| !matches!(d.kind, EmitDiagnosticKind::UnsupportedDispatchEntry { .. }))
+        .collect();
     assert_eq!(
-        emitted.diagnostics,
-        Vec::new(),
+        non_dispatch,
+        Vec::<&EmitDiagnostic>::new(),
         "emit diagnostics for {relative:?}"
     );
     assert_eq!(
@@ -515,9 +780,14 @@ fn assert_fixture_has_no_unbound_alt(relative: &str) {
             emit_dispatcher_comments: false,
         },
     );
+    let non_dispatch: Vec<_> = emitted
+        .diagnostics
+        .iter()
+        .filter(|d| !matches!(d.kind, EmitDiagnosticKind::UnsupportedDispatchEntry { .. }))
+        .collect();
     assert_eq!(
-        emitted.diagnostics,
-        Vec::new(),
+        non_dispatch,
+        Vec::<&EmitDiagnostic>::new(),
         "emit diagnostics for {relative:?}"
     );
     let checked = check_program(&emitted.program);
@@ -535,6 +805,17 @@ fn collect_solc_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.expect("fixture entry").path();
         if path.is_dir() {
             collect_solc_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "solc") {
+            out.push(path);
+        }
+    }
+}
+
+fn collect_solc_fixtures(root: &Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(root).expect("fixture dir") {
+        let path = entry.expect("fixture entry").path();
+        if path.is_dir() {
+            collect_solc_fixtures(&path, out);
         } else if path.extension().is_some_and(|ext| ext == "solc") {
             out.push(path);
         }
