@@ -1,0 +1,71 @@
+---
+source: crates/yul/tests/snapshots.rs
+expression: render_fixture(&fixture)
+---
+object "Add1Deploy" {
+  code {
+    mstore(64, memoryguard(128))
+    if lt(codesize(), datasize("Add1Deploy")) {
+      revert(0, 0)
+    }
+    if callvalue() {
+      mstore(0, 0xb5988ea3)
+      revert(28, 4)
+    }
+    let size := datasize("Add1")
+    codecopy(0, dataoffset("Add1"), datasize("Add1"))
+    return(0, size)
+  }
+  object "Add1" {
+    code {
+      function usr$Add1_Add1_main_d32c90845() -> _result {
+        let res
+        res := add(40, 2)
+        _result := 42
+        leave
+      }
+      /* selector 0xdffeadd0 -> Add1_Add1_main_d32c90845 */
+      mstore(0x40, memoryguard(128))
+      let _v0
+      _v0 := calldatasize()
+      let _v1
+      _v1 := lt(_v0, 4)
+      switch _v1
+        case true {
+          if callvalue() {
+            mstore(0, 0xb5988ea3)
+            revert(28, 4)
+          }
+          mstore(0, 0x4924aef0)
+          revert(28, 4)
+        }
+        case false {
+          let Add1_dispatch_selector
+          Add1_dispatch_selector := shr(224, calldataload(0))
+          switch Add1_dispatch_selector
+            case 0xdffeadd0 {
+              if callvalue() {
+                mstore(0, 0xb5988ea3)
+                revert(28, 4)
+              }
+              let dispatch_ret0
+              let _v2
+              _v2 := usr$Add1_Add1_main_d32c90845()
+              dispatch_ret0 := _v2
+              let dispatch_ret0_0
+              dispatch_ret0_0 := dispatch_ret0
+              mstore(0, dispatch_ret0_0)
+              return(0, 32)
+            }
+            default {
+              if callvalue() {
+                mstore(0, 0xb5988ea3)
+                revert(28, 4)
+              }
+              mstore(0, 0x4924aef0)
+              revert(28, 4)
+            }
+        }
+    }
+  }
+}

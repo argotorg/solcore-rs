@@ -841,8 +841,11 @@ dependencies = [
  "salsa",
  "solcore-hir",
  "solcore-hir-ty",
+ "solcore-hull",
  "solcore-nameres",
  "solcore-parser",
+ "solcore-specialize",
+ "solcore-yul",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -956,6 +959,22 @@ dependencies = [
  "solcore-parser",
  "solcore-specialize",
  "solcore-test-utils",
+]
+
+[[package]]
+name = "solcore-yul"
+version = "0.1.0"
+dependencies = [
+ "insta",
+ "rustc-hash",
+ "salsa",
+ "solcore-hir",
+ "solcore-hir-ty",
+ "solcore-hull",
+ "solcore-nameres",
+ "solcore-parser",
+ "solcore-specialize",
+ "url",
 ]
 
 [[package]]

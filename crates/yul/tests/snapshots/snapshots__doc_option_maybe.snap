@@ -1,0 +1,86 @@
+---
+source: crates/yul/tests/snapshots.rs
+expression: "render_source(\"doc_option_maybe\",\nr#\"\ncontract OptionDoc {\n  data Option(a) = None | Some(a);\n\n  function maybe(n : word, o : Option(word)) -> word {\n    match o {\n      | Option.None => return n;\n      | Option.Some(x) => return x;\n    }\n  }\n\n  public function main() -> word {\n    return maybe(0, Option.Some(42));\n  }\n}\n\"#,)"
+---
+object "OptionDocDeploy" {
+  code {
+    mstore(64, memoryguard(128))
+    if lt(codesize(), datasize("OptionDocDeploy")) {
+      revert(0, 0)
+    }
+    if callvalue() {
+      mstore(0, 0xb5988ea3)
+      revert(28, 4)
+    }
+    let size := datasize("OptionDoc")
+    codecopy(0, dataoffset("OptionDoc"), datasize("OptionDoc"))
+    return(0, size)
+  }
+  object "OptionDoc" {
+    code {
+      function usr$doc_option_maybe_OptionDoc_main_dd6304f4c() -> _result {
+        let _v0
+        _v0 := usr$doc_option_maybe_OptionDoc_maybe_d7fca80fc(0, true, 42)
+        _result := _v0
+        leave
+      }
+      function usr$doc_option_maybe_OptionDoc_maybe_d7fca80fc(n, _v1, _v2) -> _result {
+        switch _v1
+          case false {
+            /* None */
+            _result := n
+            leave
+          }
+          case true {
+            {
+              /* Some */
+              _result := _v2
+              leave
+            }
+          }
+      }
+      /* selector 0xdffeadd0 -> doc_option_maybe_OptionDoc_main_dd6304f4c */
+      mstore(0x40, memoryguard(128))
+      let _v3
+      _v3 := calldatasize()
+      let _v4
+      _v4 := lt(_v3, 4)
+      switch _v4
+        case true {
+          if callvalue() {
+            mstore(0, 0xb5988ea3)
+            revert(28, 4)
+          }
+          mstore(0, 0x4924aef0)
+          revert(28, 4)
+        }
+        case false {
+          let OptionDoc_dispatch_selector
+          OptionDoc_dispatch_selector := shr(224, calldataload(0))
+          switch OptionDoc_dispatch_selector
+            case 0xdffeadd0 {
+              if callvalue() {
+                mstore(0, 0xb5988ea3)
+                revert(28, 4)
+              }
+              let dispatch_ret0
+              let _v5
+              _v5 := usr$doc_option_maybe_OptionDoc_main_dd6304f4c()
+              dispatch_ret0 := _v5
+              let dispatch_ret0_0
+              dispatch_ret0_0 := dispatch_ret0
+              mstore(0, dispatch_ret0_0)
+              return(0, 32)
+            }
+            default {
+              if callvalue() {
+                mstore(0, 0xb5988ea3)
+                revert(28, 4)
+              }
+              mstore(0, 0x4924aef0)
+              revert(28, 4)
+            }
+        }
+    }
+  }
+}

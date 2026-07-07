@@ -1,0 +1,94 @@
+---
+source: crates/yul/tests/snapshots.rs
+expression: "render_source(\"dispatch_basic_shape\",\nr#\"\ncontract DispatchBasicShape {\n  public function id(x : word) -> word {\n    return x;\n  }\n\n  public function answer() -> word {\n    return 42;\n  }\n}\n\"#,)"
+---
+object "DispatchBasicShapeDeploy" {
+  code {
+    mstore(64, memoryguard(128))
+    if lt(codesize(), datasize("DispatchBasicShapeDeploy")) {
+      revert(0, 0)
+    }
+    if callvalue() {
+      mstore(0, 0xb5988ea3)
+      revert(28, 4)
+    }
+    let size := datasize("DispatchBasicShape")
+    codecopy(0, dataoffset("DispatchBasicShape"), datasize("DispatchBasicShape"))
+    return(0, size)
+  }
+  object "DispatchBasicShape" {
+    code {
+      function usr$dispatch_basic_shape_DispatchBasicShape_answer_d321b495b() -> _result {
+        _result := 42
+        leave
+      }
+      function usr$dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94(x) -> _result {
+        _result := x
+        leave
+      }
+      /* selector 0x7d3c40c8 -> dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94 */
+      /* selector 0x85bb7d69 -> dispatch_basic_shape_DispatchBasicShape_answer_d321b495b */
+      mstore(0x40, memoryguard(128))
+      let _v0
+      _v0 := calldatasize()
+      let _v1
+      _v1 := lt(_v0, 4)
+      switch _v1
+        case true {
+          if callvalue() {
+            mstore(0, 0xb5988ea3)
+            revert(28, 4)
+          }
+          mstore(0, 0x4924aef0)
+          revert(28, 4)
+        }
+        case false {
+          let DispatchBasicShape_dispatch_selector
+          DispatchBasicShape_dispatch_selector := shr(224, calldataload(0))
+          switch DispatchBasicShape_dispatch_selector
+            case 0x7d3c40c8 {
+              if callvalue() {
+                mstore(0, 0xb5988ea3)
+                revert(28, 4)
+              }
+              if lt(calldatasize(), 36) {
+                mstore(0, 0x08638556)
+                revert(28, 4)
+              }
+              let dispatch_arg0_0
+              dispatch_arg0_0 := calldataload(4)
+              let dispatch_ret0
+              let _v2
+              _v2 := usr$dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94(dispatch_arg0_0)
+              dispatch_ret0 := _v2
+              let dispatch_ret0_0
+              dispatch_ret0_0 := dispatch_ret0
+              mstore(0, dispatch_ret0_0)
+              return(0, 32)
+            }
+            case 0x85bb7d69 {
+              if callvalue() {
+                mstore(0, 0xb5988ea3)
+                revert(28, 4)
+              }
+              let dispatch_ret1
+              let _v3
+              _v3 := usr$dispatch_basic_shape_DispatchBasicShape_answer_d321b495b()
+              dispatch_ret1 := _v3
+              let dispatch_ret1_0
+              dispatch_ret1_0 := dispatch_ret1
+              mstore(0, dispatch_ret1_0)
+              return(0, 32)
+            }
+            default {
+              if callvalue() {
+                mstore(0, 0xb5988ea3)
+                revert(28, 4)
+              }
+              mstore(0, 0x4924aef0)
+              revert(28, 4)
+            }
+        }
+    }
+  }
+}

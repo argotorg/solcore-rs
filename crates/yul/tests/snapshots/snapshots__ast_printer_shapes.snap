@@ -1,0 +1,20 @@
+---
+source: crates/yul/tests/snapshots.rs
+expression: "solcore_yul::pretty_program(&program)"
+---
+object "PrinterShapes" {
+  code {
+    let i := 0
+    for {
+    } lt(i, 3) {
+      i := add(i, 1)
+    } {
+      if eq(i, 2) {
+        mstore(0, 0x2a)
+      }
+    }
+    mstore(32, "done")
+  }
+  data "blob" hex"60016002"
+  data "label" "hello"
+}

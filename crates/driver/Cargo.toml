@@ -9,7 +9,10 @@ rustc-hash = { workspace = true }
 url = { workspace = true }
 hir = { workspace = true }
 hir-ty = { workspace = true }
+hull = { path = "../hull", package = "solcore-hull" }
 parser = { workspace = true }
 nameres = { workspace = true }
+specialize = { path = "../specialize", package = "solcore-specialize" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+yul = { path = "../yul", package = "solcore-yul" }

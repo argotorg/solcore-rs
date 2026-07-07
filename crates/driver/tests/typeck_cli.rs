@@ -66,6 +66,60 @@ forall a b . instance Box(a):MyClass(b) {}
     );
 }
 
+#[test]
+fn cli_emits_yul_to_stdout_and_hull_to_file() {
+    let dir = temp_dir("emit-backends");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    let hull_output = dir.join("main.hull");
+    fs::write(
+        &input,
+        r#"
+contract C {
+  public function main() -> word {
+    return 42;
+  }
+}
+"#,
+    )
+    .expect("write source");
+
+    let yul = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--emit-yul")
+        .arg(&input)
+        .output()
+        .expect("run driver yul");
+    assert!(
+        yul.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&yul.stdout),
+        String::from_utf8_lossy(&yul.stderr)
+    );
+    let yul_stdout = String::from_utf8_lossy(&yul.stdout);
+    assert!(yul_stdout.contains("object \"CDeploy\""), "{yul_stdout}");
+    assert!(
+        yul_stdout.contains("switch C_dispatch_selector"),
+        "{yul_stdout}"
+    );
+
+    let hull = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg(format!("--emit-hull={}", hull_output.display()))
+        .arg(&input)
+        .output()
+        .expect("run driver hull");
+    assert!(
+        hull.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&hull.stdout),
+        String::from_utf8_lossy(&hull.stderr)
+    );
+    let hull_text = fs::read_to_string(&hull_output).expect("read hull output");
+    assert!(hull_text.contains("object \"CDeploy\""), "{hull_text}");
+    assert!(hull_text.contains("match<word>"), "{hull_text}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 fn driver_stderr(label: &str, source: &str) -> String {
     let dir = temp_dir(label);
     fs::create_dir_all(&dir).expect("create temp dir");

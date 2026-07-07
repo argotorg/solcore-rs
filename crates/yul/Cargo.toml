@@ -1,0 +1,18 @@
+[package]
+name = "solcore-yul"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+hir = { workspace = true }
+hull = { path = "../hull", package = "solcore-hull" }
+
+[dev-dependencies]
+hir-ty = { workspace = true }
+insta = "1.43.2"
+nameres = { workspace = true }
+parser = { workspace = true }
+rustc-hash = { workspace = true }
+salsa = { workspace = true }
+specialize = { path = "../specialize", package = "solcore-specialize" }
+url = { workspace = true }

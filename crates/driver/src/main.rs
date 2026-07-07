@@ -109,7 +109,9 @@ fn main() {
         Ok(args) => args,
         Err(message) => {
             eprintln!("{message}");
-            eprintln!("usage: {program} [--trace] [--external-lib NAME=PATH] <input.solc>");
+            eprintln!(
+                "usage: {program} [--trace] [--external-lib NAME=PATH] [--emit-hull[=FILE]] [--emit-yul[=FILE]] <input.solc>"
+            );
             std::process::exit(2);
         }
     };
@@ -137,10 +139,10 @@ fn main() {
     let std_root = repo_root().join("std");
     let external_roots = args
         .external_roots
-        .into_iter()
+        .iter()
         .map(|(name, path)| {
-            absolutize(&path)
-                .map(|path| (name, path))
+            absolutize(path)
+                .map(|path| (name.clone(), path))
                 .map_err(|err| format!("failed to resolve `{}`: {err}", path.display()))
         })
         .collect::<Result<BTreeMap<_, _>, _>>();
@@ -195,6 +197,10 @@ fn main() {
     );
     sort_dedup_diagnostics(&db, &mut diagnostics);
     if diagnostics.is_empty() {
+        if let Err(message) = maybe_emit_backend_outputs(&db, entry_file, &args) {
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
         return;
     }
 
@@ -238,6 +244,16 @@ struct Args {
     external_roots: Vec<(String, PathBuf)>,
     /// Enables compact tracing output when `RUST_LOG` is not set.
     trace: bool,
+    /// Optional Hull output target.
+    emit_hull: Option<EmitTarget>,
+    /// Optional Yul output target.
+    emit_yul: Option<EmitTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum EmitTarget {
+    Stdout,
+    File(PathBuf),
 }
 
 /// Parses command-line arguments.
@@ -249,17 +265,39 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
     let mut input = None;
     let mut external_roots = Vec::new();
     let mut trace = false;
+    let mut emit_hull = None;
+    let mut emit_yul = None;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--trace" => {
                 trace = true;
             }
+            "--emit-hull" => {
+                emit_hull = Some(EmitTarget::Stdout);
+            }
+            "--emit-yul" => {
+                emit_yul = Some(EmitTarget::Stdout);
+            }
             "--external-lib" | "--lib" => {
                 let Some(value) = iter.next() else {
                     return Err(format!("{arg} requires NAME=PATH"));
                 };
                 external_roots.push(parse_external_root(&value)?);
+            }
+            _ if arg.starts_with("--emit-hull=") => {
+                let value = &arg["--emit-hull=".len()..];
+                if value.is_empty() {
+                    return Err("--emit-hull= requires FILE".to_owned());
+                }
+                emit_hull = Some(EmitTarget::File(PathBuf::from(value)));
+            }
+            _ if arg.starts_with("--emit-yul=") => {
+                let value = &arg["--emit-yul=".len()..];
+                if value.is_empty() {
+                    return Err("--emit-yul= requires FILE".to_owned());
+                }
+                emit_yul = Some(EmitTarget::File(PathBuf::from(value)));
             }
             _ if arg.starts_with("--external-lib=") => {
                 external_roots.push(parse_external_root(&arg["--external-lib=".len()..])?);
@@ -285,7 +323,85 @@ fn parse_args(args: Vec<String>) -> Result<Args, String> {
         input,
         external_roots,
         trace,
+        emit_hull,
+        emit_yul,
     })
+}
+
+fn maybe_emit_backend_outputs(
+    db: &DriverDb,
+    entry_file: SourceFile,
+    args: &Args,
+) -> Result<(), String> {
+    if args.emit_hull.is_none() && args.emit_yul.is_none() {
+        return Ok(());
+    }
+    if matches!(args.emit_hull, Some(EmitTarget::Stdout))
+        && matches!(args.emit_yul, Some(EmitTarget::Stdout))
+    {
+        return Err("cannot write both --emit-hull and --emit-yul to stdout".to_owned());
+    }
+
+    let module = parser::parse_file_to_hir(db, entry_file).module(db);
+    let specialized =
+        specialize::specialize_module(db, module, specialize::SpecializeOptions::default());
+    if !specialized.diagnostics.is_empty() {
+        return Err(format!(
+            "specialization failed:\n{}",
+            specialized
+                .diagnostics
+                .iter()
+                .map(|diagnostic| format!("  {:?}", diagnostic.kind))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
+    let emitted = hull::emit_module(db, &specialized.module, hull::EmitOptions::default());
+    if !emitted.diagnostics.is_empty() {
+        return Err(format!(
+            "Hull emission failed:\n{}",
+            emitted
+                .diagnostics
+                .iter()
+                .map(|diagnostic| format!("  {:?}", diagnostic.kind))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
+    let checked = hull::check_program_with_db(db, &emitted.program);
+    if !checked.is_empty() {
+        return Err(format!(
+            "Hull check failed:\n{}",
+            checked
+                .iter()
+                .map(|diagnostic| format!("  {:?}", diagnostic.kind))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ));
+    }
+
+    if let Some(target) = &args.emit_hull {
+        write_emit_output(target, &hull::pretty_program(db, &emitted.program))?;
+    }
+    if let Some(target) = &args.emit_yul {
+        let yul = yul::render_hull_program(db, &emitted.program)
+            .map_err(|err| format!("Yul translation failed:\n  {err}"))?;
+        write_emit_output(target, &yul)?;
+    }
+    Ok(())
+}
+
+fn write_emit_output(target: &EmitTarget, content: &str) -> Result<(), String> {
+    match target {
+        EmitTarget::Stdout => {
+            print!("{content}");
+            Ok(())
+        }
+        EmitTarget::File(path) => fs::write(path, content)
+            .map_err(|err| format!("failed to write `{}`: {err}", path.display())),
+    }
 }
 
 fn init_tracing(trace: bool) {
