@@ -1150,6 +1150,33 @@ fn assert_fixture_emits_and_checks(relative: &str) {
     );
 }
 
+#[test]
+fn overloaded_binary_operators_emit_instance_results() {
+    let custom_uint = pretty_fixture_hull("cases/operator-custom-uint-add.solc");
+    assert!(
+        custom_uint.contains("42"),
+        "custom uint Add instance was not reflected in Hull:\n{custom_uint}"
+    );
+
+    let meters = pretty_fixture_hull("cases/operator-meters-add.solc");
+    assert!(
+        meters.contains("3"),
+        "meters Add instance did not emit the expected result:\n{meters}"
+    );
+
+    let meters_ord = pretty_fixture_hull("cases/operator-meters-ord.solc");
+    assert!(
+        meters_ord.contains("42"),
+        "meters Ord instance did not emit the expected result:\n{meters_ord}"
+    );
+
+    let word = pretty_fixture_hull("cases/operator-word-add.solc");
+    assert!(
+        word.contains("3"),
+        "word Add instance changed observable Hull result:\n{word}"
+    );
+}
+
 fn pretty_fixture_hull(relative: &str) -> String {
     let fixture = repo_root()
         .join("crates/parser/tests/fixtures/corpus/ok/test/examples")

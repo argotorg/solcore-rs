@@ -1,0 +1,24 @@
+import std.{*};
+
+data uint = u(word);
+
+instance uint:Add {
+  function add(x:uint, y:uint) -> uint {
+    return uint.u(42);
+  }
+}
+
+function unwrap(x:uint) -> word {
+  match x {
+  | uint.u(w) => return w;
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let a:uint = uint.u(1);
+    let b:uint = uint.u(2);
+    let c:uint = a + b;
+    return unwrap(c);
+  }
+}

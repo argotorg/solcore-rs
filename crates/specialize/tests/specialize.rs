@@ -672,6 +672,26 @@ fn folds_direct_function_compose_closure_fixture() {
 }
 
 #[test]
+fn overloaded_binary_operators_specialize_through_instances() {
+    let repo = repo_root();
+    let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases");
+    for (fixture, expected) in [
+        ("operator-custom-uint-add.solc", "42"),
+        ("operator-meters-add.solc", "3"),
+        ("operator-meters-ord.solc", "42"),
+        ("operator-word-add.solc", "3"),
+    ] {
+        let output = specialize_fixture(&corpus.join(fixture));
+        assert_eq!(output.diagnostics, Vec::new(), "{fixture}");
+        assert_eq!(
+            main_return_number(&output),
+            Some(expected.to_owned()),
+            "{fixture}"
+        );
+    }
+}
+
+#[test]
 fn comptime_obligations_are_carried_into_mono_side_table() {
     let (_db, output) = specialize_src(
         r#"

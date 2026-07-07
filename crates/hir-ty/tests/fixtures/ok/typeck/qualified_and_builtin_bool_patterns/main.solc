@@ -15,5 +15,5 @@ function flip(b: bool) -> word {
 }
 
 function main() -> word {
-  return pick(flag.on) + flip(true);
+  return primAddWord(pick(flag.on), flip(true));
 }

@@ -1,0 +1,26 @@
+import std.{*};
+
+data meters = meters(word);
+
+instance meters:Add {
+  function add(x:meters, y:meters) -> meters {
+    match x, y {
+    | meters(xw), meters(yw) => return meters(addWord(xw, yw));
+    }
+  }
+}
+
+function unwrap(x:meters) -> word {
+  match x {
+  | meters(w) => return w;
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let a:meters = meters(1);
+    let b:meters = meters(2);
+    let c:meters = a + b;
+    return unwrap(c);
+  }
+}

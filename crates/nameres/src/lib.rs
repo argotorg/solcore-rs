@@ -1465,26 +1465,38 @@ pub fn module_instances<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<Orig
         .collect()
 }
 
-/// Collects local and directly imported instance origins for `module`.
+/// Collects local and import-chain instance origins for `module`.
 #[salsa::tracked]
 pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> InstanceImports<'db> {
-    let Some(file) = db.module_file(module) else {
-        return InstanceImports {
-            local: Vec::new(),
-            imported: Vec::new(),
-        };
-    };
-    let refs = module_imports(db, file);
     let local = module_instances(db, module);
     let mut imported = Vec::new();
+    let mut seen = FxHashSet::default();
+    seen.insert(module);
+    collect_imported_instances(db, module, &mut seen, &mut imported);
+    imported = unique_origins(imported);
+    InstanceImports { local, imported }
+}
+
+fn collect_imported_instances<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    seen: &mut FxHashSet<ModuleId<'db>>,
+    out: &mut Vec<Origin<'db>>,
+) {
+    let Some(file) = db.module_file(module) else {
+        return;
+    };
+    let refs = module_imports(db, file);
     for path in refs.import_refs {
         let Ok(target) = resolve_module_path(db, module, path) else {
             continue;
         };
-        imported.extend(module_instances(db, target));
+        if !seen.insert(target) {
+            continue;
+        }
+        out.extend(module_instances(db, target));
+        collect_imported_instances(db, target, seen, out);
     }
-    imported = unique_origins(imported);
-    InstanceImports { local, imported }
 }
 
 struct ModuleEnvBuilder<'db> {

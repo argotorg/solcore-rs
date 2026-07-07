@@ -103,6 +103,16 @@ error[SC0228]: module used as callee: `U`
    |
 ---
 
+error[SC0207]: unsatisfied class constraint: operator Add.add
+  --> /main/main.solc:49:10
+   |
+48 | function type_in_binop() -> word {
+49 |   return Opt + 1;
+   |          ^^^^^^^ constraint originates here
+50 | }
+   |
+---
+
 error[SC0228]: type name used as value: `Opt`
   --> /main/main.solc:49:10
    |

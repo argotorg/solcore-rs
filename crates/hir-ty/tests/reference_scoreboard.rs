@@ -280,44 +280,8 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "SC0106"
     ),
     known!(
-        "examples/comptime/int-untyped-let.solc",
-        "needs-integer-literal-inference",
-        typeck,
-        "SC0201"
-    ),
-    known!(
-        "examples/comptime/integer-lit-class.solc",
-        "needs-integer-literal-inference",
-        typeck,
-        "SC0201"
-    ),
-    known!(
         "examples/comptime/integer-lit-pat.solc",
         "needs-comptime-wrapper-numeric-pattern-parity",
-        typeck,
-        "SC0201"
-    ),
-    known!(
-        "examples/comptime/match_labels.solc",
-        "needs-string-comptime-std-parity",
-        typeck,
-        "SC0201"
-    ),
-    known!(
-        "examples/comptime/string-lit-keccak.solc",
-        "needs-string-comptime-std-parity",
-        typeck,
-        "SC0201"
-    ),
-    known!(
-        "examples/comptime/string-lit-len.solc",
-        "needs-string-comptime-std-parity",
-        typeck,
-        "SC0201"
-    ),
-    known!(
-        "examples/comptime/string-lit-ops.solc",
-        "needs-string-comptime-std-parity",
         typeck,
         "SC0201"
     ),
@@ -332,22 +296,7 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         typeck
     ),
     known!(
-        "examples/dispatch/Revert.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
         "examples/dispatch/basic.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/fallback.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/fib.solc",
         "needs-dispatch-abi-surface",
         typeck
     ),
@@ -358,11 +307,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!(
         "examples/dispatch/miniERC20.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/payable.solc",
         "needs-dispatch-abi-surface",
         typeck
     ),
@@ -462,7 +406,6 @@ macro_rules! std_known {
 }
 
 const STD_SOLC_KNOWN_DIVERGENCES: &[StdSolcKnownDivergence] = &[
-    std_known!(Typeck, "SC0201", "needs-std-type-alias-normalization"),
     std_known!(Typeck, "SC0203", "needs-std-comptime-yul-arity"),
     std_known!(Typeck, "SC0211", "needs-std-yul-builtins"),
 ];

@@ -1,0 +1,31 @@
+import std.{*};
+
+data meters = meters(word);
+
+instance meters:Eq {
+  function eq(x:meters, y:meters) -> bool {
+    match x, y {
+    | meters(xw), meters(yw) => return eqWord(xw, yw);
+    }
+  }
+}
+
+instance meters:Ord {
+  function gt(x:meters, y:meters) -> bool {
+    match x, y {
+    | meters(xw), meters(yw) => return gtWord(xw, yw);
+    }
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let a:meters = meters(1);
+    let b:meters = meters(2);
+    if (a < b) {
+      return 42;
+    } else {
+      return 0;
+    }
+  }
+}

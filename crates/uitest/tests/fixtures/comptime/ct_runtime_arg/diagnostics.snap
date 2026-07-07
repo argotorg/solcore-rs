@@ -45,6 +45,16 @@ error[SPECIALIZE]: integer type survived comptime erasure: variable 'x': comptim
    |
 ---
 
+error[SPECIALIZE]: missing evidence: add
+  --> /main/main.solc:17:12
+   |
+16 |   function double(comptime x : word) -> comptime word {
+17 |     return x + x;
+   |            ^^^^^ specialization failed here
+18 |   }
+   |
+---
+
 error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
   --> /main/main.solc:17:16
    |

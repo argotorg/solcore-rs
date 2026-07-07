@@ -1,3 +1,27 @@
+class t:Add {
+  function add(l:t, r:t) -> t;
+}
+
+class t:Ord {
+  function gt(l:t, r:t) -> bool;
+}
+
+instance word:Add {
+  function add(l:word, r:word) -> word {
+    return primAddWord(l, r);
+  }
+}
+
+instance word:Ord {
+  function gt(l:word, r:word) -> bool {
+    return true;
+  }
+}
+
+function lt(l:word, r:word) -> bool {
+  return Ord.gt(r, l);
+}
+
 function main() -> word {
   let f = lam(x: word) { return x; };
   let acc : word = 0;

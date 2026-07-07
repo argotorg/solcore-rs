@@ -3,6 +3,78 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_param_runtime/main.solc
 ---
+error[SPECIALIZE]: integer type survived comptime erasure: return type in 'main_ComptimeParamRuntime_double_df36ca606': comptime word
+  --> /main/main.solc:10:3
+   |
+ 9 |   contract ComptimeParamRuntime {
+10 | /   function double(comptime x : word) -> comptime word {
+11 | |     return x + x;
+12 | |   }
+   | |___^ specialization failed here
+13 |     function process(value : word) -> word {
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: parameter 'x': comptime word
+  --> /main/main.solc:10:19
+   |
+ 9 | contract ComptimeParamRuntime {
+10 |   function double(comptime x : word) -> comptime word {
+   |                   ^^^^^^^^^^^^^^^^^ specialization failed here
+11 |     return x + x;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:11:12
+   |
+10 |   function double(comptime x : word) -> comptime word {
+11 |     return x + x;
+   |            ^ specialization failed here
+12 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'x': comptime word
+  --> /main/main.solc:11:12
+   |
+10 |   function double(comptime x : word) -> comptime word {
+11 |     return x + x;
+   |            ^ specialization failed here
+12 |   }
+   |
+---
+
+error[SPECIALIZE]: missing evidence: add
+  --> /main/main.solc:11:12
+   |
+10 |   function double(comptime x : word) -> comptime word {
+11 |     return x + x;
+   |            ^^^^^ specialization failed here
+12 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:11:16
+   |
+10 |   function double(comptime x : word) -> comptime word {
+11 |     return x + x;
+   |                ^ specialization failed here
+12 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'x': comptime word
+  --> /main/main.solc:11:16
+   |
+10 |   function double(comptime x : word) -> comptime word {
+11 |     return x + x;
+   |                ^ specialization failed here
+12 |   }
+   |
+---
+
 error[SPECIALIZE]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'main_ComptimeParamRuntime_double_df36ca606'
   --> /main/main.solc:14:12
    |

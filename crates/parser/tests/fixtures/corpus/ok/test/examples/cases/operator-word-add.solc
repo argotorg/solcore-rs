@@ -1,0 +1,7 @@
+import std.{*};
+
+contract C {
+  public function main() -> word {
+    return 1 + 2;
+  }
+}

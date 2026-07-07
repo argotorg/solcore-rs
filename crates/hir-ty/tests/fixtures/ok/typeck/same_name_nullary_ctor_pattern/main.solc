@@ -15,5 +15,5 @@ function pickM(x: m) -> word {
 }
 
 function main() -> word {
-  return pickThing(thing) + pickM(m.k);
+  return primAddWord(pickThing(thing), pickM(m.k));
 }

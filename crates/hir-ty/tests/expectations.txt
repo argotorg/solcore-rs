@@ -199,6 +199,10 @@ examples/cases/nid.solc expected-typecheck-PASS Cases.hs
 examples/cases/noclosure.solc expected-typecheck-PASS Cases.hs
 examples/cases/noconstr.solc expected-typecheck-FAIL Cases.hs
 examples/cases/notif.solc expected-typecheck-PASS Cases.hs
+examples/cases/operator-custom-uint-add.solc expected-typecheck-PASS inferred
+examples/cases/operator-meters-add.solc expected-typecheck-PASS inferred
+examples/cases/operator-meters-ord.solc expected-typecheck-PASS inferred
+examples/cases/operator-word-add.solc expected-typecheck-PASS inferred
 examples/cases/option2.solc expected-typecheck-PASS Cases.hs
 examples/cases/overlap-synonym-detected.solc expected-typecheck-FAIL Cases.hs
 examples/cases/overlap-synonym-missed-order.solc expected-typecheck-FAIL Cases.hs
@@ -362,7 +366,7 @@ examples/dispatch/ecrecover.solc expected-typecheck-PASS inferred
 examples/dispatch/empty.solc expected-typecheck-PASS Cases.hs
 examples/dispatch/empty_no_constructor.solc expected-typecheck-PASS Cases.hs
 examples/dispatch/fallback.solc expected-typecheck-PASS inferred
-examples/dispatch/fib.solc expected-typecheck-PASS inferred
+examples/dispatch/fib.solc expected-typecheck-FAIL inferred
 examples/dispatch/forloops.solc expected-typecheck-PASS inferred
 examples/dispatch/generic_product.solc expected-typecheck-PASS Cases.hs
 examples/dispatch/generic_sum.solc expected-typecheck-PASS Cases.hs

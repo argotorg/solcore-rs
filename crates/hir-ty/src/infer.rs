@@ -23,7 +23,7 @@ use hir::{
     nameres as hir_nameres,
     span::{Span, Spanned, SpannedElem},
 };
-use nameres::{LibraryId, ModuleId};
+use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path};
 use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::field;
@@ -1220,6 +1220,71 @@ fn infer_ty_mentions_alias<'db>(ty: &InferTy<'db>) -> bool {
     }
 }
 
+fn class_method_resolution<'db>(
+    resolution: hir_nameres::Resolution<'db>,
+    expected_method: &str,
+) -> Option<(DefId<'db>, String)> {
+    match resolution {
+        hir_nameres::Resolution::ClassMethod { class, name } if name == expected_method => {
+            Some((class, name))
+        }
+        _ => None,
+    }
+}
+
+fn unique_visible_class_method<'db>(
+    terms: &std::collections::BTreeMap<String, hir_nameres::Resolution<'db>>,
+    qualified: &str,
+    expected_method: &str,
+) -> Option<(DefId<'db>, String)> {
+    let suffix = format!(".{qualified}");
+    let mut found = None;
+    for (name, resolution) in terms {
+        if name != qualified && !name.ends_with(&suffix) {
+            continue;
+        }
+        let Some(candidate) = class_method_resolution(resolution.clone(), expected_method) else {
+            continue;
+        };
+        if found
+            .as_ref()
+            .is_some_and(|existing| existing != &candidate)
+        {
+            return None;
+        }
+        found = Some(candidate);
+    }
+    found
+}
+
+fn module_id_for_hir_module<'db>(db: &'db dyn Db, module: Module<'db>) -> Option<ModuleId<'db>> {
+    let file = module.def_id_value(db).file(db);
+    let path = module
+        .def_id_value(db)
+        .file(db)
+        .url(db)
+        .to_file_path()
+        .ok()?;
+    let tree = db.module_tree();
+    let mut candidates = Vec::new();
+    if let Some(key) = module_key_for_path(LibraryId::Main, tree.main_root(db), &path) {
+        candidates.push(module_id_from_key(db, &key));
+    }
+    if let Some(key) = module_key_for_path(LibraryId::Std, tree.std_root(db), &path) {
+        candidates.push(module_id_from_key(db, &key));
+    }
+    for (name, root) in tree.external_roots(db) {
+        if let Some(key) = module_key_for_path(LibraryId::External(name.clone()), root, &path) {
+            candidates.push(module_id_from_key(db, &key));
+        }
+    }
+    candidates
+        .iter()
+        .copied()
+        .find(|candidate| db.module_file(*candidate) == Some(file))
+        .or_else(|| candidates.into_iter().next())
+}
+
 fn ty_mentions_alias<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
     match ty.kind(db) {
         TyKind::Named { ctor, args } => {
@@ -1959,11 +2024,13 @@ impl<'db> InferCtx<'db> {
                 if self.is_storage_index_expr(body, *lhs) =>
             {
                 let lhs_ty = self.infer_expr(body, *lhs);
-                // The reference elaborates `m[k] += v` to `m[k] = m[k] + v`, so
-                // the element type carries the same numeric obligation as `+`/`-`:
-                // it must be a word-shaped numeric newtype (uint/uint256) or word
-                // itself. Anything else (bool, address, ...) is a type error.
-                if !self.is_word_numeric_adt(lhs_ty.clone()) {
+                // The reference elaborates `m[k] += v` to `m[k] = m[k] + v`
+                // through Add.add, but our indexed compound assignment still
+                // lowers to raw word add/sub. Gate the element type to word or
+                // the std word-backed numeric newtypes, where the instance
+                // semantics coincide with the raw lowering; anything else
+                // (bool, address, custom instances) is a type error here.
+                if !self.is_storage_index_word_numeric(lhs_ty.clone()) {
                     let word = self.engine.from_ty(Ty::word(self.db));
                     self.unify_expr(body, *lhs, lhs_ty.clone(), word);
                 }
@@ -2145,7 +2212,7 @@ impl<'db> InferCtx<'db> {
     ) -> InferTy<'db> {
         let expr = body.exprs(self.db).get(expr_id);
         let mut ty = match &expr.kind {
-            ExprKind::Lit(lit) => self.infer_lit(body, expr_id, lit),
+            ExprKind::Lit(lit) => self.infer_lit(body, expr_id, lit, expected.clone()),
             ExprKind::Ident(name) => {
                 let resolution = self
                     .expr_resolutions
@@ -2183,7 +2250,9 @@ impl<'db> InferCtx<'db> {
                 *lambda_body,
                 expected.clone(),
             ),
-            ExprKind::BinOp { lhs, op, rhs } => self.infer_bin_op(body, *lhs, *op.atom(), *rhs),
+            ExprKind::BinOp { lhs, op, rhs } => {
+                self.infer_bin_op(body, expr_id, *lhs, *op.atom(), *rhs, expected.clone())
+            }
             ExprKind::Index { base, index } => {
                 if let Some(ret) = self.infer_storage_index_read(body, *base, *index) {
                     ret
@@ -2694,6 +2763,7 @@ impl<'db> InferCtx<'db> {
         body: FuncBody<'db>,
         expr: Id<Expr<'db>>,
         lit: &LitKind,
+        expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
         match lit {
             LitKind::Number(_) | LitKind::Hex(_) => {
@@ -2708,9 +2778,38 @@ impl<'db> InferCtx<'db> {
                 });
                 ty
             }
-            LitKind::String(_) => self.engine.from_ty(Ty::string(self.db)),
+            LitKind::String(_) => expected
+                .and_then(|expected| self.expected_string_lit_ty(expected))
+                .unwrap_or_else(|| self.engine.from_ty(Ty::string(self.db))),
             LitKind::Error => InferTy::Error,
         }
+    }
+
+    fn expected_string_lit_ty(&mut self, expected: InferTy<'db>) -> Option<InferTy<'db>> {
+        let expected = self.normalize_aliases(expected);
+        if self.infer_ty_is_string_adt(expected.clone()) {
+            return Some(expected);
+        }
+        let InferTy::Comptime(inner) = self.engine.resolve(expected.clone()) else {
+            return None;
+        };
+        self.infer_ty_is_string_adt(*inner).then_some(expected)
+    }
+
+    fn infer_ty_is_string_adt(&mut self, ty: InferTy<'db>) -> bool {
+        let ty = self.normalize_aliases(ty);
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+            args,
+        } = self.engine.resolve(ty)
+        else {
+            return false;
+        };
+        args.is_empty() && def.name(self.db).as_deref() == Some("string")
     }
 
     fn infer_lambda(
@@ -2850,49 +2949,83 @@ impl<'db> InferCtx<'db> {
     fn infer_bin_op(
         &mut self,
         body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
         lhs: Id<Expr<'db>>,
         op: BinOp,
         rhs: Id<Expr<'db>>,
+        expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
         let lhs_expr = lhs;
         let rhs_expr = rhs;
-        let lhs = self.infer_expr(body, lhs_expr);
-        let rhs = self.infer_expr(body, rhs_expr);
         match op {
-            BinOp::Add | BinOp::Sub => {
-                if let Some(target) = self.word_numeric_adt_operand(lhs.clone(), rhs.clone()) {
-                    self.unify_expr(body, lhs_expr, lhs, target.clone());
-                    self.unify_expr(body, rhs_expr, rhs, target.clone());
-                    target
-                } else {
-                    let word = self.engine.from_ty(Ty::word(self.db));
-                    self.unify_expr(body, lhs_expr, lhs, word.clone());
-                    self.unify_expr(body, rhs_expr, rhs, word.clone());
-                    word
-                }
-            }
+            BinOp::Add => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Add", "add", expected,
+            ),
+            BinOp::Sub => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Sub", "sub", expected,
+            ),
             BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::BitAnd | BinOp::BitXor | BinOp::BitOr => {
+                let lhs = self.infer_expr(body, lhs_expr);
+                let rhs = self.infer_expr(body, rhs_expr);
                 let word = self.engine.from_ty(Ty::word(self.db));
                 self.unify_expr(body, lhs_expr, lhs, word.clone());
                 self.unify_expr(body, rhs_expr, rhs, word.clone());
                 word
             }
             BinOp::Eq | BinOp::NotEq => {
+                let lhs = self.infer_expr(body, lhs_expr);
+                let rhs = self.infer_expr(body, rhs_expr);
                 self.unify_expr(body, rhs_expr, lhs, rhs);
                 self.engine.from_ty(Ty::bool(self.db))
             }
-            BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
-                if let Some(target) = self.word_numeric_adt_operand(lhs.clone(), rhs.clone()) {
-                    self.unify_expr(body, lhs_expr, lhs, target.clone());
-                    self.unify_expr(body, rhs_expr, rhs, target);
-                } else {
-                    let word = self.engine.from_ty(Ty::word(self.db));
-                    self.unify_expr(body, lhs_expr, lhs, word.clone());
-                    self.unify_expr(body, rhs_expr, rhs, word);
-                }
-                self.engine.from_ty(Ty::bool(self.db))
+            BinOp::Lt => {
+                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                self.infer_operator_function_call_expected(
+                    body,
+                    expr,
+                    lhs_expr,
+                    rhs_expr,
+                    "lt",
+                    Some(bool_ty),
+                )
+            }
+            BinOp::Gt => {
+                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                self.infer_operator_call_expected(
+                    body,
+                    expr,
+                    lhs_expr,
+                    rhs_expr,
+                    "Ord",
+                    "gt",
+                    Some(bool_ty),
+                )
+            }
+            BinOp::LtEq => {
+                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                self.infer_operator_function_call_expected(
+                    body,
+                    expr,
+                    lhs_expr,
+                    rhs_expr,
+                    "le",
+                    Some(bool_ty),
+                )
+            }
+            BinOp::GtEq => {
+                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                self.infer_operator_function_call_expected(
+                    body,
+                    expr,
+                    lhs_expr,
+                    rhs_expr,
+                    "ge",
+                    Some(bool_ty),
+                )
             }
             BinOp::And | BinOp::Or => {
+                let lhs = self.infer_expr(body, lhs_expr);
+                let rhs = self.infer_expr(body, rhs_expr);
                 let bool_ty = self.engine.from_ty(Ty::bool(self.db));
                 self.unify_expr(body, lhs_expr, lhs, bool_ty.clone());
                 self.unify_expr(body, rhs_expr, rhs, bool_ty);
@@ -2902,21 +3035,201 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn word_numeric_adt_operand(
+    #[allow(clippy::too_many_arguments)]
+    fn infer_operator_call_expected(
         &mut self,
-        lhs: InferTy<'db>,
-        rhs: InferTy<'db>,
-    ) -> Option<InferTy<'db>> {
-        if self.is_word_numeric_adt(lhs.clone()) {
-            Some(lhs)
-        } else if self.is_word_numeric_adt(rhs.clone()) {
-            Some(rhs)
-        } else {
-            None
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+        class_name: &str,
+        method: &str,
+        expected: Option<InferTy<'db>>,
+    ) -> InferTy<'db> {
+        let Some((class, name)) = self.lookup_operator_class_method(class_name, method) else {
+            self.infer_expr(body, lhs);
+            self.infer_expr(body, rhs);
+            self.diagnostics
+                .push(TypeckDiagnostic::UnsatisfiedConstraint {
+                    span: self.expr_label_span(body, expr),
+                    pred: format!("operator {class_name}.{method}"),
+                });
+            self.poison_expr(body, expr);
+            return InferTy::Error;
+        };
+
+        let source = ObligationSource::CallSite {
+            body,
+            call_expr: expr,
+            callee_expr: expr,
+            callee: CallSiteCallee::ClassMethod {
+                class,
+                name: name.clone(),
+            },
+        };
+        let callee_ty = self.instantiate_class_method(class, &name, source);
+        if let Some(expected_ty) = expected.clone() {
+            let normalized = self.normalize_aliases(callee_ty.clone());
+            if let InferTy::Function { params, .. } = self.engine.resolve(normalized) {
+                self.unify_expr(
+                    body,
+                    expr,
+                    callee_ty.clone(),
+                    InferTy::Function {
+                        params,
+                        ret: Box::new(expected_ty),
+                    },
+                );
+            }
         }
+        let normalized = self.normalize_aliases(callee_ty.clone());
+        let resolved = self.engine.resolve(normalized);
+        let params = match resolved {
+            InferTy::Function { params, .. } => Some(params),
+            _ => None,
+        };
+        self.infer_direct_call(
+            body,
+            DirectCallSite {
+                call_expr: expr,
+                callee_expr: expr,
+            },
+            callee_ty,
+            params,
+            &[lhs, rhs],
+            expected,
+        )
     }
 
-    fn is_word_numeric_adt(&mut self, ty: InferTy<'db>) -> bool {
+    #[allow(clippy::too_many_arguments)]
+    fn infer_operator_function_call_expected(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+        name: &str,
+        expected: Option<InferTy<'db>>,
+    ) -> InferTy<'db> {
+        let Some(resolution) = self.lookup_operator_function(name) else {
+            self.infer_expr(body, lhs);
+            self.infer_expr(body, rhs);
+            self.diagnostics
+                .push(TypeckDiagnostic::UnsatisfiedConstraint {
+                    span: self.expr_label_span(body, expr),
+                    pred: format!("operator {name}"),
+                });
+            self.poison_expr(body, expr);
+            return InferTy::Error;
+        };
+
+        let source = self.call_site_source(body, expr, expr, &resolution);
+        let callee_ty = self.infer_resolution_with_source(
+            body,
+            expr,
+            resolution,
+            source,
+            ValuePosition::Callee,
+        );
+        let normalized = self.normalize_aliases(callee_ty.clone());
+        let resolved = self.engine.resolve(normalized);
+        let params = match resolved {
+            InferTy::Function { params, .. } => Some(params),
+            _ => None,
+        };
+        self.infer_direct_call(
+            body,
+            DirectCallSite {
+                call_expr: expr,
+                callee_expr: expr,
+            },
+            callee_ty,
+            params,
+            &[lhs, rhs],
+            expected,
+        )
+    }
+
+    fn lookup_operator_class_method(
+        &self,
+        class_name: &str,
+        method: &str,
+    ) -> Option<(DefId<'db>, String)> {
+        let qualified = format!("{class_name}.{method}");
+        if let Some(module_id) = module_id_for_hir_module(self.db, self.module) {
+            let env = nameres::module_env(self.db, module_id);
+            let local = env
+                .item_scope
+                .as_ref()
+                .and_then(|scope| scope.term_resolution(&qualified));
+            if let Some(resolution) = local.or_else(|| env.terms.get(&qualified).cloned())
+                && let Some(method) = class_method_resolution(resolution, method)
+            {
+                return Some(method);
+            }
+            if let Some(method) =
+                self.lookup_imported_operator_class_method(module_id, &qualified, method)
+            {
+                return Some(method);
+            }
+            return unique_visible_class_method(&env.terms, &qualified, method);
+        }
+
+        hir_nameres::item_scope(self.db, self.module)
+            .term_resolution(&qualified)
+            .and_then(|resolution| class_method_resolution(resolution, method))
+    }
+
+    fn lookup_imported_operator_class_method(
+        &self,
+        module_id: ModuleId<'db>,
+        qualified: &str,
+        method: &str,
+    ) -> Option<(DefId<'db>, String)> {
+        let file = self.db.module_file(module_id)?;
+        let imports = nameres::module_imports(self.db, file);
+        let mut found = None;
+        for path in imports.import_refs {
+            let Ok(imported_module) = nameres::resolve_module_path(self.db, module_id, path) else {
+                continue;
+            };
+            let env = nameres::module_env(self.db, imported_module);
+            let local = env
+                .item_scope
+                .as_ref()
+                .and_then(|scope| scope.term_resolution(qualified));
+            let candidate = local
+                .or_else(|| env.terms.get(qualified).cloned())
+                .and_then(|resolution| class_method_resolution(resolution, method))
+                .or_else(|| unique_visible_class_method(&env.terms, qualified, method));
+            let Some(candidate) = candidate else {
+                continue;
+            };
+            if found
+                .as_ref()
+                .is_some_and(|existing| existing != &candidate)
+            {
+                return None;
+            }
+            found = Some(candidate);
+        }
+        found
+    }
+
+    fn lookup_operator_function(&self, name: &str) -> Option<hir_nameres::Resolution<'db>> {
+        if let Some(module_id) = module_id_for_hir_module(self.db, self.module) {
+            let env = nameres::module_env(self.db, module_id);
+            let local = env
+                .item_scope
+                .as_ref()
+                .and_then(|scope| scope.term_resolution(name));
+            return local.or_else(|| env.terms.get(name).cloned());
+        }
+
+        hir_nameres::item_scope(self.db, self.module).term_resolution(name)
+    }
+
+    fn is_storage_index_word_numeric(&mut self, ty: InferTy<'db>) -> bool {
         let ty = self.normalize_aliases(ty);
         let InferTy::Named {
             ctor:
@@ -3042,7 +3355,9 @@ impl<'db> InferCtx<'db> {
                     ty
                 }
             }
-            LitKind::String(_) => self.engine.from_ty(Ty::string(self.db)),
+            LitKind::String(_) => expected
+                .and_then(|expected| self.expected_string_lit_ty(expected))
+                .unwrap_or_else(|| self.engine.from_ty(Ty::string(self.db))),
             LitKind::Error => InferTy::Error,
         }
     }
@@ -8151,7 +8466,22 @@ function f() -> word {
     #[test]
     fn end_to_end_body_infers_word_arithmetic() {
         let db = TestDb::default();
-        let module = parse_module(&db, "function f(x: word) -> word { return x + 1; }");
+        let module = parse_module(
+            &db,
+            r#"
+class t:Add {
+  function add(l:t, r:t) -> t;
+}
+
+instance word:Add {
+  function add(l:word, r:word) -> word {
+    return primAddWord(l, r);
+  }
+}
+
+function f(x: word) -> word { return x + 1; }
+"#,
+        );
         let (body, result) = infer_function(&db, module, "f");
         assert!(result.diagnostics.is_empty());
 
@@ -8164,7 +8494,14 @@ function f() -> word {
             } if *op.atom() == BinOp::Add
         ));
         assert_eq!(result.expr_ty(body, expr), Some(Ty::word(&db)));
-        assert_eq!(result.obligations[0].pred.display(&db), "word:Int");
+        assert!(
+            result
+                .obligations
+                .iter()
+                .any(|obligation| obligation.pred.display(&db) == "word:Int"),
+            "{:?}",
+            result.obligations
+        );
     }
 
     #[test]

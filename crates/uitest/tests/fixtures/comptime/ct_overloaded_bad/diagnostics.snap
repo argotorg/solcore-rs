@@ -49,6 +49,16 @@ error[SPECIALIZE]: comptime evaluation failed: function annotated '-> comptime' 
    |
 ---
 
+error[SPECIALIZE]: missing evidence: add
+  --> /main/main.solc:18:12
+   |
+17 |     }
+18 |     return base + x * factor;
+   |            ^^^^^^^^^^^^^^^^^ specialization failed here
+19 |   }
+   |
+---
+
 error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
   --> /main/main.solc:18:19
    |
