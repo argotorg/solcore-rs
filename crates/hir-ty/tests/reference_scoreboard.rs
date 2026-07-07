@@ -375,10 +375,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "examples/spec/135cons3.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
         "diagnostics/missing-signature.solc",
         "missing-negative-typecheck"
     ),

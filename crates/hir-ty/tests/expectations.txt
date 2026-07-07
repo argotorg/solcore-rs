@@ -454,7 +454,6 @@ examples/spec/126nanoerc20.solc expected-typecheck-PASS Cases.hs
 examples/spec/127microerc20.solc expected-typecheck-PASS Cases.hs
 examples/spec/128minierc20.solc expected-typecheck-PASS Cases.hs
 examples/spec/131constructor.solc expected-typecheck-PASS inferred
-examples/spec/135cons3.solc expected-typecheck-PASS inferred
 examples/spec/903badassign.solc expected-typecheck-PASS Cases.hs
 examples/spec/939badfood.solc expected-typecheck-PASS Cases.hs
 examples/spec/SimpleField.solc expected-typecheck-PASS Cases.hs

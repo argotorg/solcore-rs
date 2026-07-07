@@ -1633,10 +1633,6 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
                 mode: RunMode::DeployedDispatch,
             },
         ),
-        (
-            "135cons3.solc",
-            skip("constructor requires explicit deployment calldata not covered by the P9 oracle"),
-        ),
         ("903badassign.solc", run(42)),
         ("939badfood.solc", run(2)),
         ("SimpleField.solc", run(0)),

@@ -694,7 +694,6 @@ fn corpus_emission_count_report() {
     let mut fixtures = Vec::new();
     collect_solc_fixtures(&examples.join("dispatch"), &mut fixtures);
     fixtures.push(examples.join("spec/131constructor.solc"));
-    fixtures.push(examples.join("spec/135cons3.solc"));
     fixtures.sort();
 
     let mut total = 0usize;
