@@ -1660,10 +1660,19 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 op: *op.atom(),
                 expr: Box::new(self.expr(*expr)?),
             },
-            ExprKind::Index { base, index } => MonoExprKind::Index {
-                base: Box::new(self.expr(*base)?),
-                index: Box::new(self.expr(*index)?),
-            },
+            ExprKind::Index { base, index } => {
+                if self.is_storage_index_expr(*base) {
+                    MonoExprKind::StorageIndex {
+                        base: Box::new(self.expr(*base)?),
+                        index: Box::new(self.expr(*index)?),
+                    }
+                } else {
+                    MonoExprKind::Index {
+                        base: Box::new(self.expr(*base)?),
+                        index: Box::new(self.expr(*index)?),
+                    }
+                }
+            }
             ExprKind::Proxy { ty, .. } => {
                 let ty = self.subst.apply_ty(self.driver.db, self.lower_body_ty(*ty));
                 MonoExprKind::Proxy(self.driver.mono_ty(ty, "proxy", expr.span)?)
@@ -2341,6 +2350,20 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
 
     fn expr_ty(&self, expr: Id<Expr<'db>>) -> Option<Ty<'db>> {
         self.result.expr_ty(self.body, expr)
+    }
+
+    fn is_storage_index_expr(&self, expr: Id<Expr<'db>>) -> bool {
+        if matches!(
+            self.expr_resolution(expr),
+            Some(hir_nameres::Resolution::Field(_))
+        ) {
+            return true;
+        }
+        match &self.body.exprs(self.driver.db).get(expr).kind {
+            ExprKind::Index { base, .. } => self.is_storage_index_expr(*base),
+            ExprKind::TypeAnnot { expr, .. } => self.is_storage_index_expr(*expr),
+            _ => false,
+        }
     }
 
     fn expr_resolution(&self, expr: Id<Expr<'db>>) -> Option<hir_nameres::Resolution<'db>> {

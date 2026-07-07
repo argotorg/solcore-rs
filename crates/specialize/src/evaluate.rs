@@ -602,6 +602,21 @@ impl<'db> Evaluator<'db> {
                     target,
                 )
             }
+            MonoExprKind::StorageIndex { base, index } => {
+                let (base, target) = self.eval_lvalue(env, comptime_env, *base);
+                let index = self.eval_expr(env, comptime_env, *index);
+                (
+                    MonoExpr {
+                        span,
+                        ty,
+                        kind: MonoExprKind::StorageIndex {
+                            base: Box::new(base),
+                            index: Box::new(index),
+                        },
+                    },
+                    target,
+                )
+            }
             MonoExprKind::Field { base, field } => {
                 let (base, target) = self.eval_lvalue(env, comptime_env, *base);
                 (
@@ -772,6 +787,14 @@ impl<'db> Evaluator<'db> {
                 span,
                 ty,
                 kind: MonoExprKind::Index {
+                    base: Box::new(self.eval_expr(env, comptime_env, *base)),
+                    index: Box::new(self.eval_expr(env, comptime_env, *index)),
+                },
+            },
+            MonoExprKind::StorageIndex { base, index } => MonoExpr {
+                span,
+                ty,
+                kind: MonoExprKind::StorageIndex {
                     base: Box::new(self.eval_expr(env, comptime_env, *base)),
                     index: Box::new(self.eval_expr(env, comptime_env, *index)),
                 },
@@ -1393,6 +1416,7 @@ impl<'db> Evaluator<'db> {
                 self.expr_is_comptime(base, comptime_env)
                     && self.expr_is_comptime(index, comptime_env)
             }
+            MonoExprKind::StorageIndex { .. } => false,
             MonoExprKind::Field { base, .. } => self.expr_is_comptime(base, comptime_env),
             MonoExprKind::TypeAnnot { expr, .. } => self.expr_is_comptime(expr, comptime_env),
             MonoExprKind::If {
@@ -1665,6 +1689,10 @@ impl<'db> Evaluator<'db> {
                 self.check_erasure_expr(base);
                 self.check_erasure_expr(index);
             }
+            MonoExprKind::StorageIndex { base, index } => {
+                self.check_erasure_expr(base);
+                self.check_erasure_expr(index);
+            }
             MonoExprKind::Field { base, .. } => self.check_erasure_expr(base),
             MonoExprKind::Proxy(ty) => {
                 self.check_erasure_ty("proxy", ty.ty(), Some(expr.span));
@@ -1868,6 +1896,7 @@ fn expr_is_pure(expr: &MonoExpr<'_>, pure: &FxHashSet<String>) -> bool {
         MonoExprKind::Index { base, index } => {
             expr_is_pure(base, pure) && expr_is_pure(index, pure)
         }
+        MonoExprKind::StorageIndex { .. } => false,
         MonoExprKind::Field { base, .. } => expr_is_pure(base, pure),
         MonoExprKind::TypeAnnot { expr, .. } => expr_is_pure(expr, pure),
         MonoExprKind::If {
@@ -2222,6 +2251,7 @@ fn lvalue_root_name(expr: &MonoExpr<'_>) -> Option<String> {
     match &expr.kind {
         MonoExprKind::Var(id) => Some(id.name.clone()),
         MonoExprKind::Index { base, .. }
+        | MonoExprKind::StorageIndex { base, .. }
         | MonoExprKind::Field { base, .. }
         | MonoExprKind::TypeAnnot { expr: base, .. } => lvalue_root_name(base),
         _ => None,
@@ -2563,6 +2593,10 @@ fn calls_in_expr(expr: &MonoExpr<'_>) -> BTreeSet<String> {
         }
         MonoExprKind::UnaryOp { expr, .. } => calls.extend(calls_in_expr(expr)),
         MonoExprKind::Index { base, index } => {
+            calls.extend(calls_in_expr(base));
+            calls.extend(calls_in_expr(index));
+        }
+        MonoExprKind::StorageIndex { base, index } => {
             calls.extend(calls_in_expr(base));
             calls.extend(calls_in_expr(index));
         }
@@ -3299,7 +3333,6 @@ fn assigned_names(stmts: &[MonoStmt<'_>]) -> AssignedNames {
         AssignedNames::All
     }
 }
-
 
 fn invalidate_assigned<'db>(names: &AssignedNames, env: &mut VEnv<'db>, comptime_env: &mut CEnv) {
     match names {

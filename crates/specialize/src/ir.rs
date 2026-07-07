@@ -304,6 +304,10 @@ pub enum MonoExprKind<'db> {
         base: Box<MonoExpr<'db>>,
         index: Box<MonoExpr<'db>>,
     },
+    StorageIndex {
+        base: Box<MonoExpr<'db>>,
+        index: Box<MonoExpr<'db>>,
+    },
     Field {
         base: Box<MonoExpr<'db>>,
         field: String,

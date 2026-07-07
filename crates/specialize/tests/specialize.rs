@@ -1115,7 +1115,7 @@ fn expr_has_closure_dispatch(expr: &MonoExpr<'_>) -> bool {
         MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
             expr_has_closure_dispatch(expr)
         }
-        MonoExprKind::Index { base, index } => {
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index } => {
             expr_has_closure_dispatch(base) || expr_has_closure_dispatch(index)
         }
         MonoExprKind::Field { base, .. } => expr_has_closure_dispatch(base),

@@ -27,6 +27,9 @@ use crate::ir::{
 };
 
 const ADDRESS_MASK: &str = "0xffffffffffffffffffffffffffffffffffffffff";
+const STORAGE_INDEX_READ: &str = "__solcore_storage_index_read";
+const STORAGE_INDEX_SLOT: &str = "__solcore_storage_index_slot";
+const STORAGE_HASH2_HELPER: &str = "__solcore_storage_hash2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AbiWordKind {
@@ -183,6 +186,13 @@ struct AtomicDecision<'db> {
 #[derive(Debug, Clone)]
 struct StorageField {
     slot: usize,
+    kind: StorageFieldKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StorageFieldKind {
+    DirectWord,
+    Mapping,
 }
 
 struct Emitter<'db> {
@@ -282,22 +292,43 @@ impl<'db> Emitter<'db> {
             }
         }
 
-        let storage_fields = self.contract_word_storage_fields(contract.def);
+        let storage_fields = self.contract_storage_fields(contract.def);
+        let storage_hash_helper = storage_fields
+            .values()
+            .any(|field| field.kind == StorageFieldKind::Mapping)
+            .then_some(STORAGE_HASH2_HELPER.to_owned());
 
         let deployment_names = deployment_closure(self.db, functions, &constructor_names);
-        let deployment_functions = functions
+        let mut deployment_functions = functions
             .iter()
             .filter(|function| deployment_names.contains(&function.name))
             .cloned()
-            .map(|function| self.lower_storage_fields_in_function(function, &storage_fields))
+            .map(|function| {
+                self.lower_storage_fields_in_function(
+                    function,
+                    &storage_fields,
+                    storage_hash_helper.as_deref(),
+                )
+            })
             .map(ensure_unit_function_returns)
             .collect::<Vec<_>>();
-        let runtime_functions = functions
+        let mut runtime_functions = functions
             .iter()
             .filter(|function| !constructor_names.contains(&function.name))
             .cloned()
-            .map(|function| self.lower_storage_fields_in_function(function, &storage_fields))
+            .map(|function| {
+                self.lower_storage_fields_in_function(
+                    function,
+                    &storage_fields,
+                    storage_hash_helper.as_deref(),
+                )
+            })
             .collect::<Vec<_>>();
+        if let Some(helper) = storage_hash_helper.as_deref() {
+            let helper_function = self.storage_hash2_function(contract.span, helper);
+            deployment_functions.push(helper_function.clone());
+            runtime_functions.push(helper_function);
+        }
 
         let deployer_name = format!("{}Deploy", contract.name);
         let runtime_name = contract.name.clone();
@@ -463,7 +494,7 @@ impl<'db> Emitter<'db> {
         body
     }
 
-    fn contract_word_storage_fields(&mut self, def: DefId<'db>) -> BTreeMap<String, StorageField> {
+    fn contract_storage_fields(&mut self, def: DefId<'db>) -> BTreeMap<String, StorageField> {
         let module = parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
         let Some(contract) = find_contract(self.db, module, def) else {
             return BTreeMap::new();
@@ -472,12 +503,12 @@ impl<'db> Emitter<'db> {
             .fields(self.db)
             .iter()
             .enumerate()
-            .filter(|(_, field)| field_type_is_word_slot(self.db, field.ty()))
-            .map(|(slot, field)| {
-                (
+            .filter_map(|(slot, field)| {
+                let kind = field_storage_kind(self.db, field.ty())?;
+                Some((
                     field.name().atom().text(self.db).to_owned(),
-                    StorageField { slot },
-                )
+                    StorageField { slot, kind },
+                ))
             })
             .collect()
     }
@@ -486,13 +517,78 @@ impl<'db> Emitter<'db> {
         &self,
         mut function: Function<'db>,
         fields: &BTreeMap<String, StorageField>,
+        storage_hash_helper: Option<&str>,
     ) -> Function<'db> {
         if fields.is_empty() {
             return function;
         }
-        let mut lowerer = StorageLowerer::new(self, fields, &function.args);
+        let mut lowerer = StorageLowerer::new(self, fields, storage_hash_helper, &function.args);
         function.body = lowerer.stmts(function.body);
         function
+    }
+
+    fn storage_hash2_function(&self, span: Span<'db>, name: &str) -> Function<'db> {
+        let word = Ty::word(span);
+        Function {
+            span,
+            name: name.to_owned(),
+            args: vec![
+                Arg {
+                    span,
+                    name: "x".to_owned(),
+                    ty: word.clone(),
+                },
+                Arg {
+                    span,
+                    name: "y".to_owned(),
+                    ty: word.clone(),
+                },
+            ],
+            ret: word.clone(),
+            body: vec![
+                Stmt {
+                    span,
+                    kind: StmtKind::Let {
+                        name: "out".to_owned(),
+                        ty: word.clone(),
+                    },
+                },
+                self.assembly_stmt(
+                    span,
+                    vec![
+                        self.yul_expr_stmt(
+                            span,
+                            self.yul_call(
+                                span,
+                                "mstore",
+                                vec![self.yul_number(span, "0"), self.yul_ident_expr(span, "x")],
+                            ),
+                        ),
+                        self.yul_expr_stmt(
+                            span,
+                            self.yul_call(
+                                span,
+                                "mstore",
+                                vec![self.yul_number(span, "32"), self.yul_ident_expr(span, "y")],
+                            ),
+                        ),
+                        self.yul_assign(
+                            span,
+                            "out",
+                            self.yul_call(
+                                span,
+                                "keccak256",
+                                vec![self.yul_number(span, "0"), self.yul_number(span, "64")],
+                            ),
+                        ),
+                    ],
+                ),
+                Stmt {
+                    span,
+                    kind: StmtKind::Return(Expr::var(span, "out", word)),
+                },
+            ],
+        }
     }
 
     fn emit_dispatcher(
@@ -1645,6 +1741,14 @@ impl<'db> Emitter<'db> {
             MonoExprKind::UnaryOp { op, expr: inner } => {
                 self.emit_unary_op(expr.span, ty, *op, inner)
             }
+            MonoExprKind::StorageIndex { .. } => Expr {
+                span: expr.span,
+                ty,
+                kind: ExprKind::Call {
+                    callee: STORAGE_INDEX_READ.to_owned(),
+                    args: vec![self.emit_storage_slot_expr(expr)],
+                },
+            },
             MonoExprKind::TypeAnnot { expr: inner, .. } => self.emit_expr(inner),
             MonoExprKind::If {
                 cond,
@@ -1733,6 +1837,21 @@ impl<'db> Emitter<'db> {
                 Expr::word(span, "0")
             }
             LitKind::Error => Expr::word(span, "0"),
+        }
+    }
+
+    fn emit_storage_slot_expr(&mut self, expr: &MonoExpr<'db>) -> Expr<'db> {
+        match &expr.kind {
+            MonoExprKind::StorageIndex { base, index } => Expr {
+                span: expr.span,
+                ty: Ty::word(expr.span),
+                kind: ExprKind::Call {
+                    callee: STORAGE_INDEX_SLOT.to_owned(),
+                    args: vec![self.emit_storage_slot_expr(base), self.emit_expr(index)],
+                },
+            },
+            MonoExprKind::TypeAnnot { expr: inner, .. } => self.emit_storage_slot_expr(inner),
+            _ => self.emit_expr(expr),
         }
     }
 
@@ -1859,6 +1978,74 @@ impl<'db> Emitter<'db> {
         op: BinOp,
         rhs: &MonoExpr<'db>,
     ) -> Expr<'db> {
+        match op {
+            BinOp::NotEq => {
+                let eq = Expr {
+                    span,
+                    ty: ty.clone(),
+                    kind: ExprKind::Call {
+                        callee: "primEqWord".to_owned(),
+                        args: vec![self.emit_expr(lhs), self.emit_expr(rhs)],
+                    },
+                };
+                return Expr {
+                    span,
+                    ty: ty.clone(),
+                    kind: ExprKind::Call {
+                        callee: "iszero".to_owned(),
+                        args: vec![eq],
+                    },
+                };
+            }
+            BinOp::LtEq | BinOp::GtEq => {
+                let callee = if matches!(op, BinOp::LtEq) {
+                    "gt"
+                } else {
+                    "lt"
+                };
+                let cmp = Expr {
+                    span,
+                    ty: ty.clone(),
+                    kind: ExprKind::Call {
+                        callee: callee.to_owned(),
+                        args: vec![self.emit_expr(lhs), self.emit_expr(rhs)],
+                    },
+                };
+                return Expr {
+                    span,
+                    ty: ty.clone(),
+                    kind: ExprKind::Call {
+                        callee: "iszero".to_owned(),
+                        args: vec![cmp],
+                    },
+                };
+            }
+            BinOp::And => {
+                return Expr {
+                    span,
+                    ty: ty.clone(),
+                    kind: ExprKind::If {
+                        target: ty.clone(),
+                        cond: Box::new(self.emit_expr(lhs)),
+                        then_expr: Box::new(self.emit_expr(rhs)),
+                        else_expr: Box::new(bool_expr(span, ty, false)),
+                    },
+                };
+            }
+            BinOp::Or => {
+                return Expr {
+                    span,
+                    ty: ty.clone(),
+                    kind: ExprKind::If {
+                        target: ty.clone(),
+                        cond: Box::new(self.emit_expr(lhs)),
+                        then_expr: Box::new(bool_expr(span, ty.clone(), true)),
+                        else_expr: Box::new(self.emit_expr(rhs)),
+                    },
+                };
+            }
+            _ => {}
+        }
         let Some(callee) = bin_op_name(op) else {
             self.push(
                 span,
@@ -2698,6 +2885,7 @@ fn sem_ty_needs_untyped_word_default<'db>(db: &'db dyn hir_ty::Db, ty: SemTy<'db
 struct StorageLowerer<'a, 'db> {
     emitter: &'a Emitter<'db>,
     fields: &'a BTreeMap<String, StorageField>,
+    storage_hash_helper: Option<&'a str>,
     shadows: Vec<BTreeSet<String>>,
     fresh: usize,
 }
@@ -2706,11 +2894,13 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
     fn new(
         emitter: &'a Emitter<'db>,
         fields: &'a BTreeMap<String, StorageField>,
+        storage_hash_helper: Option<&'a str>,
         args: &[Arg<'db>],
     ) -> Self {
         Self {
             emitter,
             fields,
+            storage_hash_helper,
             shadows: vec![args.iter().map(|arg| arg.name.clone()).collect()],
             fresh: 0,
         }
@@ -2738,7 +2928,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
             }
             StmtKind::Assign { lhs, rhs } => {
                 if let ExprKind::Var(name) = &lhs.kind
-                    && let Some(slot) = self.field(name).map(|field| field.slot)
+                    && let Some(slot) = self.direct_field(name).map(|field| field.slot)
                 {
                     let rhs = self.expr(rhs);
                     let temp = self.fresh_temp(name);
@@ -2771,6 +2961,41 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                                 ),
                             )],
                         ),
+                    ];
+                }
+                if let Some(slot) = self.storage_index_read_slot(&lhs) {
+                    let rhs = self.expr(rhs);
+                    let slot = self.expr(slot);
+                    let temp = self.fresh_temp("storage_index");
+                    return vec![
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Let {
+                                name: temp.clone(),
+                                ty: lhs.ty.clone(),
+                            },
+                        },
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Assign {
+                                lhs: Expr::var(stmt.span, temp.clone(), lhs.ty),
+                                rhs,
+                            },
+                        },
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Expr(Expr {
+                                span: stmt.span,
+                                ty: Ty::unit(stmt.span),
+                                kind: ExprKind::Call {
+                                    callee: "sstore".to_owned(),
+                                    args: vec![
+                                        slot,
+                                        Expr::var(stmt.span, temp, Ty::word(stmt.span)),
+                                    ],
+                                },
+                            }),
+                        },
                     ];
                 }
                 vec![Stmt {
@@ -2863,7 +3088,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
     fn expr(&mut self, expr: Expr<'db>) -> Expr<'db> {
         match expr.kind {
             ExprKind::Var(name) => {
-                if let Some(slot) = self.field(&name).map(|field| field.slot) {
+                if let Some(slot) = self.direct_field(&name).map(|field| field.slot) {
                     Expr {
                         span: expr.span,
                         ty: expr.ty,
@@ -2879,6 +3104,24 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         kind: ExprKind::Var(name),
                     }
                 }
+            }
+            ExprKind::Call { callee, args } if callee == STORAGE_INDEX_READ && args.len() == 1 => {
+                let mut args = args.into_iter();
+                let slot = self.expr(args.next().expect("checked len"));
+                Expr {
+                    span: expr.span,
+                    ty: expr.ty,
+                    kind: ExprKind::Call {
+                        callee: "sload".to_owned(),
+                        args: vec![slot],
+                    },
+                }
+            }
+            ExprKind::Call { callee, args } if callee == STORAGE_INDEX_SLOT && args.len() == 2 => {
+                let mut args = args.into_iter();
+                let base = args.next().expect("checked len");
+                let index = args.next().expect("checked len");
+                self.storage_index_slot_expr(expr.span, expr.ty, base, index)
             }
             ExprKind::Pair(lhs, rhs) => Expr {
                 span: expr.span,
@@ -2956,6 +3199,66 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
             return None;
         }
         self.fields.get(name)
+    }
+
+    fn direct_field(&self, name: &str) -> Option<&StorageField> {
+        self.field(name)
+            .filter(|field| field.kind == StorageFieldKind::DirectWord)
+    }
+
+    fn storage_index_read_slot(&self, expr: &Expr<'db>) -> Option<Expr<'db>> {
+        let ExprKind::Call { callee, args } = &expr.kind else {
+            return None;
+        };
+        if callee != STORAGE_INDEX_READ || args.len() != 1 {
+            return None;
+        }
+        args.first().cloned()
+    }
+
+    fn storage_index_slot_expr(
+        &mut self,
+        span: Span<'db>,
+        ty: Ty<'db>,
+        base: Expr<'db>,
+        index: Expr<'db>,
+    ) -> Expr<'db> {
+        let base = self.storage_slot_base_expr(base);
+        let index = self.expr(index);
+        Expr {
+            span,
+            ty,
+            kind: ExprKind::Call {
+                callee: self
+                    .storage_hash_helper
+                    .unwrap_or(STORAGE_HASH2_HELPER)
+                    .to_owned(),
+                args: vec![base, index],
+            },
+        }
+    }
+
+    fn storage_slot_base_expr(&mut self, base: Expr<'db>) -> Expr<'db> {
+        match base.kind {
+            ExprKind::Var(name) => {
+                if let Some(slot) = self.field(&name).map(|field| field.slot) {
+                    Expr::word(base.span, slot.to_string())
+                } else {
+                    Expr {
+                        span: base.span,
+                        ty: base.ty,
+                        kind: ExprKind::Var(name),
+                    }
+                }
+            }
+            ExprKind::Call { callee, args } if callee == STORAGE_INDEX_SLOT && args.len() == 2 => {
+                let mut args = args.into_iter();
+                let nested_base = args.next().expect("checked len");
+                let nested_index = args.next().expect("checked len");
+                self.storage_index_slot_expr(base.span, base.ty, nested_base, nested_index)
+            }
+            _ => self.expr(base),
+        }
     }
 
     fn fresh_temp(&mut self, field: &str) -> String {
@@ -3512,6 +3815,7 @@ fn mono_expr_name(kind: &MonoExprKind<'_>) -> &'static str {
     match kind {
         MonoExprKind::Field { .. } => "field access",
         MonoExprKind::Index { .. } => "index access",
+        MonoExprKind::StorageIndex { .. } => "storage index access",
         MonoExprKind::Proxy(_) => "proxy expression",
         MonoExprKind::Lambda { .. } => "lambda expression",
         MonoExprKind::ClosureDispatch { .. } => "closure dispatch",
@@ -3903,15 +4207,22 @@ fn source_constructor_comment(name: &str) -> String {
     name.rsplit('_').next().unwrap_or(name).to_owned()
 }
 
-fn field_type_is_word_slot<'db>(db: &'db dyn HirDb, ty: hir::ast::ty::TypeRef<'db>) -> bool {
+fn field_storage_kind<'db>(
+    db: &'db dyn HirDb,
+    ty: hir::ast::ty::TypeRef<'db>,
+) -> Option<StorageFieldKind> {
     let TypeRefKind::Named { name, args, .. } = ty.kind(db) else {
-        return false;
+        return None;
     };
-    args.atom().is_empty()
-        && matches!(
-            name.atom().text(db),
-            "word" | "uint" | "uint256" | "bytes32" | "address"
-        )
+    let name = name.atom().text(db);
+    if args.atom().is_empty() && matches!(name, "word" | "uint" | "uint256" | "bytes32" | "address")
+    {
+        return Some(StorageFieldKind::DirectWord);
+    }
+    if name == "mapping" && args.atom().len() == 2 {
+        return Some(StorageFieldKind::Mapping);
+    }
+    None
 }
 
 fn find_contract<'db>(
