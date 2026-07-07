@@ -1,0 +1,19 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/multibyte_eof_string/main.solc
+---
+error: invalid token `"café`
+ --> /main/main.solc:2:11
+  |
+1 | function f() -> word {
+2 |   let s = "café
+  |           ^^^^^
+---
+
+error: unexpected end of input; expected `{`, or `}` while parsing function definition
+ --> /main/main.solc:2:16
+  |
+1 | function f() -> word {
+2 |   let s = "café
+  |                ^

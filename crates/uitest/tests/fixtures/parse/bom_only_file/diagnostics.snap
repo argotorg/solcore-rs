@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/bom_only_file/main.solc
+---
+error: invalid token `﻿`
+ --> /main/main.solc:1:1
+  |
+1 | ﻿
+  | ^

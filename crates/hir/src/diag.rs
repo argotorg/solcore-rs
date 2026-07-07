@@ -718,22 +718,38 @@ fn context_window_span(
 fn normalize_line_lookup_offset(source: &str, offset: usize) -> usize {
     let mut offset = offset.min(source.len());
     if offset == source.len() {
-        offset = offset.saturating_sub(1);
+        offset = floor_char_boundary(source, offset.saturating_sub(1));
     }
     let bytes = source.as_bytes();
     if bytes.get(offset).copied() == Some(b'\n') && offset > 0 {
+        offset = floor_char_boundary(source, offset - 1);
+    }
+    offset
+}
+
+fn floor_char_boundary(source: &str, offset: usize) -> usize {
+    let mut offset = offset.min(source.len());
+    while offset > 0 && !source.is_char_boundary(offset) {
         offset -= 1;
     }
     offset
 }
 
+fn ceil_char_boundary(source: &str, offset: usize) -> usize {
+    let mut offset = offset.min(source.len());
+    while offset < source.len() && !source.is_char_boundary(offset) {
+        offset += 1;
+    }
+    offset
+}
+
 fn line_start_at_or_before(source: &str, offset: usize) -> usize {
-    let offset = offset.min(source.len());
+    let offset = floor_char_boundary(source, offset);
     source[..offset].rfind('\n').map_or(0, |idx| idx + 1)
 }
 
 fn line_end_at_or_after(source: &str, offset: usize) -> usize {
-    let offset = offset.min(source.len());
+    let offset = ceil_char_boundary(source, offset);
     source[offset..]
         .find('\n')
         .map_or(source.len(), |idx| offset + idx)
