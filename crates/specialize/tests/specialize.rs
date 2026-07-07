@@ -1464,3 +1464,33 @@ fn repo_root() -> PathBuf {
         .expect("repo root")
         .to_path_buf()
 }
+
+#[test]
+fn constructor_fold_is_not_confused_by_underscored_names() {
+    let (_db, output) = specialize_src(
+        r#"
+data D = Suf | Pre_Suf;
+
+function pick(d:D) -> word {
+  match d {
+  | D.Suf => return 1;
+  | D.Pre_Suf => return 2;
+  };
+}
+
+contract C {
+  function main() -> word {
+    return pick(D.Pre_Suf);
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(
+        main_return_number(&output).as_deref(),
+        Some("2"),
+        "{:?}",
+        output.module
+    );
+}

@@ -1742,7 +1742,17 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             }
             ExprKind::DotCtor { name, args, .. } => MonoExprKind::Con {
                 ctor: MonoId {
-                    name: ident_text(self.driver.db, name),
+                    name: match self.expr_resolution(expr_id) {
+                        Some(hir_nameres::Resolution::Ctor { ty: adt, index }) => ctor_name(
+                            self.driver.db,
+                            self.driver.adts.get(&adt).map(|info| info.adt),
+                            index,
+                        ),
+                        Some(hir_nameres::Resolution::Builtin(
+                            hir_nameres::BuiltinKind::Constructor(ctor),
+                        )) => builtin_ctor_name(ctor).to_owned(),
+                        _ => ident_text(self.driver.db, name),
+                    },
                     ty: mono_ty,
                     span: expr.span,
                 },
@@ -2541,9 +2551,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 },
                 // Same-name constructors lower as nullary constructor
                 // patterns, not binders.
-                Some(hir_nameres::Resolution::Ctor { .. }) => MonoPatKind::Con {
+                Some(hir_nameres::Resolution::Ctor { ty: adt, index }) => MonoPatKind::Con {
                     ctor: MonoId {
-                        name: ident_text(self.driver.db, name),
+                        name: ctor_name(
+                            self.driver.db,
+                            self.driver.adts.get(&adt).map(|info| info.adt),
+                            index,
+                        ),
                         ty: mono_ty,
                         span: pat.span,
                     },
@@ -2562,7 +2576,17 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             PatKind::Lit(lit) => MonoPatKind::Lit(lit.clone()),
             PatKind::Ctor { name, args, .. } => MonoPatKind::Con {
                 ctor: MonoId {
-                    name: ident_text(self.driver.db, name),
+                    name: match self.pat_resolution(pat_id) {
+                        Some(hir_nameres::Resolution::Ctor { ty: adt, index }) => ctor_name(
+                            self.driver.db,
+                            self.driver.adts.get(&adt).map(|info| info.adt),
+                            index,
+                        ),
+                        Some(hir_nameres::Resolution::Builtin(
+                            hir_nameres::BuiltinKind::Constructor(ctor),
+                        )) => builtin_ctor_name(ctor).to_owned(),
+                        _ => ident_text(self.driver.db, name),
+                    },
                     ty: mono_ty,
                     span: pat.span,
                 },

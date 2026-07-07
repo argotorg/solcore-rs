@@ -2760,9 +2760,11 @@ fn constructor_matches(
 }
 
 fn constructor_names_match(lhs: &str, rhs: &str) -> bool {
-    let lhs = lhs.replace('.', "_");
-    let rhs = rhs.replace('.', "_");
-    lhs == rhs || lhs.ends_with(&format!("_{rhs}")) || rhs.ends_with(&format!("_{lhs}"))
+    // Constructor names are canonicalized to `{Adt}_{Ctor}` (or the builtin
+    // spelling) at lowering time; suffix-based fuzzy matching is unsound
+    // because user constructor names may themselves contain underscores
+    // (`D.Suf` must not fold as `D.Pre_Suf`).
+    lhs.replace('.', "_") == rhs.replace('.', "_")
 }
 
 fn literal_matches(lit: &LitKind, value: &MonoExpr<'_>) -> bool {
