@@ -323,18 +323,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!("examples/spec/051negBool.solc", "needs-trait-solver-parity"),
     known!(
-        "examples/spec/112ContractStorage.solc",
-        "needs-storage-builtins",
-        pre,
-        "SC0101"
-    ),
-    known!(
-        "examples/spec/113counter.solc",
-        "needs-storage-builtins",
-        pre,
-        "SC0101"
-    ),
-    known!(
         "examples/spec/126nanoerc20.solc",
         "needs-specializer-and-std-instances"
     ),

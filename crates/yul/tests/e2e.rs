@@ -1559,8 +1559,6 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
     fn blocked(category: BlockedCategory) -> SpecExpectation {
         SpecExpectation::Blocked { category }
     }
-    let unannotated = BlockedCategory::UnannotatedEntrySpecialization;
-    let std_instances = BlockedCategory::NeedsStdInstances;
     let typedef_forall_neg = "reference HEAD rejects: class declarations lack forall binders \
         (unbound type variables, upstream commit 7ad5622); legacy pre-std StructField \
         experiment superseded by std/assign.solc";
@@ -1616,8 +1614,8 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("105nestedStruct.solc", neg(typedef_forall_neg)),
         ("10negBool.solc", run(1)),
         ("111storageStruct.solc", neg(typedef_forall_neg)),
-        ("112ContractStorage.solc", blocked(std_instances)),
-        ("113counter.solc", blocked(unannotated)),
+        ("112ContractStorage.solc", run(7)),
+        ("113counter.solc", run(1)),
         ("11negPair.solc", run(1)),
         ("120basicCounter.solc", run(42)),
         ("121counter.solc", run(1)),
