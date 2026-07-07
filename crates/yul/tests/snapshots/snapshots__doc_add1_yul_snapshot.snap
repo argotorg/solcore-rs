@@ -2,27 +2,29 @@
 source: crates/yul/tests/snapshots.rs
 expression: render_fixture(&fixture)
 ---
-object "RGBDeploy" {
+object "Add1Deploy" {
   code {
     mstore(64, memoryguard(128))
-    if lt(codesize(), datasize("RGBDeploy")) {
+    if lt(codesize(), datasize("Add1Deploy")) {
       revert(0, 0)
     }
     if callvalue() {
       mstore(0, 0xb5988ea3)
       revert(28, 4)
     }
-    let asm$size_0 := datasize("RGB")
-    codecopy(0, dataoffset("RGB"), datasize("RGB"))
+    let asm$size_0 := datasize("Add1")
+    codecopy(0, dataoffset("Add1"), datasize("Add1"))
     return(0, asm$size_0)
   }
-  object "RGB" {
+  object "Add1" {
     code {
-      function usr$047rgb_RGB_main_d9bbcf828() -> gen$result_1 {
+      function usr$Add1_Add1_main_dac62ccff() -> gen$result_1 {
+        let src$res_2
+        src$res_2 := add(40, 2)
         gen$result_1 := 42
         leave
       }
-      /* selector 0xdffeadd0 -> 047rgb_RGB_main_d9bbcf828 */
+      /* selector 0xdffeadd0 -> Add1_Add1_main_dac62ccff */
       mstore(0x40, memoryguard(128))
       let _v0
       _v0 := calldatasize()
@@ -38,22 +40,22 @@ object "RGBDeploy" {
           revert(28, 4)
         }
         case false {
-          let src$RGB_dispatch_selector_2
-          src$RGB_dispatch_selector_2 := shr(224, calldataload(0))
-          switch src$RGB_dispatch_selector_2
+          let src$Add1_dispatch_selector_3
+          src$Add1_dispatch_selector_3 := shr(224, calldataload(0))
+          switch src$Add1_dispatch_selector_3
             case 0xdffeadd0 {
               if callvalue() {
                 mstore(0, 0xb5988ea3)
                 revert(28, 4)
               }
-              let src$dispatch_ret0_3
+              let src$dispatch_ret0_4
               let _v2
-              _v2 := usr$047rgb_RGB_main_d9bbcf828()
-              src$dispatch_ret0_3 := _v2
-              let src$dispatch_ret0_word_4
-              src$dispatch_ret0_word_4 := 0
-              src$dispatch_ret0_word_4 := src$dispatch_ret0_3
-              mstore(0, src$dispatch_ret0_word_4)
+              _v2 := usr$Add1_Add1_main_dac62ccff()
+              src$dispatch_ret0_4 := _v2
+              let src$dispatch_ret0_word_5
+              src$dispatch_ret0_word_5 := 0
+              src$dispatch_ret0_word_5 := src$dispatch_ret0_4
+              mstore(0, src$dispatch_ret0_word_5)
               return(0, 32)
             }
             default {

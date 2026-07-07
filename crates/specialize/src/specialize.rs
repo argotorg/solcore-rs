@@ -3195,20 +3195,29 @@ fn source_file_stem(path: &str) -> String {
         .to_owned()
 }
 
-fn def_hash_suffix<'db>(db: &'db dyn HirDb, def: DefId<'db>) -> String {
+fn def_hash_suffix<'db>(db: &'db dyn Db, def: DefId<'db>) -> String {
     let mut hasher = DefaultHasher::new();
     hash_def_id(db, def, &mut hasher);
     format!("d{:08x}", (hasher.finish() & 0xffff_ffff) as u32)
 }
 
-fn hash_def_id<'db>(db: &'db dyn HirDb, def: DefId<'db>, state: &mut DefaultHasher) {
-    def.file(db).url(db).as_str().hash(state);
+fn hash_def_id<'db>(db: &'db dyn Db, def: DefId<'db>, state: &mut DefaultHasher) {
+    hash_source_file_identity(db, def.file(db), state);
     def.kind(db).hash(state);
     def.name(db).hash(state);
     def.fingerprint(db).hash(state);
     def.disambiguator(db).as_u32().hash(state);
     if let Some(owner) = def.owner(db) {
         hash_def_id(db, owner, state);
+    }
+}
+
+fn hash_source_file_identity(db: &dyn Db, file: SourceFile, state: &mut DefaultHasher) {
+    if let Some(module) = module_id_for_source_file(db, file) {
+        module.library(db).hash(state);
+        module.logical_path(db).hash(state);
+    } else {
+        file.url(db).as_str().hash(state);
     }
 }
 

@@ -98,6 +98,22 @@ fn function_names(output: &SpecializeOutput<'_>) -> Vec<String> {
     names
 }
 
+fn specialize_source_at_root(root: &Path, rel_path: &str, src: &str) -> SpecializeOutput<'static> {
+    let db = Box::leak(Box::new(TestDb::default()));
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        root.to_path_buf(),
+        PathBuf::from("/std"),
+        BTreeMap::new(),
+    ));
+    let path = root.join(rel_path);
+    let key = module_key_for_path(LibraryId::Main, root, &path).expect("file under main root");
+    let file = source_file_at_path(db, &path, src);
+    db.module_files.insert(key, file);
+    let module = parse_file_to_hir(db, file).module(db);
+    specialize_module(db, module, SpecializeOptions::default())
+}
+
 fn function_summaries(db: &TestDb, output: &SpecializeOutput<'_>) -> Vec<String> {
     let mut summaries = output
         .module
@@ -140,6 +156,21 @@ fn naming_matches_reference_mangling() {
         specialize_name(&db, "std.map", &[pair]),
         "std_map$pairLword_boolJ"
     );
+}
+
+#[test]
+fn specialized_name_hash_is_independent_of_absolute_module_root() {
+    let src = r#"
+contract C {
+  public function main() -> word { return 42; }
+}
+"#;
+    let left = specialize_source_at_root(Path::new("/workspace-a/project"), "src/main.solc", src);
+    let right = specialize_source_at_root(Path::new("/workspace-b/project"), "src/main.solc", src);
+
+    assert_eq!(left.diagnostics, Vec::new());
+    assert_eq!(right.diagnostics, Vec::new());
+    assert_eq!(function_names(&left), function_names(&right));
 }
 
 #[test]

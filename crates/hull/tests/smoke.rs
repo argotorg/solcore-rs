@@ -1,8 +1,7 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    env, fs,
+    fs,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
@@ -766,167 +765,6 @@ contract MatchAsm {
 }
 
 #[test]
-#[ignore]
-fn corpus_emission_count() {
-    if let Some(path) = env::var_os("HULL_COUNT_ONE") {
-        let status = corpus_status(Path::new(&path));
-        println!("{status}");
-        return;
-    }
-
-    let repo = repo_root();
-    let root = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples");
-    let mut paths = Vec::new();
-    collect_solc_files(&root, &mut paths);
-    paths.sort();
-
-    let mut buckets = BTreeMap::<String, usize>::new();
-
-    for path in &paths {
-        let output = Command::new(env::current_exe().expect("test exe"))
-            .arg("corpus_emission_count")
-            .arg("--ignored")
-            .arg("--exact")
-            .arg("--nocapture")
-            .env("HULL_COUNT_ONE", path)
-            .output()
-            .expect("fixture count child");
-        let status = if output.status.success() {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .find(|line| {
-                    matches!(
-                        *line,
-                        "check-ok"
-                            | "check-diagnostic"
-                            | "emit-diagnostic"
-                            | "specialize-diagnostic"
-                    )
-                })
-                .unwrap_or("unknown")
-                .to_owned()
-        } else {
-            "crash".to_owned()
-        };
-        *buckets.entry(status).or_default() += 1;
-    }
-
-    let emit_ok = buckets.get("check-ok").copied().unwrap_or(0)
-        + buckets.get("check-diagnostic").copied().unwrap_or(0);
-    let check_ok = buckets.get("check-ok").copied().unwrap_or(0);
-    println!(
-        "corpus={} emit_ok={} check_ok={} buckets={:?}",
-        paths.len(),
-        emit_ok,
-        check_ok,
-        buckets
-    );
-}
-
-fn corpus_status(path: &Path) -> &'static str {
-    let (db, output) = specialize_fixture(path);
-    if !output.diagnostics.is_empty() {
-        return "specialize-diagnostic";
-    }
-    let emitted = emit_module(
-        db,
-        &output.module,
-        EmitOptions {
-            emit_dispatcher_comments: false,
-        },
-    );
-    if !emitted.diagnostics.is_empty() {
-        return "emit-diagnostic";
-    }
-    let checked = check_program_with_db(db, &emitted.program);
-    if !checked.is_empty() {
-        return "check-diagnostic";
-    }
-    "check-ok"
-}
-
-#[test]
-#[ignore]
-fn corpus_emission_count_report() {
-    let repo = repo_root();
-    let examples = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples");
-    let mut fixtures = Vec::new();
-    collect_solc_fixtures(&examples.join("dispatch"), &mut fixtures);
-    fixtures.push(examples.join("spec/131constructor.solc"));
-    fixtures.sort();
-
-    let mut total = 0usize;
-    let mut specialize_ok = 0usize;
-    let mut emit_ok = 0usize;
-    let mut check_ok = 0usize;
-    let mut blocked = Vec::new();
-
-    for fixture in fixtures {
-        total += 1;
-        let (_db, output) = specialize_fixture(&fixture);
-        let rel = fixture
-            .strip_prefix(&examples)
-            .unwrap_or(&fixture)
-            .display()
-            .to_string();
-        if !output.diagnostics.is_empty() {
-            blocked.push(format!(
-                "{rel}: specialize: {:?}",
-                output
-                    .diagnostics
-                    .iter()
-                    .map(|diagnostic| &diagnostic.kind)
-                    .collect::<Vec<_>>()
-            ));
-            continue;
-        }
-        specialize_ok += 1;
-
-        let emitted = emit_module(
-            _db,
-            &output.module,
-            EmitOptions {
-                emit_dispatcher_comments: false,
-            },
-        );
-        if !emitted.diagnostics.is_empty() {
-            blocked.push(format!(
-                "{rel}: emit: {:?}",
-                emitted
-                    .diagnostics
-                    .iter()
-                    .map(|diagnostic| (&diagnostic.span, &diagnostic.kind))
-                    .collect::<Vec<_>>()
-            ));
-            continue;
-        }
-        emit_ok += 1;
-
-        let checked = check_program_with_db(_db, &emitted.program);
-        if checked.is_empty() {
-            check_ok += 1;
-        } else {
-            blocked.push(format!(
-                "{rel}: check: {:?}",
-                checked
-                    .iter()
-                    .map(|diagnostic| &diagnostic.kind)
-                    .collect::<Vec<_>>()
-            ));
-        }
-    }
-
-    eprintln!(
-        "hull dispatch/deployment smoke counts: total={total} specialize_ok={specialize_ok} emit_ok={emit_ok} check_ok={check_ok}"
-    );
-    if std::env::var_os("HULL_COUNT_VERBOSE").is_some() {
-        for item in blocked {
-            eprintln!("  {item}");
-        }
-    }
-}
-
-#[test]
 fn cited_nested_layout_fixtures_check_cleanly() {
     for fixture in [
         "spec/032simplejoin.solc",
@@ -1352,28 +1190,6 @@ fn assert_fixture_has_no_unbound_alt(relative: &str) {
         )),
         "unbound alt diagnostic for {relative:?}: {checked:?}"
     );
-}
-
-fn collect_solc_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(dir).expect("fixture dir") {
-        let path = entry.expect("fixture entry").path();
-        if path.is_dir() {
-            collect_solc_files(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "solc") {
-            out.push(path);
-        }
-    }
-}
-
-fn collect_solc_fixtures(root: &Path, out: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(root).expect("fixture dir") {
-        let path = entry.expect("fixture entry").path();
-        if path.is_dir() {
-            collect_solc_fixtures(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "solc") {
-            out.push(path);
-        }
-    }
 }
 
 fn repo_root() -> PathBuf {

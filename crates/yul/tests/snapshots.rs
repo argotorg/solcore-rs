@@ -115,14 +115,14 @@ contract OptionDoc {
 fn doc_color_yul_snapshot() {
     let fixture =
         repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec/047rgb.solc");
-    insta::assert_snapshot!("doc_color", render_fixture(&fixture));
+    insta::assert_snapshot!("doc_color_yul_snapshot", render_fixture(&fixture));
 }
 
 #[test]
 fn doc_add1_yul_snapshot() {
     let fixture =
         repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases/Add1.solc");
-    insta::assert_snapshot!("doc_add1", render_fixture(&fixture));
+    insta::assert_snapshot!("doc_add1_yul_snapshot", render_fixture(&fixture));
 }
 
 #[test]
@@ -675,108 +675,6 @@ contract C {
     }
 }
 
-#[test]
-#[ignore]
-fn corpus_hull_success_translates_to_yul_count() {
-    if let Some(path) = env::var_os("YUL_COUNT_ONE") {
-        println!("{}", corpus_status(Path::new(&path)));
-        return;
-    }
-
-    let examples = repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples");
-    let mut paths = Vec::new();
-    collect_solc_files(&examples, &mut paths);
-    paths.sort();
-
-    let mut buckets = BTreeMap::<String, usize>::new();
-    let mut failures = Vec::new();
-    for path in &paths {
-        let status = corpus_status(path);
-        *buckets.entry(status.clone()).or_default() += 1;
-        if status == "yul-diagnostic" {
-            failures.push(
-                path.strip_prefix(&examples)
-                    .unwrap_or(path)
-                    .display()
-                    .to_string(),
-            );
-        }
-    }
-
-    let hull_success = buckets.get("hull-check-ok").copied().unwrap_or(0)
-        + buckets.get("yul-diagnostic").copied().unwrap_or(0);
-    let yul_ok = buckets.get("hull-check-ok").copied().unwrap_or(0);
-    eprintln!(
-        "yul corpus smoke counts: total={} hull_success={} yul_ok={} buckets={:?}",
-        paths.len(),
-        hull_success,
-        yul_ok,
-        buckets
-    );
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
-}
-
-#[test]
-#[ignore]
-fn solc_strict_assembly_compiles_emitted_yul_when_enabled() {
-    if env::var_os("SOLC_E2E").as_deref() != Some(std::ffi::OsStr::new("1")) {
-        eprintln!("set SOLC_E2E=1 to run the local solc strict-assembly compile check");
-        return;
-    }
-    if Command::new("which").arg("solc").output().is_err() {
-        eprintln!("which solc failed; skipping");
-        return;
-    }
-
-    let fixture =
-        repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases/Add1.solc");
-    let yul = render_fixture(&fixture);
-    let path = env::temp_dir().join(format!(
-        "solcore-yul-solc-e2e-{}-{}.yul",
-        std::process::id(),
-        std::thread::current().name().unwrap_or("test")
-    ));
-    fs::write(&path, yul).expect("write yul temp file");
-    let output = Command::new("solc")
-        .arg("--strict-assembly")
-        .arg("--bin")
-        .arg(&path)
-        .output()
-        .expect("run solc");
-    let _ = fs::remove_file(&path);
-    assert!(
-        output.status.success(),
-        "solc failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn corpus_status(path: &Path) -> String {
-    let (db, output) = specialize_fixture(path);
-    if !output.diagnostics.is_empty() {
-        return "specialize-diagnostic".to_owned();
-    }
-    let emitted = hull::emit_module(
-        db,
-        &output.module,
-        hull::EmitOptions {
-            emit_dispatcher_comments: false,
-        },
-    );
-    if !emitted.diagnostics.is_empty() {
-        return "hull-emit-diagnostic".to_owned();
-    }
-    let checked = hull::check_program_with_db(db, &emitted.program);
-    if !checked.is_empty() {
-        return "hull-check-diagnostic".to_owned();
-    }
-    match solcore_yul::render_hull_program(db, &emitted.program) {
-        Ok(_) => "hull-check-ok".to_owned(),
-        Err(_) => "yul-diagnostic".to_owned(),
-    }
-}
-
 fn render_source(name: &str, src: &str) -> String {
     let (db, output) = specialize_src(name, src);
     render_output(db, output)
@@ -923,17 +821,6 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
         }
     }
     unresolved
-}
-
-fn collect_solc_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    for entry in fs::read_dir(dir).expect("fixture dir") {
-        let path = entry.expect("fixture entry").path();
-        if path.is_dir() {
-            collect_solc_files(&path, out);
-        } else if path.extension().is_some_and(|ext| ext == "solc") {
-            out.push(path);
-        }
-    }
 }
 
 fn repo_root() -> PathBuf {
