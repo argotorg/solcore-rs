@@ -206,6 +206,10 @@ fn spec_expectation_manifest_covers_all_fixtures() {
         case.label.ends_with("StorageLib.solc")
             && matches!(case.expectation, SpecExpectation::Skip { reason } if !reason.is_empty())
     }));
+    assert!(cases.iter().any(|case| {
+        case.label.ends_with("012nid.solc")
+            && matches!(case.expectation, SpecExpectation::Neg { reason } if !reason.is_empty())
+    }));
 }
 
 fn run_spec_case(
@@ -226,6 +230,9 @@ fn run_spec_case(
         SpecExpectation::Blocked { category } => {
             record_blocked_fixture(scoreboard, case.label, &case.path, category);
         }
+        SpecExpectation::Neg { reason } => {
+            record_neg_fixture(scoreboard, case.label, &case.path, reason);
+        }
         SpecExpectation::Skip { reason } => {
             scoreboard.record_skip(reason);
         }
@@ -243,6 +250,9 @@ fn run_spec_case_pipeline_only(scoreboard: &mut Scoreboard, case: SpecCase) {
         }
         SpecExpectation::Blocked { category } => {
             record_blocked_fixture(scoreboard, case.label, &case.path, category);
+        }
+        SpecExpectation::Neg { reason } => {
+            record_neg_fixture(scoreboard, case.label, &case.path, reason);
         }
         SpecExpectation::Skip { reason } => {
             scoreboard.record_skip(reason);
@@ -278,6 +288,23 @@ fn record_blocked_fixture(
                 failure.message
             ),
         ),
+    }
+}
+
+fn record_neg_fixture(
+    scoreboard: &mut Scoreboard,
+    label: impl Into<String>,
+    path: &Path,
+    reason: &'static str,
+) {
+    scoreboard.files_run += 1;
+    match render_fixture(path) {
+        Ok(_) => scoreboard.record_stale_neg(
+            label,
+            reason,
+            "pipeline unexpectedly compiled a reference-rejected fixture".to_owned(),
+        ),
+        Err(_) => scoreboard.record_neg_parity(),
     }
 }
 
@@ -1425,6 +1452,7 @@ enum RunMode {
 enum SpecExpectation {
     Run { expected: Expected, mode: RunMode },
     Blocked { category: BlockedCategory },
+    Neg { reason: &'static str },
     Skip { reason: &'static str },
 }
 
@@ -1490,6 +1518,14 @@ fn spec_cases() -> Result<Vec<SpecCase>, E2eFailure> {
                         format!("spec fixture `{file_name}` has an empty skip reason"),
                     ));
                 }
+                if matches!(&expectation, SpecExpectation::Neg { reason } if reason.is_empty()) {
+                    return Err(E2eFailure::new(
+                        FailureKind::Pipeline,
+                        format!(
+                            "spec fixture `{file_name}` has an empty negative-classification reason"
+                        ),
+                    ));
+                }
                 Ok(Some(SpecCase {
                     label: format!("spec/{file_name}"),
                     path,
@@ -1517,11 +1553,17 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
     fn skip(reason: &'static str) -> SpecExpectation {
         SpecExpectation::Skip { reason }
     }
+    fn neg(reason: &'static str) -> SpecExpectation {
+        SpecExpectation::Neg { reason }
+    }
     fn blocked(category: BlockedCategory) -> SpecExpectation {
         SpecExpectation::Blocked { category }
     }
     let unannotated = BlockedCategory::UnannotatedEntrySpecialization;
     let std_instances = BlockedCategory::NeedsStdInstances;
+    let typedef_forall_neg = "reference HEAD rejects: class declarations lack forall binders \
+        (unbound type variables, upstream commit 7ad5622); legacy pre-std StructField \
+        experiment superseded by std/assign.solc";
     let storage_index = BlockedCategory::NeedsStorageIndexLowering;
     let unsupported_mono = BlockedCategory::UnsupportedMonoConstruct;
 
@@ -1529,7 +1571,11 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("00answer.solc", run(42)),
         ("010answer.solc", run(42)),
         ("011id.solc", run(42)),
-        ("012nid.solc", blocked(unannotated)),
+        (
+            "012nid.solc",
+            neg("reference HEAD rejects: over-application of direct call `nid(42)` fails \
+                unification; superseded upstream by 02nid.solc (invoke-through-variable)"),
+        ),
         ("013comp.solc", blocked(unsupported_mono)),
         ("01id.solc", run(42)),
         ("021not.solc", run(1)),
@@ -1554,20 +1600,22 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("049rgb3.solc", run(44)),
         ("051expreturn.solc", run(0)),
         ("051negBool.solc", run(1)),
-        ("052negPair.solc", blocked(std_instances)),
+        (
+            "052negPair.solc",
+            neg("reference HEAD rejects: legacy `instance (ctx) => head` syntax removed from \
+                grammar; instance methods also lack complete signatures (matches SC0226); \
+                superseded upstream by 11negPair.solc"),
+        ),
         ("052return.solc", run(0)),
         ("053return.solc", run(0)),
         ("06comp.solc", run(42)),
         ("09not.solc", run(1)),
-        (
-            "101struct1Field.solc",
-            skip("no assigned P9 E2E oracle for legacy struct-field experiment"),
-        ),
-        ("102uintField.solc", blocked(std_instances)),
-        ("103struct3Fields.solc", blocked(std_instances)),
-        ("105nestedStruct.solc", blocked(std_instances)),
+        ("101struct1Field.solc", neg(typedef_forall_neg)),
+        ("102uintField.solc", neg(typedef_forall_neg)),
+        ("103struct3Fields.solc", neg(typedef_forall_neg)),
+        ("105nestedStruct.solc", neg(typedef_forall_neg)),
         ("10negBool.solc", run(1)),
-        ("111storageStruct.solc", blocked(std_instances)),
+        ("111storageStruct.solc", neg(typedef_forall_neg)),
         ("112ContractStorage.solc", blocked(std_instances)),
         ("113counter.solc", blocked(unannotated)),
         ("11negPair.solc", run(1)),
@@ -1604,8 +1652,10 @@ struct Scoreboard {
     files_run: usize,
     files_passed: usize,
     files_failed: usize,
+    neg_parity: usize,
     blocked_by_category: BTreeMap<BlockedCategory, usize>,
     stale_blocked: Vec<String>,
+    stale_neg: Vec<String>,
     skipped_with_reason: BTreeMap<&'static str, usize>,
     failures: BTreeMap<FailureKind, Vec<String>>,
 }
@@ -1636,23 +1686,35 @@ impl Scoreboard {
         ));
     }
 
+    fn record_neg_parity(&mut self) {
+        self.neg_parity += 1;
+    }
+
+    fn record_stale_neg(&mut self, label: impl Into<String>, reason: &str, message: String) {
+        self.stale_neg.push(format!(
+            "{}: expected reference-parity rejection ({reason}); {message}",
+            label.into()
+        ));
+    }
+
     fn record_skip(&mut self, reason: &'static str) {
         *self.skipped_with_reason.entry(reason).or_default() += 1;
     }
 
     fn is_clean(&self) -> bool {
-        self.failures.is_empty() && self.stale_blocked.is_empty()
+        self.failures.is_empty() && self.stale_blocked.is_empty() && self.stale_neg.is_empty()
     }
 
     fn render(&self) -> String {
         let skipped = self.skipped_with_reason.values().sum::<usize>();
         let blocked = self.blocked_by_category.values().sum::<usize>();
         let mut out = format!(
-            "E2E scoreboard: files run={} passed={} blocked={} stale={} failed={} skipped-with-reason={}",
+            "E2E scoreboard: files run={} passed={} blocked={} neg-parity={} stale={} failed={} skipped-with-reason={}",
             self.files_run,
             self.files_passed,
             blocked,
-            self.stale_blocked.len(),
+            self.neg_parity,
+            self.stale_blocked.len() + self.stale_neg.len(),
             self.files_failed,
             skipped
         );
@@ -1668,7 +1730,8 @@ impl Scoreboard {
                 out.push_str(&format!("  {count}: {reason}\n"));
             }
         }
-        if !self.failures.is_empty() || !self.stale_blocked.is_empty() {
+        if !self.failures.is_empty() || !self.stale_blocked.is_empty() || !self.stale_neg.is_empty()
+        {
             out.push_str("\nharness failures:\n");
             out.push_str(&self.render_failures());
         }
@@ -1683,6 +1746,17 @@ impl Scoreboard {
                 self.stale_blocked.len()
             ));
             for stale in &self.stale_blocked {
+                out.push_str("  ");
+                out.push_str(stale);
+                out.push('\n');
+            }
+        }
+        if !self.stale_neg.is_empty() {
+            out.push_str(&format!(
+                "stale negative ledger: {}\n",
+                self.stale_neg.len()
+            ));
+            for stale in &self.stale_neg {
                 out.push_str("  ");
                 out.push_str(stale);
                 out.push('\n');
