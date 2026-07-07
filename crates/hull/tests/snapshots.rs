@@ -10,8 +10,8 @@ use hir::{
 };
 use parser::parse_file_to_hir;
 use solcore_hull::{
-    Alt, Arg, CodeBlock, Con, Expr, Function, Object, Pat, PatKind, Program, Stmt, StmtKind, Ty,
-    check_program, pretty_program,
+    Alt, Arg, CheckDiagnosticKind, CodeBlock, Con, Expr, Function, Object, Pat, PatKind, Program,
+    Stmt, StmtKind, Ty, check_program_with_db, pretty_program,
 };
 
 #[salsa::db]
@@ -66,7 +66,7 @@ fn identity_function_snapshot() {
         objects: Vec::new(),
     };
 
-    assert_eq!(check_program(&program), Vec::new());
+    assert_eq!(check_program_with_db(&db, &program), Vec::new());
     assert_eq!(
         pretty_program(&db, &program),
         "function id (x : word) -> word {\n  return x\n}\n"
@@ -161,7 +161,7 @@ fn maybe_option_snapshot() {
         objects: Vec::new(),
     };
 
-    assert_eq!(check_program(&program), Vec::new());
+    assert_eq!(check_program_with_db(&db, &program), Vec::new());
     assert_eq!(
         pretty_program(&db, &program),
         concat!(
@@ -289,7 +289,7 @@ fn color_enum_snapshot() {
         objects: Vec::new(),
     };
 
-    assert_eq!(check_program(&program), Vec::new());
+    assert_eq!(check_program_with_db(&db, &program), Vec::new());
     assert_eq!(
         pretty_program(&db, &program),
         concat!(
@@ -396,7 +396,7 @@ fn add1_contract_object_snapshot() {
         }],
     };
 
-    assert_eq!(check_program(&program), Vec::new());
+    assert_eq!(check_program_with_db(&db, &program), Vec::new());
     assert_eq!(
         pretty_program(&db, &program),
         concat!(
@@ -420,10 +420,353 @@ fn add1_contract_object_snapshot() {
     );
 }
 
+#[test]
+fn for_condition_must_be_bool_like() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let program = Program {
+        span: sp,
+        functions: vec![Function {
+            span: sp,
+            name: "main".to_owned(),
+            args: Vec::new(),
+            ret: Ty::unit(sp),
+            body: vec![Stmt {
+                span: sp,
+                kind: StmtKind::For {
+                    init: Vec::new(),
+                    cond: Expr::word(sp, "0"),
+                    post: Vec::new(),
+                    body: Vec::new(),
+                },
+            }],
+        }],
+        objects: Vec::new(),
+    };
+
+    let diagnostics = check_program_with_db(&db, &program);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.kind, CheckDiagnosticKind::ExpectedBool { .. })),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let word = Ty::word(sp);
+    let bool_sum = Ty::sum(sp, Ty::unit(sp), Ty::unit(sp));
+    let program = Program {
+        span: sp,
+        functions: vec![
+            Function {
+                span: sp,
+                name: "id".to_owned(),
+                args: vec![Arg {
+                    span: sp,
+                    name: "x".to_owned(),
+                    ty: word.clone(),
+                }],
+                ret: word.clone(),
+                body: vec![Stmt {
+                    span: sp,
+                    kind: StmtKind::Return(Expr::var(sp, "x", word.clone())),
+                }],
+            },
+            Function {
+                span: sp,
+                name: "main".to_owned(),
+                args: Vec::new(),
+                ret: word.clone(),
+                body: vec![
+                    Stmt {
+                        span: sp,
+                        kind: StmtKind::Let {
+                            name: "x".to_owned(),
+                            ty: word.clone(),
+                        },
+                    },
+                    Stmt {
+                        span: sp,
+                        kind: StmtKind::Let {
+                            name: "b".to_owned(),
+                            ty: bool_sum,
+                        },
+                    },
+                    Stmt {
+                        span: sp,
+                        kind: StmtKind::Assembly(vec![
+                            yul_assign(
+                                &db,
+                                sp,
+                                &["x"],
+                                yul_call(
+                                    &db,
+                                    sp,
+                                    "mstore",
+                                    vec![yul_num(sp, "1"), yul_num(sp, "1")],
+                                ),
+                            ),
+                            yul_assign(
+                                &db,
+                                sp,
+                                &["b"],
+                                yul_call(&db, sp, "add", vec![yul_num(sp, "1"), yul_num(sp, "1")]),
+                            ),
+                            yul_assign(
+                                &db,
+                                sp,
+                                &["x"],
+                                yul_call(
+                                    &db,
+                                    sp,
+                                    "usr$id",
+                                    vec![yul_num(sp, "1"), yul_num(sp, "2")],
+                                ),
+                            ),
+                        ]),
+                    },
+                    Stmt {
+                        span: sp,
+                        kind: StmtKind::Return(Expr::var(sp, "x", word)),
+                    },
+                ],
+            },
+        ],
+        objects: Vec::new(),
+    };
+
+    let diagnostics = check_program_with_db(&db, &program);
+    assert!(
+        diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic.kind,
+            CheckDiagnosticKind::AssemblyReturnCountMismatch {
+                expected: 1,
+                actual: 0,
+                ..
+            }
+        )),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic.kind,
+            CheckDiagnosticKind::AssemblyExpectedWordAssignment { ref name, .. } if name == "b"
+        )),
+        "{diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic.kind,
+            CheckDiagnosticKind::ArityMismatch {
+                ref name,
+                expected: 1,
+                actual: 2,
+            } if name == "usr$id"
+        )),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn assembly_checker_rejects_multi_return_arity_mismatch() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let word = Ty::word(sp);
+    let program = Program {
+        span: sp,
+        functions: vec![Function {
+            span: sp,
+            name: "main".to_owned(),
+            args: Vec::new(),
+            ret: word.clone(),
+            body: vec![
+                Stmt {
+                    span: sp,
+                    kind: StmtKind::Let {
+                        name: "x".to_owned(),
+                        ty: word.clone(),
+                    },
+                },
+                Stmt {
+                    span: sp,
+                    kind: StmtKind::Let {
+                        name: "y".to_owned(),
+                        ty: word.clone(),
+                    },
+                },
+                Stmt {
+                    span: sp,
+                    kind: StmtKind::Let {
+                        name: "z".to_owned(),
+                        ty: word.clone(),
+                    },
+                },
+                Stmt {
+                    span: sp,
+                    kind: StmtKind::Assembly(vec![
+                        YulStmt {
+                            span: sp,
+                            kind: YulStmtKind::FunctionDef {
+                                name: spanned_ident(&db, sp, "pair"),
+                                params: Vec::new(),
+                                rets: vec![
+                                    spanned_ident(&db, sp, "a"),
+                                    spanned_ident(&db, sp, "b"),
+                                ],
+                                body: Vec::new(),
+                            },
+                        },
+                        yul_assign(
+                            &db,
+                            sp,
+                            &["x", "y", "z"],
+                            yul_call(&db, sp, "pair", Vec::new()),
+                        ),
+                    ]),
+                },
+                Stmt {
+                    span: sp,
+                    kind: StmtKind::Return(Expr::var(sp, "x", word)),
+                },
+            ],
+        }],
+        objects: Vec::new(),
+    };
+
+    let diagnostics = check_program_with_db(&db, &program);
+    assert!(
+        diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic.kind,
+            CheckDiagnosticKind::AssemblyReturnCountMismatch {
+                expected: 3,
+                actual: 2,
+                ..
+            }
+        )),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn terminal_yul_return_satisfies_terminator_analysis() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let program = Program {
+        span: sp,
+        functions: vec![Function {
+            span: sp,
+            name: "main".to_owned(),
+            args: Vec::new(),
+            ret: Ty::word(sp),
+            body: vec![Stmt {
+                span: sp,
+                kind: StmtKind::Assembly(vec![yul_expr_stmt(
+                    &db,
+                    sp,
+                    yul_call(&db, sp, "return", vec![yul_num(sp, "0"), yul_num(sp, "0")]),
+                )]),
+            }],
+        }],
+        objects: Vec::new(),
+    };
+
+    assert_eq!(check_program_with_db(&db, &program), Vec::new());
+}
+
+#[test]
+fn expression_type_annotations_must_match_inferred_type() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let word = Ty::word(sp);
+    let program = Program {
+        span: sp,
+        functions: vec![Function {
+            span: sp,
+            name: "main".to_owned(),
+            args: Vec::new(),
+            ret: Ty::unit(sp),
+            body: vec![
+                Stmt {
+                    span: sp,
+                    kind: StmtKind::Let {
+                        name: "x".to_owned(),
+                        ty: word,
+                    },
+                },
+                Stmt {
+                    span: sp,
+                    kind: StmtKind::Expr(Expr::var(sp, "x", Ty::unit(sp))),
+                },
+            ],
+        }],
+        objects: Vec::new(),
+    };
+
+    let diagnostics = check_program_with_db(&db, &program);
+    assert!(
+        diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic.kind,
+            CheckDiagnosticKind::ExprAnnotationMismatch { .. }
+        )),
+        "{diagnostics:?}"
+    );
+}
+
 fn spanned_ident<'db>(
     db: &'db TestDb,
     span: Span<'db>,
     name: &str,
 ) -> SpannedElem<'db, Ident<'db>> {
     SpannedElem::new(Ident::new(db, name.to_owned()), span)
+}
+
+fn yul_num<'db>(span: Span<'db>, value: &str) -> YulExpr<'db> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Lit(YulLitKind::Number(value.to_owned())),
+    }
+}
+
+fn yul_call<'db>(
+    db: &'db TestDb,
+    span: Span<'db>,
+    name: &str,
+    args: Vec<YulExpr<'db>>,
+) -> YulExpr<'db> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Call {
+            name: spanned_ident(db, span, name),
+            args,
+        },
+    }
+}
+
+fn yul_assign<'db>(
+    db: &'db TestDb,
+    span: Span<'db>,
+    names: &[&str],
+    value: YulExpr<'db>,
+) -> YulStmt<'db> {
+    YulStmt {
+        span,
+        kind: YulStmtKind::Assign {
+            names: names
+                .iter()
+                .map(|name| spanned_ident(db, span, name))
+                .collect(),
+            value,
+        },
+    }
+}
+
+fn yul_expr_stmt<'db>(_db: &'db TestDb, span: Span<'db>, expr: YulExpr<'db>) -> YulStmt<'db> {
+    YulStmt {
+        span,
+        kind: YulStmtKind::Expr(expr),
+    }
 }

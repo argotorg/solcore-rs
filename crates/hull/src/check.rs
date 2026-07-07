@@ -1,6 +1,13 @@
 use std::collections::BTreeMap;
 
-use hir::span::Span;
+use hir::{
+    Db as HirDb,
+    ast::{
+        Ident,
+        function::{YulExpr, YulExprKind, YulStmt, YulStmtKind},
+    },
+    span::{Span, SpannedElem},
+};
 
 use crate::ir::{
     Alt, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt, StmtKind, Ty, TyKind,
@@ -32,6 +39,10 @@ pub enum CheckDiagnosticKind {
         expected: String,
         actual: String,
     },
+    ExprAnnotationMismatch {
+        annotated: String,
+        inferred: String,
+    },
     ExpectedProduct {
         actual: String,
     },
@@ -56,6 +67,23 @@ pub enum CheckDiagnosticKind {
     MissingTerminator {
         function: String,
     },
+    AssemblyRequiresDatabase,
+    AssemblyReturnCountMismatch {
+        context: String,
+        expected: usize,
+        actual: usize,
+    },
+    AssemblyExpressionNotUnit {
+        actual: String,
+    },
+    AssemblyExpectedWordArgument {
+        actual: String,
+    },
+    AssemblyExpectedWordAssignment {
+        name: String,
+        actual: String,
+    },
+    AssemblyVoidArgument,
 }
 
 #[derive(Debug, Clone)]
@@ -64,8 +92,9 @@ struct FunSig<'db> {
     ret: Ty<'db>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct Env<'db> {
+    db: Option<&'db dyn HirDb>,
     vars: Vec<BTreeMap<String, Ty<'db>>>,
     funs: BTreeMap<String, FunSig<'db>>,
     ret: Option<Ty<'db>>,
@@ -73,7 +102,22 @@ struct Env<'db> {
 }
 
 pub fn check_program<'db>(program: &Program<'db>) -> Vec<CheckDiagnostic<'db>> {
+    check_program_inner(None, program)
+}
+
+pub fn check_program_with_db<'db>(
+    db: &'db dyn HirDb,
+    program: &Program<'db>,
+) -> Vec<CheckDiagnostic<'db>> {
+    check_program_inner(Some(db), program)
+}
+
+fn check_program_inner<'db>(
+    db: Option<&'db dyn HirDb>,
+    program: &Program<'db>,
+) -> Vec<CheckDiagnostic<'db>> {
     let mut env = Env {
+        db,
         vars: vec![BTreeMap::new()],
         funs: builtin_funs(program.span),
         ret: None,
@@ -153,7 +197,7 @@ impl<'db> Env<'db> {
             let saved_ret = env.ret.clone();
             env.ret = Some(function.ret.clone());
             env.check_body(&function.body);
-            if !body_terminates(&function.body) {
+            if requires_terminator(&function.ret) && !body_terminates(&function.body, env.db) {
                 env.push(
                     function.span,
                     CheckDiagnosticKind::MissingTerminator {
@@ -197,7 +241,15 @@ impl<'db> Env<'db> {
                 body,
             } => self.with_scope(|env| {
                 env.check_body(init);
-                env.check_expr(cond);
+                let cond_ty = env.check_expr(cond);
+                if !is_bool_like(&cond_ty) {
+                    env.push(
+                        cond.span,
+                        CheckDiagnosticKind::ExpectedBool {
+                            actual: ty_display(&cond_ty),
+                        },
+                    );
+                }
                 env.check_body(post);
                 env.check_body(body);
             }),
@@ -213,7 +265,14 @@ impl<'db> Env<'db> {
                     self.check_alt(target, alt);
                 }
             }
-            StmtKind::Assembly(_) | StmtKind::Revert(_) | StmtKind::Comment(_) => {}
+            StmtKind::Assembly(stmts) => {
+                if self.db.is_some() {
+                    self.with_scope(|env| env.check_asm_block(stmts));
+                } else {
+                    self.push(stmt.span, CheckDiagnosticKind::AssemblyRequiresDatabase);
+                }
+            }
+            StmtKind::Revert(_) | StmtKind::Comment(_) => {}
         }
     }
 
@@ -238,6 +297,20 @@ impl<'db> Env<'db> {
     }
 
     fn check_expr(&mut self, expr: &Expr<'db>) -> Ty<'db> {
+        let inferred = self.infer_expr(expr);
+        if !type_eq(&expr.ty, &inferred) {
+            self.push(
+                expr.span,
+                CheckDiagnosticKind::ExprAnnotationMismatch {
+                    annotated: ty_display(&expr.ty),
+                    inferred: ty_display(&inferred),
+                },
+            );
+        }
+        inferred
+    }
+
+    fn infer_expr(&mut self, expr: &Expr<'db>) -> Ty<'db> {
         match &expr.kind {
             ExprKind::Word(_) => Ty::word(expr.span),
             ExprKind::Bool(_) => Ty::bool(expr.span),
@@ -254,32 +327,36 @@ impl<'db> Env<'db> {
                 let rhs_ty = self.check_expr(rhs);
                 Ty::product(expr.span, lhs_ty, rhs_ty)
             }
-            ExprKind::Fst(inner) => match self.check_expr(inner).strip_named().kind.clone() {
-                TyKind::Product(lhs, _) => *lhs,
-                _ => {
-                    let actual = self.check_expr(inner);
-                    self.push(
-                        inner.span,
-                        CheckDiagnosticKind::ExpectedProduct {
-                            actual: ty_display(&actual),
-                        },
-                    );
-                    expr.ty.clone()
+            ExprKind::Fst(inner) => {
+                let actual = self.check_expr(inner);
+                match actual.strip_named().kind.clone() {
+                    TyKind::Product(lhs, _) => *lhs,
+                    _ => {
+                        self.push(
+                            inner.span,
+                            CheckDiagnosticKind::ExpectedProduct {
+                                actual: ty_display(&actual),
+                            },
+                        );
+                        expr.ty.clone()
+                    }
                 }
-            },
-            ExprKind::Snd(inner) => match self.check_expr(inner).strip_named().kind.clone() {
-                TyKind::Product(_, rhs) => *rhs,
-                _ => {
-                    let actual = self.check_expr(inner);
-                    self.push(
-                        inner.span,
-                        CheckDiagnosticKind::ExpectedProduct {
-                            actual: ty_display(&actual),
-                        },
-                    );
-                    expr.ty.clone()
+            }
+            ExprKind::Snd(inner) => {
+                let actual = self.check_expr(inner);
+                match actual.strip_named().kind.clone() {
+                    TyKind::Product(_, rhs) => *rhs,
+                    _ => {
+                        self.push(
+                            inner.span,
+                            CheckDiagnosticKind::ExpectedProduct {
+                                actual: ty_display(&actual),
+                            },
+                        );
+                        expr.ty.clone()
+                    }
                 }
-            },
+            }
             ExprKind::Inl { target, value } => {
                 match target.strip_named().kind.clone() {
                     TyKind::Sum(lhs, _) => {
@@ -381,6 +458,224 @@ impl<'db> Env<'db> {
         }
     }
 
+    fn check_asm_block(&mut self, stmts: &[YulStmt<'db>]) {
+        for stmt in stmts {
+            self.check_asm_stmt(stmt);
+        }
+    }
+
+    fn check_asm_stmt(&mut self, stmt: &YulStmt<'db>) {
+        match &stmt.kind {
+            YulStmtKind::Block(stmts) => self.with_scope(|env| env.check_asm_block(stmts)),
+            YulStmtKind::Let { names, init } => {
+                if let Some(init) = init {
+                    let ty = self.check_asm_expr(init);
+                    let expected = names.len();
+                    let actual = return_count(&ty);
+                    if actual != expected {
+                        self.push(
+                            init.span,
+                            CheckDiagnosticKind::AssemblyReturnCountMismatch {
+                                context: "let binding".to_owned(),
+                                expected,
+                                actual,
+                            },
+                        );
+                    }
+                }
+                for name in names {
+                    self.insert_var(self.yul_name(name), Ty::word(stmt.span));
+                }
+            }
+            YulStmtKind::Assign { names, value } => {
+                let mut expected = 0usize;
+                for name in names {
+                    let name_text = self.yul_name(name);
+                    match self.lookup_var(&name_text) {
+                        Some(ty) => {
+                            if !is_word_type(&ty) {
+                                self.push(
+                                    stmt.span,
+                                    CheckDiagnosticKind::AssemblyExpectedWordAssignment {
+                                        name: name_text,
+                                        actual: ty_display(&ty),
+                                    },
+                                );
+                            }
+                        }
+                        None => self.push(
+                            stmt.span,
+                            CheckDiagnosticKind::UndefinedVariable { name: name_text },
+                        ),
+                    }
+                    expected += 1;
+                }
+                let actual_ty = self.check_asm_expr(value);
+                let actual = return_count(&actual_ty);
+                if actual != expected {
+                    self.push(
+                        value.span,
+                        CheckDiagnosticKind::AssemblyReturnCountMismatch {
+                            context: "assignment".to_owned(),
+                            expected,
+                            actual,
+                        },
+                    );
+                }
+            }
+            YulStmtKind::Expr(expr) => {
+                let ty = self.check_asm_expr(expr);
+                if !type_eq(&ty, &Ty::unit(expr.span)) {
+                    self.push(
+                        expr.span,
+                        CheckDiagnosticKind::AssemblyExpressionNotUnit {
+                            actual: ty_display(&ty),
+                        },
+                    );
+                }
+            }
+            YulStmtKind::If { cond, body } => {
+                self.check_asm_arg(cond);
+                self.check_asm_block(body);
+            }
+            YulStmtKind::For {
+                init,
+                cond,
+                post,
+                body,
+            } => self.with_scope(|env| {
+                env.check_asm_block(init);
+                env.check_asm_arg(cond);
+                env.check_asm_block(post);
+                env.check_asm_block(body);
+            }),
+            YulStmtKind::Switch {
+                expr,
+                cases,
+                default,
+            } => {
+                self.check_asm_arg(expr);
+                for case in cases {
+                    self.check_asm_block(&case.body);
+                }
+                if let Some(default) = default {
+                    self.check_asm_block(default);
+                }
+            }
+            YulStmtKind::FunctionDef {
+                name,
+                params,
+                rets,
+                body,
+            } => {
+                let fun_name = self.yul_name(name);
+                self.funs.insert(
+                    fun_name,
+                    FunSig {
+                        args: vec![Ty::word(stmt.span); params.len()],
+                        ret: n_returns(stmt.span, rets.len()),
+                    },
+                );
+                self.with_scope(|env| {
+                    for param in params {
+                        env.insert_var(env.yul_name(param), Ty::word(stmt.span));
+                    }
+                    for ret in rets {
+                        env.insert_var(env.yul_name(ret), Ty::word(stmt.span));
+                    }
+                    env.check_asm_block(body);
+                });
+            }
+            YulStmtKind::Leave
+            | YulStmtKind::Break
+            | YulStmtKind::Continue
+            | YulStmtKind::Error => {}
+        }
+    }
+
+    fn check_asm_expr(&mut self, expr: &YulExpr<'db>) -> Ty<'db> {
+        match &expr.kind {
+            YulExprKind::Lit(_) => Ty::word(expr.span),
+            YulExprKind::Ident(name) => {
+                let name = self.yul_name(name);
+                self.lookup_var(&name).unwrap_or_else(|| {
+                    self.push(expr.span, CheckDiagnosticKind::UndefinedVariable { name });
+                    Ty::word(expr.span)
+                })
+            }
+            YulExprKind::Call { name, args } => {
+                let name = self.yul_name(name);
+                let sig = self.lookup_asm_fun(expr.span, &name);
+                if sig.args.len() != args.len() {
+                    self.push(
+                        expr.span,
+                        CheckDiagnosticKind::ArityMismatch {
+                            name,
+                            expected: sig.args.len(),
+                            actual: args.len(),
+                        },
+                    );
+                    return sig.ret;
+                }
+                for arg in args {
+                    self.check_asm_arg(arg);
+                }
+                sig.ret
+            }
+            YulExprKind::Error => Ty::word(expr.span),
+        }
+    }
+
+    fn check_asm_arg(&mut self, expr: &YulExpr<'db>) {
+        let ty = self.check_asm_expr(expr);
+        if is_word_type(&ty) {
+            return;
+        }
+        if type_eq(&ty, &Ty::unit(expr.span)) {
+            self.push(expr.span, CheckDiagnosticKind::AssemblyVoidArgument);
+        } else {
+            self.push(
+                expr.span,
+                CheckDiagnosticKind::AssemblyExpectedWordArgument {
+                    actual: ty_display(&ty),
+                },
+            );
+        }
+    }
+
+    fn lookup_asm_fun(&mut self, span: Span<'db>, name: &str) -> FunSig<'db> {
+        if let Some(sig) = asm_builtin_sig(span, name) {
+            return sig;
+        }
+        let key = name.strip_prefix("usr$").unwrap_or(name);
+        match self.funs.get(key).cloned() {
+            Some(sig) => FunSig {
+                args: vec![Ty::word(span); sig.args.len()],
+                ret: n_returns(span, return_count(&sig.ret)),
+            },
+            None => {
+                self.push(
+                    span,
+                    CheckDiagnosticKind::UndefinedFunction {
+                        name: name.to_owned(),
+                    },
+                );
+                FunSig {
+                    args: Vec::new(),
+                    ret: Ty::unit(span),
+                }
+            }
+        }
+    }
+
+    fn yul_name(&self, name: &SpannedElem<'db, Ident<'db>>) -> String {
+        if let Some(db) = self.db {
+            (*name.atom()).text(db).to_owned()
+        } else {
+            "<unknown>".to_owned()
+        }
+    }
+
     fn expect_type(&mut self, span: Span<'db>, expected: &Ty<'db>, actual: &Ty<'db>) {
         if !type_eq(expected, actual) {
             self.push(
@@ -443,6 +738,7 @@ fn builtin_funs<'db>(span: Span<'db>) -> BTreeMap<String, FunSig<'db>> {
         "shl",
         "shr",
         "sar",
+        "keccak256",
         "primAddWord",
         "subWord",
         "bxorWord",
@@ -462,14 +758,38 @@ fn builtin_funs<'db>(span: Span<'db>) -> BTreeMap<String, FunSig<'db>> {
     for name in [
         "mload",
         "sload",
+        "tload",
         "calldataload",
         "memoryguard",
-        "datasize",
-        "dataoffset",
+        "balance",
+        "extcodesize",
+        "extcodehash",
+        "blockhash",
+        "blobhash",
     ] {
         add(name, vec![word.clone()], word.clone());
     }
-    for name in ["calldatasize", "callvalue", "caller", "codesize"] {
+    for name in [
+        "address",
+        "origin",
+        "caller",
+        "callvalue",
+        "calldatasize",
+        "codesize",
+        "gasprice",
+        "returndatasize",
+        "coinbase",
+        "timestamp",
+        "number",
+        "prevrandao",
+        "gaslimit",
+        "chainid",
+        "selfbalance",
+        "basefee",
+        "blobbasefee",
+        "msize",
+        "gas",
+    ] {
         add(name, Vec::new(), word.clone());
     }
     for name in [
@@ -485,22 +805,102 @@ fn builtin_funs<'db>(span: Span<'db>) -> BTreeMap<String, FunSig<'db>> {
     ] {
         add(name, vec![word.clone(), word.clone()], bool_sum.clone());
     }
-    for name in ["iszero", "not", "clz", "wordToInteger"] {
+    add("iszero", vec![bool_sum.clone()], bool_sum.clone());
+    for name in ["not", "clz", "wordToInteger"] {
         add(name, vec![word.clone()], word.clone());
     }
     for name in [
-        "stop", "invalid", "mstore", "mstore8", "sstore", "tstore", "return", "revert", "pop",
+        "stop",
+        "invalid",
+        "mstore",
+        "mstore8",
+        "sstore",
+        "tstore",
+        "return",
+        "revert",
+        "pop",
+        "selfdestruct",
+        "calldatacopy",
         "codecopy",
+        "returndatacopy",
+        "mcopy",
+        "datacopy",
     ] {
         let argc = match name {
             "stop" | "invalid" => 0,
-            "pop" => 1,
-            "codecopy" => 3,
+            "pop" | "selfdestruct" => 1,
+            "calldatacopy" | "codecopy" | "returndatacopy" | "mcopy" | "datacopy" => 3,
             _ => 2,
         };
         add(name, vec![word.clone(); argc], unit.clone());
     }
+    add("extcodecopy", vec![word.clone(); 4], unit.clone());
+    add("create", vec![word.clone(); 3], word.clone());
+    add("create2", vec![word.clone(); 4], word.clone());
+    add("call", vec![word.clone(); 7], word.clone());
+    add("callcode", vec![word.clone(); 7], word.clone());
+    add("delegatecall", vec![word.clone(); 6], word.clone());
+    add("staticcall", vec![word.clone(); 6], word.clone());
+    for index in 0..=4 {
+        add(
+            &format!("log{index}"),
+            vec![word.clone(); 2 + index],
+            unit.clone(),
+        );
+    }
+    for name in ["dataoffset", "datasize", "loadimmutable", "linkersymbol"] {
+        add(name, vec![word.clone()], word.clone());
+    }
+    add(
+        "setimmutable",
+        vec![word.clone(), word.clone(), word.clone()],
+        unit.clone(),
+    );
     funs
+}
+
+fn asm_builtin_sig<'db>(span: Span<'db>, name: &str) -> Option<FunSig<'db>> {
+    let word = Ty::word(span);
+    let unit = Ty::unit(span);
+    let sig = |args: usize, ret: Ty<'db>| FunSig {
+        args: vec![word.clone(); args],
+        ret,
+    };
+    let fun = match name {
+        "stop" | "invalid" => sig(0, unit.clone()),
+        "add" | "sub" | "mul" | "div" | "sdiv" | "mod" | "smod" | "exp" | "signextend" | "lt"
+        | "gt" | "slt" | "sgt" | "eq" | "and" | "or" | "xor" | "byte" | "shl" | "shr" | "sar"
+        | "keccak256" => sig(2, word.clone()),
+        "addmod" | "mulmod" => sig(3, word.clone()),
+        "iszero" | "not" | "clz" | "balance" | "calldataload" | "extcodesize" | "extcodehash"
+        | "blockhash" | "blobhash" | "mload" | "sload" | "tload" => sig(1, word.clone()),
+        "pop" | "selfdestruct" => sig(1, unit.clone()),
+        "address" | "origin" | "caller" | "callvalue" | "calldatasize" | "codesize"
+        | "gasprice" | "returndatasize" | "coinbase" | "timestamp" | "number" | "prevrandao"
+        | "gaslimit" | "chainid" | "selfbalance" | "basefee" | "blobbasefee" | "msize" | "gas" => {
+            sig(0, word.clone())
+        }
+        "mstore" | "mstore8" | "sstore" | "tstore" | "return" | "revert" => sig(2, unit.clone()),
+        "calldatacopy" | "codecopy" | "returndatacopy" | "mcopy" | "datacopy" => {
+            sig(3, unit.clone())
+        }
+        "extcodecopy" => sig(4, unit.clone()),
+        "create" => sig(3, word.clone()),
+        "create2" => sig(4, word.clone()),
+        "call" | "callcode" => sig(7, word.clone()),
+        "delegatecall" | "staticcall" => sig(6, word.clone()),
+        "log0" => sig(2, unit.clone()),
+        "log1" => sig(3, unit.clone()),
+        "log2" => sig(4, unit.clone()),
+        "log3" => sig(5, unit.clone()),
+        "log4" => sig(6, unit.clone()),
+        "memoryguard" | "dataoffset" | "datasize" | "loadimmutable" | "linkersymbol" => {
+            sig(1, word.clone())
+        }
+        "setimmutable" => sig(3, unit.clone()),
+        _ => return None,
+    };
+    Some(fun)
 }
 
 fn payload_type<'db>(target: &Ty<'db>, pat: &Pat<'db>) -> Option<Ty<'db>> {
@@ -544,15 +944,35 @@ fn is_bool_like(ty: &Ty<'_>) -> bool {
         )
 }
 
-fn type_eq(lhs: &Ty<'_>, rhs: &Ty<'_>) -> bool {
-    match (&lhs.kind, &rhs.kind) {
-        (TyKind::NamedRef { name: lhs }, TyKind::NamedRef { name: rhs }) => return lhs == rhs,
-        (TyKind::NamedRef { name: lhs }, TyKind::Named { name: rhs, .. })
-        | (TyKind::Named { name: lhs, .. }, TyKind::NamedRef { name: rhs }) => {
-            return lhs == rhs;
-        }
-        _ => {}
+fn is_word_type(ty: &Ty<'_>) -> bool {
+    matches!(ty.strip_named().kind, TyKind::Word)
+}
+
+fn return_count(ty: &Ty<'_>) -> usize {
+    match &ty.strip_named().kind {
+        TyKind::Unit => 0,
+        TyKind::Word | TyKind::Bool => 1,
+        TyKind::Product(lhs, rhs) => return_count(lhs) + return_count(rhs),
+        TyKind::Sum(lhs, rhs) => 1 + return_count(lhs).max(return_count(rhs)),
+        TyKind::Named { inner, .. } => return_count(inner),
+        TyKind::NamedRef { .. } => 1,
+        TyKind::Function { .. } => 1,
     }
+}
+
+fn n_returns<'db>(span: Span<'db>, count: usize) -> Ty<'db> {
+    match count {
+        0 => Ty::unit(span),
+        1 => Ty::word(span),
+        _ => Ty::product(span, Ty::word(span), n_returns(span, count - 1)),
+    }
+}
+
+fn requires_terminator(ty: &Ty<'_>) -> bool {
+    return_count(ty) > 0
+}
+
+fn type_eq(lhs: &Ty<'_>, rhs: &Ty<'_>) -> bool {
     match (&lhs.strip_named().kind, &rhs.strip_named().kind) {
         (TyKind::Word, TyKind::Word)
         | (TyKind::Bool, TyKind::Bool)
@@ -578,32 +998,61 @@ fn type_eq(lhs: &Ty<'_>, rhs: &Ty<'_>) -> bool {
                     .all(|(lhs, rhs)| type_eq(lhs, rhs))
                 && type_eq(a_ret, b_ret)
         }
-        (TyKind::NamedRef { name: lhs }, TyKind::NamedRef { name: rhs }) => lhs == rhs,
-        (TyKind::NamedRef { name: lhs }, TyKind::Named { name: rhs, .. })
-        | (TyKind::Named { name: lhs, .. }, TyKind::NamedRef { name: rhs }) => lhs == rhs,
         _ => false,
     }
 }
 
-fn body_terminates(body: &[Stmt<'_>]) -> bool {
-    body.last().is_some_and(stmt_terminates)
+fn body_terminates(body: &[Stmt<'_>], db: Option<&dyn HirDb>) -> bool {
+    body.last().is_some_and(|stmt| stmt_terminates(stmt, db))
 }
 
-fn stmt_terminates(stmt: &Stmt<'_>) -> bool {
+fn stmt_terminates(stmt: &Stmt<'_>, db: Option<&dyn HirDb>) -> bool {
     match &stmt.kind {
         StmtKind::Return(_) | StmtKind::Revert(_) => true,
-        StmtKind::Block(body) => body_terminates(body),
+        StmtKind::Block(body) => body_terminates(body, db),
         StmtKind::Match { alts, .. } => {
-            !alts.is_empty() && alts.iter().all(|alt| body_terminates(&alt.body))
+            !alts.is_empty() && alts.iter().all(|alt| body_terminates(&alt.body, db))
         }
+        StmtKind::Assembly(stmts) => asm_block_terminates(stmts, db),
         StmtKind::Let { .. }
         | StmtKind::Assign { .. }
         | StmtKind::Expr(_)
         | StmtKind::For { .. }
         | StmtKind::Break
         | StmtKind::Continue
-        | StmtKind::Assembly(_)
         | StmtKind::Comment(_) => false,
+    }
+}
+
+fn asm_block_terminates(stmts: &[YulStmt<'_>], db: Option<&dyn HirDb>) -> bool {
+    stmts
+        .last()
+        .is_some_and(|stmt| asm_stmt_terminates(stmt, db))
+}
+
+fn asm_stmt_terminates(stmt: &YulStmt<'_>, db: Option<&dyn HirDb>) -> bool {
+    match &stmt.kind {
+        YulStmtKind::Block(stmts) => asm_block_terminates(stmts, db),
+        YulStmtKind::Expr(YulExpr {
+            kind: YulExprKind::Call { name, .. },
+            ..
+        }) => db
+            .map(|db| {
+                let name = (*name.atom()).text(db);
+                matches!(name, "return" | "revert")
+            })
+            .unwrap_or(false),
+        YulStmtKind::Switch { cases, default, .. } => {
+            !cases.is_empty()
+                && default.is_some()
+                && cases
+                    .iter()
+                    .all(|case| asm_block_terminates(&case.body, db))
+                && default
+                    .as_ref()
+                    .is_some_and(|body| asm_block_terminates(body, db))
+        }
+        _ => false,
     }
 }
 

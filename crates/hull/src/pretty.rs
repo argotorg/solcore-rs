@@ -136,15 +136,16 @@ fn write_stmt<'db>(db: &'db dyn HirDb, out: &mut String, stmt: &Stmt<'db>, inden
             post,
             body,
         } => {
-            line(out, indent, "for {");
-            for stmt in init {
-                write_stmt(db, out, stmt, indent + 1);
-            }
-            line(out, indent, &format!("}} {} {{", write_expr(cond)));
-            for stmt in post {
-                write_stmt(db, out, stmt, indent + 1);
-            }
-            line(out, indent, "} {");
+            line(
+                out,
+                indent,
+                &format!(
+                    "for ({}; {}; {}) {{",
+                    write_stmt_list_inline(init),
+                    write_expr(cond),
+                    write_stmt_list_inline(post)
+                ),
+            );
             for stmt in body {
                 write_stmt(db, out, stmt, indent + 1);
             }
@@ -192,6 +193,47 @@ fn write_stmt<'db>(db: &'db dyn HirDb, out: &mut String, stmt: &Stmt<'db>, inden
                 &format!("/* {} */", comment.replace("*/", "* /")),
             );
         }
+    }
+}
+
+fn write_stmt_list_inline(stmts: &[Stmt<'_>]) -> String {
+    match stmts {
+        [] => "{}".to_owned(),
+        [stmt] => write_stmt_inline(stmt),
+        _ => {
+            let body = stmts
+                .iter()
+                .map(write_stmt_inline)
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("{{ {body} }}")
+        }
+    }
+}
+
+fn write_stmt_inline(stmt: &Stmt<'_>) -> String {
+    match &stmt.kind {
+        StmtKind::Let { name, ty } => format!("let {name} : {}", write_ty(ty)),
+        StmtKind::Assign { lhs, rhs } => format!("{} := {}", write_expr(lhs), write_expr(rhs)),
+        StmtKind::Expr(expr) => write_expr(expr),
+        StmtKind::Return(expr) => format!("return {}", write_expr(expr)),
+        StmtKind::Block(stmts) => {
+            if stmts.is_empty() {
+                "{}".to_owned()
+            } else {
+                let body = stmts
+                    .iter()
+                    .map(write_stmt_inline)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                format!("{{ {body} }}")
+            }
+        }
+        StmtKind::Break => "break".to_owned(),
+        StmtKind::Continue => "continue".to_owned(),
+        StmtKind::Revert(message) => format!("revertLit \"{}\"", escape_string(message)),
+        StmtKind::Comment(comment) => format!("/* {} */", comment.replace("*/", "* /")),
+        StmtKind::For { .. } | StmtKind::Match { .. } | StmtKind::Assembly(_) => "{}".to_owned(),
     }
 }
 

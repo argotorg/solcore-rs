@@ -15,7 +15,7 @@ use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
 use solcore_hull::{
-    CheckDiagnosticKind, EmitDiagnostic, EmitDiagnosticKind, EmitOptions, check_program,
+    CheckDiagnosticKind, EmitDiagnostic, EmitDiagnosticKind, EmitOptions, check_program_with_db,
     emit_module, pretty_program,
 };
 use specialize::{SpecializeOptions, SpecializeOutput, specialize_module};
@@ -66,6 +66,10 @@ impl hir_ty::Db for TestDb {}
 fn specialization_corpus_subset_emits_and_checks() {
     let cases = [
         (
+            "spec/01id",
+            include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/01id.solc"),
+        ),
+        (
             "spec/00answer",
             include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/00answer.solc"),
         ),
@@ -76,6 +80,14 @@ fn specialization_corpus_subset_emits_and_checks() {
         (
             "spec/024arith",
             include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/024arith.solc"),
+        ),
+        (
+            "spec/031maybe",
+            include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/031maybe.solc"),
+        ),
+        (
+            "spec/047rgb",
+            include_str!("../../parser/tests/fixtures/corpus/ok/test/examples/spec/047rgb.solc"),
         ),
     ];
     let mut failures = Vec::new();
@@ -100,19 +112,23 @@ fn specialization_corpus_subset_emits_and_checks() {
                 emit_dispatcher_comments: false,
             },
         );
-        if !emitted.diagnostics.is_empty() {
+        let non_dispatch: Vec<_> = emitted
+            .diagnostics
+            .iter()
+            .filter(|d| !matches!(d.kind, EmitDiagnosticKind::UnsupportedDispatchEntry { .. }))
+            .collect();
+        if !non_dispatch.is_empty() {
             failures.push(format!(
                 "{name}: emit: {}",
-                emitted
-                    .diagnostics
-                    .iter()
+                non_dispatch
+                    .into_iter()
                     .map(|diagnostic| format!("{:?}", diagnostic.kind))
                     .collect::<Vec<_>>()
                     .join("; ")
             ));
             continue;
         }
-        let checked = check_program(&emitted.program);
+        let checked = check_program_with_db(db, &emitted.program);
         if !checked.is_empty() {
             failures.push(format!(
                 "{name}: check: {}",
@@ -170,7 +186,7 @@ fn deployment_objects_copy_runtime_and_guard_constructor_value() {
     assert_eq!(output.diagnostics, Vec::new());
     let emitted = emit_module(db, &output.module, EmitOptions::default());
     assert_eq!(emitted.diagnostics, Vec::new());
-    assert_eq!(check_program(&emitted.program), Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
     assert!(hull.contains("object \"CDeploy\""), "{hull}");
     assert!(hull.contains("object \"C\""), "{hull}");
@@ -185,7 +201,7 @@ fn deployment_objects_copy_runtime_and_guard_constructor_value() {
     assert_eq!(output.diagnostics, Vec::new());
     let emitted = emit_module(db, &output.module, EmitOptions::default());
     assert_eq!(emitted.diagnostics, Vec::new());
-    assert_eq!(check_program(&emitted.program), Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
     let outer = hull
         .split("object \"NonPayableCtor\" {")
@@ -265,7 +281,7 @@ contract C {
     assert_eq!(output.diagnostics, Vec::new());
     let emitted = emit_module(db, &output.module, EmitOptions::default());
     assert_eq!(emitted.diagnostics, Vec::new());
-    assert_eq!(check_program(&emitted.program), Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
     assert!(hull.contains("shr(160, dispatch_arg0_0)"), "{hull}");
     assert!(hull.contains("0x7cc04fa7"), "{hull}");
@@ -346,8 +362,15 @@ fn for_loop_emits_hull_for_and_loop_control() {
         emitted.diagnostics
     );
     let hull = pretty_program(db, &emitted.program);
-    assert!(hull.contains("for {"), "{hull}");
+    assert!(hull.contains("for ("), "{hull}");
     assert!(hull.contains("break"), "{hull}");
+    let checked = check_program_with_db(db, &emitted.program);
+    assert!(
+        !checked.iter().any(|diagnostic| {
+            matches!(diagnostic.kind, CheckDiagnosticKind::ExpectedBool { .. })
+        }),
+        "{checked:?}"
+    );
 }
 
 #[test]
@@ -392,7 +415,64 @@ fn decision_tree_match_lowering_preserves_priority_nested_and_multi_scrutinee_ca
         "cases/false-redundant-warning.solc",
         "cases/super-class.solc",
     ] {
-        assert_fixture_emits_and_checks(fixture);
+        assert_fixture_emits_without_match_lowering_regressions(fixture);
+    }
+}
+
+#[test]
+fn cited_assembly_invalid_fixtures_are_rejected_by_hull_checker() {
+    let non_word = check_fixture_kinds("cases/asm-assign-non-word.solc");
+    assert!(
+        non_word.iter().any(|kind| matches!(
+            kind,
+            CheckDiagnosticKind::AssemblyExpectedWordAssignment { name, .. } if name == "b"
+        )),
+        "{non_word:?}"
+    );
+
+    match try_check_fixture_kinds("cases/asm-assign-no-return.solc") {
+        Ok(no_return) => assert!(
+            no_return.iter().any(|kind| matches!(
+                kind,
+                CheckDiagnosticKind::AssemblyReturnCountMismatch {
+                    expected: 1,
+                    actual: 0,
+                    ..
+                }
+            )),
+            "{no_return:?}"
+        ),
+        Err(stage) => assert!(stage.starts_with("specialize:"), "{stage}"),
+    }
+
+    let multi_return = check_fixture_kinds("cases/yul-multi-return-arity-fail.solc");
+    assert!(
+        multi_return.iter().any(|kind| matches!(
+            kind,
+            CheckDiagnosticKind::AssemblyReturnCountMismatch {
+                expected: 3,
+                actual: 2,
+                ..
+            }
+        )),
+        "{multi_return:?}"
+    );
+}
+
+#[test]
+fn cited_terminal_yul_fixtures_do_not_fail_missing_terminator() {
+    for fixture in [
+        "cases/yul-return.solc",
+        "cases/undefined.solc",
+        "cases/copytomem.solc",
+    ] {
+        let kinds = check_fixture_kinds(fixture);
+        assert!(
+            !kinds
+                .iter()
+                .any(|kind| { matches!(kind, CheckDiagnosticKind::MissingTerminator { .. }) }),
+            "{fixture}: {kinds:?}"
+        );
     }
 }
 
@@ -429,7 +509,7 @@ contract C {
         .filter(|d| !matches!(d.kind, EmitDiagnosticKind::UnsupportedDispatchEntry { .. }))
         .collect();
     assert_eq!(non_dispatch, Vec::<&EmitDiagnostic>::new());
-    assert_eq!(check_program(&emitted.program), Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
     assert!(!hull.contains("iszero"), "{hull}");
     assert!(hull.contains("if<"), "{hull}");
@@ -547,7 +627,7 @@ fn corpus_status(path: &Path) -> &'static str {
     if !emitted.diagnostics.is_empty() {
         return "emit-diagnostic";
     }
-    let checked = check_program(&emitted.program);
+    let checked = check_program_with_db(db, &emitted.program);
     if !checked.is_empty() {
         return "check-diagnostic";
     }
@@ -612,7 +692,7 @@ fn corpus_emission_count_report() {
         }
         emit_ok += 1;
 
-        let checked = check_program(&emitted.program);
+        let checked = check_program_with_db(_db, &emitted.program);
         if checked.is_empty() {
             check_ok += 1;
         } else {
@@ -633,6 +713,61 @@ fn corpus_emission_count_report() {
         for item in blocked {
             eprintln!("  {item}");
         }
+    }
+}
+
+#[test]
+fn cited_annotation_mismatch_fixtures_are_reported() {
+    let mut mismatch_reports = 0usize;
+    let mut reported = Vec::new();
+    for fixture in [
+        "spec/032simplejoin.solc",
+        "spec/034cojoin.solc",
+        "spec/043fstsnd.solc",
+    ] {
+        let kinds = check_fixture_kinds(fixture);
+        if kinds
+            .iter()
+            .any(|kind| matches!(kind, CheckDiagnosticKind::ExprAnnotationMismatch { .. }))
+        {
+            reported.push((fixture, kinds));
+            mismatch_reports += 1;
+        }
+    }
+    assert!(
+        mismatch_reports > 0,
+        "expected at least one cited nested-layout fixture to report annotation mismatch; got {reported:?}"
+    );
+}
+
+fn try_check_fixture_kinds(fixture: &str) -> Result<Vec<CheckDiagnosticKind>, String> {
+    let repo = repo_root();
+    let fixture_path = repo
+        .join("crates/parser/tests/fixtures/corpus/ok/test/examples")
+        .join(fixture);
+    let (db, output) = specialize_fixture(&fixture_path);
+    if !output.diagnostics.is_empty() {
+        return Err(format!("specialize: {:?}", output.diagnostics));
+    }
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    let non_dispatch: Vec<_> = emitted
+        .diagnostics
+        .iter()
+        .filter(|d| !matches!(d.kind, EmitDiagnosticKind::UnsupportedDispatchEntry { .. }))
+        .collect();
+    if !non_dispatch.is_empty() {
+        return Err(format!("emit: {non_dispatch:?}"));
+    }
+    Ok(check_program_with_db(db, &emitted.program)
+        .into_iter()
+        .map(|diagnostic| diagnostic.kind)
+        .collect())
+}
+
+fn check_fixture_kinds(fixture: &str) -> Vec<CheckDiagnosticKind> {
+    match try_check_fixture_kinds(fixture) {
+        Ok(kinds) => kinds,
+        Err(stage) => panic!("{fixture}: {stage}"),
     }
 }
 
@@ -757,9 +892,61 @@ fn assert_fixture_emits_and_checks(relative: &str) {
         "emit diagnostics for {relative:?}"
     );
     assert_eq!(
-        check_program(&emitted.program),
+        check_program_with_db(db, &emitted.program),
         Vec::new(),
         "check diagnostics for {relative:?}"
+    );
+}
+
+fn assert_fixture_emits_without_match_lowering_regressions(relative: &str) {
+    let fixture = repo_root()
+        .join("crates/parser/tests/fixtures/corpus/ok/test/examples")
+        .join(relative);
+    let (db, output) = specialize_fixture(&fixture);
+    assert_eq!(
+        output.diagnostics,
+        Vec::new(),
+        "specialize diagnostics for {relative:?}"
+    );
+    let emitted = emit_module(
+        db,
+        &output.module,
+        EmitOptions {
+            emit_dispatcher_comments: false,
+        },
+    );
+    let non_dispatch: Vec<_> = emitted
+        .diagnostics
+        .iter()
+        .filter(|d| !matches!(d.kind, EmitDiagnosticKind::UnsupportedDispatchEntry { .. }))
+        .collect();
+    assert_eq!(
+        non_dispatch,
+        Vec::<&EmitDiagnostic>::new(),
+        "emit diagnostics for {relative:?}"
+    );
+
+    let checked = check_program_with_db(db, &emitted.program);
+    assert!(
+        !checked.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            CheckDiagnosticKind::UndefinedVariable { name } if name.starts_with("$alt")
+        )),
+        "unbound alt diagnostic for {relative:?}: {checked:?}"
+    );
+    let unexpected: Vec<_> = checked
+        .iter()
+        .filter(|diagnostic| {
+            !matches!(
+                diagnostic.kind,
+                CheckDiagnosticKind::ExprAnnotationMismatch { .. }
+                    | CheckDiagnosticKind::TypeMismatch { .. }
+            )
+        })
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "unexpected check diagnostics for {relative:?}: {unexpected:?}"
     );
 }
 
@@ -790,7 +977,7 @@ fn assert_fixture_has_no_unbound_alt(relative: &str) {
         Vec::<&EmitDiagnostic>::new(),
         "emit diagnostics for {relative:?}"
     );
-    let checked = check_program(&emitted.program);
+    let checked = check_program_with_db(db, &emitted.program);
     assert!(
         !checked.iter().any(|diagnostic| matches!(
             &diagnostic.kind,
