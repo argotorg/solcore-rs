@@ -2946,13 +2946,22 @@ impl<'db> InferCtx<'db> {
         let pat = body.pats(self.db).get(pat_id);
         let mut ty = match &pat.kind {
             PatKind::Wildcard => expected.clone().unwrap_or_else(|| self.engine.fresh_var()),
-            PatKind::Var(_) => {
-                let ty = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
-                self.pat_tys_for_locals.insert((body, pat_id), ty.clone());
-                if let PatKind::Var(name) = &pat.kind {
+            PatKind::Var(name) => {
+                if let Some(hir_nameres::Resolution::Builtin(
+                    kind @ hir_nameres::BuiltinKind::Constructor(
+                        hir_nameres::BuiltinCtor::True | hir_nameres::BuiltinCtor::False,
+                    ),
+                )) = self.pat_resolutions.get(&(body, pat_id)).cloned()
+                {
+                    let ctor_ty = self.infer_resolution_for_pat_builtin(kind);
+                    let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
+                    self.apply_ctor_pat_scheme(body, pat_id, &[], ctor_ty, ret)
+                } else {
+                    let ty = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
+                    self.pat_tys_for_locals.insert((body, pat_id), ty.clone());
                     self.add_sail_local((*name.atom()).text(self.db).to_owned(), ty.clone());
+                    ty
                 }
-                ty
             }
             PatKind::Lit(lit) => self.infer_lit_pat(body, pat_id, lit, expected.clone()),
             PatKind::Tuple { elems } => self.infer_tuple_pat(body, pat_id, elems, expected.clone()),

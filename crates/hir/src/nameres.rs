@@ -2124,8 +2124,20 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 self.map.record_pat(body, pat_id, Resolution::Err);
             }
             PatKind::Var(name) => {
-                let resolution = Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
-                self.add_local(ident_text(self.db, name), resolution.clone());
+                let leaf = ident_text(self.db, name);
+                let resolution = match builtin_term(leaf) {
+                    Some(
+                        res @ Resolution::Builtin(BuiltinKind::Constructor(
+                            BuiltinCtor::True | BuiltinCtor::False,
+                        )),
+                    ) => res,
+                    _ => {
+                        let resolution =
+                            Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
+                        self.add_local(leaf, resolution.clone());
+                        resolution
+                    }
+                };
                 self.map.record_pat(body, pat_id, resolution);
             }
             PatKind::Ctor {

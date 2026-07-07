@@ -991,6 +991,55 @@ contract C {
 }
 
 #[test]
+fn std_not_lowercase_bool_patterns_specialize_to_constructor_match() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    let repo = repo_root();
+    let std_root = repo.join("crates/parser/tests/fixtures/corpus/ok/std");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        std_root,
+        BTreeMap::new(),
+    ));
+    let main_path = main_root.join("not_probe.solc");
+    let file = source_file_at_path(
+        db,
+        &main_path,
+        r#"
+import std.{*};
+
+contract NotProbe {
+  public function flip(x : bool) -> bool { return not(x); }
+  public function main() -> word { return 42; }
+}
+"#,
+    );
+    let key = module_key_for_path(LibraryId::Main, &main_root, &main_path)
+        .expect("probe under main root");
+    db.module_files.insert(key.clone(), file);
+    let unresolved = load_reachable_modules(db, key);
+    assert!(unresolved.is_empty(), "{unresolved:?}");
+
+    let module = parse_file_to_hir(db, file).module(db);
+    let output = specialize_module(db, module, SpecializeOptions::default());
+    assert_eq!(output.diagnostics, Vec::new());
+    let std_not = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| {
+            let MonoItem::Function(function) = item else {
+                return None;
+            };
+            function.name.starts_with("std_not").then_some(function)
+        })
+        .expect("std.not is retained by runtime public flip");
+    let ctor_patterns = bool_constructor_patterns_in_stmts(&std_not.body);
+    assert_eq!(ctor_patterns, vec!["false".to_owned(), "true".to_owned()]);
+}
+
+#[test]
 fn folds_qualified_constructor_matches_before_wildcard_defaults() {
     let repo = repo_root();
     let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec");
@@ -1160,6 +1209,65 @@ fn function_return_numbers(output: &SpecializeOutput<'_>, name: &str) -> Vec<Str
             (function.name == name).then(|| return_numbers_in_stmts(&function.body))
         })
         .unwrap_or_default()
+}
+
+fn bool_constructor_patterns_in_stmts(stmts: &[MonoStmt<'_>]) -> Vec<String> {
+    let mut out = Vec::new();
+    for stmt in stmts {
+        match &stmt.kind {
+            MonoStmtKind::Match { arms, .. } => {
+                for arm in arms {
+                    for pat in &arm.pats {
+                        bool_constructor_patterns(pat, &mut out);
+                    }
+                    out.extend(bool_constructor_patterns_in_stmts(&arm.body));
+                }
+            }
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                out.extend(bool_constructor_patterns_in_stmts(init));
+                out.extend(bool_constructor_patterns_in_stmts(post));
+                out.extend(bool_constructor_patterns_in_stmts(body));
+            }
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                out.extend(bool_constructor_patterns_in_stmts(then_body));
+                if let Some(else_body) = else_body {
+                    out.extend(bool_constructor_patterns_in_stmts(else_body));
+                }
+            }
+            MonoStmtKind::Block(body) => out.extend(bool_constructor_patterns_in_stmts(body)),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn bool_constructor_patterns(pat: &solcore_specialize::MonoPat<'_>, out: &mut Vec<String>) {
+    match &pat.kind {
+        MonoPatKind::Con { ctor, args } => {
+            if ctor.name == "false" || ctor.name == "true" {
+                out.push(ctor.name.clone());
+            }
+            for arg in args {
+                bool_constructor_patterns(arg, out);
+            }
+        }
+        MonoPatKind::Tuple(elems) => {
+            for elem in elems {
+                bool_constructor_patterns(elem, out);
+            }
+        }
+        MonoPatKind::ComptimeLabel(_)
+        | MonoPatKind::Wildcard
+        | MonoPatKind::Var(_)
+        | MonoPatKind::Lit(_)
+        | MonoPatKind::Error => {}
+    }
 }
 
 fn return_numbers_in_stmts(stmts: &[solcore_specialize::MonoStmt<'_>]) -> Vec<String> {

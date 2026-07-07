@@ -2311,15 +2311,27 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         let mono_ty = self.driver.mono_ty(ty, "pattern", pat.span)?;
         let kind = match &pat.kind {
             PatKind::Wildcard => MonoPatKind::Wildcard,
-            PatKind::Var(name) => MonoPatKind::Var(MonoId {
-                name: {
-                    let name = ident_text(self.driver.db, name);
-                    self.locals.insert(name.clone(), ty);
-                    name
+            PatKind::Var(name) => match self.pat_resolution(pat_id) {
+                Some(hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(
+                    ctor,
+                ))) => MonoPatKind::Con {
+                    ctor: MonoId {
+                        name: builtin_ctor_name(ctor).to_owned(),
+                        ty: mono_ty,
+                        span: pat.span,
+                    },
+                    args: Vec::new(),
                 },
-                ty: mono_ty,
-                span: pat.span,
-            }),
+                _ => MonoPatKind::Var(MonoId {
+                    name: {
+                        let name = ident_text(self.driver.db, name);
+                        self.locals.insert(name.clone(), ty);
+                        name
+                    },
+                    ty: mono_ty,
+                    span: pat.span,
+                }),
+            },
             PatKind::Lit(lit) => MonoPatKind::Lit(lit.clone()),
             PatKind::Ctor { name, args, .. } => MonoPatKind::Con {
                 ctor: MonoId {
@@ -2350,6 +2362,14 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
 
     fn expr_ty(&self, expr: Id<Expr<'db>>) -> Option<Ty<'db>> {
         self.result.expr_ty(self.body, expr)
+    }
+
+    fn pat_resolution(&self, pat: Id<Pat<'db>>) -> Option<hir_nameres::Resolution<'db>> {
+        self.body_map
+            .pats
+            .iter()
+            .find(|entry| entry.body == self.body && entry.pat == pat)
+            .map(|entry| entry.resolution.clone())
     }
 
     fn is_storage_index_expr(&self, expr: Id<Expr<'db>>) -> bool {
