@@ -1,0 +1,7 @@
+contract Simple {
+  val : word;
+
+  public function getVal() -> word {
+    return val;
+  }
+}

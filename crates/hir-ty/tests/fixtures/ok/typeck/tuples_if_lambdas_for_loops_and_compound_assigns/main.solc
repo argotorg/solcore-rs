@@ -1,0 +1,15 @@
+function main() -> word {
+  let f = lam(x: word) { return x; };
+  let acc : word = 0;
+  for (let i : word = 0; i < 3; i = i + 1) {
+    acc += f(i);
+    acc ^= 1;
+    acc &= 7;
+    acc |= 2;
+    acc %= 5;
+  }
+  let t : (word, word) = (acc, 1);
+  match t {
+  | (x, _) => return if x == 0 then 1 else x;
+  }
+}

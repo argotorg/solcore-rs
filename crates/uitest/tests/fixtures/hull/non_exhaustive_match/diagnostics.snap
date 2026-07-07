@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/non_exhaustive_match/main.solc
+---
+error[HULL-EMIT]: NonExhaustiveMatch
+  --> /main/main.solc:11:3
+   |
+10 |   function onlyA(b : B) -> word {
+11 | /   match b {
+12 | |     | B.A => return 1;
+13 | |   }
+   | |___^ emit failed here
+14 |   }
+   |

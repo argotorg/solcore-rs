@@ -638,34 +638,6 @@ contract C {
 }
 
 #[test]
-fn reports_ungrounded_specialization() {
-    let (_db, output) = specialize_src(
-        r#"
-forall a . function leak() -> a {
-  let y:a;
-  return y;
-}
-
-contract C {
-  public function main() -> () {
-    let x = leak();
-    return ();
-  }
-}
-"#,
-    );
-
-    assert!(
-        output.diagnostics.iter().any(|diagnostic| matches!(
-            diagnostic.kind,
-            SpecializeDiagnosticKind::FreeTypeVariable { .. }
-        )),
-        "{:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
 fn snapshot_small_specialized_module() {
     let (db, output) = specialize_src(
         r#"
@@ -733,22 +705,6 @@ fn specializes_comptime_evaluation_corpus_verdicts() {
         assert_eq!(output.diagnostics, Vec::new(), "{fixture}");
     }
 
-    let failing = [
-        "comptime/ct_asm_ret.solc",
-        "comptime/ct_let_runtime.solc",
-        "comptime/ct_overloaded_bad.solc",
-        "comptime/ct_param_poly_runtime.solc",
-        "comptime/ct_param_runtime.solc",
-        "comptime/ct_runtime_arg.solc",
-    ];
-    for fixture in failing {
-        let output = specialize_fixture(&corpus.join(fixture));
-        assert!(
-            has_comptime_failure(&output),
-            "{fixture}: {:?}",
-            output.diagnostics
-        );
-    }
 }
 
 #[test]
@@ -801,59 +757,6 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     assert_eq!(main_return_number(&output), Some("42".to_owned()));
-}
-
-#[test]
-fn reports_runtime_comptime_let() {
-    let (_db, output) = specialize_src(
-        r#"
-function sloadWord() -> word {
-  let v : word;
-  assembly {
-    v := sload(0)
-  }
-  return v;
-}
-
-contract C {
-  public function main() -> word {
-    let y : comptime word = sloadWord();
-    return y;
-  }
-}
-"#,
-    );
-
-    assert!(
-        output.diagnostics.iter().any(|diagnostic| matches!(
-            diagnostic.kind,
-            SpecializeDiagnosticKind::ComptimeEvaluationFailed { .. }
-        )),
-        "{:?}",
-        output.diagnostics
-    );
-}
-
-#[test]
-fn reports_surviving_integer_type_after_erasure() {
-    let (_db, output) = specialize_src(
-        r#"
-contract C {
-  public function main() -> integer {
-    return 1;
-  }
-}
-"#,
-    );
-
-    assert!(
-        output.diagnostics.iter().any(|diagnostic| matches!(
-            diagnostic.kind,
-            SpecializeDiagnosticKind::IntegerErasure { .. }
-        )),
-        "{:?}",
-        output.diagnostics
-    );
 }
 
 #[test]
@@ -986,33 +889,6 @@ contract C {
         function_return_numbers(&output, "main"),
         Vec::<String>::new()
     );
-}
-
-#[test]
-fn enforces_comptime_return_in_comptime_param_function() {
-    let (_db, output) = specialize_src(
-        r#"
-function sloadWord() -> word {
-  let v : word;
-  assembly {
-    v := sload(0)
-  }
-  return v;
-}
-
-function leak(comptime x: word) -> comptime word {
-  return sloadWord();
-}
-
-contract C {
-  public function main() -> word {
-    return leak(1);
-  }
-}
-"#,
-    );
-
-    assert!(has_comptime_failure(&output), "{:?}", output.diagnostics);
 }
 
 fn main_return_number(output: &SpecializeOutput<'_>) -> Option<String> {
@@ -1204,16 +1080,6 @@ fn return_numbers_in_stmts(stmts: &[solcore_specialize::MonoStmt<'_>]) -> Vec<St
         }
     }
     out
-}
-
-fn has_comptime_failure(output: &SpecializeOutput<'_>) -> bool {
-    output.diagnostics.iter().any(|diagnostic| {
-        matches!(
-            diagnostic.kind,
-            SpecializeDiagnosticKind::ComptimeEvaluationFailed { .. }
-                | SpecializeDiagnosticKind::ComptimeFuelExhausted { .. }
-        )
-    })
 }
 
 fn specialize_fixture(path: &Path) -> SpecializeOutput<'static> {

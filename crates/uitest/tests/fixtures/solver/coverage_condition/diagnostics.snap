@@ -1,0 +1,17 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/coverage_condition/main.solc
+---
+error[SC0212]: Coverage condition fails for class:
+               MyClass
+               - the type:
+               Box(a)
+               does not determine:
+               b
+ --> /main/main.solc:4:23
+  |
+2 | forall a b . class a:MyClass(b) {}
+3 |
+4 | forall a b . instance Box(a):MyClass(b) {}
+  |                       ^^^^^^^^^^^^^^^^^ instance head does not determine these variables

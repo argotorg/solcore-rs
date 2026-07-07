@@ -151,29 +151,6 @@ fn wildcard_hiding_validates_against_source_interface() {
 }
 
 #[test]
-fn failure_diagnostics_match_snapshots() {
-    for name in [
-        "missing",
-        "unknown_import",
-        "duplicate_qualifier",
-        "duplicate_selector",
-        "ambiguous",
-        "hidden_ctor",
-        "unresolved_qualified",
-    ] {
-        let fixture = fixture_dir(&format!("fail/{name}"));
-        let (db, entry) = load_fixture(&fixture, BTreeMap::new());
-        let (_, diagnostics) = run(&db, &entry);
-        assert!(
-            !diagnostics.is_empty(),
-            "expected diagnostics for failure fixture `{name}`"
-        );
-        let rendered = render_diagnostics(&db, &diagnostics);
-        snapshot_diagnostics(&fixture, &rendered);
-    }
-}
-
-#[test]
 fn parse_broken_selected_import_does_not_blame_importer() {
     let (db, entry) = load_sources(parse_broken_provider_sources(
         "import util.{lost};
@@ -211,97 +188,6 @@ fn parse_broken_module_diagnostics_publish_only_parse_errors() {
     let diagnostics = lowered_module_diagnostics(&db, main);
     assert!(!diagnostics.is_empty());
     assert_eq!(diagnostic_codes(&diagnostics), Vec::<String>::new());
-}
-
-#[test]
-fn selected_import_ambiguity_is_validated_by_public_name_across_namespaces() {
-    let (db, entry) = load_sources([
-        (
-            vec!["main"],
-            "import a.{T};
-             import b.{T};
-             function main() -> word { return 0; }",
-        ),
-        (vec!["a"], "data T = A; export { T };"),
-        (
-            vec!["b"],
-            "function T() -> word { return 0; }
-             export { T };",
-        ),
-    ]);
-    let main = module_id_from_key(&db, &entry);
-    let diagnostics = lowered_module_diagnostics(&db, main);
-    let rendered = render_diagnostics(&db, &diagnostics);
-
-    assert_eq!(code_count(&diagnostics, "SC0120"), 1, "{rendered}");
-    assert!(
-        rendered.contains("ambiguous selected import `T` across term/type namespaces"),
-        "{rendered}"
-    );
-}
-
-#[test]
-fn duplicate_exported_items_are_validated_by_public_name_across_namespaces() {
-    let (db, entry) = load_sources([
-        (
-            vec!["main"],
-            "export a.{T};
-             export b.{T};
-             function main() -> word { return 0; }",
-        ),
-        (vec!["a"], "data T = A; export { T };"),
-        (
-            vec!["b"],
-            "function T() -> word { return 0; }
-             export { T };",
-        ),
-    ]);
-    let main = module_id_from_key(&db, &entry);
-    let diagnostics = lowered_module_diagnostics(&db, main);
-    let rendered = render_diagnostics(&db, &diagnostics);
-
-    assert_eq!(code_count(&diagnostics, "SC0111"), 1, "{rendered}");
-    assert!(
-        rendered.contains("duplicate exported item name `T`"),
-        "{rendered}"
-    );
-}
-
-#[test]
-fn selected_import_ambiguity_keeps_namespace_identity() {
-    let (db, entry) = load_sources([
-        (
-            vec!["main"],
-            "import a.{T};
-             import b.{T};
-             function main() -> word { return 0; }",
-        ),
-        (
-            vec!["a"],
-            "data T = A;
-             function T() -> word { return 0; }
-             export { T };",
-        ),
-        (
-            vec!["b"],
-            "data T = A;
-             function T() -> word { return 0; }
-             export { T };",
-        ),
-    ]);
-    let main = module_id_from_key(&db, &entry);
-    let diagnostics = lowered_module_diagnostics(&db, main);
-    let rendered = render_diagnostics(&db, &diagnostics);
-
-    assert_eq!(code_count(&diagnostics, "SC0120"), 2, "{rendered}");
-    assert!(
-        rendered.contains("ambiguous selected import `T` in term namespace"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains("ambiguous selected import `T` in type namespace"),
-        "{rendered}"
-    );
 }
 
 #[test]
@@ -478,13 +364,6 @@ fn diagnostic_codes(diagnostics: &[Diagnostic]) -> Vec<String> {
         .collect()
 }
 
-fn code_count(diagnostics: &[Diagnostic], code: &str) -> usize {
-    diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.code.as_deref() == Some(code))
-        .count()
-}
-
 fn load_entry(
     root: &Path,
     entry_path: &Path,
@@ -601,16 +480,6 @@ fn sort_dedup_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<Diagnostic>) {
     diagnostics.sort_by_key(|diagnostic| diagnostic.sort_key(db));
     let mut seen = FxHashSet::<DiagnosticId>::default();
     diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
-}
-
-fn snapshot_diagnostics(fixture: &Path, rendered: &str) {
-    let mut settings = insta::Settings::new();
-    settings.set_snapshot_path(fixture);
-    settings.set_input_file(fixture.join("main.solc"));
-    settings.set_prepend_module_to_snapshot(false);
-    settings.bind(|| {
-        insta::assert_snapshot!("diagnostics", rendered);
-    });
 }
 
 fn fixture_dir(relative: &str) -> PathBuf {

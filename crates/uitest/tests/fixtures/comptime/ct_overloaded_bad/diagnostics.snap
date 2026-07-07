@@ -1,0 +1,179 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/comptime/ct_overloaded_bad/main.solc
+---
+error[SPECIALIZE]: integer type survived comptime erasure: return type in 'Scale_scale$word': comptime word
+  --> /main/main.solc:13:3
+   |
+12 |   instance word : Scale {
+13 | /   function scale(comptime factor : word, comptime x : word) -> comptime word {
+14 | |     let base : word;
+15 | |     assembly {
+16 | |       base := sload(0)
+17 | |     }
+18 | |     return base + x * factor;
+19 | |   }
+   | |___^ specialization failed here
+20 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: parameter 'factor': comptime word
+  --> /main/main.solc:13:18
+   |
+12 | instance word : Scale {
+13 |   function scale(comptime factor : word, comptime x : word) -> comptime word {
+   |                  ^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+14 |     let base : word;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: parameter 'x': comptime word
+  --> /main/main.solc:13:42
+   |
+12 | instance word : Scale {
+13 |   function scale(comptime factor : word, comptime x : word) -> comptime word {
+   |                                          ^^^^^^^^^^^^^^^^^ specialization failed here
+14 |     let base : word;
+   |
+---
+
+error[SPECIALIZE]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
+  --> /main/main.solc:18:5
+   |
+17 |     }
+18 |     return base + x * factor;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+19 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:18:19
+   |
+17 |     }
+18 |     return base + x * factor;
+   |                   ^ specialization failed here
+19 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'x': comptime word
+  --> /main/main.solc:18:19
+   |
+17 |     }
+18 |     return base + x * factor;
+   |                   ^ specialization failed here
+19 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:18:23
+   |
+17 |     }
+18 |     return base + x * factor;
+   |                       ^^^^^^ specialization failed here
+19 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'factor': comptime word
+  --> /main/main.solc:18:23
+   |
+17 |     }
+18 |     return base + x * factor;
+   |                       ^^^^^^ specialization failed here
+19 |   }
+   |
+---
+
+error[SPECIALIZE]: comptime evaluation failed: comptime let 'a' is bound to a runtime expression
+  --> /main/main.solc:24:5
+   |
+23 |   function main() -> word {
+24 |     let a : comptime word = Scale.scale(3, 10);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+25 |     return a;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: let 'a': comptime word
+  --> /main/main.solc:24:5
+   |
+23 |   function main() -> word {
+24 |     let a : comptime word = Scale.scale(3, 10);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+25 |     return a;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: let annotation 'a': comptime word
+  --> /main/main.solc:24:5
+   |
+23 |   function main() -> word {
+24 |     let a : comptime word = Scale.scale(3, 10);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+25 |     return a;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: callee 'Scale_scale$word': (comptime word, comptime word) -> comptime word
+  --> /main/main.solc:24:29
+   |
+23 |   function main() -> word {
+24 |     let a : comptime word = Scale.scale(3, 10);
+   |                             ^^^^^^^^^^^^^^^^^^ specialization failed here
+25 |     return a;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:24:29
+   |
+23 |   function main() -> word {
+24 |     let a : comptime word = Scale.scale(3, 10);
+   |                             ^^^^^^^^^^^^^^^^^^ specialization failed here
+25 |     return a;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:24:41
+   |
+23 |   function main() -> word {
+24 |     let a : comptime word = Scale.scale(3, 10);
+   |                                         ^ specialization failed here
+25 |     return a;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:24:44
+   |
+23 |   function main() -> word {
+24 |     let a : comptime word = Scale.scale(3, 10);
+   |                                            ^^ specialization failed here
+25 |     return a;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:25:12
+   |
+24 |     let a : comptime word = Scale.scale(3, 10);
+25 |     return a;
+   |            ^ specialization failed here
+26 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'a': comptime word
+  --> /main/main.solc:25:12
+   |
+24 |     let a : comptime word = Scale.scale(3, 10);
+25 |     return a;
+   |            ^ specialization failed here
+26 |   }
+   |

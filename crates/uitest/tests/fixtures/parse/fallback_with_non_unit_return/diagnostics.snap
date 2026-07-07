@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/fallback_with_non_unit_return/main.solc
+---
+error: fallback function must return unit (`()`) while parsing fallback definition
+ --> /main/main.solc:2:17
+  |
+1 | contract Bad {
+2 |   fallback() -> word {}
+  |                 ^^^^
+3 |
+  |

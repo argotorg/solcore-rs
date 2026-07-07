@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/shorthand_constructor_no_match/main.solc
+---
+error[SC0101]: undefined name: Some
+ --> /main/main.solc:4:11
+  |
+3 | function noMatch() -> Other {
+4 |   return .Some(1);
+  |           ^^^^ unknown name
+5 | }
+  |

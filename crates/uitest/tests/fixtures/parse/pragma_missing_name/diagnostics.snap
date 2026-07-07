@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/pragma_missing_name/main.solc
+---
+error: unexpected `;`; expected different token while parsing pragma declaration
+ --> /main/main.solc:1:8
+  |
+1 | pragma ;
+  |        ^

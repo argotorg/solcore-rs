@@ -1,0 +1,73 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/comptime/ct_let_runtime/main.solc
+---
+error[SPECIALIZE]: comptime evaluation failed: comptime let 'y' is bound to a runtime expression
+  --> /main/main.solc:18:5
+   |
+17 |   function main() -> word {
+18 |     let y : comptime word = sloadWord();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+19 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: let 'y': comptime word
+  --> /main/main.solc:18:5
+   |
+17 |   function main() -> word {
+18 |     let y : comptime word = sloadWord();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+19 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: let annotation 'y': comptime word
+  --> /main/main.solc:18:5
+   |
+17 |   function main() -> word {
+18 |     let y : comptime word = sloadWord();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+19 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: callee 'main_sloadWord_d96e43b9c': () -> comptime word
+  --> /main/main.solc:18:29
+   |
+17 |   function main() -> word {
+18 |     let y : comptime word = sloadWord();
+   |                             ^^^^^^^^^^^ specialization failed here
+19 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:18:29
+   |
+17 |   function main() -> word {
+18 |     let y : comptime word = sloadWord();
+   |                             ^^^^^^^^^^^ specialization failed here
+19 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:19:12
+   |
+18 |     let y : comptime word = sloadWord();
+19 |     return y;
+   |            ^ specialization failed here
+20 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'y': comptime word
+  --> /main/main.solc:19:12
+   |
+18 |     let y : comptime word = sloadWord();
+19 |     return y;
+   |            ^ specialization failed here
+20 |   }
+   |

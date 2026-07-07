@@ -1,0 +1,5 @@
+function main() -> word {
+  let b : bool = false;
+  assembly { b := add(1, 1) }
+  if b { return 1; } else { return 0; }
+}

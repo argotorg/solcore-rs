@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/missing_semicolon/main.solc
+---
+error: unexpected end of input; expected `.`, `;`, or `as` while parsing import declaration
+ --> /main/main.solc:1:18
+  |
+1 | import core.math
+  |                 ^

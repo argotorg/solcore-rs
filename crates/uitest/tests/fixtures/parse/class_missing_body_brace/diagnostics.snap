@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/class_missing_body_brace/main.solc
+---
+error: unexpected end of input; expected `(`, or `{` while parsing predicate
+ --> /main/main.solc:1:13
+  |
+1 | class T: Eq
+  |            ^

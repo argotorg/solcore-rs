@@ -13,4 +13,3 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 annotate-snippets = { workspace = true }
-insta = "1.43.2"

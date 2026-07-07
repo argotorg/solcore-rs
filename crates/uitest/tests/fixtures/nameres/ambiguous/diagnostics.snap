@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/ambiguous/main.solc
+---
+error[SC0120]: ambiguous selected import `value` in term namespace
+ --> /main/main.solc:1:1
+  |
+1 | import a.{value};
+  | ^^^^^^^^^^^^^^^^^ ambiguous selected import in term namespace
+2 | import b.{value};
+  |
+  = note: `value` is imported from a, b in term namespace
+  = note: use an explicit module qualifier or narrow the selected imports

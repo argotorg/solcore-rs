@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/public_free_function/main.solc
+---
+error: 'public' is only allowed on functions declared inside a contract while parsing function signature
+ --> /main/main.solc:1:1
+  |
+1 | public function bad() {}
+  | ^^^^^^
+2 |
+3 | function after() {}
+  |

@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/call_wrong_arity/main.solc
+---
+error[SC0201]: type mismatch: expected (word) -> word, got () -> word
+ --> /main/main.solc:6:10
+  |
+5 | function g() -> word {
+6 |   return f();
+  |          ^^^ expression has mismatched type
+7 | }
+  |
+---
+
+error[SC0203]: wrong arity for call: expected 1, got 0
+ --> /main/main.solc:6:10
+  |
+5 | function g() -> word {
+6 |   return f();
+  |          ^^^ wrong arity here
+7 | }
+  |

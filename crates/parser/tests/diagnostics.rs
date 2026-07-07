@@ -32,14 +32,6 @@ impl hir::Db for TestDb {
 impl solcore_parser::Db for TestDb {}
 
 #[dir_test(
-    dir: "$CARGO_MANIFEST_DIR/tests/fixtures/fail",
-    glob: "*.solc"
-)]
-fn parser_fail_diagnostics(fixture: Fixture<&str>) {
-    run_fixture_assertion(fixture, assert_fail_fixture);
-}
-
-#[dir_test(
     dir: "$CARGO_MANIFEST_DIR/tests/fixtures/corpus/fail",
     glob: "**/*.solc"
 )]

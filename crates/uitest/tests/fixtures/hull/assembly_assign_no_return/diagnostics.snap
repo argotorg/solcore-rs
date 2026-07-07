@@ -1,0 +1,19 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/assembly_assign_no_return/main.solc
+---
+error[SPECIALIZE]: cannot specialize entry specialization: free type variable in () -> <unknown>
+  --> /main/main.solc:3:3
+   |
+ 2 |   contract Test {
+ 3 | /   public function main() {
+ 4 | |     let x : word;
+ 5 | |     assembly {
+ 6 | |       x := mstore(1, 1)
+ 7 | |     }
+ 8 | |     return x;
+ 9 | |   }
+   | |___^ specialization failed here
+10 |   }
+   |

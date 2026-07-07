@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/comptime/ct_param_runtime/main.solc
+---
+error[SPECIALIZE]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'main_ComptimeParamRuntime_double_df36ca606'
+  --> /main/main.solc:14:12
+   |
+13 |   function process(value : word) -> word {
+14 |     return double(value);
+   |            ^^^^^^^^^^^^^ specialization failed here
+15 |   }
+   |

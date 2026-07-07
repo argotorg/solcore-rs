@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/fallback_with_params/main.solc
+---
+error: fallback function must not declare input parameters while parsing fallback definition
+ --> /main/main.solc:2:11
+  |
+1 | contract Bad {
+2 |   fallback(x: word) {}
+  |           ^^^^^^^^^
+3 |
+  |

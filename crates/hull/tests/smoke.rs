@@ -322,24 +322,6 @@ contract C {
         "{hull}"
     );
     assert!(hull.contains("stop()"), "{hull}");
-
-    let repo = repo_root();
-    let fixture =
-        repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/storage.solc");
-    let (db, output) = specialize_fixture(&fixture);
-    assert_eq!(output.diagnostics, Vec::new());
-    let emitted = emit_module(db, &output.module, EmitOptions::default());
-    assert!(
-        emitted.diagnostics.iter().any(|diagnostic| matches!(
-            &diagnostic.kind,
-            EmitDiagnosticKind::UnsupportedDispatchEntry { signature, reason }
-                if signature == "set(<unsupported>)" && reason == "non-word ABI shape"
-        )),
-        "{:?}",
-        emitted.diagnostics
-    );
-    let hull = pretty_program(db, &emitted.program);
-    assert!(!hull.contains("dispatcher skipped"), "{hull}");
 }
 
 #[test]
@@ -420,46 +402,6 @@ fn decision_tree_match_lowering_preserves_priority_nested_and_multi_scrutinee_ca
 }
 
 #[test]
-fn cited_assembly_invalid_fixtures_are_rejected_by_hull_checker() {
-    let non_word = check_fixture_kinds("cases/asm-assign-non-word.solc");
-    assert!(
-        non_word.iter().any(|kind| matches!(
-            kind,
-            CheckDiagnosticKind::AssemblyExpectedWordAssignment { name, .. } if name == "b"
-        )),
-        "{non_word:?}"
-    );
-
-    match try_check_fixture_kinds("cases/asm-assign-no-return.solc") {
-        Ok(no_return) => assert!(
-            no_return.iter().any(|kind| matches!(
-                kind,
-                CheckDiagnosticKind::AssemblyReturnCountMismatch {
-                    expected: 1,
-                    actual: 0,
-                    ..
-                }
-            )),
-            "{no_return:?}"
-        ),
-        Err(stage) => assert!(stage.starts_with("specialize:"), "{stage}"),
-    }
-
-    let multi_return = check_fixture_kinds("cases/yul-multi-return-arity-fail.solc");
-    assert!(
-        multi_return.iter().any(|kind| matches!(
-            kind,
-            CheckDiagnosticKind::AssemblyReturnCountMismatch {
-                expected: 3,
-                actual: 2,
-                ..
-            }
-        )),
-        "{multi_return:?}"
-    );
-}
-
-#[test]
 fn cited_terminal_yul_fixtures_do_not_fail_missing_terminator() {
     for fixture in [
         "cases/yul-return.solc",
@@ -513,45 +455,6 @@ contract C {
     let hull = pretty_program(db, &emitted.program);
     assert!(!hull.contains("iszero"), "{hull}");
     assert!(hull.contains("if<"), "{hull}");
-}
-
-#[test]
-fn non_exhaustive_source_matches_are_emit_diagnostics() {
-    let (db, output) = specialize_src(
-        "non_exhaustive_match",
-        r#"
-data B = A | C;
-
-function choose(x : word) -> B {
-  if (x == 0) {
-    return B.A;
-  }
-  return B.C;
-}
-
-function onlyA(b : B) -> word {
-  match b {
-    | B.A => return 1;
-  }
-}
-
-contract C {
-  public function main(x : word) -> word {
-    return onlyA(choose(x));
-  }
-}
-"#,
-    );
-    assert_eq!(output.diagnostics, Vec::new());
-    let emitted = emit_module(db, &output.module, EmitOptions::default());
-    assert!(
-        emitted
-            .diagnostics
-            .iter()
-            .any(|diagnostic| matches!(diagnostic.kind, EmitDiagnosticKind::NonExhaustiveMatch)),
-        "{:?}",
-        emitted.diagnostics
-    );
 }
 
 #[test]

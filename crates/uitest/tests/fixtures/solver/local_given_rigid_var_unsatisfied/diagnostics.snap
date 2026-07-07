@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/local_given_rigid_var_unsatisfied/main.solc
+---
+error[SC0207]: unsatisfied class constraint: word:class:C
+ --> /main/main.solc:6:10
+  |
+5 | forall a . a:C => function bad() -> word {
+6 |   return C.c(1);
+  |          ^^^^^^ constraint originates here
+7 | }
+  |

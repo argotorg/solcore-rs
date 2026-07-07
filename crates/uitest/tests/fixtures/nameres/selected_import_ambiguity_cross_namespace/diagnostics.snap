@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/selected_import_ambiguity_cross_namespace/main.solc
+---
+error[SC0120]: ambiguous selected import `T` across term/type namespaces
+ --> /main/main.solc:1:1
+  |
+1 | import a.{T};
+  | ^^^^^^^^^^^^^ ambiguous selected import across term/type namespaces
+2 | import b.{T};
+3 |
+  |
+  = note: `T` is imported from a, b across term/type namespaces
+  = note: use an explicit module qualifier or narrow the selected imports

@@ -1,0 +1,12 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/missing/main.solc
+---
+error[SC0109]: module not found: missing
+ --> /main/main.solc:1:1
+  |
+1 | import missing.{value};
+  | ^^^^^^^^^^^^^^^^^^^^^^^ module reference
+  |
+  = note: check the module path or add the missing source file

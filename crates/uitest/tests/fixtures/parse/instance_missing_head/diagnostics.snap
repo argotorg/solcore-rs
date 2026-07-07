@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/instance_missing_head/main.solc
+---
+error: unexpected `{`; expected `(`, `=>`, or predicate while parsing instance declaration
+ --> /main/main.solc:1:10
+  |
+1 | instance {}
+  |          ^

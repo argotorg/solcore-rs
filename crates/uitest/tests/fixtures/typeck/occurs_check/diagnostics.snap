@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/occurs_check/main.solc
+---
+error[SC0202]: recursive type: ?1 occurs in (?1) -> ?2
+ --> /main/main.solc:2:30
+  |
+1 | function f() -> () {
+2 |   let self = lam(x) { return x(x); };
+  |                              ^^^^ recursive type required here
+3 |   return ();
+  |

@@ -1,0 +1,75 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/specialize/comptime_return_evaluation_failed/main.solc
+---
+error[SPECIALIZE]: integer type survived comptime erasure: return type in 'main_leak_d421af571': comptime word
+  --> /main/main.solc:9:1
+   |
+ 8 |
+ 9 | / function leak(comptime x: word) -> comptime word {
+10 | |   return sloadWord();
+11 | | }
+   | |_^ specialization failed here
+12 |
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: parameter 'x': comptime word
+  --> /main/main.solc:9:15
+   |
+ 8 |
+ 9 | function leak(comptime x: word) -> comptime word {
+   |               ^^^^^^^^^^^^^^^^ specialization failed here
+10 |   return sloadWord();
+   |
+---
+
+error[SPECIALIZE]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
+  --> /main/main.solc:10:3
+   |
+ 9 | function leak(comptime x: word) -> comptime word {
+10 |   return sloadWord();
+   |   ^^^^^^^^^^^^^^^^^^^ specialization failed here
+11 | }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: callee 'main_sloadWord_d96e43b9c': () -> comptime word
+  --> /main/main.solc:10:10
+   |
+ 9 | function leak(comptime x: word) -> comptime word {
+10 |   return sloadWord();
+   |          ^^^^^^^^^^^ specialization failed here
+11 | }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:10:10
+   |
+ 9 | function leak(comptime x: word) -> comptime word {
+10 |   return sloadWord();
+   |          ^^^^^^^^^^^ specialization failed here
+11 | }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: callee 'main_leak_d421af571': (comptime word) -> word
+  --> /main/main.solc:15:12
+   |
+14 |   public function main() -> word {
+15 |     return leak(1);
+   |            ^^^^^^^ specialization failed here
+16 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:15:17
+   |
+14 |   public function main() -> word {
+15 |     return leak(1);
+   |                 ^ specialization failed here
+16 |   }
+   |

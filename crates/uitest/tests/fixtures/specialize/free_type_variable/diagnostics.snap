@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/specialize/free_type_variable/main.solc
+---
+error[SPECIALIZE]: cannot specialize expression: free type variable in <unknown>
+ --> /main/main.solc:8:13
+  |
+7 |   public function main() -> () {
+8 |     let x = leak();
+  |             ^^^^^^ specialization failed here
+9 |     return ();
+  |

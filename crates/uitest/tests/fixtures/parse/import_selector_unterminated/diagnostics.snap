@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/import_selector_unterminated/main.solc
+---
+error: unexpected end of input; expected `*`, or selector name while parsing import declaration
+ --> /main/main.solc:1:14
+  |
+1 | import mod.{
+  |             ^

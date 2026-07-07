@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/assembly_assign_non_word/main.solc
+---
+error[HULL-CHECK]: TypeMismatch { expected: "(unit + unit)", actual: "word" }
+ --> /main/main.solc:7:9
+  |
+6 |   public function main() -> word {
+7 |     let b : bool = false;
+  |         ^ check failed here
+8 |     assembly { b := add(1, 1) }
+  |
+---
+
+error[HULL-CHECK]: AssemblyExpectedWordAssignment { name: "b", actual: "(unit + unit)" }
+ --> /main/main.solc:8:16
+  |
+7 |     let b : bool = false;
+8 |     assembly { b := add(1, 1) }
+  |                ^^^^^^^^^^^^^^ check failed here
+9 |     if b { return 1; } else { return 0; }
+  |

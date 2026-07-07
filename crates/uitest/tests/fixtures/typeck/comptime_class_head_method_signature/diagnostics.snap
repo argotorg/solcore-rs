@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/comptime_class_head_method_signature/main.solc
+---
+error[SC0221]: Invalid instance member signature for `f`: expected (word) -> word, got (word) -> bool
+ --> /main/main.solc:6:3
+  |
+5 | instance word : C {
+6 |   function f(x : word) -> bool {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid instance method signature
+7 |     return true;
+  |

@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/if_trailing_semicolon/main.solc
+---
+error: unexpected `;`; expected `else`, end of input, or statement
+ --> /main/main.solc:4:4
+  |
+3 |     return ();
+4 |   };
+  |    ^
+5 | }
+  |

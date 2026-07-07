@@ -1,0 +1,17 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/coverage_condition_alias_expansion/main.solc
+---
+error[SC0212]: Coverage condition fails for class:
+               MyClass
+               - the type:
+               word
+               does not determine:
+               a
+ --> /main/main.solc:4:21
+  |
+2 | forall a b . class a:MyClass(b) {}
+3 |
+4 | forall a . instance Phantom(a):MyClass(a) {}
+  |                     ^^^^^^^^^^^^^^^^^^^^^ instance head does not determine these variables

@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/data_trailing_pipe/main.solc
+---
+error: unexpected `;`; expected different token while parsing data declaration
+ --> /main/main.solc:1:28
+  |
+1 | data Option(T) = Some(T) | ;
+  |                            ^

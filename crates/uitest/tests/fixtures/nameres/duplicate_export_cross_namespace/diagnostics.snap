@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/duplicate_export_cross_namespace/main.solc
+---
+error[SC0111]: duplicate exported item name `T`
+ --> /main/main.solc:2:11
+  |
+1 | export a.{T};
+2 | export b.{T};
+  |           ^ module exports this name more than once
+3 |
+  |
+  = note: export each item name from only one origin

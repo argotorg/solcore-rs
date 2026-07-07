@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/top_level_recovery/main.solc
+---
+error: could not parse top-level item near `unknown nonsense tokens`; expected a declaration starting with `import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`
+ --> /main/main.solc:2:1
+  |
+1 | function first() {}
+2 | unknown nonsense tokens
+  | ^^^^^^^^^^^^^^^^^^^^^^^
+3 | function second() {}
+  |

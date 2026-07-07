@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/unsupported_dispatch_storage/main.solc
+---
+error[HULL-EMIT]: UnsupportedDispatchEntry { signature: "set(<unsupported>)", reason: "non-word ABI shape" }
+  --> /main/main.solc:10:3
+   |
+ 9 |
+10 | /   public function set(value: memory(bytes)) -> () {
+11 | |     content = value;
+12 | |   }
+   | |___^ emit failed here
+13 |
+   |

@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/function_signature_missing_type/main.solc
+---
+error: unexpected `)`; expected type while parsing function parameter
+ --> /main/main.solc:1:17
+  |
+1 | function bad(x: ) {}
+  |                 ^

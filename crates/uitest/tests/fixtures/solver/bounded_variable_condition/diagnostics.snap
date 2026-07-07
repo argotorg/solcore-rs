@@ -1,0 +1,12 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/bounded_variable_condition/main.solc
+---
+error[SC0214]: Bounded variable condition fails!
+ --> /main/main.solc:5:31
+  |
+3 | forall a b . class a:Container(b) {}
+4 |
+5 | forall a c . c:Eq => instance Box(a):Container(a) {}
+  |                               ^^^^^^^^^^^^^^^^^^^ instance head is missing context variables

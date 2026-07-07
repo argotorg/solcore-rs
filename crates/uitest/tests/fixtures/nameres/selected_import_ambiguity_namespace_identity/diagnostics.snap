@@ -1,0 +1,27 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/selected_import_ambiguity_namespace_identity/main.solc
+---
+error[SC0120]: ambiguous selected import `T` in term namespace
+ --> /main/main.solc:1:1
+  |
+1 | import a.{T};
+  | ^^^^^^^^^^^^^ ambiguous selected import in term namespace
+2 | import b.{T};
+3 |
+  |
+  = note: `T` is imported from a, b in term namespace
+  = note: use an explicit module qualifier or narrow the selected imports
+---
+
+error[SC0120]: ambiguous selected import `T` in type namespace
+ --> /main/main.solc:1:1
+  |
+1 | import a.{T};
+  | ^^^^^^^^^^^^^ ambiguous selected import in type namespace
+2 | import b.{T};
+3 |
+  |
+  = note: `T` is imported from a, b in type namespace
+  = note: use an explicit module qualifier or narrow the selected imports

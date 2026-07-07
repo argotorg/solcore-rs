@@ -13,4 +13,6 @@ salsa = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+dir-test = "0.4.1"
+solcore-test-utils = { path = "../test-utils" }
 url = { workspace = true }

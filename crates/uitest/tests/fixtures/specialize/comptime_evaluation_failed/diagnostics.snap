@@ -1,0 +1,73 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/specialize/comptime_evaluation_failed/main.solc
+---
+error[SPECIALIZE]: comptime evaluation failed: comptime let 'y' is bound to a runtime expression
+  --> /main/main.solc:11:5
+   |
+10 |   public function main() -> word {
+11 |     let y : comptime word = sloadWord();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+12 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: let 'y': comptime word
+  --> /main/main.solc:11:5
+   |
+10 |   public function main() -> word {
+11 |     let y : comptime word = sloadWord();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+12 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: let annotation 'y': comptime word
+  --> /main/main.solc:11:5
+   |
+10 |   public function main() -> word {
+11 |     let y : comptime word = sloadWord();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+12 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: callee 'main_sloadWord_d96e43b9c': () -> comptime word
+  --> /main/main.solc:11:29
+   |
+10 |   public function main() -> word {
+11 |     let y : comptime word = sloadWord();
+   |                             ^^^^^^^^^^^ specialization failed here
+12 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:11:29
+   |
+10 |   public function main() -> word {
+11 |     let y : comptime word = sloadWord();
+   |                             ^^^^^^^^^^^ specialization failed here
+12 |     return y;
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:12:12
+   |
+11 |     let y : comptime word = sloadWord();
+12 |     return y;
+   |            ^ specialization failed here
+13 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'y': comptime word
+  --> /main/main.solc:12:12
+   |
+11 |     let y : comptime word = sloadWord();
+12 |     return y;
+   |            ^ specialization failed here
+13 |   }
+   |

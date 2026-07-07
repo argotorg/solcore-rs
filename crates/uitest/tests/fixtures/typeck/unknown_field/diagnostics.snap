@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/unknown_field/main.solc
+---
+error[SC0205]: unknown field: foo
+ --> /main/main.solc:2:10
+  |
+1 | function f(x: word) -> word {
+2 |   return x.foo;
+  |          ^^^^^ unknown field
+3 | }
+  |
