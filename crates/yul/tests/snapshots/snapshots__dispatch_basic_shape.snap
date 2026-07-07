@@ -1,5 +1,6 @@
 ---
 source: crates/yul/tests/snapshots.rs
+assertion_line: 130
 expression: "render_source(\"dispatch_basic_shape\",\nr#\"\ncontract DispatchBasicShape {\n  public function id(x : word) -> word {\n    return x;\n  }\n\n  public function answer() -> word {\n    return 42;\n  }\n}\n\"#,)"
 ---
 object "DispatchBasicShapeDeploy" {
@@ -55,15 +56,18 @@ object "DispatchBasicShapeDeploy" {
                 mstore(0, 0x08638556)
                 revert(28, 4)
               }
-              let src$dispatch_arg0_0_5
-              src$dispatch_arg0_0_5 := calldataload(4)
-              let src$dispatch_ret0_6
+              let src$dispatch_arg0_0_word_5
+              src$dispatch_arg0_0_word_5 := calldataload(4)
+              let src$dispatch_arg0_0_6
+              src$dispatch_arg0_0_6 := src$dispatch_arg0_0_word_5
+              let src$dispatch_ret0_7
               let _v2
-              _v2 := usr$dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94(src$dispatch_arg0_0_5)
-              src$dispatch_ret0_6 := _v2
-              let src$dispatch_ret0_0_7
-              src$dispatch_ret0_0_7 := src$dispatch_ret0_6
-              mstore(0, src$dispatch_ret0_0_7)
+              _v2 := usr$dispatch_basic_shape_DispatchBasicShape_id_d0c1a6e94(src$dispatch_arg0_0_6)
+              src$dispatch_ret0_7 := _v2
+              let src$dispatch_ret0_word_8
+              src$dispatch_ret0_word_8 := 0
+              src$dispatch_ret0_word_8 := src$dispatch_ret0_7
+              mstore(0, src$dispatch_ret0_word_8)
               return(0, 32)
             }
             case 0x85bb7d69 {
@@ -71,13 +75,14 @@ object "DispatchBasicShapeDeploy" {
                 mstore(0, 0xb5988ea3)
                 revert(28, 4)
               }
-              let src$dispatch_ret1_8
+              let src$dispatch_ret1_9
               let _v3
               _v3 := usr$dispatch_basic_shape_DispatchBasicShape_answer_d321b495b()
-              src$dispatch_ret1_8 := _v3
-              let src$dispatch_ret1_0_9
-              src$dispatch_ret1_0_9 := src$dispatch_ret1_8
-              mstore(0, src$dispatch_ret1_0_9)
+              src$dispatch_ret1_9 := _v3
+              let src$dispatch_ret1_word_10
+              src$dispatch_ret1_word_10 := 0
+              src$dispatch_ret1_word_10 := src$dispatch_ret1_9
+              mstore(0, src$dispatch_ret1_word_10)
               return(0, 32)
             }
             default {

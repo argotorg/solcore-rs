@@ -19,7 +19,7 @@ object "RGBDeploy" {
   }
   object "RGB" {
     code {
-      function usr$047rgb_RGB_main_d22993dc4() -> gen$result_1 {
+      function usr$047rgb_RGB_main_d9bbcf828() -> gen$result_1 {
         switch true
           case false {
             /* R */
@@ -42,7 +42,7 @@ object "RGBDeploy" {
               }
           }
       }
-      /* selector 0xdffeadd0 -> 047rgb_RGB_main_d22993dc4 */
+      /* selector 0xdffeadd0 -> 047rgb_RGB_main_d9bbcf828 */
       mstore(0x40, memoryguard(128))
       let _v0
       _v0 := calldatasize()
@@ -68,7 +68,7 @@ object "RGBDeploy" {
               }
               let src$dispatch_ret0_3
               let _v2
-              _v2 := usr$047rgb_RGB_main_d22993dc4()
+              _v2 := usr$047rgb_RGB_main_d9bbcf828()
               src$dispatch_ret0_3 := _v2
               let src$dispatch_ret0_word_4
               src$dispatch_ret0_word_4 := 0

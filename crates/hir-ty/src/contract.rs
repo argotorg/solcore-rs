@@ -21,6 +21,7 @@ use hir::{
     nameres as hir_nameres,
     span::SpannedElem,
 };
+use nameres::{LibraryId, module_id_from_key, module_key_for_path};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 
@@ -286,7 +287,7 @@ fn contract_dispatch_surface_by_def<'db>(
             diagnostics: Vec::new(),
         };
     };
-    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    let item_resolutions = resolve_contract_item_types(db, module);
     contract_dispatch_surface_with_resolutions(db, module, &item_resolutions, contract)
 }
 
@@ -584,6 +585,33 @@ fn lower_normalized_function<'db>(
         body_map.as_ref(),
         None,
     )
+}
+
+fn resolve_contract_item_types<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+) -> hir_nameres::ItemResolutionMap<'db> {
+    let file = module.def_id_value(db).file(db);
+    let Ok(path) = file.url(db).to_file_path() else {
+        return hir_nameres::resolve_item_types(db, module);
+    };
+    let tree = db.module_tree();
+    let key = module_key_for_path(LibraryId::Main, tree.main_root(db), &path)
+        .or_else(|| module_key_for_path(LibraryId::Std, tree.std_root(db), &path))
+        .or_else(|| {
+            tree.external_roots(db).iter().find_map(|(name, root)| {
+                module_key_for_path(LibraryId::External(name.clone()), root, &path)
+            })
+        });
+    let Some(key) = key else {
+        return hir_nameres::resolve_item_types(db, module);
+    };
+    let module_id = module_id_from_key(db, &key);
+    let env = nameres::module_env(db, module_id);
+    let Some(item_scope) = env.item_scope.as_ref() else {
+        return hir_nameres::resolve_item_types(db, module);
+    };
+    hir_nameres::resolve_item_types_with_imports(db, module, item_scope, &env)
 }
 
 fn find_contract_by_def<'db>(

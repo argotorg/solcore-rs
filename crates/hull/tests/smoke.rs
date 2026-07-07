@@ -287,7 +287,7 @@ contract C {
     let hull = pretty_program(db, &emitted.program);
     assert!(hull.contains("if gt(dispatch_arg0_0_word, 1)"), "{hull}");
     assert!(
-        hull.contains("mstore(0, iszero(iszero(dispatch_ret0_0_word)))"),
+        hull.contains("mstore(0, iszero(iszero(dispatch_ret0_word)))"),
         "{hull}"
     );
 }
@@ -304,7 +304,7 @@ fn ltimp_bool_return_fixture_is_dispatchable() {
     let hull = pretty_program(db, &emitted.program);
     assert!(hull.contains("selector 0xdffeadd0"), "{hull}");
     assert!(
-        hull.contains("mstore(0, iszero(iszero(dispatch_ret0_0_word)))"),
+        hull.contains("mstore(0, iszero(iszero(dispatch_ret0_word)))"),
         "{hull}"
     );
 }
@@ -328,17 +328,17 @@ contract C {
     assert_eq!(emitted.diagnostics, Vec::new());
     assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
-    assert!(hull.contains("shr(160, dispatch_arg0_0)"), "{hull}");
+    assert!(hull.contains("shr(160, dispatch_arg0_0_word)"), "{hull}");
     assert!(hull.contains("0x7cc04fa7"), "{hull}");
     assert!(
         hull.contains(
-            "dispatch_arg0_0 := and(dispatch_arg0_0, 0xffffffffffffffffffffffffffffffffffffffff)"
+            "dispatch_arg0_0_word := and(dispatch_arg0_0_word, 0xffffffffffffffffffffffffffffffffffffffff)"
         ),
         "{hull}"
     );
     assert!(
         hull.contains(
-            "mstore(0, and(dispatch_ret0_0, 0xffffffffffffffffffffffffffffffffffffffff))"
+            "mstore(0, and(dispatch_ret0_word, 0xffffffffffffffffffffffffffffffffffffffff))"
         ),
         "{hull}"
     );
@@ -672,27 +672,15 @@ fn corpus_emission_count_report() {
 }
 
 #[test]
-fn cited_annotation_mismatch_fixtures_are_reported() {
-    let mut mismatch_reports = 0usize;
-    let mut reported = Vec::new();
+fn cited_nested_layout_fixtures_check_cleanly() {
     for fixture in [
         "spec/032simplejoin.solc",
         "spec/034cojoin.solc",
         "spec/043fstsnd.solc",
     ] {
         let kinds = check_fixture_kinds(fixture);
-        if kinds
-            .iter()
-            .any(|kind| matches!(kind, CheckDiagnosticKind::ExprAnnotationMismatch { .. }))
-        {
-            reported.push((fixture, kinds));
-            mismatch_reports += 1;
-        }
+        assert!(kinds.is_empty(), "{fixture}: {kinds:?}");
     }
-    assert!(
-        mismatch_reports > 0,
-        "expected at least one cited nested-layout fixture to report annotation mismatch; got {reported:?}"
-    );
 }
 
 fn try_check_fixture_kinds(fixture: &str) -> Result<Vec<CheckDiagnosticKind>, String> {

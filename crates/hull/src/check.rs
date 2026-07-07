@@ -973,6 +973,15 @@ fn requires_terminator(ty: &Ty<'_>) -> bool {
 }
 
 fn type_eq(lhs: &Ty<'_>, rhs: &Ty<'_>) -> bool {
+    match (&lhs.kind, &rhs.kind) {
+        (TyKind::NamedRef { name: a }, TyKind::NamedRef { name: b })
+        | (TyKind::NamedRef { name: a }, TyKind::Named { name: b, .. })
+        | (TyKind::Named { name: a, .. }, TyKind::NamedRef { name: b }) => {
+            return a == b;
+        }
+        _ => {}
+    }
+
     match (&lhs.strip_named().kind, &rhs.strip_named().kind) {
         (TyKind::Word, TyKind::Word)
         | (TyKind::Bool, TyKind::Bool)

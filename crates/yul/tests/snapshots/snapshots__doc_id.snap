@@ -1,5 +1,6 @@
 ---
 source: crates/yul/tests/snapshots.rs
+assertion_line: 73
 expression: "render_source(\"doc_id\",\nr#\"\ncontract IdDoc {\n  public function id(x : word) -> word {\n    return x;\n  }\n}\n\"#,)"
 ---
 object "IdDocDeploy" {
@@ -50,15 +51,18 @@ object "IdDocDeploy" {
                 mstore(0, 0x08638556)
                 revert(28, 4)
               }
-              let src$dispatch_arg0_0_4
-              src$dispatch_arg0_0_4 := calldataload(4)
-              let src$dispatch_ret0_5
+              let src$dispatch_arg0_0_word_4
+              src$dispatch_arg0_0_word_4 := calldataload(4)
+              let src$dispatch_arg0_0_5
+              src$dispatch_arg0_0_5 := src$dispatch_arg0_0_word_4
+              let src$dispatch_ret0_6
               let _v2
-              _v2 := usr$doc_id_IdDoc_id_de5a55c43(src$dispatch_arg0_0_4)
-              src$dispatch_ret0_5 := _v2
-              let src$dispatch_ret0_0_6
-              src$dispatch_ret0_0_6 := src$dispatch_ret0_5
-              mstore(0, src$dispatch_ret0_0_6)
+              _v2 := usr$doc_id_IdDoc_id_de5a55c43(src$dispatch_arg0_0_5)
+              src$dispatch_ret0_6 := _v2
+              let src$dispatch_ret0_word_7
+              src$dispatch_ret0_word_7 := 0
+              src$dispatch_ret0_word_7 := src$dispatch_ret0_6
+              mstore(0, src$dispatch_ret0_word_7)
               return(0, 32)
             }
             default {

@@ -432,27 +432,12 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         typeck
     ),
     known!(
-        "examples/dispatch/assembly.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
         "examples/dispatch/basic.solc",
         "needs-dispatch-abi-surface",
         typeck
     ),
     known!(
-        "examples/dispatch/concat.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
         "examples/dispatch/counter.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/ecrecover.solc",
         "needs-dispatch-abi-surface",
         typeck
     ),
@@ -472,42 +457,7 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         typeck
     ),
     known!(
-        "examples/dispatch/generic_product.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/generic_sum.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/hashes.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/memory.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
         "examples/dispatch/miniERC20.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/neg.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/nonpayable_ctor.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/ownable.solc",
         "needs-dispatch-abi-surface",
         typeck
     ),
@@ -517,27 +467,7 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         typeck
     ),
     known!(
-        "examples/dispatch/payable_ctor.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/slices.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/specialise_sum_of_product.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
         "examples/dispatch/storage.solc",
-        "needs-dispatch-abi-surface",
-        typeck
-    ),
-    known!(
-        "examples/dispatch/stringid.solc",
         "needs-dispatch-abi-surface",
         typeck
     ),

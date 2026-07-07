@@ -3,13 +3,21 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/unsupported_dispatch_storage/main.solc
 ---
-error[HULL-EMIT]: UnsupportedDispatchEntry { signature: "set(<unsupported>)", reason: "non-word ABI shape" }
-  --> /main/main.solc:10:3
+error[HULL-CHECK]: UndefinedVariable { name: "content" }
+  --> /main/main.solc:11:5
    |
- 9 |
-10 | /   public function set(value: memory(bytes)) -> () {
-11 | |     content = value;
-12 | |   }
-   | |___^ emit failed here
-13 |
+10 |   public function set(value: memory(bytes)) -> () {
+11 |     content = value;
+   |     ^^^^^^^ check failed here
+12 |   }
+   |
+---
+
+error[HULL-CHECK]: UndefinedVariable { name: "content" }
+  --> /main/main.solc:15:12
+   |
+14 |   public function get() -> memory(bytes) {
+15 |     return content;
+   |            ^^^^^^^ check failed here
+16 |   }
    |
