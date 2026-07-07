@@ -1955,6 +1955,14 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
                 self.engine.from_ty(Ty::unit(self.db))
             }
+            StmtKind::AddAssign { lhs, rhs } | StmtKind::SubAssign { lhs, rhs }
+                if self.is_storage_index_expr(body, *lhs) =>
+            {
+                let lhs_ty = self.infer_expr(body, *lhs);
+                let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));
+                self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
+                self.engine.from_ty(Ty::unit(self.db))
+            }
             StmtKind::AddAssign { lhs, rhs }
             | StmtKind::SubAssign { lhs, rhs }
             | StmtKind::BitXorAssign { lhs, rhs }
@@ -2169,19 +2177,23 @@ impl<'db> InferCtx<'db> {
             ),
             ExprKind::BinOp { lhs, op, rhs } => self.infer_bin_op(body, *lhs, *op.atom(), *rhs),
             ExprKind::Index { base, index } => {
-                let base_ty = self.infer_expr(body, *base);
-                let index_ty = self.infer_expr(body, *index);
-                let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
-                self.unify_expr(
-                    body,
-                    expr_id,
-                    base_ty,
-                    InferTy::Function {
-                        params: vec![index_ty],
-                        ret: Box::new(ret.clone()),
-                    },
-                );
-                ret
+                if let Some(ret) = self.infer_storage_index_read(body, *base, *index) {
+                    ret
+                } else {
+                    let base_ty = self.infer_expr(body, *base);
+                    let index_ty = self.infer_expr(body, *index);
+                    let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
+                    self.unify_expr(
+                        body,
+                        expr_id,
+                        base_ty,
+                        InferTy::Function {
+                            params: vec![index_ty],
+                            ret: Box::new(ret.clone()),
+                        },
+                    );
+                    ret
+                }
             }
             ExprKind::Call { callee, args } => {
                 if let Some(ty) =
@@ -2242,6 +2254,55 @@ impl<'db> InferCtx<'db> {
         }
         self.expr_tys.push((body, expr_id, ty.clone()));
         ty
+    }
+
+    fn infer_storage_index_read(
+        &mut self,
+        body: FuncBody<'db>,
+        base: Id<Expr<'db>>,
+        index: Id<Expr<'db>>,
+    ) -> Option<InferTy<'db>> {
+        if !self.is_storage_index_expr(body, base) {
+            return None;
+        }
+        let base_ty = self.infer_expr(body, base);
+        let (index_ty, value_ty) = self.mapping_args(base_ty)?;
+        let actual_index_ty = self.infer_expr_expected(body, index, Some(index_ty.clone()));
+        self.unify_expr(body, index, index_ty, actual_index_ty);
+        Some(value_ty)
+    }
+
+    fn is_storage_index_expr(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> bool {
+        if matches!(
+            self.expr_resolutions.get(&(body, expr)),
+            Some(hir_nameres::Resolution::Field(_))
+        ) {
+            return true;
+        }
+        match &body.exprs(self.db).get(expr).kind {
+            ExprKind::Index { base, .. } => self.is_storage_index_expr(body, *base),
+            ExprKind::TypeAnnot { expr, .. } => self.is_storage_index_expr(body, *expr),
+            _ => false,
+        }
+    }
+
+    fn mapping_args(&mut self, ty: InferTy<'db>) -> Option<(InferTy<'db>, InferTy<'db>)> {
+        let ty = self.normalize_aliases(ty);
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+            args,
+        } = self.engine.resolve(ty)
+        else {
+            return None;
+        };
+        if def.name(self.db).as_deref() != Some("mapping") || args.len() != 2 {
+            return None;
+        }
+        Some((args[0].clone(), args[1].clone()))
     }
 
     fn infer_constructor_call(
@@ -2790,14 +2851,19 @@ impl<'db> InferCtx<'db> {
         let lhs = self.infer_expr(body, lhs_expr);
         let rhs = self.infer_expr(body, rhs_expr);
         match op {
-            BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Mod
-            | BinOp::BitAnd
-            | BinOp::BitXor
-            | BinOp::BitOr => {
+            BinOp::Add | BinOp::Sub => {
+                if let Some(target) = self.word_numeric_adt_operand(lhs.clone(), rhs.clone()) {
+                    self.unify_expr(body, lhs_expr, lhs, target.clone());
+                    self.unify_expr(body, rhs_expr, rhs, target.clone());
+                    target
+                } else {
+                    let word = self.engine.from_ty(Ty::word(self.db));
+                    self.unify_expr(body, lhs_expr, lhs, word.clone());
+                    self.unify_expr(body, rhs_expr, rhs, word.clone());
+                    word
+                }
+            }
+            BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::BitAnd | BinOp::BitXor | BinOp::BitOr => {
                 let word = self.engine.from_ty(Ty::word(self.db));
                 self.unify_expr(body, lhs_expr, lhs, word.clone());
                 self.unify_expr(body, rhs_expr, rhs, word.clone());
@@ -2808,9 +2874,14 @@ impl<'db> InferCtx<'db> {
                 self.engine.from_ty(Ty::bool(self.db))
             }
             BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
-                let word = self.engine.from_ty(Ty::word(self.db));
-                self.unify_expr(body, lhs_expr, lhs, word.clone());
-                self.unify_expr(body, rhs_expr, rhs, word);
+                if let Some(target) = self.word_numeric_adt_operand(lhs.clone(), rhs.clone()) {
+                    self.unify_expr(body, lhs_expr, lhs, target.clone());
+                    self.unify_expr(body, rhs_expr, rhs, target);
+                } else {
+                    let word = self.engine.from_ty(Ty::word(self.db));
+                    self.unify_expr(body, lhs_expr, lhs, word.clone());
+                    self.unify_expr(body, rhs_expr, rhs, word);
+                }
                 self.engine.from_ty(Ty::bool(self.db))
             }
             BinOp::And | BinOp::Or => {
@@ -2821,6 +2892,36 @@ impl<'db> InferCtx<'db> {
             }
             BinOp::Error => InferTy::Error,
         }
+    }
+
+    fn word_numeric_adt_operand(
+        &mut self,
+        lhs: InferTy<'db>,
+        rhs: InferTy<'db>,
+    ) -> Option<InferTy<'db>> {
+        if self.is_word_numeric_adt(lhs.clone()) {
+            Some(lhs)
+        } else if self.is_word_numeric_adt(rhs.clone()) {
+            Some(rhs)
+        } else {
+            None
+        }
+    }
+
+    fn is_word_numeric_adt(&mut self, ty: InferTy<'db>) -> bool {
+        let ty = self.normalize_aliases(ty);
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+            args,
+        } = self.engine.resolve(ty)
+        else {
+            return false;
+        };
+        args.is_empty() && matches!(def.name(self.db).as_deref(), Some("uint") | Some("uint256"))
     }
 
     fn infer_un_op(&mut self, body: FuncBody<'db>, op: UnOp, expr: Id<Expr<'db>>) -> InferTy<'db> {
