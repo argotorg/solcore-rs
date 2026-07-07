@@ -874,6 +874,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "solcore-hull"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash",
+ "salsa",
+ "solcore-hir",
+ "solcore-hir-ty",
+ "solcore-nameres",
+ "solcore-parser",
+ "solcore-specialize",
+ "url",
+]
+
+[[package]]
 name = "solcore-nameres"
 version = "0.1.0"
 dependencies = [
