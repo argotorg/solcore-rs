@@ -15,8 +15,9 @@ use hir::{
         function::{FuncParam, FuncSig},
         item::{AdtDef, ClassDef, ContractItem, FunctionDef, InstanceDef, Item, Module},
     },
+    diag::LabelSpan,
     nameres as hir_nameres,
-    span::SpannedElem,
+    span::{Spanned, SpannedElem},
 };
 use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path};
 use parser::{parse_diagnostics, parse_file_to_hir};
@@ -334,6 +335,7 @@ pub fn generic_derivation_diagnostics<'db>(
         .filter(|info| manual.contains(&info.adt.def_id_value(db)))
         .filter(|info| !excluded.contains(&adt_name(db, info.adt)))
         .map(|info| TypeckDiagnostic::GenericDeriveConflict {
+            span: LabelSpan::from_span(db, info.adt.name_elem(db).span(db)),
             ty: adt_name(db, info.adt),
         })
         .collect()
@@ -420,10 +422,19 @@ pub fn instance_soundness_diagnostics<'db>(
             )
             && instance.default_kw(db).is_none()
         {
-            prior_heads.push(head);
+            prior_heads.push(InstanceHead {
+                pred: head,
+                span: LabelSpan::from_span(db, instance.head(db).span(db)),
+            });
         }
     }
     diagnostics
+}
+
+#[derive(Clone)]
+struct InstanceHead<'db> {
+    pred: Pred<'db>,
+    span: LabelSpan,
 }
 
 #[derive(Default)]
@@ -485,7 +496,7 @@ fn check_instance_soundness<'db>(
     instance: InstanceDef<'db>,
     item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
     pragmas: &InstanceSoundnessPragmas,
-    prior_heads: &[Pred<'db>],
+    prior_heads: &[InstanceHead<'db>],
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) -> Option<Pred<'db>> {
     let type_vars = type_var_bindings(instance.def_id_value(db), instance.type_var_elems(db));
@@ -496,6 +507,7 @@ fn check_instance_soundness<'db>(
         BinderEnv::from_type_vars(&type_vars),
     );
     let head_ref = instance.head(db);
+    let head_span = LabelSpan::from_span(db, head_ref.span(db));
     let class_name = head_ref_class_name(db, head_ref);
     let head_norm =
         normalize_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(head_ref));
@@ -511,46 +523,78 @@ fn check_instance_soundness<'db>(
             let norm =
                 normalize_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(*pred));
             diagnostics.extend(norm.errors.into_iter().map(alias_error_to_diagnostic));
-            norm.value
+            (norm.value, LabelSpan::from_span(db, pred.span(db)))
         })
         .collect::<Vec<_>>();
 
-    check_pred_class_arity(db, module, head, diagnostics);
-    for condition in &conditions {
-        check_pred_class_arity(db, module, *condition, diagnostics);
+    check_pred_class_arity(db, module, head, head_span.clone(), diagnostics);
+    for (condition, span) in &conditions {
+        check_pred_class_arity(db, module, *condition, span.clone(), diagnostics);
     }
     check_default_instance_head(
         db,
         head,
+        head_span.clone(),
         instance.default_kw(db).is_some(),
         &type_var_names,
         diagnostics,
     );
     if instance.default_kw(db).is_none() {
-        check_overlapping_instance(db, head, prior_heads, &type_var_names, diagnostics);
+        check_overlapping_instance(
+            db,
+            head,
+            head_span.clone(),
+            prior_heads,
+            &type_var_names,
+            diagnostics,
+        );
     }
     check_instance_methods(db, module, instance, item_resolutions, head, diagnostics);
 
     if !pragmas.coverage.disables(&class_name) {
-        check_coverage_condition(db, head, &class_name, &type_var_names, diagnostics);
+        check_coverage_condition(
+            db,
+            head,
+            head_span.clone(),
+            &class_name,
+            &type_var_names,
+            diagnostics,
+        );
     }
     if !pragmas.patterson.disables(&class_name) {
-        check_patterson_condition(db, head, &conditions, &type_var_names, diagnostics);
+        let condition_preds = conditions
+            .iter()
+            .map(|(condition, _)| *condition)
+            .collect::<Vec<_>>();
+        check_patterson_condition(
+            db,
+            head,
+            head_span.clone(),
+            &condition_preds,
+            &type_var_names,
+            diagnostics,
+        );
     }
     if !pragmas.bounded_variable.disables(&class_name) {
-        check_bounded_variable_condition(db, head, &conditions, diagnostics);
+        let condition_preds = conditions
+            .iter()
+            .map(|(condition, _)| *condition)
+            .collect::<Vec<_>>();
+        check_bounded_variable_condition(db, head, head_span, &condition_preds, diagnostics);
     }
     Some(head)
 }
 
 fn alias_error_to_diagnostic(error: AliasError) -> TypeckDiagnostic {
     match error {
-        AliasError::Cycle { alias } => TypeckDiagnostic::TypeAliasCycle { alias },
+        AliasError::Cycle { span, alias } => TypeckDiagnostic::TypeAliasCycle { span, alias },
         AliasError::Arity {
+            span,
             alias,
             expected,
             actual,
         } => TypeckDiagnostic::TypeAliasArity {
+            span,
             alias,
             expected,
             actual,
@@ -562,7 +606,7 @@ fn imported_non_default_heads<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     env: &nameres::ModuleEnv<'db>,
-) -> Vec<Pred<'db>> {
+) -> Vec<InstanceHead<'db>> {
     let mut heads = Vec::new();
     for origin in &env.instances {
         if origin.module == module {
@@ -597,7 +641,10 @@ fn imported_non_default_heads<'db>(
         )
         .value;
         if !matches!(head.kind(db), PredKind::Error) {
-            heads.push(head);
+            heads.push(InstanceHead {
+                pred: head,
+                span: LabelSpan::from_span(db, instance.head(db).span(db)),
+            });
         }
     }
     heads
@@ -607,6 +654,7 @@ fn check_pred_class_arity<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     pred: Pred<'db>,
+    span: LabelSpan,
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) {
     let PredKind::InClass { class, args, .. } = pred.kind(db) else {
@@ -617,6 +665,7 @@ fn check_pred_class_arity<'db>(
     };
     if expected != args.len() {
         diagnostics.push(TypeckDiagnostic::ClassArity {
+            span,
             class: display_class_source(db, *class),
             expected,
             actual: args.len(),
@@ -641,6 +690,7 @@ fn class_arity<'db>(db: &'db dyn Db, module: Module<'db>, class: ClassId<'db>) -
 fn check_default_instance_head<'db>(
     db: &'db dyn Db,
     head: Pred<'db>,
+    span: LabelSpan,
     is_default: bool,
     type_var_names: &[String],
     diagnostics: &mut Vec<TypeckDiagnostic>,
@@ -650,12 +700,14 @@ fn check_default_instance_head<'db>(
     }
     let PredKind::InClass { main, .. } = head.kind(db) else {
         diagnostics.push(TypeckDiagnostic::InvalidDefaultInstance {
+            span,
             head: display_pred_source(db, head, type_var_names),
         });
         return;
     };
     if !matches!(main.kind(db), TyKind::BoundVar(_)) {
         diagnostics.push(TypeckDiagnostic::InvalidDefaultInstance {
+            span,
             head: display_pred_source(db, head, type_var_names),
         });
     }
@@ -664,18 +716,21 @@ fn check_default_instance_head<'db>(
 fn check_overlapping_instance<'db>(
     db: &'db dyn Db,
     head: Pred<'db>,
-    prior_heads: &[Pred<'db>],
+    head_span: LabelSpan,
+    prior_heads: &[InstanceHead<'db>],
     type_var_names: &[String],
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) {
     for prior in prior_heads {
-        if !same_class(db, head, *prior) {
+        if !same_class(db, head, prior.pred) {
             continue;
         }
-        if instance_heads_overlap(db, head, *prior) {
+        if instance_heads_overlap(db, head, prior.pred) {
             diagnostics.push(TypeckDiagnostic::OverlappingInstance {
+                instance_span: head_span,
+                overlaps_span: Some(prior.span.clone()),
                 instance: display_pred_source(db, head, type_var_names),
-                overlaps: prior.display(db),
+                overlaps: prior.pred.display(db),
             });
             return;
         }
@@ -751,6 +806,7 @@ fn check_instance_methods<'db>(
         .collect::<Vec<_>>();
     if !missing.is_empty() {
         diagnostics.push(TypeckDiagnostic::IncompleteInstance {
+            span: LabelSpan::from_span(db, instance.head(db).span(db)),
             class: class_name.clone(),
             missing,
         });
@@ -793,6 +849,7 @@ fn check_instance_method_signature<'db>(
     let method_name = ident_text(db, &class_method.name);
     if let Some(reason) = incomplete_class_method_signature_reason(class_method) {
         diagnostics.push(TypeckDiagnostic::InvalidInstanceMethodSignature {
+            span: LabelSpan::from_span(db, class_method.span(db)),
             method: method_name.clone(),
             reason,
         });
@@ -800,6 +857,7 @@ fn check_instance_method_signature<'db>(
     }
     if let Some(reason) = incomplete_instance_method_signature_reason(instance_method.sig(db)) {
         diagnostics.push(TypeckDiagnostic::InvalidInstanceMethodSignature {
+            span: LabelSpan::from_span(db, instance_method.sig(db).span(db)),
             method: method_name.clone(),
             reason,
         });
@@ -859,6 +917,7 @@ fn check_instance_method_signature<'db>(
 
     if !ty_equal(db, expected, actual) {
         diagnostics.push(TypeckDiagnostic::InvalidInstanceMethodSignature {
+            span: LabelSpan::from_span(db, instance_method.sig(db).span(db)),
             method: method_name,
             reason: format!(
                 "expected {}, got {}",
@@ -1461,6 +1520,7 @@ fn offset_ty_vars<'db>(db: &'db dyn Db, ty: Ty<'db>, offset: u32) -> Ty<'db> {
 fn check_coverage_condition<'db>(
     db: &'db dyn Db,
     head: Pred<'db>,
+    span: LabelSpan,
     class_name: &str,
     type_var_names: &[String],
     diagnostics: &mut Vec<TypeckDiagnostic>,
@@ -1479,6 +1539,7 @@ fn check_coverage_condition<'db>(
         return;
     }
     diagnostics.push(TypeckDiagnostic::CoverageCondition {
+        span,
         class: class_name.to_owned(),
         main: display_ty_source(db, *main, type_var_names),
         undetermined: display_vars(&undetermined, type_var_names),
@@ -1488,6 +1549,7 @@ fn check_coverage_condition<'db>(
 fn check_patterson_condition<'db>(
     db: &'db dyn Db,
     head: Pred<'db>,
+    span: LabelSpan,
     conditions: &[Pred<'db>],
     type_var_names: &[String],
     diagnostics: &mut Vec<TypeckDiagnostic>,
@@ -1499,6 +1561,7 @@ fn check_patterson_condition<'db>(
         return;
     }
     diagnostics.push(TypeckDiagnostic::PattersonCondition {
+        span,
         head: display_pred_source(db, head, type_var_names),
     });
 }
@@ -1506,6 +1569,7 @@ fn check_patterson_condition<'db>(
 fn check_bounded_variable_condition<'db>(
     db: &'db dyn Db,
     head: Pred<'db>,
+    span: LabelSpan,
     conditions: &[Pred<'db>],
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) {
@@ -1515,7 +1579,7 @@ fn check_bounded_variable_condition<'db>(
         let mut condition_vars = FxHashSet::default();
         collect_pred_vars(db, *condition, &mut condition_vars);
         if condition_vars.iter().any(|var| !head_vars.contains(var)) {
-            diagnostics.push(TypeckDiagnostic::BoundedVariableCondition);
+            diagnostics.push(TypeckDiagnostic::BoundedVariableCondition { span });
             return;
         }
     }

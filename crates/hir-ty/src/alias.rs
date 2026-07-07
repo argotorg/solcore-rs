@@ -7,8 +7,9 @@ use hir::{
         Ident,
         item::{ContractItem, Item, Module, TypeAlias},
     },
+    diag::LabelSpan,
     nameres as hir_nameres,
-    span::SpannedElem,
+    span::{Spanned, SpannedElem},
 };
 use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path};
 use rustc_hash::FxHashSet;
@@ -23,11 +24,15 @@ use crate::{
 pub enum AliasError {
     /// A recursive type alias was encountered.
     Cycle {
+        /// Source span for the alias declaration or use.
+        span: LabelSpan,
         /// Alias name.
         alias: String,
     },
     /// A type alias was applied with the wrong number of arguments.
     Arity {
+        /// Source span for the alias declaration or use.
+        span: LabelSpan,
         /// Alias name.
         alias: String,
         /// Declared arity.
@@ -283,6 +288,7 @@ impl<'a, 'db> AliasNormalizer<'a, 'db> {
     {
         if self.expanding.contains(&def) {
             self.errors.push(AliasError::Cycle {
+                span: alias_label_span(self.db, self.module, def),
                 alias: alias_name(self.db, def),
             });
             return T::alias_error(self.db);
@@ -296,6 +302,7 @@ impl<'a, 'db> AliasNormalizer<'a, 'db> {
         let expected = info.type_vars.len();
         if expected != args.len() {
             self.errors.push(AliasError::Arity {
+                span: alias_label_span(self.db, self.module, def),
                 alias: alias_name(self.db, def),
                 expected,
                 actual: args.len(),
@@ -388,6 +395,18 @@ struct LoweredAliasInfo<'db> {
 struct TypeAliasInfo<'db> {
     alias: TypeAlias<'db>,
     type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+}
+
+fn alias_label_span<'db>(db: &'db dyn Db, module: Module<'db>, def: DefId<'db>) -> LabelSpan {
+    let span = find_type_alias_info(db, module, def, &[])
+        .or_else(|| {
+            module_for_def(db, def)
+                .and_then(|module| scope_resolution_for_module_id(db, module))
+                .and_then(|(scope, _)| find_type_alias_info(db, scope.module, def, &[]))
+        })
+        .map(|info| info.alias.name_elem(db).span(db))
+        .unwrap_or_else(|| module.span(db));
+    LabelSpan::from_span(db, span)
 }
 
 fn lower_type_alias_info<'db>(

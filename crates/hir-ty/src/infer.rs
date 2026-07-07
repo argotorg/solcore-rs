@@ -19,9 +19,9 @@ use hir::{
         },
         ty::{TypeRef, TypeRefKind},
     },
-    diag::{AnyDiagnostic, Diagnostic},
+    diag::{AnyDiagnostic, Diagnostic, LabelSpan},
     nameres as hir_nameres,
-    span::SpannedElem,
+    span::{Span, Spanned, SpannedElem},
 };
 use nameres::{LibraryId, ModuleId};
 use parser::{parse_diagnostics, parse_file_to_hir};
@@ -500,6 +500,8 @@ impl<'db> InferResultExt<'db> for InferenceResult<'db> {
 pub enum TypeckDiagnostic {
     /// `SC0201`: two types could not be unified.
     Mismatch {
+        /// Source span for the expression or pattern whose type mismatched.
+        span: LabelSpan,
         /// Expected or left-hand type snapshot.
         expected: String,
         /// Actual or right-hand type snapshot.
@@ -507,6 +509,8 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0202`: unification would create an infinite type.
     OccursCheck {
+        /// Source span where the recursive type was required.
+        span: LabelSpan,
         /// Inference variable snapshot.
         var: String,
         /// Type snapshot containing the variable.
@@ -514,6 +518,8 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0203`: function, constructor, or match arm arity mismatch.
     WrongArity {
+        /// Source span for the call, constructor, signature, or syntactic context.
+        span: LabelSpan,
         /// Callable or syntactic context.
         context: String,
         /// Expected number of arguments/patterns.
@@ -523,6 +529,8 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0204`: a SAIL variable referenced by Yul is not word-typed.
     NonWordYulVar {
+        /// Source span for the Yul reference.
+        span: LabelSpan,
         /// Referenced SAIL variable name.
         name: String,
         /// Actual type snapshot.
@@ -530,21 +538,29 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0205`: field lookup could not be typed.
     UnknownField {
+        /// Source span for the field projection.
+        span: LabelSpan,
         /// Field name.
         field: String,
     },
     /// `SC0206`: attempted to call a non-function value.
     NonCallable {
+        /// Source span for the attempted call.
+        span: LabelSpan,
         /// Callee type snapshot.
         callee: String,
     },
     /// `SC0207`: a class constraint could not be solved.
     UnsatisfiedConstraint {
+        /// Source span for the obligation that could not be solved.
+        span: LabelSpan,
         /// Predicate snapshot.
         pred: String,
     },
     /// `SC0208`: more than one non-default instance solved a class constraint.
     AmbiguousConstraint {
+        /// Source span for the ambiguous obligation.
+        span: LabelSpan,
         /// Predicate snapshot.
         pred: String,
         /// Candidate evidence snapshots.
@@ -552,18 +568,27 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0209`: trait solving exceeded its fuel bound.
     SolverFuelExhausted {
+        /// Source span for the obligation that exhausted solver fuel.
+        span: LabelSpan,
         /// Predicate snapshot.
         pred: String,
     },
     /// `SC0210`: a `return` appears before the final statement in a body.
-    NonFinalReturn,
+    NonFinalReturn {
+        /// Source span for the non-final return statement.
+        span: LabelSpan,
+    },
     /// `SC0211`: a Yul identifier or function name could not be resolved.
     UnknownYulName {
+        /// Source span for the unknown Yul identifier or function.
+        span: LabelSpan,
         /// Referenced Yul name.
         name: String,
     },
     /// `SC0212`: weak instance-head variables are not determined by the main type.
     CoverageCondition {
+        /// Source span for the instance head.
+        span: LabelSpan,
         /// Class whose instance violates coverage.
         class: String,
         /// Main instance-head type snapshot.
@@ -573,18 +598,27 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0213`: an instance context predicate is not smaller than the head.
     PattersonCondition {
+        /// Source span for the instance head.
+        span: LabelSpan,
         /// Instance-head predicate snapshot.
         head: String,
     },
     /// `SC0214`: an instance context mentions variables absent from the head.
-    BoundedVariableCondition,
+    BoundedVariableCondition {
+        /// Source span for the instance head.
+        span: LabelSpan,
+    },
     /// `SC0215`: a recursive type alias was rejected.
     TypeAliasCycle {
+        /// Source span for the alias declaration.
+        span: LabelSpan,
         /// Alias name.
         alias: String,
     },
     /// `SC0216`: a type alias was applied with the wrong number of arguments.
     TypeAliasArity {
+        /// Source span for the alias use or declaration.
+        span: LabelSpan,
         /// Alias name.
         alias: String,
         /// Declared arity.
@@ -594,6 +628,8 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0217`: a class predicate used the wrong number of weak arguments.
     ClassArity {
+        /// Source span for the class predicate.
+        span: LabelSpan,
         /// Class name.
         class: String,
         /// Declared weak-argument arity.
@@ -603,6 +639,10 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0218`: two visible non-default instance heads overlap.
     OverlappingInstance {
+        /// Source span for the later instance head.
+        instance_span: LabelSpan,
+        /// Source span for the earlier overlapping instance head, when available.
+        overlaps_span: Option<LabelSpan>,
         /// New instance predicate.
         instance: String,
         /// Prior overlapping instance predicate.
@@ -610,11 +650,15 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0219`: a default instance head was not headed by a type variable.
     InvalidDefaultInstance {
+        /// Source span for the instance head.
+        span: LabelSpan,
         /// Instance predicate snapshot.
         head: String,
     },
     /// `SC0220`: an instance omits one or more required methods.
     IncompleteInstance {
+        /// Source span for the instance declaration.
+        span: LabelSpan,
         /// Class name.
         class: String,
         /// Missing method names.
@@ -622,6 +666,8 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0221`: an instance method signature does not match its class method.
     InvalidInstanceMethodSignature {
+        /// Source span for the invalid method signature.
+        span: LabelSpan,
         /// Method name.
         method: String,
         /// Failure reason.
@@ -629,6 +675,8 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0225`: a required function parameter annotation is missing.
     MissingParamAnnotation {
+        /// Source span for the untyped parameter.
+        span: LabelSpan,
         /// Function or method name.
         function: String,
         /// Parameter name.
@@ -636,21 +684,29 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0226`: a required function return annotation is missing.
     MissingReturnAnnotation {
+        /// Source span for the function signature.
+        span: LabelSpan,
         /// Function or method name.
         function: String,
     },
     /// `SC0222`: constructor-shaped pattern syntax did not resolve to a constructor.
     InvalidConstructorPattern {
+        /// Source span for the invalid constructor pattern.
+        span: LabelSpan,
         /// Constructor syntax name.
         name: String,
     },
     /// `SC0223`: matching a partial imported data type needs a catch-all arm.
     HiddenConstructorCoverage {
+        /// Source span for the match that needs a catch-all arm.
+        span: LabelSpan,
         /// Data type being matched.
         ty: String,
     },
     /// `SC0224`: shorthand constructor lookup failed.
     ShorthandConstructor {
+        /// Source span for the shorthand constructor.
+        span: LabelSpan,
         /// Constructor leaf name.
         name: String,
         /// Lookup failure reason.
@@ -658,11 +714,15 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0227`: a type has both an auto-derived and manual `Generic` instance.
     GenericDeriveConflict {
+        /// Source span for the ADT declaration.
+        span: LabelSpan,
         /// Type name with the conflicting manual instance.
         ty: String,
     },
     /// `SC0240`: a runtime expression was supplied to a comptime parameter.
     RuntimeToComptimeParam {
+        /// Source span for the runtime argument.
+        span: LabelSpan,
         /// Callee name.
         function: String,
         /// Parameter name.
@@ -670,11 +730,15 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0241`: a comptime let binding has a runtime initializer.
     ComptimeLetRuntime {
+        /// Source span for the runtime initializer.
+        span: LabelSpan,
         /// Binding name.
         name: String,
     },
     /// `SC0242`: a function annotated `-> comptime` returns runtime data.
     ComptimeReturnRuntime {
+        /// Source span for the runtime return expression.
+        span: LabelSpan,
         /// Function or body context.
         context: String,
     },
@@ -805,57 +869,80 @@ impl TypeckDiagnostic {
     /// Lowers this typed diagnostic to the generic rendering surface.
     pub fn lower(&self) -> Diagnostic {
         match self {
-            TypeckDiagnostic::Mismatch { expected, actual } => {
+            TypeckDiagnostic::Mismatch {
+                span,
+                expected,
+                actual,
+            } => {
                 Diagnostic::error(format!("type mismatch: expected {expected}, got {actual}"))
                     .with_code("SC0201")
+                    .with_primary_label_span(span.clone(), Some("expression has mismatched type"))
             }
-            TypeckDiagnostic::OccursCheck { var, ty } => {
+            TypeckDiagnostic::OccursCheck { span, var, ty } => {
                 Diagnostic::error(format!("recursive type: {var} occurs in {ty}"))
                     .with_code("SC0202")
+                    .with_primary_label_span(span.clone(), Some("recursive type required here"))
             }
             TypeckDiagnostic::WrongArity {
+                span,
                 context,
                 expected,
                 actual,
             } => Diagnostic::error(format!(
                 "wrong arity for {context}: expected {expected}, got {actual}"
             ))
-            .with_code("SC0203"),
-            TypeckDiagnostic::NonWordYulVar { name, actual } => Diagnostic::error(format!(
+            .with_code("SC0203")
+            .with_primary_label_span(span.clone(), Some("wrong arity here")),
+            TypeckDiagnostic::NonWordYulVar { span, name, actual } => Diagnostic::error(format!(
                 "Yul reference `{name}` requires word type, got {actual}"
             ))
-            .with_code("SC0204"),
-            TypeckDiagnostic::UnknownField { field } => {
-                Diagnostic::error(format!("unknown field: {field}")).with_code("SC0205")
+            .with_code("SC0204")
+            .with_primary_label_span(span.clone(), Some("Yul reference has non-word type")),
+            TypeckDiagnostic::UnknownField { span, field } => {
+                Diagnostic::error(format!("unknown field: {field}"))
+                    .with_code("SC0205")
+                    .with_primary_label_span(span.clone(), Some("unknown field"))
             }
-            TypeckDiagnostic::NonCallable { callee } => {
+            TypeckDiagnostic::NonCallable { span, callee } => {
                 Diagnostic::error(format!("non-callable value of type {callee}"))
                     .with_code("SC0206")
+                    .with_primary_label_span(span.clone(), Some("callee is not callable"))
             }
-            TypeckDiagnostic::UnsatisfiedConstraint { pred } => {
+            TypeckDiagnostic::UnsatisfiedConstraint { span, pred } => {
                 Diagnostic::error(format!("unsatisfied class constraint: {pred}"))
                     .with_code("SC0207")
+                    .with_primary_label_span(span.clone(), Some("constraint originates here"))
             }
-            TypeckDiagnostic::AmbiguousConstraint { pred, candidates } => {
+            TypeckDiagnostic::AmbiguousConstraint {
+                span,
+                pred,
+                candidates,
+            } => {
                 let mut message = format!("ambiguous class constraint: {pred}");
                 if !candidates.is_empty() {
                     message.push_str(&format!("; candidates: {}", candidates.join(", ")));
                 }
-                Diagnostic::error(message).with_code("SC0208")
+                Diagnostic::error(message)
+                    .with_code("SC0208")
+                    .with_primary_label_span(span.clone(), Some("ambiguous constraint here"))
             }
-            TypeckDiagnostic::SolverFuelExhausted { pred } => Diagnostic::error(format!(
+            TypeckDiagnostic::SolverFuelExhausted { span, pred } => Diagnostic::error(format!(
                 "cannot solve class constraint {pred}: solver exceeded its iteration bound"
             ))
-            .with_code("SC0209"),
-            TypeckDiagnostic::NonFinalReturn => {
+            .with_code("SC0209")
+            .with_primary_label_span(span.clone(), Some("constraint originates here")),
+            TypeckDiagnostic::NonFinalReturn { span } => {
                 Diagnostic::error("return statement must be the final statement in its body")
                     .with_code("SC0210")
+                    .with_primary_label_span(span.clone(), Some("non-final return"))
             }
-            TypeckDiagnostic::UnknownYulName { name } => {
+            TypeckDiagnostic::UnknownYulName { span, name } => {
                 Diagnostic::error(format!("unknown Yul identifier or function: {name}"))
                     .with_code("SC0211")
+                    .with_primary_label_span(span.clone(), Some("unknown Yul name"))
             }
             TypeckDiagnostic::CoverageCondition {
+                span,
                 class,
                 main,
                 undetermined,
@@ -863,104 +950,160 @@ impl TypeckDiagnostic {
                 "Coverage condition fails for class:\n{class}\n- the type:\n{main}\ndoes not determine:\n{}",
                 undetermined.join(", ")
             ))
-            .with_code("SC0212"),
-            TypeckDiagnostic::PattersonCondition { head } => Diagnostic::error(format!(
+            .with_code("SC0212")
+            .with_primary_label_span(span.clone(), Some("instance head does not determine these variables")),
+            TypeckDiagnostic::PattersonCondition { span, head } => Diagnostic::error(format!(
                 "Instance\n{head}\ndoes not satisfy the Patterson conditions."
             ))
-            .with_code("SC0213"),
-            TypeckDiagnostic::BoundedVariableCondition => {
-                Diagnostic::error("Bounded variable condition fails!").with_code("SC0214")
+            .with_code("SC0213")
+            .with_primary_label_span(span.clone(), Some("instance head violates Patterson condition")),
+            TypeckDiagnostic::BoundedVariableCondition { span } => {
+                Diagnostic::error("Bounded variable condition fails!")
+                    .with_code("SC0214")
+                    .with_primary_label_span(span.clone(), Some("instance head is missing context variables"))
             }
-            TypeckDiagnostic::TypeAliasCycle { alias } => {
-                Diagnostic::error(format!("recursive type alias `{alias}`")).with_code("SC0215")
+            TypeckDiagnostic::TypeAliasCycle { span, alias } => {
+                Diagnostic::error(format!("recursive type alias `{alias}`"))
+                    .with_code("SC0215")
+                    .with_primary_label_span(span.clone(), Some("recursive alias"))
             }
             TypeckDiagnostic::TypeAliasArity {
+                span,
                 alias,
                 expected,
                 actual,
             } => Diagnostic::error(format!(
                 "type synonym arity mismatch for `{alias}`: expected {expected}, got {actual}"
             ))
-            .with_code("SC0216"),
+            .with_code("SC0216")
+            .with_primary_label_span(span.clone(), Some("type alias arity mismatch")),
             TypeckDiagnostic::ClassArity {
+                span,
                 class,
                 expected,
                 actual,
             } => Diagnostic::error(format!(
                 "class arity mismatch for `{class}`: expected {expected}, got {actual}"
             ))
-            .with_code("SC0217"),
-            TypeckDiagnostic::OverlappingInstance { instance, overlaps } => {
-                Diagnostic::error(format!(
+            .with_code("SC0217")
+            .with_primary_label_span(span.clone(), Some("class predicate arity mismatch")),
+            TypeckDiagnostic::OverlappingInstance {
+                instance_span,
+                overlaps_span,
+                instance,
+                overlaps,
+            } => {
+                let diagnostic = Diagnostic::error(format!(
                     "Overlapping instances are not supported\ninstance:\n{instance}\noverlaps with:\n{overlaps}"
                 ))
                 .with_code("SC0218")
+                .with_primary_label_span(instance_span.clone(), Some("overlapping instance"));
+                if let Some(overlaps_span) = overlaps_span {
+                    diagnostic.with_secondary_label_span(
+                        overlaps_span.clone(),
+                        Some("previous overlapping instance"),
+                    )
+                } else {
+                    diagnostic
+                }
             }
-            TypeckDiagnostic::InvalidDefaultInstance { head } => Diagnostic::error(format!(
+            TypeckDiagnostic::InvalidDefaultInstance { span, head } => Diagnostic::error(format!(
                 "Cannot have a default instance with a non-type variable as main argument: {head}"
             ))
-            .with_code("SC0219"),
-            TypeckDiagnostic::IncompleteInstance { class, missing } => Diagnostic::error(format!(
+            .with_code("SC0219")
+            .with_primary_label_span(span.clone(), Some("invalid default instance head")),
+            TypeckDiagnostic::IncompleteInstance {
+                span,
+                class,
+                missing,
+            } => Diagnostic::error(format!(
                 "Incomplete definition for class:\n{class}\nmissing definitions for:\n{}",
                 missing.join(", ")
             ))
-            .with_code("SC0220"),
-            TypeckDiagnostic::InvalidInstanceMethodSignature { method, reason } => {
+            .with_code("SC0220")
+            .with_primary_label_span(span.clone(), Some("incomplete instance")),
+            TypeckDiagnostic::InvalidInstanceMethodSignature {
+                span,
+                method,
+                reason,
+            } => {
                 Diagnostic::error(format!(
                     "Invalid instance member signature for `{method}`: {reason}"
                 ))
                 .with_code("SC0221")
+                .with_primary_label_span(span.clone(), Some("invalid instance method signature"))
             }
-            TypeckDiagnostic::MissingParamAnnotation { function, param } => Diagnostic::error(
-                format!("function `{function}` parameter `{param}` requires a type annotation"),
-            )
-            .with_code("SC0225"),
-            TypeckDiagnostic::MissingReturnAnnotation { function } => Diagnostic::error(format!(
-                "function `{function}` requires an explicit return type annotation"
+            TypeckDiagnostic::MissingParamAnnotation {
+                span,
+                function,
+                param,
+            } => Diagnostic::error(format!(
+                "function `{function}` parameter `{param}` requires a type annotation"
             ))
-            .with_code("SC0226"),
-            TypeckDiagnostic::InvalidConstructorPattern { name } => Diagnostic::error(format!(
+            .with_code("SC0225")
+            .with_primary_label_span(span.clone(), Some("missing parameter annotation")),
+            TypeckDiagnostic::MissingReturnAnnotation { span, function } => {
+                Diagnostic::error(format!(
+                    "function `{function}` requires an explicit return type annotation"
+                ))
+                .with_code("SC0226")
+                .with_primary_label_span(span.clone(), Some("missing return annotation"))
+            }
+            TypeckDiagnostic::InvalidConstructorPattern { span, name } => Diagnostic::error(format!(
                 "constructor pattern `{name}` does not resolve to a constructor"
             ))
-            .with_code("SC0222"),
-            TypeckDiagnostic::HiddenConstructorCoverage { ty } => Diagnostic::error(format!(
+            .with_code("SC0222")
+            .with_primary_label_span(span.clone(), Some("invalid constructor pattern")),
+            TypeckDiagnostic::HiddenConstructorCoverage { span, ty } => Diagnostic::error(format!(
                 "pattern match on type with hidden constructors requires a wildcard arm: {ty}"
             ))
-            .with_code("SC0223"),
-            TypeckDiagnostic::ShorthandConstructor { name, reason } => Diagnostic::error(format!(
+            .with_code("SC0223")
+            .with_primary_label_span(span.clone(), Some("match needs a wildcard arm")),
+            TypeckDiagnostic::ShorthandConstructor { span, name, reason } => Diagnostic::error(format!(
                 "cannot resolve shorthand constructor `.{name}`: {reason}"
             ))
-            .with_code("SC0224"),
-            TypeckDiagnostic::GenericDeriveConflict { ty } => Diagnostic::error(format!(
+            .with_code("SC0224")
+            .with_primary_label_span(span.clone(), Some("shorthand constructor")),
+            TypeckDiagnostic::GenericDeriveConflict { span, ty } => Diagnostic::error(format!(
                 "type '{ty}' has a manual Generic instance but no 'pragma no-generic-instance-for {ty}'; add the pragma to suppress auto-derivation"
             ))
-            .with_code("SC0227"),
-            TypeckDiagnostic::RuntimeToComptimeParam { function, param } => {
+            .with_code("SC0227")
+            .with_primary_label_span(span.clone(), Some("manual Generic instance conflicts with auto-derivation")),
+            TypeckDiagnostic::RuntimeToComptimeParam {
+                span,
+                function,
+                param,
+            } => {
                 Diagnostic::error(format!(
                     "runtime value passed to comptime parameter '{param}' of '{function}'"
                 ))
                 .with_code("SC0240")
+                .with_primary_label_span(span.clone(), Some("runtime value passed here"))
             }
-            TypeckDiagnostic::ComptimeLetRuntime { name } => Diagnostic::error(format!(
+            TypeckDiagnostic::ComptimeLetRuntime { span, name } => Diagnostic::error(format!(
                 "comptime let '{name}' is bound to a runtime expression"
             ))
-            .with_code("SC0241"),
-            TypeckDiagnostic::ComptimeReturnRuntime { context } => Diagnostic::error(format!(
+            .with_code("SC0241")
+            .with_primary_label_span(span.clone(), Some("runtime initializer")),
+            TypeckDiagnostic::ComptimeReturnRuntime { span, context } => Diagnostic::error(format!(
                 "{context}: function annotated '-> comptime' returns a runtime expression"
             ))
-            .with_code("SC0242"),
+            .with_code("SC0242")
+            .with_primary_label_span(span.clone(), Some("runtime return expression")),
         }
     }
 }
 
 fn alias_error_to_diagnostic(error: AliasError) -> TypeckDiagnostic {
     match error {
-        AliasError::Cycle { alias } => TypeckDiagnostic::TypeAliasCycle { alias },
+        AliasError::Cycle { span, alias } => TypeckDiagnostic::TypeAliasCycle { span, alias },
         AliasError::Arity {
+            span,
             alias,
             expected,
             actual,
         } => TypeckDiagnostic::TypeAliasArity {
+            span,
             alias,
             expected,
             actual,
@@ -1387,13 +1530,15 @@ impl<'db> InferTable<'db> {
 }
 
 impl<'db> UnifyError<'db> {
-    fn diagnostic(self, engine: &mut InferTable<'db>) -> TypeckDiagnostic {
+    fn diagnostic(self, engine: &mut InferTable<'db>, span: LabelSpan) -> TypeckDiagnostic {
         match self {
             UnifyError::Mismatch { expected, actual } => TypeckDiagnostic::Mismatch {
+                span,
                 expected: engine.display(expected),
                 actual: engine.display(actual),
             },
             UnifyError::Occurs { var, ty } => TypeckDiagnostic::OccursCheck {
+                span,
                 var: format!("?{}", var.index()),
                 ty: engine.display(ty),
             },
@@ -1538,9 +1683,16 @@ impl<'db> InferCtx<'db> {
     }
 
     fn infer_body(&mut self, body: FuncBody<'db>) -> InferTy<'db> {
-        let ty = self.infer_stmt_sequence(body, body.top_level_stmts(self.db));
+        let top_level_stmts = body.top_level_stmts(self.db);
+        let ty = self.infer_stmt_sequence(body, top_level_stmts);
         if let Some(expected) = self.return_stack.last().cloned() {
-            self.unify(expected, ty.clone());
+            if let Some(last_stmt) = top_level_stmts.last().copied() {
+                if !self.is_return_stmt(body, last_stmt) {
+                    self.unify_stmt(body, last_stmt, expected, ty.clone());
+                }
+            } else {
+                self.unify_body(body, expected, ty.clone());
+            }
         }
         ty
     }
@@ -1557,7 +1709,9 @@ impl<'db> InferCtx<'db> {
         let mut result = unit.clone();
         for (index, stmt) in stmts.iter().enumerate() {
             if index + 1 != stmts.len() && self.is_return_stmt(body, *stmt) {
-                self.diagnostics.push(TypeckDiagnostic::NonFinalReturn);
+                self.diagnostics.push(TypeckDiagnostic::NonFinalReturn {
+                    span: self.stmt_label_span(body, *stmt),
+                });
             }
             result = self.infer_stmt(body, *stmt);
         }
@@ -1595,7 +1749,7 @@ impl<'db> InferCtx<'db> {
                     } else {
                         self.infer_expr_expected(body, *init, Some(local_ty.clone()))
                     };
-                    self.unify(local_ty.clone(), init_ty);
+                    self.unify_expr(body, *init, local_ty.clone(), init_ty);
                     self.pending_comptime_lets.push(PendingComptimeLet {
                         body,
                         stmt: stmt_id,
@@ -1624,11 +1778,15 @@ impl<'db> InferCtx<'db> {
                             },
                         });
                     }
-                    let actual = expr
-                        .map(|expr| self.infer_expr_expected(body, expr, Some(expected.clone())))
-                        .unwrap_or_else(|| self.engine.from_ty(Ty::unit(self.db)));
-                    self.unify(expected, actual.clone());
-                    actual
+                    if let Some(expr) = expr {
+                        let actual = self.infer_expr_expected(body, *expr, Some(expected.clone()));
+                        self.unify_expr(body, *expr, expected, actual.clone());
+                        actual
+                    } else {
+                        let actual = self.engine.from_ty(Ty::unit(self.db));
+                        self.unify_stmt(body, stmt_id, expected, actual.clone());
+                        actual
+                    }
                 } else {
                     expr.map(|expr| self.infer_expr(body, expr))
                         .unwrap_or_else(|| self.engine.from_ty(Ty::unit(self.db)))
@@ -1639,9 +1797,9 @@ impl<'db> InferCtx<'db> {
                 self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::Assign { lhs, rhs } => {
-                let lhs = self.infer_expr(body, *lhs);
-                let rhs = self.infer_expr_expected(body, *rhs, Some(lhs.clone()));
-                self.unify(lhs, rhs);
+                let lhs_ty = self.infer_expr(body, *lhs);
+                let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));
+                self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
                 self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::AddAssign { lhs, rhs }
@@ -1650,11 +1808,11 @@ impl<'db> InferCtx<'db> {
             | StmtKind::BitAndAssign { lhs, rhs }
             | StmtKind::BitOrAssign { lhs, rhs }
             | StmtKind::ModAssign { lhs, rhs } => {
-                let lhs = self.infer_expr(body, *lhs);
-                let rhs = self.infer_expr(body, *rhs);
+                let lhs_ty = self.infer_expr(body, *lhs);
+                let rhs_ty = self.infer_expr(body, *rhs);
                 let word = self.engine.from_ty(Ty::word(self.db));
-                self.unify(lhs, word.clone());
-                self.unify(rhs, word);
+                self.unify_expr(body, *lhs, lhs_ty, word.clone());
+                self.unify_expr(body, *rhs, rhs_ty, word);
                 self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::Match { scrutinees, arms } => {
@@ -1662,11 +1820,11 @@ impl<'db> InferCtx<'db> {
                     .iter()
                     .map(|scrutinee| self.infer_expr(body, *scrutinee))
                     .collect::<Vec<_>>();
-                self.ensure_visible_pattern_coverage(body, &scrutinee_tys, arms);
+                self.ensure_visible_pattern_coverage(body, scrutinees, &scrutinee_tys, arms);
                 let result_ty = self.engine.fresh_var();
                 for arm in arms {
                     let arm_ty = self.infer_match_arm(body, arm, &scrutinee_tys);
-                    self.unify(result_ty.clone(), arm_ty);
+                    self.unify_span(arm.span(self.db), result_ty.clone(), arm_ty);
                 }
                 result_ty
             }
@@ -1677,9 +1835,9 @@ impl<'db> InferCtx<'db> {
                 body: for_body,
             } => {
                 self.infer_stmt_sequence(body, init);
-                let cond = self.infer_expr(body, *cond);
+                let cond_ty = self.infer_expr(body, *cond);
                 let bool_ty = self.engine.from_ty(Ty::bool(self.db));
-                self.unify(cond, bool_ty);
+                self.unify_expr(body, *cond, cond_ty, bool_ty);
                 self.infer_stmt_sequence(body, post);
                 self.infer_stmt_sequence(body, for_body);
                 self.engine.from_ty(Ty::unit(self.db))
@@ -1689,15 +1847,15 @@ impl<'db> InferCtx<'db> {
                 then_body,
                 else_body,
             } => {
-                let cond = self.infer_expr(body, *cond);
+                let cond_ty = self.infer_expr(body, *cond);
                 let bool_ty = self.engine.from_ty(Ty::bool(self.db));
-                self.unify(cond, bool_ty);
+                self.unify_expr(body, *cond, cond_ty, bool_ty);
                 let then_ty = self.infer_stmt_sequence(body, then_body);
                 let else_ty = else_body
                     .as_ref()
                     .map(|else_body| self.infer_stmt_sequence(body, else_body))
                     .unwrap_or_else(|| then_ty.clone());
-                self.unify(then_ty.clone(), else_ty);
+                self.unify_stmt(body, stmt_id, then_ty.clone(), else_ty);
                 then_ty
             }
             StmtKind::Block { body: block } => {
@@ -1727,6 +1885,7 @@ impl<'db> InferCtx<'db> {
     ) -> InferTy<'db> {
         if arm.pats.len() != scrutinees.len() {
             self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                span: self.label_span(arm.span(self.db)),
                 context: "match arm".to_owned(),
                 expected: scrutinees.len(),
                 actual: arm.pats.len(),
@@ -1735,7 +1894,7 @@ impl<'db> InferCtx<'db> {
         self.push_sail_scope();
         for (pat, scrutinee) in arm.pats.iter().zip(scrutinees.iter()) {
             let pat_ty = self.infer_pat_expected(body, *pat, Some(scrutinee.clone()));
-            self.unify(scrutinee.clone(), pat_ty);
+            self.unify_pat(body, *pat, scrutinee.clone(), pat_ty);
         }
         let ty = self.infer_stmt_sequence(body, &arm.body);
         self.pop_sail_scope();
@@ -1745,6 +1904,7 @@ impl<'db> InferCtx<'db> {
     fn ensure_visible_pattern_coverage(
         &mut self,
         body: FuncBody<'db>,
+        scrutinee_exprs: &[Id<Expr<'db>>],
         scrutinees: &[InferTy<'db>],
         arms: &[MatchArm<'db>],
     ) {
@@ -1759,7 +1919,13 @@ impl<'db> InferCtx<'db> {
                 continue;
             }
             self.diagnostics
-                .push(TypeckDiagnostic::HiddenConstructorCoverage { ty });
+                .push(TypeckDiagnostic::HiddenConstructorCoverage {
+                    span: scrutinee_exprs
+                        .get(index)
+                        .map(|expr| self.expr_label_span(body, *expr))
+                        .unwrap_or_else(|| self.body_label_span(body)),
+                    ty,
+                });
         }
     }
 
@@ -1841,13 +2007,21 @@ impl<'db> InferCtx<'db> {
                 params,
                 ret,
                 body: lambda_body,
-            } => self.infer_lambda(params.atom(), *ret, *lambda_body, expected.clone()),
+            } => self.infer_lambda(
+                self.expr_label_span(body, expr_id),
+                params.atom(),
+                *ret,
+                *lambda_body,
+                expected.clone(),
+            ),
             ExprKind::BinOp { lhs, op, rhs } => self.infer_bin_op(body, *lhs, *op.atom(), *rhs),
             ExprKind::Index { base, index } => {
                 let base_ty = self.infer_expr(body, *base);
                 let index_ty = self.infer_expr(body, *index);
                 let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
-                self.unify(
+                self.unify_expr(
+                    body,
+                    expr_id,
                     base_ty,
                     InferTy::Function {
                         params: vec![index_ty],
@@ -1874,6 +2048,7 @@ impl<'db> InferCtx<'db> {
                     resolution
                 } else {
                     self.diagnostics.push(TypeckDiagnostic::UnknownField {
+                        span: self.expr_label_span(body, expr_id),
                         field: self.field_name(body, expr_id),
                     });
                     hir_nameres::Resolution::Err
@@ -1883,7 +2058,7 @@ impl<'db> InferCtx<'db> {
             ExprKind::TypeAnnot { expr, ty } => {
                 let annot = self.engine.from_ty(self.lowerer.lower_type(*ty));
                 let expr_ty = self.infer_expr_expected(body, *expr, Some(annot.clone()));
-                self.unify(annot.clone(), expr_ty);
+                self.unify_expr(body, *expr, annot.clone(), expr_ty);
                 annot
             }
             ExprKind::UnaryOp { op, expr } => self.infer_un_op(body, *op.atom(), *expr),
@@ -1892,19 +2067,19 @@ impl<'db> InferCtx<'db> {
                 then_expr,
                 else_expr,
             } => {
-                let cond = self.infer_expr(body, *cond);
+                let cond_ty = self.infer_expr(body, *cond);
                 let bool_ty = self.engine.from_ty(Ty::bool(self.db));
-                self.unify(cond, bool_ty);
+                self.unify_expr(body, *cond, cond_ty, bool_ty);
                 let then_ty = self.infer_expr_expected(body, *then_expr, expected.clone());
                 let else_ty = self.infer_expr_expected(body, *else_expr, expected.clone());
-                self.unify(then_ty.clone(), else_ty);
+                self.unify_expr(body, *else_expr, then_ty.clone(), else_ty);
                 then_ty
             }
-            ExprKind::Tuple(elems) => self.infer_tuple_expr(body, elems, expected.clone()),
+            ExprKind::Tuple(elems) => self.infer_tuple_expr(body, expr_id, elems, expected.clone()),
             ExprKind::Error => InferTy::Error,
         };
         if let Some(expected) = expected {
-            self.unify(expected, ty.clone());
+            self.unify_expr(body, expr_id, expected, ty.clone());
         }
         self.expr_tys.push((body, expr_id, ty.clone()));
         ty
@@ -2005,6 +2180,7 @@ impl<'db> InferCtx<'db> {
             && params.len() != args.len()
         {
             self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                span: self.expr_label_span(body, site.call_expr),
                 context: "call".to_owned(),
                 expected: params.len(),
                 actual: args.len(),
@@ -2039,7 +2215,9 @@ impl<'db> InferCtx<'db> {
             })
             .collect::<Vec<_>>();
         let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
-        self.unify(
+        self.unify_expr(
+            body,
+            site.call_expr,
             callee_ty,
             InferTy::Function {
                 params: args,
@@ -2063,6 +2241,7 @@ impl<'db> InferCtx<'db> {
             && sig.params.len() != args.len()
         {
             self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                span: self.expr_label_span(body, call_expr),
                 context: "call".to_owned(),
                 expected: sig.params.len(),
                 actual: args.len(),
@@ -2083,7 +2262,7 @@ impl<'db> InferCtx<'db> {
             .collect::<Vec<_>>();
         let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
         if let Some(sig) = callable_sig {
-            self.unify(sig.ret, ret.clone());
+            self.unify_expr(body, call_expr, sig.ret, ret.clone());
         }
         let source =
             self.indirect_call_site_source(body, call_expr, callee_expr, callee_ty.clone());
@@ -2129,6 +2308,7 @@ impl<'db> InferCtx<'db> {
                     resolution
                 } else {
                     self.diagnostics.push(TypeckDiagnostic::UnknownField {
+                        span: self.expr_label_span(body, callee_expr),
                         field: self.field_name(body, callee_expr),
                     });
                     hir_nameres::Resolution::Err
@@ -2277,13 +2457,15 @@ impl<'db> InferCtx<'db> {
 
     fn infer_lambda(
         &mut self,
+        span: LabelSpan,
         params: &[FuncParam<'db>],
         ret: Option<hir::ast::ty::TypeRef<'db>>,
         body: FuncBody<'db>,
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
         let has_expected = expected.is_some();
-        let (expected_params, expected_ret) = self.expected_lambda_parts(expected, params.len());
+        let (expected_params, expected_ret) =
+            self.expected_lambda_parts(span.clone(), expected, params.len());
         let param_tys = params
             .iter()
             .enumerate()
@@ -2296,7 +2478,7 @@ impl<'db> InferCtx<'db> {
                             .as_ref()
                             .and_then(|params| params.get(index))
                         {
-                            self.unify(expected.clone(), ty.clone());
+                            self.unify_span(param.span(self.db), expected.clone(), ty.clone());
                         }
                         ty
                     }
@@ -2316,7 +2498,7 @@ impl<'db> InferCtx<'db> {
         let ret = if let Some(ret) = ret {
             let annotated = self.engine.from_ty(self.lowerer.lower_type(ret));
             if let Some(expected_ret) = expected_ret {
-                self.unify(expected_ret, annotated.clone());
+                self.unify_span(ret.span(self.db), expected_ret, annotated.clone());
             }
             annotated
         } else {
@@ -2360,6 +2542,7 @@ impl<'db> InferCtx<'db> {
 
     fn expected_lambda_parts(
         &mut self,
+        span: LabelSpan,
         expected: Option<InferTy<'db>>,
         param_count: usize,
     ) -> (Option<Vec<InferTy<'db>>>, Option<InferTy<'db>>) {
@@ -2371,6 +2554,7 @@ impl<'db> InferCtx<'db> {
             InferTy::Function { params, ret } => {
                 if params.len() != param_count {
                     self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                        span,
                         context: "lambda".to_owned(),
                         expected: params.len(),
                         actual: param_count,
@@ -2383,7 +2567,8 @@ impl<'db> InferCtx<'db> {
                     .map(|_| self.engine.fresh_var())
                     .collect::<Vec<_>>();
                 let ret = self.engine.fresh_var();
-                self.unify(
+                self.unify_at(
+                    span,
                     expected,
                     InferTy::Function {
                         params: params.clone(),
@@ -2395,6 +2580,7 @@ impl<'db> InferCtx<'db> {
             InferTy::Error => (None, None),
             other => {
                 self.diagnostics.push(TypeckDiagnostic::Mismatch {
+                    span,
                     expected: "function".to_owned(),
                     actual: self.engine.display(other),
                 });
@@ -2410,8 +2596,10 @@ impl<'db> InferCtx<'db> {
         op: BinOp,
         rhs: Id<Expr<'db>>,
     ) -> InferTy<'db> {
-        let lhs = self.infer_expr(body, lhs);
-        let rhs = self.infer_expr(body, rhs);
+        let lhs_expr = lhs;
+        let rhs_expr = rhs;
+        let lhs = self.infer_expr(body, lhs_expr);
+        let rhs = self.infer_expr(body, rhs_expr);
         match op {
             BinOp::Add
             | BinOp::Sub
@@ -2422,24 +2610,24 @@ impl<'db> InferCtx<'db> {
             | BinOp::BitXor
             | BinOp::BitOr => {
                 let word = self.engine.from_ty(Ty::word(self.db));
-                self.unify(lhs, word.clone());
-                self.unify(rhs, word.clone());
+                self.unify_expr(body, lhs_expr, lhs, word.clone());
+                self.unify_expr(body, rhs_expr, rhs, word.clone());
                 word
             }
             BinOp::Eq | BinOp::NotEq => {
-                self.unify(lhs, rhs);
+                self.unify_expr(body, rhs_expr, lhs, rhs);
                 self.engine.from_ty(Ty::bool(self.db))
             }
             BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
                 let word = self.engine.from_ty(Ty::word(self.db));
-                self.unify(lhs, word.clone());
-                self.unify(rhs, word);
+                self.unify_expr(body, lhs_expr, lhs, word.clone());
+                self.unify_expr(body, rhs_expr, rhs, word);
                 self.engine.from_ty(Ty::bool(self.db))
             }
             BinOp::And | BinOp::Or => {
                 let bool_ty = self.engine.from_ty(Ty::bool(self.db));
-                self.unify(lhs, bool_ty.clone());
-                self.unify(rhs, bool_ty);
+                self.unify_expr(body, lhs_expr, lhs, bool_ty.clone());
+                self.unify_expr(body, rhs_expr, rhs, bool_ty);
                 self.engine.from_ty(Ty::bool(self.db))
             }
             BinOp::Error => InferTy::Error,
@@ -2447,11 +2635,12 @@ impl<'db> InferCtx<'db> {
     }
 
     fn infer_un_op(&mut self, body: FuncBody<'db>, op: UnOp, expr: Id<Expr<'db>>) -> InferTy<'db> {
-        let expr = self.infer_expr(body, expr);
+        let expr_id = expr;
+        let expr = self.infer_expr(body, expr_id);
         match op {
             UnOp::Not => {
                 let bool_ty = self.engine.from_ty(Ty::bool(self.db));
-                self.unify(expr, bool_ty.clone());
+                self.unify_expr(body, expr_id, expr, bool_ty.clone());
                 bool_ty
             }
             UnOp::Error => InferTy::Error,
@@ -2476,12 +2665,13 @@ impl<'db> InferCtx<'db> {
                 ty
             }
             PatKind::Lit(lit) => self.infer_lit_pat(body, pat_id, lit, expected.clone()),
-            PatKind::Tuple { elems } => self.infer_tuple_pat(body, elems, expected.clone()),
+            PatKind::Tuple { elems } => self.infer_tuple_pat(body, pat_id, elems, expected.clone()),
             PatKind::Ctor { args, .. } => self.infer_ctor_pat(body, pat_id, args, expected.clone()),
             PatKind::ComptimeLabel { expr, .. } => {
                 let label_ty = self.infer_expr_expected(body, *expr, expected.clone());
                 if !self.is_numeric_or_open(label_ty.clone()) {
                     self.diagnostics.push(TypeckDiagnostic::Mismatch {
+                        span: self.expr_label_span(body, *expr),
                         expected: "numeric".to_owned(),
                         actual: self.engine.display(label_ty),
                     });
@@ -2496,7 +2686,7 @@ impl<'db> InferCtx<'db> {
             PatKind::Error => InferTy::Error,
         };
         if let Some(expected) = expected {
-            self.unify(expected, ty.clone());
+            self.unify_pat(body, pat_id, expected, ty.clone());
         }
         self.pat_tys.push((body, pat_id, ty.clone()));
         ty
@@ -2522,10 +2712,11 @@ impl<'db> InferCtx<'db> {
                 });
                 if let Some(expected) = expected {
                     if self.is_numeric_or_open(expected.clone()) {
-                        self.unify(expected.clone(), ty);
+                        self.unify_pat(body, pat, expected.clone(), ty);
                         expected
                     } else {
                         self.diagnostics.push(TypeckDiagnostic::Mismatch {
+                            span: self.pat_label_span(body, pat),
                             expected: "numeric".to_owned(),
                             actual: self.engine.display(expected.clone()),
                         });
@@ -2722,6 +2913,7 @@ impl<'db> InferCtx<'db> {
                 self.infer_expr(body, *arg);
             }
             self.shorthand_ctor_diag(
+                self.expr_label_span(body, expr),
                 name,
                 "cannot resolve without expected constructor type".to_owned(),
             );
@@ -2736,6 +2928,7 @@ impl<'db> InferCtx<'db> {
                     self.infer_expr(body, *arg);
                 }
                 self.shorthand_ctor_diag(
+                    self.expr_label_span(body, expr),
                     name,
                     "cannot resolve without expected constructor type".to_owned(),
                 );
@@ -2745,7 +2938,11 @@ impl<'db> InferCtx<'db> {
                 for arg in args {
                     self.infer_expr(body, *arg);
                 }
-                self.shorthand_ctor_diag(name, "no matching constructor".to_owned());
+                self.shorthand_ctor_diag(
+                    self.expr_label_span(body, expr),
+                    name,
+                    "no matching constructor".to_owned(),
+                );
                 InferTy::Error
             }
             DotCtorLookup::Ambiguous(candidates) => {
@@ -2753,6 +2950,7 @@ impl<'db> InferCtx<'db> {
                     self.infer_expr(body, *arg);
                 }
                 self.shorthand_ctor_diag(
+                    self.expr_label_span(body, expr),
                     name,
                     format!("ambiguous candidates: {}", candidates.join(", ")),
                 );
@@ -2764,7 +2962,7 @@ impl<'db> InferCtx<'db> {
     fn apply_ctor_expr_scheme(
         &mut self,
         body: FuncBody<'db>,
-        _expr: Id<Expr<'db>>,
+        expr: Id<Expr<'db>>,
         ctor_ty: InferTy<'db>,
         args: &[Id<Expr<'db>>],
         expected: InferTy<'db>,
@@ -2773,6 +2971,7 @@ impl<'db> InferCtx<'db> {
             InferTy::Function { params, ret } => {
                 if params.len() != args.len() {
                     self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                        span: self.expr_label_span(body, expr),
                         context: "constructor".to_owned(),
                         expected: params.len(),
                         actual: args.len(),
@@ -2782,14 +2981,16 @@ impl<'db> InferCtx<'db> {
                     .iter()
                     .map(|_| self.engine.fresh_var())
                     .collect::<Vec<_>>();
-                self.unify(
+                self.unify_expr(
+                    body,
+                    expr,
                     ctor_ty.clone(),
                     InferTy::Function {
                         params: expected_params.clone(),
                         ret: Box::new(expected.clone()),
                     },
                 );
-                self.unify(*ret, expected.clone());
+                self.unify_expr(body, expr, *ret, expected.clone());
                 let expected_params = expected_params
                     .into_iter()
                     .map(|param| self.engine.resolve(param))
@@ -2801,7 +3002,9 @@ impl<'db> InferCtx<'db> {
                         self.infer_expr_expected(body, *arg, expected_params.get(index).cloned())
                     })
                     .collect::<Vec<_>>();
-                self.unify(
+                self.unify_expr(
+                    body,
+                    expr,
                     ctor_ty,
                     InferTy::Function {
                         params: inferred_args,
@@ -2812,12 +3015,13 @@ impl<'db> InferCtx<'db> {
             }
             non_function => {
                 if args.is_empty() {
-                    self.unify(non_function.clone(), expected.clone());
+                    self.unify_expr(body, expr, non_function.clone(), expected.clone());
                 } else if !matches!(
                     non_function,
                     InferTy::Error | InferTy::Unknown | InferTy::Var(_)
                 ) {
                     self.diagnostics.push(TypeckDiagnostic::NonCallable {
+                        span: self.expr_label_span(body, expr),
                         callee: self.engine.display(non_function),
                     });
                 }
@@ -2985,9 +3189,10 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn shorthand_ctor_diag(&mut self, name: &str, reason: String) {
+    fn shorthand_ctor_diag(&mut self, span: LabelSpan, name: &str, reason: String) {
         self.diagnostics
             .push(TypeckDiagnostic::ShorthandConstructor {
+                span,
                 name: name.to_owned(),
                 reason,
             });
@@ -2996,6 +3201,7 @@ impl<'db> InferCtx<'db> {
     fn infer_tuple_expr(
         &mut self,
         body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
         elems: &[Id<Expr<'db>>],
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
@@ -3008,6 +3214,7 @@ impl<'db> InferCtx<'db> {
                 }
                 InferTy::Tuple(expected_elems) => {
                     self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                        span: self.expr_label_span(body, expr),
                         context: "tuple".to_owned(),
                         expected: expected_elems.len(),
                         actual: elems.len(),
@@ -3037,6 +3244,7 @@ impl<'db> InferCtx<'db> {
     fn infer_tuple_pat(
         &mut self,
         body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
         elems: &[Id<Pat<'db>>],
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
@@ -3047,6 +3255,7 @@ impl<'db> InferCtx<'db> {
                 InferTy::Tuple(expected_elems) => {
                     if expected_elems.len() != elems.len() {
                         self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                            span: self.pat_label_span(body, pat),
                             context: "tuple pattern".to_owned(),
                             expected: expected_elems.len(),
                             actual: elems.len(),
@@ -3057,6 +3266,7 @@ impl<'db> InferCtx<'db> {
                 InferTy::Var(_) | InferTy::Unknown | InferTy::Error => None,
                 other => {
                     self.diagnostics.push(TypeckDiagnostic::Mismatch {
+                        span: self.pat_label_span(body, pat),
                         expected: "tuple".to_owned(),
                         actual: self.engine.display(other),
                     });
@@ -3079,7 +3289,7 @@ impl<'db> InferCtx<'db> {
             .collect::<Vec<_>>();
         let ty = InferTy::Tuple(inferred);
         if let Some(expected) = expected {
-            self.unify(expected, ty.clone());
+            self.unify_pat(body, pat, expected, ty.clone());
         }
         ty
     }
@@ -3100,12 +3310,12 @@ impl<'db> InferCtx<'db> {
             hir_nameres::Resolution::Ctor { ty, index } => {
                 let ctor_ty = self.instantiate_adt_ctor(ty, index, ObligationSource::Scheme);
                 let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
-                self.apply_ctor_pat_scheme(body, args, ctor_ty, ret)
+                self.apply_ctor_pat_scheme(body, pat, args, ctor_ty, ret)
             }
             hir_nameres::Resolution::Builtin(kind) => {
                 let ctor_ty = self.infer_resolution_for_pat_builtin(kind);
                 let ret = expected.unwrap_or_else(|| self.engine.fresh_var());
-                self.apply_ctor_pat_scheme(body, args, ctor_ty, ret)
+                self.apply_ctor_pat_scheme(body, pat, args, ctor_ty, ret)
             }
             hir_nameres::Resolution::DotCtorDeferred => {
                 let name = match &body.pats(self.db).get(pat).kind {
@@ -3117,6 +3327,7 @@ impl<'db> InferCtx<'db> {
                         self.infer_pat_expected(body, *arg, None);
                     }
                     self.shorthand_ctor_diag(
+                        self.pat_label_span(body, pat),
                         name,
                         "cannot resolve without expected constructor type".to_owned(),
                     );
@@ -3124,13 +3335,14 @@ impl<'db> InferCtx<'db> {
                 };
                 match self.ctor_for_expected(name, expected.clone()) {
                     DotCtorLookup::Match(ctor_ty) => {
-                        self.apply_ctor_pat_scheme(body, args, ctor_ty, expected)
+                        self.apply_ctor_pat_scheme(body, pat, args, ctor_ty, expected)
                     }
                     DotCtorLookup::NoExpected => {
                         for arg in args {
                             self.infer_pat_expected(body, *arg, None);
                         }
                         self.shorthand_ctor_diag(
+                            self.pat_label_span(body, pat),
                             name,
                             "cannot resolve without expected constructor type".to_owned(),
                         );
@@ -3140,7 +3352,11 @@ impl<'db> InferCtx<'db> {
                         for arg in args {
                             self.infer_pat_expected(body, *arg, None);
                         }
-                        self.shorthand_ctor_diag(name, "no matching constructor".to_owned());
+                        self.shorthand_ctor_diag(
+                            self.pat_label_span(body, pat),
+                            name,
+                            "no matching constructor".to_owned(),
+                        );
                         InferTy::Error
                     }
                     DotCtorLookup::Ambiguous(candidates) => {
@@ -3148,6 +3364,7 @@ impl<'db> InferCtx<'db> {
                             self.infer_pat_expected(body, *arg, None);
                         }
                         self.shorthand_ctor_diag(
+                            self.pat_label_span(body, pat),
                             name,
                             format!("ambiguous candidates: {}", candidates.join(", ")),
                         );
@@ -3162,7 +3379,10 @@ impl<'db> InferCtx<'db> {
                     _ => "<pattern>".to_owned(),
                 };
                 self.diagnostics
-                    .push(TypeckDiagnostic::InvalidConstructorPattern { name });
+                    .push(TypeckDiagnostic::InvalidConstructorPattern {
+                        span: self.pat_label_span(body, pat),
+                        name,
+                    });
                 for arg in args {
                     self.infer_pat_expected(body, *arg, None);
                 }
@@ -3184,6 +3404,7 @@ impl<'db> InferCtx<'db> {
     fn apply_ctor_pat_scheme(
         &mut self,
         body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
         args: &[Id<Pat<'db>>],
         ctor_ty: InferTy<'db>,
         expected: InferTy<'db>,
@@ -3192,6 +3413,7 @@ impl<'db> InferCtx<'db> {
             InferTy::Function { params, ret } => {
                 if params.len() != args.len() {
                     self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                        span: self.pat_label_span(body, pat),
                         context: "constructor pattern".to_owned(),
                         expected: params.len(),
                         actual: args.len(),
@@ -3201,14 +3423,16 @@ impl<'db> InferCtx<'db> {
                     .iter()
                     .map(|_| self.engine.fresh_var())
                     .collect::<Vec<_>>();
-                self.unify(
+                self.unify_pat(
+                    body,
+                    pat,
                     ctor_ty.clone(),
                     InferTy::Function {
                         params: expected_params.clone(),
                         ret: Box::new(expected.clone()),
                     },
                 );
-                self.unify(*ret, expected.clone());
+                self.unify_pat(body, pat, *ret, expected.clone());
                 let expected_params = expected_params
                     .into_iter()
                     .map(|param| self.engine.resolve(param))
@@ -3220,7 +3444,9 @@ impl<'db> InferCtx<'db> {
                         self.infer_pat_expected(body, *arg, expected_params.get(index).cloned())
                     })
                     .collect::<Vec<_>>();
-                self.unify(
+                self.unify_pat(
+                    body,
+                    pat,
                     ctor_ty,
                     InferTy::Function {
                         params: inferred_args,
@@ -3231,9 +3457,10 @@ impl<'db> InferCtx<'db> {
             }
             concrete => {
                 if args.is_empty() {
-                    self.unify(concrete.clone(), expected.clone());
+                    self.unify_pat(body, pat, concrete.clone(), expected.clone());
                 } else {
                     self.diagnostics.push(TypeckDiagnostic::NonCallable {
+                        span: self.pat_label_span(body, pat),
                         callee: self.engine.display(concrete.clone()),
                     });
                 }
@@ -3301,6 +3528,48 @@ impl<'db> InferCtx<'db> {
             .name(self.db)
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "lambda".to_owned())
+    }
+
+    fn label_span(&self, span: Span<'db>) -> LabelSpan {
+        LabelSpan::from_span(self.db, span)
+    }
+
+    fn body_label_span(&self, body: FuncBody<'db>) -> LabelSpan {
+        self.label_span(body.span(self.db))
+    }
+
+    fn obligation_source_label_span(&self, source: &ObligationSource<'db>) -> LabelSpan {
+        match source {
+            ObligationSource::IntegerLiteral { body, expr }
+            | ObligationSource::ClassMethod { body, expr } => self.expr_label_span(*body, *expr),
+            ObligationSource::CallSite {
+                body, call_expr, ..
+            } => self.expr_label_span(*body, *call_expr),
+            ObligationSource::IntegerLiteralPattern { body, pat } => {
+                self.pat_label_span(*body, *pat)
+            }
+            ObligationSource::Scheme => self.label_span(self.module.span(self.db)),
+        }
+    }
+
+    fn stmt_label_span(&self, body: FuncBody<'db>, stmt: Id<Stmt<'db>>) -> LabelSpan {
+        self.label_span(body.stmts(self.db).get(stmt).span(self.db))
+    }
+
+    fn expr_label_span(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> LabelSpan {
+        self.label_span(body.exprs(self.db).get(expr).span(self.db))
+    }
+
+    fn pat_label_span(&self, body: FuncBody<'db>, pat: Id<Pat<'db>>) -> LabelSpan {
+        self.label_span(body.pats(self.db).get(pat).span(self.db))
+    }
+
+    fn yul_stmt_label_span(&self, stmt: &YulStmt<'db>) -> LabelSpan {
+        self.label_span(stmt.span(self.db))
+    }
+
+    fn yul_expr_label_span(&self, expr: &YulExpr<'db>) -> LabelSpan {
+        self.label_span(expr.span(self.db))
     }
 
     fn comptime_callee_name(&self, body: FuncBody<'db>, callee: Id<Expr<'db>>) -> String {
@@ -3394,7 +3663,12 @@ impl<'db> InferCtx<'db> {
             YulStmtKind::Let { names, init } => {
                 if let Some(init) = init {
                     let init_ty = self.infer_yul_expr(init, scopes);
-                    self.check_yul_assign_arity("Yul let", names.len(), init_ty);
+                    self.check_yul_assign_arity(
+                        self.yul_stmt_label_span(stmt),
+                        "Yul let",
+                        names.len(),
+                        init_ty,
+                    );
                 }
                 let binds = names
                     .iter()
@@ -3407,11 +3681,16 @@ impl<'db> InferCtx<'db> {
             }
             YulStmtKind::Assign { names, value } => {
                 let value_ty = self.infer_yul_expr(value, scopes);
-                self.check_yul_assign_arity("Yul assignment", names.len(), value_ty);
+                self.check_yul_assign_arity(
+                    self.yul_stmt_label_span(stmt),
+                    "Yul assignment",
+                    names.len(),
+                    value_ty,
+                );
                 for name in names {
                     let text = (*name.atom()).text(self.db);
                     if !self.is_yul_local(scopes, text) {
-                        self.check_yul_sail_var_write(text);
+                        self.check_yul_sail_var_write(self.label_span(name.span(self.db)), text);
                     }
                 }
                 (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
@@ -3500,7 +3779,7 @@ impl<'db> InferCtx<'db> {
                 if self.is_yul_local(scopes, text) {
                     self.engine.from_ty(Ty::word(self.db))
                 } else {
-                    self.check_yul_sail_var_read(text)
+                    self.check_yul_sail_var_read(self.yul_expr_label_span(expr), text)
                 }
             }
             YulExprKind::Call { name, args } => {
@@ -3514,19 +3793,21 @@ impl<'db> InferCtx<'db> {
                     .or_else(|| self.yul_builtin_sig(text));
                 let Some(sig) = sig else {
                     self.diagnostics.push(TypeckDiagnostic::UnknownYulName {
+                        span: self.yul_expr_label_span(expr),
                         name: text.to_owned(),
                     });
                     return InferTy::Error;
                 };
                 if sig.params.len() != arg_tys.len() {
                     self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                        span: self.yul_expr_label_span(expr),
                         context: format!("Yul call `{text}`"),
                         expected: sig.params.len(),
                         actual: arg_tys.len(),
                     });
                 }
-                for (expected, actual) in sig.params.iter().cloned().zip(arg_tys) {
-                    self.unify(expected, actual);
+                for ((expected, actual), arg) in sig.params.iter().cloned().zip(arg_tys).zip(args) {
+                    self.unify_at(self.yul_expr_label_span(arg), expected, actual);
                 }
                 sig.ret
             }
@@ -3576,18 +3857,20 @@ impl<'db> InferCtx<'db> {
             .find_map(|scope| scope.functions.get(name).cloned())
     }
 
-    fn check_yul_sail_var_read(&mut self, name: &str) -> InferTy<'db> {
+    fn check_yul_sail_var_read(&mut self, span: LabelSpan, name: &str) -> InferTy<'db> {
         let Some(ty) = self.lookup_sail_local(name) else {
             self.diagnostics.push(TypeckDiagnostic::UnknownYulName {
+                span,
                 name: name.to_owned(),
             });
             return InferTy::Error;
         };
         let word = self.engine.from_ty(Ty::word(self.db));
         if self.can_unify(ty.clone(), word.clone()) {
-            self.unify(ty, word.clone());
+            self.unify_at(span, ty, word.clone());
         } else {
             self.diagnostics.push(TypeckDiagnostic::NonWordYulVar {
+                span,
                 name: name.to_owned(),
                 actual: self.engine.display(ty),
             });
@@ -3595,25 +3878,33 @@ impl<'db> InferCtx<'db> {
         word
     }
 
-    fn check_yul_sail_var_write(&mut self, name: &str) {
+    fn check_yul_sail_var_write(&mut self, span: LabelSpan, name: &str) {
         let Some(ty) = self.lookup_sail_local(name) else {
             return;
         };
         let word = self.engine.from_ty(Ty::word(self.db));
         if self.can_unify(ty.clone(), word.clone()) {
-            self.unify(ty, word);
+            self.unify_at(span, ty, word);
         } else {
             self.diagnostics.push(TypeckDiagnostic::NonWordYulVar {
+                span,
                 name: name.to_owned(),
                 actual: self.engine.display(ty),
             });
         }
     }
 
-    fn check_yul_assign_arity(&mut self, context: &str, expected: usize, actual_ty: InferTy<'db>) {
+    fn check_yul_assign_arity(
+        &mut self,
+        span: LabelSpan,
+        context: &str,
+        expected: usize,
+        actual_ty: InferTy<'db>,
+    ) {
         let actual = self.yul_return_arity(actual_ty);
         if expected != actual {
             self.diagnostics.push(TypeckDiagnostic::WrongArity {
+                span,
                 context: context.to_owned(),
                 expected,
                 actual,
@@ -3763,12 +4054,55 @@ impl<'db> InferCtx<'db> {
         Some(sig)
     }
 
-    fn unify(&mut self, expected: InferTy<'db>, actual: InferTy<'db>) {
+    fn unify_at(&mut self, span: LabelSpan, expected: InferTy<'db>, actual: InferTy<'db>) {
         let expected = self.normalize_aliases(expected);
         let actual = self.normalize_aliases(actual);
         if let Err(err) = self.engine.unify(expected, actual) {
-            self.diagnostics.push(err.diagnostic(&mut self.engine));
+            self.diagnostics
+                .push(err.diagnostic(&mut self.engine, span));
         }
+    }
+
+    fn unify_span(&mut self, span: Span<'db>, expected: InferTy<'db>, actual: InferTy<'db>) {
+        self.unify_at(self.label_span(span), expected, actual);
+    }
+
+    fn unify_body(&mut self, body: FuncBody<'db>, expected: InferTy<'db>, actual: InferTy<'db>) {
+        self.unify_at(self.body_label_span(body), expected, actual);
+    }
+
+    fn unify_stmt(
+        &mut self,
+        body: FuncBody<'db>,
+        stmt: Id<Stmt<'db>>,
+        expected: InferTy<'db>,
+        actual: InferTy<'db>,
+    ) {
+        self.unify_at(self.stmt_label_span(body, stmt), expected, actual);
+    }
+
+    fn unify_expr(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        expected: InferTy<'db>,
+        actual: InferTy<'db>,
+    ) {
+        self.unify_at(self.expr_label_span(body, expr), expected, actual);
+    }
+
+    fn unify_pat(
+        &mut self,
+        body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
+        expected: InferTy<'db>,
+        actual: InferTy<'db>,
+    ) {
+        self.unify_at(self.pat_label_span(body, pat), expected, actual);
+    }
+
+    fn unify(&mut self, expected: InferTy<'db>, actual: InferTy<'db>) {
+        self.unify_at(self.label_span(self.module.span(self.db)), expected, actual);
     }
 
     fn can_unify(&mut self, expected: InferTy<'db>, actual: InferTy<'db>) -> bool {
@@ -3860,6 +4194,7 @@ impl<'db> InferCtx<'db> {
             if matches!(pred.pred.kind(self.db), PredKind::Error) {
                 continue;
             }
+            let span = self.obligation_source_label_span(&pending.source);
             let report = solve_report(
                 self.db,
                 trait_env,
@@ -3867,6 +4202,7 @@ impl<'db> InferCtx<'db> {
             );
             if report.exhausted {
                 diagnostics.push(TypeckDiagnostic::SolverFuelExhausted {
+                    span,
                     pred: pred.pred.display(self.db),
                 });
                 continue;
@@ -3900,6 +4236,7 @@ impl<'db> InferCtx<'db> {
                 }
                 Solution::Ambiguous { candidates } => {
                     diagnostics.push(TypeckDiagnostic::AmbiguousConstraint {
+                        span,
                         pred: pred.pred.display(self.db),
                         candidates: candidates
                             .iter()
@@ -3908,6 +4245,7 @@ impl<'db> InferCtx<'db> {
                     });
                 }
                 Solution::NoSolution => diagnostics.push(TypeckDiagnostic::UnsatisfiedConstraint {
+                    span,
                     pred: pred.pred.display(self.db),
                 }),
             }
@@ -4706,6 +5044,18 @@ impl<'db> ComptimeChecker<'db> {
         }
     }
 
+    fn label_span(&self, span: Span<'db>) -> LabelSpan {
+        LabelSpan::from_span(self.db, span)
+    }
+
+    fn stmt_label_span(&self, body: FuncBody<'db>, stmt: Id<Stmt<'db>>) -> LabelSpan {
+        self.label_span(body.stmts(self.db).get(stmt).span(self.db))
+    }
+
+    fn expr_label_span(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> LabelSpan {
+        self.label_span(body.exprs(self.db).get(expr).span(self.db))
+    }
+
     fn check_function(
         mut self,
         function: FunctionDef<'db>,
@@ -4784,6 +5134,9 @@ impl<'db> ComptimeChecker<'db> {
                 }
                 if declared_comptime && init_value.is_runtime() {
                     self.diagnostics.push(TypeckDiagnostic::ComptimeLetRuntime {
+                        span: init
+                            .map(|expr| self.expr_label_span(body, expr))
+                            .unwrap_or_else(|| self.stmt_label_span(body, stmt_id)),
                         name: name_text.clone(),
                     });
                 }
@@ -4815,7 +5168,10 @@ impl<'db> ComptimeChecker<'db> {
                         },
                     });
                 }
-                self.check_comptime_return(value);
+                let span = expr
+                    .map(|expr| self.expr_label_span(body, expr))
+                    .unwrap_or_else(|| self.stmt_label_span(body, stmt_id));
+                self.check_comptime_return(span, value);
                 value
             }
             StmtKind::Expr(expr) => {
@@ -4830,7 +5186,7 @@ impl<'db> ComptimeChecker<'db> {
                             },
                         });
                     }
-                    self.check_comptime_return(value);
+                    self.check_comptime_return(self.expr_label_span(body, *expr), value);
                 }
                 value
             }
@@ -4999,6 +5355,7 @@ impl<'db> ComptimeChecker<'db> {
                 if param.is_comptime && arg_value.is_runtime() && !skip_runtime_arg_diagnostics {
                     self.diagnostics
                         .push(TypeckDiagnostic::RuntimeToComptimeParam {
+                            span: self.expr_label_span(body, *arg),
                             function: sig.name.clone(),
                             param: param.name.clone(),
                         });
@@ -5037,10 +5394,11 @@ impl<'db> ComptimeChecker<'db> {
         self.current_return_comptime = previous_return;
     }
 
-    fn check_comptime_return(&mut self, value: ComptimeValue) {
+    fn check_comptime_return(&mut self, span: LabelSpan, value: ComptimeValue) {
         if self.current_return_comptime && value.is_runtime() {
             self.diagnostics
                 .push(TypeckDiagnostic::ComptimeReturnRuntime {
+                    span,
                     context: self.current_function.clone(),
                 });
         }
@@ -5670,6 +6028,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 complete = false;
                 self.diagnostics.push(AnyDiagnostic::Typeck(
                     TypeckDiagnostic::MissingParamAnnotation {
+                        span: LabelSpan::from_span(self.db, param.span(self.db)),
                         function: function.clone(),
                         param: ident_text(self.db, name),
                     }
@@ -5680,7 +6039,11 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         if sig.ret.is_none() {
             complete = false;
             self.diagnostics.push(AnyDiagnostic::Typeck(
-                TypeckDiagnostic::MissingReturnAnnotation { function }.lower(),
+                TypeckDiagnostic::MissingReturnAnnotation {
+                    span: LabelSpan::from_span(self.db, sig.span(self.db)),
+                    function,
+                }
+                .lower(),
             ));
         }
         complete
@@ -7425,7 +7788,7 @@ forall a . a:C => function bad() -> word {
         assert!(result.diagnostics.iter().any(|diag| {
             matches!(
                 diag,
-                TypeckDiagnostic::UnsatisfiedConstraint { pred }
+                TypeckDiagnostic::UnsatisfiedConstraint { pred, .. }
                     if pred.contains("word") && pred.contains("C")
             )
         }));
@@ -7731,7 +8094,7 @@ function g() -> word {
         );
         let (_, result) = infer_function(&db, module, "g");
         assert_typeck(&result, |diag| {
-            matches!(diag, TypeckDiagnostic::NonFinalReturn)
+            matches!(diag, TypeckDiagnostic::NonFinalReturn { .. })
         });
 
         let module = parse_module(
@@ -7820,6 +8183,7 @@ contract YulMultiRetBad {
                     context,
                     expected: 3,
                     actual: 2,
+                    ..
                 } if context == "Yul assignment"
             )
         });
@@ -7848,13 +8212,18 @@ function badYul() -> word {
         assert_typeck(&result, |diag| {
             matches!(
                 diag,
-                TypeckDiagnostic::WrongArity { context, expected: 2, actual: 1 }
+                TypeckDiagnostic::WrongArity {
+                    context,
+                    expected: 2,
+                    actual: 1,
+                    ..
+                }
                     if context == "Yul call `add`"
             )
         });
         assert_typeck(
             &result,
-            |diag| matches!(diag, TypeckDiagnostic::Mismatch { expected, actual } if expected == "word" && actual == "string"),
+            |diag| matches!(diag, TypeckDiagnostic::Mismatch { expected, actual, .. } if expected == "word" && actual == "string"),
         );
         assert_typeck(&result, |diag| {
             matches!(
@@ -7863,12 +8232,13 @@ function badYul() -> word {
                     context,
                     expected: 1,
                     actual: 0,
+                    ..
                 } if context == "Yul assignment"
             )
         });
         assert_typeck(
             &result,
-            |diag| matches!(diag, TypeckDiagnostic::UnknownYulName { name } if name == "missing"),
+            |diag| matches!(diag, TypeckDiagnostic::UnknownYulName { name, .. } if name == "missing"),
         );
     }
 
@@ -7900,7 +8270,7 @@ function badYul() -> word {
         let module = parse_module(&db, "function f(x: word) -> word { return x.foo; }");
         let (_, result) = infer_function(&db, module, "f");
         assert!(result.diagnostics.iter().any(
-            |diag| matches!(diag, TypeckDiagnostic::UnknownField { field } if field == "foo")
+            |diag| matches!(diag, TypeckDiagnostic::UnknownField { field, .. } if field == "foo")
         ));
 
         let module = parse_module(
@@ -7914,7 +8284,7 @@ function badYul() -> word {
             .1;
         assert!(result.diagnostics.iter().any(|diag| matches!(
             diag,
-            TypeckDiagnostic::UnsatisfiedConstraint { pred }
+            TypeckDiagnostic::UnsatisfiedConstraint { pred, .. }
                 if pred.contains("invokable")
         )));
     }
@@ -7957,7 +8327,8 @@ forall a b . instance Box(a):MyClass(b) {}
                 TypeckDiagnostic::CoverageCondition {
                     class,
                     main,
-                    undetermined
+                    undetermined,
+                    ..
                 } if class == "MyClass"
                     && main == "Box(a)"
                     && undetermined.len() == 1
@@ -8005,7 +8376,8 @@ forall a . instance Phantom(a):MyClass(a) {}
                 TypeckDiagnostic::CoverageCondition {
                     class,
                     main,
-                    undetermined
+                    undetermined,
+                    ..
                 } if class == "MyClass"
                     && main == "word"
                     && undetermined.len() == 1
@@ -8047,7 +8419,7 @@ forall U . U:C1, U:C2 => instance U:C1 {}
         assert!(
             diagnostics.iter().any(|diagnostic| matches!(
                 diagnostic,
-                TypeckDiagnostic::PattersonCondition { head } if head == "U : C1"
+                TypeckDiagnostic::PattersonCondition { head, .. } if head == "U : C1"
             )),
             "{diagnostics:?}"
         );
@@ -8088,9 +8460,10 @@ forall a c . c:Eq => instance Box(a):Container(a) {}
         );
 
         assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| matches!(diagnostic, TypeckDiagnostic::BoundedVariableCondition)),
+            diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::BoundedVariableCondition { .. }
+            )),
             "{diagnostics:?}"
         );
     }
@@ -8110,9 +8483,10 @@ forall a c . c:Eq => instance Box(a):Container(a) {}
         );
 
         assert!(
-            !diagnostics
-                .iter()
-                .any(|diagnostic| matches!(diagnostic, TypeckDiagnostic::BoundedVariableCondition)),
+            !diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::BoundedVariableCondition { .. }
+            )),
             "{diagnostics:?}"
         );
     }
@@ -8156,7 +8530,7 @@ forall a b . instance Box(a):MyClass(b) {}
         assert!(
             diagnostics.iter().any(|diagnostic| matches!(
                 diagnostic,
-                TypeckDiagnostic::PattersonCondition { head } if head == "x : C(word, word)"
+                TypeckDiagnostic::PattersonCondition { head, .. } if head == "x : C(word, word)"
             )),
             "{diagnostics:?}"
         );
