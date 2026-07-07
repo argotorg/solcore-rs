@@ -1563,7 +1563,6 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         (unbound type variables, upstream commit 7ad5622); legacy pre-std StructField \
         experiment superseded by std/assign.solc";
     let storage_index = BlockedCategory::NeedsStorageIndexLowering;
-    let unsupported_mono = BlockedCategory::UnsupportedMonoConstruct;
 
     BTreeMap::from([
         ("00answer.solc", run(42)),
