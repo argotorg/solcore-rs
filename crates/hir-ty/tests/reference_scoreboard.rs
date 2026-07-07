@@ -258,8 +258,8 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!(
         "examples/comptime/fromInt.solc",
         "needs-std-comptime-surface",
-        typeck,
-        "SC0224"
+        pre,
+        "SC0106"
     ),
     known!(
         "examples/comptime/fromInt2.solc",
@@ -276,8 +276,8 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!(
         "examples/comptime/fromLit.solc",
         "needs-std-comptime-surface",
-        typeck,
-        "SC0224"
+        pre,
+        "SC0106"
     ),
     known!(
         "examples/comptime/int-untyped-let.solc",
@@ -420,21 +420,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "examples/spec/attic/053return.solc",
         "needs-legacy-spec-attic-surface",
         pre
-    ),
-    known!(
-        "imports/alias_unqualified_constr_fail.solc",
-        "missing-import-constructor-negative",
-        no
-    ),
-    known!(
-        "imports/boolconselect_fail.solc",
-        "missing-import-constructor-negative",
-        no
-    ),
-    known!(
-        "imports/module_unqualified_constr_fail.solc",
-        "missing-import-constructor-negative",
-        no
     ),
 ];
 
@@ -1430,3 +1415,4 @@ fn repo_root() -> PathBuf {
         .expect("hir-ty crate lives under <repo>/crates/hir-ty")
         .to_path_buf()
 }
+
