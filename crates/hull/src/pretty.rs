@@ -215,6 +215,7 @@ fn write_ty<'db>(ty: &Ty<'db>) -> String {
         TyKind::Product(lhs, rhs) => format!("({} * {})", write_ty(lhs), write_ty(rhs)),
         TyKind::Sum(lhs, rhs) => format!("({} + {})", write_ty(lhs), write_ty(rhs)),
         TyKind::Named { name, inner } => format!("{name}{{{}}}", write_ty(inner)),
+        TyKind::NamedRef { name } => name.clone(),
         TyKind::Function { params, ret } => {
             let params = params.iter().map(write_ty).collect::<Vec<_>>().join(", ");
             format!("({params} -> {})", write_ty(ret))

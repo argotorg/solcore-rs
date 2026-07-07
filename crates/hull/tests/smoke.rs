@@ -1,7 +1,8 @@
 use std::{
     collections::{BTreeMap, VecDeque},
-    fs,
+    env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
@@ -13,7 +14,10 @@ use nameres::{ModuleId, ModuleKey, ModuleTree};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use rustc_hash::FxHashSet;
-use solcore_hull::{EmitDiagnosticKind, EmitOptions, check_program, emit_module, pretty_program};
+use solcore_hull::{
+    CheckDiagnosticKind, EmitDiagnosticKind, EmitOptions, check_program, emit_module,
+    pretty_program,
+};
 use specialize::{SpecializeOptions, SpecializeOutput, specialize_module};
 
 #[salsa::db]
@@ -198,6 +202,180 @@ fn word_storage_fixture_reaches_word_slot_ops() {
     );
 }
 
+#[test]
+fn single_constructor_matches_project_payloads_from_scrutinee() {
+    assert_fixture_emits_and_checks("cases/encoder1.solc");
+    assert_fixture_has_no_unbound_alt("cases/mptc-multi-instance.solc");
+}
+
+#[test]
+fn decision_tree_match_lowering_preserves_priority_nested_and_multi_scrutinee_cases() {
+    for fixture in [
+        "spec/033join.solc",
+        "spec/038food0.solc",
+        "cases/Option.solc",
+        "cases/option2.solc",
+        "cases/dot-pattern-nested-constructor.solc",
+        "cases/Logic.solc",
+        "cases/Ackermann.solc",
+        "cases/false-redundant-warning.solc",
+        "cases/super-class.solc",
+    ] {
+        assert_fixture_emits_and_checks(fixture);
+    }
+}
+
+#[test]
+fn recursive_adt_layouts_are_cycle_safe() {
+    for fixture in ["cases/PeanoMatch.solc", "cases/listid.solc"] {
+        assert_fixture_emits_and_checks(fixture);
+    }
+}
+
+#[test]
+fn logical_not_lowers_as_bool_sum_branch_swap() {
+    let (db, output) = specialize_src(
+        "logical_not",
+        r#"
+function neq(x : word, y : word) -> bool {
+  return !(x == y);
+}
+
+contract C {
+  public function main(x : word, y : word) -> bool {
+    return neq(x, y);
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program(&emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(!hull.contains("iszero"), "{hull}");
+    assert!(hull.contains("if<"), "{hull}");
+}
+
+#[test]
+fn non_exhaustive_source_matches_are_emit_diagnostics() {
+    let (db, output) = specialize_src(
+        "non_exhaustive_match",
+        r#"
+data B = A | C;
+
+function choose(x : word) -> B {
+  if (x == 0) {
+    return B.A;
+  }
+  return B.C;
+}
+
+function onlyA(b : B) -> word {
+  match b {
+    | B.A => return 1;
+  }
+}
+
+contract C {
+  public function main(x : word) -> word {
+    return onlyA(choose(x));
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert!(
+        emitted
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic.kind, EmitDiagnosticKind::NonExhaustiveMatch)),
+        "{:?}",
+        emitted.diagnostics
+    );
+}
+
+#[test]
+#[ignore]
+fn corpus_emission_count() {
+    if let Some(path) = env::var_os("HULL_COUNT_ONE") {
+        let status = corpus_status(Path::new(&path));
+        println!("{status}");
+        return;
+    }
+
+    let repo = repo_root();
+    let root = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples");
+    let mut paths = Vec::new();
+    collect_solc_files(&root, &mut paths);
+    paths.sort();
+
+    let mut buckets = BTreeMap::<String, usize>::new();
+
+    for path in &paths {
+        let output = Command::new(env::current_exe().expect("test exe"))
+            .arg("corpus_emission_count")
+            .arg("--ignored")
+            .arg("--exact")
+            .arg("--nocapture")
+            .env("HULL_COUNT_ONE", path)
+            .output()
+            .expect("fixture count child");
+        let status = if output.status.success() {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .find(|line| {
+                    matches!(
+                        *line,
+                        "check-ok"
+                            | "check-diagnostic"
+                            | "emit-diagnostic"
+                            | "specialize-diagnostic"
+                    )
+                })
+                .unwrap_or("unknown")
+                .to_owned()
+        } else {
+            "crash".to_owned()
+        };
+        *buckets.entry(status).or_default() += 1;
+    }
+
+    let emit_ok = buckets.get("check-ok").copied().unwrap_or(0)
+        + buckets.get("check-diagnostic").copied().unwrap_or(0);
+    let check_ok = buckets.get("check-ok").copied().unwrap_or(0);
+    println!(
+        "corpus={} emit_ok={} check_ok={} buckets={:?}",
+        paths.len(),
+        emit_ok,
+        check_ok,
+        buckets
+    );
+}
+
+fn corpus_status(path: &Path) -> &'static str {
+    let (db, output) = specialize_fixture(path);
+    if !output.diagnostics.is_empty() {
+        return "specialize-diagnostic";
+    }
+    let emitted = emit_module(
+        db,
+        &output.module,
+        EmitOptions {
+            emit_dispatcher_comments: false,
+        },
+    );
+    if !emitted.diagnostics.is_empty() {
+        return "emit-diagnostic";
+    }
+    let checked = check_program(&emitted.program);
+    if !checked.is_empty() {
+        return "check-diagnostic";
+    }
+    "check-ok"
+}
+
 fn specialize_src(name: &str, src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {
     let db = Box::leak(Box::new(TestDb::default()));
     let module = parse_module(db, name, src);
@@ -289,6 +467,78 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
         }
     }
     unresolved
+}
+
+fn assert_fixture_emits_and_checks(relative: &str) {
+    let fixture = repo_root()
+        .join("crates/parser/tests/fixtures/corpus/ok/test/examples")
+        .join(relative);
+    let (db, output) = specialize_fixture(&fixture);
+    assert_eq!(
+        output.diagnostics,
+        Vec::new(),
+        "specialize diagnostics for {relative:?}"
+    );
+    let emitted = emit_module(
+        db,
+        &output.module,
+        EmitOptions {
+            emit_dispatcher_comments: false,
+        },
+    );
+    assert_eq!(
+        emitted.diagnostics,
+        Vec::new(),
+        "emit diagnostics for {relative:?}"
+    );
+    assert_eq!(
+        check_program(&emitted.program),
+        Vec::new(),
+        "check diagnostics for {relative:?}"
+    );
+}
+
+fn assert_fixture_has_no_unbound_alt(relative: &str) {
+    let fixture = repo_root()
+        .join("crates/parser/tests/fixtures/corpus/ok/test/examples")
+        .join(relative);
+    let (db, output) = specialize_fixture(&fixture);
+    assert_eq!(
+        output.diagnostics,
+        Vec::new(),
+        "specialize diagnostics for {relative:?}"
+    );
+    let emitted = emit_module(
+        db,
+        &output.module,
+        EmitOptions {
+            emit_dispatcher_comments: false,
+        },
+    );
+    assert_eq!(
+        emitted.diagnostics,
+        Vec::new(),
+        "emit diagnostics for {relative:?}"
+    );
+    let checked = check_program(&emitted.program);
+    assert!(
+        !checked.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            CheckDiagnosticKind::UndefinedVariable { name } if name.starts_with("$alt")
+        )),
+        "unbound alt diagnostic for {relative:?}: {checked:?}"
+    );
+}
+
+fn collect_solc_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).expect("fixture dir") {
+        let path = entry.expect("fixture entry").path();
+        if path.is_dir() {
+            collect_solc_files(&path, out);
+        } else if path.extension().is_some_and(|ext| ext == "solc") {
+            out.push(path);
+        }
+    }
 }
 
 fn repo_root() -> PathBuf {

@@ -26,6 +26,9 @@ pub enum TyKind<'db> {
         name: Name,
         inner: Box<Ty<'db>>,
     },
+    NamedRef {
+        name: Name,
+    },
     Function {
         params: Vec<Ty<'db>>,
         ret: Box<Ty<'db>>,
@@ -216,6 +219,13 @@ impl<'db> Ty<'db> {
         }
     }
 
+    pub fn named_ref(span: Span<'db>, name: impl Into<Name>) -> Self {
+        Self {
+            span,
+            kind: TyKind::NamedRef { name: name.into() },
+        }
+    }
+
     pub fn function(span: Span<'db>, params: Vec<Ty<'db>>, ret: Ty<'db>) -> Self {
         Self {
             span,
@@ -240,7 +250,7 @@ impl<'db> Ty<'db> {
                 lhs.contains_function() || rhs.contains_function()
             }
             TyKind::Named { inner, .. } => inner.contains_function(),
-            TyKind::Word | TyKind::Bool | TyKind::Unit => false,
+            TyKind::NamedRef { .. } | TyKind::Word | TyKind::Bool | TyKind::Unit => false,
         }
     }
 }

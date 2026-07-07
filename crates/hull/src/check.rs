@@ -536,6 +536,14 @@ fn is_bool_like(ty: &Ty<'_>) -> bool {
 }
 
 fn type_eq(lhs: &Ty<'_>, rhs: &Ty<'_>) -> bool {
+    match (&lhs.kind, &rhs.kind) {
+        (TyKind::NamedRef { name: lhs }, TyKind::NamedRef { name: rhs }) => return lhs == rhs,
+        (TyKind::NamedRef { name: lhs }, TyKind::Named { name: rhs, .. })
+        | (TyKind::Named { name: lhs, .. }, TyKind::NamedRef { name: rhs }) => {
+            return lhs == rhs;
+        }
+        _ => {}
+    }
     match (&lhs.strip_named().kind, &rhs.strip_named().kind) {
         (TyKind::Word, TyKind::Word)
         | (TyKind::Bool, TyKind::Bool)
@@ -561,6 +569,9 @@ fn type_eq(lhs: &Ty<'_>, rhs: &Ty<'_>) -> bool {
                     .all(|(lhs, rhs)| type_eq(lhs, rhs))
                 && type_eq(a_ret, b_ret)
         }
+        (TyKind::NamedRef { name: lhs }, TyKind::NamedRef { name: rhs }) => lhs == rhs,
+        (TyKind::NamedRef { name: lhs }, TyKind::Named { name: rhs, .. })
+        | (TyKind::Named { name: lhs, .. }, TyKind::NamedRef { name: rhs }) => lhs == rhs,
         _ => false,
     }
 }
@@ -595,6 +606,7 @@ fn ty_display(ty: &Ty<'_>) -> String {
         TyKind::Product(lhs, rhs) => format!("({} * {})", ty_display(lhs), ty_display(rhs)),
         TyKind::Sum(lhs, rhs) => format!("({} + {})", ty_display(lhs), ty_display(rhs)),
         TyKind::Named { name, inner } => format!("{name}{{{}}}", ty_display(inner)),
+        TyKind::NamedRef { name } => name.clone(),
         TyKind::Function { params, ret } => {
             let params = params.iter().map(ty_display).collect::<Vec<_>>().join(", ");
             format!("({params} -> {})", ty_display(ret))
