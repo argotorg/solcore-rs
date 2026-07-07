@@ -5,13 +5,16 @@ use std::{
 
 use hir::{
     Db as HirDb,
+    anchor::DefId,
     ast::{
         Ident,
         function::{BinOp, LitKind, UnOp, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
+        item::{ContractDef, Item, Module},
     },
     span::{Span, SpannedElem},
 };
 use hir_ty::{BuiltinTyCtor, Db, Ty, TyCtor, TyKind};
+use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
@@ -53,10 +56,17 @@ type CEnv = FxHashSet<String>;
 type TypeReg<'db> = FxHashMap<String, MonoId<'db>>;
 type YulState = FxHashMap<String, BigInt>;
 
+enum FoldOutcome<'db> {
+    ReturnedKnown(MonoExpr<'db>),
+    ReturnedUnknownAbort,
+    FellThroughContinue(VEnv<'db>, CEnv),
+}
+
 struct Evaluator<'db> {
     db: &'db dyn Db,
     functions: FxHashMap<String, MonoFunction<'db>>,
     pure_funs: FxHashSet<String>,
+    write_effects: FxHashMap<String, AssignedNames>,
     diagnostics: Vec<SpecializeDiagnostic<'db>>,
     fuel_limit: usize,
     fuel: usize,
@@ -75,11 +85,14 @@ impl<'db> Evaluator<'db> {
                 _ => None,
             })
             .collect::<FxHashMap<_, _>>();
-        let pure_funs = compute_pure_funs(db, &functions);
+        let storage_fields = storage_field_names(db, module);
+        let pure_funs = compute_pure_funs(db, &functions, &storage_fields);
+        let write_effects = compute_write_effects(&functions, &storage_fields);
         Self {
             db,
             functions,
             pure_funs,
+            write_effects,
             diagnostics: Vec::new(),
             fuel_limit: fuel,
             fuel,
@@ -169,6 +182,11 @@ impl<'db> Evaluator<'db> {
                 };
                 let mut env = env;
                 let mut comptime_env = comptime_env;
+                let init_effects = init
+                    .as_ref()
+                    .map(|expr| self.expr_write_effects(expr))
+                    .unwrap_or_else(AssignedNames::empty);
+                invalidate_assigned(&init_effects, &mut env, &mut comptime_env);
                 if let Some(expr) = init.as_ref().filter(|expr| self.expr_is_known_value(expr)) {
                     env.insert(id.name.clone(), expr.clone());
                 } else {
@@ -246,6 +264,10 @@ impl<'db> Evaluator<'db> {
             }
             MonoStmtKind::Expr(expr) => {
                 let expr = self.eval_expr(&env, &comptime_env, expr);
+                let mut env = env;
+                let mut comptime_env = comptime_env;
+                let effects = self.expr_write_effects(&expr);
+                invalidate_assigned(&effects, &mut env, &mut comptime_env);
                 if self.expr_is_known_value(&expr) {
                     (env, comptime_env, Vec::new())
                 } else {
@@ -264,6 +286,9 @@ impl<'db> Evaluator<'db> {
                 let rhs = self.eval_expr(&env, &comptime_env, rhs);
                 let mut env = env;
                 let mut comptime_env = comptime_env;
+                let mut effects = self.expr_write_effects(&lhs);
+                effects.merge(self.expr_write_effects(&rhs));
+                invalidate_assigned(&effects, &mut env, &mut comptime_env);
                 if let Some(id) = target {
                     let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
                     if self.expr_is_known_value(&rhs) {
@@ -332,6 +357,10 @@ impl<'db> Evaluator<'db> {
                 else_body,
             } => {
                 let cond = self.eval_expr(&env, &comptime_env, cond);
+                let mut env = env;
+                let mut comptime_env = comptime_env;
+                let cond_effects = self.expr_write_effects(&cond);
+                invalidate_assigned(&cond_effects, &mut env, &mut comptime_env);
                 if let Some(value) = known_bool(&cond) {
                     let selected = if value {
                         then_body
@@ -340,17 +369,12 @@ impl<'db> Evaluator<'db> {
                     };
                     return self.eval_stmts(type_reg, env, comptime_env, selected, ret_comptime);
                 }
-                let assigned = assigned_in_stmts(&then_body)
-                    .into_iter()
-                    .chain(
-                        else_body
-                            .as_deref()
-                            .map(assigned_in_stmts)
-                            .unwrap_or_default(),
-                    )
-                    .collect::<FxHashSet<_>>();
-                let branch_env = remove_names(env.clone(), &assigned);
-                let branch_comptime_env = remove_comptime_names(comptime_env.clone(), &assigned);
+                let mut assigned = self.stmts_write_effects(&then_body);
+                if let Some(else_body) = else_body.as_deref() {
+                    assigned.merge(self.stmts_write_effects(else_body));
+                }
+                let branch_env = remove_assigned(env.clone(), &assigned);
+                let branch_comptime_env = remove_comptime_assigned(comptime_env.clone(), &assigned);
                 let (_, _, then_body) = self.eval_stmts(
                     type_reg,
                     branch_env.clone(),
@@ -368,8 +392,8 @@ impl<'db> Evaluator<'db> {
                     );
                     body
                 });
-                let env = remove_names(env, &assigned);
-                let comptime_env = remove_comptime_names(comptime_env, &assigned);
+                let env = remove_assigned(env, &assigned);
+                let comptime_env = remove_comptime_assigned(comptime_env, &assigned);
                 (
                     env,
                     comptime_env,
@@ -388,6 +412,13 @@ impl<'db> Evaluator<'db> {
                     .into_iter()
                     .map(|expr| self.eval_expr(&env, &comptime_env, expr))
                     .collect::<Vec<_>>();
+                let mut env = env;
+                let mut comptime_env = comptime_env;
+                let mut scrutinee_effects = AssignedNames::empty();
+                for scrutinee in &scrutinees {
+                    scrutinee_effects.merge(self.expr_write_effects(scrutinee));
+                }
+                invalidate_assigned(&scrutinee_effects, &mut env, &mut comptime_env);
                 let arms = arms
                     .into_iter()
                     .map(|arm| self.eval_arm_labels(&env, &comptime_env, arm))
@@ -403,29 +434,27 @@ impl<'db> Evaluator<'db> {
                         ret_comptime,
                     );
                 }
-                let assigned = arms
-                    .iter()
-                    .flat_map(|arm| assigned_in_stmts(&arm.body))
-                    .collect::<FxHashSet<_>>();
+                let mut assigned = AssignedNames::empty();
+                for arm in &arms {
+                    assigned.merge(self.stmts_write_effects(&arm.body));
+                }
                 let arms = arms
                     .into_iter()
                     .map(|arm| {
-                        let mut masked = assigned_in_stmts(&arm.body);
-                        for pat in &arm.pats {
-                            collect_pat_binders(pat, &mut masked);
-                        }
+                        let mut masked = self.stmts_write_effects(&arm.body);
+                        masked.insert_pat_binders(&arm.pats);
                         let (_, _, body) = self.eval_stmts(
                             type_reg,
-                            remove_names(env.clone(), &masked),
-                            remove_comptime_names(comptime_env.clone(), &masked),
+                            remove_assigned(env.clone(), &masked),
+                            remove_comptime_assigned(comptime_env.clone(), &masked),
                             arm.body,
                             ret_comptime,
                         );
                         MonoArm { body, ..arm }
                     })
                     .collect::<Vec<_>>();
-                let env = remove_names(env, &assigned);
-                let comptime_env = remove_comptime_names(comptime_env, &assigned);
+                let env = remove_assigned(env, &assigned);
+                let comptime_env = remove_comptime_assigned(comptime_env, &assigned);
                 (
                     env,
                     comptime_env,
@@ -436,6 +465,7 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Block(body) => {
+                let assigned = self.stmts_write_effects(&body);
                 let (_, _, body) = self.eval_stmts(
                     type_reg,
                     env.clone(),
@@ -443,6 +473,8 @@ impl<'db> Evaluator<'db> {
                     body,
                     ret_comptime,
                 );
+                let env = remove_assigned(env, &assigned);
+                let comptime_env = remove_comptime_assigned(comptime_env, &assigned);
                 (
                     env,
                     comptime_env,
@@ -458,9 +490,9 @@ impl<'db> Evaluator<'db> {
                 post,
                 body,
             } => {
-                let loop_env = env_without_assigned(&env, &body);
-                let assigned = assigned_in_stmts(&body);
-                let loop_comptime_env = remove_comptime_names(comptime_env, &assigned);
+                let assigned = self.stmts_write_effects(&body);
+                let loop_env = remove_assigned(env.clone(), &assigned);
+                let loop_comptime_env = remove_comptime_assigned(comptime_env, &assigned);
                 let (_, _, init) = self.eval_stmts(
                     type_reg,
                     loop_env.clone(),
@@ -556,6 +588,9 @@ impl<'db> Evaluator<'db> {
         let rhs = self.eval_expr(&env, &comptime_env, rhs);
         let mut env = env;
         let mut comptime_env = comptime_env;
+        let mut effects = self.expr_write_effects(&lhs);
+        effects.merge(self.expr_write_effects(&rhs));
+        invalidate_assigned(&effects, &mut env, &mut comptime_env);
         if let Some(id) = target {
             env.remove(&id.name);
             comptime_env.remove(&id.name);
@@ -857,6 +892,142 @@ impl<'db> Evaluator<'db> {
         }
     }
 
+    fn expr_write_effects(&self, expr: &MonoExpr<'db>) -> AssignedNames {
+        match &expr.kind {
+            MonoExprKind::Var(_)
+            | MonoExprKind::Lit(_)
+            | MonoExprKind::Proxy(_)
+            | MonoExprKind::Error => AssignedNames::empty(),
+            MonoExprKind::Tuple(elems) => self.exprs_write_effects(elems),
+            MonoExprKind::Call {
+                callee,
+                args,
+                origin,
+            } => {
+                let mut effects = self.exprs_write_effects(args);
+                if !matches!(origin, MonoCallOrigin::Builtin(_)) {
+                    effects.merge(
+                        self.write_effects
+                            .get(&callee.name)
+                            .cloned()
+                            .unwrap_or(AssignedNames::All),
+                    );
+                }
+                effects
+            }
+            MonoExprKind::Con { args, .. } => self.exprs_write_effects(args),
+            MonoExprKind::ClosureDispatch { callee, args } => {
+                let mut effects = self.expr_write_effects(callee);
+                effects.merge(self.exprs_write_effects(args));
+                effects.merge(AssignedNames::All);
+                effects
+            }
+            MonoExprKind::BinOp { lhs, rhs, .. } => {
+                let mut effects = self.expr_write_effects(lhs);
+                effects.merge(self.expr_write_effects(rhs));
+                effects
+            }
+            MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
+                self.expr_write_effects(expr)
+            }
+            MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index } => {
+                let mut effects = self.expr_write_effects(base);
+                effects.merge(self.expr_write_effects(index));
+                effects
+            }
+            MonoExprKind::Field { base, .. } => self.expr_write_effects(base),
+            MonoExprKind::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
+                let mut effects = self.expr_write_effects(cond);
+                effects.merge(self.expr_write_effects(then_expr));
+                effects.merge(self.expr_write_effects(else_expr));
+                effects
+            }
+            MonoExprKind::Lambda { .. } => AssignedNames::empty(),
+        }
+    }
+
+    fn exprs_write_effects(&self, exprs: &[MonoExpr<'db>]) -> AssignedNames {
+        let mut effects = AssignedNames::empty();
+        for expr in exprs {
+            effects.merge(self.expr_write_effects(expr));
+        }
+        effects
+    }
+
+    fn stmts_write_effects(&self, stmts: &[MonoStmt<'db>]) -> AssignedNames {
+        let mut effects = AssignedNames::empty();
+        self.collect_stmt_write_effects(stmts, &mut effects);
+        effects
+    }
+
+    fn collect_stmt_write_effects(&self, stmts: &[MonoStmt<'db>], effects: &mut AssignedNames) {
+        for stmt in stmts {
+            match &stmt.kind {
+                MonoStmtKind::Let { init, .. } => {
+                    if let Some(init) = init {
+                        effects.merge(self.expr_write_effects(init));
+                    }
+                }
+                MonoStmtKind::Return(expr) => {
+                    if let Some(expr) = expr {
+                        effects.merge(self.expr_write_effects(expr));
+                    }
+                }
+                MonoStmtKind::Expr(expr) => effects.merge(self.expr_write_effects(expr)),
+                MonoStmtKind::Assign { lhs, rhs }
+                | MonoStmtKind::AddAssign { lhs, rhs }
+                | MonoStmtKind::SubAssign { lhs, rhs }
+                | MonoStmtKind::BitXorAssign { lhs, rhs }
+                | MonoStmtKind::BitAndAssign { lhs, rhs }
+                | MonoStmtKind::BitOrAssign { lhs, rhs }
+                | MonoStmtKind::ModAssign { lhs, rhs } => {
+                    if let Some(name) = lvalue_root_name(lhs) {
+                        effects.insert(name);
+                    } else {
+                        effects.merge(AssignedNames::All);
+                    }
+                    effects.merge(self.expr_write_effects(lhs));
+                    effects.merge(self.expr_write_effects(rhs));
+                }
+                MonoStmtKind::Match { scrutinees, arms } => {
+                    effects.merge(self.exprs_write_effects(scrutinees));
+                    for arm in arms {
+                        self.collect_stmt_write_effects(&arm.body, effects);
+                    }
+                }
+                MonoStmtKind::For {
+                    init,
+                    cond,
+                    post,
+                    body,
+                } => {
+                    self.collect_stmt_write_effects(init, effects);
+                    effects.merge(self.expr_write_effects(cond));
+                    self.collect_stmt_write_effects(post, effects);
+                    self.collect_stmt_write_effects(body, effects);
+                }
+                MonoStmtKind::If {
+                    cond,
+                    then_body,
+                    else_body,
+                } => {
+                    effects.merge(self.expr_write_effects(cond));
+                    self.collect_stmt_write_effects(then_body, effects);
+                    if let Some(else_body) = else_body {
+                        self.collect_stmt_write_effects(else_body, effects);
+                    }
+                }
+                MonoStmtKind::Block(body) => self.collect_stmt_write_effects(body, effects),
+                MonoStmtKind::Assembly(_) => effects.merge(AssignedNames::All),
+                MonoStmtKind::Break | MonoStmtKind::Continue | MonoStmtKind::Error => {}
+            }
+        }
+    }
+
     fn eval_closure_dispatch(
         &mut self,
         callee: &MonoExpr<'db>,
@@ -904,7 +1075,12 @@ impl<'db> Evaluator<'db> {
                 let type_reg = build_type_reg(params, body);
                 let result = self.eval_fun_body(&type_reg, env, comptime_env, body.clone());
                 self.fuel += 1;
-                result
+                match result {
+                    FoldOutcome::ReturnedKnown(expr) => Some(expr),
+                    FoldOutcome::ReturnedUnknownAbort | FoldOutcome::FellThroughContinue(_, _) => {
+                        None
+                    }
+                }
             }
             MonoExprKind::TypeAnnot { expr, .. } => {
                 self.eval_closure_dispatch(expr, args, ty, span)
@@ -1208,7 +1384,10 @@ impl<'db> Evaluator<'db> {
         let type_reg = build_type_reg(&function.params, &function.body);
         let result = self.eval_fun_body(&type_reg, env, comptime_env, function.body);
         self.fuel += 1;
-        result
+        match result {
+            FoldOutcome::ReturnedKnown(expr) => Some(expr),
+            FoldOutcome::ReturnedUnknownAbort | FoldOutcome::FellThroughContinue(_, _) => None,
+        }
     }
 
     fn eval_fun_body(
@@ -1217,7 +1396,7 @@ impl<'db> Evaluator<'db> {
         mut env: VEnv<'db>,
         mut comptime_env: CEnv,
         body: Vec<MonoStmt<'db>>,
-    ) -> Option<MonoExpr<'db>> {
+    ) -> FoldOutcome<'db> {
         for stmt in body {
             match stmt.kind {
                 MonoStmtKind::Let {
@@ -1266,8 +1445,15 @@ impl<'db> Evaluator<'db> {
                     }
                 }
                 MonoStmtKind::Return(expr) => {
-                    let expr = expr.map(|expr| self.eval_expr(&env, &comptime_env, expr))?;
-                    return self.expr_is_known_value(&expr).then_some(expr);
+                    let Some(expr) = expr.map(|expr| self.eval_expr(&env, &comptime_env, expr))
+                    else {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    };
+                    return if self.expr_is_known_value(&expr) {
+                        FoldOutcome::ReturnedKnown(expr)
+                    } else {
+                        FoldOutcome::ReturnedUnknownAbort
+                    };
                 }
                 MonoStmtKind::Expr(_) => {}
                 MonoStmtKind::Match { scrutinees, arms } => {
@@ -1282,15 +1468,21 @@ impl<'db> Evaluator<'db> {
                     if scrutinees.iter().all(is_known_value)
                         && let Some((matched_env, body)) = match_arms(&env, &scrutinees, &arms)
                     {
-                        let assigned = assigned_names(&body);
-                        if let Some(result) =
-                            self.eval_fun_body(type_reg, matched_env, comptime_env.clone(), body)
+                        match self.eval_fun_body(type_reg, matched_env, comptime_env.clone(), body)
                         {
-                            return Some(result);
+                            FoldOutcome::ReturnedKnown(expr) => {
+                                return FoldOutcome::ReturnedKnown(expr);
+                            }
+                            FoldOutcome::ReturnedUnknownAbort => {
+                                return FoldOutcome::ReturnedUnknownAbort;
+                            }
+                            FoldOutcome::FellThroughContinue(next_env, next_comptime_env) => {
+                                env = next_env;
+                                comptime_env = next_comptime_env;
+                            }
                         }
-                        invalidate_assigned(&assigned, &mut env, &mut comptime_env);
                     } else {
-                        return None;
+                        return FoldOutcome::ReturnedUnknownAbort;
                     }
                 }
                 MonoStmtKind::If {
@@ -1299,31 +1491,46 @@ impl<'db> Evaluator<'db> {
                     else_body,
                 } => {
                     let cond = self.eval_expr(&env, &comptime_env, cond);
-                    let body = if known_bool(&cond)? {
+                    let Some(cond) = known_bool(&cond) else {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    };
+                    let body = if cond {
                         then_body
                     } else {
                         else_body.unwrap_or_default()
                     };
-                    let assigned = assigned_names(&body);
-                    if let Some(result) =
-                        self.eval_fun_body(type_reg, env.clone(), comptime_env.clone(), body)
-                    {
-                        return Some(result);
+                    match self.eval_fun_body(type_reg, env.clone(), comptime_env.clone(), body) {
+                        FoldOutcome::ReturnedKnown(expr) => {
+                            return FoldOutcome::ReturnedKnown(expr);
+                        }
+                        FoldOutcome::ReturnedUnknownAbort => {
+                            return FoldOutcome::ReturnedUnknownAbort;
+                        }
+                        FoldOutcome::FellThroughContinue(next_env, next_comptime_env) => {
+                            env = next_env;
+                            comptime_env = next_comptime_env;
+                        }
                     }
-                    invalidate_assigned(&assigned, &mut env, &mut comptime_env);
                 }
                 MonoStmtKind::Block(body) => {
-                    let assigned = assigned_names(&body);
-                    if let Some(result) =
-                        self.eval_fun_body(type_reg, env.clone(), comptime_env.clone(), body)
-                    {
-                        return Some(result);
+                    match self.eval_fun_body(type_reg, env.clone(), comptime_env.clone(), body) {
+                        FoldOutcome::ReturnedKnown(expr) => {
+                            return FoldOutcome::ReturnedKnown(expr);
+                        }
+                        FoldOutcome::ReturnedUnknownAbort => {
+                            return FoldOutcome::ReturnedUnknownAbort;
+                        }
+                        FoldOutcome::FellThroughContinue(next_env, next_comptime_env) => {
+                            env = next_env;
+                            comptime_env = next_comptime_env;
+                        }
                     }
-                    invalidate_assigned(&assigned, &mut env, &mut comptime_env);
                 }
                 MonoStmtKind::Assembly(body) => {
                     let state = venv_to_yul_state(&env);
-                    let state = self.eval_yul_block(state, &body)?;
+                    let Some(state) = self.eval_yul_block(state, &body) else {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    };
                     env = merge_yul_state(type_reg, state, env);
                 }
                 MonoStmtKind::For { .. }
@@ -1335,10 +1542,10 @@ impl<'db> Evaluator<'db> {
                 | MonoStmtKind::BitAndAssign { .. }
                 | MonoStmtKind::BitOrAssign { .. }
                 | MonoStmtKind::ModAssign { .. }
-                | MonoStmtKind::Error => return None,
+                | MonoStmtKind::Error => return FoldOutcome::ReturnedUnknownAbort,
             }
         }
-        None
+        FoldOutcome::FellThroughContinue(env, comptime_env)
     }
 
     fn check_comptime_params(
@@ -1779,6 +1986,7 @@ enum WordBinaryOp {
 fn compute_pure_funs<'db>(
     db: &'db dyn Db,
     functions: &FxHashMap<String, MonoFunction<'db>>,
+    storage_fields: &FxHashSet<String>,
 ) -> FxHashSet<String> {
     let mut pure = FxHashSet::default();
     loop {
@@ -1789,11 +1997,7 @@ fn compute_pure_funs<'db>(
             }
             let mut assumed = pure.clone();
             assumed.insert(name.clone());
-            if function
-                .body
-                .iter()
-                .all(|stmt| stmt_is_pure(db, stmt, &assumed))
-            {
+            if function_is_pure(db, function, &assumed, storage_fields) {
                 pure.insert(name.clone());
             }
         }
@@ -1826,23 +2030,72 @@ fn intrinsic_is_pure(intrinsic: MonoIntrinsic) -> bool {
     )
 }
 
-fn stmt_is_pure<'db>(db: &'db dyn Db, stmt: &MonoStmt<'db>, pure: &FxHashSet<String>) -> bool {
+fn function_is_pure<'db>(
+    db: &'db dyn Db,
+    function: &MonoFunction<'db>,
+    pure: &FxHashSet<String>,
+    storage_fields: &FxHashSet<String>,
+) -> bool {
+    let mut locals = function
+        .params
+        .iter()
+        .map(|param| param.name.clone())
+        .collect::<FxHashSet<_>>();
+    stmts_are_pure(db, &function.body, pure, storage_fields, &mut locals)
+}
+
+fn stmts_are_pure<'db>(
+    db: &'db dyn Db,
+    stmts: &[MonoStmt<'db>],
+    pure: &FxHashSet<String>,
+    storage_fields: &FxHashSet<String>,
+    locals: &mut FxHashSet<String>,
+) -> bool {
+    for stmt in stmts {
+        if !stmt_is_pure(db, stmt, pure, storage_fields, locals) {
+            return false;
+        }
+    }
+    true
+}
+
+fn stmt_is_pure<'db>(
+    db: &'db dyn Db,
+    stmt: &MonoStmt<'db>,
+    pure: &FxHashSet<String>,
+    storage_fields: &FxHashSet<String>,
+    locals: &mut FxHashSet<String>,
+) -> bool {
     match &stmt.kind {
-        MonoStmtKind::Let { init, .. } => init.as_ref().is_none_or(|expr| expr_is_pure(expr, pure)),
+        MonoStmtKind::Let { id, init, .. } => {
+            if !init.as_ref().is_none_or(|expr| expr_is_pure(expr, pure)) {
+                return false;
+            }
+            locals.insert(id.name.clone());
+            true
+        }
         MonoStmtKind::Return(expr) => expr.as_ref().is_none_or(|expr| expr_is_pure(expr, pure)),
         MonoStmtKind::Expr(expr) => expr_is_pure(expr, pure),
-        MonoStmtKind::Assign { rhs, .. }
-        | MonoStmtKind::AddAssign { rhs, .. }
-        | MonoStmtKind::SubAssign { rhs, .. }
-        | MonoStmtKind::BitXorAssign { rhs, .. }
-        | MonoStmtKind::BitAndAssign { rhs, .. }
-        | MonoStmtKind::BitOrAssign { rhs, .. }
-        | MonoStmtKind::ModAssign { rhs, .. } => expr_is_pure(rhs, pure),
+        MonoStmtKind::Assign { lhs, rhs }
+        | MonoStmtKind::AddAssign { lhs, rhs }
+        | MonoStmtKind::SubAssign { lhs, rhs }
+        | MonoStmtKind::BitXorAssign { lhs, rhs }
+        | MonoStmtKind::BitAndAssign { lhs, rhs }
+        | MonoStmtKind::BitOrAssign { lhs, rhs }
+        | MonoStmtKind::ModAssign { lhs, rhs } => {
+            !lvalue_writes_storage(lhs, storage_fields, locals)
+                && expr_is_pure(lhs, pure)
+                && expr_is_pure(rhs, pure)
+        }
         MonoStmtKind::Match { scrutinees, arms } => {
             scrutinees.iter().all(|expr| expr_is_pure(expr, pure))
-                && arms
-                    .iter()
-                    .all(|arm| arm.body.iter().all(|stmt| stmt_is_pure(db, stmt, pure)))
+                && arms.iter().all(|arm| {
+                    let mut arm_locals = locals.clone();
+                    for pat in &arm.pats {
+                        collect_pat_binders(pat, &mut arm_locals);
+                    }
+                    stmts_are_pure(db, &arm.body, pure, storage_fields, &mut arm_locals)
+                })
         }
         MonoStmtKind::For {
             init,
@@ -1850,23 +2103,30 @@ fn stmt_is_pure<'db>(db: &'db dyn Db, stmt: &MonoStmt<'db>, pure: &FxHashSet<Str
             post,
             body,
         } => {
-            init.iter().all(|stmt| stmt_is_pure(db, stmt, pure))
+            let mut loop_locals = locals.clone();
+            let mut post_locals = loop_locals.clone();
+            stmts_are_pure(db, init, pure, storage_fields, &mut loop_locals)
                 && expr_is_pure(cond, pure)
-                && post.iter().all(|stmt| stmt_is_pure(db, stmt, pure))
-                && body.iter().all(|stmt| stmt_is_pure(db, stmt, pure))
+                && stmts_are_pure(db, post, pure, storage_fields, &mut post_locals)
+                && stmts_are_pure(db, body, pure, storage_fields, &mut loop_locals)
         }
         MonoStmtKind::If {
             cond,
             then_body,
             else_body,
         } => {
+            let mut then_locals = locals.clone();
+            let mut else_locals = locals.clone();
             expr_is_pure(cond, pure)
-                && then_body.iter().all(|stmt| stmt_is_pure(db, stmt, pure))
-                && else_body
-                    .as_ref()
-                    .is_none_or(|body| body.iter().all(|stmt| stmt_is_pure(db, stmt, pure)))
+                && stmts_are_pure(db, then_body, pure, storage_fields, &mut then_locals)
+                && else_body.as_ref().is_none_or(|body| {
+                    stmts_are_pure(db, body, pure, storage_fields, &mut else_locals)
+                })
         }
-        MonoStmtKind::Block(body) => body.iter().all(|stmt| stmt_is_pure(db, stmt, pure)),
+        MonoStmtKind::Block(body) => {
+            let mut block_locals = locals.clone();
+            stmts_are_pure(db, body, pure, storage_fields, &mut block_locals)
+        }
         MonoStmtKind::Assembly(body) => asm_is_interpretable(db, body),
         MonoStmtKind::Break | MonoStmtKind::Continue => true,
         MonoStmtKind::Error => false,
@@ -1911,6 +2171,326 @@ fn expr_is_pure(expr: &MonoExpr<'_>, pure: &FxHashSet<String>) -> bool {
         MonoExprKind::Lambda { .. } => true,
         MonoExprKind::Error => false,
     }
+}
+
+fn compute_write_effects<'db>(
+    functions: &FxHashMap<String, MonoFunction<'db>>,
+    storage_fields: &FxHashSet<String>,
+) -> FxHashMap<String, AssignedNames> {
+    let mut effects = functions
+        .keys()
+        .map(|name| (name.clone(), AssignedNames::empty()))
+        .collect::<FxHashMap<_, _>>();
+    loop {
+        let mut changed = false;
+        for (name, function) in functions {
+            let next = function_write_effects(function, storage_fields, &effects);
+            if effects.get(name) != Some(&next) {
+                effects.insert(name.clone(), next);
+                changed = true;
+            }
+        }
+        if !changed {
+            return effects;
+        }
+    }
+}
+
+fn function_write_effects<'db>(
+    function: &MonoFunction<'db>,
+    storage_fields: &FxHashSet<String>,
+    call_effects: &FxHashMap<String, AssignedNames>,
+) -> AssignedNames {
+    let mut locals = function
+        .params
+        .iter()
+        .map(|param| param.name.clone())
+        .collect::<FxHashSet<_>>();
+    let mut effects = AssignedNames::empty();
+    collect_write_effects_in_stmts(
+        &function.body,
+        storage_fields,
+        call_effects,
+        &mut locals,
+        &mut effects,
+    );
+    effects
+}
+
+fn collect_write_effects_in_stmts<'db>(
+    stmts: &[MonoStmt<'db>],
+    storage_fields: &FxHashSet<String>,
+    call_effects: &FxHashMap<String, AssignedNames>,
+    locals: &mut FxHashSet<String>,
+    effects: &mut AssignedNames,
+) {
+    for stmt in stmts {
+        match &stmt.kind {
+            MonoStmtKind::Let { id, init, .. } => {
+                if let Some(init) = init {
+                    effects.merge(expr_write_effects_from_summary(init, call_effects));
+                }
+                locals.insert(id.name.clone());
+            }
+            MonoStmtKind::Return(expr) => {
+                if let Some(expr) = expr {
+                    effects.merge(expr_write_effects_from_summary(expr, call_effects));
+                }
+            }
+            MonoStmtKind::Expr(expr) => {
+                effects.merge(expr_write_effects_from_summary(expr, call_effects));
+            }
+            MonoStmtKind::Assign { lhs, rhs }
+            | MonoStmtKind::AddAssign { lhs, rhs }
+            | MonoStmtKind::SubAssign { lhs, rhs }
+            | MonoStmtKind::BitXorAssign { lhs, rhs }
+            | MonoStmtKind::BitAndAssign { lhs, rhs }
+            | MonoStmtKind::BitOrAssign { lhs, rhs }
+            | MonoStmtKind::ModAssign { lhs, rhs } => {
+                if lvalue_writes_storage(lhs, storage_fields, locals) {
+                    if let Some(name) = lvalue_root_name(lhs) {
+                        effects.insert(name);
+                    } else {
+                        effects.merge(AssignedNames::All);
+                    }
+                }
+                effects.merge(expr_write_effects_from_summary(lhs, call_effects));
+                effects.merge(expr_write_effects_from_summary(rhs, call_effects));
+            }
+            MonoStmtKind::Match { scrutinees, arms } => {
+                for scrutinee in scrutinees {
+                    effects.merge(expr_write_effects_from_summary(scrutinee, call_effects));
+                }
+                for arm in arms {
+                    let mut arm_locals = locals.clone();
+                    for pat in &arm.pats {
+                        collect_pat_binders(pat, &mut arm_locals);
+                    }
+                    collect_write_effects_in_stmts(
+                        &arm.body,
+                        storage_fields,
+                        call_effects,
+                        &mut arm_locals,
+                        effects,
+                    );
+                }
+            }
+            MonoStmtKind::For {
+                init,
+                cond,
+                post,
+                body,
+            } => {
+                let mut loop_locals = locals.clone();
+                collect_write_effects_in_stmts(
+                    init,
+                    storage_fields,
+                    call_effects,
+                    &mut loop_locals,
+                    effects,
+                );
+                effects.merge(expr_write_effects_from_summary(cond, call_effects));
+                let mut post_locals = loop_locals.clone();
+                collect_write_effects_in_stmts(
+                    post,
+                    storage_fields,
+                    call_effects,
+                    &mut post_locals,
+                    effects,
+                );
+                collect_write_effects_in_stmts(
+                    body,
+                    storage_fields,
+                    call_effects,
+                    &mut loop_locals,
+                    effects,
+                );
+            }
+            MonoStmtKind::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                effects.merge(expr_write_effects_from_summary(cond, call_effects));
+                let mut then_locals = locals.clone();
+                collect_write_effects_in_stmts(
+                    then_body,
+                    storage_fields,
+                    call_effects,
+                    &mut then_locals,
+                    effects,
+                );
+                if let Some(else_body) = else_body {
+                    let mut else_locals = locals.clone();
+                    collect_write_effects_in_stmts(
+                        else_body,
+                        storage_fields,
+                        call_effects,
+                        &mut else_locals,
+                        effects,
+                    );
+                }
+            }
+            MonoStmtKind::Block(body) => {
+                let mut block_locals = locals.clone();
+                collect_write_effects_in_stmts(
+                    body,
+                    storage_fields,
+                    call_effects,
+                    &mut block_locals,
+                    effects,
+                );
+            }
+            MonoStmtKind::Assembly(_) => effects.merge(AssignedNames::All),
+            MonoStmtKind::Break | MonoStmtKind::Continue | MonoStmtKind::Error => {}
+        }
+    }
+}
+
+fn expr_write_effects_from_summary<'db>(
+    expr: &MonoExpr<'db>,
+    call_effects: &FxHashMap<String, AssignedNames>,
+) -> AssignedNames {
+    match &expr.kind {
+        MonoExprKind::Var(_)
+        | MonoExprKind::Lit(_)
+        | MonoExprKind::Proxy(_)
+        | MonoExprKind::Error => AssignedNames::empty(),
+        MonoExprKind::Tuple(elems) => exprs_write_effects_from_summary(elems, call_effects),
+        MonoExprKind::Call {
+            callee,
+            args,
+            origin,
+        } => {
+            let mut effects = exprs_write_effects_from_summary(args, call_effects);
+            if !matches!(origin, MonoCallOrigin::Builtin(_)) {
+                effects.merge(
+                    call_effects
+                        .get(&callee.name)
+                        .cloned()
+                        .unwrap_or(AssignedNames::All),
+                );
+            }
+            effects
+        }
+        MonoExprKind::Con { args, .. } => exprs_write_effects_from_summary(args, call_effects),
+        MonoExprKind::ClosureDispatch { callee, args } => {
+            let mut effects = expr_write_effects_from_summary(callee, call_effects);
+            effects.merge(exprs_write_effects_from_summary(args, call_effects));
+            effects.merge(AssignedNames::All);
+            effects
+        }
+        MonoExprKind::BinOp { lhs, rhs, .. } => {
+            let mut effects = expr_write_effects_from_summary(lhs, call_effects);
+            effects.merge(expr_write_effects_from_summary(rhs, call_effects));
+            effects
+        }
+        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
+            expr_write_effects_from_summary(expr, call_effects)
+        }
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index } => {
+            let mut effects = expr_write_effects_from_summary(base, call_effects);
+            effects.merge(expr_write_effects_from_summary(index, call_effects));
+            effects
+        }
+        MonoExprKind::Field { base, .. } => expr_write_effects_from_summary(base, call_effects),
+        MonoExprKind::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            let mut effects = expr_write_effects_from_summary(cond, call_effects);
+            effects.merge(expr_write_effects_from_summary(then_expr, call_effects));
+            effects.merge(expr_write_effects_from_summary(else_expr, call_effects));
+            effects
+        }
+        MonoExprKind::Lambda { .. } => AssignedNames::empty(),
+    }
+}
+
+fn exprs_write_effects_from_summary<'db>(
+    exprs: &[MonoExpr<'db>],
+    call_effects: &FxHashMap<String, AssignedNames>,
+) -> AssignedNames {
+    let mut effects = AssignedNames::empty();
+    for expr in exprs {
+        effects.merge(expr_write_effects_from_summary(expr, call_effects));
+    }
+    effects
+}
+
+fn lvalue_writes_storage(
+    lhs: &MonoExpr<'_>,
+    storage_fields: &FxHashSet<String>,
+    locals: &FxHashSet<String>,
+) -> bool {
+    expr_contains_storage_index(lhs)
+        || lvalue_root_name(lhs)
+            .is_some_and(|name| storage_fields.contains(&name) && !locals.contains(&name))
+}
+
+fn expr_contains_storage_index(expr: &MonoExpr<'_>) -> bool {
+    match &expr.kind {
+        MonoExprKind::StorageIndex { .. } => true,
+        MonoExprKind::Tuple(elems) => elems.iter().any(expr_contains_storage_index),
+        MonoExprKind::Call { args, .. } | MonoExprKind::Con { args, .. } => {
+            args.iter().any(expr_contains_storage_index)
+        }
+        MonoExprKind::ClosureDispatch { callee, args } => {
+            expr_contains_storage_index(callee) || args.iter().any(expr_contains_storage_index)
+        }
+        MonoExprKind::BinOp { lhs, rhs, .. } => {
+            expr_contains_storage_index(lhs) || expr_contains_storage_index(rhs)
+        }
+        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
+            expr_contains_storage_index(expr)
+        }
+        MonoExprKind::Index { base, index } => {
+            expr_contains_storage_index(base) || expr_contains_storage_index(index)
+        }
+        MonoExprKind::Field { base, .. } => expr_contains_storage_index(base),
+        MonoExprKind::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            expr_contains_storage_index(cond)
+                || expr_contains_storage_index(then_expr)
+                || expr_contains_storage_index(else_expr)
+        }
+        MonoExprKind::Var(_)
+        | MonoExprKind::Lit(_)
+        | MonoExprKind::Proxy(_)
+        | MonoExprKind::Lambda { .. }
+        | MonoExprKind::Error => false,
+    }
+}
+
+fn storage_field_names<'db>(db: &'db dyn Db, module: &MonoModule<'db>) -> FxHashSet<String> {
+    let mut fields = FxHashSet::default();
+    for item in &module.items {
+        let MonoItem::Contract(contract) = item else {
+            continue;
+        };
+        let parsed = parse_file_to_hir(db, contract.def.file(db)).module(db);
+        if let Some(contract_def) = find_contract(db, parsed, contract.def) {
+            for field in contract_def.fields(db) {
+                fields.insert(ident_text(db, field.name()));
+            }
+        }
+    }
+    fields
+}
+
+fn find_contract<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<ContractDef<'db>> {
+    module.items(db).iter().find_map(|item| match item {
+        Item::ContractDef(contract) if contract.def_id_value(db) == def => Some(*contract),
+        _ => None,
+    })
 }
 
 fn asm_is_interpretable<'db>(db: &'db dyn Db, body: &[YulStmt<'db>]) -> bool {
@@ -2181,70 +2761,28 @@ fn literal_bigint(lit: &LitKind) -> Option<BigInt> {
     }
 }
 
-fn env_without_assigned<'db>(env: &VEnv<'db>, stmts: &[MonoStmt<'db>]) -> VEnv<'db> {
-    remove_names(env.clone(), &assigned_in_stmts(stmts))
-}
-
-fn remove_names<'db>(mut env: VEnv<'db>, names: &FxHashSet<String>) -> VEnv<'db> {
-    for name in names {
-        env.remove(name);
-    }
-    env
-}
-
-fn remove_comptime_names(mut env: CEnv, names: &FxHashSet<String>) -> CEnv {
-    for name in names {
-        env.remove(name);
-    }
-    env
-}
-
-fn assigned_in_stmts(stmts: &[MonoStmt<'_>]) -> FxHashSet<String> {
-    let mut assigned = FxHashSet::default();
-    collect_assigned(stmts, &mut assigned);
-    assigned
-}
-
-fn collect_assigned(stmts: &[MonoStmt<'_>], out: &mut FxHashSet<String>) {
-    for stmt in stmts {
-        match &stmt.kind {
-            MonoStmtKind::Assign { lhs, .. }
-            | MonoStmtKind::AddAssign { lhs, .. }
-            | MonoStmtKind::SubAssign { lhs, .. }
-            | MonoStmtKind::BitXorAssign { lhs, .. }
-            | MonoStmtKind::BitAndAssign { lhs, .. }
-            | MonoStmtKind::BitOrAssign { lhs, .. }
-            | MonoStmtKind::ModAssign { lhs, .. } => {
-                if let Some(name) = lvalue_root_name(lhs) {
-                    out.insert(name);
-                }
+fn remove_assigned<'db>(mut env: VEnv<'db>, assigned: &AssignedNames) -> VEnv<'db> {
+    match assigned {
+        AssignedNames::All => env.clear(),
+        AssignedNames::Names(names) => {
+            for name in names {
+                env.remove(name);
             }
-            MonoStmtKind::Match { arms, .. } => {
-                for arm in arms {
-                    collect_assigned(&arm.body, out);
-                }
-            }
-            MonoStmtKind::For {
-                init, post, body, ..
-            } => {
-                collect_assigned(init, out);
-                collect_assigned(post, out);
-                collect_assigned(body, out);
-            }
-            MonoStmtKind::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                collect_assigned(then_body, out);
-                if let Some(else_body) = else_body {
-                    collect_assigned(else_body, out);
-                }
-            }
-            MonoStmtKind::Block(body) => collect_assigned(body, out),
-            _ => {}
         }
     }
+    env
+}
+
+fn remove_comptime_assigned(mut env: CEnv, assigned: &AssignedNames) -> CEnv {
+    match assigned {
+        AssignedNames::All => env.clear(),
+        AssignedNames::Names(names) => {
+            for name in names {
+                env.remove(name);
+            }
+        }
+    }
+    env
 }
 
 fn lvalue_root_name(expr: &MonoExpr<'_>) -> Option<String> {
@@ -3256,81 +3794,37 @@ fn two_pow_256() -> BigInt {
     BigInt { sign: 1, limbs }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum AssignedNames {
     Names(FxHashSet<String>),
     All,
 }
 
-fn collect_assigned_names(stmts: &[MonoStmt<'_>], out: &mut FxHashSet<String>) -> bool {
-    // Returns false if the body may mutate arbitrary state (assembly), in
-    // which case the caller must invalidate everything.
-    for stmt in stmts {
-        match &stmt.kind {
-            MonoStmtKind::Assign { lhs, .. }
-            | MonoStmtKind::AddAssign { lhs, .. }
-            | MonoStmtKind::SubAssign { lhs, .. }
-            | MonoStmtKind::BitXorAssign { lhs, .. }
-            | MonoStmtKind::BitAndAssign { lhs, .. }
-            | MonoStmtKind::BitOrAssign { lhs, .. }
-            | MonoStmtKind::ModAssign { lhs, .. } => {
-                if let Some(name) = lvalue_root_name(lhs) {
-                    out.insert(name);
-                }
-            }
-            MonoStmtKind::Assembly(_) => return false,
-            MonoStmtKind::Match { arms, .. } => {
-                for arm in arms {
-                    if !collect_assigned_names(&arm.body, out) {
-                        return false;
-                    }
-                }
-            }
-            MonoStmtKind::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                if !collect_assigned_names(then_body, out) {
-                    return false;
-                }
-                if let Some(else_body) = else_body
-                    && !collect_assigned_names(else_body, out)
-                {
-                    return false;
-                }
-            }
-            MonoStmtKind::Block(body) => {
-                if !collect_assigned_names(body, out) {
-                    return false;
-                }
-            }
-            MonoStmtKind::For {
-                init, post, body, ..
-            } => {
-                if !collect_assigned_names(init, out)
-                    || !collect_assigned_names(post, out)
-                    || !collect_assigned_names(body, out)
-                {
-                    return false;
-                }
-            }
-            MonoStmtKind::Let { .. }
-            | MonoStmtKind::Return(_)
-            | MonoStmtKind::Expr(_)
-            | MonoStmtKind::Break
-            | MonoStmtKind::Continue
-            | MonoStmtKind::Error => {}
+impl AssignedNames {
+    fn empty() -> Self {
+        AssignedNames::Names(FxHashSet::default())
+    }
+
+    fn insert(&mut self, name: String) {
+        if let AssignedNames::Names(names) = self {
+            names.insert(name);
         }
     }
-    true
-}
 
-fn assigned_names(stmts: &[MonoStmt<'_>]) -> AssignedNames {
-    let mut out = FxHashSet::default();
-    if collect_assigned_names(stmts, &mut out) {
-        AssignedNames::Names(out)
-    } else {
-        AssignedNames::All
+    fn merge(&mut self, other: AssignedNames) {
+        match (self, other) {
+            (this @ AssignedNames::Names(_), AssignedNames::All) => *this = AssignedNames::All,
+            (AssignedNames::All, _) => {}
+            (AssignedNames::Names(lhs), AssignedNames::Names(rhs)) => lhs.extend(rhs),
+        }
+    }
+
+    fn insert_pat_binders(&mut self, pats: &[MonoPat<'_>]) {
+        if let AssignedNames::Names(names) = self {
+            for pat in pats {
+                collect_pat_binders(pat, names);
+            }
+        }
     }
 }
 

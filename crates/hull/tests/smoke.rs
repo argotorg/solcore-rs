@@ -607,6 +607,167 @@ contract C {
 }
 
 #[test]
+fn evaluator_does_not_fold_past_unknown_return() {
+    let hull = pretty_src_hull(
+        "eval_return_unknown_abort",
+        r#"
+contract RetUnknown {
+  function pick(flag: bool, y: word) -> word {
+    match flag {
+      | true => return y;
+      | false => return 5;
+    }
+    return 0;
+  }
+
+  public function get(x: word) -> word {
+    return pick(true, x);
+  }
+}
+"#,
+    );
+    let get = hull_function(&hull, "_get_");
+    assert!(get.contains("_pick_"), "{get}\n{hull}");
+    assert!(!get.contains("return 0"), "{get}\n{hull}");
+}
+
+#[test]
+fn evaluator_does_not_inline_storage_writing_helpers() {
+    let mapping_hull = pretty_src_hull(
+        "eval_storage_writer_mapping",
+        r#"
+contract MappingWriter {
+  m: mapping(word, word);
+
+  function set(k: word, v: word) -> word {
+    m[k] = v;
+    return v;
+  }
+
+  public function main() -> word {
+    let a : word = set(1, 42);
+    return m[1];
+  }
+}
+"#,
+    );
+    let mapping_main = hull_function(&mapping_hull, "_main_");
+    assert!(
+        mapping_main.contains("_set_"),
+        "{mapping_main}\n{mapping_hull}"
+    );
+    assert!(mapping_hull.contains("sstore("), "{mapping_hull}");
+    assert!(
+        mapping_main.contains("sload(__solcore_storage_hash2(0, 1))"),
+        "{mapping_main}\n{mapping_hull}"
+    );
+
+    let direct_hull = pretty_src_hull(
+        "eval_storage_writer_direct",
+        r#"
+contract DirectWriter {
+  x: word;
+
+  function setv(v: word) -> word {
+    x = v;
+    return v;
+  }
+
+  public function main() -> word {
+    let a : word = setv(9);
+    return x;
+  }
+}
+"#,
+    );
+    let direct_main = hull_function(&direct_hull, "_main_");
+    assert!(
+        direct_main.contains("_setv_"),
+        "{direct_main}\n{direct_hull}"
+    );
+    assert!(direct_hull.contains("sstore(0,"), "{direct_hull}");
+    assert!(
+        direct_main.contains("return sload(0)"),
+        "{direct_main}\n{direct_hull}"
+    );
+    assert!(
+        !direct_main.contains("return 9"),
+        "{direct_main}\n{direct_hull}"
+    );
+}
+
+#[test]
+fn evaluator_invalidates_storage_bindings_after_residual_calls() {
+    let hull = pretty_src_hull(
+        "eval_stale_storage_call",
+        r#"
+contract StaleCall {
+  x: word;
+
+  function setx() -> () {
+    x = 8;
+  }
+
+  public function main() -> word {
+    x = 7;
+    setx();
+    return x;
+  }
+}
+"#,
+    );
+    let main = hull_function(&hull, "_main_");
+    assert_contains_in_order(
+        "stale storage call main",
+        main,
+        &["sstore(0,", "_setx_", "return sload(0)"],
+    );
+    assert!(!main.contains("return 7"), "{main}\n{hull}");
+}
+
+#[test]
+fn evaluator_invalidates_residual_assembly_branch_assignments() {
+    let if_hull = pretty_src_hull(
+        "eval_if_asm_assignment",
+        r#"
+contract IfAsm {
+  public function f(b: bool) -> word {
+    let x : word = 1;
+    if (b) {
+      assembly { x := 5 }
+    }
+    return x;
+  }
+}
+"#,
+    );
+    let f = hull_function(&if_hull, "_f_");
+    assert!(f.contains("x := 5"), "{f}\n{if_hull}");
+    assert!(f.contains("return x"), "{f}\n{if_hull}");
+    assert!(!f.contains("return 1"), "{f}\n{if_hull}");
+
+    let match_hull = pretty_src_hull(
+        "eval_match_asm_assignment",
+        r#"
+contract MatchAsm {
+  public function g(b: bool) -> word {
+    let x : word = 1;
+    match b {
+      | true => assembly { x := 5 }
+      | false => {}
+    }
+    return x;
+  }
+}
+"#,
+    );
+    let g = hull_function(&match_hull, "_g_");
+    assert!(g.contains("x := 5"), "{g}\n{match_hull}");
+    assert!(g.contains("return x"), "{g}\n{match_hull}");
+    assert!(!g.contains("return 1"), "{g}\n{match_hull}");
+}
+
+#[test]
 #[ignore]
 fn corpus_emission_count() {
     if let Some(path) = env::var_os("HULL_COUNT_ONE") {
@@ -993,6 +1154,38 @@ fn assert_contains_in_order(label: &str, haystack: &str, needles: &[&str]) {
         };
         offset += found + needle.len();
     }
+}
+
+fn hull_function<'a>(hull: &'a str, name_fragment: &str) -> &'a str {
+    let mut search_from = 0;
+    while let Some(relative_start) = hull[search_from..].find("function ") {
+        let start = search_from + relative_start;
+        let header_end = hull[start..]
+            .find('{')
+            .map(|offset| start + offset)
+            .expect("function header has body");
+        let header = &hull[start..header_end];
+        let body_start = header_end + 1;
+        let mut depth = 1usize;
+        for (offset, ch) in hull[body_start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let end = body_start + offset + ch.len_utf8();
+                        if header.contains(name_fragment) {
+                            return &hull[start..end];
+                        }
+                        search_from = end;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    panic!("missing function containing {name_fragment:?}\n{hull}");
 }
 
 fn assert_fixture_emits_without_match_lowering_regressions(relative: &str) {
