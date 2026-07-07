@@ -1,0 +1,16 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/ergo_hull_word_match_no_default/main.solc
+---
+error[HULL-EMIT]: NonExhaustiveMatch
+ --> /main/main.solc:3:5
+  |
+2 |     public function name(d : word) -> word {
+3 | /     match d {
+4 | |     | 0 => return 100;
+5 | |     | 1 => return 101;
+6 | |     }
+  | |_____^ emit failed here
+7 |     }
+  |

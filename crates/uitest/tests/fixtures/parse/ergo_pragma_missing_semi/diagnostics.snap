@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/ergo_pragma_missing_semi/main.solc
+---
+error: unexpected `function`; expected `;` while parsing pragma declaration
+ --> /main/main.solc:3:1
+  |
+2 |
+3 | function f() -> word {
+  | ^^^^^^^^
+4 |     return 1;
+  |

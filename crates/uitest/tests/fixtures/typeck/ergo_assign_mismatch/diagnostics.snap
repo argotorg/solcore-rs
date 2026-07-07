@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_assign_mismatch/main.solc
+---
+error[SC0201]: type mismatch: expected word, got bool
+ --> /main/main.solc:3:7
+  |
+2 |   let x : word = 1;
+3 |   x = true;
+  |       ^^^^ expression has mismatched type
+4 |   return x;
+  |

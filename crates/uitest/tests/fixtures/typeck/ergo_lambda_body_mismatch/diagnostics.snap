@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_lambda_body_mismatch/main.solc
+---
+error[SC0201]: type mismatch: expected word, got bool
+ --> /main/main.solc:6:39
+  |
+5 | function g() -> word {
+6 |   return apply(lam (y: word) { return true; }, 1);
+  |                                       ^^^^ expression has mismatched type
+7 | }
+  |

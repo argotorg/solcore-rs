@@ -1,0 +1,24 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/ergo_import_symbol_typo/main.solc
+---
+error[SC0110]: unknown import item `valu`
+ --> /main/main.solc:1:14
+  |
+1 | import util.{valu};
+  |              ^^^^ unknown import item
+2 |
+3 | function main() -> word {
+  |
+  = note: check the imported module's exported names
+---
+
+error[SC0101]: undefined name: valu
+ --> /main/main.solc:4:10
+  |
+3 | function main() -> word {
+4 |   return valu(1);
+  |          ^^^^ unknown name
+5 | }
+  |

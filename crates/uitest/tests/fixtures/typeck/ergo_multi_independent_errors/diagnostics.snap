@@ -1,0 +1,33 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_multi_independent_errors/main.solc
+---
+error[SC0201]: type mismatch: expected word, got bool
+ --> /main/main.solc:2:10
+  |
+1 | function a() -> word {
+2 |   return true;
+  |          ^^^^ expression has mismatched type
+3 | }
+  |
+---
+
+error[SC0201]: type mismatch: expected numeric, got bool
+ --> /main/main.solc:6:10
+  |
+5 | function b() -> bool {
+6 |   return 1;
+  |          ^ expression has mismatched type
+7 | }
+  |
+---
+
+error[SC0206]: non-callable value of type word
+  --> /main/main.solc:10:10
+   |
+ 9 | function c(x: word) -> word {
+10 |   return x(1);
+   |          ^ callee is not callable
+11 | }
+   |

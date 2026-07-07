@@ -1,0 +1,63 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/specialize/ergo_ct_public_param/main.solc
+---
+error[SPECIALIZE]: integer type survived comptime erasure: parameter 'x': comptime word
+ --> /main/main.solc:8:24
+  |
+7 | contract CtPublicParam {
+8 |   public function main(comptime x : word) -> word {
+  |                        ^^^^^^^^^^^^^^^^^ specialization failed here
+9 |     return x + x;
+  |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:9:12
+   |
+ 8 |   public function main(comptime x : word) -> word {
+ 9 |     return x + x;
+   |            ^ specialization failed here
+10 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'x': comptime word
+  --> /main/main.solc:9:12
+   |
+ 8 |   public function main(comptime x : word) -> word {
+ 9 |     return x + x;
+   |            ^ specialization failed here
+10 |   }
+   |
+---
+
+error[SPECIALIZE]: missing evidence: add
+  --> /main/main.solc:9:12
+   |
+ 8 |   public function main(comptime x : word) -> word {
+ 9 |     return x + x;
+   |            ^^^^^ specialization failed here
+10 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+  --> /main/main.solc:9:16
+   |
+ 8 |   public function main(comptime x : word) -> word {
+ 9 |     return x + x;
+   |                ^ specialization failed here
+10 |   }
+   |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'x': comptime word
+  --> /main/main.solc:9:16
+   |
+ 8 |   public function main(comptime x : word) -> word {
+ 9 |     return x + x;
+   |                ^ specialization failed here
+10 |   }
+   |

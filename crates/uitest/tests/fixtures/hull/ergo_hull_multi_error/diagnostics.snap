@@ -1,0 +1,63 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/ergo_hull_multi_error/main.solc
+---
+error[HULL-EMIT]: UnsupportedType { ty: "string" }
+ --> /main/main.solc:5:5
+  |
+4 |   public function first() -> word {
+5 |     let s : string = "oops";
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^ emit failed here
+6 |     return 1;
+  |
+---
+
+error[HULL-EMIT]: UnsupportedLiteral { literal: "/"oops/"" }
+ --> /main/main.solc:5:22
+  |
+4 |   public function first() -> word {
+5 |     let s : string = "oops";
+  |                      ^^^^^^ emit failed here
+6 |     return 1;
+  |
+---
+
+error[HULL-EMIT]: UnsupportedType { ty: "string" }
+ --> /main/main.solc:5:22
+  |
+4 |   public function first() -> word {
+5 |     let s : string = "oops";
+  |                      ^^^^^^ emit failed here
+6 |     return 1;
+  |
+---
+
+error[HULL-EMIT]: UnsupportedType { ty: "string" }
+  --> /main/main.solc:10:5
+   |
+ 9 |   public function second() -> word {
+10 |     let t : string = "also bad";
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ emit failed here
+11 |     return 2;
+   |
+---
+
+error[HULL-EMIT]: UnsupportedLiteral { literal: "/"also bad/"" }
+  --> /main/main.solc:10:22
+   |
+ 9 |   public function second() -> word {
+10 |     let t : string = "also bad";
+   |                      ^^^^^^^^^^ emit failed here
+11 |     return 2;
+   |
+---
+
+error[HULL-EMIT]: UnsupportedType { ty: "string" }
+  --> /main/main.solc:10:22
+   |
+ 9 |   public function second() -> word {
+10 |     let t : string = "also bad";
+   |                      ^^^^^^^^^^ emit failed here
+11 |     return 2;
+   |

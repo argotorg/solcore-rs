@@ -1,0 +1,47 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/hull/ergo_hull_string_return/main.solc
+---
+error[HULL-EMIT]: UnsupportedDispatchEntry { signature: "main()", reason: "non-word ABI shape" }
+ --> /main/main.solc:4:3
+  |
+3 |   contract Answer {
+4 | /   public function main() {
+5 | |     return "42";
+6 | |   }
+  | |___^ emit failed here
+7 |   }
+  |
+---
+
+error[HULL-EMIT]: UnsupportedType { ty: "string" }
+ --> /main/main.solc:4:3
+  |
+3 |   contract Answer {
+4 | /   public function main() {
+5 | |     return "42";
+6 | |   }
+  | |___^ emit failed here
+7 |   }
+  |
+---
+
+error[HULL-EMIT]: UnsupportedLiteral { literal: "/"42/"" }
+ --> /main/main.solc:5:12
+  |
+4 |   public function main() {
+5 |     return "42";
+  |            ^^^^ emit failed here
+6 |   }
+  |
+---
+
+error[HULL-EMIT]: UnsupportedType { ty: "string" }
+ --> /main/main.solc:5:12
+  |
+4 |   public function main() {
+5 |     return "42";
+  |            ^^^^ emit failed here
+6 |   }
+  |

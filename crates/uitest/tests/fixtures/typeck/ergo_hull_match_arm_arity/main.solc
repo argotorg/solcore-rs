@@ -1,0 +1,15 @@
+data Nat = Zero | Succ(Nat);
+
+function pick(x : Nat, y : Nat) -> word {
+  match x, y {
+  | Nat.Zero => return 0;
+  | Nat.Succ(a), Nat.Zero => return 1;
+  | Nat.Succ(a), Nat.Succ(b) => return 2;
+  }
+}
+
+contract T {
+  public function main(w : word) -> word {
+    return pick(Nat.Zero, Nat.Zero);
+  }
+}

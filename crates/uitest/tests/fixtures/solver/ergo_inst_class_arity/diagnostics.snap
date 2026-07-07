@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/ergo_inst_class_arity/main.solc
+---
+error[SC0217]: class arity mismatch for `Rel`: expected 1, got 0
+ --> /main/main.solc:5:10
+  |
+4 |
+5 | instance word : Rel {
+  |          ^^^^^^^^^^ class predicate arity mismatch
+6 |   function rel(x: word, y: word) -> word {
+  |

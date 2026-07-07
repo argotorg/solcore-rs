@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/ergo_contract_no_instance/main.solc
+---
+error[SC0207]: unsatisfied class constraint: word:class:Eq
+  --> /main/main.solc:9:12
+   |
+ 8 |   function go(x: word) -> Bool {
+ 9 |     return Eq.eq(x, x);
+   |            ^^^^^^^^^^^ constraint originates here
+10 |   }
+   |

@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_tuple_arity_mismatch/main.solc
+---
+error[SC0203]: wrong arity for tuple: expected 3, got 2
+ --> /main/main.solc:2:10
+  |
+1 | function f() -> (word, word, word) {
+2 |   return (1, 2);
+  |          ^^^^^^ wrong arity here
+3 | }
+  |

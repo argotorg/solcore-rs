@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/ergo_typo_did_you_mean/main.solc
+---
+error[SC0101]: undefined name: computeVale
+ --> /main/main.solc:6:10
+  |
+5 | function main() -> word {
+6 |   return computeVale(1);
+  |          ^^^^^^^^^^^ unknown name
+7 | }
+  |

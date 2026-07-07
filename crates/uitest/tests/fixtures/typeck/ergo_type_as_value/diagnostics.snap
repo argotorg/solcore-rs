@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_type_as_value/main.solc
+---
+error[SC0228]: type name used as value: `Pair`
+ --> /main/main.solc:4:11
+  |
+3 | function main() -> word {
+4 |   let p = Pair;
+  |           ^^^^ not a value
+5 |   return 0;
+  |

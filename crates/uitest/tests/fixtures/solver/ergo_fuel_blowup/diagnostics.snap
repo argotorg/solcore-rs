@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/ergo_fuel_blowup/main.solc
+---
+error[SC0209]: cannot solve class constraint word:class:C: solver exceeded its iteration bound
+  --> /main/main.solc:16:10
+   |
+15 | function f() -> word {
+16 |   return C.c(0);
+   |          ^^^^^^ constraint originates here
+17 | }
+   |

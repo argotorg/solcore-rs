@@ -1,0 +1,34 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_ct_indirect_escape/main.solc
+---
+error[SC0109]: module not found: std
+ --> /main/main.solc:5:1
+  |
+4 | // calls, this silently defeats the comptime contract (accept-bug).
+5 | import std;
+  | ^^^^^^^^^^^ module reference
+6 |
+  |
+  = note: check the module path or add the missing source file
+---
+
+error[SC0207]: unsatisfied class constraint: operator Add.add
+  --> /main/main.solc:17:12
+   |
+16 |   function double(comptime x : word) -> comptime word {
+17 |     return x + x;
+   |            ^^^^^ constraint originates here
+18 |   }
+   |
+---
+
+error[SC0240]: runtime value passed to comptime parameter 'x' of 'double'
+  --> /main/main.solc:20:44
+   |
+19 |   function main() -> word {
+20 |     let g = lam (y : word) { return double(y); };
+   |                                            ^ runtime value passed here
+21 |     return g(sloadWord());
+   |

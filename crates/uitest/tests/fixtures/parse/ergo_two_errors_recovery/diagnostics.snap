@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/ergo_two_errors_recovery/main.solc
+---
+error: unexpected `let`; expected `!`, `(`, `.`, `@`, `if`, or `lam`
+ --> /main/main.solc:2:5
+  |
+1 | function f() -> word {
+2 |     let x = ;
+  |     ^^^
+3 |     return 0;
+  |
+---
+
+error: unexpected `;`; expected `&&`, `&`, `(`, `)`, `,`, `.`, `:`, `?`, `[`, `^`, `|`, or `||`
+  --> /main/main.solc:12:14
+   |
+11 | function h() -> word {
+12 |     return (1;
+   |              ^
+13 | }
+   |

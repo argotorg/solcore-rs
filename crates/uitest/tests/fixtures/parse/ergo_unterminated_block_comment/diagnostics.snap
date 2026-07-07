@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/ergo_unterminated_block_comment/main.solc
+---
+error: unterminated block comment
+ --> /main/main.solc:4:1
+  |
+3 |   }
+4 | / /* this comment never ends
+5 | | function g() -> word {
+6 | |     return 2;
+7 | | }
+  | |__^

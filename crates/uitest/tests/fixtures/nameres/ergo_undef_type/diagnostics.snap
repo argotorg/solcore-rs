@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/ergo_undef_type/main.solc
+---
+error[SC0103]: undefined type constructor: MissingType
+ --> /main/main.solc:1:20
+  |
+1 | function takeIt(x: MissingType) -> word {
+  |                    ^^^^^^^^^^^ undefined type constructor
+2 |   return 0;
+3 | }
+  |

@@ -1,0 +1,13 @@
+// Two independent Hull-level problems in separate functions:
+// string literals are not representable in Hull.
+contract C {
+  public function first() -> word {
+    let s : string = "oops";
+    return 1;
+  }
+
+  public function second() -> word {
+    let t : string = "also bad";
+    return 2;
+  }
+}

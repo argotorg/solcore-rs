@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/ergo_constraint_escape/main.solc
+---
+error[SC0207]: unsatisfied class constraint: _:class:Same
+ --> /main/main.solc:8:10
+  |
+7 | forall a . function f(x: a) -> Bool {
+8 |   return Same.same(x, x);
+  |          ^^^^^^^^^^^^^^^ constraint originates here
+9 | }
+  |

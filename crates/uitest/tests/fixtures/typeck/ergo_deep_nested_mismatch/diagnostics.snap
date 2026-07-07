@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_deep_nested_mismatch/main.solc
+---
+error[SC0201]: type mismatch: expected word, got bool
+ --> /main/main.solc:7:34
+  |
+6 |   return add3(add3(x, x, add3(x, add3(x, x, x), x)),
+7 |               add3(x, x, add3(x, true, x)),
+  |                                  ^^^^ expression has mismatched type
+8 |               x);
+  |

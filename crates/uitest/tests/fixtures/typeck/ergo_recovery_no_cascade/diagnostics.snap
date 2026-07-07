@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_recovery_no_cascade/main.solc
+---
+error[SC0201]: type mismatch: expected (word, word), got bool
+ --> /main/main.solc:8:17
+  |
+7 | function f() -> word {
+8 |   let x = first(true);
+  |                 ^^^^ expression has mismatched type
+9 |   return x;
+  |
+---
+
+error[SC0201]: type mismatch: expected numeric, got bool
+  --> /main/main.solc:13:10
+   |
+12 | function g() -> bool {
+13 |   return 42;
+   |          ^^ expression has mismatched type
+14 | }
+   |

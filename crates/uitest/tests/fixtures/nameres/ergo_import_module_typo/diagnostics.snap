@@ -1,0 +1,24 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/ergo_import_module_typo/main.solc
+---
+error[SC0109]: module not found: helprs
+ --> /main/main.solc:1:1
+  |
+1 | import helprs.{helperValue};
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ module reference
+2 |
+3 | function main() -> word {
+  |
+  = note: check the module path or add the missing source file
+---
+
+error[SC0101]: undefined name: helperValue
+ --> /main/main.solc:4:10
+  |
+3 | function main() -> word {
+4 |   return helperValue(1);
+  |          ^^^^^^^^^^^ unknown name
+5 | }
+  |

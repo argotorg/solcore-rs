@@ -1,0 +1,26 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/ergo_unterminated_string/main.solc
+---
+error: invalid token `"hello;
+           return 1;
+       }
+       `
+ --> /main/main.solc:2:13
+  |
+1 |   function f() -> word {
+2 |       let s = "hello;
+  |  _____________^
+3 | |     return 1;
+4 | | }
+  | |__^
+---
+
+error: unexpected end of input; expected `{`, or `}` while parsing function definition
+ --> /main/main.solc:4:3
+  |
+2 |     let s = "hello;
+3 |     return 1;
+4 | }
+  |  ^

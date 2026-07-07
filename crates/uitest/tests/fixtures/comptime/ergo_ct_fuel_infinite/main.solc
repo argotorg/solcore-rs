@@ -1,0 +1,13 @@
+// Non-terminating comptime recursion: fuel exhaustion message quality.
+// fib-style recursion that never reaches a base case.
+import std;
+
+function spin(comptime n : integer) -> comptime integer {
+  return spin(integerAdd(n, 1));
+}
+
+contract CtFuelInfinite {
+  function main() -> word {
+    return wordFromInteger(spin(0));
+  }
+}

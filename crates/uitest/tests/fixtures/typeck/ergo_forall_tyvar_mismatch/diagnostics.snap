@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_forall_tyvar_mismatch/main.solc
+---
+error[SC0207]: unsatisfied class constraint: _:Int
+ --> /main/main.solc:2:10
+  |
+1 | forall a . function ident(x: a) -> a {
+2 |   return 1;
+  |          ^ constraint originates here
+3 | }
+  |

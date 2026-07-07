@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_match_branch_divergence/main.solc
+---
+error[SC0201]: type mismatch: expected word, got bool
+ --> /main/main.solc:6:31
+  |
+5 |   | Shape.Circle(r) => return r;
+6 |   | Shape.Square(w) => return true;
+  |                               ^^^^ expression has mismatched type
+7 |   }
+  |

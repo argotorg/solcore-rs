@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/ergo_no_instance/main.solc
+---
+error[SC0207]: unsatisfied class constraint: adt:Bool:class:Eq
+  --> /main/main.solc:14:10
+   |
+13 | function f() -> Bool {
+14 |   return Eq.eq(Bool.True, Bool.False);
+   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constraint originates here
+15 | }
+   |

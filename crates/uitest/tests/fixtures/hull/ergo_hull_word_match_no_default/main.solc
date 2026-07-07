@@ -1,0 +1,8 @@
+contract Digits {
+  public function name(d : word) -> word {
+    match d {
+    | 0 => return 100;
+    | 1 => return 101;
+    }
+  }
+}

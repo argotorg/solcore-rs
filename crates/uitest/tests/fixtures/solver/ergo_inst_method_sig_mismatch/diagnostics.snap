@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/ergo_inst_method_sig_mismatch/main.solc
+---
+error[SC0221]: Invalid instance member signature for `size`: expected (adt:Bool) -> word, got (adt:Bool) -> adt:Bool
+ --> /main/main.solc:8:3
+  |
+7 | instance Bool : Sz {
+8 |   function size(x: Bool) -> Bool {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid instance method signature
+9 |     return x;
+  |

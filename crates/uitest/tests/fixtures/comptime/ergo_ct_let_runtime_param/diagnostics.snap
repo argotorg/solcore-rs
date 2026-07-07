@@ -1,0 +1,63 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/comptime/ergo_ct_let_runtime_param/main.solc
+---
+error[SPECIALIZE]: comptime evaluation failed: comptime let 'c' is bound to a runtime expression
+ --> /main/main.solc:7:5
+  |
+6 |   function scale(k : word) -> word {
+7 |     let c : comptime word = k + 1;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+8 |     return c;
+  |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: let 'c': comptime word
+ --> /main/main.solc:7:5
+  |
+6 |   function scale(k : word) -> word {
+7 |     let c : comptime word = k + 1;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+8 |     return c;
+  |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: let annotation 'c': comptime word
+ --> /main/main.solc:7:5
+  |
+6 |   function scale(k : word) -> word {
+7 |     let c : comptime word = k + 1;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+8 |     return c;
+  |
+---
+
+error[SPECIALIZE]: missing evidence: add
+ --> /main/main.solc:7:29
+  |
+6 |   function scale(k : word) -> word {
+7 |     let c : comptime word = k + 1;
+  |                             ^^^^^ specialization failed here
+8 |     return c;
+  |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+ --> /main/main.solc:8:12
+  |
+7 |     let c : comptime word = k + 1;
+8 |     return c;
+  |            ^ specialization failed here
+9 |   }
+  |
+---
+
+error[SPECIALIZE]: integer type survived comptime erasure: variable 'c': comptime word
+ --> /main/main.solc:8:12
+  |
+7 |     let c : comptime word = k + 1;
+8 |     return c;
+  |            ^ specialization failed here
+9 |   }
+  |

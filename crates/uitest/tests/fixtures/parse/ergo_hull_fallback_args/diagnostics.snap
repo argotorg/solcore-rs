@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/ergo_hull_fallback_args/main.solc
+---
+error: fallback function must not declare input parameters while parsing fallback definition
+  --> /main/main.solc:9:13
+   |
+ 8 |
+ 9 |     fallback(x: uint256) -> () {
+   |             ^^^^^^^^^^^^
+10 |         revert("fallback-was-called");
+   |

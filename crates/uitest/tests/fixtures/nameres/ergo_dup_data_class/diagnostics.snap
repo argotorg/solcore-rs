@@ -1,0 +1,30 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/ergo_dup_data_class/main.solc
+---
+error[SC0108]: duplicate declaration `Shape` in type namespace
+ --> /main/main.solc:3:6
+  |
+1 | data Shape = Circle(word);
+  |      ----- previous declaration
+2 |
+3 | data Shape = Square(word);
+  |      ^^^^^ duplicate declaration
+4 |
+  |
+---
+
+error[SC0108]: duplicate declaration `Render` in type namespace
+  --> /main/main.solc:9:20
+   |
+ 4 |
+ 5 | forall a . class a:Render {
+   |                    ------ previous declaration
+ 6 |   function render(x: a) -> word;
+ 7 | }
+ 8 |
+ 9 | forall a . class a:Render {
+   |                    ^^^^^^ duplicate declaration
+10 |   function paint(x: a) -> word;
+   |

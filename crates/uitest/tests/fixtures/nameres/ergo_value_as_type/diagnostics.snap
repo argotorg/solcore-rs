@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/ergo_value_as_type/main.solc
+---
+error[SC0103]: undefined type constructor: MkPair
+ --> /main/main.solc:3:19
+  |
+2 |
+3 | function first(p: MkPair) -> word {
+  |                   ^^^^^^ undefined type constructor
+4 |   match p {
+  |

@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_hull_match_arm_arity/main.solc
+---
+error[SC0203]: wrong arity for match arm: expected 2, got 1
+ --> /main/main.solc:5:3
+  |
+4 |   match x, y {
+5 |   | Nat.Zero => return 0;
+  |   ^^^^^^^^^^^^^^^^^^^^^^^ wrong arity here
+6 |   | Nat.Succ(a), Nat.Zero => return 1;
+  |

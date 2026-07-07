@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/ergo_undef_class/main.solc
+---
+error[SC0105]: undefined class: NoSuchClass
+ --> /main/main.solc:1:17
+  |
+1 | instance word : NoSuchClass {
+  |                 ^^^^^^^^^^^ undefined class
+2 |   function frob(x: word) -> word {
+3 |     return x;
+  |

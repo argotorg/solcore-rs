@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/ergo_import_trailing_dot/main.solc
+---
+error: unexpected `;`; expected `{` while parsing import declaration
+ --> /main/main.solc:1:12
+  |
+1 | import a.b.;
+  |            ^
+2 |
+3 | function f() -> word {
+  |

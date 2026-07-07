@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_if_expr_branch_mismatch/main.solc
+---
+error[SC0201]: type mismatch: expected numeric, got bool
+ --> /main/main.solc:2:21
+  |
+1 | function f(b: bool) -> word {
+2 |   let x = if b then 1 else false;
+  |                     ^ expression has mismatched type
+3 |   return x;
+  |
+---
+
+error[SC0201]: type mismatch: expected word, got bool
+ --> /main/main.solc:3:10
+  |
+2 |   let x = if b then 1 else false;
+3 |   return x;
+  |          ^ expression has mismatched type
+4 | }
+  |

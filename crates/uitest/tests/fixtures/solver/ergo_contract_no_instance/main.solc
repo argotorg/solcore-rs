@@ -1,0 +1,11 @@
+data Bool = True | False;
+
+forall a . class a : Eq {
+  function eq(x: a, y: a) -> Bool;
+}
+
+contract Check {
+  function go(x: word) -> Bool {
+    return Eq.eq(x, x);
+  }
+}

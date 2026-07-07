@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/ergo_undef_variable/main.solc
+---
+error[SC0101]: undefined name: missingVar
+ --> /main/main.solc:2:14
+  |
+1 | function addOne(x: word) -> word {
+2 |   return x + missingVar;
+  |              ^^^^^^^^^^ unknown name
+3 | }
+  |

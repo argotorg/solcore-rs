@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/ergo_missing_semicolon_stmts/main.solc
+---
+error: unexpected `let`; expected `!`, `(`, `.`, `@`, `if`, or `lam`
+ --> /main/main.solc:2:5
+  |
+1 | function f() -> word {
+2 |     let x = 1
+  |     ^^^
+3 |     return x;
+  |
