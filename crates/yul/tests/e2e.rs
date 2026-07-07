@@ -1589,7 +1589,13 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("126nanoerc20.solc", blocked(storage_index)),
         ("127microerc20.solc", blocked(storage_index)),
         ("128minierc20.solc", blocked(storage_index)),
-        ("131constructor.solc", blocked(missing_specialized)),
+        (
+            "131constructor.solc",
+            SpecExpectation::Run {
+                expected: Expected::Word(42),
+                mode: RunMode::DeployedDispatch,
+            },
+        ),
         (
             "135cons3.solc",
             skip("constructor requires explicit deployment calldata not covered by the P9 oracle"),
