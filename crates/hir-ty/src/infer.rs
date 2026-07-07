@@ -2955,25 +2955,17 @@ impl<'db> InferCtx<'db> {
         let mut ty = match &pat.kind {
             PatKind::Wildcard => expected.clone().unwrap_or_else(|| self.engine.fresh_var()),
             PatKind::Var(name) => match self.pat_resolutions.get(&(body, pat_id)).cloned() {
-                Some(hir_nameres::Resolution::Builtin(
-                    kind @ hir_nameres::BuiltinKind::Constructor(
+                // Builtin `true`/`false`, unqualified same-name constructors,
+                // and unqualified-constructor misuse already reported by
+                // nameres all follow nullary constructor-pattern inference
+                // instead of binding a fresh local.
+                Some(
+                    hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(
                         hir_nameres::BuiltinCtor::True | hir_nameres::BuiltinCtor::False,
-                    ),
-                )) => {
-                    let ctor_ty = self.infer_resolution_for_pat_builtin(kind);
-                    let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
-                    self.apply_ctor_pat_scheme(body, pat_id, &[], ctor_ty, ret)
-                }
-                // A same-name constructor referenced without a qualifier:
-                // nameres resolved the identifier to the constructor, so treat
-                // the pattern as a nullary constructor pattern.
-                Some(hir_nameres::Resolution::Ctor { ty, index }) => {
-                    let ctor_ty = self.instantiate_adt_ctor(ty, index, ObligationSource::Scheme);
-                    let ret = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
-                    self.apply_ctor_pat_scheme(body, pat_id, &[], ctor_ty, ret)
-                }
-                // Unqualified-constructor misuse already reported by nameres.
-                Some(hir_nameres::Resolution::Err) => InferTy::Error,
+                    ))
+                    | hir_nameres::Resolution::Ctor { .. }
+                    | hir_nameres::Resolution::Err,
+                ) => self.infer_ctor_pat(body, pat_id, &[], expected.clone()),
                 _ => {
                     let ty = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
                     self.pat_tys_for_locals.insert((body, pat_id), ty.clone());
@@ -3739,7 +3731,7 @@ impl<'db> InferCtx<'db> {
             }
             hir_nameres::Resolution::DotCtorDeferred => {
                 let name = match &body.pats(self.db).get(pat).kind {
-                    PatKind::Ctor { name, .. } => (*name.atom()).text(self.db),
+                    PatKind::Ctor { name, .. } | PatKind::Var(name) => (*name.atom()).text(self.db),
                     _ => "",
                 };
                 let Some(expected) = expected else {
@@ -3795,7 +3787,9 @@ impl<'db> InferCtx<'db> {
             hir_nameres::Resolution::Err => InferTy::Error,
             _ => {
                 let name = match &body.pats(self.db).get(pat).kind {
-                    PatKind::Ctor { name, .. } => (*name.atom()).text(self.db).to_owned(),
+                    PatKind::Ctor { name, .. } | PatKind::Var(name) => {
+                        (*name.atom()).text(self.db).to_owned()
+                    }
                     _ => "<pattern>".to_owned(),
                 };
                 self.diagnostics

@@ -2322,7 +2322,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     },
                     args: Vec::new(),
                 },
-                // Same-name constructors resolve as nullary constructor
+                // Same-name constructors lower as nullary constructor
                 // patterns, not binders.
                 Some(hir_nameres::Resolution::Ctor { .. }) => MonoPatKind::Con {
                     ctor: MonoId {
