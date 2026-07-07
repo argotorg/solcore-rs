@@ -2646,7 +2646,45 @@ fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedErr
         }
     }
 
+    truncate_excessive_nesting(&mut tokens, &mut errors);
     (tokens, errors)
+}
+
+/// Maximum delimiter nesting depth accepted by the parser.
+///
+/// Recursive descent recurses once per nesting level, so unbounded nesting
+/// exhausts the native stack before any other limit applies; clang enforces
+/// the same guard with a default bracket depth of 256.
+const MAX_DELIMITER_NESTING: usize = 512;
+
+fn truncate_excessive_nesting(
+    tokens: &mut Vec<(Token<'_>, LexSpan)>,
+    errors: &mut Vec<ParsedError>,
+) {
+    let mut depth = 0usize;
+    for (idx, (token, span)) in tokens.iter().enumerate() {
+        match token {
+            Token::LParen | Token::LBrace | Token::LBracket => {
+                depth += 1;
+                if depth > MAX_DELIMITER_NESTING {
+                    let span = *span;
+                    trace_recovery("nesting_limit", span);
+                    errors.push(ParsedError {
+                        span,
+                        message: format!(
+                            "delimiter nesting exceeds the compiler limit of {MAX_DELIMITER_NESTING}"
+                        ),
+                    });
+                    tokens.truncate(idx);
+                    return;
+                }
+            }
+            Token::RParen | Token::RBrace | Token::RBracket => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
 }
 
 fn lex_error_message(source: &str, start: usize, end: usize, error: LexError) -> String {

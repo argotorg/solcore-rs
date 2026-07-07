@@ -8,9 +8,12 @@
 use std::{
     collections::{BTreeMap, VecDeque},
     env, fs,
+    io::IsTerminal,
     path::{Path, PathBuf},
+    thread,
 };
 
+use annotate_snippets::Renderer;
 use hir::{
     diag::{Diagnostic, DiagnosticId},
     input::SourceFile,
@@ -100,8 +103,33 @@ impl nameres::Db for DriverDb {
 #[salsa::db]
 impl hir_ty::Db for DriverDb {}
 
+/// Stack size for the compilation thread. Recursive-descent parsing, HIR
+/// lowering, and type folding recurse with input nesting depth; the default
+/// main-thread stack overflows on deeply nested (but well-formed) programs.
+const COMPILER_STACK_SIZE: usize = 256 * 1024 * 1024;
+
 /// Entry point for the CLI driver.
+///
+/// Restores default SIGPIPE handling so piping output into e.g. `head` ends
+/// the process instead of panicking, then runs the compiler on a thread with
+/// a large stack.
 fn main() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+    let result = thread::Builder::new()
+        .name("solcore-compiler".to_owned())
+        .stack_size(COMPILER_STACK_SIZE)
+        .spawn(run_compiler)
+        .expect("spawn compiler thread")
+        .join();
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+fn run_compiler() {
     let program = env::args()
         .next()
         .unwrap_or_else(|| "solcore-driver".to_owned());
@@ -204,11 +232,27 @@ fn main() {
         return;
     }
 
+    let renderer = diagnostic_renderer();
     eprint!(
         "{}",
-        render_diagnostic_blocks(diagnostics.iter().map(|diagnostic| diagnostic.render(&db)))
+        render_diagnostic_blocks(
+            diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render_with(&db, &renderer))
+        )
     );
     std::process::exit(1);
+}
+
+/// Chooses colored output only when stderr is a terminal and `NO_COLOR` is
+/// not set.
+fn diagnostic_renderer() -> Renderer {
+    let no_color = env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty());
+    if !no_color && std::io::stderr().is_terminal() {
+        Renderer::styled()
+    } else {
+        Renderer::plain()
+    }
 }
 
 fn render_diagnostic_blocks(rendered_blocks: impl IntoIterator<Item = String>) -> String {

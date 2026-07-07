@@ -1,0 +1,17 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/delimiter_nesting_limit/main.solc
+---
+error: delimiter nesting exceeds the compiler limit of 512
+ --> /main/main.solc:1:548
+  |
+1 | ...((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((...
+  |                                                                    ^
+---
+
+error: unexpected end of input; expected `{`, or `}` while parsing function definition
+ --> /main/main.solc:1:1242
+  |
+1 | ...))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))); }
+  |                                                                    ^
