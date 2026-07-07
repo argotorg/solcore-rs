@@ -1713,7 +1713,7 @@ impl<'db> Emitter<'db> {
     fn closure_callee_name(&self, callee: &MonoExpr<'db>) -> Option<String> {
         let name = match &callee.kind {
             MonoExprKind::Var(id) => &id.name,
-            MonoExprKind::Lambda { name } => name,
+            MonoExprKind::Lambda { name, .. } => name,
             MonoExprKind::TypeAnnot { expr, .. } => return self.closure_callee_name(expr),
             _ => return None,
         };

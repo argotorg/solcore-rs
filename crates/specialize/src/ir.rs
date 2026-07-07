@@ -320,6 +320,8 @@ pub enum MonoExprKind<'db> {
     },
     Lambda {
         name: String,
+        params: Vec<MonoParam<'db>>,
+        body: Vec<MonoStmt<'db>>,
     },
     Error,
 }

@@ -661,6 +661,17 @@ fn specializes_p7_cited_regression_corpus() {
 }
 
 #[test]
+fn folds_direct_function_compose_closure_fixture() {
+    let repo = repo_root();
+    let output = specialize_fixture(
+        &repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec/013comp.solc"),
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), Some("42".to_owned()));
+}
+
+#[test]
 fn comptime_obligations_are_carried_into_mono_side_table() {
     let (_db, output) = specialize_src(
         r#"

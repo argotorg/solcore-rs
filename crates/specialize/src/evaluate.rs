@@ -112,6 +112,19 @@ impl<'db> Evaluator<'db> {
         function
     }
 
+    fn expr_is_known_value(&self, expr: &MonoExpr<'db>) -> bool {
+        match &expr.kind {
+            MonoExprKind::Lit(_) | MonoExprKind::Proxy(_) | MonoExprKind::Lambda { .. } => true,
+            MonoExprKind::Var(id) => self.functions.contains_key(&id.name),
+            MonoExprKind::Tuple(elems) => elems.iter().all(|expr| self.expr_is_known_value(expr)),
+            MonoExprKind::Con { args, .. } => {
+                args.iter().all(|expr| self.expr_is_known_value(expr))
+            }
+            MonoExprKind::TypeAnnot { expr, .. } => self.expr_is_known_value(expr),
+            _ => false,
+        }
+    }
+
     fn eval_stmts(
         &mut self,
         type_reg: &TypeReg<'db>,
@@ -156,7 +169,7 @@ impl<'db> Evaluator<'db> {
                 };
                 let mut env = env;
                 let mut comptime_env = comptime_env;
-                if let Some(expr) = init.as_ref().filter(|expr| is_known_value(expr)) {
+                if let Some(expr) = init.as_ref().filter(|expr| self.expr_is_known_value(expr)) {
                     env.insert(id.name.clone(), expr.clone());
                 } else {
                     env.remove(&id.name);
@@ -172,7 +185,7 @@ impl<'db> Evaluator<'db> {
                 if self.enforce_comptime && comptime {
                     match init.as_ref() {
                         Some(expr) if self.expr_is_comptime(expr, &comptime_env) => {
-                            if is_known_value(expr) {
+                            if self.expr_is_known_value(expr) {
                                 return (env, comptime_env, Vec::new());
                             }
                         }
@@ -188,6 +201,13 @@ impl<'db> Evaluator<'db> {
                             Some(span),
                         ),
                     }
+                }
+                if ty_is_function(self.db, id.ty.ty())
+                    && init
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_is_known_value(expr))
+                {
+                    return (env, comptime_env, Vec::new());
                 }
                 (
                     env,
@@ -226,7 +246,7 @@ impl<'db> Evaluator<'db> {
             }
             MonoStmtKind::Expr(expr) => {
                 let expr = self.eval_expr(&env, &comptime_env, expr);
-                if is_known_value(&expr) {
+                if self.expr_is_known_value(&expr) {
                     (env, comptime_env, Vec::new())
                 } else {
                     (
@@ -246,7 +266,7 @@ impl<'db> Evaluator<'db> {
                 let mut comptime_env = comptime_env;
                 if let Some(id) = target {
                     let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
-                    if is_known_value(&rhs) {
+                    if self.expr_is_known_value(&rhs) {
                         if matches!(&lhs.kind, MonoExprKind::Var(_)) {
                             env.insert(id.name.clone(), rhs.clone());
                             if rhs_is_comptime {
@@ -628,11 +648,27 @@ impl<'db> Evaluator<'db> {
                 ty,
                 kind: MonoExprKind::Var(id),
             }),
-            MonoExprKind::Lit(_) | MonoExprKind::Lambda { .. } | MonoExprKind::Error => MonoExpr {
+            MonoExprKind::Lit(_) | MonoExprKind::Error => MonoExpr {
                 span,
                 ty,
                 kind: expr.kind,
             },
+            MonoExprKind::Lambda { name, params, body } => {
+                let type_reg = build_type_reg(&params, &body);
+                let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
+                let (_, _, body) = self.eval_stmts(
+                    &type_reg,
+                    env.clone(),
+                    comptime_env.clone(),
+                    body,
+                    ret_comptime,
+                );
+                MonoExpr {
+                    span,
+                    ty,
+                    kind: MonoExprKind::Lambda { name, params, body },
+                }
+            }
             MonoExprKind::Tuple(elems) => MonoExpr {
                 span,
                 ty,
@@ -684,17 +720,24 @@ impl<'db> Evaluator<'db> {
                         .collect(),
                 },
             },
-            MonoExprKind::ClosureDispatch { callee, args } => MonoExpr {
-                span,
-                ty,
-                kind: MonoExprKind::ClosureDispatch {
-                    callee: Box::new(self.eval_expr(env, comptime_env, *callee)),
-                    args: args
-                        .into_iter()
-                        .map(|arg| self.eval_expr(env, comptime_env, arg))
-                        .collect(),
-                },
-            },
+            MonoExprKind::ClosureDispatch { callee, args } => {
+                let callee = self.eval_expr(env, comptime_env, *callee);
+                let args = args
+                    .into_iter()
+                    .map(|arg| self.eval_expr(env, comptime_env, arg))
+                    .collect::<Vec<_>>();
+                if let Some(result) = self.eval_closure_dispatch(&callee, &args, ty, span) {
+                    return result;
+                }
+                MonoExpr {
+                    span,
+                    ty,
+                    kind: MonoExprKind::ClosureDispatch {
+                        callee: Box::new(callee),
+                        args,
+                    },
+                }
+            }
             MonoExprKind::BinOp { lhs, op, rhs } => {
                 let lhs = self.eval_expr(env, comptime_env, *lhs);
                 let rhs = self.eval_expr(env, comptime_env, *rhs);
@@ -748,7 +791,7 @@ impl<'db> Evaluator<'db> {
             },
             MonoExprKind::TypeAnnot { expr, ty: annot_ty } => {
                 let expr = self.eval_expr(env, comptime_env, *expr);
-                if is_known_value(&expr) {
+                if self.expr_is_known_value(&expr) {
                     MonoExpr {
                         span,
                         ty,
@@ -788,6 +831,62 @@ impl<'db> Evaluator<'db> {
                     },
                 }
             }
+        }
+    }
+
+    fn eval_closure_dispatch(
+        &mut self,
+        callee: &MonoExpr<'db>,
+        args: &[MonoExpr<'db>],
+        ty: MonoTy<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        match &callee.kind {
+            MonoExprKind::Var(id) if self.functions.contains_key(&id.name) => {
+                self.check_comptime_params(&id.name, args, &CEnv::default(), span);
+                self.try_inline(&id.name, args, span).or_else(|| {
+                    Some(MonoExpr {
+                        span,
+                        ty,
+                        kind: MonoExprKind::Call {
+                            callee: id.clone(),
+                            args: args.to_vec(),
+                            origin: MonoCallOrigin::Unknown,
+                        },
+                    })
+                })
+            }
+            MonoExprKind::Lambda { params, body, .. } if params.len() == args.len() => {
+                if self.fuel == 0 {
+                    self.diagnostics.push(SpecializeDiagnostic {
+                        kind: SpecializeDiagnosticKind::ComptimeFuelExhausted {
+                            function: "lambda".to_owned(),
+                            limit: self.fuel_limit,
+                        },
+                        span: Some(span),
+                    });
+                    return None;
+                }
+                self.fuel -= 1;
+                let mut env = VEnv::default();
+                let mut comptime_env = CEnv::default();
+                for (param, arg) in params.iter().zip(args) {
+                    if self.expr_is_known_value(arg) {
+                        env.insert(param.name.clone(), arg.clone());
+                        comptime_env.insert(param.name.clone());
+                    } else if param_is_comptime(self.db, param) {
+                        comptime_env.insert(param.name.clone());
+                    }
+                }
+                let type_reg = build_type_reg(params, body);
+                let result = self.eval_fun_body(&type_reg, env, comptime_env, body.clone());
+                self.fuel += 1;
+                result
+            }
+            MonoExprKind::TypeAnnot { expr, .. } => {
+                self.eval_closure_dispatch(expr, args, ty, span)
+            }
+            _ => None,
         }
     }
 
@@ -1076,10 +1175,10 @@ impl<'db> Evaluator<'db> {
         let mut comptime_env = CEnv::default();
         let ret_comptime = ty_is_comptime(self.db, function.ret.ty());
         for (param, arg) in function.params.iter().zip(args) {
-            if is_known_value(arg) {
+            if self.expr_is_known_value(arg) {
                 env.insert(param.name.clone(), arg.clone());
             }
-            if ret_comptime || param_is_comptime(self.db, param) || is_known_value(arg) {
+            if ret_comptime || param_is_comptime(self.db, param) || self.expr_is_known_value(arg) {
                 comptime_env.insert(param.name.clone());
             }
         }
@@ -1105,7 +1204,7 @@ impl<'db> Evaluator<'db> {
                     let init_is_comptime = init
                         .as_ref()
                         .is_some_and(|expr| self.expr_is_comptime(expr, &comptime_env));
-                    if let Some(expr) = init.filter(is_known_value) {
+                    if let Some(expr) = init.filter(|expr| self.expr_is_known_value(expr)) {
                         env.insert(id.name.clone(), expr);
                     } else {
                         env.remove(&id.name);
@@ -1121,7 +1220,7 @@ impl<'db> Evaluator<'db> {
                     let rhs = self.eval_expr(&env, &comptime_env, rhs);
                     if let Some(id) = target {
                         let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
-                        if is_known_value(&rhs) {
+                        if self.expr_is_known_value(&rhs) {
                             if matches!(&lhs.kind, MonoExprKind::Var(_)) {
                                 env.insert(id.name.clone(), rhs);
                                 if rhs_is_comptime {
@@ -1145,7 +1244,7 @@ impl<'db> Evaluator<'db> {
                 }
                 MonoStmtKind::Return(expr) => {
                     let expr = expr.map(|expr| self.eval_expr(&env, &comptime_env, expr))?;
-                    return is_known_value(&expr).then_some(expr);
+                    return self.expr_is_known_value(&expr).then_some(expr);
                 }
                 MonoStmtKind::Expr(_) => {}
                 MonoStmtKind::Match { scrutinees, arms } => {
@@ -1257,7 +1356,7 @@ impl<'db> Evaluator<'db> {
     }
 
     fn expr_is_comptime(&self, expr: &MonoExpr<'db>, comptime_env: &CEnv) -> bool {
-        if is_known_value(expr) {
+        if self.expr_is_known_value(expr) {
             return true;
         }
         match &expr.kind {
@@ -1780,7 +1879,8 @@ fn expr_is_pure(expr: &MonoExpr<'_>, pure: &FxHashSet<String>) -> bool {
                 && expr_is_pure(then_expr, pure)
                 && expr_is_pure(else_expr, pure)
         }
-        MonoExprKind::Lambda { .. } | MonoExprKind::Error => false,
+        MonoExprKind::Lambda { .. } => true,
+        MonoExprKind::Error => false,
     }
 }
 
@@ -2492,6 +2592,17 @@ fn param_is_comptime<'db>(db: &'db dyn Db, param: &MonoParam<'db>) -> bool {
 
 fn ty_is_comptime<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
     matches!(ty.kind(db), TyKind::Comptime(_))
+}
+
+fn ty_is_function<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    matches!(ty.kind(db), TyKind::Function { .. })
+}
+
+fn lambda_ret_is_comptime<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
+    matches!(
+        ty.kind(db),
+        TyKind::Function { ret, .. } if ty_is_comptime(db, *ret)
+    )
 }
 
 fn ty_is_builtin<'db>(db: &'db dyn Db, ty: Ty<'db>, builtin: BuiltinTyCtor) -> bool {

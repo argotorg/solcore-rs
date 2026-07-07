@@ -1684,12 +1684,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 then_expr: Box::new(self.expr(*then_expr)?),
                 else_expr: Box::new(self.expr(*else_expr)?),
             },
-            ExprKind::Lambda { body, .. } => MonoExprKind::Lambda {
-                name: body
-                    .def_id(self.driver.db)
-                    .name(self.driver.db)
-                    .unwrap_or_else(|| "lambda".to_owned()),
-            },
+            ExprKind::Lambda { params, body, .. } => {
+                self.lambda_expr(params.atom(), *body, ty, expr.span)?
+            }
             ExprKind::DotCtor { name, args, .. } => MonoExprKind::Con {
                 ctor: MonoId {
                     name: ident_text(self.driver.db, name),
@@ -1742,12 +1739,102 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     args: Vec::new(),
                 }
             }
+            Some(hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Function,
+            }) => {
+                let origin = self.driver.call_origin_for_def(def);
+                let name = if matches!(origin, MonoCallOrigin::Builtin(_)) {
+                    def.name(self.driver.db)
+                        .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
+                } else {
+                    self.specialize_direct_function(def, ty.ty(), span)
+                };
+                MonoExprKind::Var(MonoId { name, ty, span })
+            }
             _ => MonoExprKind::Var(MonoId {
                 name: ident_text(self.driver.db, name),
                 ty,
                 span,
             }),
         }
+    }
+
+    fn lambda_expr(
+        &mut self,
+        params: &[FuncParam<'db>],
+        body: FuncBody<'db>,
+        ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExprKind<'db>> {
+        let name = body
+            .def_id(self.driver.db)
+            .name(self.driver.db)
+            .unwrap_or_else(|| "lambda".to_owned());
+        let TyKind::Function {
+            params: param_tys, ..
+        } = ty.kind(self.driver.db)
+        else {
+            return Some(MonoExprKind::Lambda {
+                name,
+                params: Vec::new(),
+                body: Vec::new(),
+            });
+        };
+        if params.len() != param_tys.len() {
+            return Some(MonoExprKind::Lambda {
+                name,
+                params: Vec::new(),
+                body: Vec::new(),
+            });
+        }
+
+        let mut locals = self.locals.clone();
+        let mut mono_params = Vec::new();
+        for (param, param_ty) in params.iter().zip(param_tys) {
+            let param_ty = self.subst.apply_ty(self.driver.db, *param_ty);
+            let name = param_name(self.driver.db, param).unwrap_or("_").to_owned();
+            let mono_ty = self.driver.mono_ty(param_ty, "lambda parameter", span)?;
+            locals.insert(name.clone(), param_ty);
+            mono_params.push(MonoParam {
+                name,
+                comptime: param_comptime(param) || ty_is_comptime(self.driver.db, param_ty),
+                ty: mono_ty,
+                span: param.span(self.driver.db),
+            });
+        }
+
+        let body_map = self
+            .driver
+            .body_resolution_for(body)
+            .cloned()
+            .unwrap_or_else(|| self.body_map.clone());
+        let result = self.result.clone();
+        let subst = self.subst.clone();
+        let info = self.info;
+        let depth = self.depth;
+        let mut nested = BodyCtx {
+            driver: self.driver,
+            info,
+            body,
+            result,
+            body_map,
+            subst,
+            depth,
+            lowered_exprs: FxHashMap::default(),
+            locals,
+        };
+        let lowered_body = body
+            .top_level_stmts(nested.driver.db)
+            .iter()
+            .map(|stmt| nested.stmt(*stmt))
+            .collect::<Option<Vec<_>>>()?;
+
+        Some(MonoExprKind::Lambda {
+            name,
+            params: mono_params,
+            body: lowered_body,
+        })
     }
 
     fn call_expr(
