@@ -126,6 +126,22 @@ macro_rules! known {
             diagnostic_prefix: None,
         }
     };
+    ($file:literal, $reason:literal, pre) => {
+        KnownDivergence {
+            file: $file,
+            reason: $reason,
+            expected_observed: ObservedMode::PreTypeck,
+            diagnostic_prefix: None,
+        }
+    };
+    ($file:literal, $reason:literal, typeck) => {
+        KnownDivergence {
+            file: $file,
+            reason: $reason,
+            expected_observed: ObservedMode::Typeck,
+            diagnostic_prefix: None,
+        }
+    };
     ($file:literal, $reason:literal, pre, $prefix:literal) => {
         KnownDivergence {
             file: $file,
@@ -147,266 +163,462 @@ macro_rules! known {
 // Keep this list precise: every entry must currently diverge, or the test
 // fails as stale. These are P6/P7 inputs, not weakened expectations.
 const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
-    known!("cases/DupFun.solc", "reference-fails-before-typeck"),
-    known!("cases/Enum.solc", "missing-negative-typecheck"),
-    known!("cases/Filter.solc", "missing-negative-typecheck"),
-    known!("cases/GoodInstance.solc", "missing-negative-typecheck"),
-    known!("cases/KindTest.solc", "missing-negative-typecheck"),
-    known!("cases/ListModule.solc", "needs-tuple-call-lowering"),
-    known!("cases/Pair.solc", "needs-tuple-call-lowering"),
-    known!("cases/Peano.solc", "needs-tuple-call-lowering"),
-    known!("cases/Uncurry.solc", "needs-tuple-call-lowering"),
+    known!("examples/cases/Enum.solc", "missing-negative-typecheck"),
+    known!("examples/cases/Filter.solc", "missing-negative-typecheck"),
     known!(
-        "cases/abigeneric.solc",
-        "needs-specializer-and-std-instances"
+        "examples/cases/GoodInstance.solc",
+        "missing-negative-typecheck"
     ),
-    known!("cases/bal.solc", "needs-specializer-and-std-instances"),
-    known!("cases/bound-minimal.solc", "reference-fails-before-typeck"),
+    known!("examples/cases/KindTest.solc", "missing-negative-typecheck"),
     known!(
-        "cases/bound-only-test.solc",
-        "reference-fails-before-typeck"
+        "examples/cases/ListModule.solc",
+        "needs-tuple-call-lowering"
     ),
+    known!("examples/cases/Pair.solc", "needs-tuple-call-lowering"),
+    known!("examples/cases/Peano.solc", "needs-tuple-call-lowering"),
+    known!("examples/cases/Uncurry.solc", "needs-tuple-call-lowering"),
     known!(
-        "cases/bug-import-default-inst-shadow.solc",
+        "examples/cases/abigeneric.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "cases/bug-spec-generic-let.solc",
+        "examples/cases/bal.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "cases/class-type-name-collision.solc",
-        "reference-fails-before-typeck"
+        "examples/cases/bug-import-default-inst-shadow.solc",
+        "needs-specializer-and-std-instances"
     ),
     known!(
-        "cases/dispatch.solc",
+        "examples/cases/bug-spec-generic-let.solc",
+        "needs-specializer-and-std-instances"
+    ),
+    known!(
+        "examples/cases/dispatch.solc",
         "needs-dispatch-lowering",
         typeck,
         "SC0201"
     ),
     known!(
-        "cases/dot-expression-unknown-fail.solc",
-        "reference-fails-before-typeck"
-    ),
-    known!(
-        "cases/duplicated-contract-name.solc",
-        "reference-fails-before-typeck"
-    ),
-    known!(
-        "cases/duplicated-type-name.solc",
-        "reference-fails-before-typeck"
-    ),
-    known!("cases/for-let-post.solc", "missing-negative-typecheck"),
-    known!("cases/ixa.solc", "needs-specializer-and-std-instances"),
-    known!("cases/mainproxy.solc", "reference-fails-before-typeck"),
-    known!(
-        "cases/match-compiler-undef-asm.solc",
+        "examples/cases/for-let-post.solc",
         "missing-negative-typecheck"
     ),
     known!(
-        "cases/mptc-partial-instance.solc",
+        "examples/cases/ixa.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "cases/phantom-type-return-con.solc",
+        "examples/cases/match-compiler-undef-asm.solc",
         "missing-negative-typecheck"
     ),
     known!(
-        "cases/pragma_merge_fail_patterson.solc",
-        "reference-fails-before-typeck"
-    ),
-    known!(
-        "cases/pragma_merge_import.solc",
-        "reference-fails-before-typeck"
-    ),
-    known!(
-        "cases/pragma_merge_verify.solc",
-        "reference-fails-before-typeck"
-    ),
-    known!("cases/rec.solc", "needs-tuple-call-lowering"),
-    known!(
-        "cases/reference-encoding-good.solc",
+        "examples/cases/mptc-partial-instance.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "cases/reference-encoding-good1.solc",
+        "examples/cases/phantom-type-return-con.solc",
+        "missing-negative-typecheck"
+    ),
+    known!("examples/cases/rec.solc", "needs-tuple-call-lowering"),
+    known!(
+        "examples/cases/reference-encoding-good.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "cases/spec-fail-ungrounded.solc",
+        "examples/cases/reference-encoding-good1.solc",
+        "needs-specializer-and-std-instances"
+    ),
+    known!(
+        "examples/cases/spec-fail-ungrounded.solc",
         "missing-negative-typecheck"
     ),
     known!(
-        "cases/strange-unbound.solc",
+        "examples/cases/strange-unbound.solc",
         "needs-frontend-constructor-parity"
     ),
-    known!("cases/string-const.solc", "missing-negative-typecheck"),
-    known!("cases/tiamat.solc", "needs-specializer-and-std-instances"),
     known!(
-        "cases/tuple-trick.solc",
-        "needs-specializer-and-std-instances"
+        "examples/cases/string-const.solc",
+        "missing-negative-typecheck"
     ),
-    known!("cases/tuva.solc", "needs-specializer-and-std-instances"),
     known!(
-        "cases/uintdesugared.solc",
+        "examples/cases/tiamat.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "cases/unbound-instance-var.solc",
-        "reference-fails-before-typeck"
+        "examples/cases/tuple-trick.solc",
+        "needs-specializer-and-std-instances"
     ),
-    known!("cases/vartyped.solc", "missing-negative-typecheck"),
-    known!("cases/weird-error-foo.solc", "missing-negative-typecheck"),
     known!(
-        "comptime/ct_asm_ret.solc",
+        "examples/cases/tuva.solc",
+        "needs-specializer-and-std-instances"
+    ),
+    known!(
+        "examples/cases/uintdesugared.solc",
+        "needs-specializer-and-std-instances"
+    ),
+    known!("examples/cases/vartyped.solc", "missing-negative-typecheck"),
+    known!(
+        "examples/cases/weird-error-foo.solc",
+        "missing-negative-typecheck"
+    ),
+    known!(
+        "examples/comptime/ct_asm_ret.solc",
         "needs-backend-comptime-obligation-check",
         no
     ),
     known!(
-        "comptime/ct_let_runtime.solc",
+        "examples/comptime/ct_let_runtime.solc",
         "needs-backend-comptime-obligation-check",
         no
     ),
     known!(
-        "comptime/ct_overloaded_bad.solc",
+        "examples/comptime/ct_overloaded_bad.solc",
         "needs-backend-comptime-obligation-check",
         no
     ),
     known!(
-        "comptime/ct_param_poly_runtime.solc",
+        "examples/comptime/ct_param_poly_runtime.solc",
         "needs-backend-comptime-obligation-check",
         no
     ),
     known!(
-        "comptime/ct_runtime_arg.solc",
+        "examples/comptime/ct_runtime_arg.solc",
         "needs-backend-comptime-obligation-check",
         no
     ),
     known!(
-        "comptime/fromInt.solc",
+        "examples/comptime/fromInt.solc",
         "needs-std-comptime-surface",
         typeck,
         "SC0224"
     ),
     known!(
-        "comptime/fromInt2.solc",
+        "examples/comptime/fromInt2.solc",
         "needs-std-comptime-surface",
         pre,
         "SC0101"
     ),
     known!(
-        "comptime/fromInt3.solc",
+        "examples/comptime/fromInt3.solc",
         "needs-std-comptime-surface",
         typeck,
         "SC0207"
     ),
     known!(
-        "comptime/fromLit.solc",
+        "examples/comptime/fromLit.solc",
         "needs-std-comptime-surface",
         typeck,
         "SC0224"
     ),
     known!(
-        "comptime/int-untyped-let.solc",
+        "examples/comptime/int-untyped-let.solc",
         "needs-integer-literal-inference",
         typeck,
         "SC0201"
     ),
     known!(
-        "comptime/integer-lit-class.solc",
+        "examples/comptime/integer-lit-class.solc",
         "needs-integer-literal-inference",
         typeck,
         "SC0201"
     ),
     known!(
-        "comptime/integer-lit-pat.solc",
+        "examples/comptime/integer-lit-pat.solc",
         "needs-comptime-wrapper-numeric-pattern-parity",
         typeck,
         "SC0201"
     ),
     known!(
-        "comptime/match_labels.solc",
+        "examples/comptime/match_labels.solc",
         "needs-string-comptime-std-parity",
         typeck,
         "SC0201"
     ),
     known!(
-        "comptime/string-lit-keccak.solc",
+        "examples/comptime/string-lit-keccak.solc",
         "needs-string-comptime-std-parity",
         typeck,
         "SC0201"
     ),
     known!(
-        "comptime/string-lit-len.solc",
+        "examples/comptime/string-lit-len.solc",
         "needs-string-comptime-std-parity",
         typeck,
         "SC0201"
     ),
     known!(
-        "comptime/string-lit-ops.solc",
+        "examples/comptime/string-lit-ops.solc",
         "needs-string-comptime-std-parity",
         typeck,
         "SC0201"
     ),
-    known!("spec/012nid.solc", "needs-tuple-call-lowering"),
+    known!("examples/spec/012nid.solc", "needs-tuple-call-lowering"),
     known!(
-        "spec/051expreturn.solc",
+        "examples/spec/051expreturn.solc",
         "needs-frontend-constructor-parity"
     ),
-    known!("spec/051negBool.solc", "needs-trait-solver-parity"),
+    known!("examples/spec/051negBool.solc", "needs-trait-solver-parity"),
     known!(
-        "spec/052negPair.solc",
+        "examples/spec/052negPair.solc",
         "needs-trait-solver-parity",
         typeck,
         "SC0207"
     ),
-    known!("spec/052return.solc", "needs-frontend-constructor-parity"),
-    known!("spec/053return.solc", "needs-frontend-constructor-parity"),
     known!(
-        "spec/101struct1Field.solc",
+        "examples/spec/052return.solc",
+        "needs-frontend-constructor-parity"
+    ),
+    known!(
+        "examples/spec/053return.solc",
+        "needs-frontend-constructor-parity"
+    ),
+    known!(
+        "examples/spec/101struct1Field.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "spec/102uintField.solc",
+        "examples/spec/102uintField.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "spec/103struct3Fields.solc",
+        "examples/spec/103struct3Fields.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "spec/105nestedStruct.solc",
+        "examples/spec/105nestedStruct.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "spec/111storageStruct.solc",
+        "examples/spec/111storageStruct.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "spec/112ContractStorage.solc",
+        "examples/spec/112ContractStorage.solc",
         "needs-storage-builtins",
         pre,
         "SC0101"
     ),
     known!(
-        "spec/113counter.solc",
+        "examples/spec/113counter.solc",
         "needs-storage-builtins",
         pre,
         "SC0101"
     ),
     known!(
-        "spec/126nanoerc20.solc",
+        "examples/spec/126nanoerc20.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "spec/127microerc20.solc",
+        "examples/spec/127microerc20.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
-        "spec/128minierc20.solc",
+        "examples/spec/128minierc20.solc",
         "needs-specializer-and-std-instances"
     ),
-    known!("spec/135cons3.solc", "needs-frontend-constructor-parity"),
+    known!(
+        "examples/spec/135cons3.solc",
+        "needs-frontend-constructor-parity"
+    ),
+    known!(
+        "diagnostics/missing-signature.solc",
+        "missing-negative-typecheck"
+    ),
+    known!(
+        "examples/Convertible.solc",
+        "needs-convertible-type-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/Revert.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/assembly.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/basic.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/concat.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/counter.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/ecrecover.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/fallback.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/fib.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/forloops.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/generic_product.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/generic_sum.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/hashes.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/memory.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/miniERC20.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/neg.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/nonpayable_ctor.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/ownable.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/payable.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/payable_ctor.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/slices.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/specialise_sum_of_product.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/storage.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/stringid.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/sum_wide_product.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/dispatch/weth9.solc",
+        "needs-dispatch-abi-surface",
+        typeck
+    ),
+    known!(
+        "examples/invokable/021nid.solc",
+        "needs-legacy-invokable-surface",
+        typeck
+    ),
+    known!(
+        "examples/invokable/022nid-invoke.solc",
+        "needs-legacy-invokable-surface",
+        typeck
+    ),
+    known!(
+        "examples/invokable/025lamid-invoke.solc",
+        "needs-legacy-invokable-surface",
+        typeck
+    ),
+    known!(
+        "examples/invokable/026capture.solc",
+        "needs-legacy-invokable-surface",
+        typeck
+    ),
+    known!(
+        "examples/invokable/027retfun.solc",
+        "needs-legacy-invokable-surface",
+        typeck
+    ),
+    known!(
+        "examples/invokable/028modifier.solc",
+        "needs-legacy-invokable-surface",
+        typeck
+    ),
+    known!(
+        "examples/invokable/031enum.solc",
+        "needs-legacy-invokable-surface",
+        typeck
+    ),
+    known!(
+        "examples/spec/attic/051expreturn.solc",
+        "needs-legacy-spec-attic-surface",
+        typeck
+    ),
+    known!(
+        "examples/spec/attic/052return.solc",
+        "needs-legacy-spec-attic-surface",
+        pre
+    ),
+    known!(
+        "examples/spec/attic/053return.solc",
+        "needs-legacy-spec-attic-surface",
+        pre
+    ),
+    known!(
+        "imports/alias_unqualified_constr_fail.solc",
+        "missing-import-constructor-negative",
+        no
+    ),
+    known!(
+        "imports/boolconselect_fail.solc",
+        "missing-import-constructor-negative",
+        no
+    ),
+    known!(
+        "imports/module_unqualified_constr_fail.solc",
+        "missing-import-constructor-negative",
+        no
+    ),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -464,6 +676,22 @@ struct Scoreboard {
     skipped_unresolved_imports: usize,
 }
 
+impl Scoreboard {
+    fn record_expected(&mut self, expected: Expected) {
+        match expected {
+            Expected::Pass => self.expected_pass += 1,
+            Expected::Fail => self.expected_fail += 1,
+        }
+    }
+
+    fn record_parity(&mut self, expected: Expected) {
+        match expected {
+            Expected::Pass => self.pass_parity += 1,
+            Expected::Fail => self.fail_parity += 1,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct Divergence {
     file: String,
@@ -487,6 +715,13 @@ struct RunOutcome {
     frontend_diagnostics: Vec<String>,
     typeck_diagnostics: Vec<String>,
     executed: Vec<String>,
+}
+
+struct CorpusEntry {
+    path: PathBuf,
+    main_root: PathBuf,
+    external_roots: BTreeMap<String, PathBuf>,
+    area: String,
 }
 
 #[salsa::db]
@@ -559,45 +794,47 @@ impl solcore_hir_ty::Db for TestDb {}
 #[test]
 fn reference_typecheck_scoreboard_matches_known_divergences() {
     let repo = repo_root();
-    let corpus_root = repo.join("crates/parser/tests/fixtures/corpus/ok");
-    let examples_root = corpus_root.join("test/examples");
-    let std_root = corpus_root.join("std");
+    let corpus_root = repo.join("crates/parser/tests/fixtures/corpus");
+    let std_root = corpus_root.join("ok/std");
     let expectations = parse_expectations();
-    assert_expectations_cover_corpus(&expectations, &examples_root);
+    assert_expectations_cover_corpus(&expectations, &corpus_root);
 
     let mut scoreboard = Scoreboard::default();
+    let mut area_scoreboards = BTreeMap::<String, Scoreboard>::new();
     let mut unrecorded = Vec::new();
     let mut seen_known = BTreeSet::new();
     let mut known_by_reason = BTreeMap::<&'static str, Vec<String>>::new();
-    let mut skipped = Vec::<(String, Vec<String>)>::new();
+    let skipped = Vec::<(String, Vec<String>)>::new();
     let mut stale_known = Vec::<StaleKnownDivergence>::new();
 
     for expectation in &expectations {
-        match expectation.expected {
-            Expected::Pass => scoreboard.expected_pass += 1,
-            Expected::Fail => scoreboard.expected_fail += 1,
-        }
+        let entry = corpus_entry(&corpus_root, &expectation.file);
+        scoreboard.record_expected(expectation.expected);
+        area_scoreboards
+            .entry(entry.area.clone())
+            .or_default()
+            .record_expected(expectation.expected);
 
-        let path = examples_root.join(&expectation.file);
-        let outcome = run_frontend(&path, &std_root);
-        if !outcome.unresolved_imports.is_empty() {
-            scoreboard.skipped_unresolved_imports += 1;
-            skipped.push((expectation.file.clone(), outcome.unresolved_imports));
-            continue;
-        }
+        let outcome = run_frontend_with_roots(
+            &entry.path,
+            &entry.main_root,
+            &std_root,
+            entry.external_roots,
+        );
 
-        let typeck_failed = !outcome.typeck_diagnostics.is_empty();
-        let frontend_failed = !outcome.frontend_diagnostics.is_empty() || typeck_failed;
+        let frontend_failed =
+            !outcome.frontend_diagnostics.is_empty() || !outcome.typeck_diagnostics.is_empty();
         let parity = match expectation.expected {
             Expected::Pass => !frontend_failed,
-            Expected::Fail => typeck_failed,
+            Expected::Fail => frontend_failed,
         };
 
         if parity {
-            match expectation.expected {
-                Expected::Pass => scoreboard.pass_parity += 1,
-                Expected::Fail => scoreboard.fail_parity += 1,
-            }
+            scoreboard.record_parity(expectation.expected);
+            area_scoreboards
+                .entry(entry.area)
+                .or_default()
+                .record_parity(expectation.expected);
             continue;
         }
 
@@ -611,6 +848,10 @@ fn reference_typecheck_scoreboard_matches_known_divergences() {
 
         if let Some(known) = known_divergence(&expectation.file) {
             scoreboard.known_divergences += 1;
+            area_scoreboards
+                .entry(entry.area)
+                .or_default()
+                .known_divergences += 1;
             seen_known.insert(expectation.file.clone());
             known_by_reason
                 .entry(known.reason)
@@ -644,6 +885,7 @@ fn reference_typecheck_scoreboard_matches_known_divergences() {
     );
     let report = format_scoreboard_report(
         &scoreboard,
+        &area_scoreboards,
         &known_by_reason,
         &unrecorded,
         &skipped,
@@ -703,17 +945,22 @@ fn std_solc_frontend_typecheck_triage() {
 #[test]
 fn curated_solver_files_execute_solver_and_soundness_queries() {
     let repo = repo_root();
-    let corpus_root = repo.join("crates/parser/tests/fixtures/corpus/ok");
-    let examples_root = corpus_root.join("test/examples");
-    let std_root = corpus_root.join("std");
+    let corpus_root = repo.join("crates/parser/tests/fixtures/corpus");
+    let std_root = corpus_root.join("ok/std");
     let fixtures = [
-        "cases/p4-local-instance.solc",
-        "cases/tabled-answer-reuse.solc",
-        "cases/tabled-default-instance.solc",
+        "examples/cases/p4-local-instance.solc",
+        "examples/cases/tabled-answer-reuse.solc",
+        "examples/cases/tabled-default-instance.solc",
     ];
 
     for fixture in fixtures {
-        let outcome = run_frontend(&examples_root.join(fixture), &std_root);
+        let entry = corpus_entry(&corpus_root, fixture);
+        let outcome = run_frontend_with_roots(
+            &entry.path,
+            &entry.main_root,
+            &std_root,
+            entry.external_roots,
+        );
         let mut report = String::new();
         writeln!(&mut report, "{fixture} solver execution").unwrap();
         writeln!(
@@ -796,55 +1043,168 @@ fn parse_expectations() -> Vec<Expectation> {
     expectations
 }
 
-fn assert_expectations_cover_corpus(expectations: &[Expectation], examples_root: &Path) {
+fn assert_expectations_cover_corpus(expectations: &[Expectation], corpus_root: &Path) {
     let listed = expectations
         .iter()
         .map(|expectation| expectation.file.clone())
         .collect::<Vec<_>>();
-    let actual = corpus_files(examples_root);
+    let actual = corpus_files(corpus_root);
     assert_eq!(
         listed, actual,
-        "expectations.txt must exactly cover the cases/comptime/spec corpus"
+        "expectations.txt must exactly cover the experimental test corpus"
     );
 }
 
-fn corpus_files(examples_root: &Path) -> Vec<String> {
+fn corpus_files(corpus_root: &Path) -> Vec<String> {
     let mut files = Vec::new();
-    for bucket in ["cases", "comptime", "spec"] {
-        for entry in fs::read_dir(examples_root.join(bucket)).expect("corpus bucket exists") {
-            let entry = entry.expect("corpus entry");
-            let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "solc")
-            {
-                let file = path
-                    .file_name()
-                    .and_then(|file| file.to_str())
-                    .expect("UTF-8 fixture path");
-                files.push(format!("{bucket}/{file}"));
-            }
+    let mut seen = BTreeSet::new();
+    for status in ["ok", "fail", "known-diagnostic-gaps"] {
+        let test_root = corpus_root.join(status).join("test");
+        if test_root.exists() {
+            collect_corpus_files(&test_root, &test_root, &mut files, &mut seen);
         }
     }
     files.sort();
     files
 }
 
+fn collect_corpus_files(
+    test_root: &Path,
+    dir: &Path,
+    files: &mut Vec<String>,
+    seen: &mut BTreeSet<String>,
+) {
+    for entry in fs::read_dir(dir).expect("corpus directory exists") {
+        let entry = entry.expect("corpus entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_corpus_files(test_root, &path, files, seen);
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "solc")
+        {
+            let relative = path
+                .strip_prefix(test_root)
+                .expect("corpus path under test root")
+                .to_str()
+                .expect("UTF-8 fixture path")
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            if is_scoreboard_corpus_file(&relative) {
+                assert!(
+                    seen.insert(relative.clone()),
+                    "duplicate corpus fixture relative path `{relative}`"
+                );
+                files.push(relative);
+            }
+        }
+    }
+}
+
+fn is_scoreboard_corpus_file(relative: &str) -> bool {
+    relative.starts_with("diagnostics/")
+        || relative.starts_with("examples/")
+        || relative.starts_with("imports/")
+}
+
+fn corpus_entry(corpus_root: &Path, relative: &str) -> CorpusEntry {
+    for status in ["ok", "fail", "known-diagnostic-gaps"] {
+        let test_root = corpus_root.join(status).join("test");
+        let path = test_root.join(relative);
+        if path.exists() {
+            let main_root = main_root_for_fixture(&test_root, relative);
+            let mut external_roots = BTreeMap::new();
+            if relative.starts_with("imports/") {
+                external_roots.insert("extlib".to_owned(), test_root.join("imports/extlib"));
+            }
+            return CorpusEntry {
+                path,
+                main_root,
+                external_roots,
+                area: corpus_area(relative).to_owned(),
+            };
+        }
+    }
+    panic!("expectation fixture `{relative}` does not exist in corpus");
+}
+
+fn main_root_for_fixture(test_root: &Path, relative: &str) -> PathBuf {
+    if relative.starts_with("diagnostics/") {
+        test_root.join("diagnostics")
+    } else if relative.starts_with("examples/cases/") {
+        test_root.join("examples/cases")
+    } else if relative.starts_with("examples/comptime/") {
+        test_root.join("examples/comptime")
+    } else if relative.starts_with("examples/dispatch/") {
+        test_root.join("examples/dispatch")
+    } else if relative.starts_with("examples/invokable/") {
+        test_root.join("examples/invokable")
+    } else if relative.starts_with("examples/opcodes/") {
+        test_root.join("examples/opcodes")
+    } else if relative.starts_with("examples/pragmas/") {
+        test_root.join("examples/pragmas")
+    } else if relative.starts_with("examples/spec/") {
+        test_root.join("examples/spec")
+    } else if relative.starts_with("examples/") {
+        test_root.join("examples")
+    } else if relative.starts_with("imports/extlib/") {
+        test_root.join("imports/extlib")
+    } else if relative.starts_with("imports/") {
+        test_root.join("imports")
+    } else {
+        panic!("unknown corpus fixture area `{relative}`");
+    }
+}
+
+fn corpus_area(relative: &str) -> &'static str {
+    if relative.starts_with("diagnostics/") {
+        "test/diagnostics"
+    } else if relative.starts_with("examples/cases/") {
+        "test/examples/cases"
+    } else if relative.starts_with("examples/comptime/") {
+        "test/examples/comptime"
+    } else if relative.starts_with("examples/dispatch/") {
+        "test/examples/dispatch"
+    } else if relative.starts_with("examples/invokable/") {
+        "test/examples/invokable"
+    } else if relative.starts_with("examples/opcodes/") {
+        "test/examples/opcodes"
+    } else if relative.starts_with("examples/pragmas/") {
+        "test/examples/pragmas"
+    } else if relative.starts_with("examples/spec/") {
+        "test/examples/spec"
+    } else if relative.starts_with("examples/") {
+        "test/examples top-level"
+    } else if relative.starts_with("imports/") {
+        "test/imports"
+    } else {
+        "unknown"
+    }
+}
+
 fn run_frontend(path: &Path, std_root: &Path) -> RunOutcome {
-    let mut db = TestDb::default();
     let main_root = path
         .parent()
         .expect("entry path has a parent directory")
         .to_path_buf();
+    run_frontend_with_roots(path, &main_root, std_root, BTreeMap::new())
+}
+
+fn run_frontend_with_roots(
+    path: &Path,
+    main_root: &Path,
+    std_root: &Path,
+    external_roots: BTreeMap<String, PathBuf>,
+) -> RunOutcome {
+    let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
         &db,
-        main_root.clone(),
+        main_root.to_path_buf(),
         std_root.to_path_buf(),
-        BTreeMap::new(),
+        external_roots,
     ));
 
     let source = fs::read_to_string(path).expect("fixture source");
-    let entry_key = module_key_for_path(LibraryId::Main, &main_root, path)
+    let entry_key = module_key_for_path(LibraryId::Main, main_root, path)
         .expect("entry file is under its main root");
     let entry_file = source_file_for_path(&db, path, source);
     db.module_files.insert(entry_key.clone(), entry_file);
@@ -853,7 +1213,14 @@ fn run_frontend(path: &Path, std_root: &Path) -> RunOutcome {
     let entry = module_id_from_key(&db, &entry_key);
     let _ = db.take_executed();
     let _ = resolve_reachable_full(&db, entry);
-    let frontend_diagnostics = summarize_diagnostics(&db, reachable_diagnostics(&db, entry));
+    let mut frontend_diagnostics = summarize_diagnostics(&db, reachable_diagnostics(&db, entry));
+    frontend_diagnostics.extend(
+        unresolved_imports
+            .iter()
+            .map(|unresolved| format!("unresolved-import: {unresolved}")),
+    );
+    frontend_diagnostics.sort();
+    frontend_diagnostics.dedup();
     let typeck_diagnostics = summarize_diagnostics(&db, reachable_typeck_diagnostics(&db, entry));
     let executed = db.take_executed();
 
@@ -1036,6 +1403,7 @@ fn std_solc_known_divergence(
 
 fn format_scoreboard_report(
     scoreboard: &Scoreboard,
+    area_scoreboards: &BTreeMap<String, Scoreboard>,
     known_by_reason: &BTreeMap<&'static str, Vec<String>>,
     unrecorded: &[Divergence],
     skipped: &[(String, Vec<String>)],
@@ -1066,6 +1434,30 @@ fn format_scoreboard_report(
     )
     .unwrap();
 
+    if !area_scoreboards.is_empty() {
+        writeln!(&mut report, "\nper-area scoreboard").unwrap();
+        writeln!(
+            &mut report,
+            "  {:<28} {:>5} {:>5} {:>11} {:>11} {:>7} {:>7}",
+            "area", "pass", "fail", "pass-parity", "fail-parity", "known", "skipped"
+        )
+        .unwrap();
+        for (area, area_scoreboard) in area_scoreboards {
+            writeln!(
+                &mut report,
+                "  {:<28} {:>5} {:>5} {:>11} {:>11} {:>7} {:>7}",
+                area,
+                area_scoreboard.expected_pass,
+                area_scoreboard.expected_fail,
+                area_scoreboard.pass_parity,
+                area_scoreboard.fail_parity,
+                area_scoreboard.known_divergences,
+                area_scoreboard.skipped_unresolved_imports,
+            )
+            .unwrap();
+        }
+    }
+
     if !known_by_reason.is_empty() {
         writeln!(&mut report, "\nknown divergence categories").unwrap();
         for (reason, files) in known_by_reason {
@@ -1091,7 +1483,7 @@ fn format_scoreboard_report(
 
     if !unrecorded.is_empty() {
         writeln!(&mut report, "\nunrecorded divergences").unwrap();
-        for divergence in unrecorded.iter().take(40) {
+        for divergence in unrecorded.iter().take(80) {
             writeln!(
                 &mut report,
                 "  {} expected {:?}, observed {}",
@@ -1101,11 +1493,11 @@ fn format_scoreboard_report(
             append_diagnostic_sample(&mut report, "frontend", &divergence.frontend_diagnostics);
             append_diagnostic_sample(&mut report, "typeck", &divergence.typeck_diagnostics);
         }
-        if unrecorded.len() > 40 {
+        if unrecorded.len() > 80 {
             writeln!(
                 &mut report,
                 "  ... {} more unrecorded divergences",
-                unrecorded.len() - 40
+                unrecorded.len() - 80
             )
             .unwrap();
         }
