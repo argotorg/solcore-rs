@@ -1,0 +1,19 @@
+data thing = thing;
+data m = m | k;
+
+function pickThing(t: thing) -> word {
+  match t {
+  | thing => return 7;
+  }
+}
+
+function pickM(x: m) -> word {
+  match x {
+  | m => return 1;
+  | m.k => return 2;
+  }
+}
+
+function main() -> word {
+  return pickThing(thing) + pickM(m.k);
+}

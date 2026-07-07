@@ -1,0 +1,25 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/unqualified_ctor_plain_import/main.solc
+---
+error[SC0106]: unqualified constructor: wrapper
+ --> /main/main.solc:5:5
+  |
+4 |   match u {
+5 |   | wrapper(w) => return w;
+  |     ^^^^^^^ constructor must be qualified
+6 |   }
+  |
+  = note: use Type.Constructor form
+---
+
+error[SC0106]: unqualified constructor: wrapper
+  --> /main/main.solc:10:17
+   |
+ 9 | function main() -> word {
+10 |   return unwrap(wrapper(3));
+   |                 ^^^^^^^ constructor must be qualified
+11 | }
+   |
+   = note: use Type.Constructor form

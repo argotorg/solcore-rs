@@ -1,0 +1,25 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/unqualified_ctor_pattern_direction/main.solc
+---
+error[SC0106]: unqualified constructor: north
+ --> /main/main.solc:5:5
+  |
+4 |   match d {
+5 |   | north => return 1;
+  |     ^^^^^ constructor must be qualified
+6 |   | south => return 2;
+  |
+  = note: use Type.Constructor form
+---
+
+error[SC0106]: unqualified constructor: south
+ --> /main/main.solc:6:5
+  |
+5 |   | north => return 1;
+6 |   | south => return 2;
+  |     ^^^^^ constructor must be qualified
+7 |   }
+  |
+  = note: use Type.Constructor form
