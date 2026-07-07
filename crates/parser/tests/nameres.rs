@@ -359,8 +359,7 @@ fn qualified_ctor_class_method_and_dot_ctor_resolve_as_expected() {
          function good(x: word) -> Option { return Option.Some(x); }
          function classCall(x: word) -> word { return Show.show(x); }
          function dot(x: word) -> Option { return .Some(x); }
-         function bad(x: word) -> Option { return Some(x); }
-         function badSameName(x: word) -> Foo { return Foo(x); }",
+         function sameName(x: word) -> Foo { return Foo(x); }",
     );
     let codes = diagnostic_codes(&db, module);
     assert!(codes.is_empty());
@@ -384,6 +383,41 @@ fn qualified_ctor_class_method_and_dot_ctor_resolve_as_expected() {
     assert!(
         dot_map.exprs.iter().any(|entry| entry.body == dot_body
             && matches!(entry.resolution, Resolution::DotCtorDeferred))
+    );
+}
+
+#[test]
+fn unqualified_constructor_references_report_sc0106() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "data Option = None | Some(word);
+         data flag = off | on;
+         function exprCall(x: word) -> Option { return Some(x); }
+         function exprBare(f: flag) -> flag { return on; }
+         function patLower(f: flag) -> word {
+           match f {
+           | off => return 0;
+           | on => return 1;
+           }
+         }
+         function patUpper(o: Option) -> word {
+           match o {
+           | None => return 0;
+           | _ => return 1;
+           }
+         }",
+    );
+    let codes = diagnostic_codes(&db, module);
+    assert_eq!(
+        codes.iter().filter(|code| *code == "SC0106").count(),
+        // `Some(x)`, `on` (expression), `off` + `on` (patterns), `None` (pattern).
+        5,
+        "expected SC0106 for every unqualified constructor reference, got {codes:?}"
+    );
+    assert!(
+        codes.iter().all(|code| code == "SC0106"),
+        "unexpected extra diagnostics: {codes:?}"
     );
 }
 

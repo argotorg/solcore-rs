@@ -2125,18 +2125,31 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             }
             PatKind::Var(name) => {
                 let leaf = ident_text(self.db, name);
-                let resolution = match builtin_term(leaf) {
-                    Some(
-                        res @ Resolution::Builtin(BuiltinKind::Constructor(
-                            BuiltinCtor::True | BuiltinCtor::False,
-                        )),
-                    ) => res,
-                    _ => {
-                        let resolution =
-                            Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
-                        self.add_local(leaf, resolution.clone());
-                        resolution
-                    }
+                let resolution = if let Some(
+                    res @ Resolution::Builtin(BuiltinKind::Constructor(
+                        BuiltinCtor::True | BuiltinCtor::False,
+                    )),
+                ) = builtin_term(leaf)
+                {
+                    res
+                } else if let Some(res) = self.same_name_constructor_resolution(leaf) {
+                    // A constructor sharing its type's name may be referenced
+                    // without a qualifier, mirroring the reference resolver.
+                    res
+                } else if self.has_user_constructor_leaf(leaf) {
+                    // Any other in-scope constructor must be written qualified;
+                    // silently binding it as a variable would turn the arm into
+                    // a catch-all.
+                    self.map.diagnostics.push(unqualified_constructor(
+                        self.db,
+                        leaf,
+                        name.span(self.db),
+                    ));
+                    Resolution::Err
+                } else {
+                    let resolution = Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
+                    self.add_local(leaf, resolution.clone());
+                    resolution
                 };
                 self.map.record_pat(body, pat_id, resolution);
             }
@@ -2176,8 +2189,24 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     {
                         Resolution::Err
                     } else if self.has_constructor_leaf(leaf) {
-                        self.same_name_constructor_resolution(leaf)
-                            .unwrap_or(Resolution::DotCtorDeferred)
+                        self.same_name_constructor_resolution(leaf).unwrap_or_else(|| {
+                            if matches!(
+                                builtin_term(leaf),
+                                Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
+                            ) {
+                                // Primitive constructors (`pair`, `inl`, ...) stay
+                                // legal unqualified; their concrete constructor is
+                                // picked from the expected type during inference.
+                                Resolution::DotCtorDeferred
+                            } else {
+                                self.map.diagnostics.push(unqualified_constructor(
+                                    self.db,
+                                    leaf,
+                                    name.span(self.db),
+                                ));
+                                Resolution::Err
+                            }
+                        })
                     } else if args.is_empty() {
                         let resolution =
                             Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
@@ -2282,10 +2311,6 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     .then_some(Resolution::Err)
             })
             .or_else(|| self.same_name_constructor_resolution(text))
-            .or_else(|| {
-                self.has_constructor_leaf(text)
-                    .then_some(Resolution::DotCtorDeferred)
-            })
             .or_else(|| self.lookup_type(text))
             .or_else(|| self.lookup_module(text))
             .unwrap_or_else(|| {
@@ -2293,6 +2318,16 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     .imports
                     .may_contain_unknown_unqualified(self.db, Namespace::Term, text)
                 {
+                    return Resolution::Err;
+                }
+                if self.has_user_constructor_leaf(text) {
+                    // The name is visible only as a constructor of some type;
+                    // referencing it without its type qualifier is an error.
+                    self.map.diagnostics.push(unqualified_constructor(
+                        self.db,
+                        text,
+                        name.span(self.db),
+                    ));
                     return Resolution::Err;
                 }
                 self.map
@@ -2320,10 +2355,6 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .or_else(|| self.lookup_field(text))
             .or_else(|| self.lookup_unqualified_class_method(text))
             .or_else(|| self.same_name_constructor_resolution(text))
-            .or_else(|| {
-                self.has_constructor_leaf(text)
-                    .then_some(Resolution::DotCtorDeferred)
-            })
             .unwrap_or_else(|| self.resolve_ident(name))
     }
 
@@ -2503,15 +2534,24 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     }
 
     fn has_constructor_leaf(&self, leaf: &str) -> bool {
+        self.has_user_constructor_leaf(leaf)
+            || matches!(
+                builtin_term(leaf),
+                Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
+            )
+    }
+
+    /// Returns whether any user-declared constructor in scope has this leaf
+    /// name, excluding the builtin (primitive) constructors.
+    ///
+    /// Unqualified references to such constructors are rejected with `SC0106`,
+    /// while primitive constructors stay legal unqualified.
+    fn has_user_constructor_leaf(&self, leaf: &str) -> bool {
         self.contract
             .and_then(|contract| self.scope.contract_scope(contract))
             .is_some_and(|contract| contract.has_constructor_leaf(leaf))
             || self.scope.has_constructor_leaf(leaf)
             || self.imports.has_constructor_leaf(self.db, leaf)
-            || matches!(
-                builtin_term(leaf),
-                Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
-            )
     }
 
     fn same_name_constructor_resolution(&self, name: &str) -> Option<Resolution<'db>> {
@@ -2705,6 +2745,13 @@ fn undefined_class<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> Nameres
 
 fn invalid_pattern<'db>(db: &'db dyn Db, span: Span<'db>) -> NameresDiagnostic {
     NameresDiagnostic::InvalidPattern {
+        span: LabelSpan::from_span(db, span),
+    }
+}
+
+fn unqualified_constructor<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
+    NameresDiagnostic::UnqualifiedConstructor {
+        name: name.to_owned(),
         span: LabelSpan::from_span(db, span),
     }
 }
