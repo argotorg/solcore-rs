@@ -178,18 +178,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     known!("examples/cases/Peano.solc", "needs-tuple-call-lowering"),
     known!("examples/cases/Uncurry.solc", "needs-tuple-call-lowering"),
     known!(
-        "examples/cases/abigeneric.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
-        "examples/cases/bal.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
-        "examples/cases/bug-import-default-inst-shadow.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
         "examples/cases/bug-spec-generic-let.solc",
         "needs-specializer-and-std-instances"
     ),
@@ -222,14 +210,6 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
     ),
     known!("examples/cases/rec.solc", "needs-tuple-call-lowering"),
     known!(
-        "examples/cases/reference-encoding-good.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
-        "examples/cases/reference-encoding-good1.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
         "examples/cases/spec-fail-ungrounded.solc",
         "missing-negative-typecheck"
     ),
@@ -242,15 +222,7 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "missing-negative-typecheck"
     ),
     known!(
-        "examples/cases/tiamat.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
         "examples/cases/tuple-trick.solc",
-        "needs-specializer-and-std-instances"
-    ),
-    known!(
-        "examples/cases/tuva.solc",
         "needs-specializer-and-std-instances"
     ),
     known!(
@@ -546,7 +518,6 @@ macro_rules! std_known {
 const STD_SOLC_KNOWN_DIVERGENCES: &[StdSolcKnownDivergence] = &[
     std_known!(Typeck, "SC0201", "needs-std-type-alias-normalization"),
     std_known!(Typeck, "SC0203", "needs-std-comptime-yul-arity"),
-    std_known!(Typeck, "SC0207", "needs-std-specializer-and-instances"),
     std_known!(Typeck, "SC0211", "needs-std-yul-builtins"),
 ];
 

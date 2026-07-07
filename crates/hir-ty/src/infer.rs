@@ -4514,108 +4514,169 @@ impl<'db> InferCtx<'db> {
     ) -> ObligationSolveOutput<'db> {
         let mut evidence = Vec::new();
         let mut call_site_evidence = Vec::new();
-        let mut diagnostics = Vec::new();
+        let mut diagnostics: Vec<(usize, TypeckDiagnostic)> = Vec::new();
 
-        for (index, pending) in self.pending.clone().into_iter().enumerate() {
-            if self.obligation_source_poisoned(&pending.source)
-                || self.pending_obligation_has_error(&pending)
-            {
-                continue;
-            }
-            if let Some(proof) = self.solve_local_closure_obligation(&pending) {
-                evidence.push(ObligationEvidence {
-                    obligation: index,
-                    evidence: proof.clone(),
-                });
-                if let ObligationSource::CallSite {
-                    body,
-                    call_expr,
-                    callee_expr,
-                    callee,
-                } = &pending.source
-                {
-                    call_site_evidence.push(CallSiteEvidence {
-                        body: *body,
-                        call_expr: *call_expr,
-                        callee_expr: *callee_expr,
-                        callee: callee.clone(),
-                        obligation: index,
-                        evidence: proof,
-                    });
+        let pending = self.pending.clone();
+        let mut unresolved: Vec<usize> = (0..pending.len()).collect();
+
+        // Improvement rounds, mirroring the reference's `toHnfs` fixpoint:
+        // solving one obligation can pin goal metavariables of a sibling via
+        // class-argument unification (improvement), so a failure whose
+        // canonicalized goal still mentions inference variables is deferred
+        // and retried after other obligations make progress. Ground goals can
+        // never improve, so their failures are reported immediately. Each
+        // continuing round resolves at least one obligation, bounding the
+        // loop by `pending.len()` rounds.
+        loop {
+            let mut progress = false;
+            let mut deferred = Vec::new();
+            for &index in &unresolved {
+                match self.attempt_obligation(
+                    trait_env,
+                    index,
+                    &pending[index],
+                    true,
+                    &mut evidence,
+                    &mut call_site_evidence,
+                    &mut diagnostics,
+                ) {
+                    ObligationAttempt::Solved => progress = true,
+                    ObligationAttempt::Settled => {}
+                    ObligationAttempt::Deferred => deferred.push(index),
                 }
-                continue;
             }
-            let pred = self.pending_obligation_pred(&pending);
-            if matches!(pred.pred.kind(self.db), PredKind::Error) {
-                continue;
+            unresolved = deferred;
+            if !progress || unresolved.is_empty() {
+                break;
             }
-            let span = self.obligation_source_label_span(&pending.source);
-            let report = solve_report(
-                self.db,
+        }
+
+        // Final phase: no further improvement is possible, so report the
+        // remaining deferred obligations exactly as the single-pass solver
+        // did, in ascending obligation order.
+        for index in unresolved {
+            self.attempt_obligation(
                 trait_env,
-                canonical_goal_with_allowed(self.db, pred.pred, pred.allowed_vars.clone()),
+                index,
+                &pending[index],
+                false,
+                &mut evidence,
+                &mut call_site_evidence,
+                &mut diagnostics,
             );
-            if report.exhausted {
-                diagnostics.push(TypeckDiagnostic::SolverFuelExhausted {
+        }
+
+        // Consumers key on the stored obligation index; keep the outputs
+        // index-sorted so round interleaving cannot perturb downstream order.
+        evidence.sort_by_key(|entry| entry.obligation);
+        call_site_evidence.sort_by_key(|entry| entry.obligation);
+        diagnostics.sort_by_key(|(index, _)| *index);
+
+        ObligationSolveOutput {
+            evidence,
+            call_site_evidence,
+            diagnostics: diagnostics
+                .into_iter()
+                .map(|(_, diagnostic)| diagnostic)
+                .collect(),
+        }
+    }
+
+    /// Attempts a single pending obligation.
+    ///
+    /// When `defer_unsolved` is true (improvement rounds), failures on goals
+    /// that still mention inference variables return
+    /// [`ObligationAttempt::Deferred`] without reporting; otherwise (final
+    /// phase) failures emit the same diagnostics as the historical
+    /// single-pass solver.
+    #[allow(clippy::too_many_arguments)]
+    fn attempt_obligation(
+        &mut self,
+        trait_env: TraitEnvId<'db>,
+        index: usize,
+        pending: &PendingObligation<'db>,
+        defer_unsolved: bool,
+        evidence: &mut Vec<ObligationEvidence<'db>>,
+        call_site_evidence: &mut Vec<CallSiteEvidence<'db>>,
+        diagnostics: &mut Vec<(usize, TypeckDiagnostic)>,
+    ) -> ObligationAttempt {
+        // Re-checked on every attempt: poisoning can grow as other
+        // obligations unify error types into this obligation's source.
+        if self.obligation_source_poisoned(&pending.source)
+            || self.pending_obligation_has_error(pending)
+        {
+            return ObligationAttempt::Settled;
+        }
+        if let Some(proof) = self.solve_local_closure_obligation(pending) {
+            record_obligation_evidence(index, pending, proof, evidence, call_site_evidence);
+            return ObligationAttempt::Solved;
+        }
+        // Re-canonicalized on every attempt: the goal resolves through the
+        // inference engine, so substitutions applied by other obligations
+        // refine it between rounds.
+        let pred = self.pending_obligation_pred(pending);
+        if matches!(pred.pred.kind(self.db), PredKind::Error) {
+            return ObligationAttempt::Settled;
+        }
+        let can_improve = defer_unsolved && !pred.allowed_vars.is_empty();
+        let span = self.obligation_source_label_span(&pending.source);
+        let report = solve_report(
+            self.db,
+            trait_env,
+            canonical_goal_with_allowed(self.db, pred.pred, pred.allowed_vars.clone()),
+        );
+        if report.exhausted {
+            if can_improve {
+                return ObligationAttempt::Deferred;
+            }
+            diagnostics.push((
+                index,
+                TypeckDiagnostic::SolverFuelExhausted {
                     span,
                     pred: pred.pred.display(self.db),
-                });
-                continue;
+                },
+            ));
+            return ObligationAttempt::Settled;
+        }
+        match report.solution {
+            Solution::Unique {
+                subst,
+                evidence: proof,
+            } => {
+                self.apply_solver_substitution(&pred.goal_vars, &subst);
+                record_obligation_evidence(index, pending, proof, evidence, call_site_evidence);
+                ObligationAttempt::Solved
             }
-            match report.solution {
-                Solution::Unique {
-                    subst,
-                    evidence: proof,
-                } => {
-                    self.apply_solver_substitution(&pred.goal_vars, &subst);
-                    evidence.push(ObligationEvidence {
-                        obligation: index,
-                        evidence: proof.clone(),
-                    });
-                    if let ObligationSource::CallSite {
-                        body,
-                        call_expr,
-                        callee_expr,
-                        callee,
-                    } = &pending.source
-                    {
-                        call_site_evidence.push(CallSiteEvidence {
-                            body: *body,
-                            call_expr: *call_expr,
-                            callee_expr: *callee_expr,
-                            callee: callee.clone(),
-                            obligation: index,
-                            evidence: proof,
-                        });
-                    }
+            Solution::Ambiguous { candidates } => {
+                if can_improve {
+                    return ObligationAttempt::Deferred;
                 }
-                Solution::Ambiguous { candidates } => {
-                    diagnostics.push(TypeckDiagnostic::AmbiguousConstraint {
+                diagnostics.push((
+                    index,
+                    TypeckDiagnostic::AmbiguousConstraint {
                         span,
                         pred: pred.pred.display(self.db),
                         candidates: candidates
                             .iter()
                             .map(|candidate| candidate.evidence.display(self.db))
                             .collect(),
-                    });
-                }
-                Solution::NoSolution => {
-                    if let Some(diagnostic) = self.classify_no_solution(&pending) {
-                        diagnostics.push(diagnostic);
-                    } else {
-                        diagnostics.push(TypeckDiagnostic::UnsatisfiedConstraint {
-                            span,
-                            pred: pred.pred.display(self.db),
-                        });
-                    }
-                }
+                    },
+                ));
+                ObligationAttempt::Settled
             }
-        }
-
-        ObligationSolveOutput {
-            evidence,
-            call_site_evidence,
-            diagnostics,
+            Solution::NoSolution => {
+                if can_improve {
+                    return ObligationAttempt::Deferred;
+                }
+                let diagnostic = self.classify_no_solution(pending).unwrap_or_else(|| {
+                    TypeckDiagnostic::UnsatisfiedConstraint {
+                        span,
+                        pred: pred.pred.display(self.db),
+                    }
+                });
+                diagnostics.push((index, diagnostic));
+                ObligationAttempt::Settled
+            }
         }
     }
 
@@ -5008,6 +5069,50 @@ struct ObligationSolveOutput<'db> {
     evidence: Vec<ObligationEvidence<'db>>,
     call_site_evidence: Vec<CallSiteEvidence<'db>>,
     diagnostics: Vec<TypeckDiagnostic>,
+}
+
+/// Outcome of one attempt at a pending obligation.
+enum ObligationAttempt {
+    /// Evidence was recorded and the solver substitution (or closure
+    /// unification) advanced the inference state, so deferred goals are
+    /// worth retrying.
+    Solved,
+    /// Nothing further to do: the obligation was skipped (poisoned or
+    /// error-tainted) or a diagnostic was emitted for a goal that can no
+    /// longer improve.
+    Settled,
+    /// The goal failed but still mentions inference variables; retry after
+    /// other obligations make progress.
+    Deferred,
+}
+
+fn record_obligation_evidence<'db>(
+    index: usize,
+    pending: &PendingObligation<'db>,
+    proof: Evidence<'db>,
+    evidence: &mut Vec<ObligationEvidence<'db>>,
+    call_site_evidence: &mut Vec<CallSiteEvidence<'db>>,
+) {
+    evidence.push(ObligationEvidence {
+        obligation: index,
+        evidence: proof.clone(),
+    });
+    if let ObligationSource::CallSite {
+        body,
+        call_expr,
+        callee_expr,
+        callee,
+    } = &pending.source
+    {
+        call_site_evidence.push(CallSiteEvidence {
+            body: *body,
+            call_expr: *call_expr,
+            callee_expr: *callee_expr,
+            callee: callee.clone(),
+            obligation: index,
+            evidence: proof,
+        });
+    }
 }
 
 fn apply_solver_ty_subst<'db>(
