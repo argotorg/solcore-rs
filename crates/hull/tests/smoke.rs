@@ -971,6 +971,58 @@ fn check_fixture_kinds(fixture: &str) -> Vec<CheckDiagnosticKind> {
     }
 }
 
+#[test]
+fn mapping_field_in_value_position_lowers_to_unimplemented_trap() {
+    // The reference compiles whole-mapping reads/stores via the
+    // `storage(mapping(k, v)) : CanStore` instance, whose load/store are
+    // `unimplemented()` runtime traps. This must not escape as an internal
+    // hull-check error (previously: UndefinedVariable { name: "bal" }).
+    let read_src = r#"
+data mapping(key, value) = mapping(word);
+
+contract C {
+  bal : mapping(word, word);
+
+  public function main() -> word {
+    let b = bal;
+    return 7;
+  }
+}
+"#;
+    let store_src = r#"
+data mapping(key, value) = mapping(word);
+
+contract C {
+  bal : mapping(word, word);
+
+  public function main() -> word {
+    bal = bal;
+    return 7;
+  }
+}
+"#;
+    for (name, src) in [
+        ("mapping_value_read", read_src),
+        ("mapping_value_store", store_src),
+    ] {
+        let (db, output) = specialize_src(name, src);
+        assert_eq!(output.diagnostics, Vec::new(), "specialize for {name}");
+        let emitted = emit_module(db, &output.module, EmitOptions::default());
+        assert_eq!(emitted.diagnostics, Vec::new(), "emit for {name}");
+        assert_eq!(
+            check_program_with_db(db, &emitted.program),
+            Vec::new(),
+            "check for {name}"
+        );
+        let hull = pretty_program(db, &emitted.program);
+        assert!(
+            hull.contains("__solcore_storage_mapping_value"),
+            "{name}: {hull}"
+        );
+        assert!(hull.contains("0x6e128399"), "{name}: {hull}");
+    }
+}
+
 fn specialize_src(name: &str, src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {
     let db = Box::leak(Box::new(TestDb::default()));
     let module = parse_module(db, name, src);

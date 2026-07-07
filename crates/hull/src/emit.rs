@@ -30,6 +30,10 @@ const ADDRESS_MASK: &str = "0xffffffffffffffffffffffffffffffffffffffff";
 const STORAGE_INDEX_READ: &str = "__solcore_storage_index_read";
 const STORAGE_INDEX_SLOT: &str = "__solcore_storage_index_slot";
 const STORAGE_HASH2_HELPER: &str = "__solcore_storage_hash2";
+const STORAGE_MAPPING_VALUE_HELPER: &str = "__solcore_storage_mapping_value";
+/// Error selector of the reference std's `Unimplemented` error
+/// (`Error(0x6e128399)` raised by `unimplemented()` in std.solc).
+const UNIMPLEMENTED_SELECTOR: &str = "0x6e128399";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AbiWordKind {
@@ -299,6 +303,7 @@ impl<'db> Emitter<'db> {
             .then_some(STORAGE_HASH2_HELPER.to_owned());
 
         let deployment_names = deployment_closure(self.db, functions, &constructor_names);
+        let mut mapping_value_helper_used = false;
         let mut deployment_functions = functions
             .iter()
             .filter(|function| deployment_names.contains(&function.name))
@@ -308,6 +313,7 @@ impl<'db> Emitter<'db> {
                     function,
                     &storage_fields,
                     storage_hash_helper.as_deref(),
+                    &mut mapping_value_helper_used,
                 )
             })
             .map(ensure_unit_function_returns)
@@ -321,11 +327,18 @@ impl<'db> Emitter<'db> {
                     function,
                     &storage_fields,
                     storage_hash_helper.as_deref(),
+                    &mut mapping_value_helper_used,
                 )
             })
             .collect::<Vec<_>>();
         if let Some(helper) = storage_hash_helper.as_deref() {
             let helper_function = self.storage_hash2_function(contract.span, helper);
+            deployment_functions.push(helper_function.clone());
+            runtime_functions.push(helper_function);
+        }
+        if mapping_value_helper_used {
+            let helper_function = self
+                .storage_mapping_value_function(contract.span, STORAGE_MAPPING_VALUE_HELPER);
             deployment_functions.push(helper_function.clone());
             runtime_functions.push(helper_function);
         }
@@ -518,12 +531,14 @@ impl<'db> Emitter<'db> {
         mut function: Function<'db>,
         fields: &BTreeMap<String, StorageField>,
         storage_hash_helper: Option<&str>,
+        mapping_value_helper_used: &mut bool,
     ) -> Function<'db> {
         if fields.is_empty() {
             return function;
         }
         let mut lowerer = StorageLowerer::new(self, fields, storage_hash_helper, &function.args);
         function.body = lowerer.stmts(function.body);
+        *mapping_value_helper_used |= lowerer.mapping_value_helper_used;
         function
     }
 
@@ -586,6 +601,55 @@ impl<'db> Emitter<'db> {
                 Stmt {
                     span,
                     kind: StmtKind::Return(Expr::var(span, "out", word)),
+                },
+            ],
+        }
+    }
+
+    /// Mirrors the reference std's `storage(mapping(k, v)) : CanStore`
+    /// instance, whose `load`/`store` bodies are `unimplemented()`: touching a
+    /// whole mapping field as a value compiles, but reverts at runtime with
+    /// the std `Unimplemented` error, nominally yielding the field's base
+    /// slot (the storage reference).
+    fn storage_mapping_value_function(&self, span: Span<'db>, name: &str) -> Function<'db> {
+        let word = Ty::word(span);
+        Function {
+            span,
+            name: name.to_owned(),
+            args: vec![Arg {
+                span,
+                name: "slot".to_owned(),
+                ty: word.clone(),
+            }],
+            ret: word.clone(),
+            body: vec![
+                self.assembly_stmt(
+                    span,
+                    vec![
+                        self.yul_expr_stmt(
+                            span,
+                            self.yul_call(
+                                span,
+                                "mstore",
+                                vec![
+                                    self.yul_number(span, "0"),
+                                    self.yul_number(span, UNIMPLEMENTED_SELECTOR),
+                                ],
+                            ),
+                        ),
+                        self.yul_expr_stmt(
+                            span,
+                            self.yul_call(
+                                span,
+                                "revert",
+                                vec![self.yul_number(span, "28"), self.yul_number(span, "4")],
+                            ),
+                        ),
+                    ],
+                ),
+                Stmt {
+                    span,
+                    kind: StmtKind::Return(Expr::var(span, "slot", word)),
                 },
             ],
         }
@@ -2888,6 +2952,7 @@ struct StorageLowerer<'a, 'db> {
     storage_hash_helper: Option<&'a str>,
     shadows: Vec<BTreeSet<String>>,
     fresh: usize,
+    mapping_value_helper_used: bool,
 }
 
 impl<'a, 'db> StorageLowerer<'a, 'db> {
@@ -2903,6 +2968,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
             storage_hash_helper,
             shadows: vec![args.iter().map(|arg| arg.name.clone()).collect()],
             fresh: 0,
+            mapping_value_helper_used: false,
         }
     }
 
@@ -2961,6 +3027,56 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                                 ),
                             )],
                         ),
+                    ];
+                }
+                if let ExprKind::Var(name) = &lhs.kind
+                    && let Some(slot) = self.mapping_field(name).map(|field| field.slot)
+                {
+                    // A whole mapping field as an assignment target: the
+                    // reference compiles this via `CanStore.store`, which
+                    // evaluates the rhs and then hits an `unimplemented()`
+                    // runtime trap.
+                    self.mapping_value_helper_used = true;
+                    let rhs = self.expr(rhs);
+                    let temp = self.fresh_temp(name);
+                    let trap = self.fresh_temp(name);
+                    let word = Ty::word(stmt.span);
+                    return vec![
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Let {
+                                name: temp.clone(),
+                                ty: lhs.ty.clone(),
+                            },
+                        },
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Assign {
+                                lhs: Expr::var(stmt.span, temp, lhs.ty),
+                                rhs,
+                            },
+                        },
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Let {
+                                name: trap.clone(),
+                                ty: word.clone(),
+                            },
+                        },
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Assign {
+                                lhs: Expr::var(stmt.span, trap, word.clone()),
+                                rhs: Expr {
+                                    span: stmt.span,
+                                    ty: word,
+                                    kind: ExprKind::Call {
+                                        callee: STORAGE_MAPPING_VALUE_HELPER.to_owned(),
+                                        args: vec![Expr::word(stmt.span, slot.to_string())],
+                                    },
+                                },
+                            },
+                        },
                     ];
                 }
                 if let Some(slot) = self.storage_index_read_slot(&lhs) {
@@ -3097,6 +3213,19 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                             args: vec![Expr::word(expr.span, slot.to_string())],
                         },
                     }
+                } else if let Some(slot) = self.mapping_field(&name).map(|field| field.slot) {
+                    // A whole mapping field read as a value: the reference
+                    // compiles this via `CanStore.load`, which is an
+                    // `unimplemented()` runtime trap returning the base slot.
+                    self.mapping_value_helper_used = true;
+                    Expr {
+                        span: expr.span,
+                        ty: expr.ty,
+                        kind: ExprKind::Call {
+                            callee: STORAGE_MAPPING_VALUE_HELPER.to_owned(),
+                            args: vec![Expr::word(expr.span, slot.to_string())],
+                        },
+                    }
                 } else {
                     Expr {
                         span: expr.span,
@@ -3204,6 +3333,11 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
     fn direct_field(&self, name: &str) -> Option<&StorageField> {
         self.field(name)
             .filter(|field| field.kind == StorageFieldKind::DirectWord)
+    }
+
+    fn mapping_field(&self, name: &str) -> Option<&StorageField> {
+        self.field(name)
+            .filter(|field| field.kind == StorageFieldKind::Mapping)
     }
 
     fn storage_index_read_slot(&self, expr: &Expr<'db>) -> Option<Expr<'db>> {
