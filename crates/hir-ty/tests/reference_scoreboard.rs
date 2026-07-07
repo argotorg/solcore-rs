@@ -350,24 +350,12 @@ const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
         "SC0201"
     ),
     known!("examples/spec/012nid.solc", "needs-tuple-call-lowering"),
-    known!(
-        "examples/spec/051expreturn.solc",
-        "needs-frontend-constructor-parity"
-    ),
     known!("examples/spec/051negBool.solc", "needs-trait-solver-parity"),
     known!(
         "examples/spec/052negPair.solc",
         "needs-trait-solver-parity",
         typeck,
         "SC0207"
-    ),
-    known!(
-        "examples/spec/052return.solc",
-        "needs-frontend-constructor-parity"
-    ),
-    known!(
-        "examples/spec/053return.solc",
-        "needs-frontend-constructor-parity"
     ),
     known!(
         "examples/spec/101struct1Field.solc",

@@ -1552,20 +1552,11 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("047rgb.solc", run(42)),
         ("048rgb2.solc", run(42)),
         ("049rgb3.solc", run(44)),
-        (
-            "051expreturn.solc",
-            skip("no assigned P9 E2E oracle for experimental return encoding"),
-        ),
+        ("051expreturn.solc", run(0)),
         ("051negBool.solc", run(1)),
         ("052negPair.solc", blocked(std_instances)),
-        (
-            "052return.solc",
-            skip("no assigned P9 E2E oracle for experimental return encoding"),
-        ),
-        (
-            "053return.solc",
-            skip("no assigned P9 E2E oracle for experimental return encoding"),
-        ),
+        ("052return.solc", run(0)),
+        ("053return.solc", run(0)),
         ("06comp.solc", run(42)),
         ("09not.solc", run(1)),
         (

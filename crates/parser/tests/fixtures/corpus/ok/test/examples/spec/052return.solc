@@ -10,7 +10,7 @@ data U = U;
 // function ereturn(x:a) -> a
 // or
 
-function ereturn(x:a) -> unit { let res: unit; return res; }
+forall a . function ereturn(x:a) -> () { let res: (); return res; }
 // and then cast it to any type using unsafeCast
 
 /* simulate match expression
@@ -42,9 +42,9 @@ function elimBool1(b:Bool) -> word {
 }
 
 // "semicolon"
-function semi(x:a) -> U { return U;}
+forall a . function semi(x:a) -> U { return U;}
 
-function unsafeCast(x:a) -> b {
+forall a b . function unsafeCast(x:a) -> b {
 let res: b; return res;
 }
 
