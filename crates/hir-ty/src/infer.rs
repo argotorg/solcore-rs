@@ -6049,7 +6049,7 @@ impl<'db> InferCtx<'db> {
         let mut ambiguous = Vec::new();
         for pending in self.pending.clone() {
             if pending.class != ClassId::Builtin(BuiltinClassId::Int)
-                || pending.args.len() != 0
+                || !pending.args.is_empty()
                 || matches!(
                     pending.source,
                     ObligationSource::IntegerLiteralPattern { .. }
