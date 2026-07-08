@@ -13,13 +13,21 @@ fn cli_prints_help_and_version() {
         .expect("run driver help");
     assert!(help.status.success(), "help failed");
     let stdout = String::from_utf8_lossy(&help.stdout);
+    assert!(stdout.contains("-f, --file FILE"), "{stdout}");
     assert!(stdout.contains("--std-root DIR"), "{stdout}");
     assert!(stdout.contains("--color auto|always|never"), "{stdout}");
+    assert!(stdout.contains("--unicode auto|always|never"), "{stdout}");
+    assert!(stdout.contains("--diagnostic-width N"), "{stdout}");
     assert!(
         stdout.contains("--diagnostic-format human|short"),
         "{stdout}"
     );
+    assert!(
+        stdout.contains("--warnings default|always|never|deny"),
+        "{stdout}"
+    );
     assert!(stdout.contains("-o, --output-dir DIR"), "{stdout}");
+    assert!(stdout.contains("--abi"), "{stdout}");
     assert!(stdout.contains("--root DIR"), "{stdout}");
 
     let version = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
@@ -91,6 +99,124 @@ fn cli_prints_short_diagnostics() {
     assert!(
         !stderr.contains("function main()"),
         "short output should not include source snippets:\n{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_reports_non_utf8_input_path_without_panic() {
+    use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+    let dir = temp_dir("non-utf8-arg");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let root = dir.clone();
+    let mut raw = dir.into_os_string().into_vec();
+    raw.extend_from_slice(b"/bad-\xff.solc");
+    let input = OsString::from_vec(raw);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg(input)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&root);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("failed to read"), "stderr:\n{stderr}");
+    assert!(!stderr.contains("panicked"), "stderr:\n{stderr}");
+    assert!(
+        !stderr.contains("thread 'solcore-compiler'"),
+        "stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_reports_reachable_missing_external_lib_root() {
+    let dir = temp_dir("missing-external-root");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    let missing = dir.join("missing-ext");
+    fs::write(
+        &input,
+        "import @pkg.util;\nfunction main() -> word { return 0; }\n",
+    )
+    .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--color=never")
+        .arg("--external-lib")
+        .arg(format!("pkg={}", missing.display()))
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("external library `@pkg` root directory does not exist"),
+        "stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&missing.display().to_string()),
+        "stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("note: pass --external-lib pkg=PATH with an existing directory"),
+        "stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_accepts_warning_policy_and_diagnostic_rendering_flags() {
+    let dir = temp_dir("warning-policy");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    fs::write(&input, "function main() -> word { return 0; }\n").expect("write source");
+
+    for policy in ["default", "always", "never", "deny"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .arg(format!("--warnings={policy}"))
+            .arg("--unicode=never")
+            .arg("--diagnostic-width=40")
+            .arg(&input)
+            .output()
+            .expect("run driver");
+        assert!(
+            output.status.success(),
+            "driver failed for --warnings={policy}\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let file_flag = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--file")
+        .arg(&input)
+        .output()
+        .expect("run driver");
+    assert!(
+        file_flag.status.success(),
+        "driver failed for --file\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&file_flag.stdout),
+        String::from_utf8_lossy(&file_flag.stderr)
+    );
+
+    let invalid = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--warnings=loud")
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(invalid.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(
+        stderr.contains("--warnings must be one of"),
+        "stderr:\n{stderr}"
     );
 }
 
@@ -279,6 +405,46 @@ contract C {
     let hull_text = fs::read_to_string(&hull_output).expect("read hull output");
     assert!(hull_text.contains("object \"CDeploy\""), "{hull_text}");
     assert!(hull_text.contains("match<word>"), "{hull_text}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_emits_abi_to_output_dir() {
+    let dir = temp_dir("emit-abi");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    let output_dir = dir.join("abi");
+    let abi_output = output_dir.join("C.abi");
+    fs::write(
+        &input,
+        r#"
+contract C {
+  public function main() -> word {
+    return 42;
+  }
+}
+"#,
+    )
+    .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--abi")
+        .arg("-o")
+        .arg(&output_dir)
+        .arg(&input)
+        .output()
+        .expect("run driver");
+    assert!(
+        output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let abi = fs::read_to_string(&abi_output).expect("read ABI output");
+    assert!(abi.contains("\"name\": \"main\""), "{abi}");
+    assert!(abi.contains("\"type\": \"function\""), "{abi}");
+    assert!(abi.contains("\"type\": \"uint256\""), "{abi}");
 
     let _ = fs::remove_dir_all(&dir);
 }
