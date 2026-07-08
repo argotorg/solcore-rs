@@ -1,6 +1,6 @@
 import util as U;
 
-data Opt = Some(word) | None
+data Opt = Some(word) | None;
 type Alias = word;
 contract K {}
 class a:C {}

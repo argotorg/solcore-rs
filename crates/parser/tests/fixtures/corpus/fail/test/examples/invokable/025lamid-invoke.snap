@@ -1,0 +1,13 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/invokable/025lamid-invoke.solc
+---
+error: unexpected `instance`; expected `(`, `;`, or `|` while parsing data declaration
+  --> /025lamid-invoke.solc:18:1
+   |
+17 |
+18 | instance Lam0Token(a) : Invokable(a,a) {
+   | ^^^^^^^^
+19 |   function invoke(token: Lam0Token(a), arg:a) -> a {
+   |

@@ -1,0 +1,13 @@
+---
+source: crates/parser/tests/diagnostics.rs
+expression: value
+input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/invokable/027retfun.solc
+---
+error: unexpected `instance`; expected `;`, or `|` while parsing data declaration
+  --> /027retfun.solc:24:1
+   |
+23 |
+24 | instance Lam1Closure(a) : Invokable(a,Word) {
+   | ^^^^^^^^
+25 |   function invoke(clos: Lam1Closure(a), arg:a) -> Word {
+   |

@@ -241,29 +241,6 @@ fn import_selector_fingerprints_are_structural_and_order_independent() {
 }
 
 #[test]
-fn import_constructor_selector_fingerprints_are_structural() {
-    let db = TestDb::default();
-    let file = source_file(
-        &db,
-        "imports-constructor-selector-fingerprints",
-        "import A.{T};\n\
-         import A.{T(*)};\n\
-         import A.{T(A, B)};\n",
-    );
-
-    let mut fingerprints = all_defs(&db, file)
-        .into_iter()
-        .filter(|def| def.kind(&db) == DefKind::Import)
-        .map(|def| def.fingerprint(&db).expect("import fingerprint"))
-        .collect::<Vec<_>>();
-
-    assert_eq!(fingerprints.len(), 3);
-    fingerprints.sort();
-    fingerprints.dedup();
-    assert_eq!(fingerprints.len(), 3);
-}
-
-#[test]
 fn inserting_preceding_lambda_keeps_existing_lambda_body_identities_stable() {
     let mut db = TestDb::default();
     let before_src = "function f(z: word) -> word {

@@ -14,6 +14,8 @@ pub enum LexError {
     Invalid,
     /// A block comment reached end of file before its matching terminator.
     UnterminatedBlockComment,
+    /// A string literal used a backslash escape not supported by the language.
+    InvalidStringEscape,
 }
 
 /// Token recognized by the Solcore lexer.
@@ -251,7 +253,7 @@ pub enum Token<'a> {
     Number(&'a str),
 
     /// Quoted string literal text, including quotes and escapes.
-    #[regex(r#""([^"\\]|\\.)*""#, |lex| lex.slice())]
+    #[regex(r#""([^"\\]|\\.)*""#, string_literal)]
     String(&'a str),
 
     /// Identifier or pragma-name text.
@@ -259,7 +261,7 @@ pub enum Token<'a> {
     /// The lexer accepts hyphens so pragma names such as
     /// `no-bounded-variable-condition` tokenize as one item. The parser rejects
     /// hyphenated text in normal identifier positions.
-    #[regex(r"[a-zA-Z][a-zA-Z0-9_]*(-[a-zA-Z][a-zA-Z0-9_]*)*", |lex| lex.slice())]
+    #[regex(r"\p{L}[\p{L}\p{N}_]*(-\p{L}[\p{L}\p{N}_]*)*", |lex| lex.slice())]
     Ident(&'a str),
 
     /// Line comment skipped by the lexer.
@@ -308,6 +310,24 @@ fn block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<logos::Ski
 
     lex.bump(remainder.len());
     Err(LexError::UnterminatedBlockComment)
+}
+
+fn string_literal<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<&'a str, LexError> {
+    let slice = lex.slice();
+    let mut chars = slice.chars();
+    chars.next();
+    while let Some(ch) = chars.next() {
+        if ch == '"' {
+            break;
+        }
+        if ch == '\\' {
+            match chars.next() {
+                Some('n' | 't' | '"' | '\\') => {}
+                _ => return Err(LexError::InvalidStringEscape),
+            }
+        }
+    }
+    Ok(slice)
 }
 
 #[cfg(test)]
@@ -444,6 +464,8 @@ mod tests {
         assert_eq!(tokenize("foo_bar"), vec![Token::Ident("foo_bar")]);
         assert_eq!(tokenize("foo123"), vec![Token::Ident("foo123")]);
         assert_eq!(tokenize("x1_y2_z3"), vec![Token::Ident("x1_y2_z3")]);
+        assert_eq!(tokenize("fλ"), vec![Token::Ident("fλ")]);
+        assert_eq!(tokenize("λ2"), vec![Token::Ident("λ2")]);
     }
 
     #[test]
@@ -473,6 +495,12 @@ mod tests {
         // Mixed underscores and hyphens.
         assert_eq!(tokenize("foo_bar-baz"), vec![Token::Ident("foo_bar-baz")]);
         assert_eq!(tokenize("comptime"), vec![Token::Ident("comptime")]);
+    }
+
+    #[test]
+    fn test_invalid_string_escape() {
+        let mut lexer = Token::lexer(r#""bad\q""#);
+        assert_eq!(lexer.next(), Some(Err(LexError::InvalidStringEscape)));
     }
 
     #[test]

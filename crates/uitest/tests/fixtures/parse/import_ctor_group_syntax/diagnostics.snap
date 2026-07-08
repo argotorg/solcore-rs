@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/import_ctor_group_syntax/main.solc
+---
+error: unexpected `(`; expected `,`, `as`, or `}` while parsing import declaration
+ --> /main/main.solc:1:14
+  |
+1 | import lib.{D(C)};
+  |              ^

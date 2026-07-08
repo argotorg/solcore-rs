@@ -1,4 +1,4 @@
-data Opt = Some(word) | None
+data Opt = Some(word) | None;
 
 function f() -> Opt {
   return 1;

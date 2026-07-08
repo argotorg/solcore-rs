@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/nullary_ctor_applied_pattern/main.solc
+---
+error: unexpected `match`; expected `!`, `(`, `.`, `@`, `if`, or `lam`
+ --> /main/main.solc:4:3
+  |
+3 | function f(x: D) -> word {
+4 |   match x {
+  |   ^^^^^
+5 |   | C() => return 1;
+  |
+---
+
+error: unexpected `=>`; expected `%=`, `&&`, `&=`, `&`, `(`, `+=`, `-=`, `.`, `:`, `;`, `=`, `?`, `[`, `^=`, `^`, `|=`, `|`, `||`, end of input, or statement
+ --> /main/main.solc:5:9
+  |
+4 |   match x {
+5 |   | C() => return 1;
+  |         ^^
+6 |   }
+  |

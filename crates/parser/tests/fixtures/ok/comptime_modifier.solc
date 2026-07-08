@@ -5,7 +5,7 @@ contract ComptimeModifier {
     return x;
   }
 
-  function identifier(comptime : comptime) -> comptime {
+  function identifier(x : comptime) -> comptime {
     let comptime : word = 1;
     let y : comptime word = f(comptime);
     return y;

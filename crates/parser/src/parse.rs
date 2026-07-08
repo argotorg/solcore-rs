@@ -54,6 +54,22 @@ where
     select! { Token::Ident(name) => name }.map_with(|name, e| (name, e.span()))
 }
 
+fn non_comptime_param_name_parser<'src, I>()
+-> impl Parser<'src, I, SpannedStr<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    ident_parser().validate(|name, _, emitter| {
+        if name.0 == "comptime" {
+            emitter.emit(Rich::custom(
+                name.1,
+                "`comptime` is a parameter modifier; expected parameter name",
+            ));
+        }
+        name
+    })
+}
+
 fn qualified_ident_parser<'src, I>() -> impl Parser<'src, I, Vec<SpannedStr<'src>>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -185,7 +201,6 @@ where
     let names = ident_parser()
         .separated_by(just(Token::Comma))
         .at_least(1)
-        .allow_trailing()
         .collect::<Vec<_>>()
         .map(ParsedConstructorSelector::Named);
     let wildcard = just(Token::Star).to(ParsedConstructorSelector::All);
@@ -252,18 +267,16 @@ where
         .boxed();
 
     let selected_item = import_name_parser()
-        .then(constructor_selector_parser().or_not())
         .then(just(Token::As).ignore_then(ident_parser()).or_not())
-        .map(|((name, constructors), alias)| ParsedSelectedName {
+        .map(|(name, alias)| ParsedSelectedName {
             name,
             alias,
-            constructors,
+            constructors: None,
         });
     let selected_or_wildcard = just(Token::Star).to(None).or(selected_item.map(Some));
     let named_selector = selected_or_wildcard
         .separated_by(just(Token::Comma))
         .at_least(1)
-        .allow_trailing()
         .collect::<Vec<_>>()
         .map(|entries| {
             if entries.iter().any(Option::is_none) {
@@ -945,7 +958,6 @@ where
                 .then(
                     expr.clone()
                         .separated_by(just(Token::Comma))
-                        .allow_trailing()
                         .collect::<Vec<_>>()
                         .delimited_by(just(Token::LParen), just(Token::RParen))
                         .or_not()
@@ -973,7 +985,6 @@ where
         let call_op = expr
             .clone()
             .separated_by(just(Token::Comma))
-            .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
             .map(ParsedPostfixOp::Call);
@@ -1204,7 +1215,7 @@ where
         let ctor_args = pat
             .clone()
             .separated_by(just(Token::Comma))
-            .allow_trailing()
+            .at_least(1)
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
             .or_not()
@@ -1804,7 +1815,7 @@ where
         })
         .boxed();
 
-    let typed = ident_parser()
+    let typed = non_comptime_param_name_parser()
         .then_ignore(just(Token::Colon))
         .then(type_parser())
         .map(|(name, ty)| ParsedFuncParam::Typed {
@@ -1814,7 +1825,7 @@ where
         })
         .boxed();
 
-    let untyped = ident_parser()
+    let untyped = non_comptime_param_name_parser()
         .map(|name| ParsedFuncParam::Untyped {
             comptime: None,
             name,
@@ -2224,7 +2235,6 @@ where
 {
     let fields = type_parser()
         .separated_by(just(Token::Comma))
-        .allow_trailing()
         .collect::<Vec<_>>()
         .delimited_by(just(Token::LParen), just(Token::RParen))
         .or_not()
@@ -2244,18 +2254,7 @@ fn data_terminator_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let declaration_boundary = select! {
-        Token::Import | Token::Export | Token::Pragma | Token::Type | Token::Data
-        | Token::Class | Token::Instance | Token::Contract | Token::Public
-        | Token::Payable | Token::Function | Token::Constructor | Token::Fallback
-        | Token::Forall | Token::Default | Token::RBrace => (),
-    }
-    .rewind();
-
-    just(Token::Semi)
-        .ignored()
-        .or(declaration_boundary)
-        .or(end())
+    just(Token::Semi).ignored()
 }
 
 fn adt_payload_parser<'src, I>() -> impl Parser<
@@ -2691,6 +2690,7 @@ fn lex_error_message(source: &str, start: usize, end: usize, error: LexError) ->
     match error {
         LexError::Invalid => invalid_token_message(source, start, end),
         LexError::UnterminatedBlockComment => "unterminated block comment".to_owned(),
+        LexError::InvalidStringEscape => invalid_string_escape_message(source, start, end),
     }
 }
 
@@ -2701,6 +2701,24 @@ fn invalid_token_message(source: &str, start: usize, end: usize) -> String {
     } else {
         format!("invalid token `{snippet}`")
     }
+}
+
+fn invalid_string_escape_message(source: &str, start: usize, end: usize) -> String {
+    let snippet = source.get(start..end).unwrap_or("");
+    let mut chars = snippet.chars();
+    chars.next();
+    while let Some(ch) = chars.next() {
+        if ch == '"' {
+            break;
+        }
+        if ch == '\\'
+            && let Some(escaped) = chars.next()
+            && !matches!(escaped, 'n' | 't' | '"' | '\\')
+        {
+            return format!("invalid string escape `\\{escaped}`");
+        }
+    }
+    "invalid string escape".to_owned()
 }
 
 fn token_spelling(token: &Token<'_>) -> &'static str {
@@ -3109,6 +3127,21 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert!(output.is_some(), "expected parsed output");
+    }
+
+    #[test]
+    fn unicode_identifier_parses() {
+        let source = "function fλ(x: word) -> word { return x; }";
+        let parsed = parse_supported_items(source);
+        assert!(
+            parsed.errors.is_empty(),
+            "top-level errors: {:?}",
+            parsed.errors
+        );
+        assert!(matches!(
+            parsed.output.as_slice(),
+            [ParsedTopItem::Function { sig, .. }] if sig.name.0 == "fλ"
+        ));
     }
 
     #[test]

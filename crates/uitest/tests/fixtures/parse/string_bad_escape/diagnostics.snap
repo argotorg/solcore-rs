@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/string_bad_escape/main.solc
+---
+error: invalid string escape `/q`
+ --> /main/main.solc:1:33
+  |
+1 | function f() -> string { return "a/q"; }
+  |                                 ^^^^^
