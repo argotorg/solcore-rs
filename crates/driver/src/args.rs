@@ -110,16 +110,14 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some("--trace") => {
                 trace = true;
             }
-            Some("-f" | "--file") => {
-                let option = arg_str.expect("matched option");
+            Some(option @ ("-f" | "--file")) => {
                 let value = next_path_option_value(&mut iter, option, "FILE")?;
                 set_input(&mut input, value)?;
             }
             Some("--root") => {
                 main_root = Some(next_path_option_value(&mut iter, "--root", "DIR")?);
             }
-            Some("--std-root" | "--include" | "-i") => {
-                let option = arg_str.expect("matched option");
+            Some(option @ ("--std-root" | "--include" | "-i")) => {
                 std_root = Some(next_path_option_value(&mut iter, option, "DIR")?);
             }
             Some("--color") => {
@@ -144,8 +142,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                     next_string_option_value(&mut iter, "--warnings", "default|always|never|deny")?;
                 warning_policy = parse_warning_policy(&value)?;
             }
-            Some("-o" | "--output-dir") => {
-                let option = arg_str.expect("matched option");
+            Some(option @ ("-o" | "--output-dir")) => {
                 output_dir = Some(next_path_option_value(&mut iter, option, "DIR")?);
             }
             Some("--abi") => {
@@ -161,8 +158,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                 let value = next_string_option_value(&mut iter, "--emit-yul-object", "NAME")?;
                 emit_yul_object = Some(value);
             }
-            Some("--external-lib" | "--lib") => {
-                let option = arg_str.expect("matched option");
+            Some(option @ ("--external-lib" | "--lib")) => {
                 let value = next_os_option_value(&mut iter, option, "NAME=PATH")?;
                 external_roots.push(parse_external_root(value)?);
             }

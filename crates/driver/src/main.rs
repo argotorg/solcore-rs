@@ -14,7 +14,7 @@ mod paths;
 mod pipeline;
 mod trace;
 
-use std::thread;
+use std::{process, thread};
 
 /// Stack size for the compilation thread. Recursive-descent parsing, HIR
 /// lowering, and type folding recurse with input nesting depth; the default
@@ -31,12 +31,18 @@ fn main() {
     unsafe {
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
     }
-    let result = thread::Builder::new()
+    let compiler = match thread::Builder::new()
         .name("solcore-compiler".to_owned())
         .stack_size(COMPILER_STACK_SIZE)
         .spawn(pipeline::run_compiler)
-        .expect("spawn compiler thread")
-        .join();
+    {
+        Ok(compiler) => compiler,
+        Err(err) => {
+            eprintln!("failed to spawn compiler thread: {err}");
+            process::exit(1);
+        }
+    };
+    let result = compiler.join();
     if let Err(payload) = result {
         std::panic::resume_unwind(payload);
     }
