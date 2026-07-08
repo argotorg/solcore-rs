@@ -35,12 +35,12 @@ pub(super) fn constructor_inputs_are_static_word(contract: &MonoContract<'_>) ->
 
 pub(super) fn dispatcher_input_layouts<'db>(
     function: &Function<'db>,
-    entry: &MonoEntry<'db>,
+    inputs: &[MonoAbiParam],
 ) -> Option<Vec<StaticAbiLayout<'db>>> {
     function
         .args
         .iter()
-        .zip(&entry.inputs)
+        .zip(inputs)
         .map(|(arg, param)| static_abi_layout_for_param(&arg.ty, param))
         .collect()
 }

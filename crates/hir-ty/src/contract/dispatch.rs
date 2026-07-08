@@ -62,32 +62,38 @@ pub struct DispatchMethod<'db> {
 
 /// Constructor dispatch/ABI entry.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub struct DispatchConstructor {
-    /// Whether the constructor was present in source.
-    pub explicit: bool,
-    /// Source declaration index within the contract, when explicit.
-    pub source_index: Option<usize>,
-    /// Whether deployment may receive value.
-    pub payable: bool,
-    /// ABI input parameters.
-    pub inputs: Vec<AbiParam>,
+pub enum DispatchConstructor {
+    /// No source constructor: implicit non-payable unit constructor.
+    Implicit,
+    /// Source constructor declaration.
+    Explicit {
+        /// Source declaration index within the contract.
+        source_index: usize,
+        /// Whether deployment may receive value.
+        payable: bool,
+        /// ABI input parameters.
+        inputs: Vec<AbiParam>,
+    },
 }
 
 /// Fallback dispatch/ABI entry.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub struct DispatchFallback<'db> {
-    /// Source fallback definition, when present.
-    pub def: Option<DefId<'db>>,
-    /// Whether the fallback was present in source.
-    pub explicit: bool,
-    /// Source declaration index within the contract, when explicit.
-    pub source_index: Option<usize>,
-    /// Whether fallback calls may receive value.
-    pub payable: bool,
-    /// ABI input parameters. Valid Solcore fallbacks are unit.
-    pub inputs: Vec<AbiParam>,
-    /// ABI output parameters. Valid Solcore fallbacks are unit.
-    pub outputs: Vec<AbiParam>,
+pub enum DispatchFallback<'db> {
+    /// No source fallback: default non-payable unit fallback.
+    Default,
+    /// Source fallback declaration.
+    Explicit {
+        /// Source fallback definition.
+        def: DefId<'db>,
+        /// Source declaration index within the contract.
+        source_index: usize,
+        /// Whether fallback calls may receive value.
+        payable: bool,
+        /// ABI input parameters. Valid Solcore fallbacks are unit.
+        inputs: Vec<AbiParam>,
+        /// ABI output parameters. Valid Solcore fallbacks are unit.
+        outputs: Vec<AbiParam>,
+    },
 }
 
 /// Returns the typed dispatch surface for one contract in `module`.
@@ -113,20 +119,8 @@ fn contract_dispatch_surface_by_def<'db>(
                 .name(db)
                 .unwrap_or_else(|| "Contract".to_owned()),
             methods: Vec::new(),
-            constructor: DispatchConstructor {
-                explicit: false,
-                payable: false,
-                inputs: Vec::new(),
-                source_index: None,
-            },
-            fallback: DispatchFallback {
-                def: None,
-                explicit: false,
-                payable: false,
-                inputs: Vec::new(),
-                outputs: Vec::new(),
-                source_index: None,
-            },
+            constructor: DispatchConstructor::Implicit,
+            fallback: DispatchFallback::Default,
             diagnostics: Vec::new(),
         };
     };
@@ -259,9 +253,8 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                     &mut diagnostics,
                     sig.span,
                 );
-                constructor = Some(DispatchConstructor {
-                    explicit: true,
-                    source_index: Some(source_index),
+                constructor = Some(DispatchConstructor::Explicit {
+                    source_index,
                     payable: sig.payable.is_some(),
                     inputs,
                 });
@@ -282,10 +275,9 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                     function,
                     &type_vars,
                 );
-                fallback = Some(DispatchFallback {
-                    def: Some(function.def_id_value(db)),
-                    explicit: true,
-                    source_index: Some(source_index),
+                fallback = Some(DispatchFallback::Explicit {
+                    def: function.def_id_value(db),
+                    source_index,
                     payable: sig.payable.is_some(),
                     inputs: abi_params(
                         db,
@@ -300,20 +292,8 @@ fn contract_dispatch_surface_with_resolutions<'db>(
         }
     }
 
-    let constructor = constructor.unwrap_or(DispatchConstructor {
-        explicit: false,
-        source_index: None,
-        payable: false,
-        inputs: Vec::new(),
-    });
-    let fallback = fallback.unwrap_or(DispatchFallback {
-        def: None,
-        explicit: false,
-        source_index: None,
-        payable: false,
-        inputs: Vec::new(),
-        outputs: Vec::new(),
-    });
+    let constructor = constructor.unwrap_or(DispatchConstructor::Implicit);
+    let fallback = fallback.unwrap_or(DispatchFallback::Default);
 
     let mut seen = FxHashMap::<String, DefId<'db>>::default();
     for method in &methods {

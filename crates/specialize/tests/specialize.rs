@@ -13,9 +13,9 @@ use nameres::{
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_specialize::{
-    MonoComptimeObligationKind, MonoEntryKind, MonoExpr, MonoExprKind, MonoItem, MonoPatKind,
-    MonoStmt, MonoStmtKind, SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput,
-    specialize_module, specialize_name,
+    MonoComptimeObligationKind, MonoEntry, MonoExpr, MonoExprKind, MonoItem, MonoPatKind, MonoStmt,
+    MonoStmtKind, SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput, specialize_module,
+    specialize_name,
 };
 
 #[salsa::db]
@@ -532,8 +532,17 @@ contract B { public function get() -> word { return 2; } }
         .flatten()
         .collect::<Vec<_>>();
     assert_eq!(entries.len(), 2, "{entries:?}");
-    assert_ne!(entries[0].specialized, entries[1].specialized);
-    assert!(entries.iter().all(|entry| entry.name == "get"));
+    let entry_summaries = entries
+        .iter()
+        .map(|entry| match entry {
+            MonoEntry::SelectorMethod {
+                name, specialized, ..
+            } => (name.as_str(), specialized.as_str()),
+            _ => panic!("expected selector method entry: {entry:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_ne!(entry_summaries[0].1, entry_summaries[1].1);
+    assert!(entry_summaries.iter().all(|(name, _)| *name == "get"));
 }
 
 #[test]
@@ -561,14 +570,29 @@ contract PayableTest {
     let deposit = contract
         .entries
         .iter()
-        .find(|entry| entry.name == "deposit")
+        .find(|entry| {
+            matches!(
+                entry,
+                MonoEntry::SelectorMethod { name, .. } if name == "deposit"
+            )
+        })
         .expect("deposit entry");
-    assert_eq!(deposit.kind, MonoEntryKind::Method);
-    assert_eq!(deposit.signature.as_deref(), Some("deposit()"));
-    assert_eq!(deposit.selector, Some([0xd0, 0xe3, 0x0d, 0xb0]));
-    assert!(deposit.payable);
-    assert_eq!(deposit.inputs, Vec::new());
-    assert_eq!(deposit.outputs.len(), 1);
+    let MonoEntry::SelectorMethod {
+        signature,
+        selector,
+        payable,
+        inputs,
+        outputs,
+        ..
+    } = deposit
+    else {
+        panic!("expected selector method entry: {deposit:?}");
+    };
+    assert_eq!(signature, "deposit()");
+    assert_eq!(*selector, [0xd0, 0xe3, 0x0d, 0xb0]);
+    assert!(*payable);
+    assert!(inputs.is_empty());
+    assert_eq!(outputs.len(), 1);
     assert!(contract.constructor.explicit);
     assert!(!contract.constructor.payable);
     assert!(contract.fallback.explicit);
@@ -670,9 +694,14 @@ fn specializes_p7_cited_regression_corpus() {
         .expect("basic contract metadata");
     assert!(
         basic_contract.entries.iter().any(|entry| {
-            entry.name == "something"
-                && entry.signature.as_deref() == Some("something()")
-                && entry.selector.is_some()
+            matches!(
+                entry,
+                MonoEntry::SelectorMethod {
+                    name,
+                    signature,
+                    ..
+                } if name == "something" && signature == "something()"
+            )
         }),
         "{:?}",
         basic_contract.entries
@@ -688,10 +717,16 @@ fn specializes_p7_cited_regression_corpus() {
         })
         .expect("payable contract metadata");
     assert!(
-        payable_contract
-            .entries
-            .iter()
-            .any(|entry| entry.name == "deposit" && entry.payable && entry.selector.is_some()),
+        payable_contract.entries.iter().any(|entry| {
+            matches!(
+                entry,
+                MonoEntry::SelectorMethod {
+                    name,
+                    payable: true,
+                    ..
+                } if name == "deposit"
+            )
+        }),
         "{:?}",
         payable_contract.entries
     );
@@ -1225,8 +1260,13 @@ fn main_return_number(output: &SpecializeOutput<'_>) -> Option<String> {
                 contract
                     .entries
                     .iter()
-                    .filter(|entry| entry.name == "main")
-                    .map(|entry| entry.specialized.clone())
+                    .filter_map(|entry| match entry {
+                        MonoEntry::SelectorMethod {
+                            name, specialized, ..
+                        } if name == "main" => Some(specialized.clone()),
+                        MonoEntry::SyntheticMain { specialized, .. } => Some(specialized.clone()),
+                        _ => None,
+                    })
                     .collect::<Vec<_>>(),
             ),
             _ => None,

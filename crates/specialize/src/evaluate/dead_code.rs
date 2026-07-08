@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ir::{
-    MonoCallOrigin, MonoExpr, MonoExprKind, MonoItem, MonoModule, MonoPat, MonoStmt,
+    MonoCallOrigin, MonoEntry, MonoExpr, MonoExprKind, MonoItem, MonoModule, MonoPat, MonoStmt,
     visit::{Visitor, walk_expr},
 };
 
@@ -10,7 +10,13 @@ pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> Mono
     for item in &module.items {
         if let MonoItem::Contract(contract) = item {
             for entry in &contract.entries {
-                roots.insert(entry.specialized.clone());
+                let specialized = match entry {
+                    MonoEntry::SelectorMethod { specialized, .. }
+                    | MonoEntry::Constructor { specialized, .. }
+                    | MonoEntry::Fallback { specialized, .. }
+                    | MonoEntry::SyntheticMain { specialized, .. } => specialized,
+                };
+                roots.insert(specialized.clone());
             }
         }
     }

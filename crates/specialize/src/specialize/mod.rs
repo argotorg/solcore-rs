@@ -24,12 +24,12 @@ use hir::{
 };
 use hir_ty::{
     AbiParam, AliasNormalizer, BinderEnv, BodyTyContext, BuiltinTyCtor, CallSiteCallee,
-    CallSiteEvidence, ClassId, ComptimeObligationKind, Db, Evidence, InferResultExt,
-    InferenceResult, LoweredFunction, Pred, PredKind, Solution, Ty, TyCtor, TyKind, TypeLowering,
-    UserTyCtor, UserTyCtorKind, canonical_goal, contract_dispatch_surface, derived_generic_plan,
-    frontend_desugar_plan, infer_body, lower_normalized_function_with_inferred_signature, solve,
-    solver::DerivedClauseKind, trait_env_for_module, trait_env_from_module_resolution,
-    trait_env_with_givens,
+    CallSiteEvidence, ClassId, ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback,
+    Evidence, InferResultExt, InferenceResult, LoweredFunction, Pred, PredKind, Solution, Ty,
+    TyCtor, TyKind, TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal,
+    contract_dispatch_surface, derived_generic_plan, frontend_desugar_plan, infer_body,
+    lower_normalized_function_with_inferred_signature, solve, solver::DerivedClauseKind,
+    trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens,
 };
 use nameres::{
     LibraryId, ModuleId, module_id_from_key, module_key_for_path, resolve_reachable_full,
@@ -41,9 +41,9 @@ use crate::{
     evaluate::{EvaluateOptions, evaluate_module},
     ir::{
         MonoAbiParam, MonoArm, MonoCallOrigin, MonoComptimeObligation, MonoComptimeObligationKind,
-        MonoConstructor, MonoContract, MonoEntry, MonoEntryKind, MonoExpr, MonoExprKind,
-        MonoFallback, MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem,
-        MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+        MonoConstructor, MonoContract, MonoEntry, MonoExpr, MonoExprKind, MonoFallback,
+        MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem, MonoModule, MonoParam,
+        MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
     },
 };
 

@@ -1,5 +1,11 @@
 use super::*;
 
+struct SelectorDispatchEntry<'a, 'db> {
+    span: Span<'db>,
+    payable: bool,
+    outputs: &'a [MonoAbiParam],
+}
+
 impl<'db> Emitter<'db> {
     pub(super) fn emit_dispatcher(
         &mut self,
@@ -9,7 +15,7 @@ impl<'db> Emitter<'db> {
         let dispatch_entries = contract
             .entries
             .iter()
-            .filter(|entry| entry.selector.is_some() && matches!(entry.kind, MonoEntryKind::Method))
+            .filter(|entry| matches!(entry, MonoEntry::SelectorMethod { .. }))
             .collect::<Vec<_>>();
 
         // The reference inserts SAIL `RunContract.exec` before typechecking and
@@ -117,35 +123,56 @@ impl<'db> Emitter<'db> {
 
         let mut alts = Vec::new();
         for (index, entry) in dispatch_entries.iter().enumerate() {
-            let Some(selector) = entry.selector else {
+            let MonoEntry::SelectorMethod {
+                specialized,
+                span: entry_span,
+                selector,
+                signature,
+                payable,
+                inputs,
+                outputs,
+                ..
+            } = *entry
+            else {
                 continue;
             };
-            let Some(function) = function_map.get(entry.specialized.as_str()).copied() else {
-                self.push_unsupported_dispatch_entry(entry, "missing specialized function");
+            let Some(function) = function_map.get(specialized.as_str()).copied() else {
+                self.push_unsupported_dispatch_entry(
+                    *entry_span,
+                    signature,
+                    "missing specialized function",
+                );
                 continue;
             };
-            if function.args.len() != entry.inputs.len() {
-                self.push_unsupported_dispatch_entry(entry, "ABI/function arity mismatch");
+            if function.args.len() != inputs.len() {
+                self.push_unsupported_dispatch_entry(
+                    *entry_span,
+                    signature,
+                    "ABI/function arity mismatch",
+                );
                 continue;
             }
-            let Some(input_layouts) = dispatcher_input_layouts(function, entry) else {
-                self.push_unsupported_dispatch_entry(entry, "non-word ABI shape");
+            let Some(input_layouts) = dispatcher_input_layouts(function, inputs) else {
+                self.push_unsupported_dispatch_entry(*entry_span, signature, "non-word ABI shape");
                 continue;
             };
-            let Some(return_layout) = dispatcher_return_layout(&function.ret, &entry.outputs)
-            else {
-                self.push_unsupported_dispatch_entry(entry, "non-word ABI shape");
+            let Some(return_layout) = dispatcher_return_layout(&function.ret, outputs) else {
+                self.push_unsupported_dispatch_entry(*entry_span, signature, "non-word ABI shape");
                 continue;
             };
             alts.push(Alt {
-                span: entry.span,
+                span: *entry_span,
                 pat: Pat {
-                    span: entry.span,
-                    kind: PatKind::IntLit(selector_hex(selector)),
+                    span: *entry_span,
+                    kind: PatKind::IntLit(selector_hex(*selector)),
                 },
                 binder: self.fresh_alt(),
                 body: self.emit_dispatch_entry(
-                    entry,
+                    SelectorDispatchEntry {
+                        span: *entry_span,
+                        payable: *payable,
+                        outputs,
+                    },
                     function,
                     index,
                     &input_layouts,
@@ -175,15 +202,11 @@ impl<'db> Emitter<'db> {
         out
     }
 
-    fn push_unsupported_dispatch_entry(&mut self, entry: &MonoEntry<'db>, reason: &str) {
+    fn push_unsupported_dispatch_entry(&mut self, span: Span<'db>, signature: &str, reason: &str) {
         self.push(
-            entry.span,
+            span,
             EmitDiagnosticKind::UnsupportedDispatchEntry {
-                signature: entry
-                    .signature
-                    .as_deref()
-                    .unwrap_or(entry.name.as_str())
-                    .to_owned(),
+                signature: signature.to_owned(),
                 reason: reason.to_owned(),
             },
         );
@@ -191,7 +214,7 @@ impl<'db> Emitter<'db> {
 
     fn emit_dispatch_entry(
         &mut self,
-        entry: &MonoEntry<'db>,
+        entry: SelectorDispatchEntry<'_, 'db>,
         function: &Function<'db>,
         index: usize,
         input_layouts: &[StaticAbiLayout<'db>],
@@ -282,7 +305,7 @@ impl<'db> Emitter<'db> {
                     return_layout,
                     &mut body,
                 );
-                body.push(self.return_abi_words(span, &names, &entry.outputs));
+                body.push(self.return_abi_words(span, &names, entry.outputs));
             }
         }
         body

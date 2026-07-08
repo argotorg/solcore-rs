@@ -93,25 +93,38 @@ pub struct MonoContract<'db> {
 
 /// One dispatch entry and its concrete specialized function name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MonoEntry<'db> {
-    pub source: DefId<'db>,
-    pub kind: MonoEntryKind,
-    pub name: String,
-    pub specialized: String,
-    pub span: Span<'db>,
-    pub selector: Option<[u8; 4]>,
-    pub signature: Option<String>,
-    pub payable: bool,
-    pub inputs: Vec<MonoAbiParam>,
-    pub outputs: Vec<MonoAbiParam>,
-}
-
-/// Dispatch entry category.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum MonoEntryKind {
-    Method,
-    Constructor,
-    Fallback,
+pub enum MonoEntry<'db> {
+    SelectorMethod {
+        source: DefId<'db>,
+        name: String,
+        specialized: String,
+        span: Span<'db>,
+        selector: [u8; 4],
+        signature: String,
+        payable: bool,
+        inputs: Vec<MonoAbiParam>,
+        outputs: Vec<MonoAbiParam>,
+    },
+    Constructor {
+        source: DefId<'db>,
+        specialized: String,
+        span: Span<'db>,
+        payable: bool,
+        inputs: Vec<MonoAbiParam>,
+    },
+    Fallback {
+        source: DefId<'db>,
+        specialized: String,
+        span: Span<'db>,
+        payable: bool,
+        inputs: Vec<MonoAbiParam>,
+        outputs: Vec<MonoAbiParam>,
+    },
+    SyntheticMain {
+        source: DefId<'db>,
+        specialized: String,
+        span: Span<'db>,
+    },
 }
 
 /// Constructor dispatch/ABI metadata.

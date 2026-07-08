@@ -11,8 +11,8 @@ impl<'db> Emitter<'db> {
             constructor_names.insert(name.clone());
         }
         for entry in &contract.entries {
-            if matches!(entry.kind, specialize::MonoEntryKind::Constructor) {
-                constructor_names.insert(entry.specialized.clone());
+            if let MonoEntry::Constructor { specialized, .. } = entry {
+                constructor_names.insert(specialized.clone());
             }
         }
 
@@ -75,12 +75,18 @@ impl<'db> Emitter<'db> {
         let mut runtime_stmts = Vec::new();
         if self.options.emit_dispatcher_comments {
             for entry in &contract.entries {
-                if let Some(selector) = entry.selector {
+                if let MonoEntry::SelectorMethod {
+                    selector,
+                    specialized,
+                    span,
+                    ..
+                } = entry
+                {
                     runtime_stmts.push(Stmt {
-                        span: entry.span,
+                        span: *span,
                         kind: StmtKind::Comment(format!(
                             "selector 0x{:02x}{:02x}{:02x}{:02x} -> {}",
-                            selector[0], selector[1], selector[2], selector[3], entry.specialized
+                            selector[0], selector[1], selector[2], selector[3], specialized
                         )),
                     });
                 }

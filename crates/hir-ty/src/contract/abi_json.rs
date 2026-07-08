@@ -4,7 +4,10 @@ use hir::ast::item::{ContractDef, Module};
 
 use crate::Db;
 
-use super::{abi::AbiParam, dispatch::contract_dispatch_surface};
+use super::{
+    abi::AbiParam,
+    dispatch::{DispatchConstructor, DispatchFallback, contract_dispatch_surface},
+};
 
 /// Renders an ABI JSON document mirroring the reference `contractAbiJson`
 /// behavior: explicit constructors and user-defined fallbacks are included,
@@ -16,14 +19,13 @@ pub fn contract_abi_json<'db>(
 ) -> Result<String, String> {
     let surface = contract_dispatch_surface(db, module, contract);
     let mut entries = Vec::new();
-    if surface.constructor.explicit {
-        entries.push((
-            surface.constructor.source_index.unwrap_or(usize::MAX),
-            AbiJsonEntry::Constructor {
-                inputs: surface.constructor.inputs,
-                payable: surface.constructor.payable,
-            },
-        ));
+    if let DispatchConstructor::Explicit {
+        source_index,
+        inputs,
+        payable,
+    } = surface.constructor
+    {
+        entries.push((source_index, AbiJsonEntry::Constructor { inputs, payable }));
     }
     for method in surface.methods {
         entries.push((
@@ -36,13 +38,13 @@ pub fn contract_abi_json<'db>(
             },
         ));
     }
-    if surface.fallback.explicit {
-        entries.push((
-            surface.fallback.source_index.unwrap_or(usize::MAX),
-            AbiJsonEntry::Fallback {
-                payable: surface.fallback.payable,
-            },
-        ));
+    if let DispatchFallback::Explicit {
+        source_index,
+        payable,
+        ..
+    } = surface.fallback
+    {
+        entries.push((source_index, AbiJsonEntry::Fallback { payable }));
     }
     entries.sort_by_key(|(source_index, _)| *source_index);
     let entries = entries

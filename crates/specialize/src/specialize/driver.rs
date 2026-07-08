@@ -332,19 +332,37 @@ impl<'db> Driver<'db> {
             let mut blocked_dispatch_entry = false;
             let mut constructor_meta = MonoConstructor {
                 source: None,
-                explicit: constructor_surface.explicit,
+                explicit: matches!(constructor_surface, DispatchConstructor::Explicit { .. }),
                 specialized: None,
-                payable: constructor_surface.payable,
-                inputs: mono_abi_params(constructor_surface.inputs.clone()),
+                payable: match &constructor_surface {
+                    DispatchConstructor::Implicit => false,
+                    DispatchConstructor::Explicit { payable, .. } => *payable,
+                },
+                inputs: match &constructor_surface {
+                    DispatchConstructor::Implicit => Vec::new(),
+                    DispatchConstructor::Explicit { inputs, .. } => mono_abi_params(inputs.clone()),
+                },
                 span: contract.span(self.db),
             };
             let mut fallback_meta = MonoFallback {
-                source: fallback_surface.def,
-                explicit: fallback_surface.explicit,
+                source: match &fallback_surface {
+                    DispatchFallback::Default => None,
+                    DispatchFallback::Explicit { def, .. } => Some(*def),
+                },
+                explicit: matches!(fallback_surface, DispatchFallback::Explicit { .. }),
                 specialized: None,
-                payable: fallback_surface.payable,
-                inputs: mono_abi_params(fallback_surface.inputs.clone()),
-                outputs: mono_abi_params(fallback_surface.outputs.clone()),
+                payable: match &fallback_surface {
+                    DispatchFallback::Default => false,
+                    DispatchFallback::Explicit { payable, .. } => *payable,
+                },
+                inputs: match &fallback_surface {
+                    DispatchFallback::Default => Vec::new(),
+                    DispatchFallback::Explicit { inputs, .. } => mono_abi_params(inputs.clone()),
+                },
+                outputs: match &fallback_surface {
+                    DispatchFallback::Default => Vec::new(),
+                    DispatchFallback::Explicit { outputs, .. } => mono_abi_params(outputs.clone()),
+                },
                 span: contract.span(self.db),
             };
             for method in surface.methods {
@@ -368,9 +386,8 @@ impl<'db> Driver<'db> {
                     continue;
                 }
                 if let Some(key) = self.root_for_def(method.def) {
-                    entries.push(MonoEntry {
+                    entries.push(MonoEntry::SelectorMethod {
                         source: method.def,
-                        kind: MonoEntryKind::Method,
                         name: method.name,
                         specialized: key.base_name.clone(),
                         span: self
@@ -378,8 +395,9 @@ impl<'db> Driver<'db> {
                             .get(&method.def)
                             .map(|info| info.function.span(self.db))
                             .unwrap_or_else(|| contract.span(self.db)),
-                        selector: selector_bytes(&method.selector),
-                        signature: Some(method.signature),
+                        selector: selector_bytes(&method.selector)
+                            .expect("ABI selector should be a 4-byte hex string"),
+                        signature: method.signature,
                         payable: method.payable,
                         inputs: mono_abi_params(method.inputs),
                         outputs: mono_abi_params(method.outputs),
@@ -387,52 +405,53 @@ impl<'db> Driver<'db> {
                     roots.push(key);
                 }
             }
-            if let Some(index) = constructor_surface.source_index
+            if let DispatchConstructor::Explicit {
+                source_index,
+                payable,
+                inputs,
+            } = &constructor_surface
                 && let Some(ContractItem::FunctionDef(function)) =
-                    contract.items(self.db).get(index)
+                    contract.items(self.db).get(*source_index)
                 && let Some(key) = self.root_for_def(function.def_id_value(self.db))
             {
                 constructor_meta.source = Some(function.def_id_value(self.db));
                 constructor_meta.specialized = Some(key.base_name.clone());
                 constructor_meta.span = function.span(self.db);
-                entries.push(MonoEntry {
+                entries.push(MonoEntry::Constructor {
                     source: function.def_id_value(self.db),
-                    kind: MonoEntryKind::Constructor,
-                    name: "constructor".to_owned(),
                     specialized: key.base_name.clone(),
                     span: function.span(self.db),
-                    selector: None,
-                    signature: None,
-                    payable: constructor_surface.payable,
-                    inputs: mono_abi_params(constructor_surface.inputs.clone()),
-                    outputs: Vec::new(),
+                    payable: *payable,
+                    inputs: mono_abi_params(inputs.clone()),
                 });
                 roots.push(key);
             }
-            if let Some(def) = fallback_surface.def
-                && let Some(key) = self.root_for_def(def)
+            if let DispatchFallback::Explicit {
+                def,
+                payable,
+                inputs,
+                outputs,
+                ..
+            } = &fallback_surface
+                && let Some(key) = self.root_for_def(*def)
             {
                 fallback_meta.specialized = Some(key.base_name.clone());
                 fallback_meta.span = self
                     .functions
-                    .get(&def)
+                    .get(def)
                     .map(|info| info.function.span(self.db))
                     .unwrap_or_else(|| contract.span(self.db));
-                entries.push(MonoEntry {
-                    source: def,
-                    kind: MonoEntryKind::Fallback,
-                    name: "fallback".to_owned(),
+                entries.push(MonoEntry::Fallback {
+                    source: *def,
                     specialized: key.base_name.clone(),
                     span: self
                         .functions
-                        .get(&def)
+                        .get(def)
                         .map(|info| info.function.span(self.db))
                         .unwrap_or_else(|| contract.span(self.db)),
-                    selector: None,
-                    signature: None,
-                    payable: fallback_surface.payable,
-                    inputs: mono_abi_params(fallback_surface.inputs.clone()),
-                    outputs: mono_abi_params(fallback_surface.outputs.clone()),
+                    payable: *payable,
+                    inputs: mono_abi_params(inputs.clone()),
+                    outputs: mono_abi_params(outputs.clone()),
                 });
                 roots.push(key);
             }
@@ -442,17 +461,10 @@ impl<'db> Driver<'db> {
                         && ident_text(self.db, &function.sig(self.db).name) == "main"
                         && let Some(key) = self.root_for_def(function.def_id_value(self.db))
                     {
-                        entries.push(MonoEntry {
+                        entries.push(MonoEntry::SyntheticMain {
                             source: function.def_id_value(self.db),
-                            kind: MonoEntryKind::Method,
-                            name: "main".to_owned(),
                             specialized: key.base_name.clone(),
                             span: function.span(self.db),
-                            selector: None,
-                            signature: None,
-                            payable: false,
-                            inputs: Vec::new(),
-                            outputs: Vec::new(),
                         });
                         roots.push(key);
                     }

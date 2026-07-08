@@ -10,9 +10,9 @@ use nameres::{LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use solcore_hir_ty::{
-    BuiltinTyCtor, CallSiteCallee, FrontendTransform, IndirectArgShape, Ty, TyCtor, TyKind,
-    contract_abi_json, contract_dispatch_surface, derived_generic_plan, frontend_desugar_plan,
-    infer::module_typeck_diagnostics,
+    BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback, FrontendTransform,
+    IndirectArgShape, Ty, TyCtor, TyKind, contract_abi_json, contract_dispatch_surface,
+    derived_generic_plan, frontend_desugar_plan, infer::module_typeck_diagnostics,
 };
 
 #[salsa::db]
@@ -144,12 +144,19 @@ contract Token {
     let surface = contract_dispatch_surface(&db, module, contract);
 
     assert_eq!(surface.name, "Token");
-    assert!(surface.constructor.explicit);
-    assert!(surface.constructor.payable);
-    assert_eq!(surface.constructor.inputs[0].name, "amount");
-    assert_eq!(surface.constructor.inputs[0].ty, "uint256");
-    assert!(surface.fallback.explicit);
-    assert!(surface.fallback.payable);
+    let DispatchConstructor::Explicit {
+        payable, inputs, ..
+    } = &surface.constructor
+    else {
+        panic!("expected explicit constructor: {:?}", surface.constructor);
+    };
+    assert!(*payable);
+    assert_eq!(inputs[0].name, "amount");
+    assert_eq!(inputs[0].ty, "uint256");
+    let DispatchFallback::Explicit { payable, .. } = &surface.fallback else {
+        panic!("expected explicit fallback: {:?}", surface.fallback);
+    };
+    assert!(*payable);
     assert_eq!(surface.methods.len(), 1);
     assert_eq!(surface.methods[0].name, "pay");
     assert!(surface.methods[0].payable);
@@ -265,12 +272,14 @@ contract AliasDispatch {
     let contract = contract_named(&db, module, "AliasDispatch");
     let surface = contract_dispatch_surface(&db, module, contract);
 
-    assert_eq!(surface.constructor.inputs[0].ty, "uint256");
-    assert!(
-        surface.fallback.outputs.is_empty(),
-        "{:?}",
-        surface.fallback.outputs
-    );
+    let DispatchConstructor::Explicit { inputs, .. } = &surface.constructor else {
+        panic!("expected explicit constructor: {:?}", surface.constructor);
+    };
+    assert_eq!(inputs[0].ty, "uint256");
+    let DispatchFallback::Explicit { outputs, .. } = &surface.fallback else {
+        panic!("expected explicit fallback: {:?}", surface.fallback);
+    };
+    assert!(outputs.is_empty(), "{outputs:?}");
     assert!(
         surface
             .diagnostics

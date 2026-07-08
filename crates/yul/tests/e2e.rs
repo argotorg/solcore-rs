@@ -35,7 +35,7 @@ use nameres::{
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use specialize::{
-    MonoAbiParam, MonoEntryKind, MonoItem, SpecializeDiagnostic, SpecializeDiagnosticKind,
+    MonoAbiParam, MonoEntry, MonoItem, SpecializeDiagnostic, SpecializeDiagnosticKind,
     SpecializeOptions, SpecializeOutput, specialize_module,
 };
 
@@ -711,16 +711,18 @@ fn collect_abi_entries(
             continue;
         };
         for entry in &contract.entries {
-            if !matches!(entry.kind, MonoEntryKind::Method) {
-                continue;
-            }
-            let Some(selector) = entry.selector else {
+            let MonoEntry::SelectorMethod {
+                specialized,
+                signature,
+                selector,
+                inputs,
+                ..
+            } = entry
+            else {
                 continue;
             };
-            let signature = entry
-                .signature
-                .clone()
-                .unwrap_or_else(|| entry.name.clone());
+            let selector = *selector;
+            let signature = signature.clone();
             let selector_hex = selector_hex(selector);
             let derived = hir_ty::abi_selector(db, AbiSignature::new(db, signature.clone()));
             if derived != selector_hex {
@@ -732,7 +734,7 @@ fn collect_abi_entries(
                     ),
                 ));
             }
-            let comment = format!("selector {selector_hex} -> {}", entry.specialized);
+            let comment = format!("selector {selector_hex} -> {}", specialized);
             if !yul.contains(&comment) {
                 return Err(E2eFailure::new(
                     FailureKind::Pipeline,
@@ -741,10 +743,10 @@ fn collect_abi_entries(
             }
             entries.push(AbiEntry {
                 contract: contract.name.clone(),
-                specialized: entry.specialized.clone(),
+                specialized: specialized.clone(),
                 signature,
                 selector,
-                inputs: entry.inputs.clone(),
+                inputs: inputs.clone(),
             });
         }
     }
