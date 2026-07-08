@@ -85,8 +85,12 @@ impl<'db> ScopeTableBuilder<'db> {
         self.entries.push(entry);
     }
 
-    fn into_entries(self) -> Vec<ScopeEntry<'db>> {
-        self.entries
+    fn into_table(self) -> NamespaceTable<'db> {
+        let mut table = NamespaceTable::default();
+        for entry in self.entries {
+            table.push(entry);
+        }
+        table
     }
 
     fn contains_name(&self, name: &str) -> bool {
@@ -162,9 +166,9 @@ impl<'db> ItemScopeBuilder<'db> {
         ItemScope {
             facts: ItemScopeFacts {
                 module: self.module,
-                types: self.types.into_entries(),
-                terms: self.terms.into_entries(),
-                modules: self.modules.into_entries(),
+                types: self.types.into_table(),
+                terms: self.terms.into_table(),
+                modules: self.modules.into_table(),
                 ctor_lists: self.ctor_lists,
                 contracts: self.contracts,
                 instances: self.instances,
@@ -482,8 +486,8 @@ impl<'db> ContractScopeBuilder<'db> {
             ContractScope {
                 contract: self.contract,
                 name: self.name,
-                types: self.types.into_entries(),
-                terms: self.terms.into_entries(),
+                types: self.types.into_table(),
+                terms: self.terms.into_table(),
                 fields: self.fields,
                 ctor_lists: self.ctor_lists,
             },

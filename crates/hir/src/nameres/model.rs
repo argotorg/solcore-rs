@@ -269,6 +269,44 @@ pub struct ScopeEntry<'db> {
     pub resolution: Resolution<'db>,
 }
 
+/// Ordered namespace entries with an indexed first-name lookup.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
+pub struct NamespaceTable<'db> {
+    entries: Vec<ScopeEntry<'db>>,
+    index: std::collections::BTreeMap<String, u32>,
+}
+
+impl<'db> NamespaceTable<'db> {
+    /// Appends `entry` and records the first entry for its name.
+    pub fn push(&mut self, entry: ScopeEntry<'db>) {
+        let index =
+            u32::try_from(self.entries.len()).expect("namespace table entry count exceeds u32");
+        self.index.entry(entry.name.clone()).or_insert(index);
+        self.entries.push(entry);
+    }
+
+    /// Returns the first entry for `name`.
+    pub fn get(&self, name: &str) -> Option<&ScopeEntry<'db>> {
+        self.index
+            .get(name)
+            .and_then(|index| self.entries.get(*index as usize))
+    }
+
+    /// Iterates entries in insertion order.
+    pub fn iter(&self) -> std::slice::Iter<'_, ScopeEntry<'db>> {
+        self.entries.iter()
+    }
+}
+
+impl<'a, 'db> IntoIterator for &'a NamespaceTable<'db> {
+    type Item = &'a ScopeEntry<'db>;
+    type IntoIter = std::slice::Iter<'a, ScopeEntry<'db>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 /// Constructor entry in a type's constructor list.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct CtorEntry<'db> {
@@ -318,9 +356,9 @@ pub struct ContractScope<'db> {
     /// Contract name.
     pub name: String,
     /// Contract-local type entries.
-    pub types: Vec<ScopeEntry<'db>>,
+    pub types: NamespaceTable<'db>,
     /// Contract-local term entries.
-    pub terms: Vec<ScopeEntry<'db>>,
+    pub terms: NamespaceTable<'db>,
     /// Field entries.
     pub fields: Vec<FieldEntry<'db>>,
     /// Constructor lists declared inside the contract.
@@ -339,11 +377,11 @@ pub struct ItemScopeFacts<'db> {
     /// Module this scope belongs to.
     pub module: Module<'db>,
     /// Type namespace entries.
-    pub types: Vec<ScopeEntry<'db>>,
+    pub types: NamespaceTable<'db>,
     /// Term namespace entries.
-    pub terms: Vec<ScopeEntry<'db>>,
+    pub terms: NamespaceTable<'db>,
     /// Module qualifier entries introduced by imports.
-    pub modules: Vec<ScopeEntry<'db>>,
+    pub modules: NamespaceTable<'db>,
     /// Top-level constructor lists.
     pub ctor_lists: Vec<CtorList<'db>>,
     /// Contract-local scopes.
@@ -657,26 +695,17 @@ impl<'db> ItemResolutionMap<'db> {
 impl<'db> ItemScopeFacts<'db> {
     /// Resolves a type name declared in this module scope.
     pub fn type_resolution(&self, name: &str) -> Option<Resolution<'db>> {
-        self.types
-            .iter()
-            .find(|entry| entry.name == name)
-            .map(|entry| entry.resolution.clone())
+        self.types.get(name).map(|entry| entry.resolution.clone())
     }
 
     /// Resolves a term name declared in this module scope.
     pub fn term_resolution(&self, name: &str) -> Option<Resolution<'db>> {
-        self.terms
-            .iter()
-            .find(|entry| entry.name == name)
-            .map(|entry| entry.resolution.clone())
+        self.terms.get(name).map(|entry| entry.resolution.clone())
     }
 
     /// Resolves a module qualifier name introduced by imports.
     pub fn module_resolution(&self, name: &str) -> Option<Resolution<'db>> {
-        self.modules
-            .iter()
-            .find(|entry| entry.name == name)
-            .map(|entry| entry.resolution.clone())
+        self.modules.get(name).map(|entry| entry.resolution.clone())
     }
 
     /// Returns the contract-local scope for `contract`.
@@ -706,17 +735,11 @@ impl<'db> ItemScopeFacts<'db> {
 
 impl<'db> ContractScope<'db> {
     pub(super) fn type_resolution(&self, name: &str) -> Option<Resolution<'db>> {
-        self.types
-            .iter()
-            .find(|entry| entry.name == name)
-            .map(|entry| entry.resolution.clone())
+        self.types.get(name).map(|entry| entry.resolution.clone())
     }
 
     pub(super) fn term_resolution(&self, name: &str) -> Option<Resolution<'db>> {
-        self.terms
-            .iter()
-            .find(|entry| entry.name == name)
-            .map(|entry| entry.resolution.clone())
+        self.terms.get(name).map(|entry| entry.resolution.clone())
     }
 
     pub(super) fn field_resolution(&self, name: &str) -> Option<Resolution<'db>> {
