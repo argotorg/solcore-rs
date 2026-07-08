@@ -3805,7 +3805,7 @@ impl<'db> InferCtx<'db> {
         if !self.is_storage_index_expr(body, base) {
             return None;
         }
-        let base_ty = self.infer_storage_ref_expr(body, base)?;
+        let base_ty = self.infer_storage_ref_expr(body, base, true)?;
         let (index_ty, value_ty) = self.storage_mapping_args(base_ty)?;
         let actual_index_ty = self.infer_expr_expected(body, index, Some(index_ty.clone()));
         self.unify_expr(body, index, index_ty, actual_index_ty);
@@ -3818,10 +3818,14 @@ impl<'db> InferCtx<'db> {
         lhs: Id<Expr<'db>>,
         rhs: Id<Expr<'db>>,
     ) -> bool {
-        let Some(lhs_ty) = self.infer_storage_ref_expr(body, lhs) else {
+        let Some(lhs_ty) = self.infer_storage_ref_expr(body, lhs, false) else {
             return false;
         };
-        let rhs_ty = self.infer_expr(body, rhs);
+        let expected_rhs = self
+            .loaded_ty_for_storage_ty(lhs_ty.clone())
+            .unwrap_or_else(|| self.engine.fresh_var());
+        let rhs_ty = self.infer_expr_expected(body, rhs, Some(expected_rhs.clone()));
+        self.unify_expr(body, rhs, expected_rhs, rhs_ty.clone());
         self.push_can_store_obligation(lhs_ty, rhs_ty.clone(), ObligationSource::Scheme);
         self.expr_tys.push((body, lhs, rhs_ty));
         true
@@ -3831,24 +3835,31 @@ impl<'db> InferCtx<'db> {
         &mut self,
         body: FuncBody<'db>,
         expr: Id<Expr<'db>>,
+        record_current: bool,
     ) -> Option<InferTy<'db>> {
         let kind = body.exprs(self.db).get(expr).kind.clone();
-        match kind {
+        let ty = match kind {
             ExprKind::Index { base, index } => {
-                let base_ty = self.infer_storage_ref_expr(body, base)?;
+                let base_ty = self.infer_storage_ref_expr(body, base, true)?;
                 let (index_ty, value_ty) = self.storage_mapping_args(base_ty)?;
                 let actual_index_ty = self.infer_expr_expected(body, index, Some(index_ty.clone()));
                 self.unify_expr(body, index, index_ty, actual_index_ty);
                 Some(value_ty)
             }
-            ExprKind::TypeAnnot { expr: inner, .. } => self.infer_storage_ref_expr(body, inner),
+            ExprKind::TypeAnnot { expr: inner, .. } => {
+                self.infer_storage_ref_expr(body, inner, true)
+            }
             _ => match self.expr_resolutions.get(&(body, expr)).cloned() {
                 Some(hir_nameres::Resolution::Field(field)) => {
                     Some(self.instantiate_field_ref(field, ObligationSource::Scheme))
                 }
                 _ => None,
             },
+        }?;
+        if record_current {
+            self.expr_tys.push((body, expr, ty.clone()));
         }
+        Some(ty)
     }
 
     fn is_storage_index_expr(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> bool {
@@ -4753,6 +4764,11 @@ impl<'db> InferCtx<'db> {
             .and_then(type_ctor_from_resolution)
     }
 
+    fn memory_type_ctor(&self) -> Option<TyCtor<'db>> {
+        self.lookup_type_resolution("memory")
+            .and_then(type_ctor_from_resolution)
+    }
+
     fn lookup_class_id(&self, name: &str) -> Option<ClassId<'db>> {
         self.lookup_type_resolution(name)
             .and_then(class_id_from_resolution)
@@ -5109,26 +5125,53 @@ impl<'db> InferCtx<'db> {
         if self.storage_type_ctor().is_none() {
             return storage_ty;
         }
-        if self.is_storage_mapping_ty(storage_ty.clone()) {
-            return storage_ty;
-        }
-        let loaded = self.engine.fresh_var();
+        let loaded = self
+            .loaded_ty_for_storage_ty(storage_ty.clone())
+            .unwrap_or_else(|| self.engine.fresh_var());
         self.push_can_store_obligation(storage_ty, loaded.clone(), ObligationSource::Scheme);
         loaded
     }
 
-    fn is_storage_mapping_ty(&mut self, ty: InferTy<'db>) -> bool {
+    fn loaded_ty_for_storage_ty(&mut self, ty: InferTy<'db>) -> Option<InferTy<'db>> {
         let Some(storage_ctor) = self.storage_type_ctor() else {
-            return false;
+            return Some(ty);
         };
         let ty = self.normalize_aliases(ty);
-        let InferTy::Named { ctor, args } = self.engine.resolve(ty) else {
-            return false;
+        let InferTy::Named { ctor, args } = self.engine.resolve(ty.clone()) else {
+            return None;
         };
         if ctor != storage_ctor || args.len() != 1 {
-            return false;
+            return None;
         }
         let inner = self.normalize_aliases(args[0].clone());
+        let inner = self.engine.resolve(inner);
+        if self.is_mapping_adt_ty(inner.clone()) {
+            return Some(InferTy::Named {
+                ctor: storage_ctor,
+                args: vec![inner],
+            });
+        }
+        if self.is_memory_backed_storage_adt(inner.clone()) {
+            let memory_ctor = self.memory_type_ctor()?;
+            return Some(InferTy::Named {
+                ctor: memory_ctor,
+                args: vec![inner],
+            });
+        }
+        Some(inner)
+    }
+
+    fn is_mapping_adt_ty(&mut self, ty: InferTy<'db>) -> bool {
+        self.is_named_adt_ty(ty, "mapping", Some(2))
+    }
+
+    fn is_memory_backed_storage_adt(&mut self, ty: InferTy<'db>) -> bool {
+        self.is_named_adt_ty(ty.clone(), "string", Some(0))
+            || self.is_named_adt_ty(ty, "bytes", Some(0))
+    }
+
+    fn is_named_adt_ty(&mut self, ty: InferTy<'db>, name: &str, arity: Option<usize>) -> bool {
+        let ty = self.normalize_aliases(ty);
         let InferTy::Named {
             ctor:
                 TyCtor::User(crate::UserTyCtor {
@@ -5136,11 +5179,11 @@ impl<'db> InferCtx<'db> {
                     kind: UserTyCtorKind::Adt,
                 }),
             args,
-        } = self.engine.resolve(inner)
+        } = self.engine.resolve(ty)
         else {
             return false;
         };
-        def.name(self.db).as_deref() == Some("mapping") && args.len() == 2
+        def.name(self.db).as_deref() == Some(name) && arity.is_none_or(|arity| args.len() == arity)
     }
 
     fn push_can_store_obligation(
@@ -10724,6 +10767,161 @@ function main() -> word {
             "expected Enum obligation, got {:?}",
             result.obligations
         );
+    }
+
+    #[test]
+    fn storage_word_field_read_loads_as_word_without_context() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+data storage(t) = storage(word);
+
+forall a b.
+class a:CanStore(b) {
+  function store(r:a, v:b) -> ();
+  function load(r:a) -> b;
+}
+
+instance storage(word):CanStore(word) {
+  function store(dst: storage(word), src: word) -> () {
+    return ();
+  }
+
+  function load(src: storage(word)) -> word {
+    return 0;
+  }
+}
+
+contract C {
+  value: word;
+
+  function get() {
+    let x = value;
+    return x;
+  }
+}
+"#,
+        );
+        let (body, result) = infer_function(&db, module, "get");
+        assert_no_typeck(&result);
+
+        let value_expr = body
+            .exprs(&db)
+            .iter()
+            .find_map(|(expr_id, expr)| match &expr.kind {
+                ExprKind::Ident(name) if (*name.atom()).text(&db) == "value" => Some(expr_id),
+                _ => None,
+            })
+            .expect("value expression");
+        assert_eq!(result.expr_ty(body, value_expr), Some(Ty::word(&db)));
+    }
+
+    #[test]
+    fn storage_string_field_read_loads_as_memory_string_without_context() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+data string;
+data memory(t) = memory(word);
+data storage(t) = storage(word);
+
+forall a b.
+class a:CanStore(b) {
+  function store(r:a, v:b) -> ();
+  function load(r:a) -> b;
+}
+
+instance storage(string):CanStore(memory(string)) {
+  function store(dst: storage(string), src: memory(string)) -> () {
+    return ();
+  }
+
+  function load(src: storage(string)) -> memory(string) {
+    return memory(0);
+  }
+}
+
+contract C {
+  value: string;
+
+  function get() {
+    let x = value;
+    return x;
+  }
+}
+"#,
+        );
+        let (body, result) = infer_function(&db, module, "get");
+        assert_no_typeck(&result);
+
+        let value_expr = body
+            .exprs(&db)
+            .iter()
+            .find_map(|(expr_id, expr)| match &expr.kind {
+                ExprKind::Ident(name) if (*name.atom()).text(&db) == "value" => Some(expr_id),
+                _ => None,
+            })
+            .expect("value expression");
+        let string_ty = adt_ty(&db, module, "string", Vec::new());
+        let memory_string = adt_ty(&db, module, "memory", vec![string_ty]);
+        assert_eq!(result.expr_ty(body, value_expr), Some(memory_string));
+    }
+
+    #[test]
+    fn storage_mapping_assignment_records_concrete_base_ref_type() {
+        let db = TestDb::default();
+        let module = parse_module(
+            &db,
+            r#"
+data mapping(index, member) = mapping(word);
+data storage(t) = storage(word);
+
+forall a b.
+class a:CanStore(b) {
+  function store(r:a, v:b) -> ();
+  function load(r:a) -> b;
+}
+
+instance storage(word):CanStore(word) {
+  function store(dst: storage(word), src: word) -> () {
+    return ();
+  }
+
+  function load(src: storage(word)) -> word {
+    return 0;
+  }
+}
+
+contract C {
+  m: mapping(word, word);
+
+  function next() -> word {
+    return 1;
+  }
+
+  function main() {
+    m[next()] = next();
+  }
+}
+"#,
+        );
+        let (body, result) = infer_function(&db, module, "main");
+        assert_no_typeck(&result);
+
+        let mapping_expr = body
+            .exprs(&db)
+            .iter()
+            .find_map(|(expr_id, expr)| match &expr.kind {
+                ExprKind::Ident(name) if (*name.atom()).text(&db) == "m" => Some(expr_id),
+                _ => None,
+            })
+            .expect("mapping field expression");
+        let word = Ty::word(&db);
+        let mapping = adt_ty(&db, module, "mapping", vec![word, word]);
+        let storage_mapping = adt_ty(&db, module, "storage", vec![mapping]);
+        assert_eq!(result.expr_ty(body, mapping_expr), Some(storage_mapping));
     }
 
     #[test]
