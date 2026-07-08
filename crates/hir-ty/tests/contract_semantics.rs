@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 use hir::{
     anchor::DefLocationTable,
@@ -6,7 +9,7 @@ use hir::{
     diag::Diagnostic,
     input::SourceFile,
 };
-use nameres::{LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
+use nameres::{LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use solcore_hir_ty::{
@@ -44,6 +47,10 @@ impl nameres::Db for TestDb {
             PathBuf::from("/std"),
             BTreeMap::new(),
         )
+    }
+
+    fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
+        ModuleFsSnapshot::new(self, BTreeSet::new(), BTreeMap::new())
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {

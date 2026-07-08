@@ -66,9 +66,9 @@ pub use instances::{instance_imports, module_instances};
 pub use interface::public_interface;
 pub use model::{
     ConstructorVisibility, Db, FullResolutionSummary, InstanceImports, Interface, ItemRef,
-    LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleGraph, ModuleId, ModuleImports, ModuleKey,
-    ModulePathRef, ModuleTree, Namespace, Origin, ResolvedModulePath, ValidationSummary,
-    VisibleConstructors,
+    LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleFsSnapshot, ModuleGraph, ModuleId,
+    ModuleImports, ModuleKey, ModulePathRef, ModuleTree, Namespace, Origin, ResolvedModulePath,
+    ValidationSummary, VisibleConstructors,
 };
 pub use paths::{resolve_module_path, resolve_module_path_candidate};
 pub use scc::strongly_connected_components;

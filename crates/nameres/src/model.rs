@@ -5,6 +5,9 @@ pub trait Db: parser::Db {
     /// Returns the logical library roots available to this compilation.
     fn module_tree(&self) -> ModuleTree;
 
+    /// Returns the filesystem facts used by module path resolution.
+    fn module_fs_snapshot(&self) -> ModuleFsSnapshot;
+
     /// Returns the source file loaded for a logical module, if any.
     ///
     /// Drivers may populate this map lazily while traversing imports.
@@ -28,6 +31,21 @@ pub struct ModuleTree {
     /// Named external library roots.
     #[returns(ref)]
     pub external_roots: BTreeMap<String, PathBuf>,
+}
+
+/// Snapshot of module filesystem facts used by tracked module resolution.
+///
+/// This input is populated by drivers/tests outside tracked queries. Paths are
+/// expected to use the same normalized roots as [`ModuleTree`].
+#[salsa::input(debug)]
+pub struct ModuleFsSnapshot {
+    /// Absolute `.solc` source files observed on disk.
+    #[returns(ref)]
+    pub existing_files: BTreeSet<PathBuf>,
+
+    /// Sibling `.solc` file stems by parent directory.
+    #[returns(ref)]
+    pub sibling_stems: BTreeMap<PathBuf, Vec<String>>,
 }
 
 /// Logical library namespace that owns a module path.

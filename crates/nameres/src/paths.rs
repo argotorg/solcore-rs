@@ -34,13 +34,12 @@ pub fn resolve_module_path_candidate<'db>(
             segments[1..].to_vec()
         };
         let std_root = tree.std_root(db).clone();
-        let file_path = std_root.join(module_file_path(&logical_path));
-        if segments.len() > 1 && !file_path.is_file() {
+        if segments.len() > 1 && !module_file_exists(db, &std_root, &logical_path) {
             let library = importing.library(db).clone();
             let root = root_for_library(db, tree, &library, path)?;
             let mut local_path = module_directory(importing.logical_path(db));
             local_path.extend(segments.clone());
-            if root.join(module_file_path(&local_path)).is_file() {
+            if module_file_exists(db, &root, &local_path) {
                 (library, local_path, root)
             } else {
                 (LibraryId::Std, logical_path, std_root)
@@ -122,6 +121,13 @@ fn module_directory(path: &[String]) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn module_file_exists(db: &dyn Db, root: &Path, logical_path: &[String]) -> bool {
+    let file_path = root.join(module_file_path(logical_path));
+    db.module_fs_snapshot()
+        .existing_files(db)
+        .contains(&file_path)
+}
+
 pub(super) fn path_segments<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> Vec<String> {
     path.segments
         .iter()
@@ -145,22 +151,11 @@ fn module_path_suggestion<'db>(
     let parent = file_path.parent()?;
     let requested = file_path.file_stem()?.to_str()?;
     let mut segments = path_segments(db, path);
-    let mut candidates = Vec::new();
-    let entries = std::fs::read_dir(parent).ok()?;
-    for entry in entries.flatten() {
-        let entry_path = entry.path();
-        if entry_path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            != Some("solc")
-        {
-            continue;
-        }
-        let Some(stem) = entry_path.file_stem().and_then(|stem| stem.to_str()) else {
-            continue;
-        };
-        candidates.push(stem.to_owned());
-    }
+    let candidates = db
+        .module_fs_snapshot()
+        .sibling_stems(db)
+        .get(parent)?
+        .clone();
     let suggestion = best_name_suggestion(requested, candidates)?;
     if let Some(last) = segments.last_mut() {
         *last = suggestion;

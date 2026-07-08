@@ -1,13 +1,13 @@
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
     path::{Path, PathBuf},
 };
 
 use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
 use nameres::{
-    LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
-    module_path_display, resolve_module_path_candidate,
+    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
+    module_key_for_path, module_path_display, resolve_module_path_candidate,
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -22,6 +22,7 @@ use specialize::{SpecializeOptions, SpecializeOutput, specialize_module};
 struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
+    module_fs_snapshot: Option<ModuleFsSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
 }
 
@@ -49,6 +50,11 @@ impl nameres::Db for TestDb {
                 BTreeMap::new(),
             )
         })
+    }
+
+    fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
+        self.module_fs_snapshot
+            .unwrap_or_else(|| ModuleFsSnapshot::new(self, BTreeSet::new(), BTreeMap::new()))
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
@@ -1041,8 +1047,12 @@ fn specialize_fixture(path: &Path) -> (&'static TestDb, SpecializeOutput<'static
     db.module_tree = Some(ModuleTree::new(
         db,
         main_root.clone(),
-        std_root,
+        std_root.clone(),
         BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(
+        db,
+        [main_root.as_path(), std_root.as_path()],
     ));
     let source = fs::read_to_string(path).expect("fixture source");
     let key =
@@ -1058,6 +1068,49 @@ fn specialize_fixture(path: &Path) -> (&'static TestDb, SpecializeOutput<'static
     let module = parse_file_to_hir(db, file).module(db);
     let output = specialize_module(db, module, SpecializeOptions::default());
     (db, output)
+}
+
+fn module_fs_snapshot_for_roots<'a>(
+    db: &TestDb,
+    roots: impl IntoIterator<Item = &'a Path>,
+) -> ModuleFsSnapshot {
+    let mut existing_files = BTreeSet::new();
+    let mut sibling_stems = BTreeMap::<PathBuf, BTreeSet<String>>::new();
+    for root in roots {
+        collect_module_fs_snapshot(root, &mut existing_files, &mut sibling_stems);
+    }
+    let sibling_stems = sibling_stems
+        .into_iter()
+        .map(|(parent, stems)| (parent, stems.into_iter().collect()))
+        .collect();
+    ModuleFsSnapshot::new(db, existing_files, sibling_stems)
+}
+
+fn collect_module_fs_snapshot(
+    dir: &Path,
+    existing_files: &mut BTreeSet<PathBuf>,
+    sibling_stems: &mut BTreeMap<PathBuf, BTreeSet<String>>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("solc") {
+            if path.is_file() {
+                existing_files.insert(path.clone());
+            }
+            if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+                sibling_stems
+                    .entry(dir.to_path_buf())
+                    .or_default()
+                    .insert(stem.to_owned());
+            }
+        }
+        if path.is_dir() {
+            collect_module_fs_snapshot(&path, existing_files, sibling_stems);
+        }
+    }
 }
 
 fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {

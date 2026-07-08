@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs, panic,
     path::{Path, PathBuf},
     thread,
@@ -11,7 +11,7 @@ use hir::{
     input::SourceFile,
 };
 use nameres::{
-    LibraryId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
+    LibraryId, ModuleFsSnapshot, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
     resolve_module_path_candidate,
 };
 use rustc_hash::FxHashSet;
@@ -27,6 +27,7 @@ pub mod reexports {
 
 pub trait FrontendTestDb: hir::Db + parser::Db + nameres::Db + Sized {
     fn set_module_tree(&mut self, tree: ModuleTree);
+    fn set_module_fs_snapshot(&mut self, snapshot: ModuleFsSnapshot);
     fn insert_module_file(&mut self, key: ModuleKey, file: SourceFile);
     fn contains_module_file(&self, key: &ModuleKey) -> bool;
     fn module_file_for_key(&self, key: &ModuleKey) -> Option<SourceFile>;
@@ -40,6 +41,7 @@ macro_rules! define_frontend_test_db {
         struct $name {
             storage: $crate::reexports::salsa::Storage<Self>,
             module_tree: Option<$crate::reexports::nameres::ModuleTree>,
+            module_fs_snapshot: Option<$crate::reexports::nameres::ModuleFsSnapshot>,
             module_files: $crate::reexports::rustc_hash::FxHashMap<
                 $crate::reexports::nameres::ModuleKey,
                 $crate::reexports::hir::input::SourceFile,
@@ -75,6 +77,16 @@ macro_rules! define_frontend_test_db {
                 })
             }
 
+            fn module_fs_snapshot(&self) -> $crate::reexports::nameres::ModuleFsSnapshot {
+                self.module_fs_snapshot.unwrap_or_else(|| {
+                    $crate::reexports::nameres::ModuleFsSnapshot::new(
+                        self,
+                        std::collections::BTreeSet::new(),
+                        std::collections::BTreeMap::new(),
+                    )
+                })
+            }
+
             fn module_file<'db>(
                 &'db self,
                 module: $crate::reexports::nameres::ModuleId<'db>,
@@ -89,6 +101,13 @@ macro_rules! define_frontend_test_db {
         impl $crate::FrontendTestDb for $name {
             fn set_module_tree(&mut self, tree: $crate::reexports::nameres::ModuleTree) {
                 self.module_tree = Some(tree);
+            }
+
+            fn set_module_fs_snapshot(
+                &mut self,
+                snapshot: $crate::reexports::nameres::ModuleFsSnapshot,
+            ) {
+                self.module_fs_snapshot = Some(snapshot);
             }
 
             fn insert_module_file(
@@ -131,11 +150,18 @@ pub fn load_fixture_case<Db>(
 where
     Db: FrontendTestDb,
 {
+    let std_root = repo_root.join("std");
     db.set_module_tree(ModuleTree::new(
         db,
         root.to_path_buf(),
-        repo_root.join("std"),
+        std_root.clone(),
         external_roots.clone(),
+    ));
+    db.set_module_fs_snapshot(module_fs_snapshot_for_roots(
+        db,
+        std::iter::once(root)
+            .chain(std::iter::once(std_root.as_path()))
+            .chain(external_roots.values().map(|path| path.as_path())),
     ));
     load_library_files(db, LibraryId::Main, root, root);
     for (name, external_root) in external_roots {
@@ -161,6 +187,7 @@ where
         PathBuf::from("/std"),
         BTreeMap::new(),
     ));
+    db.set_module_fs_snapshot(ModuleFsSnapshot::new(db, BTreeSet::new(), BTreeMap::new()));
     let key = ModuleKey {
         library: LibraryId::Main,
         logical_path: vec!["main".to_owned()],
@@ -283,6 +310,52 @@ pub fn run_in_large_stack(assertion: impl FnOnce() + Send + 'static) {
         .join();
     if let Err(payload) = result {
         panic::resume_unwind(payload);
+    }
+}
+
+pub fn module_fs_snapshot_for_roots<'a, Db>(
+    db: &Db,
+    roots: impl IntoIterator<Item = &'a Path>,
+) -> ModuleFsSnapshot
+where
+    Db: FrontendTestDb,
+{
+    let mut existing_files = BTreeSet::new();
+    let mut sibling_stems = BTreeMap::<PathBuf, BTreeSet<String>>::new();
+    for root in roots {
+        collect_module_fs_snapshot(root, &mut existing_files, &mut sibling_stems);
+    }
+    let sibling_stems = sibling_stems
+        .into_iter()
+        .map(|(parent, stems)| (parent, stems.into_iter().collect()))
+        .collect();
+    ModuleFsSnapshot::new(db, existing_files, sibling_stems)
+}
+
+fn collect_module_fs_snapshot(
+    dir: &Path,
+    existing_files: &mut BTreeSet<PathBuf>,
+    sibling_stems: &mut BTreeMap<PathBuf, BTreeSet<String>>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("solc") {
+            if path.is_file() {
+                existing_files.insert(path.clone());
+            }
+            if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+                sibling_stems
+                    .entry(dir.to_path_buf())
+                    .or_default()
+                    .insert(stem.to_owned());
+            }
+        }
+        if path.is_dir() {
+            collect_module_fs_snapshot(&path, existing_files, sibling_stems);
+        }
     }
 }
 

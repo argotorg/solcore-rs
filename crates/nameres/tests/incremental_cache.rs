@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -9,7 +9,8 @@ use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
 use solcore_nameres::{
-    LibraryId, ModuleId, ModuleKey, ModuleTree, module_diagnostics, module_id_from_key,
+    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_diagnostics,
+    module_id_from_key,
 };
 
 #[salsa::db]
@@ -17,6 +18,7 @@ use solcore_nameres::{
 struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
+    module_fs_snapshot: Option<ModuleFsSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
     executed: Arc<Mutex<Vec<String>>>,
 }
@@ -37,6 +39,7 @@ impl Default for TestDb {
                 }
             }))),
             module_tree: None,
+            module_fs_snapshot: None,
             module_files: FxHashMap::default(),
             executed,
         }
@@ -69,6 +72,11 @@ impl parser::Db for TestDb {}
 impl solcore_nameres::Db for TestDb {
     fn module_tree(&self) -> ModuleTree {
         self.module_tree.expect("test module tree initialized")
+    }
+
+    fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
+        self.module_fs_snapshot
+            .expect("test module filesystem snapshot initialized")
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
@@ -150,6 +158,59 @@ fn duplicate_export_diagnostics_backdate_after_unrelated_body_length_edit() {
     }
 }
 
+#[test]
+fn module_not_found_suggestion_tracks_fs_snapshot_edit() {
+    let (mut db, _file, key) = db_with_main("import utilx;\n");
+    let snapshot = db
+        .module_fs_snapshot
+        .expect("test module filesystem snapshot initialized");
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        let diagnostics = module_diagnostics(&db, module);
+        assert_eq!(diagnostics.len(), 1);
+        let lowered = diagnostics[0].lower(&db);
+        assert!(
+            !lowered
+                .helps
+                .iter()
+                .any(|help| help.contains("did you mean"))
+        );
+        let executed = db.take_executed();
+        assert_eq!(
+            query_executions(&executed, "resolve_module_path"),
+            1,
+            "{executed:#?}"
+        );
+    }
+
+    let mut sibling_stems = snapshot.sibling_stems(&db).clone();
+    sibling_stems.insert(PathBuf::from("/memory"), vec!["util".to_owned()]);
+    snapshot.set_sibling_stems(&mut db).to(sibling_stems);
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        let diagnostics = module_diagnostics(&db, module);
+        assert_eq!(diagnostics.len(), 1);
+        let lowered = diagnostics[0].lower(&db);
+        assert!(
+            lowered
+                .helps
+                .iter()
+                .any(|help| help == "did you mean `util`?"),
+            "{lowered:#?}"
+        );
+        let executed = db.take_executed();
+        assert_eq!(
+            query_executions(&executed, "resolve_module_path"),
+            1,
+            "{executed:#?}"
+        );
+    }
+}
+
 fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
@@ -158,6 +219,7 @@ fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
         PathBuf::from("/memory/std"),
         BTreeMap::new(),
     ));
+    db.module_fs_snapshot = Some(empty_module_fs_snapshot(&db));
     let file = SourceFile::new(
         &db,
         "memory:///main.solc".parse().expect("valid URL"),
@@ -179,6 +241,7 @@ fn db_with_duplicate_export_main(content: &str) -> (TestDb, SourceFile, ModuleKe
         PathBuf::from("/memory/std"),
         BTreeMap::new(),
     ));
+    db.module_fs_snapshot = Some(empty_module_fs_snapshot(&db));
     for (path, source) in [
         (
             vec!["a"],
@@ -208,6 +271,10 @@ fn db_with_duplicate_export_main(content: &str) -> (TestDb, SourceFile, ModuleKe
     };
     db.module_files.insert(key.clone(), file);
     (db, file, key)
+}
+
+fn empty_module_fs_snapshot(db: &TestDb) -> ModuleFsSnapshot {
+    ModuleFsSnapshot::new(db, BTreeSet::new(), BTreeMap::new())
 }
 
 fn source_file(db: &TestDb, key: &ModuleKey, content: &str) -> SourceFile {

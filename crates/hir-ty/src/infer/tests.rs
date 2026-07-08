@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+};
 
 use hir::{
     anchor::{DefId, DefLocationTable},
@@ -11,7 +14,8 @@ use hir::{
     sema::ty::QualTy,
 };
 use nameres::{
-    LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
+    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
+    module_key_for_path,
 };
 use parser::parse_file_to_hir;
 
@@ -51,6 +55,10 @@ impl nameres::Db for TestDb {
             PathBuf::from("/std"),
             BTreeMap::new(),
         )
+    }
+
+    fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
+        ModuleFsSnapshot::new(self, BTreeSet::new(), BTreeMap::new())
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {

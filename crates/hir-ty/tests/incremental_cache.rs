@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -8,7 +8,7 @@ use hir::{
     ast::item::{ContractDef, Item, Module},
     input::SourceFile,
 };
-use nameres::{LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
+use nameres::{LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
@@ -19,6 +19,7 @@ use solcore_hir_ty::{contract_dispatch_surface, infer::module_typeck_diagnostics
 struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
+    module_fs_snapshot: Option<ModuleFsSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
     executed: Arc<Mutex<Vec<String>>>,
 }
@@ -39,6 +40,7 @@ impl Default for TestDb {
                 }
             }))),
             module_tree: None,
+            module_fs_snapshot: None,
             module_files: FxHashMap::default(),
             executed,
         }
@@ -71,6 +73,11 @@ impl parser::Db for TestDb {}
 impl nameres::Db for TestDb {
     fn module_tree(&self) -> ModuleTree {
         self.module_tree.expect("test module tree initialized")
+    }
+
+    fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
+        self.module_fs_snapshot
+            .expect("test module filesystem snapshot initialized")
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
@@ -273,6 +280,7 @@ fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
         PathBuf::from("/memory/std"),
         BTreeMap::new(),
     ));
+    db.module_fs_snapshot = Some(ModuleFsSnapshot::new(&db, BTreeSet::new(), BTreeMap::new()));
     let file = SourceFile::new(
         &db,
         "memory:///main.solc".parse().expect("valid URL"),

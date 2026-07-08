@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -12,7 +12,7 @@ use hir::{
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_nameres::{
-    LibraryId, ModuleGraph, ModuleId, ModuleKey, ModuleTree, module_diagnostics,
+    LibraryId, ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleKey, ModuleTree, module_diagnostics,
     module_id_from_key, module_key_for_path, public_interface, reachable_diagnostics,
     resolve_module_path_candidate, resolve_reachable_full, strongly_connected_components,
 };
@@ -23,6 +23,7 @@ use url::Url;
 struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
+    module_fs_snapshot: Option<ModuleFsSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
 }
 
@@ -46,6 +47,11 @@ impl parser::Db for TestDb {}
 impl solcore_nameres::Db for TestDb {
     fn module_tree(&self) -> ModuleTree {
         self.module_tree.expect("test module tree initialized")
+    }
+
+    fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
+        self.module_fs_snapshot
+            .expect("test module filesystem snapshot initialized")
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
@@ -303,11 +309,18 @@ fn run<'db>(db: &'db TestDb, entry: &ModuleKey) -> (ModuleGraph<'db>, Vec<Diagno
 
 fn load_fixture(root: &Path, external_roots: BTreeMap<String, PathBuf>) -> (TestDb, ModuleKey) {
     let mut db = TestDb::default();
+    let std_root = repo_std_dir();
     db.module_tree = Some(ModuleTree::new(
         &db,
         root.to_path_buf(),
-        repo_std_dir(),
+        std_root.clone(),
         external_roots.clone(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(
+        &db,
+        std::iter::once(root)
+            .chain(std::iter::once(std_root.as_path()))
+            .chain(external_roots.values().map(|path| path.as_path())),
     ));
     load_library_files(&mut db, LibraryId::Main, root, root);
     for (name, external_root) in external_roots {
@@ -326,11 +339,16 @@ fn load_fixture(root: &Path, external_roots: BTreeMap<String, PathBuf>) -> (Test
 
 fn load_sources<const N: usize>(sources: [(Vec<&str>, &str); N]) -> (TestDb, ModuleKey) {
     let mut db = TestDb::default();
+    let std_root = repo_std_dir();
     db.module_tree = Some(ModuleTree::new(
         &db,
         PathBuf::from("/memory/main"),
-        repo_std_dir(),
+        std_root.clone(),
         BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(
+        &db,
+        std::iter::once(std_root.as_path()),
     ));
     for (path, source) in sources {
         let key = ModuleKey {
@@ -392,11 +410,18 @@ fn load_entry(
     external_roots: BTreeMap<String, PathBuf>,
 ) -> (TestDb, ModuleKey) {
     let mut db = TestDb::default();
+    let std_root = repo_std_dir();
     db.module_tree = Some(ModuleTree::new(
         &db,
         root.to_path_buf(),
-        repo_std_dir(),
-        external_roots,
+        std_root.clone(),
+        external_roots.clone(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(
+        &db,
+        std::iter::once(root)
+            .chain(std::iter::once(std_root.as_path()))
+            .chain(external_roots.values().map(|path| path.as_path())),
     ));
     let entry_key = module_key_for_path(LibraryId::Main, root, entry_path).expect("entry key");
     let entry_file = source_file_for_path(&db, entry_path);
@@ -445,6 +470,49 @@ fn source_file_for_path(db: &TestDb, path: &Path) -> SourceFile {
     let source = fs::read_to_string(path).expect("source file");
     let url = Url::from_file_path(path).expect("file URL");
     SourceFile::new(db, url, Some(source))
+}
+
+fn module_fs_snapshot_for_roots<'a>(
+    db: &TestDb,
+    roots: impl IntoIterator<Item = &'a Path>,
+) -> ModuleFsSnapshot {
+    let mut existing_files = BTreeSet::new();
+    let mut sibling_stems = BTreeMap::<PathBuf, BTreeSet<String>>::new();
+    for root in roots {
+        collect_module_fs_snapshot(root, &mut existing_files, &mut sibling_stems);
+    }
+    let sibling_stems = sibling_stems
+        .into_iter()
+        .map(|(parent, stems)| (parent, stems.into_iter().collect()))
+        .collect();
+    ModuleFsSnapshot::new(db, existing_files, sibling_stems)
+}
+
+fn collect_module_fs_snapshot(
+    dir: &Path,
+    existing_files: &mut BTreeSet<PathBuf>,
+    sibling_stems: &mut BTreeMap<PathBuf, BTreeSet<String>>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("solc") {
+            if path.is_file() {
+                existing_files.insert(path.clone());
+            }
+            if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+                sibling_stems
+                    .entry(dir.to_path_buf())
+                    .or_default()
+                    .insert(stem.to_owned());
+            }
+        }
+        if path.is_dir() {
+            collect_module_fs_snapshot(&path, existing_files, sibling_stems);
+        }
+    }
 }
 
 fn load_library_files(db: &mut TestDb, library: LibraryId, root: &Path, dir: &Path) {

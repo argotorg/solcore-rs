@@ -1,5 +1,5 @@
 use hir::input::SourceFile;
-use nameres::{ModuleId, ModuleKey, ModuleTree};
+use nameres::{ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use tracing::Level;
@@ -17,6 +17,8 @@ pub(crate) struct DriverDb {
     storage: salsa::Storage<Self>,
     /// Module roots for the current run.
     pub(crate) module_tree: Option<ModuleTree>,
+    /// Filesystem facts used by module path resolution.
+    pub(crate) module_fs_snapshot: Option<ModuleFsSnapshot>,
     /// Loaded source file for each logical module key.
     pub(crate) module_files: FxHashMap<ModuleKey, SourceFile>,
 }
@@ -30,6 +32,7 @@ impl DriverDb {
                 None
             }),
             module_tree: None,
+            module_fs_snapshot: None,
             module_files: FxHashMap::default(),
         }
     }
@@ -62,6 +65,11 @@ impl nameres::Db for DriverDb {
     fn module_tree(&self) -> ModuleTree {
         self.module_tree
             .expect("DriverDb module tree is initialized before use")
+    }
+
+    fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
+        self.module_fs_snapshot
+            .expect("DriverDb module filesystem snapshot is initialized before use")
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {

@@ -12,7 +12,10 @@ use crate::{
     diagnostics::{apply_warning_policy, render_diagnostics},
     emit::{BackendFailure, maybe_emit_abi_outputs, maybe_emit_backend_outputs},
     modules::load_reachable_modules,
-    paths::{absolutize, resolve_main_root, resolve_std_root, source_file_for_path},
+    paths::{
+        absolutize, module_fs_snapshot_for_roots, resolve_main_root, resolve_std_root,
+        source_file_for_path,
+    },
     trace::init_tracing,
 };
 
@@ -90,8 +93,8 @@ pub(crate) fn run_compiler() {
     db.module_tree = Some(ModuleTree::new(
         &db,
         main_root.clone(),
-        std_root,
-        external_roots,
+        std_root.clone(),
+        external_roots.clone(),
     ));
 
     let entry_key = match module_key_for_path(LibraryId::Main, &main_root, &input_path) {
@@ -113,6 +116,13 @@ pub(crate) fn run_compiler() {
         }
     };
     db.module_files.insert(entry_key.clone(), entry_file);
+
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(
+        &db,
+        std::iter::once(main_root.as_path())
+            .chain(std::iter::once(std_root.as_path()))
+            .chain(external_roots.values().map(|path| path.as_path())),
+    ));
 
     if let Err(message) = load_reachable_modules(&mut db, entry_key.clone()) {
         eprintln!("{message}");

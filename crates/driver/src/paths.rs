@@ -1,9 +1,11 @@
 use std::{
-    env,
+    collections::{BTreeMap, BTreeSet},
+    env, fs,
     path::{Path, PathBuf},
 };
 
 use hir::input::SourceFile;
+use nameres::ModuleFsSnapshot;
 use url::Url;
 
 use crate::{args::Args, db::DriverDb};
@@ -50,6 +52,49 @@ pub(crate) fn source_file_for_path(
     let url = Url::from_file_path(path)
         .map_err(|()| format!("failed to convert `{}` into file URL", path.display()))?;
     Ok(SourceFile::new(db, url, Some(source)))
+}
+
+pub(crate) fn module_fs_snapshot_for_roots<'a>(
+    db: &DriverDb,
+    roots: impl IntoIterator<Item = &'a Path>,
+) -> ModuleFsSnapshot {
+    let mut existing_files = BTreeSet::new();
+    let mut sibling_stems = BTreeMap::<PathBuf, BTreeSet<String>>::new();
+    for root in roots {
+        collect_module_fs_snapshot(root, &mut existing_files, &mut sibling_stems);
+    }
+    let sibling_stems = sibling_stems
+        .into_iter()
+        .map(|(parent, stems)| (parent, stems.into_iter().collect()))
+        .collect();
+    ModuleFsSnapshot::new(db, existing_files, sibling_stems)
+}
+
+fn collect_module_fs_snapshot(
+    dir: &Path,
+    existing_files: &mut BTreeSet<PathBuf>,
+    sibling_stems: &mut BTreeMap<PathBuf, BTreeSet<String>>,
+) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) == Some("solc") {
+            if path.is_file() {
+                existing_files.insert(path.clone());
+            }
+            if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+                sibling_stems
+                    .entry(dir.to_path_buf())
+                    .or_default()
+                    .insert(stem.to_owned());
+            }
+        }
+        if path.is_dir() {
+            collect_module_fs_snapshot(&path, existing_files, sibling_stems);
+        }
+    }
 }
 
 /// Converts a possibly relative path to an absolute path without resolving
