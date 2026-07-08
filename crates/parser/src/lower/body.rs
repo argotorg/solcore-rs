@@ -554,16 +554,13 @@ fn lower_parsed_pat<'db>(
             let expr = ctx.lower_expr(anchor, base_start, expr, arenas);
             function::PatKind::ComptimeLabel { kw, expr }
         }
-        ParsedPatKind::Tuple(mut elems) if elems.len() == 1 => {
-            return lower_parsed_pat(
-                ctx,
-                anchor,
-                base_start,
-                elems.pop().expect("len == 1"),
-                arenas,
-            );
-        }
         ParsedPatKind::Tuple(elems) => {
+            let elems = match <[_; 1]>::try_from(elems) {
+                Ok([elem]) => {
+                    return lower_parsed_pat(ctx, anchor, base_start, elem, arenas);
+                }
+                Err(elems) => elems,
+            };
             let elems = elems
                 .into_iter()
                 .map(|elem| lower_parsed_pat(ctx, anchor, base_start, elem, arenas))

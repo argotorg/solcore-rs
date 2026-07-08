@@ -278,14 +278,10 @@ fn lower_type_list_ref<'db>(
     span: LexSpan,
     elems: Vec<ParsedTy<'_>>,
 ) -> ty::TypeRef<'db> {
-    if elems.len() == 1 {
-        return lower_type_ref(
-            db,
-            anchor,
-            base_start,
-            elems.into_iter().next().expect("len == 1"),
-        );
-    }
+    let elems = match <[_; 1]>::try_from(elems) {
+        Ok([elem]) => return lower_type_ref(db, anchor, base_start, elem),
+        Err(elems) => elems,
+    };
 
     let span = span_from_absolute(anchor, span, base_start);
     let elems = elems

@@ -148,15 +148,12 @@ where
             .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
-            .map_with(|elems, e| {
-                if elems.len() == 1 {
-                    elems.into_iter().next().expect("len == 1")
-                } else {
-                    ParsedExpr {
-                        span: e.span(),
-                        kind: ParsedExprKind::Tuple(elems),
-                    }
-                }
+            .map_with(|elems, e| match <[_; 1]>::try_from(elems) {
+                Ok([expr]) => expr,
+                Err(elems) => ParsedExpr {
+                    span: e.span(),
+                    kind: ParsedExprKind::Tuple(elems),
+                },
             })
             .boxed();
 
@@ -422,15 +419,12 @@ where
             .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen))
-            .map_with(|pats, e| {
-                if pats.len() == 1 {
-                    pats.into_iter().next().expect("len == 1")
-                } else {
-                    ParsedPat {
-                        span: e.span(),
-                        kind: ParsedPatKind::Tuple(pats),
-                    }
-                }
+            .map_with(|pats, e| match <[_; 1]>::try_from(pats) {
+                Ok([pat]) => pat,
+                Err(pats) => ParsedPat {
+                    span: e.span(),
+                    kind: ParsedPatKind::Tuple(pats),
+                },
             })
             .boxed();
 
