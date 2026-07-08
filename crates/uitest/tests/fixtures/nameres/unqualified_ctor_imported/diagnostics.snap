@@ -11,7 +11,7 @@ error[SC0106]: unqualified constructor: Ok
   |          ^^ constructor must be qualified
 5 | }
   |
-  = note: use Type.Constructor form
+  = help: use Type.Constructor form
 ---
 
 error[SC0106]: unqualified constructor: Ok
@@ -22,4 +22,4 @@ error[SC0106]: unqualified constructor: Ok
    |     ^^ constructor must be qualified
 10 |   | Token.Err(v) => return v;
    |
-   = note: use Type.Constructor form
+   = help: use Type.Constructor form

@@ -11,3 +11,4 @@ error[SC0101]: undefined name: Option.Nope
   |            ^^^^ unknown name
 6 |   | Option.Some(v) => return v;
   |
+  = help: did you mean `Option.None`?

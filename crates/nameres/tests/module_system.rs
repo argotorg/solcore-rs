@@ -181,7 +181,7 @@ fn parse_broken_selected_import_does_not_blame_importer() {
     let util = module_id_from_key(&db, &module_key(["util"]));
     let util_diagnostics = lowered_module_diagnostics(&db, util);
     assert!(!util_diagnostics.is_empty());
-    assert_eq!(diagnostic_codes(&util_diagnostics), Vec::<String>::new());
+    assert_eq!(diagnostic_codes(&util_diagnostics), vec!["SC0001".to_owned()]);
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn parse_broken_module_diagnostics_publish_only_parse_errors() {
     let main = module_id_from_key(&db, &entry);
     let diagnostics = lowered_module_diagnostics(&db, main);
     assert!(!diagnostics.is_empty());
-    assert_eq!(diagnostic_codes(&diagnostics), Vec::<String>::new());
+    assert_eq!(diagnostic_codes(&diagnostics), vec!["SC0001".to_owned()]);
 }
 
 #[test]

@@ -11,3 +11,4 @@ error[SC0101]: undefined name: computeVale
   |          ^^^^^^^^^^^ unknown name
 7 | }
   |
+  = help: did you mean `computeValue`?

@@ -290,6 +290,8 @@ pub struct ModuleEnv<'db> {
     pub unknown_unqualified_wildcard: bool,
     /// Module qualifiers whose target provider had parse errors.
     pub incomplete_modules: BTreeSet<String>,
+    /// Private imported items addressable by qualified module syntax but not exported.
+    pub private_surfaces: BTreeMap<String, hir_nameres::PrivateCandidate>,
     /// Instances visible from local and imported modules.
     pub instances: Vec<Origin<'db>>,
     /// Diagnostics found while building the import environment.
@@ -310,6 +312,7 @@ impl<'db> ModuleEnv<'db> {
             unknown_unqualified_names: BTreeSet::new(),
             unknown_unqualified_wildcard: false,
             incomplete_modules: BTreeSet::new(),
+            private_surfaces: BTreeMap::new(),
             instances: Vec::new(),
             diagnostics: Vec::new(),
         }
@@ -354,6 +357,31 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
     fn has_incomplete_module_qualifier(&self, _db: &'db dyn hir::Db, qualifier: &str) -> bool {
         self.incomplete_modules.contains(qualifier)
     }
+
+    fn candidate_names(
+        &self,
+        _db: &'db dyn hir::Db,
+        namespace: hir_nameres::Namespace,
+    ) -> Vec<String> {
+        match namespace {
+            hir_nameres::Namespace::Type => self.types.keys().cloned().collect(),
+            hir_nameres::Namespace::Term => self.terms.keys().cloned().collect(),
+            hir_nameres::Namespace::Module => self.modules.keys().cloned().collect(),
+            hir_nameres::Namespace::Field => Vec::new(),
+        }
+    }
+
+    fn private_candidate(
+        &self,
+        _db: &'db dyn hir::Db,
+        namespace: hir_nameres::Namespace,
+        qualifier: &str,
+        name: &str,
+    ) -> Option<hir_nameres::PrivateCandidate> {
+        self.private_surfaces
+            .get(&private_surface_key(namespace, qualifier, name))
+            .cloned()
+    }
 }
 
 /// Summary returned by full resolution queries.
@@ -377,6 +405,8 @@ pub enum ModuleDiagnostic<'db> {
         path: String,
         /// Span of the module reference.
         span: LabelSpan,
+        /// Nearest existing module path, when one is close enough.
+        suggestion: Option<String>,
     },
     /// `SC0110`: selected or hidden import item is absent from the target.
     UnknownImportItem {
@@ -384,6 +414,10 @@ pub enum ModuleDiagnostic<'db> {
         name: String,
         /// Span of the selected or hidden name.
         span: LabelSpan,
+        /// Target module that does not export the item.
+        module: Option<String>,
+        /// Nearest exported item, when one is close enough.
+        suggestion: Option<String>,
     },
     /// `SC0111`: two exported items expose the same public name.
     DuplicateExportedItemName {
@@ -482,17 +516,37 @@ impl<'db> ModuleDiagnostic<'db> {
     /// Lowers this typed module diagnostic to the generic rendering surface.
     pub fn lower(&self, db: &'db dyn Db) -> Diagnostic {
         match self {
-            ModuleDiagnostic::ModuleNotFound { path, span } => {
-                Diagnostic::error(format!("module not found: {path}"))
+            ModuleDiagnostic::ModuleNotFound {
+                path,
+                span,
+                suggestion,
+            } => {
+                let mut diagnostic = Diagnostic::error(format!("import {path}: file not found"))
                     .with_code("SC0109")
                     .with_primary_label_span(span.clone(), Some("module reference"))
-                    .with_note("check the module path or add the missing source file")
+                    .with_help("check the module path or add the missing source file");
+                if let Some(suggestion) = suggestion {
+                    diagnostic = diagnostic.with_help(format!("did you mean `{suggestion}`?"));
+                }
+                diagnostic
             }
-            ModuleDiagnostic::UnknownImportItem { name, span } => {
-                Diagnostic::error(format!("unknown import item `{name}`"))
+            ModuleDiagnostic::UnknownImportItem {
+                name,
+                span,
+                module,
+                suggestion,
+            } => {
+                let mut diagnostic = Diagnostic::error(format!("unknown import item `{name}`"))
                     .with_code("SC0110")
-                    .with_primary_label_span(span.clone(), Some("unknown import item"))
-                    .with_note("check the imported module's exported names")
+                    .with_primary_label_span(span.clone(), Some("unknown import item"));
+                if let Some(module) = module {
+                    diagnostic = diagnostic
+                        .with_note(format!("`{name}` is not exported by module `{module}`"));
+                }
+                if let Some(suggestion) = suggestion {
+                    diagnostic = diagnostic.with_help(format!("did you mean `{suggestion}`?"));
+                }
+                diagnostic.with_help("check the imported module's exported names")
             }
             ModuleDiagnostic::DuplicateExportedItemName { name, span } => {
                 let diagnostic =
@@ -810,7 +864,7 @@ pub fn resolve_module_path_candidate<'db>(
 
     let (library, logical_path, root) = if path.external.is_some() {
         let Some((lib_name, rest)) = segments.split_first() else {
-            return Err(Box::new(module_not_found_diag(db, path)));
+            return Err(Box::new(module_not_found_diag(db, path, None)));
         };
         let Some(root) = tree.external_roots(db).get(lib_name).cloned() else {
             return Err(Box::new(missing_external_root_diag(db, path, lib_name)));
@@ -888,7 +942,8 @@ pub fn resolve_module_path<'db>(
         Ok(resolved.module)
     } else {
         trace_import_decision(db, importing, &path, Some(resolved.module), "not-loaded");
-        Err(Box::new(module_not_found_diag(db, &path)))
+        let suggestion = module_path_suggestion(db, &path, &resolved.file_path);
+        Err(Box::new(module_not_found_diag(db, &path, suggestion)))
     }
 }
 
@@ -1259,10 +1314,23 @@ pub fn body_diagnostics<'db>(
     let mut diagnostics = resolution
         .diagnostics
         .into_iter()
+        .filter(|diagnostic| !is_suppressed_unknown_diagnostic(&env, diagnostic))
         .map(AnyDiagnostic::Nameres)
         .collect::<Vec<_>>();
     sort_dedup_any_diagnostics(db, &mut diagnostics);
     diagnostics
+}
+
+fn is_suppressed_unknown_diagnostic(
+    env: &ModuleEnv<'_>,
+    diagnostic: &hir_nameres::NameresDiagnostic,
+) -> bool {
+    match diagnostic {
+        hir_nameres::NameresDiagnostic::UndefinedName { name, .. } => {
+            env.unknown_unqualified_wildcard || env.unknown_unqualified_names.contains(name)
+        }
+        _ => false,
+    }
 }
 
 fn collect_body_diagnostics<'db>(
@@ -1557,6 +1625,7 @@ impl<'db> ModuleEnvBuilder<'db> {
                 unknown_unqualified_names: BTreeSet::new(),
                 unknown_unqualified_wildcard: false,
                 incomplete_modules: BTreeSet::new(),
+                private_surfaces: BTreeMap::new(),
                 instances: unique_origins(instances.local.into_iter().chain(instances.imported)),
                 diagnostics: Vec::new(),
             },
@@ -1574,11 +1643,14 @@ impl<'db> ModuleEnvBuilder<'db> {
 
     fn add_import(&mut self, import: Import<'db>) {
         let path = path_ref_from_import(self.db, import);
+        let selector = import.selector(self.db);
         let Ok(target) = resolve_module_path(self.db, self.module, path.clone()) else {
+            if let Some(selector) = selector.as_ref() {
+                self.add_unknown_selector_imports(selector);
+            }
             return;
         };
         let target_has_parse_errors = module_has_parse_errors(self.db, target);
-        let selector = import.selector(self.db);
         tracing::trace!(
             target: "nameres::imports",
             module = %self.module.display(self.db),
@@ -1594,6 +1666,7 @@ impl<'db> ModuleEnvBuilder<'db> {
                 self.add_unknown_selector_imports(selector);
             }
             let interface = public_interface(self.db, target);
+            self.add_unknown_missing_selector_imports(selector, &interface);
             let item_refs = select_import_refs(
                 self.db,
                 &interface.item_refs,
@@ -1649,6 +1722,29 @@ impl<'db> ModuleEnvBuilder<'db> {
                     self.env.unknown_unqualified_names.insert(local_name);
                 }
             }
+        }
+    }
+
+    fn add_unknown_missing_selector_imports(
+        &mut self,
+        selector: &ImportSelector<'db>,
+        interface: &Interface<'db>,
+    ) {
+        let ImportSelector::Names(names) = selector else {
+            return;
+        };
+        let available = interface_names(interface);
+        for selected in names {
+            let source_name = spanned_name_text(self.db, &selected.name);
+            if available.contains(&source_name) {
+                continue;
+            }
+            let local_name = selected
+                .alias
+                .as_ref()
+                .map(|alias| spanned_name_text(self.db, alias))
+                .unwrap_or(source_name);
+            self.env.unknown_unqualified_names.insert(local_name);
         }
     }
 
@@ -1731,6 +1827,7 @@ impl<'db> ModuleEnvBuilder<'db> {
         for item_ref in &interface.item_refs {
             self.add_item_ref_surface(item_ref, Some(qualifier));
         }
+        self.add_private_item_surfaces(qualifier, target, &interface);
 
         if !stack.insert(target) {
             tracing::trace!(
@@ -1747,6 +1844,70 @@ impl<'db> ModuleEnvBuilder<'db> {
             self.add_module_surface(&nested_qualifier, nested, span, seen, stack);
         }
         stack.remove(&target);
+    }
+
+    fn add_private_item_surfaces(
+        &mut self,
+        qualifier: &str,
+        target: ModuleId<'db>,
+        interface: &Interface<'db>,
+    ) {
+        if module_has_parse_errors(self.db, target) {
+            return;
+        }
+        let Some(file) = self.db.module_file(target) else {
+            return;
+        };
+        let hir_module = parse_file_to_hir(self.db, file).module(self.db);
+        let item_scope = hir_nameres::item_scope(self.db, hir_module);
+        let module = module_id_display(self.db, target);
+
+        for entry in &item_scope.terms {
+            if interface.terms.contains_key(&entry.name) {
+                continue;
+            }
+            self.insert_private_surface(
+                hir_nameres::Namespace::Term,
+                qualifier,
+                &entry.name,
+                &module,
+                entry.span,
+            );
+        }
+
+        for entry in &item_scope.types {
+            if interface.types.contains_key(&entry.name)
+                || interface.classes.contains_key(&entry.name)
+            {
+                continue;
+            }
+            self.insert_private_surface(
+                hir_nameres::Namespace::Type,
+                qualifier,
+                &entry.name,
+                &module,
+                entry.span,
+            );
+        }
+    }
+
+    fn insert_private_surface(
+        &mut self,
+        namespace: hir_nameres::Namespace,
+        qualifier: &str,
+        name: &str,
+        module: &str,
+        span: Span<'db>,
+    ) {
+        let key = private_surface_key(namespace, qualifier, name);
+        self.env
+            .private_surfaces
+            .entry(key)
+            .or_insert_with(|| hir_nameres::PrivateCandidate {
+                name: name.to_owned(),
+                module: module.to_owned(),
+                span: LabelSpan::from_span(self.db, span),
+            });
     }
 
     fn add_module_binding(&mut self, name: &str, target: ModuleId<'db>, span: Span<'db>) {
@@ -1880,12 +2041,55 @@ fn path_segments<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> Vec<String>
         .collect()
 }
 
+fn module_path_span<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> Span<'db> {
+    let Some(first) = path.segments.first() else {
+        return path.span;
+    };
+    let last = path.segments.last().expect("non-empty module path");
+    first.span(db) + last.span(db)
+}
+
+fn module_path_suggestion<'db>(
+    db: &'db dyn Db,
+    path: &ModulePathRef<'db>,
+    file_path: &Path,
+) -> Option<String> {
+    let parent = file_path.parent()?;
+    let requested = file_path.file_stem()?.to_str()?;
+    let mut segments = path_segments(db, path);
+    let mut candidates = Vec::new();
+    let entries = std::fs::read_dir(parent).ok()?;
+    for entry in entries.flatten() {
+        let entry_path = entry.path();
+        if entry_path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("solc")
+        {
+            continue;
+        }
+        let Some(stem) = entry_path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        candidates.push(stem.to_owned());
+    }
+    let suggestion = best_name_suggestion(requested, candidates)?;
+    if let Some(last) = segments.last_mut() {
+        *last = suggestion;
+        Some(segments.join("."))
+    } else {
+        Some(suggestion)
+    }
+}
+
 fn path_ref_from_import<'db>(db: &'db dyn Db, import: Import<'db>) -> ModulePathRef<'db> {
-    ModulePathRef {
+    let mut path = ModulePathRef {
         span: import.span(db),
         external: import.external(db),
         segments: import.path(db).clone(),
-    }
+    };
+    path.span = module_path_span(db, &path);
+    path
 }
 
 fn path_refs_from_export<'db>(db: &'db dyn Db, export: Export<'db>) -> Vec<ModulePathRef<'db>> {
@@ -2970,11 +3174,11 @@ fn validate_import_items_exist<'db>(
             continue;
         }
         let interface = public_interface(db, target);
-        let available = interface_names(&interface);
+        let available_names = interface_names(&interface);
         if let ImportSelector::Names(names) = selector {
             for selected in names {
                 let name = spanned_name_text(db, &selected.name);
-                if !available.contains(&name) {
+                if !available_names.contains(&name) {
                     tracing::trace!(
                         target: "nameres::imports",
                         module = %module.display(db),
@@ -2982,13 +3186,19 @@ fn validate_import_items_exist<'db>(
                         name = %name,
                         "unknown selected import item"
                     );
-                    diagnostics.push(unknown_import_item_diag(db, selected.name.span(db), &name));
+                    diagnostics.push(unknown_import_item_diag(
+                        db,
+                        selected.name.span(db),
+                        &name,
+                        Some(target),
+                        best_name_suggestion(&name, available_names.iter().cloned()),
+                    ));
                 }
             }
         }
         for hidden in import.hiding(db) {
             let name = spanned_name_text(db, &hidden.name);
-            if !available.contains(&name) {
+            if !available_names.contains(&name) {
                 tracing::trace!(
                     target: "nameres::imports",
                     module = %module.display(db),
@@ -2996,7 +3206,13 @@ fn validate_import_items_exist<'db>(
                     name = %name,
                     "unknown hidden import item"
                 );
-                diagnostics.push(unknown_import_item_diag(db, hidden.name.span(db), &name));
+                diagnostics.push(unknown_import_item_diag(
+                    db,
+                    hidden.name.span(db),
+                    &name,
+                    Some(target),
+                    best_name_suggestion(&name, available_names.iter().cloned()),
+                ));
             }
         }
     }
@@ -3213,6 +3429,58 @@ fn unique_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
     result
 }
 
+fn best_name_suggestion(
+    name: &str,
+    candidates: impl IntoIterator<Item = String>,
+) -> Option<String> {
+    let mut candidates = candidates
+        .into_iter()
+        .filter(|candidate| candidate != name)
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.dedup();
+
+    let mut best: Option<(usize, String)> = None;
+    for candidate in candidates {
+        let distance = edit_distance(name, &candidate);
+        let limit = suggestion_distance_limit(name, &candidate);
+        if distance == 0 || distance > limit {
+            continue;
+        }
+        match &best {
+            Some((best_distance, best_candidate))
+                if distance > *best_distance
+                    || (distance == *best_distance && candidate >= *best_candidate) => {}
+            _ => best = Some((distance, candidate)),
+        }
+    }
+    best.map(|(_, candidate)| candidate)
+}
+
+fn suggestion_distance_limit(left: &str, right: &str) -> usize {
+    let max_len = left.chars().count().max(right.chars().count());
+    if max_len <= 4 { 1 } else { 3 }
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let right_chars = right.chars().collect::<Vec<_>>();
+    let mut previous = (0..=right_chars.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right_chars.len() + 1];
+
+    for (left_index, left_char) in left.chars().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, right_char) in right_chars.iter().enumerate() {
+            let substitution = usize::from(left_char != *right_char);
+            current[right_index + 1] = (previous[right_index + 1] + 1)
+                .min(current[right_index] + 1)
+                .min(previous[right_index] + substitution);
+        }
+        previous.clone_from(&current);
+    }
+
+    previous[right_chars.len()]
+}
+
 fn unique_modules<'db>(values: impl IntoIterator<Item = ModuleId<'db>>) -> Vec<ModuleId<'db>> {
     let mut seen = FxHashSet::default();
     let mut result = Vec::new();
@@ -3268,6 +3536,16 @@ fn namespace_context(namespaces: &[Namespace]) -> String {
     }
 }
 
+fn private_surface_key(namespace: hir_nameres::Namespace, qualifier: &str, name: &str) -> String {
+    let prefix = match namespace {
+        hir_nameres::Namespace::Term => "term",
+        hir_nameres::Namespace::Type => "type",
+        hir_nameres::Namespace::Field => "field",
+        hir_nameres::Namespace::Module => "module",
+    };
+    format!("{prefix}:{qualifier}.{name}")
+}
+
 fn module_root_span<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Span<'db> {
     let file = db
         .module_file(module)
@@ -3276,10 +3554,15 @@ fn module_root_span<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Span<'db> {
     Span::new(anchor, Offset::new(0), Offset::new(0))
 }
 
-fn module_not_found_diag<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> ModuleDiagnostic<'db> {
+fn module_not_found_diag<'db>(
+    db: &'db dyn Db,
+    path: &ModulePathRef<'db>,
+    suggestion: Option<String>,
+) -> ModuleDiagnostic<'db> {
     ModuleDiagnostic::ModuleNotFound {
         path: module_path_display(db, path),
-        span: LabelSpan::from_span(db, path.span),
+        span: LabelSpan::from_span(db, module_path_span(db, path)),
+        suggestion,
     }
 }
 
@@ -3298,10 +3581,14 @@ fn unknown_import_item_diag<'db>(
     db: &'db dyn Db,
     span: Span<'db>,
     name: &str,
+    module: Option<ModuleId<'db>>,
+    suggestion: Option<String>,
 ) -> ModuleDiagnostic<'db> {
     ModuleDiagnostic::UnknownImportItem {
         name: name.to_owned(),
         span: LabelSpan::from_span(db, span),
+        module: module.map(|module| module_id_display(db, module)),
+        suggestion,
     }
 }
 

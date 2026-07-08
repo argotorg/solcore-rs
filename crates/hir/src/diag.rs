@@ -34,8 +34,10 @@ pub struct Diagnostic {
     pub code: Option<String>,
     /// Source labels to render with this diagnostic.
     pub labels: Vec<DiagnosticLabel>,
-    /// Additional notes/help text shown below the main message.
+    /// Additional note text shown below the main message.
     pub notes: Vec<String>,
+    /// Additional help text shown below the main message.
+    pub helps: Vec<String>,
     /// Reserved quick-fix suggestions attached to this diagnostic.
     pub suggestions: Vec<Suggestion>,
 }
@@ -349,6 +351,7 @@ impl Diagnostic {
             code: None,
             labels: Vec::new(),
             notes: Vec::new(),
+            helps: Vec::new(),
             suggestions: Vec::new(),
         }
     }
@@ -430,9 +433,15 @@ impl Diagnostic {
         self.with_secondary_label_span(LabelSpan::from_span(db, span), message)
     }
 
-    /// Appends a note/help text line below the rendered source snippets.
+    /// Appends a note text line below the rendered source snippets.
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
+        self
+    }
+
+    /// Appends a help text line below the rendered source snippets.
+    pub fn with_help(mut self, help: impl Into<String>) -> Self {
+        self.helps.push(help.into());
         self
     }
 
@@ -569,6 +578,9 @@ impl Diagnostic {
 
         for note in &self.notes {
             group = group.element(Level::NOTE.message(note.clone()));
+        }
+        for help in &self.helps {
+            group = group.element(Level::HELP.message(help.clone()));
         }
 
         vec![group]

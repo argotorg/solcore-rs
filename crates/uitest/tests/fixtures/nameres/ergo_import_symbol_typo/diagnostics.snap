@@ -11,14 +11,6 @@ error[SC0110]: unknown import item `valu`
 2 |
 3 | function main() -> word {
   |
-  = note: check the imported module's exported names
----
-
-error[SC0101]: undefined name: valu
- --> /main/main.solc:4:10
-  |
-3 | function main() -> word {
-4 |   return valu(1);
-  |          ^^^^ unknown name
-5 | }
-  |
+  = note: `valu` is not exported by module `util`
+  = help: did you mean `value`?
+  = help: check the imported module's exported names

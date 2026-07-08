@@ -11,3 +11,11 @@ error[SC0101]: undefined name: secret
   |                ^^^^^^ unknown name
 5 | }
   |
+ ::: /main/vault.solc:6
+  |
+6 |
+7 | function secret(x: word) -> word {
+  |          ------ private item declared here
+8 |   return x;
+  |
+  = note: `secret` is private to module `vault` and is not exported

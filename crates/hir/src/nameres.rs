@@ -62,6 +62,28 @@ pub enum Namespace {
     Module,
 }
 
+/// Visible candidate for a constructor leaf.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ConstructorTypeCandidate {
+    /// Type that owns the constructor.
+    pub ty_name: String,
+    /// Constructor leaf name.
+    pub ctor_name: String,
+    /// Span of the constructor declaration.
+    pub span: LabelSpan,
+}
+
+/// Private imported item found while resolving a qualified module access.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct PrivateCandidate {
+    /// Private item name.
+    pub name: String,
+    /// Module that declares the private item.
+    pub module: String,
+    /// Span of the private declaration.
+    pub span: LabelSpan,
+}
+
 /// Kind of user definition reached by a resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub enum DefResolutionKind {
@@ -565,6 +587,32 @@ pub trait ImportedNames<'db> {
     fn has_incomplete_module_qualifier(&self, _db: &'db dyn Db, _qualifier: &str) -> bool {
         false
     }
+
+    /// Returns imported names that are visible in `namespace`.
+    fn candidate_names(&self, _db: &'db dyn Db, _namespace: Namespace) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Returns visible constructor/type pairs with the given constructor leaf.
+    fn constructor_type_candidates(
+        &self,
+        _db: &'db dyn Db,
+        _leaf: &str,
+    ) -> Vec<ConstructorTypeCandidate> {
+        Vec::new()
+    }
+
+    /// Returns an exact private item behind a qualified module access, when the
+    /// provider can prove the item exists but is not exported.
+    fn private_candidate(
+        &self,
+        _db: &'db dyn Db,
+        _namespace: Namespace,
+        _qualifier: &str,
+        _name: &str,
+    ) -> Option<PrivateCandidate> {
+        None
+    }
 }
 
 /// Empty import provider used by standalone HIR queries.
@@ -595,6 +643,10 @@ pub enum NameresDiagnostic {
         name: String,
         /// Source span of the failed lookup.
         span: LabelSpan,
+        /// Nearest visible name, when one is close enough to be actionable.
+        suggestion: Option<String>,
+        /// Exact private imported item hidden behind a module qualifier.
+        private_candidate: Option<PrivateCandidate>,
     },
     /// `SC0103`: failed type-constructor lookup.
     UndefinedTypeConstructor {
@@ -602,6 +654,10 @@ pub enum NameresDiagnostic {
         name: String,
         /// Source span of the failed lookup.
         span: LabelSpan,
+        /// Nearest visible type name, when one is close enough to be actionable.
+        suggestion: Option<String>,
+        /// Constructor with this name, when a value constructor was used as a type.
+        constructor_candidate: Option<ConstructorTypeCandidate>,
     },
     /// `SC0105`: failed class lookup.
     UndefinedClass {
@@ -616,6 +672,8 @@ pub enum NameresDiagnostic {
         name: String,
         /// Source span of the constructor occurrence.
         span: LabelSpan,
+        /// Concrete qualified form, when the constructor leaf has one visible owner.
+        qualification: Option<String>,
     },
     /// `SC0107`: parser recovery produced an invalid pattern shape.
     InvalidPattern {
@@ -641,26 +699,75 @@ impl NameresDiagnostic {
     /// Lowers this typed diagnostic to the generic rendering surface.
     pub fn lower(&self, _db: &dyn Db) -> Diagnostic {
         match self {
-            NameresDiagnostic::UndefinedName { name, span } => {
-                Diagnostic::error(format!("undefined name: {name}"))
+            NameresDiagnostic::UndefinedName {
+                name,
+                span,
+                suggestion,
+                private_candidate,
+            } => {
+                let mut diagnostic = Diagnostic::error(format!("undefined name: {name}"))
                     .with_code("SC0101")
-                    .with_primary_label_span(span.clone(), Some("unknown name"))
+                    .with_primary_label_span(span.clone(), Some("unknown name"));
+                if let Some(private) = private_candidate {
+                    diagnostic = diagnostic
+                        .with_secondary_label_span(
+                            private.span.clone(),
+                            Some("private item declared here"),
+                        )
+                        .with_note(format!(
+                            "`{}` is private to module `{}` and is not exported",
+                            private.name, private.module
+                        ));
+                }
+                if let Some(suggestion) = suggestion {
+                    diagnostic = diagnostic.with_help(format!("did you mean `{suggestion}`?"));
+                }
+                diagnostic
             }
-            NameresDiagnostic::UndefinedTypeConstructor { name, span } => {
-                Diagnostic::error(format!("undefined type constructor: {name}"))
-                    .with_code("SC0103")
-                    .with_primary_label_span(span.clone(), Some("undefined type constructor"))
+            NameresDiagnostic::UndefinedTypeConstructor {
+                name,
+                span,
+                suggestion,
+                constructor_candidate,
+            } => {
+                let mut diagnostic =
+                    Diagnostic::error(format!("undefined type constructor: {name}"))
+                        .with_code("SC0103")
+                        .with_primary_label_span(span.clone(), Some("undefined type constructor"));
+                if let Some(constructor) = constructor_candidate {
+                    diagnostic = diagnostic
+                        .with_secondary_label_span(
+                            constructor.span.clone(),
+                            Some("constructor declared here"),
+                        )
+                        .with_note(format!(
+                            "`{}` is a constructor of type `{}`",
+                            constructor.ctor_name, constructor.ty_name
+                        ))
+                        .with_help(format!("use `{}` as the type name", constructor.ty_name));
+                } else if let Some(suggestion) = suggestion {
+                    diagnostic = diagnostic.with_help(format!("did you mean type `{suggestion}`?"));
+                }
+                diagnostic
             }
             NameresDiagnostic::UndefinedClass { name, span } => {
                 Diagnostic::error(format!("undefined class: {name}"))
                     .with_code("SC0105")
                     .with_primary_label_span(span.clone(), Some("undefined class"))
             }
-            NameresDiagnostic::UnqualifiedConstructor { name, span } => {
+            NameresDiagnostic::UnqualifiedConstructor {
+                name,
+                span,
+                qualification,
+            } => {
+                let help = qualification
+                    .as_ref()
+                    .map(|qualified| format!("use `{qualified}`"))
+                    .unwrap_or_else(|| "use Type.Constructor form".to_owned());
                 Diagnostic::error(format!("unqualified constructor: {name}"))
                     .with_code("SC0106")
                     .with_primary_label_span(span.clone(), Some("constructor must be qualified"))
-                    .with_note("use Type.Constructor form")
+                    .with_help(help)
             }
             NameresDiagnostic::InvalidPattern { span } => {
                 Diagnostic::error("invalid pattern syntax")
@@ -1787,21 +1894,17 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                         {
                             return Resolution::Err;
                         }
-                        self.map.diagnostics.push(undefined_type_ctor(
-                            self.db,
-                            &qualified,
-                            name.span(self.db),
-                        ));
+                        self.map
+                            .diagnostics
+                            .push(self.undefined_type_ctor_diag(&qualified, name.span(self.db)));
                         Resolution::Err
                     })
                 } else {
                     let name_text = ident_text(self.db, name);
                     self.lookup_type(name_text).unwrap_or_else(|| {
-                        self.map.diagnostics.push(undefined_type_ctor(
-                            self.db,
-                            name_text,
-                            name.span(self.db),
-                        ));
+                        self.map
+                            .diagnostics
+                            .push(self.undefined_type_ctor_diag(name_text, name.span(self.db)));
                         Resolution::Err
                     })
                 };
@@ -1880,6 +1983,55 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
             | Some(res @ Resolution::Err) => Some(res),
             Some(_) | None => None,
         }
+    }
+
+    fn undefined_type_ctor_diag(&self, name: &str, span: Span<'db>) -> NameresDiagnostic {
+        let constructor_candidate = unique_constructor_type_candidate(
+            self.constructor_type_candidates(name)
+                .into_iter()
+                .filter(|candidate| candidate.ctor_name == name),
+        );
+        let suggestion = constructor_candidate
+            .is_none()
+            .then(|| best_name_suggestion(name, self.type_candidate_names()))
+            .flatten();
+        undefined_type_ctor(self.db, name, span, suggestion, constructor_candidate)
+    }
+
+    fn type_candidate_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        names.extend(
+            self.type_vars
+                .iter()
+                .map(|var| ident_text(self.db, &var.name).to_owned()),
+        );
+        if let Some(contract) = self
+            .contract
+            .and_then(|contract| self.scope.contract_scope(contract))
+        {
+            names.extend(contract.types.iter().map(|entry| entry.name.clone()));
+        }
+        names.extend(self.scope.types.iter().map(|entry| entry.name.clone()));
+        names.extend(self.imports.candidate_names(self.db, Namespace::Type));
+        names
+    }
+
+    fn constructor_type_candidates(&self, leaf: &str) -> Vec<ConstructorTypeCandidate> {
+        let mut candidates = Vec::new();
+        if let Some(contract) = self
+            .contract
+            .and_then(|contract| self.scope.contract_scope(contract))
+        {
+            collect_constructor_type_candidates(
+                self.db,
+                &contract.ctor_lists,
+                leaf,
+                &mut candidates,
+            );
+        }
+        collect_constructor_type_candidates(self.db, &self.scope.ctor_lists, leaf, &mut candidates);
+        candidates.extend(self.imports.constructor_type_candidates(self.db, leaf));
+        candidates
     }
 }
 
@@ -2044,7 +2196,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 } else {
                     self.map
                         .diagnostics
-                        .push(undefined_name(self.db, leaf, name.span(self.db)));
+                        .push(self.undefined_name_diag(leaf, name.span(self.db)));
                     Resolution::Err
                 };
                 self.map.record_expr(body, expr_id, resolution);
@@ -2144,6 +2296,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         self.db,
                         leaf,
                         name.span(self.db),
+                        self.constructor_qualification(leaf),
                     ));
                     Resolution::Err
                 } else {
@@ -2174,11 +2327,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         {
                             return Resolution::Err;
                         }
-                        self.map.diagnostics.push(undefined_name(
-                            self.db,
-                            &qualified,
-                            name.span(self.db),
-                        ));
+                        self.map
+                            .diagnostics
+                            .push(self.undefined_name_diag(&qualified, name.span(self.db)));
                         Resolution::Err
                     })
                 } else {
@@ -2204,6 +2355,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                                         self.db,
                                         leaf,
                                         name.span(self.db),
+                                        self.constructor_qualification(leaf),
                                     ));
                                     Resolution::Err
                                 }
@@ -2251,21 +2403,17 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         {
                             return Resolution::Err;
                         }
-                        self.map.diagnostics.push(undefined_type_ctor(
-                            self.db,
-                            &qualified,
-                            name.span(self.db),
-                        ));
+                        self.map
+                            .diagnostics
+                            .push(self.undefined_type_ctor_diag(&qualified, name.span(self.db)));
                         Resolution::Err
                     })
                 } else {
                     let name_text = ident_text(self.db, name);
                     self.lookup_type(name_text).unwrap_or_else(|| {
-                        self.map.diagnostics.push(undefined_type_ctor(
-                            self.db,
-                            name_text,
-                            name.span(self.db),
-                        ));
+                        self.map
+                            .diagnostics
+                            .push(self.undefined_type_ctor_diag(name_text, name.span(self.db)));
                         Resolution::Err
                     })
                 };
@@ -2307,9 +2455,17 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .or_else(|| self.lookup_qualified_term(text))
             .or_else(|| self.lookup_unqualified_class_method(text))
             .or_else(|| {
-                self.imports
+                if self
+                    .imports
                     .may_contain_unknown_unqualified(self.db, Namespace::Term, text)
-                    .then_some(Resolution::Err)
+                {
+                    self.map
+                        .diagnostics
+                        .push(self.undefined_name_diag(text, name.span(self.db)));
+                    Some(Resolution::Err)
+                } else {
+                    None
+                }
             })
             .or_else(|| self.same_name_constructor_resolution(text))
             .or_else(|| self.lookup_type(text))
@@ -2328,12 +2484,13 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         self.db,
                         text,
                         name.span(self.db),
+                        self.constructor_qualification(text),
                     ));
                     return Resolution::Err;
                 }
                 self.map
                     .diagnostics
-                    .push(undefined_name(self.db, text, name.span(self.db)));
+                    .push(self.undefined_name_diag(text, name.span(self.db)));
                 Resolution::Err
             })
     }
@@ -2376,11 +2533,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         ) {
                             return Resolution::Err;
                         }
-                        self.map.diagnostics.push(undefined_name(
-                            self.db,
-                            text,
-                            name.span(self.db),
-                        ));
+                        self.map
+                            .diagnostics
+                            .push(self.undefined_name_diag(text, name.span(self.db)));
                         Resolution::Err
                     });
                 self.map.record_expr(body, expr_id, resolution);
@@ -2428,7 +2583,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         ) {
             self.map
                 .diagnostics
-                .push(undefined_name(self.db, field_text, field.span(self.db)));
+                .push(self.undefined_name_diag(field_text, field.span(self.db)));
             return Some(Resolution::Err);
         }
 
@@ -2440,9 +2595,19 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 {
                     return Some(Resolution::Err);
                 }
+                let private_candidate = self.imports.private_candidate(
+                    self.db,
+                    Namespace::Term,
+                    &qualifier,
+                    field_text,
+                );
                 self.map
                     .diagnostics
-                    .push(undefined_name(self.db, field_text, field.span(self.db)));
+                    .push(self.undefined_name_diag_with_private(
+                        field_text,
+                        field.span(self.db),
+                        private_candidate,
+                    ));
                 return Some(Resolution::Err);
             }
             return Some(Resolution::Module(ModuleRef {
@@ -2452,6 +2617,103 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         }
 
         None
+    }
+
+    fn undefined_name_diag(&self, name: &str, span: Span<'db>) -> NameresDiagnostic {
+        self.undefined_name_diag_with_private(name, span, None)
+    }
+
+    fn undefined_name_diag_with_private(
+        &self,
+        name: &str,
+        span: Span<'db>,
+        private_candidate: Option<PrivateCandidate>,
+    ) -> NameresDiagnostic {
+        let suggestion = private_candidate
+            .is_none()
+            .then(|| best_name_suggestion(name, self.name_candidate_names()))
+            .flatten();
+        undefined_name(self.db, name, span, suggestion, private_candidate)
+    }
+
+    fn undefined_type_ctor_diag(&self, name: &str, span: Span<'db>) -> NameresDiagnostic {
+        let constructor_candidate = unique_constructor_type_candidate(
+            self.constructor_type_candidates(name)
+                .into_iter()
+                .filter(|candidate| candidate.ctor_name == name),
+        );
+        let suggestion = constructor_candidate
+            .is_none()
+            .then(|| best_name_suggestion(name, self.type_candidate_names()))
+            .flatten();
+        undefined_type_ctor(self.db, name, span, suggestion, constructor_candidate)
+    }
+
+    fn constructor_qualification(&self, leaf: &str) -> Option<String> {
+        unique_constructor_type_candidate(
+            self.constructor_type_candidates(leaf)
+                .into_iter()
+                .filter(|candidate| candidate.ctor_name == leaf),
+        )
+        .map(|candidate| qualify(&candidate.ty_name, &candidate.ctor_name))
+    }
+
+    fn name_candidate_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        for scope in &self.local_scopes {
+            names.extend(scope.keys().cloned());
+        }
+        if let Some(contract) = self
+            .contract
+            .and_then(|contract| self.scope.contract_scope(contract))
+        {
+            names.extend(contract.fields.iter().map(|entry| entry.name.clone()));
+            names.extend(contract.terms.iter().map(|entry| entry.name.clone()));
+            names.extend(contract.types.iter().map(|entry| entry.name.clone()));
+        }
+        names.extend(self.scope.terms.iter().map(|entry| entry.name.clone()));
+        names.extend(self.scope.types.iter().map(|entry| entry.name.clone()));
+        names.extend(self.scope.modules.iter().map(|entry| entry.name.clone()));
+        names.extend(self.imports.candidate_names(self.db, Namespace::Term));
+        names.extend(self.imports.candidate_names(self.db, Namespace::Type));
+        names.extend(self.imports.candidate_names(self.db, Namespace::Module));
+        names
+    }
+
+    fn type_candidate_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        names.extend(
+            self.type_vars
+                .iter()
+                .map(|var| ident_text(self.db, &var.name).to_owned()),
+        );
+        if let Some(contract) = self
+            .contract
+            .and_then(|contract| self.scope.contract_scope(contract))
+        {
+            names.extend(contract.types.iter().map(|entry| entry.name.clone()));
+        }
+        names.extend(self.scope.types.iter().map(|entry| entry.name.clone()));
+        names.extend(self.imports.candidate_names(self.db, Namespace::Type));
+        names
+    }
+
+    fn constructor_type_candidates(&self, leaf: &str) -> Vec<ConstructorTypeCandidate> {
+        let mut candidates = Vec::new();
+        if let Some(contract) = self
+            .contract
+            .and_then(|contract| self.scope.contract_scope(contract))
+        {
+            collect_constructor_type_candidates(
+                self.db,
+                &contract.ctor_lists,
+                leaf,
+                &mut candidates,
+            );
+        }
+        collect_constructor_type_candidates(self.db, &self.scope.ctor_lists, leaf, &mut candidates);
+        candidates.extend(self.imports.constructor_type_candidates(self.db, leaf));
+        candidates
     }
 
     fn lookup_qualified_term(&self, name: &str) -> Option<Resolution<'db>> {
@@ -2609,6 +2871,88 @@ fn ident_text<'db>(db: &'db dyn Db, ident: &SpannedElem<'db, Ident<'db>>) -> &'d
     (*ident.atom()).text(db)
 }
 
+fn collect_constructor_type_candidates<'db>(
+    db: &'db dyn Db,
+    lists: &[CtorList<'db>],
+    leaf: &str,
+    out: &mut Vec<ConstructorTypeCandidate>,
+) {
+    for list in lists {
+        for ctor in &list.ctors {
+            if ctor.name == leaf {
+                out.push(ConstructorTypeCandidate {
+                    ty_name: list.ty_name.clone(),
+                    ctor_name: ctor.name.clone(),
+                    span: LabelSpan::from_span(db, ctor.span),
+                });
+            }
+        }
+    }
+}
+
+fn unique_constructor_type_candidate(
+    candidates: impl IntoIterator<Item = ConstructorTypeCandidate>,
+) -> Option<ConstructorTypeCandidate> {
+    let mut candidates = candidates.into_iter();
+    let first = candidates.next()?;
+    if candidates.next().is_some() {
+        return None;
+    }
+    Some(first)
+}
+
+fn best_name_suggestion(
+    name: &str,
+    candidates: impl IntoIterator<Item = String>,
+) -> Option<String> {
+    let mut candidates = candidates
+        .into_iter()
+        .filter(|candidate| candidate != name)
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.dedup();
+
+    let mut best: Option<(usize, String)> = None;
+    for candidate in candidates {
+        let distance = edit_distance(name, &candidate);
+        let limit = suggestion_distance_limit(name, &candidate);
+        if distance == 0 || distance > limit {
+            continue;
+        }
+        match &best {
+            Some((best_distance, best_candidate))
+                if distance > *best_distance
+                    || (distance == *best_distance && candidate >= *best_candidate) => {}
+            _ => best = Some((distance, candidate)),
+        }
+    }
+    best.map(|(_, candidate)| candidate)
+}
+
+fn suggestion_distance_limit(left: &str, right: &str) -> usize {
+    let max_len = left.chars().count().max(right.chars().count());
+    if max_len <= 4 { 1 } else { 3 }
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let right_chars = right.chars().collect::<Vec<_>>();
+    let mut previous = (0..=right_chars.len()).collect::<Vec<_>>();
+    let mut current = vec![0; right_chars.len() + 1];
+
+    for (left_index, left_char) in left.chars().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, right_char) in right_chars.iter().enumerate() {
+            let substitution = usize::from(left_char != *right_char);
+            current[right_index + 1] = (previous[right_index + 1] + 1)
+                .min(current[right_index] + 1)
+                .min(previous[right_index] + substitution);
+        }
+        previous.clone_from(&current);
+    }
+
+    previous[right_chars.len()]
+}
+
 fn qualify(qualifier: &str, name: &str) -> String {
     format!("{qualifier}.{name}")
 }
@@ -2723,17 +3067,33 @@ fn duplicate_diagnostic<'db>(
     }
 }
 
-fn undefined_name<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
+fn undefined_name<'db>(
+    db: &'db dyn Db,
+    name: &str,
+    span: Span<'db>,
+    suggestion: Option<String>,
+    private_candidate: Option<PrivateCandidate>,
+) -> NameresDiagnostic {
     NameresDiagnostic::UndefinedName {
         name: name.to_owned(),
         span: LabelSpan::from_span(db, span),
+        suggestion,
+        private_candidate,
     }
 }
 
-fn undefined_type_ctor<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
+fn undefined_type_ctor<'db>(
+    db: &'db dyn Db,
+    name: &str,
+    span: Span<'db>,
+    suggestion: Option<String>,
+    constructor_candidate: Option<ConstructorTypeCandidate>,
+) -> NameresDiagnostic {
     NameresDiagnostic::UndefinedTypeConstructor {
         name: name.to_owned(),
         span: LabelSpan::from_span(db, span),
+        suggestion,
+        constructor_candidate,
     }
 }
 
@@ -2750,9 +3110,15 @@ fn invalid_pattern<'db>(db: &'db dyn Db, span: Span<'db>) -> NameresDiagnostic {
     }
 }
 
-fn unqualified_constructor<'db>(db: &'db dyn Db, name: &str, span: Span<'db>) -> NameresDiagnostic {
+fn unqualified_constructor<'db>(
+    db: &'db dyn Db,
+    name: &str,
+    span: Span<'db>,
+    qualification: Option<String>,
+) -> NameresDiagnostic {
     NameresDiagnostic::UnqualifiedConstructor {
         name: name.to_owned(),
         span: LabelSpan::from_span(db, span),
+        qualification,
     }
 }

@@ -11,4 +11,4 @@ error[SC0106]: unqualified constructor: On
    |               ^^ constructor must be qualified
 13 | }
    |
-   = note: use Type.Constructor form
+   = help: use `Light.On`

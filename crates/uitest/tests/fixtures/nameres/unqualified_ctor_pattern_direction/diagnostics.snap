@@ -11,7 +11,7 @@ error[SC0106]: unqualified constructor: north
   |     ^^^^^ constructor must be qualified
 6 |   | south => return 2;
   |
-  = note: use Type.Constructor form
+  = help: use `direction.north`
 ---
 
 error[SC0106]: unqualified constructor: south
@@ -22,4 +22,4 @@ error[SC0106]: unqualified constructor: south
   |     ^^^^^ constructor must be qualified
 7 |   }
   |
-  = note: use Type.Constructor form
+  = help: use `direction.south`

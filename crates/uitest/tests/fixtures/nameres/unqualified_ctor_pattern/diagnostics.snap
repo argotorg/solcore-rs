@@ -11,7 +11,7 @@ error[SC0106]: unqualified constructor: off
   |     ^^^ constructor must be qualified
 6 |   | on => return 1;
   |
-  = note: use Type.Constructor form
+  = help: use `flag.off`
 ---
 
 error[SC0106]: unqualified constructor: on
@@ -22,4 +22,4 @@ error[SC0106]: unqualified constructor: on
   |     ^^ constructor must be qualified
 7 |   }
   |
-  = note: use Type.Constructor form
+  = help: use `flag.on`

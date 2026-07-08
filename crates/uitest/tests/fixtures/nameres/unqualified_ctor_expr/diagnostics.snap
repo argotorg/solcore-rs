@@ -11,4 +11,4 @@ error[SC0106]: unqualified constructor: on
    |               ^^ constructor must be qualified
 12 | }
    |
-   = note: use Type.Constructor form
+   = help: use `flag.on`

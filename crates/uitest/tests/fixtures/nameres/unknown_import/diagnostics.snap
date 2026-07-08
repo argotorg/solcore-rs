@@ -9,4 +9,5 @@ error[SC0110]: unknown import item `missing`
 1 | import util.{missing};
   |              ^^^^^^^ unknown import item
   |
-  = note: check the imported module's exported names
+  = note: `missing` is not exported by module `util`
+  = help: check the imported module's exported names

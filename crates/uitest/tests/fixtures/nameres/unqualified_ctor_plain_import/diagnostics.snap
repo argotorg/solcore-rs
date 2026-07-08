@@ -11,7 +11,7 @@ error[SC0106]: unqualified constructor: wrapper
   |     ^^^^^^^ constructor must be qualified
 6 |   }
   |
-  = note: use Type.Constructor form
+  = help: use Type.Constructor form
 ---
 
 error[SC0106]: unqualified constructor: wrapper
@@ -22,4 +22,4 @@ error[SC0106]: unqualified constructor: wrapper
    |                 ^^^^^^^ constructor must be qualified
 11 | }
    |
-   = note: use Type.Constructor form
+   = help: use Type.Constructor form
