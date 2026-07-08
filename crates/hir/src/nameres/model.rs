@@ -133,6 +133,28 @@ impl ParamIndex {
     }
 }
 
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub struct CtorIndex(u32);
+
+impl CtorIndex {
+    pub const fn from_u32(v: u32) -> Self {
+        Self(v)
+    }
+
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    pub fn from_usize(v: usize) -> Self {
+        Self(v as u32)
+    }
+
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ParamId<'db> {
     /// Body whose parameter list introduced this parameter.
@@ -283,7 +305,7 @@ pub enum Resolution<'db> {
         /// Owning data type.
         ty: DefId<'db>,
         /// Constructor index in the owning data type.
-        index: u32,
+        index: CtorIndex,
     },
     /// Type class method.
     ClassMethod {
@@ -363,7 +385,7 @@ pub struct CtorEntry<'db> {
     /// Owning data type.
     pub ty: DefId<'db>,
     /// Constructor index in declaration order.
-    pub index: u32,
+    pub index: CtorIndex,
 }
 
 /// Constructors associated with one data type.

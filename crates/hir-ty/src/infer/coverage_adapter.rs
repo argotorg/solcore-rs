@@ -441,14 +441,18 @@ impl<'db> InferCtx<'db> {
             .enumerate()
             .map(|(index, ctor)| CoverageCtor::User {
                 ty,
-                index: index as u32,
+                index: hir_nameres::CtorIndex::from_usize(index),
                 ty_name: ty_name.clone(),
                 name: ident_text(self.db, &ctor.name),
             })
             .collect()
     }
 
-    fn user_ctor_head(&self, ty: DefId<'db>, index: u32) -> Option<CoverageCtor<'db>> {
+    fn user_ctor_head(
+        &self,
+        ty: DefId<'db>,
+        index: hir_nameres::CtorIndex,
+    ) -> Option<CoverageCtor<'db>> {
         self.user_ctor_heads(ty)
             .into_iter()
             .find(|ctor| matches!(ctor, CoverageCtor::User { index: ctor_index, .. } if *ctor_index == index))

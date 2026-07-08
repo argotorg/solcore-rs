@@ -290,7 +290,7 @@ impl<'db> InferCtx<'db> {
     pub(super) fn instantiate_adt_ctor(
         &mut self,
         ty: DefId<'db>,
-        index: u32,
+        index: hir_nameres::CtorIndex,
         source: ObligationSource<'db>,
     ) -> InferTy<'db> {
         if let Some(scheme) = self.lookup_adt_ctor_scheme(ty, index) {
@@ -304,7 +304,7 @@ impl<'db> InferCtx<'db> {
     fn instantiate_adt_ctor_value(
         &mut self,
         ty: DefId<'db>,
-        index: u32,
+        index: hir_nameres::CtorIndex,
         source: ObligationSource<'db>,
     ) -> InferTy<'db> {
         let ctor_ty = self.instantiate_adt_ctor(ty, index, source);
@@ -347,7 +347,7 @@ impl<'db> InferCtx<'db> {
     pub(super) fn lookup_adt_ctor_scheme(
         &self,
         ty: DefId<'db>,
-        index: u32,
+        index: hir_nameres::CtorIndex,
     ) -> Option<TyScheme<'db>> {
         if let Some(entry_module) = self.entry_module {
             adt_ctor_scheme_for_entry(self.db, entry_module, ty, index)

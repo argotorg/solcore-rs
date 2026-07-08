@@ -575,14 +575,19 @@ fn def_resolution_kind<'db>(
 pub(super) fn constructor_entries_for_ref<'db>(
     db: &'db dyn Db,
     item_ref: &ItemRef<'db>,
-) -> Vec<(String, u32)> {
+) -> Vec<(String, hir_nameres::CtorIndex)> {
     let Some(def) = find_origin_adt(db, item_ref.origin.module, item_ref.origin.def_id) else {
         return Vec::new();
     };
     def.ctors(db)
         .iter()
         .enumerate()
-        .map(|(index, ctor)| (spanned_name_text(db, &ctor.name), index as u32))
+        .map(|(index, ctor)| {
+            (
+                spanned_name_text(db, &ctor.name),
+                hir_nameres::CtorIndex::from_usize(index),
+            )
+        })
         .collect()
 }
 

@@ -104,7 +104,7 @@ pub struct AdtCtorScheme<'db> {
     /// Owning ADT definition.
     pub ty: DefId<'db>,
     /// Constructor index in the owning ADT.
-    pub index: u32,
+    pub index: hir_nameres::CtorIndex,
     /// Constructor leaf name.
     pub name: String,
     /// Polymorphic constructor scheme.
@@ -199,7 +199,7 @@ pub enum CallSiteCallee<'db> {
         /// Owning ADT.
         ty: DefId<'db>,
         /// Constructor index.
-        index: u32,
+        index: hir_nameres::CtorIndex,
     },
     /// Class method.
     ClassMethod {

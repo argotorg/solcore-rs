@@ -534,9 +534,14 @@ pub(super) fn class_method_name_parts<'db>(
     }
 }
 
-pub(super) fn ctor_name<'db>(db: &'db dyn HirDb, adt: Option<AdtDef<'db>>, index: u32) -> String {
+pub(super) fn ctor_name<'db>(
+    db: &'db dyn HirDb,
+    adt: Option<AdtDef<'db>>,
+    index: hir_nameres::CtorIndex,
+) -> String {
+    let raw_index = index.as_u32();
     let Some(adt) = adt else {
-        return format!("ctor{index}");
+        return format!("ctor{raw_index}");
     };
     let ty = adt
         .def_id_value(db)
@@ -544,8 +549,8 @@ pub(super) fn ctor_name<'db>(db: &'db dyn HirDb, adt: Option<AdtDef<'db>>, index
         .unwrap_or_else(|| "Adt".to_owned());
     let ctor = adt
         .ctors(db)
-        .get(index as usize)
+        .get(index.as_usize())
         .map(|ctor| ident_text(db, &ctor.name))
-        .unwrap_or_else(|| format!("ctor{index}"));
+        .unwrap_or_else(|| format!("ctor{raw_index}"));
     format!("{ty}_{ctor}")
 }

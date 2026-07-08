@@ -309,6 +309,7 @@ impl<'db> ItemScopeBuilder<'db> {
             TypeDeclFamily::Adt,
         );
         for (index, ctor) in def.ctors(self.db).iter().enumerate() {
+            let index = CtorIndex::from_usize(index);
             let ctor_name = ident_text_str(self.db, &ctor.name).to_owned();
             let qualified = qualify(&ty_name, &ctor_name);
             let entry = CtorEntry {
@@ -316,16 +317,13 @@ impl<'db> ItemScopeBuilder<'db> {
                 qualified_name: qualified.clone(),
                 span: ctor.name.span(self.db),
                 ty: ty_def,
-                index: index as u32,
+                index,
             };
             ctor_entries.push(entry);
             self.add_term(
                 qualified,
                 ctor.name.span(self.db),
-                Resolution::Ctor {
-                    ty: ty_def,
-                    index: index as u32,
-                },
+                Resolution::Ctor { ty: ty_def, index },
                 contract.as_deref_mut(),
             );
         }

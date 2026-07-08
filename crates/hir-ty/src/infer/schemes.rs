@@ -90,7 +90,7 @@ pub fn adt_ctor_scheme<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     ty: DefId<'db>,
-    index: u32,
+    index: hir_nameres::CtorIndex,
 ) -> Option<TyScheme<'db>> {
     let hir_module = module_hir(db, module)?;
     let item_resolutions = item_resolution_facts_for_module(db, module)?;
@@ -130,7 +130,7 @@ pub(super) fn adt_ctor_scheme_for_entry<'db>(
     db: &'db dyn Db,
     entry: ModuleId<'db>,
     ty: DefId<'db>,
-    index: u32,
+    index: hir_nameres::CtorIndex,
 ) -> Option<TyScheme<'db>> {
     adt_ctor_scheme(db, module_for_def(db, entry, ty)?, ty, index)
 }
@@ -266,7 +266,7 @@ pub(super) fn adt_ctor_scheme_in_hir_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     ty: DefId<'db>,
-    index: u32,
+    index: hir_nameres::CtorIndex,
 ) -> Option<TyScheme<'db>> {
     let item_resolutions = hir_nameres::resolve_item_type_facts(db, module);
     adt_ctor_scheme_in_module(db, module, &item_resolutions, ty, index)
@@ -309,7 +309,7 @@ fn adt_ctor_indices_by_name<'db>(
     module: ModuleId<'db>,
     ty: DefId<'db>,
     name: String,
-) -> Vec<(u32, String)> {
+) -> Vec<(hir_nameres::CtorIndex, String)> {
     let Some(hir_module) = module_hir(db, module) else {
         return Vec::new();
     };
@@ -322,7 +322,7 @@ fn adt_ctor_indices_by_name_in_hir_module<'db>(
     module: Module<'db>,
     ty: DefId<'db>,
     name: String,
-) -> Vec<(u32, String)> {
+) -> Vec<(hir_nameres::CtorIndex, String)> {
     adt_ctor_indices_by_name_in_module(db, module, ty, &name)
 }
 
@@ -520,10 +520,10 @@ fn adt_ctor_scheme_in_module<'db>(
     module: Module<'db>,
     item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     ty: DefId<'db>,
-    index: u32,
+    index: hir_nameres::CtorIndex,
 ) -> Option<TyScheme<'db>> {
     let info = find_adt_info(db, module, ty)?;
-    let ctor = info.adt.ctors(db).get(index as usize)?;
+    let ctor = info.adt.ctors(db).get(index.as_usize())?;
     let lowered = TypeLowering::from_item_resolutions(
         db,
         item_resolutions,
@@ -560,7 +560,7 @@ fn adt_ctor_indices_by_name_in_module<'db>(
     module: Module<'db>,
     ty: DefId<'db>,
     name: &str,
-) -> Vec<(u32, String)> {
+) -> Vec<(hir_nameres::CtorIndex, String)> {
     let Some(info) = find_adt_info(db, module, ty) else {
         return Vec::new();
     };
@@ -570,7 +570,7 @@ fn adt_ctor_indices_by_name_in_module<'db>(
         .enumerate()
         .filter_map(|(index, ctor)| {
             let ctor_name = ident_text(db, &ctor.name);
-            (ctor_name == name).then_some((index as u32, ctor_name))
+            (ctor_name == name).then_some((hir_nameres::CtorIndex::from_usize(index), ctor_name))
         })
         .collect()
 }

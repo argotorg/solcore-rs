@@ -5,7 +5,7 @@
 //! this small pattern language and for supplying type-specific constructor
 //! data.
 
-use hir::anchor::DefId;
+use hir::{anchor::DefId, nameres::CtorIndex};
 
 /// Constructor head used by coverage analysis.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -15,7 +15,7 @@ pub(crate) enum CoverageCtor<'db> {
         /// Type definition that owns this constructor.
         ty: DefId<'db>,
         /// Constructor index inside the ADT definition.
-        index: u32,
+        index: CtorIndex,
         /// Display name of the owning type.
         ty_name: String,
         /// Display name of the constructor.
