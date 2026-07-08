@@ -104,7 +104,7 @@ pub(super) fn find_field_info<'db>(
             return None;
         }
         let type_vars = type_var_bindings(contract.def_id_value(db), contract.ty_param_elems(db));
-        let field = contract.fields(db).get(field.index as usize)?.clone();
+        let field = contract.fields(db).get(field.index.as_usize())?.clone();
         Some(FieldLookup { field, type_vars })
     })
 }

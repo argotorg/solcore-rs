@@ -60,12 +60,34 @@ pub enum DefResolutionKind {
 ///
 /// Fields are identified by their owning contract definition and declaration
 /// index, which is stable under unrelated edits inside the contract body.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub struct FieldIndex(u32);
+
+impl FieldIndex {
+    pub const fn from_u32(v: u32) -> Self {
+        Self(v)
+    }
+
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    pub fn from_usize(v: usize) -> Self {
+        Self(v as u32)
+    }
+
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub struct FieldId<'db> {
     /// Owning contract definition.
     pub contract: DefId<'db>,
     /// Zero-based field declaration index.
-    pub index: u32,
+    pub index: FieldIndex,
 }
 
 /// Logical module binding visible in an item scope.

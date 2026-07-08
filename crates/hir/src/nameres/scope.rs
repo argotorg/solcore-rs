@@ -544,7 +544,7 @@ impl<'db> ContractScopeBuilder<'db> {
             span: field.name().span(self.db),
             field: FieldId {
                 contract: self.contract,
-                index,
+                index: FieldIndex::from_u32(index),
             },
         });
     }

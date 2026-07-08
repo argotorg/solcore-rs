@@ -84,7 +84,7 @@ pub(super) fn selector_name<'db>(db: &'db dyn HirDb, field: &hir_nameres::FieldI
         .contract
         .name(db)
         .unwrap_or_else(|| "Contract".to_owned());
-    format!("{contract}_field{}_sel", field.index)
+    format!("{contract}_field{}_sel", field.index.as_u32())
 }
 
 pub(super) fn function_type_vars<'db>(
