@@ -190,7 +190,7 @@ impl<'pure, 'db> Visitor<'db> for ExprPurityVisitor<'pure> {
             } => {
                 let callee_is_pure = match origin {
                     MonoCallOrigin::Builtin(intrinsic) => intrinsic_is_pure(*intrinsic),
-                    MonoCallOrigin::Source(_) | MonoCallOrigin::Unknown => {
+                    MonoCallOrigin::Source(_) | MonoCallOrigin::ByName => {
                         self.pure.contains(&callee.name)
                     }
                 };

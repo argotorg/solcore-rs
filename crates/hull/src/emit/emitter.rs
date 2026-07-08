@@ -774,7 +774,7 @@ impl<'db> Emitter<'db> {
 fn call_name(origin: &MonoCallOrigin<'_>, name: &str) -> String {
     match origin {
         MonoCallOrigin::Builtin(intrinsic) => intrinsic_name(*intrinsic).to_owned(),
-        MonoCallOrigin::Source(_) | MonoCallOrigin::Unknown => name.to_owned(),
+        MonoCallOrigin::Source(_) | MonoCallOrigin::ByName => name.to_owned(),
     }
 }
 

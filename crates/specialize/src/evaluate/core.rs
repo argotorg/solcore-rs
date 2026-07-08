@@ -951,7 +951,7 @@ impl<'db> Evaluator<'db> {
                         kind: MonoExprKind::Call {
                             callee: id.clone(),
                             args: args.to_vec(),
-                            origin: MonoCallOrigin::Unknown,
+                            origin: MonoCallOrigin::ByName,
                         },
                     })
                 })
@@ -1520,7 +1520,7 @@ impl<'db> Evaluator<'db> {
             } => {
                 let callee_is_comptime = match origin {
                     MonoCallOrigin::Builtin(intrinsic) => intrinsic_is_pure(*intrinsic),
-                    MonoCallOrigin::Source(_) | MonoCallOrigin::Unknown => {
+                    MonoCallOrigin::Source(_) | MonoCallOrigin::ByName => {
                         self.pure_funs.contains(&callee.name)
                     }
                 };

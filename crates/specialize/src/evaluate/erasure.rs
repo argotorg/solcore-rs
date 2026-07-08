@@ -34,7 +34,7 @@ fn display_call_name<'db>(db: &'db dyn Db, origin: MonoCallOrigin<'db>, fallback
         MonoCallOrigin::Source(def) => def
             .name(db)
             .unwrap_or_else(|| display_backend_symbol(fallback)),
-        MonoCallOrigin::Builtin(_) | MonoCallOrigin::Unknown => display_backend_symbol(fallback),
+        MonoCallOrigin::Builtin(_) | MonoCallOrigin::ByName => display_backend_symbol(fallback),
     }
 }
 

@@ -77,7 +77,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 ty: mono_callee_ty,
                 span: expr.span,
             },
-            origin: MonoCallOrigin::Unknown,
+            origin: MonoCallOrigin::ByName,
             args,
         })
     }
@@ -133,7 +133,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             hir_nameres::Resolution::Builtin(kind) => {
                 let origin = builtin_intrinsic(kind)
                     .map(MonoCallOrigin::Builtin)
-                    .unwrap_or(MonoCallOrigin::Unknown);
+                    .unwrap_or(MonoCallOrigin::ByName);
                 Some(MonoExprKind::Call {
                     callee: MonoId {
                         name: builtin_name(kind).to_owned(),
@@ -271,7 +271,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                             ty: mono_callee_ty,
                             span,
                         },
-                        origin: MonoCallOrigin::Unknown,
+                        origin: MonoCallOrigin::ByName,
                         args: arg_exprs,
                     });
                 }
@@ -300,7 +300,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 };
                 let origin = builtin_intrinsic(kind)
                     .map(MonoCallOrigin::Builtin)
-                    .unwrap_or(MonoCallOrigin::Unknown);
+                    .unwrap_or(MonoCallOrigin::ByName);
                 match kind {
                     hir_nameres::BuiltinKind::Constructor(_) => Some(MonoExprKind::Con {
                         ctor: builtin_callee,
@@ -323,7 +323,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                                     ty: mono_callee_ty,
                                     span,
                                 },
-                                origin: MonoCallOrigin::Unknown,
+                                origin: MonoCallOrigin::ByName,
                                 args: arg_exprs,
                             });
                         }
@@ -370,7 +370,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                                 ty: mono_callee_ty,
                                 span,
                             },
-                            origin: MonoCallOrigin::Unknown,
+                            origin: MonoCallOrigin::ByName,
                             args: arg_exprs,
                         });
                     }
@@ -634,7 +634,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         )),
                         span,
                     },
-                    origin: MonoCallOrigin::Unknown,
+                    origin: MonoCallOrigin::ByName,
                     args,
                 });
             }
@@ -649,7 +649,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 )),
                 span,
             },
-            origin: MonoCallOrigin::Unknown,
+            origin: MonoCallOrigin::ByName,
             args,
         })
     }
