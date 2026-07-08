@@ -5,6 +5,7 @@ use super::{CEnv, TypeReg, VEnv, assigned::AssignedNames, value::BigInt};
 use crate::ir::{
     MonoArm, MonoExpr, MonoExprKind, MonoId, MonoParam, MonoPat, MonoPatKind, MonoStmt,
     MonoStmtKind, MonoTy,
+    visit::{Visitor, walk_pat, walk_stmt},
 };
 
 pub(super) fn build_type_reg<'db>(
@@ -27,37 +28,27 @@ pub(super) fn build_type_reg<'db>(
 }
 
 fn collect_type_reg_stmts<'db>(stmts: &[MonoStmt<'db>], reg: &mut TypeReg<'db>) {
+    let mut collector = TypeRegCollector { reg };
     for stmt in stmts {
-        match &stmt.kind {
-            MonoStmtKind::Let { id, .. } => {
-                reg.insert(id.name.clone(), id.clone());
-            }
-            MonoStmtKind::Match { arms, .. } => {
-                for arm in arms {
-                    collect_type_reg_stmts(&arm.body, reg);
-                }
-            }
-            MonoStmtKind::For {
-                init, post, body, ..
-            } => {
-                collect_type_reg_stmts(init, reg);
-                collect_type_reg_stmts(post, reg);
-                collect_type_reg_stmts(body, reg);
-            }
-            MonoStmtKind::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                collect_type_reg_stmts(then_body, reg);
-                if let Some(else_body) = else_body {
-                    collect_type_reg_stmts(else_body, reg);
-                }
-            }
-            MonoStmtKind::Block(body) => collect_type_reg_stmts(body, reg),
-            _ => {}
-        }
+        collector.visit_stmt(stmt);
     }
+}
+
+struct TypeRegCollector<'reg, 'db> {
+    reg: &'reg mut TypeReg<'db>,
+}
+
+impl<'reg, 'db> Visitor<'db> for TypeRegCollector<'reg, 'db> {
+    fn visit_stmt(&mut self, stmt: &MonoStmt<'db>) {
+        if let MonoStmtKind::Let { id, .. } = &stmt.kind {
+            self.reg.insert(id.name.clone(), id.clone());
+        }
+        walk_stmt(self, stmt);
+    }
+
+    fn visit_expr(&mut self, _expr: &MonoExpr<'db>) {}
+
+    fn visit_pat(&mut self, _pat: &MonoPat<'db>) {}
 }
 
 pub(super) fn is_known_value(expr: &MonoExpr<'_>) -> bool {
@@ -267,20 +258,22 @@ pub(super) fn lvalue_root_name(expr: &MonoExpr<'_>) -> Option<String> {
 }
 
 pub(super) fn collect_pat_binders(pat: &MonoPat<'_>, out: &mut FxHashSet<String>) {
-    match &pat.kind {
-        MonoPatKind::Var(id) => {
-            out.insert(id.name.clone());
+    PatBinderCollector { out }.visit_pat(pat);
+}
+
+struct PatBinderCollector<'out> {
+    out: &'out mut FxHashSet<String>,
+}
+
+impl<'out, 'db> Visitor<'db> for PatBinderCollector<'out> {
+    fn visit_pat(&mut self, pat: &MonoPat<'db>) {
+        if let MonoPatKind::Var(id) = &pat.kind {
+            self.out.insert(id.name.clone());
         }
-        MonoPatKind::Con { args, .. } | MonoPatKind::Tuple(args) => {
-            for arg in args {
-                collect_pat_binders(arg, out);
-            }
-        }
-        MonoPatKind::Wildcard
-        | MonoPatKind::Lit(_)
-        | MonoPatKind::ComptimeLabel(_)
-        | MonoPatKind::Error => {}
+        walk_pat(self, pat);
     }
+
+    fn visit_expr(&mut self, _expr: &MonoExpr<'db>) {}
 }
 
 fn decode_string_lit(text: &str) -> Option<String> {

@@ -5,6 +5,8 @@ use hir::{
 };
 use hir_ty::{FrontendDesugarPlan, Ty};
 
+pub(crate) mod visit;
+
 /// A semantic type that has been checked to contain no type variables or
 /// unknown placeholders by the specializer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

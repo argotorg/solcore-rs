@@ -10,7 +10,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{
     CEnv, TypeReg, VEnv, YulState,
     assigned::{AssignedNames, invalidate_assigned},
-    effects::{compute_pure_funs, compute_write_effects, intrinsic_is_pure, storage_field_names},
+    effects::{
+        compute_pure_funs, compute_write_effects, expr_write_effects_from_call_summaries,
+        intrinsic_is_pure, storage_field_names,
+    },
     erasure::{
         display_backend_symbol, display_mono_function_name, lambda_ret_is_comptime,
         param_is_comptime, ty_is_builtin, ty_is_comptime, ty_is_function,
@@ -30,6 +33,7 @@ use crate::{
     ir::{
         MonoArm, MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoId, MonoIntrinsic,
         MonoItem, MonoModule, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+        visit::{Visitor, walk_stmt},
     },
     specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind},
 };
@@ -51,6 +55,45 @@ pub(super) struct Evaluator<'db> {
     memory: BTreeMap<BigInt, u8>,
     comptime_mode: bool,
     enforce_comptime: bool,
+}
+
+struct StmtWriteEffectsCollector<'effects> {
+    call_effects: &'effects FxHashMap<String, AssignedNames>,
+    effects: AssignedNames,
+}
+
+impl<'effects, 'db> Visitor<'db> for StmtWriteEffectsCollector<'effects> {
+    fn visit_stmt(&mut self, stmt: &MonoStmt<'db>) {
+        match &stmt.kind {
+            MonoStmtKind::Assign { lhs, .. }
+            | MonoStmtKind::AddAssign { lhs, .. }
+            | MonoStmtKind::SubAssign { lhs, .. }
+            | MonoStmtKind::BitXorAssign { lhs, .. }
+            | MonoStmtKind::BitAndAssign { lhs, .. }
+            | MonoStmtKind::BitOrAssign { lhs, .. }
+            | MonoStmtKind::ModAssign { lhs, .. } => {
+                if let Some(name) = lvalue_root_name(lhs) {
+                    self.effects.insert(name);
+                } else {
+                    self.effects.merge(AssignedNames::All);
+                }
+            }
+            MonoStmtKind::Assembly(_) => {
+                self.effects.merge(AssignedNames::All);
+            }
+            _ => {}
+        }
+        walk_stmt(self, stmt);
+    }
+
+    fn visit_expr(&mut self, expr: &MonoExpr<'db>) {
+        self.effects.merge(expr_write_effects_from_call_summaries(
+            expr,
+            self.call_effects,
+        ));
+    }
+
+    fn visit_pat(&mut self, _pat: &MonoPat<'db>) {}
 }
 
 impl<'db> Evaluator<'db> {
@@ -899,139 +942,18 @@ impl<'db> Evaluator<'db> {
     }
 
     fn expr_write_effects(&self, expr: &MonoExpr<'db>) -> AssignedNames {
-        match &expr.kind {
-            MonoExprKind::Var(_)
-            | MonoExprKind::Lit(_)
-            | MonoExprKind::Proxy(_)
-            | MonoExprKind::Error => AssignedNames::empty(),
-            MonoExprKind::Tuple(elems) => self.exprs_write_effects(elems),
-            MonoExprKind::Call {
-                callee,
-                args,
-                origin,
-            } => {
-                let mut effects = self.exprs_write_effects(args);
-                if !matches!(origin, MonoCallOrigin::Builtin(_)) {
-                    effects.merge(
-                        self.write_effects
-                            .get(&callee.name)
-                            .cloned()
-                            .unwrap_or(AssignedNames::All),
-                    );
-                }
-                effects
-            }
-            MonoExprKind::Con { args, .. } => self.exprs_write_effects(args),
-            MonoExprKind::ClosureDispatch { callee, args } => {
-                let mut effects = self.expr_write_effects(callee);
-                effects.merge(self.exprs_write_effects(args));
-                effects.merge(AssignedNames::All);
-                effects
-            }
-            MonoExprKind::BinOp { lhs, rhs, .. } => {
-                let mut effects = self.expr_write_effects(lhs);
-                effects.merge(self.expr_write_effects(rhs));
-                effects
-            }
-            MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
-                self.expr_write_effects(expr)
-            }
-            MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index } => {
-                let mut effects = self.expr_write_effects(base);
-                effects.merge(self.expr_write_effects(index));
-                effects
-            }
-            MonoExprKind::Field { base, .. } => self.expr_write_effects(base),
-            MonoExprKind::If {
-                cond,
-                then_expr,
-                else_expr,
-            } => {
-                let mut effects = self.expr_write_effects(cond);
-                effects.merge(self.expr_write_effects(then_expr));
-                effects.merge(self.expr_write_effects(else_expr));
-                effects
-            }
-            MonoExprKind::Lambda { .. } => AssignedNames::empty(),
-        }
-    }
-
-    fn exprs_write_effects(&self, exprs: &[MonoExpr<'db>]) -> AssignedNames {
-        let mut effects = AssignedNames::empty();
-        for expr in exprs {
-            effects.merge(self.expr_write_effects(expr));
-        }
-        effects
+        expr_write_effects_from_call_summaries(expr, &self.write_effects)
     }
 
     fn stmts_write_effects(&self, stmts: &[MonoStmt<'db>]) -> AssignedNames {
-        let mut effects = AssignedNames::empty();
-        self.collect_stmt_write_effects(stmts, &mut effects);
-        effects
-    }
-
-    fn collect_stmt_write_effects(&self, stmts: &[MonoStmt<'db>], effects: &mut AssignedNames) {
+        let mut collector = StmtWriteEffectsCollector {
+            call_effects: &self.write_effects,
+            effects: AssignedNames::empty(),
+        };
         for stmt in stmts {
-            match &stmt.kind {
-                MonoStmtKind::Let { init, .. } => {
-                    if let Some(init) = init {
-                        effects.merge(self.expr_write_effects(init));
-                    }
-                }
-                MonoStmtKind::Return(expr) => {
-                    if let Some(expr) = expr {
-                        effects.merge(self.expr_write_effects(expr));
-                    }
-                }
-                MonoStmtKind::Expr(expr) => effects.merge(self.expr_write_effects(expr)),
-                MonoStmtKind::Assign { lhs, rhs }
-                | MonoStmtKind::AddAssign { lhs, rhs }
-                | MonoStmtKind::SubAssign { lhs, rhs }
-                | MonoStmtKind::BitXorAssign { lhs, rhs }
-                | MonoStmtKind::BitAndAssign { lhs, rhs }
-                | MonoStmtKind::BitOrAssign { lhs, rhs }
-                | MonoStmtKind::ModAssign { lhs, rhs } => {
-                    if let Some(name) = lvalue_root_name(lhs) {
-                        effects.insert(name);
-                    } else {
-                        effects.merge(AssignedNames::All);
-                    }
-                    effects.merge(self.expr_write_effects(lhs));
-                    effects.merge(self.expr_write_effects(rhs));
-                }
-                MonoStmtKind::Match { scrutinees, arms } => {
-                    effects.merge(self.exprs_write_effects(scrutinees));
-                    for arm in arms {
-                        self.collect_stmt_write_effects(&arm.body, effects);
-                    }
-                }
-                MonoStmtKind::For {
-                    init,
-                    cond,
-                    post,
-                    body,
-                } => {
-                    self.collect_stmt_write_effects(init, effects);
-                    effects.merge(self.expr_write_effects(cond));
-                    self.collect_stmt_write_effects(post, effects);
-                    self.collect_stmt_write_effects(body, effects);
-                }
-                MonoStmtKind::If {
-                    cond,
-                    then_body,
-                    else_body,
-                } => {
-                    effects.merge(self.expr_write_effects(cond));
-                    self.collect_stmt_write_effects(then_body, effects);
-                    if let Some(else_body) = else_body {
-                        self.collect_stmt_write_effects(else_body, effects);
-                    }
-                }
-                MonoStmtKind::Block(body) => self.collect_stmt_write_effects(body, effects),
-                MonoStmtKind::Assembly(_) => effects.merge(AssignedNames::All),
-                MonoStmtKind::Break | MonoStmtKind::Continue | MonoStmtKind::Error => {}
-            }
+            collector.visit_stmt(stmt);
         }
+        collector.effects
     }
 
     fn eval_closure_dispatch(

@@ -16,6 +16,7 @@ use super::{
 use crate::ir::{
     MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoIntrinsic, MonoItem, MonoModule,
     MonoStmt, MonoStmtKind,
+    visit::{Visitor, walk_expr},
 };
 
 pub(super) fn compute_pure_funs<'db>(
@@ -169,42 +170,55 @@ fn stmt_is_pure<'db>(
 }
 
 fn expr_is_pure(expr: &MonoExpr<'_>, pure: &FxHashSet<String>) -> bool {
-    match &expr.kind {
-        MonoExprKind::Lit(_) | MonoExprKind::Var(_) | MonoExprKind::Proxy(_) => true,
-        MonoExprKind::Tuple(elems) => elems.iter().all(|expr| expr_is_pure(expr, pure)),
-        MonoExprKind::Call {
-            callee,
-            args,
-            origin,
-        } => match origin {
-            MonoCallOrigin::Builtin(intrinsic) => {
-                intrinsic_is_pure(*intrinsic) && args.iter().all(|arg| expr_is_pure(arg, pure))
-            }
-            MonoCallOrigin::Source(_) | MonoCallOrigin::Unknown => {
-                pure.contains(&callee.name) && args.iter().all(|arg| expr_is_pure(arg, pure))
-            }
-        },
-        MonoExprKind::Con { args, .. } => args.iter().all(|arg| expr_is_pure(arg, pure)),
-        MonoExprKind::ClosureDispatch { .. } => false,
-        MonoExprKind::BinOp { lhs, rhs, .. } => expr_is_pure(lhs, pure) && expr_is_pure(rhs, pure),
-        MonoExprKind::UnaryOp { expr, .. } => expr_is_pure(expr, pure),
-        MonoExprKind::Index { base, index } => {
-            expr_is_pure(base, pure) && expr_is_pure(index, pure)
+    let mut visitor = ExprPurityVisitor {
+        pure,
+        is_pure: true,
+    };
+    visitor.visit_expr(expr);
+    visitor.is_pure
+}
+
+struct ExprPurityVisitor<'pure> {
+    pure: &'pure FxHashSet<String>,
+    is_pure: bool,
+}
+
+impl<'pure, 'db> Visitor<'db> for ExprPurityVisitor<'pure> {
+    fn visit_expr(&mut self, expr: &MonoExpr<'db>) {
+        if !self.is_pure {
+            return;
         }
-        MonoExprKind::StorageIndex { .. } => false,
-        MonoExprKind::Field { base, .. } => expr_is_pure(base, pure),
-        MonoExprKind::TypeAnnot { expr, .. } => expr_is_pure(expr, pure),
-        MonoExprKind::If {
-            cond,
-            then_expr,
-            else_expr,
-        } => {
-            expr_is_pure(cond, pure)
-                && expr_is_pure(then_expr, pure)
-                && expr_is_pure(else_expr, pure)
+        match &expr.kind {
+            MonoExprKind::Call {
+                callee,
+                args,
+                origin,
+            } => {
+                let callee_is_pure = match origin {
+                    MonoCallOrigin::Builtin(intrinsic) => intrinsic_is_pure(*intrinsic),
+                    MonoCallOrigin::Source(_) | MonoCallOrigin::Unknown => {
+                        self.pure.contains(&callee.name)
+                    }
+                };
+                if !callee_is_pure {
+                    self.is_pure = false;
+                    return;
+                }
+                for arg in args {
+                    self.visit_expr(arg);
+                }
+            }
+            MonoExprKind::ClosureDispatch { .. }
+            | MonoExprKind::StorageIndex { .. }
+            | MonoExprKind::Error => {
+                self.is_pure = false;
+            }
+            MonoExprKind::Lambda { .. }
+            | MonoExprKind::Lit(_)
+            | MonoExprKind::Var(_)
+            | MonoExprKind::Proxy(_) => {}
+            _ => walk_expr(self, expr),
         }
-        MonoExprKind::Lambda { .. } => true,
-        MonoExprKind::Error => false,
     }
 }
 
@@ -263,17 +277,17 @@ fn collect_write_effects_in_stmts<'db>(
         match &stmt.kind {
             MonoStmtKind::Let { id, init, .. } => {
                 if let Some(init) = init {
-                    effects.merge(expr_write_effects_from_summary(init, call_effects));
+                    effects.merge(expr_write_effects_from_call_summaries(init, call_effects));
                 }
                 locals.insert(id.name.clone());
             }
             MonoStmtKind::Return(expr) => {
                 if let Some(expr) = expr {
-                    effects.merge(expr_write_effects_from_summary(expr, call_effects));
+                    effects.merge(expr_write_effects_from_call_summaries(expr, call_effects));
                 }
             }
             MonoStmtKind::Expr(expr) => {
-                effects.merge(expr_write_effects_from_summary(expr, call_effects));
+                effects.merge(expr_write_effects_from_call_summaries(expr, call_effects));
             }
             MonoStmtKind::Assign { lhs, rhs }
             | MonoStmtKind::AddAssign { lhs, rhs }
@@ -289,12 +303,15 @@ fn collect_write_effects_in_stmts<'db>(
                         effects.merge(AssignedNames::All);
                     }
                 }
-                effects.merge(expr_write_effects_from_summary(lhs, call_effects));
-                effects.merge(expr_write_effects_from_summary(rhs, call_effects));
+                effects.merge(expr_write_effects_from_call_summaries(lhs, call_effects));
+                effects.merge(expr_write_effects_from_call_summaries(rhs, call_effects));
             }
             MonoStmtKind::Match { scrutinees, arms } => {
                 for scrutinee in scrutinees {
-                    effects.merge(expr_write_effects_from_summary(scrutinee, call_effects));
+                    effects.merge(expr_write_effects_from_call_summaries(
+                        scrutinee,
+                        call_effects,
+                    ));
                 }
                 for arm in arms {
                     let mut arm_locals = locals.clone();
@@ -324,7 +341,7 @@ fn collect_write_effects_in_stmts<'db>(
                     &mut loop_locals,
                     effects,
                 );
-                effects.merge(expr_write_effects_from_summary(cond, call_effects));
+                effects.merge(expr_write_effects_from_call_summaries(cond, call_effects));
                 let mut post_locals = loop_locals.clone();
                 collect_write_effects_in_stmts(
                     post,
@@ -346,7 +363,7 @@ fn collect_write_effects_in_stmts<'db>(
                 then_body,
                 else_body,
             } => {
-                effects.merge(expr_write_effects_from_summary(cond, call_effects));
+                effects.merge(expr_write_effects_from_call_summaries(cond, call_effects));
                 let mut then_locals = locals.clone();
                 collect_write_effects_in_stmts(
                     then_body,
@@ -382,76 +399,54 @@ fn collect_write_effects_in_stmts<'db>(
     }
 }
 
-fn expr_write_effects_from_summary<'db>(
+pub(super) fn expr_write_effects_from_call_summaries<'db>(
     expr: &MonoExpr<'db>,
     call_effects: &FxHashMap<String, AssignedNames>,
 ) -> AssignedNames {
-    match &expr.kind {
-        MonoExprKind::Var(_)
-        | MonoExprKind::Lit(_)
-        | MonoExprKind::Proxy(_)
-        | MonoExprKind::Error => AssignedNames::empty(),
-        MonoExprKind::Tuple(elems) => exprs_write_effects_from_summary(elems, call_effects),
-        MonoExprKind::Call {
-            callee,
-            args,
-            origin,
-        } => {
-            let mut effects = exprs_write_effects_from_summary(args, call_effects);
-            if !matches!(origin, MonoCallOrigin::Builtin(_)) {
-                effects.merge(
-                    call_effects
-                        .get(&callee.name)
-                        .cloned()
-                        .unwrap_or(AssignedNames::All),
-                );
-            }
-            effects
-        }
-        MonoExprKind::Con { args, .. } => exprs_write_effects_from_summary(args, call_effects),
-        MonoExprKind::ClosureDispatch { callee, args } => {
-            let mut effects = expr_write_effects_from_summary(callee, call_effects);
-            effects.merge(exprs_write_effects_from_summary(args, call_effects));
-            effects.merge(AssignedNames::All);
-            effects
-        }
-        MonoExprKind::BinOp { lhs, rhs, .. } => {
-            let mut effects = expr_write_effects_from_summary(lhs, call_effects);
-            effects.merge(expr_write_effects_from_summary(rhs, call_effects));
-            effects
-        }
-        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
-            expr_write_effects_from_summary(expr, call_effects)
-        }
-        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index } => {
-            let mut effects = expr_write_effects_from_summary(base, call_effects);
-            effects.merge(expr_write_effects_from_summary(index, call_effects));
-            effects
-        }
-        MonoExprKind::Field { base, .. } => expr_write_effects_from_summary(base, call_effects),
-        MonoExprKind::If {
-            cond,
-            then_expr,
-            else_expr,
-        } => {
-            let mut effects = expr_write_effects_from_summary(cond, call_effects);
-            effects.merge(expr_write_effects_from_summary(then_expr, call_effects));
-            effects.merge(expr_write_effects_from_summary(else_expr, call_effects));
-            effects
-        }
-        MonoExprKind::Lambda { .. } => AssignedNames::empty(),
-    }
+    let mut visitor = SummaryWriteEffectsVisitor {
+        call_effects,
+        effects: AssignedNames::empty(),
+    };
+    visitor.visit_expr(expr);
+    visitor.effects
 }
 
-fn exprs_write_effects_from_summary<'db>(
-    exprs: &[MonoExpr<'db>],
-    call_effects: &FxHashMap<String, AssignedNames>,
-) -> AssignedNames {
-    let mut effects = AssignedNames::empty();
-    for expr in exprs {
-        effects.merge(expr_write_effects_from_summary(expr, call_effects));
+struct SummaryWriteEffectsVisitor<'effects> {
+    call_effects: &'effects FxHashMap<String, AssignedNames>,
+    effects: AssignedNames,
+}
+
+impl<'effects, 'db> Visitor<'db> for SummaryWriteEffectsVisitor<'effects> {
+    fn visit_expr(&mut self, expr: &MonoExpr<'db>) {
+        match &expr.kind {
+            MonoExprKind::Call {
+                callee,
+                args,
+                origin,
+            } => {
+                for arg in args {
+                    self.visit_expr(arg);
+                }
+                if !matches!(origin, MonoCallOrigin::Builtin(_)) {
+                    self.effects.merge(
+                        self.call_effects
+                            .get(&callee.name)
+                            .cloned()
+                            .unwrap_or(AssignedNames::All),
+                    );
+                }
+            }
+            MonoExprKind::ClosureDispatch { callee, args } => {
+                self.visit_expr(callee);
+                for arg in args {
+                    self.visit_expr(arg);
+                }
+                self.effects.merge(AssignedNames::All);
+            }
+            MonoExprKind::Lambda { .. } => {}
+            _ => walk_expr(self, expr),
+        }
     }
-    effects
 }
 
 fn lvalue_writes_storage(
@@ -465,39 +460,27 @@ fn lvalue_writes_storage(
 }
 
 fn expr_contains_storage_index(expr: &MonoExpr<'_>) -> bool {
-    match &expr.kind {
-        MonoExprKind::StorageIndex { .. } => true,
-        MonoExprKind::Tuple(elems) => elems.iter().any(expr_contains_storage_index),
-        MonoExprKind::Call { args, .. } | MonoExprKind::Con { args, .. } => {
-            args.iter().any(expr_contains_storage_index)
+    let mut visitor = StorageIndexFinder { found: false };
+    visitor.visit_expr(expr);
+    visitor.found
+}
+
+struct StorageIndexFinder {
+    found: bool,
+}
+
+impl<'db> Visitor<'db> for StorageIndexFinder {
+    fn visit_expr(&mut self, expr: &MonoExpr<'db>) {
+        if self.found {
+            return;
         }
-        MonoExprKind::ClosureDispatch { callee, args } => {
-            expr_contains_storage_index(callee) || args.iter().any(expr_contains_storage_index)
+        match &expr.kind {
+            MonoExprKind::StorageIndex { .. } => {
+                self.found = true;
+            }
+            MonoExprKind::Lambda { .. } => {}
+            _ => walk_expr(self, expr),
         }
-        MonoExprKind::BinOp { lhs, rhs, .. } => {
-            expr_contains_storage_index(lhs) || expr_contains_storage_index(rhs)
-        }
-        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
-            expr_contains_storage_index(expr)
-        }
-        MonoExprKind::Index { base, index } => {
-            expr_contains_storage_index(base) || expr_contains_storage_index(index)
-        }
-        MonoExprKind::Field { base, .. } => expr_contains_storage_index(base),
-        MonoExprKind::If {
-            cond,
-            then_expr,
-            else_expr,
-        } => {
-            expr_contains_storage_index(cond)
-                || expr_contains_storage_index(then_expr)
-                || expr_contains_storage_index(else_expr)
-        }
-        MonoExprKind::Var(_)
-        | MonoExprKind::Lit(_)
-        | MonoExprKind::Proxy(_)
-        | MonoExprKind::Lambda { .. }
-        | MonoExprKind::Error => false,
     }
 }
 

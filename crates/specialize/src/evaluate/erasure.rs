@@ -6,6 +6,7 @@ use crate::{
     ir::{
         MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoItem, MonoModule, MonoParam,
         MonoPat, MonoPatKind, MonoStmt, MonoStmtKind,
+        visit::{Visitor, walk_expr, walk_pat, walk_stmt},
     },
     specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind, display_backend_ty},
 };
@@ -129,208 +130,7 @@ impl<'db> Evaluator<'db> {
 
     fn check_integer_erasure_stmts(&mut self, stmts: &[MonoStmt<'db>]) {
         for stmt in stmts {
-            match &stmt.kind {
-                MonoStmtKind::Let { id, ty, init, .. } => {
-                    let mut failed = self.check_erasure_ty(
-                        format!("let '{}'", id.name),
-                        id.ty.ty(),
-                        Some(stmt.span),
-                    );
-                    if let Some(ty) = ty {
-                        failed |= self.check_erasure_ty(
-                            format!("let annotation '{}'", id.name),
-                            ty.ty(),
-                            Some(stmt.span),
-                        );
-                    }
-                    if failed {
-                        continue;
-                    }
-                    if let Some(init) = init {
-                        self.check_erasure_expr(init);
-                    }
-                }
-                MonoStmtKind::Return(expr) => {
-                    if let Some(expr) = expr {
-                        self.check_erasure_expr(expr);
-                    }
-                }
-                MonoStmtKind::Expr(expr) => self.check_erasure_expr(expr),
-                MonoStmtKind::Assign { lhs, rhs }
-                | MonoStmtKind::AddAssign { lhs, rhs }
-                | MonoStmtKind::SubAssign { lhs, rhs }
-                | MonoStmtKind::BitXorAssign { lhs, rhs }
-                | MonoStmtKind::BitAndAssign { lhs, rhs }
-                | MonoStmtKind::BitOrAssign { lhs, rhs }
-                | MonoStmtKind::ModAssign { lhs, rhs } => {
-                    self.check_erasure_expr(lhs);
-                    self.check_erasure_expr(rhs);
-                }
-                MonoStmtKind::Match { scrutinees, arms } => {
-                    for scrutinee in scrutinees {
-                        self.check_erasure_expr(scrutinee);
-                    }
-                    for arm in arms {
-                        for pat in &arm.pats {
-                            self.check_erasure_pat(pat);
-                        }
-                        self.check_integer_erasure_stmts(&arm.body);
-                    }
-                }
-                MonoStmtKind::For {
-                    init,
-                    cond,
-                    post,
-                    body,
-                } => {
-                    self.check_integer_erasure_stmts(init);
-                    self.check_erasure_expr(cond);
-                    self.check_integer_erasure_stmts(post);
-                    self.check_integer_erasure_stmts(body);
-                }
-                MonoStmtKind::If {
-                    cond,
-                    then_body,
-                    else_body,
-                    ..
-                } => {
-                    self.check_erasure_expr(cond);
-                    self.check_integer_erasure_stmts(then_body);
-                    if let Some(else_body) = else_body {
-                        self.check_integer_erasure_stmts(else_body);
-                    }
-                }
-                MonoStmtKind::Block(body) => self.check_integer_erasure_stmts(body),
-                MonoStmtKind::Assembly(_)
-                | MonoStmtKind::Break
-                | MonoStmtKind::Continue
-                | MonoStmtKind::Error => {}
-            }
-        }
-    }
-
-    fn check_erasure_expr(&mut self, expr: &MonoExpr<'db>) {
-        if self.check_erasure_ty("expression", expr.ty.ty(), Some(expr.span)) {
-            return;
-        }
-        match &expr.kind {
-            MonoExprKind::Var(id) => {
-                self.check_erasure_ty(
-                    format!("variable '{}'", id.name),
-                    id.ty.ty(),
-                    Some(expr.span),
-                );
-            }
-            MonoExprKind::Lit(_) | MonoExprKind::Lambda { .. } | MonoExprKind::Error => {}
-            MonoExprKind::Tuple(elems) => {
-                for elem in elems {
-                    self.check_erasure_expr(elem);
-                }
-            }
-            MonoExprKind::Call {
-                callee,
-                args,
-                origin,
-            } => {
-                if self.check_erasure_ty(
-                    format!(
-                        "call to `{}`",
-                        display_call_name(self.db, *origin, &callee.name)
-                    ),
-                    callee.ty.ty(),
-                    Some(expr.span),
-                ) {
-                    return;
-                }
-                for arg in args {
-                    self.check_erasure_expr(arg);
-                }
-            }
-            MonoExprKind::Con { ctor, args } => {
-                if self.check_erasure_ty(
-                    format!("constructor `{}`", display_backend_symbol(&ctor.name)),
-                    ctor.ty.ty(),
-                    Some(expr.span),
-                ) {
-                    return;
-                }
-                for arg in args {
-                    self.check_erasure_expr(arg);
-                }
-            }
-            MonoExprKind::ClosureDispatch { callee, args } => {
-                self.check_erasure_expr(callee);
-                for arg in args {
-                    self.check_erasure_expr(arg);
-                }
-            }
-            MonoExprKind::BinOp { lhs, rhs, .. } => {
-                self.check_erasure_expr(lhs);
-                self.check_erasure_expr(rhs);
-            }
-            MonoExprKind::UnaryOp { expr, .. } => self.check_erasure_expr(expr),
-            MonoExprKind::Index { base, index } => {
-                self.check_erasure_expr(base);
-                self.check_erasure_expr(index);
-            }
-            MonoExprKind::StorageIndex { base, index } => {
-                self.check_erasure_expr(base);
-                self.check_erasure_expr(index);
-            }
-            MonoExprKind::Field { base, .. } => self.check_erasure_expr(base),
-            MonoExprKind::Proxy(ty) => {
-                self.check_erasure_ty("proxy", ty.ty(), Some(expr.span));
-            }
-            MonoExprKind::TypeAnnot { expr, ty } => {
-                self.check_erasure_expr(expr);
-                self.check_erasure_ty("type annotation", ty.ty(), Some(expr.span));
-            }
-            MonoExprKind::If {
-                cond,
-                then_expr,
-                else_expr,
-            } => {
-                self.check_erasure_expr(cond);
-                self.check_erasure_expr(then_expr);
-                self.check_erasure_expr(else_expr);
-            }
-        }
-    }
-
-    fn check_erasure_pat(&mut self, pat: &MonoPat<'db>) {
-        if self.check_erasure_ty("pattern", pat.ty.ty(), Some(pat.span)) {
-            return;
-        }
-        match &pat.kind {
-            MonoPatKind::Var(id) => {
-                self.check_erasure_ty(
-                    format!("pattern variable '{}'", id.name),
-                    id.ty.ty(),
-                    Some(pat.span),
-                );
-            }
-            MonoPatKind::Con { ctor, args } => {
-                if self.check_erasure_ty(
-                    format!(
-                        "pattern constructor `{}`",
-                        display_backend_symbol(&ctor.name)
-                    ),
-                    ctor.ty.ty(),
-                    Some(pat.span),
-                ) {
-                    return;
-                }
-                for arg in args {
-                    self.check_erasure_pat(arg);
-                }
-            }
-            MonoPatKind::Tuple(elems) => {
-                for elem in elems {
-                    self.check_erasure_pat(elem);
-                }
-            }
-            MonoPatKind::ComptimeLabel(expr) => self.check_erasure_expr(expr),
-            MonoPatKind::Wildcard | MonoPatKind::Lit(_) | MonoPatKind::Error => {}
+            self.visit_stmt(stmt);
         }
     }
 
@@ -355,5 +155,106 @@ impl<'db> Evaluator<'db> {
             },
             span,
         });
+    }
+}
+
+impl<'db> Visitor<'db> for Evaluator<'db> {
+    fn visit_stmt(&mut self, stmt: &MonoStmt<'db>) {
+        if let MonoStmtKind::Let { id, ty, init, .. } = &stmt.kind {
+            let mut failed =
+                self.check_erasure_ty(format!("let '{}'", id.name), id.ty.ty(), Some(stmt.span));
+            if let Some(ty) = ty {
+                failed |= self.check_erasure_ty(
+                    format!("let annotation '{}'", id.name),
+                    ty.ty(),
+                    Some(stmt.span),
+                );
+            }
+            if failed {
+                return;
+            }
+            if let Some(init) = init {
+                self.visit_expr(init);
+            }
+            return;
+        }
+        walk_stmt(self, stmt);
+    }
+
+    fn visit_expr(&mut self, expr: &MonoExpr<'db>) {
+        if self.check_erasure_ty("expression", expr.ty.ty(), Some(expr.span)) {
+            return;
+        }
+        match &expr.kind {
+            MonoExprKind::Var(id) => {
+                self.check_erasure_ty(
+                    format!("variable '{}'", id.name),
+                    id.ty.ty(),
+                    Some(expr.span),
+                );
+            }
+            MonoExprKind::Call { callee, origin, .. } => {
+                if self.check_erasure_ty(
+                    format!(
+                        "call to `{}`",
+                        display_call_name(self.db, *origin, &callee.name)
+                    ),
+                    callee.ty.ty(),
+                    Some(expr.span),
+                ) {
+                    return;
+                }
+                walk_expr(self, expr);
+            }
+            MonoExprKind::Con { ctor, .. } => {
+                if self.check_erasure_ty(
+                    format!("constructor `{}`", display_backend_symbol(&ctor.name)),
+                    ctor.ty.ty(),
+                    Some(expr.span),
+                ) {
+                    return;
+                }
+                walk_expr(self, expr);
+            }
+            MonoExprKind::Proxy(ty) => {
+                self.check_erasure_ty("proxy", ty.ty(), Some(expr.span));
+            }
+            MonoExprKind::TypeAnnot { expr: inner, ty } => {
+                self.visit_expr(inner);
+                self.check_erasure_ty("type annotation", ty.ty(), Some(expr.span));
+            }
+            MonoExprKind::Lit(_) | MonoExprKind::Lambda { .. } | MonoExprKind::Error => {}
+            _ => walk_expr(self, expr),
+        }
+    }
+
+    fn visit_pat(&mut self, pat: &MonoPat<'db>) {
+        if self.check_erasure_ty("pattern", pat.ty.ty(), Some(pat.span)) {
+            return;
+        }
+        match &pat.kind {
+            MonoPatKind::Var(id) => {
+                self.check_erasure_ty(
+                    format!("pattern variable '{}'", id.name),
+                    id.ty.ty(),
+                    Some(pat.span),
+                );
+            }
+            MonoPatKind::Con { ctor, .. } => {
+                if self.check_erasure_ty(
+                    format!(
+                        "pattern constructor `{}`",
+                        display_backend_symbol(&ctor.name)
+                    ),
+                    ctor.ty.ty(),
+                    Some(pat.span),
+                ) {
+                    return;
+                }
+                walk_pat(self, pat);
+            }
+            MonoPatKind::Tuple(_) | MonoPatKind::ComptimeLabel(_) => walk_pat(self, pat),
+            MonoPatKind::Wildcard | MonoPatKind::Lit(_) | MonoPatKind::Error => {}
+        }
     }
 }

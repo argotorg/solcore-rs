@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ir::{
-    MonoCallOrigin, MonoExpr, MonoExprKind, MonoItem, MonoModule, MonoStmt, MonoStmtKind,
+    MonoCallOrigin, MonoExpr, MonoExprKind, MonoItem, MonoModule, MonoPat, MonoStmt,
+    visit::{Visitor, walk_expr},
 };
 
 pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> MonoModule<'db> {
@@ -52,132 +53,34 @@ pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> Mono
 }
 
 fn calls_in_stmts(stmts: &[MonoStmt<'_>]) -> BTreeSet<String> {
-    let mut calls = BTreeSet::new();
+    let mut collector = CallCollector {
+        calls: BTreeSet::new(),
+    };
     for stmt in stmts {
-        match &stmt.kind {
-            MonoStmtKind::Let { init, .. } => {
-                if let Some(init) = init {
-                    calls.extend(calls_in_expr(init));
-                }
-            }
-            MonoStmtKind::Return(expr) => {
-                if let Some(expr) = expr {
-                    calls.extend(calls_in_expr(expr));
-                }
-            }
-            MonoStmtKind::Expr(expr) => {
-                calls.extend(calls_in_expr(expr));
-            }
-            MonoStmtKind::Assign { lhs, rhs }
-            | MonoStmtKind::AddAssign { lhs, rhs }
-            | MonoStmtKind::SubAssign { lhs, rhs }
-            | MonoStmtKind::BitXorAssign { lhs, rhs }
-            | MonoStmtKind::BitAndAssign { lhs, rhs }
-            | MonoStmtKind::BitOrAssign { lhs, rhs }
-            | MonoStmtKind::ModAssign { lhs, rhs } => {
-                calls.extend(calls_in_expr(lhs));
-                calls.extend(calls_in_expr(rhs));
-            }
-            MonoStmtKind::Match { scrutinees, arms } => {
-                for expr in scrutinees {
-                    calls.extend(calls_in_expr(expr));
-                }
-                for arm in arms {
-                    calls.extend(calls_in_stmts(&arm.body));
-                }
-            }
-            MonoStmtKind::For {
-                init,
-                cond,
-                post,
-                body,
-            } => {
-                calls.extend(calls_in_stmts(init));
-                calls.extend(calls_in_expr(cond));
-                calls.extend(calls_in_stmts(post));
-                calls.extend(calls_in_stmts(body));
-            }
-            MonoStmtKind::If {
-                cond,
-                then_body,
-                else_body,
-            } => {
-                calls.extend(calls_in_expr(cond));
-                calls.extend(calls_in_stmts(then_body));
-                if let Some(else_body) = else_body {
-                    calls.extend(calls_in_stmts(else_body));
-                }
-            }
-            MonoStmtKind::Block(body) => calls.extend(calls_in_stmts(body)),
-            MonoStmtKind::Assembly(_)
-            | MonoStmtKind::Break
-            | MonoStmtKind::Continue
-            | MonoStmtKind::Error => {}
-        }
+        collector.visit_stmt(stmt);
     }
-    calls
+    collector.calls
 }
 
-fn calls_in_expr(expr: &MonoExpr<'_>) -> BTreeSet<String> {
-    let mut calls = BTreeSet::new();
-    match &expr.kind {
-        MonoExprKind::Call {
-            callee,
-            args,
-            origin,
-        } => {
-            if !matches!(origin, MonoCallOrigin::Builtin(_)) {
-                calls.insert(callee.name.clone());
+struct CallCollector {
+    calls: BTreeSet<String>,
+}
+
+impl<'db> Visitor<'db> for CallCollector {
+    fn visit_expr(&mut self, expr: &MonoExpr<'db>) {
+        match &expr.kind {
+            MonoExprKind::Call { callee, origin, .. } => {
+                if !matches!(origin, MonoCallOrigin::Builtin(_)) {
+                    self.calls.insert(callee.name.clone());
+                }
+                walk_expr(self, expr);
             }
-            for arg in args {
-                calls.extend(calls_in_expr(arg));
-            }
+            MonoExprKind::Lambda { .. } => {}
+            _ => walk_expr(self, expr),
         }
-        MonoExprKind::Tuple(elems) => {
-            for elem in elems {
-                calls.extend(calls_in_expr(elem));
-            }
-        }
-        MonoExprKind::Con { args, .. } => {
-            for arg in args {
-                calls.extend(calls_in_expr(arg));
-            }
-        }
-        MonoExprKind::ClosureDispatch { callee, args } => {
-            calls.extend(calls_in_expr(callee));
-            for arg in args {
-                calls.extend(calls_in_expr(arg));
-            }
-        }
-        MonoExprKind::BinOp { lhs, rhs, .. } => {
-            calls.extend(calls_in_expr(lhs));
-            calls.extend(calls_in_expr(rhs));
-        }
-        MonoExprKind::UnaryOp { expr, .. } => calls.extend(calls_in_expr(expr)),
-        MonoExprKind::Index { base, index } => {
-            calls.extend(calls_in_expr(base));
-            calls.extend(calls_in_expr(index));
-        }
-        MonoExprKind::StorageIndex { base, index } => {
-            calls.extend(calls_in_expr(base));
-            calls.extend(calls_in_expr(index));
-        }
-        MonoExprKind::Field { base, .. } => calls.extend(calls_in_expr(base)),
-        MonoExprKind::TypeAnnot { expr, .. } => calls.extend(calls_in_expr(expr)),
-        MonoExprKind::If {
-            cond,
-            then_expr,
-            else_expr,
-        } => {
-            calls.extend(calls_in_expr(cond));
-            calls.extend(calls_in_expr(then_expr));
-            calls.extend(calls_in_expr(else_expr));
-        }
-        MonoExprKind::Var(_)
-        | MonoExprKind::Lit(_)
-        | MonoExprKind::Proxy(_)
-        | MonoExprKind::Lambda { .. }
-        | MonoExprKind::Error => {}
     }
-    calls
+
+    fn visit_pat(&mut self, _pat: &MonoPat<'db>) {
+        // Existing dead-code call collection ignored match pattern labels.
+    }
 }
