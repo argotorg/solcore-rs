@@ -3,14 +3,12 @@ use super::*;
 pub(super) struct ItemScopeBuilder<'db> {
     db: &'db dyn Db,
     module: Module<'db>,
-    types: Vec<ScopeEntry<'db>>,
-    terms: Vec<ScopeEntry<'db>>,
-    modules: Vec<ScopeEntry<'db>>,
+    types: ScopeTableBuilder<'db>,
+    terms: ScopeTableBuilder<'db>,
+    modules: ScopeTableBuilder<'db>,
     ctor_lists: Vec<CtorList<'db>>,
     contracts: Vec<ContractScope<'db>>,
     instances: Vec<InstanceDef<'db>>,
-    type_names: FxHashMap<String, Vec<(TypeDeclFamily, Span<'db>)>>,
-    term_names: FxHashMap<String, Span<'db>>,
     diagnostics: Vec<NameresDiagnostic>,
 }
 
@@ -22,19 +20,140 @@ enum TypeDeclFamily {
     Contract,
 }
 
+enum DuplicatePolicy<'a> {
+    SingleSpan {
+        context: Option<&'a str>,
+    },
+    TypeFamilies {
+        family: TypeDeclFamily,
+        context: Option<&'a str>,
+    },
+    Silent,
+}
+
+enum DuplicateIndex<'db> {
+    SingleSpan {
+        namespace: Namespace,
+        names: FxHashMap<String, Span<'db>>,
+    },
+    TypeFamilies {
+        names: FxHashMap<String, Vec<(TypeDeclFamily, Span<'db>)>>,
+    },
+    Silent,
+}
+
+struct ScopeTableBuilder<'db> {
+    entries: Vec<ScopeEntry<'db>>,
+    duplicate_index: DuplicateIndex<'db>,
+}
+
+impl<'db> ScopeTableBuilder<'db> {
+    fn single_span(namespace: Namespace) -> Self {
+        Self {
+            entries: Vec::new(),
+            duplicate_index: DuplicateIndex::SingleSpan {
+                namespace,
+                names: FxHashMap::default(),
+            },
+        }
+    }
+
+    fn type_families() -> Self {
+        Self {
+            entries: Vec::new(),
+            duplicate_index: DuplicateIndex::TypeFamilies {
+                names: FxHashMap::default(),
+            },
+        }
+    }
+
+    fn silent() -> Self {
+        Self {
+            entries: Vec::new(),
+            duplicate_index: DuplicateIndex::Silent,
+        }
+    }
+
+    fn push(
+        &mut self,
+        db: &'db dyn Db,
+        diagnostics: &mut Vec<NameresDiagnostic>,
+        policy: DuplicatePolicy<'_>,
+        entry: ScopeEntry<'db>,
+    ) {
+        self.check_duplicate(db, diagnostics, policy, &entry);
+        self.entries.push(entry);
+    }
+
+    fn into_entries(self) -> Vec<ScopeEntry<'db>> {
+        self.entries
+    }
+
+    fn contains_name(&self, name: &str) -> bool {
+        self.entries.iter().any(|entry| entry.name == name)
+    }
+
+    fn check_duplicate(
+        &mut self,
+        db: &'db dyn Db,
+        diagnostics: &mut Vec<NameresDiagnostic>,
+        policy: DuplicatePolicy<'_>,
+        entry: &ScopeEntry<'db>,
+    ) {
+        match policy {
+            DuplicatePolicy::SingleSpan { context } => {
+                let DuplicateIndex::SingleSpan { namespace, names } = &mut self.duplicate_index
+                else {
+                    unreachable!("single-span duplicate policy used with incompatible scope table")
+                };
+                if let Some(previous) = names.get(&entry.name).copied() {
+                    diagnostics.push(duplicate_diagnostic(
+                        db,
+                        *namespace,
+                        &entry.name,
+                        entry.span,
+                        previous,
+                        context,
+                    ));
+                } else {
+                    names.insert(entry.name.clone(), entry.span);
+                }
+            }
+            DuplicatePolicy::TypeFamilies { family, context } => {
+                let DuplicateIndex::TypeFamilies { names } = &mut self.duplicate_index else {
+                    unreachable!("type-family duplicate policy used with incompatible scope table")
+                };
+                let previous = names.entry(entry.name.clone()).or_default();
+                if let Some((_, previous_span)) = previous.iter().find(|(previous_family, _)| {
+                    !type_decl_families_can_share(*previous_family, family)
+                }) {
+                    diagnostics.push(duplicate_diagnostic(
+                        db,
+                        Namespace::Type,
+                        &entry.name,
+                        entry.span,
+                        *previous_span,
+                        context,
+                    ));
+                }
+                previous.push((family, entry.span));
+            }
+            DuplicatePolicy::Silent => {}
+        }
+    }
+}
+
 impl<'db> ItemScopeBuilder<'db> {
     pub(super) fn new(db: &'db dyn Db, module: Module<'db>) -> Self {
         Self {
             db,
             module,
-            types: Vec::new(),
-            terms: Vec::new(),
-            modules: Vec::new(),
+            types: ScopeTableBuilder::type_families(),
+            terms: ScopeTableBuilder::single_span(Namespace::Term),
+            modules: ScopeTableBuilder::silent(),
             ctor_lists: Vec::new(),
             contracts: Vec::new(),
             instances: Vec::new(),
-            type_names: FxHashMap::default(),
-            term_names: FxHashMap::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -43,9 +162,9 @@ impl<'db> ItemScopeBuilder<'db> {
         ItemScope {
             facts: ItemScopeFacts {
                 module: self.module,
-                types: self.types,
-                terms: self.terms,
-                modules: self.modules,
+                types: self.types.into_entries(),
+                terms: self.terms.into_entries(),
+                modules: self.modules.into_entries(),
                 ctor_lists: self.ctor_lists,
                 contracts: self.contracts,
                 instances: self.instances,
@@ -81,12 +200,20 @@ impl<'db> ItemScopeBuilder<'db> {
             contract.add_type(text, name.span(self.db), resolution);
             return;
         }
-        self.check_type_duplicate(&text, name.span(self.db), family);
-        self.types.push(ScopeEntry {
-            name: text,
-            span: name.span(self.db),
-            resolution,
-        });
+        let span = name.span(self.db);
+        self.types.push(
+            self.db,
+            &mut self.diagnostics,
+            DuplicatePolicy::TypeFamilies {
+                family,
+                context: None,
+            },
+            ScopeEntry {
+                name: text,
+                span,
+                resolution,
+            },
+        );
     }
 
     fn add_term(
@@ -95,20 +222,44 @@ impl<'db> ItemScopeBuilder<'db> {
         span: Span<'db>,
         resolution: Resolution<'db>,
         contract: Option<&mut ContractScopeBuilder<'db>>,
-        check_duplicate: bool,
     ) {
         if let Some(contract) = contract {
-            contract.add_term(name, span, resolution, check_duplicate);
+            contract.add_term(name, span, resolution);
             return;
         }
-        if check_duplicate {
-            self.check_duplicate(Namespace::Term, &name, span, None);
+        self.terms.push(
+            self.db,
+            &mut self.diagnostics,
+            DuplicatePolicy::SingleSpan { context: None },
+            ScopeEntry {
+                name,
+                span,
+                resolution,
+            },
+        );
+    }
+
+    fn add_silent_term(
+        &mut self,
+        name: String,
+        span: Span<'db>,
+        resolution: Resolution<'db>,
+        contract: Option<&mut ContractScopeBuilder<'db>>,
+    ) {
+        if let Some(contract) = contract {
+            contract.add_silent_term(name, span, resolution);
+            return;
         }
-        self.terms.push(ScopeEntry {
-            name,
-            span,
-            resolution,
-        });
+        self.terms.push(
+            self.db,
+            &mut self.diagnostics,
+            DuplicatePolicy::Silent,
+            ScopeEntry {
+                name,
+                span,
+                resolution,
+            },
+        );
     }
 
     fn add_function(
@@ -125,7 +276,6 @@ impl<'db> ItemScopeBuilder<'db> {
                 kind: DefResolutionKind::Function,
             },
             contract,
-            true,
         );
     }
 
@@ -173,7 +323,6 @@ impl<'db> ItemScopeBuilder<'db> {
                     index: index as u32,
                 },
                 contract.as_deref_mut(),
-                true,
             );
         }
 
@@ -204,7 +353,7 @@ impl<'db> ItemScopeBuilder<'db> {
         );
         for method in def.methods(self.db) {
             let method_name = ident_text_str(self.db, &method.name).to_owned();
-            self.add_term(
+            self.add_silent_term(
                 qualify(&class_text, &method_name),
                 method.name.span(self.db),
                 Resolution::ClassMethod {
@@ -212,7 +361,6 @@ impl<'db> ItemScopeBuilder<'db> {
                     name: method_name,
                 },
                 None,
-                false,
             );
         }
     }
@@ -274,55 +422,22 @@ impl<'db> ItemScopeBuilder<'db> {
     }
 
     fn add_module(&mut self, name: String, span: Span<'db>) {
-        if self.modules.iter().any(|entry| entry.name == name) {
+        if self.modules.contains_name(&name) {
             return;
         }
-        self.modules.push(ScopeEntry {
-            name: name.clone(),
-            span,
-            resolution: Resolution::Module(ModuleRef {
-                owner: self.module.def_id_value(self.db),
-                name,
-            }),
-        });
-    }
-
-    fn check_type_duplicate(&mut self, name: &str, span: Span<'db>, family: TypeDeclFamily) {
-        let previous = self.type_names.entry(name.to_owned()).or_default();
-        if let Some((_, previous_span)) = previous
-            .iter()
-            .find(|(previous_family, _)| !type_decl_families_can_share(*previous_family, family))
-        {
-            self.diagnostics.push(duplicate_diagnostic(
-                self.db,
-                Namespace::Type,
-                name,
+        self.modules.push(
+            self.db,
+            &mut self.diagnostics,
+            DuplicatePolicy::Silent,
+            ScopeEntry {
+                name: name.clone(),
                 span,
-                *previous_span,
-                None,
-            ));
-        }
-        previous.push((family, span));
-    }
-
-    fn check_duplicate(
-        &mut self,
-        namespace: Namespace,
-        name: &str,
-        span: Span<'db>,
-        context: Option<&str>,
-    ) {
-        let map = match namespace {
-            Namespace::Term => &mut self.term_names,
-            Namespace::Type | Namespace::Field | Namespace::Module => return,
-        };
-        if let Some(previous) = map.get(name).copied() {
-            self.diagnostics.push(duplicate_diagnostic(
-                self.db, namespace, name, span, previous, context,
-            ));
-        } else {
-            map.insert(name.to_owned(), span);
-        }
+                resolution: Resolution::Module(ModuleRef {
+                    owner: self.module.def_id_value(self.db),
+                    name,
+                }),
+            },
+        );
     }
 }
 
@@ -338,27 +453,26 @@ struct ContractScopeBuilder<'db> {
     db: &'db dyn Db,
     contract: DefId<'db>,
     name: String,
-    types: Vec<ScopeEntry<'db>>,
-    terms: Vec<ScopeEntry<'db>>,
+    context: String,
+    types: ScopeTableBuilder<'db>,
+    terms: ScopeTableBuilder<'db>,
     fields: Vec<FieldEntry<'db>>,
     ctor_lists: Vec<CtorList<'db>>,
-    type_names: FxHashMap<String, Span<'db>>,
-    term_names: FxHashMap<String, Span<'db>>,
     diagnostics: Vec<NameresDiagnostic>,
 }
 
 impl<'db> ContractScopeBuilder<'db> {
     fn new(db: &'db dyn Db, contract: DefId<'db>, name: String) -> Self {
+        let context = format!("contract {name}");
         Self {
             db,
             contract,
             name,
-            types: Vec::new(),
-            terms: Vec::new(),
+            context,
+            types: ScopeTableBuilder::single_span(Namespace::Type),
+            terms: ScopeTableBuilder::single_span(Namespace::Term),
             fields: Vec::new(),
             ctor_lists: Vec::new(),
-            type_names: FxHashMap::default(),
-            term_names: FxHashMap::default(),
             diagnostics: Vec::new(),
         }
     }
@@ -368,8 +482,8 @@ impl<'db> ContractScopeBuilder<'db> {
             ContractScope {
                 contract: self.contract,
                 name: self.name,
-                types: self.types,
-                terms: self.terms,
+                types: self.types.into_entries(),
+                terms: self.terms.into_entries(),
                 fields: self.fields,
                 ctor_lists: self.ctor_lists,
             },
@@ -378,29 +492,46 @@ impl<'db> ContractScopeBuilder<'db> {
     }
 
     fn add_type(&mut self, name: String, span: Span<'db>, resolution: Resolution<'db>) {
-        self.check_duplicate(Namespace::Type, &name, span);
-        self.types.push(ScopeEntry {
-            name,
-            span,
-            resolution,
-        });
+        self.types.push(
+            self.db,
+            &mut self.diagnostics,
+            DuplicatePolicy::SingleSpan {
+                context: Some(&self.context),
+            },
+            ScopeEntry {
+                name,
+                span,
+                resolution,
+            },
+        );
     }
 
-    fn add_term(
-        &mut self,
-        name: String,
-        span: Span<'db>,
-        resolution: Resolution<'db>,
-        check_duplicate: bool,
-    ) {
-        if check_duplicate {
-            self.check_duplicate(Namespace::Term, &name, span);
-        }
-        self.terms.push(ScopeEntry {
-            name,
-            span,
-            resolution,
-        });
+    fn add_term(&mut self, name: String, span: Span<'db>, resolution: Resolution<'db>) {
+        self.terms.push(
+            self.db,
+            &mut self.diagnostics,
+            DuplicatePolicy::SingleSpan {
+                context: Some(&self.context),
+            },
+            ScopeEntry {
+                name,
+                span,
+                resolution,
+            },
+        );
+    }
+
+    fn add_silent_term(&mut self, name: String, span: Span<'db>, resolution: Resolution<'db>) {
+        self.terms.push(
+            self.db,
+            &mut self.diagnostics,
+            DuplicatePolicy::Silent,
+            ScopeEntry {
+                name,
+                span,
+                resolution,
+            },
+        );
     }
 
     fn add_field(&mut self, field: &FieldDef<'db>, index: u32) {
@@ -412,26 +543,5 @@ impl<'db> ContractScopeBuilder<'db> {
                 index,
             },
         });
-    }
-
-    fn check_duplicate(&mut self, namespace: Namespace, name: &str, span: Span<'db>) {
-        let map = match namespace {
-            Namespace::Type => &mut self.type_names,
-            Namespace::Term => &mut self.term_names,
-            Namespace::Field | Namespace::Module => return,
-        };
-        if let Some(previous) = map.get(name).copied() {
-            let context = format!("contract {}", self.name);
-            self.diagnostics.push(duplicate_diagnostic(
-                self.db,
-                namespace,
-                name,
-                span,
-                previous,
-                Some(&context),
-            ));
-        } else {
-            map.insert(name.to_owned(), span);
-        }
     }
 }
