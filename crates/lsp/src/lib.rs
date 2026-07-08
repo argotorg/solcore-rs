@@ -7,6 +7,8 @@
 pub mod capabilities;
 pub mod diagnostics;
 pub mod line_index;
+#[cfg(feature = "native")]
+pub mod native;
 pub mod state;
 
 pub use capabilities::{initialize_result, server_capabilities};
