@@ -1,0 +1,38 @@
+[package]
+name = "solcore-lsp"
+version = "0.1.0"
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# Core handlers over solcore-vfs are wasm-clean by default (no tokio/stdio).
+default = []
+# Native stdio LSP server (tower-lsp + tokio) — never in the wasm build.
+native = ["dep:tower-lsp", "dep:tokio"]
+# WASM Web Worker entry (JSON-RPC over postMessage; no tokio).
+wasm = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen"]
+
+[dependencies]
+vfs = { workspace = true }
+hir = { workspace = true }
+hir-ty = { workspace = true }
+nameres = { workspace = true }
+parser = { workspace = true }
+# tower-lsp 0.20.0 depends on lsp-types 0.94.1, so pin the
+# same exact protocol crate here to avoid duplicate LSP type versions later.
+lsp-types = "=0.94.1"
+line-index = "=0.1.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = { workspace = true }
+tower-lsp = { version = "0.20", optional = true }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+
+[[bin]]
+name = "solcore-lsp"
+path = "src/bin/server.rs"
+required-features = ["native"]
