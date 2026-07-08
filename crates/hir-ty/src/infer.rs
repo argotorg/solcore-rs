@@ -608,6 +608,13 @@ pub enum TypeckDiagnostic {
         /// Class name.
         class: String,
     },
+    /// `SC0229`: a generated dispatch type collides with a user type.
+    DuplicateType {
+        /// Source span for the duplicate type.
+        span: LabelSpan,
+        /// Type name.
+        name: String,
+    },
     /// `SC0207`: a class constraint could not be solved.
     UnsatisfiedConstraint {
         /// Source span for the obligation that could not be solved.
@@ -1131,6 +1138,14 @@ impl TypeckDiagnostic {
                 Diagnostic::error(format!("class name used as type: `{class}`"))
                     .with_code("SC0229")
                     .with_primary_label_span(span.clone(), Some("class is not a type"))
+            }
+            TypeckDiagnostic::DuplicateType { span, name } => {
+                Diagnostic::error(format!("duplicate type definition: {name}"))
+                    .with_code("SC0229")
+                    .with_primary_label_span(span.clone(), Some("duplicate type"))
+                    .with_note(format!("new definition: data {name}"))
+                    .with_note(format!("existing definition: data {name}"))
+                    .with_note("rename or remove the duplicate type definition")
             }
             TypeckDiagnostic::UnsatisfiedConstraint { span, pred } => {
                 Diagnostic::error(format!("unsatisfied class constraint: {pred}"))
@@ -1709,7 +1724,7 @@ fn implicit_class_head_binder_diagnostic<'db>(
 fn builtin_type_name(name: &str) -> bool {
     matches!(
         name,
-        "word" | "Word" | "bool" | "string" | "()" | "pair" | "sum" | "integer"
+        "word" | "Word" | "bool" | "()" | "pair" | "sum" | "integer"
     )
 }
 
@@ -1804,6 +1819,123 @@ fn mutual_data_diagnostics<'db>(
         });
     }
     diagnostics
+}
+
+fn dispatch_name_collision_diagnostics<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+) -> Vec<TypeckDiagnostic> {
+    let reserved = dispatch_reserved_type_names(db, module);
+    if reserved.is_empty() {
+        return Vec::new();
+    }
+    let mut diagnostics = Vec::new();
+    for item in module.items(db) {
+        collect_dispatch_name_collisions(db, *item, true, &reserved, &mut diagnostics);
+    }
+    diagnostics
+}
+
+fn dispatch_reserved_type_names<'db>(db: &'db dyn HirDb, module: Module<'db>) -> FxHashSet<String> {
+    let mut reserved = FxHashSet::default();
+    for item in module.items(db) {
+        let Item::ContractDef(contract) = item else {
+            continue;
+        };
+        if contract.items(db).iter().any(|item| {
+            matches!(
+                item,
+                ContractItem::FunctionDef(function)
+                    if ident_text(db, &function.sig(db).name) == "main"
+            )
+        }) {
+            continue;
+        }
+        let contract_name = ident_text(db, &contract.name_elem(db));
+        for item in contract.items(db) {
+            let ContractItem::FunctionDef(function) = item else {
+                continue;
+            };
+            if !matches!(function.kind(db), FuncKind::Function) {
+                continue;
+            }
+            let sig = function.sig(db);
+            if sig.public.is_none() {
+                continue;
+            }
+            let method_name = ident_text(db, &sig.name);
+            if method_name == "fallback" {
+                continue;
+            }
+            reserved.insert(dispatch_name_type_name(&contract_name, &method_name));
+        }
+    }
+    reserved
+}
+
+fn collect_dispatch_name_collisions<'db>(
+    db: &'db dyn HirDb,
+    item: Item<'db>,
+    top_level: bool,
+    reserved: &FxHashSet<String>,
+    diagnostics: &mut Vec<TypeckDiagnostic>,
+) {
+    match item {
+        Item::AdtDef(adt) => {
+            let name = ident_text(db, &adt.name_elem(db));
+            if reserved.contains(&name) && !(top_level && is_empty_dispatch_data_decl(db, adt)) {
+                diagnostics.push(TypeckDiagnostic::DuplicateType {
+                    span: LabelSpan::from_span(db, adt.name_elem(db).span(db)),
+                    name,
+                });
+            }
+        }
+        Item::TypeAlias(alias) => {
+            let name = ident_text(db, &alias.name_elem(db));
+            if reserved.contains(&name) {
+                diagnostics.push(TypeckDiagnostic::DuplicateType {
+                    span: LabelSpan::from_span(db, alias.name_elem(db).span(db)),
+                    name,
+                });
+            }
+        }
+        Item::ContractDef(contract) => {
+            for item in contract.items(db) {
+                match *item {
+                    ContractItem::AdtDef(adt) => collect_dispatch_name_collisions(
+                        db,
+                        Item::AdtDef(adt),
+                        false,
+                        reserved,
+                        diagnostics,
+                    ),
+                    ContractItem::TypeAlias(alias) => collect_dispatch_name_collisions(
+                        db,
+                        Item::TypeAlias(alias),
+                        false,
+                        reserved,
+                        diagnostics,
+                    ),
+                    ContractItem::FunctionDef(_) | ContractItem::Error { .. } => {}
+                }
+            }
+        }
+        Item::FunctionDef(_)
+        | Item::InstanceDef(_)
+        | Item::ClassDef(_)
+        | Item::Import(_)
+        | Item::Export(_)
+        | Item::Pragma(_)
+        | Item::Error { .. } => {}
+    }
+}
+
+fn is_empty_dispatch_data_decl<'db>(db: &'db dyn HirDb, adt: AdtDef<'db>) -> bool {
+    adt.ty_param_elems(db).is_empty() && adt.ctors(db).is_empty()
+}
+
+fn dispatch_name_type_name(contract: &str, method: &str) -> String {
+    format!("DispatchNameTy_{contract}_{method}")
 }
 
 fn local_data_cycle_nodes<'db>(db: &'db dyn HirDb, module: Module<'db>) -> Vec<DataCycleNode<'db>> {
@@ -1964,6 +2096,62 @@ fn class_method_resolution<'db>(
         hir_nameres::Resolution::ClassMethod { class, name } if name == expected_method => {
             Some((class, name))
         }
+        _ => None,
+    }
+}
+
+fn type_ctor_from_resolution<'db>(resolution: hir_nameres::Resolution<'db>) -> Option<TyCtor<'db>> {
+    match resolution {
+        hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Type(ty)) => {
+            let ctor = match ty {
+                hir_nameres::BuiltinType::Word => BuiltinTyCtor::Word,
+                hir_nameres::BuiltinType::Bool => BuiltinTyCtor::Bool,
+                hir_nameres::BuiltinType::String => BuiltinTyCtor::String,
+                hir_nameres::BuiltinType::Unit => BuiltinTyCtor::Unit,
+                hir_nameres::BuiltinType::Pair => BuiltinTyCtor::Pair,
+                hir_nameres::BuiltinType::Sum => BuiltinTyCtor::Sum,
+                hir_nameres::BuiltinType::Integer => BuiltinTyCtor::Integer,
+            };
+            Some(TyCtor::Builtin(ctor))
+        }
+        hir_nameres::Resolution::Def {
+            def,
+            kind: hir_nameres::DefResolutionKind::Adt,
+        } => Some(TyCtor::User(crate::UserTyCtor {
+            def,
+            kind: UserTyCtorKind::Adt,
+        })),
+        hir_nameres::Resolution::Def {
+            def,
+            kind: hir_nameres::DefResolutionKind::TypeAlias,
+        } => Some(TyCtor::User(crate::UserTyCtor {
+            def,
+            kind: UserTyCtorKind::Alias,
+        })),
+        hir_nameres::Resolution::Def {
+            def,
+            kind: hir_nameres::DefResolutionKind::Contract,
+        } => Some(TyCtor::User(crate::UserTyCtor {
+            def,
+            kind: UserTyCtorKind::Contract,
+        })),
+        _ => None,
+    }
+}
+
+fn class_id_from_resolution<'db>(resolution: hir_nameres::Resolution<'db>) -> Option<ClassId<'db>> {
+    match resolution {
+        hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Class(class)) => {
+            let class = match class {
+                hir_nameres::BuiltinClass::Invokable => BuiltinClassId::Invokable,
+                hir_nameres::BuiltinClass::Int => BuiltinClassId::Int,
+            };
+            Some(ClassId::Builtin(class))
+        }
+        hir_nameres::Resolution::Def {
+            def,
+            kind: hir_nameres::DefResolutionKind::Class,
+        } => Some(ClassId::User(def)),
         _ => None,
     }
 }
@@ -2755,9 +2943,11 @@ impl<'db> InferCtx<'db> {
                 self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::Assign { lhs, rhs } => {
-                let lhs_ty = self.infer_expr(body, *lhs);
-                let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));
-                self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
+                if !self.infer_storage_assign(body, *lhs, *rhs) {
+                    let lhs_ty = self.infer_expr(body, *lhs);
+                    let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));
+                    self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
+                }
                 self.engine.from_ty(Ty::unit(self.db))
             }
             StmtKind::AddAssign { lhs, rhs } | StmtKind::SubAssign { lhs, rhs }
@@ -3526,7 +3716,7 @@ impl<'db> InferCtx<'db> {
                 self.infer_bin_op(body, expr_id, *lhs, *op.atom(), *rhs, expected.clone())
             }
             ExprKind::Index { base, index } => {
-                if let Some(ret) = self.infer_storage_index_read(body, *base, *index) {
+                if let Some(ret) = self.infer_storage_index_read(body, expr_id, *base, *index) {
                     ret
                 } else {
                     let base_ty = self.infer_expr(body, *base);
@@ -3608,17 +3798,57 @@ impl<'db> InferCtx<'db> {
     fn infer_storage_index_read(
         &mut self,
         body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
         base: Id<Expr<'db>>,
         index: Id<Expr<'db>>,
     ) -> Option<InferTy<'db>> {
         if !self.is_storage_index_expr(body, base) {
             return None;
         }
-        let base_ty = self.infer_expr(body, base);
-        let (index_ty, value_ty) = self.mapping_args(base_ty)?;
+        let base_ty = self.infer_storage_ref_expr(body, base)?;
+        let (index_ty, value_ty) = self.storage_mapping_args(base_ty)?;
         let actual_index_ty = self.infer_expr_expected(body, index, Some(index_ty.clone()));
         self.unify_expr(body, index, index_ty, actual_index_ty);
-        Some(value_ty)
+        Some(self.storage_load_ty(body, expr, value_ty))
+    }
+
+    fn infer_storage_assign(
+        &mut self,
+        body: FuncBody<'db>,
+        lhs: Id<Expr<'db>>,
+        rhs: Id<Expr<'db>>,
+    ) -> bool {
+        let Some(lhs_ty) = self.infer_storage_ref_expr(body, lhs) else {
+            return false;
+        };
+        let rhs_ty = self.infer_expr(body, rhs);
+        self.push_can_store_obligation(lhs_ty, rhs_ty.clone(), ObligationSource::Scheme);
+        self.expr_tys.push((body, lhs, rhs_ty));
+        true
+    }
+
+    fn infer_storage_ref_expr(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<InferTy<'db>> {
+        let kind = body.exprs(self.db).get(expr).kind.clone();
+        match kind {
+            ExprKind::Index { base, index } => {
+                let base_ty = self.infer_storage_ref_expr(body, base)?;
+                let (index_ty, value_ty) = self.storage_mapping_args(base_ty)?;
+                let actual_index_ty = self.infer_expr_expected(body, index, Some(index_ty.clone()));
+                self.unify_expr(body, index, index_ty, actual_index_ty);
+                Some(value_ty)
+            }
+            ExprKind::TypeAnnot { expr: inner, .. } => self.infer_storage_ref_expr(body, inner),
+            _ => match self.expr_resolutions.get(&(body, expr)).cloned() {
+                Some(hir_nameres::Resolution::Field(field)) => {
+                    Some(self.instantiate_field_ref(field, ObligationSource::Scheme))
+                }
+                _ => None,
+            },
+        }
     }
 
     fn is_storage_index_expr(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> bool {
@@ -3635,8 +3865,18 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn mapping_args(&mut self, ty: InferTy<'db>) -> Option<(InferTy<'db>, InferTy<'db>)> {
+    fn storage_mapping_args(&mut self, ty: InferTy<'db>) -> Option<(InferTy<'db>, InferTy<'db>)> {
+        let storage_ctor = self.storage_type_ctor();
         let ty = self.normalize_aliases(ty);
+        let mut resolved = self.engine.resolve(ty);
+        if let Some(storage_ctor) = storage_ctor
+            && let InferTy::Named { ctor, args } = &resolved
+            && *ctor == storage_ctor
+            && args.len() == 1
+        {
+            let inner = self.normalize_aliases(args[0].clone());
+            resolved = self.engine.resolve(inner);
+        }
         let InferTy::Named {
             ctor:
                 TyCtor::User(crate::UserTyCtor {
@@ -3644,14 +3884,22 @@ impl<'db> InferCtx<'db> {
                     kind: UserTyCtorKind::Adt,
                 }),
             args,
-        } = self.engine.resolve(ty)
+        } = resolved
         else {
             return None;
         };
         if def.name(self.db).as_deref() != Some("mapping") || args.len() != 2 {
             return None;
         }
-        Some((args[0].clone(), args[1].clone()))
+        let value = if let Some(storage_ctor) = storage_ctor {
+            InferTy::Named {
+                ctor: storage_ctor,
+                args: vec![args[1].clone()],
+            }
+        } else {
+            args[1].clone()
+        };
+        Some((args[0].clone(), value))
     }
 
     fn infer_constructor_call(
@@ -4500,6 +4748,32 @@ impl<'db> InferCtx<'db> {
         hir_nameres::item_scope(self.db, self.module).term_resolution(name)
     }
 
+    fn storage_type_ctor(&self) -> Option<TyCtor<'db>> {
+        self.lookup_type_resolution("storage")
+            .and_then(type_ctor_from_resolution)
+    }
+
+    fn lookup_class_id(&self, name: &str) -> Option<ClassId<'db>> {
+        self.lookup_type_resolution(name)
+            .and_then(class_id_from_resolution)
+    }
+
+    fn lookup_type_resolution(&self, name: &str) -> Option<hir_nameres::Resolution<'db>> {
+        if let Some(module_id) = self
+            .entry_module
+            .or_else(|| module_id_for_hir_module(self.db, self.module))
+        {
+            let env = nameres::module_env(self.db, module_id);
+            let local = env
+                .item_scope
+                .as_ref()
+                .and_then(|scope| scope.type_resolution(name));
+            return local.or_else(|| env.types.get(name).cloned());
+        }
+
+        hir_nameres::item_scope(self.db, self.module).type_resolution(name)
+    }
+
     fn is_storage_index_word_numeric(&mut self, ty: InferTy<'db>) -> bool {
         let ty = self.normalize_aliases(ty);
         let InferTy::Named {
@@ -4687,9 +4961,12 @@ impl<'db> InferCtx<'db> {
                 def,
                 kind: hir_nameres::DefResolutionKind::Function,
             } => self.instantiate_function(def, source.unwrap_or(ObligationSource::Scheme)),
-            hir_nameres::Resolution::Field(field) => {
-                self.instantiate_field(field, source.unwrap_or(ObligationSource::Scheme))
-            }
+            hir_nameres::Resolution::Field(field) => self.instantiate_field_read(
+                body,
+                expr,
+                field,
+                source.unwrap_or(ObligationSource::Scheme),
+            ),
             hir_nameres::Resolution::Ctor { ty, index } => self.instantiate_adt_ctor_value(
                 ty,
                 index,
@@ -4794,6 +5071,93 @@ impl<'db> InferCtx<'db> {
         } else {
             self.engine.fresh_var()
         }
+    }
+
+    fn instantiate_field_ref(
+        &mut self,
+        field: hir_nameres::FieldId<'db>,
+        source: ObligationSource<'db>,
+    ) -> InferTy<'db> {
+        let ty = self.instantiate_field(field, source);
+        if let Some(storage_ctor) = self.storage_type_ctor() {
+            InferTy::Named {
+                ctor: storage_ctor,
+                args: vec![ty],
+            }
+        } else {
+            ty
+        }
+    }
+
+    fn instantiate_field_read(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        field: hir_nameres::FieldId<'db>,
+        source: ObligationSource<'db>,
+    ) -> InferTy<'db> {
+        let field_ref = self.instantiate_field_ref(field, source);
+        self.storage_load_ty(body, expr, field_ref)
+    }
+
+    fn storage_load_ty(
+        &mut self,
+        _body: FuncBody<'db>,
+        _expr: Id<Expr<'db>>,
+        storage_ty: InferTy<'db>,
+    ) -> InferTy<'db> {
+        if self.storage_type_ctor().is_none() {
+            return storage_ty;
+        }
+        if self.is_storage_mapping_ty(storage_ty.clone()) {
+            return storage_ty;
+        }
+        let loaded = self.engine.fresh_var();
+        self.push_can_store_obligation(storage_ty, loaded.clone(), ObligationSource::Scheme);
+        loaded
+    }
+
+    fn is_storage_mapping_ty(&mut self, ty: InferTy<'db>) -> bool {
+        let Some(storage_ctor) = self.storage_type_ctor() else {
+            return false;
+        };
+        let ty = self.normalize_aliases(ty);
+        let InferTy::Named { ctor, args } = self.engine.resolve(ty) else {
+            return false;
+        };
+        if ctor != storage_ctor || args.len() != 1 {
+            return false;
+        }
+        let inner = self.normalize_aliases(args[0].clone());
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+            args,
+        } = self.engine.resolve(inner)
+        else {
+            return false;
+        };
+        def.name(self.db).as_deref() == Some("mapping") && args.len() == 2
+    }
+
+    fn push_can_store_obligation(
+        &mut self,
+        storage_ty: InferTy<'db>,
+        loaded_ty: InferTy<'db>,
+        source: ObligationSource<'db>,
+    ) {
+        let Some(class) = self.lookup_class_id("CanStore") else {
+            return;
+        };
+        self.pending.push(PendingObligation {
+            class,
+            main: storage_ty,
+            args: vec![loaded_ty],
+            source,
+        });
     }
 
     fn instantiate_adt_ctor(
@@ -7643,6 +8007,11 @@ pub fn module_typeck_diagnostics<'db>(
     );
     diagnostics.extend(
         mutual_data_diagnostics(db, hir_module, &item_resolutions)
+            .into_iter()
+            .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+    );
+    diagnostics.extend(
+        dispatch_name_collision_diagnostics(db, hir_module)
             .into_iter()
             .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
     );

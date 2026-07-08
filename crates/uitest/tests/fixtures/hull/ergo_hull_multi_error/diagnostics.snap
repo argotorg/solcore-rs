@@ -4,16 +4,6 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/ergo_hull_multi_error/main.solc
 ---
 error[SC0420]: cannot lower type `string` to Hull
- --> /main/main.solc:5:5
-  |
-4 |   public function first() -> word {
-5 |     let s : string = "oops";
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^ unsupported type
-6 |     return 1;
-  |
----
-
-error[SC0420]: cannot lower type `string` to Hull
  --> /main/main.solc:5:22
   |
 4 |   public function first() -> word {
@@ -31,16 +21,6 @@ error[SC0421]: cannot lower literal `"oops"` to Hull
   |                      ^^^^^^ unsupported literal
 6 |     return 1;
   |
----
-
-error[SC0420]: cannot lower type `string` to Hull
-  --> /main/main.solc:10:5
-   |
- 9 |   public function second() -> word {
-10 |     let t : string = "also bad";
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported type
-11 |     return 2;
-   |
 ---
 
 error[SC0420]: cannot lower type `string` to Hull

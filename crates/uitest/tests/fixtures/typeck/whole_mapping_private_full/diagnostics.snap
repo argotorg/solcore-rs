@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/whole_mapping_private_full/main.solc
+---
+error[SC0201]: type mismatch: expected adt:mapping(adt:address, adt:uint256), got adt:storage(adt:mapping(adt:address, adt:uint256))
+  --> /main/main.solc:10:12
+   |
+ 9 |   function leak() -> mapping(address, uint256) {
+10 |     return balances;
+   |            ^^^^^^^^ expression has mismatched type
+11 |   }
+   |

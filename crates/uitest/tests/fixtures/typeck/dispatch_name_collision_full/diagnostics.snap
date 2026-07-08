@@ -1,0 +1,16 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/dispatch_name_collision_full/main.solc
+---
+error[SC0229]: duplicate type definition: DispatchNameTy_C_ping
+ --> /main/main.solc:1:6
+  |
+1 | data DispatchNameTy_C_ping = Collision;
+  |      ^^^^^^^^^^^^^^^^^^^^^ duplicate type
+2 |
+3 | contract C {
+  |
+  = note: new definition: data DispatchNameTy_C_ping
+  = note: existing definition: data DispatchNameTy_C_ping
+  = note: rename or remove the duplicate type definition

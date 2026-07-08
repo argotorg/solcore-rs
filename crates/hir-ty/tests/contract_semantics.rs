@@ -288,6 +288,7 @@ fn dispatch_signature_spelling_matches_reference_sigstring_shape() {
         &db,
         r#"
 type U = word;
+data string;
 data address;
 data bytes;
 data bytes32;

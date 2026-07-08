@@ -23,14 +23,29 @@ error[SC0201]: type mismatch: expected numeric, got bool
    |
 ---
 
-error[SC0201]: type mismatch: expected numeric, got string
-  --> /main/main.solc:13:10
+error[SC0103]: undefined type constructor: string
+  --> /main/main.solc:12:26
    |
+11 |
 12 | function string_ret() -> string {
+   |                          ^^^^^^ undefined type constructor
 13 |   return 1;
-   |          ^ expression has mismatched type
-14 | }
    |
+---
+
+error[SC0299]: Ambiguous infered type
+  --> /main/main.solc:12:33
+   |
+11 |
+12 |   function string_ret() -> string {
+   |  _________________________________^
+13 | |   return 1;
+14 | | }
+   | |_^ ambiguous inferred type
+15 |
+   |
+   = note: forall _ . _:Int => () -> <error>
+   = note: add a type signature to fix the ambiguous type variable
 ---
 
 error[SC0201]: type mismatch: expected numeric, got ()

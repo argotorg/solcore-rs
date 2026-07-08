@@ -1,0 +1,7 @@
+data DispatchNameTy_C_ping = Collision;
+
+contract C {
+  public function ping() -> word {
+    return 0;
+  }
+}
