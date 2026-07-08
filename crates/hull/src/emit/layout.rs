@@ -265,7 +265,11 @@ pub(super) fn product_field_exprs<'db>(base: Expr<'db>, fields: &[Ty<'db>]) -> V
 }
 
 pub(super) fn product_expr<'db>(span: Span<'db>, ty: Ty<'db>, elems: Vec<Expr<'db>>) -> Expr<'db> {
-    match elems.as_slice() {
+    product_expr_from_slice(span, ty, &elems)
+}
+
+fn product_expr_from_slice<'db>(span: Span<'db>, ty: Ty<'db>, elems: &[Expr<'db>]) -> Expr<'db> {
+    match elems {
         [] => Expr::unit(span),
         [one] => {
             let mut one = one.clone();
@@ -279,7 +283,7 @@ pub(super) fn product_expr<'db>(span: Span<'db>, ty: Ty<'db>, elems: Vec<Expr<'d
                 ty: ty.clone(),
                 kind: ExprKind::Pair(
                     Box::new(head.clone()),
-                    Box::new(product_expr(span, tail_ty, tail.to_vec())),
+                    Box::new(product_expr_from_slice(span, tail_ty, tail)),
                 ),
             }
         }
@@ -287,10 +291,14 @@ pub(super) fn product_expr<'db>(span: Span<'db>, ty: Ty<'db>, elems: Vec<Expr<'d
 }
 
 fn tuple_ty<'db>(span: Span<'db>, elems: Vec<Ty<'db>>) -> Ty<'db> {
-    match elems.as_slice() {
+    tuple_ty_from_slice(span, &elems)
+}
+
+fn tuple_ty_from_slice<'db>(span: Span<'db>, elems: &[Ty<'db>]) -> Ty<'db> {
+    match elems {
         [] => Ty::unit(span),
         [one] => one.clone(),
-        [head, tail @ ..] => Ty::product(span, head.clone(), tuple_ty(span, tail.to_vec())),
+        [head, tail @ ..] => Ty::product(span, head.clone(), tuple_ty_from_slice(span, tail)),
     }
 }
 

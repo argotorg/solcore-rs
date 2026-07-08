@@ -11,6 +11,7 @@ mod check;
 mod emit;
 mod ir;
 mod pretty;
+mod scope_stack;
 mod word;
 
 pub use check::{CheckDiagnostic, CheckDiagnosticKind, check_program, check_program_with_db};

@@ -88,6 +88,93 @@ struct AtomicDecision<'db> {
     tree: DecisionTree<'db>,
 }
 
+struct MatchMatrix<'db> {
+    columns: Vec<MatchColumn<'db>>,
+    rows: Vec<MatchRow<'db>>,
+}
+
+struct MatrixState<'db> {
+    test: MatchColumn<'db>,
+    rest: Vec<MatchColumn<'db>>,
+    rows: Vec<MatchRow<'db>>,
+}
+
+impl<'db> MatchMatrix<'db> {
+    fn new(columns: Vec<MatchColumn<'db>>, rows: Vec<MatchRow<'db>>) -> Self {
+        Self { columns, rows }
+    }
+
+    fn rows_is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+
+    fn fail_span(&self, fallback: Span<'db>) -> Span<'db> {
+        self.columns
+            .first()
+            .map(|column| column.span)
+            .unwrap_or(fallback)
+    }
+
+    fn columns_is_empty(&self) -> bool {
+        self.columns.is_empty()
+    }
+
+    fn first_row_is_var_like(&self) -> bool {
+        self.rows
+            .first()
+            .is_some_and(|row| row.pats.iter().all(MatrixPat::is_var_like))
+    }
+
+    fn into_first_leaf(self) -> DecisionTree<'db> {
+        let row = self.rows.into_iter().next().expect("row exists");
+        DecisionTree::Leaf {
+            bindings: row.bindings,
+            body: row.body,
+        }
+    }
+
+    fn into_var_like_leaf(self) -> DecisionTree<'db> {
+        let row = self.rows.into_iter().next().expect("row exists");
+        let MatchRow {
+            pats,
+            mut bindings,
+            body,
+        } = row;
+        for (pat, column) in pats.into_iter().zip(self.columns) {
+            if let MatrixPat::Var { name } = pat {
+                bindings.push((name, column.occurrence));
+            }
+        }
+        DecisionTree::Leaf { bindings, body }
+    }
+
+    fn into_selected_state(mut self) -> MatrixState<'db> {
+        debug_assert!(!self.columns.is_empty());
+        let selected = select_match_column(&self.columns, &self.rows);
+        move_selected_column_to_front(&mut self.columns, selected);
+        move_selected_pat_to_front(&mut self.rows, selected);
+        let test = self.columns.remove(0);
+        MatrixState {
+            test,
+            rest: self.columns,
+            rows: self.rows,
+        }
+    }
+}
+
+impl<'db> MatrixState<'db> {
+    fn first_col(&self) -> Vec<&MatrixPat> {
+        self.rows
+            .iter()
+            .filter_map(|row| row.pats.first())
+            .collect()
+    }
+
+    fn into_default(self) -> (Vec<MatchRow<'db>>, Vec<MatchColumn<'db>>) {
+        default_rows(self.test.occurrence, self.rows, self.rest)
+    }
+}
+
 impl<'db> Emitter<'db> {
     pub(super) fn emit_match(
         &mut self,
@@ -150,72 +237,54 @@ impl<'db> Emitter<'db> {
             }];
         }
 
-        let tree = self.compile_match_matrix(span, columns.clone(), rows);
         let mut occurrences = columns
-            .into_iter()
+            .iter()
             .zip(scrutinee_exprs)
-            .map(|(column, expr)| (column.occurrence, expr))
+            .map(|(column, expr)| (column.occurrence.clone(), expr))
             .collect::<BTreeMap<_, _>>();
+        let tree = self.compile_match_matrix(span, MatchMatrix::new(columns, rows));
         self.tree_to_body(span, &mut occurrences, &tree)
     }
 
     fn compile_match_matrix(
         &mut self,
         span: Span<'db>,
-        columns: Vec<MatchColumn<'db>>,
-        rows: Vec<MatchRow<'db>>,
+        matrix: MatchMatrix<'db>,
     ) -> DecisionTree<'db> {
-        if rows.is_empty() {
-            let span = columns.first().map(|column| column.span).unwrap_or(span);
+        if matrix.rows_is_empty() {
+            let span = matrix.fail_span(span);
             self.push(span, EmitDiagnosticKind::NonExhaustiveMatch);
             return DecisionTree::Fail { span };
         }
-        if columns.is_empty() {
-            let row = rows.into_iter().next().expect("row exists");
-            return DecisionTree::Leaf {
-                bindings: row.bindings,
-                body: row.body,
-            };
+        if matrix.columns_is_empty() {
+            return matrix.into_first_leaf();
         }
-        if rows[0].pats.iter().all(MatrixPat::is_var_like) {
-            let row = rows.into_iter().next().expect("row exists");
-            let mut bindings = row.bindings;
-            for (pat, column) in row.pats.iter().zip(&columns) {
-                if let MatrixPat::Var { name, .. } = pat {
-                    bindings.push((name.clone(), column.occurrence.clone()));
-                }
-            }
-            return DecisionTree::Leaf {
-                bindings,
-                body: row.body,
-            };
+        if matrix.first_row_is_var_like() {
+            return matrix.into_var_like_leaf();
         }
 
-        let selected = select_match_column(&columns, &rows);
-        let columns = reorder_columns(columns, selected);
-        let rows = reorder_rows(rows, selected);
-        let test = columns[0].clone();
-        let rest = columns[1..].to_vec();
-        let first_col = rows
-            .iter()
-            .filter_map(|row| row.pats.first())
-            .collect::<Vec<_>>();
+        let state = matrix.into_selected_state();
+        let first_col = state.first_col();
 
-        if let Some(product) = self.compile_product_column(span, &test, &rest, &rows, &first_col) {
-            return product;
+        if let Some(fields) = self.product_column_fields(&state.test, &first_col) {
+            drop(first_col);
+            return self.compile_product_column(span, state, fields);
         }
 
         let head_ctors = head_constructor_indices(
-            self.adt_layout_for_sem_ty(test.ty, test.span).as_ref(),
+            self.adt_layout_for_sem_ty(state.test.ty, state.test.span)
+                .as_ref(),
             &first_col,
         );
         if !head_ctors.is_empty() {
-            return self.compile_constructor_switch(span, test, rest, rows, head_ctors);
+            drop(first_col);
+            return self.compile_constructor_switch(span, state, head_ctors);
         }
 
         let head_lits = head_literals(&first_col);
         if !head_lits.is_empty() {
-            return self.compile_atomic_switch(span, test, rest, rows, head_lits);
+            drop(first_col);
+            return self.compile_atomic_switch(span, state, head_lits);
         }
 
         if first_col
@@ -231,18 +300,16 @@ impl<'db> Emitter<'db> {
             return DecisionTree::Fail { span };
         }
 
-        let (rows, columns) = default_rows(test.occurrence, rows, rest);
-        self.compile_match_matrix(span, columns, rows)
+        drop(first_col);
+        let (rows, columns) = state.into_default();
+        self.compile_match_matrix(span, MatchMatrix::new(columns, rows))
     }
 
-    fn compile_product_column(
+    fn product_column_fields(
         &mut self,
-        span: Span<'db>,
         test: &MatchColumn<'db>,
-        rest: &[MatchColumn<'db>],
-        rows: &[MatchRow<'db>],
         first_col: &[&MatrixPat],
-    ) -> Option<DecisionTree<'db>> {
+    ) -> Option<Vec<SemTy<'db>>> {
         let tuple_fields = first_col
             .iter()
             .any(|pat| matches!(pat, MatrixPat::Tuple { .. }))
@@ -257,16 +324,27 @@ impl<'db> Emitter<'db> {
                     .iter()
                     .any(|pat| matches!(pat, MatrixPat::Con { .. })) =>
             {
-                layout.ctors[0].fields.clone()
+                let ctor = layout.ctors.into_iter().next()?;
+                ctor.fields
             }
             _ => return None,
         };
+        Some(fields)
+    }
+
+    fn compile_product_column(
+        &mut self,
+        span: Span<'db>,
+        state: MatrixState<'db>,
+        fields: Vec<SemTy<'db>>,
+    ) -> DecisionTree<'db> {
+        let MatrixState { test, rest, rows } = state;
 
         let child_columns = child_columns(&test.occurrence, &fields, test.span);
         let mut next_columns = child_columns;
-        next_columns.extend_from_slice(rest);
+        next_columns.extend(rest);
         let mut next_rows = Vec::new();
-        for row in rows.iter().cloned() {
+        for row in rows {
             let (first, row_rest) = split_row(row);
             match first {
                 MatrixPat::Tuple { elems, .. } => {
@@ -298,21 +376,22 @@ impl<'db> Emitter<'db> {
             .iter()
             .map(|field| self.hull_ty(*field, test.span))
             .collect();
-        Some(DecisionTree::Product {
-            occurrence: test.occurrence.clone(),
+        DecisionTree::Product {
+            occurrence: test.occurrence,
             fields: field_tys,
-            subtree: Box::new(self.compile_match_matrix(span, next_columns, next_rows)),
-        })
+            subtree: Box::new(
+                self.compile_match_matrix(span, MatchMatrix::new(next_columns, next_rows)),
+            ),
+        }
     }
 
     fn compile_constructor_switch(
         &mut self,
         span: Span<'db>,
-        test: MatchColumn<'db>,
-        rest: Vec<MatchColumn<'db>>,
-        rows: Vec<MatchRow<'db>>,
+        state: MatrixState<'db>,
         head_ctors: Vec<usize>,
     ) -> DecisionTree<'db> {
+        let MatrixState { test, rest, rows } = state;
         let Some(layout) = self.adt_layout_for_sem_ty(test.ty, test.span) else {
             self.push(
                 test.span,
@@ -322,60 +401,32 @@ impl<'db> Emitter<'db> {
             );
             return DecisionTree::Fail { span };
         };
+        let include_default = head_ctors.len() != layout.ctors.len();
+        let (projected_branches, default_rows) =
+            project_constructor_rows(&test, &layout, &head_ctors, rows, include_default);
+
         let mut branches = Vec::new();
-        for index in head_ctors.iter().copied() {
+        for (index, next_rows) in head_ctors.iter().copied().zip(projected_branches) {
             let ctor = &layout.ctors[index];
             let child_cols = child_columns(&test.occurrence, &ctor.fields, test.span);
             let mut next_columns = child_cols;
-            next_columns.extend(rest.clone());
-            let mut next_rows = Vec::new();
-            for row in rows.iter().cloned() {
-                let (first, row_rest) = split_row(row);
-                match first {
-                    MatrixPat::Con {
-                        ctor: name, args, ..
-                    } if constructor_name_matches(&name, &layout.name, &ctor.name) => {
-                        next_rows.push(row_with_pats(row_rest, args));
-                    }
-                    MatrixPat::Var { name, .. } => {
-                        next_rows.push(row_with_binding_and_wildcards(
-                            row_rest,
-                            name,
-                            test.occurrence.clone(),
-                            ctor.fields.len(),
-                            test.span,
-                        ));
-                    }
-                    MatrixPat::Wildcard => {
-                        next_rows.push(row_with_wildcards(row_rest, ctor.fields.len(), test.span));
-                    }
-                    MatrixPat::Error => {
-                        next_rows.push(row_with_wildcards(row_rest, ctor.fields.len(), test.span));
-                    }
-                    MatrixPat::Con { .. }
-                    | MatrixPat::Tuple { .. }
-                    | MatrixPat::Lit { .. }
-                    | MatrixPat::ComptimeLabel => {}
-                }
-            }
+            next_columns.extend_from_slice(&rest);
             branches.push(CtorDecision {
                 index,
-                tree: self.compile_match_matrix(span, next_columns, next_rows),
+                tree: self.compile_match_matrix(span, MatchMatrix::new(next_columns, next_rows)),
             });
         }
 
-        let default = if head_ctors.len() == layout.ctors.len() {
+        let default = if !include_default {
             None
         } else {
-            let (default_rows, default_columns) = default_rows(test.occurrence.clone(), rows, rest);
             if default_rows.is_empty() {
                 self.push(test.span, EmitDiagnosticKind::NonExhaustiveMatch);
                 Some(Box::new(DecisionTree::Fail { span: test.span }))
             } else {
                 Some(Box::new(self.compile_match_matrix(
                     span,
-                    default_columns,
-                    default_rows,
+                    MatchMatrix::new(rest, default_rows),
                 )))
             }
         };
@@ -391,49 +442,27 @@ impl<'db> Emitter<'db> {
     fn compile_atomic_switch(
         &mut self,
         span: Span<'db>,
-        test: MatchColumn<'db>,
-        rest: Vec<MatchColumn<'db>>,
-        rows: Vec<MatchRow<'db>>,
+        state: MatrixState<'db>,
         head_lits: Vec<LitKind>,
     ) -> DecisionTree<'db> {
+        let MatrixState { test, rest, rows } = state;
+        let (projected_branches, default_rows) = project_atomic_rows(&test, &head_lits, rows);
+
         let mut branches = Vec::new();
-        for lit in head_lits {
-            let mut next_rows = Vec::new();
-            for row in rows.iter().cloned() {
-                let (first, row_rest) = split_row(row);
-                match first {
-                    MatrixPat::Lit { lit: candidate, .. } if candidate == lit => {
-                        next_rows.push(row_rest);
-                    }
-                    MatrixPat::Var { name, .. } => {
-                        let mut row_rest = row_rest;
-                        row_rest.bindings.push((name, test.occurrence.clone()));
-                        next_rows.push(row_rest);
-                    }
-                    MatrixPat::Wildcard | MatrixPat::Error => {
-                        next_rows.push(row_rest);
-                    }
-                    MatrixPat::Lit { .. }
-                    | MatrixPat::Con { .. }
-                    | MatrixPat::Tuple { .. }
-                    | MatrixPat::ComptimeLabel => {}
-                }
-            }
+        for (lit, next_rows) in head_lits.into_iter().zip(projected_branches) {
             branches.push(AtomicDecision {
                 lit,
-                tree: self.compile_match_matrix(span, rest.clone(), next_rows),
+                tree: self.compile_match_matrix(span, MatchMatrix::new(rest.clone(), next_rows)),
             });
         }
 
-        let (default_rows, default_columns) = default_rows(test.occurrence.clone(), rows, rest);
         let default = if default_rows.is_empty() {
             self.push(test.span, EmitDiagnosticKind::NonExhaustiveMatch);
             Some(Box::new(DecisionTree::Fail { span: test.span }))
         } else {
             Some(Box::new(self.compile_match_matrix(
                 span,
-                default_columns,
-                default_rows,
+                MatchMatrix::new(rest, default_rows),
             )))
         };
 
@@ -703,25 +732,20 @@ fn select_match_column<'db>(columns: &[MatchColumn<'db>], rows: &[MatchRow<'db>]
     best_index
 }
 
-fn reorder_columns<'db>(
-    mut columns: Vec<MatchColumn<'db>>,
-    selected: usize,
-) -> Vec<MatchColumn<'db>> {
+fn move_selected_column_to_front<'db>(columns: &mut Vec<MatchColumn<'db>>, selected: usize) {
     if selected < columns.len() {
         let column = columns.remove(selected);
         columns.insert(0, column);
     }
-    columns
 }
 
-fn reorder_rows<'db>(mut rows: Vec<MatchRow<'db>>, selected: usize) -> Vec<MatchRow<'db>> {
-    for row in &mut rows {
+fn move_selected_pat_to_front<'db>(rows: &mut [MatchRow<'db>], selected: usize) {
+    for row in rows {
         if selected < row.pats.len() {
             let pat = row.pats.remove(selected);
             row.pats.insert(0, pat);
         }
     }
-    rows
 }
 
 fn split_row<'db>(mut row: MatchRow<'db>) -> (MatrixPat, MatchRow<'db>) {
@@ -753,6 +777,164 @@ fn row_with_binding_and_wildcards<'db>(
 ) -> MatchRow<'db> {
     row.bindings.push((name, occurrence));
     row_with_wildcards(row, count, span)
+}
+
+fn project_constructor_rows<'db>(
+    test: &MatchColumn<'db>,
+    layout: &AdtLayout<'db>,
+    head_ctors: &[usize],
+    rows: Vec<MatchRow<'db>>,
+    include_default: bool,
+) -> (Vec<Vec<MatchRow<'db>>>, Vec<MatchRow<'db>>) {
+    let mut branch_rows = (0..head_ctors.len())
+        .map(|_| Vec::new())
+        .collect::<Vec<_>>();
+    let mut default_rows = Vec::new();
+
+    for row in rows {
+        let (first, row_rest) = split_row(row);
+        match first {
+            MatrixPat::Con {
+                ctor: name, args, ..
+            } => {
+                let matching_branches = head_ctors
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(branch, index)| {
+                        constructor_name_matches(&name, &layout.name, &layout.ctors[*index].name)
+                            .then_some(branch)
+                    })
+                    .collect::<Vec<_>>();
+                let Some((&last_branch, prefix_branches)) = matching_branches.split_last() else {
+                    continue;
+                };
+                for branch in prefix_branches {
+                    branch_rows[*branch].push(row_with_pats(row_rest.clone(), args.clone()));
+                }
+                branch_rows[last_branch].push(row_with_pats(row_rest, args));
+            }
+            MatrixPat::Var { name, .. } => {
+                push_constructor_var_rows(
+                    test,
+                    layout,
+                    head_ctors,
+                    &mut branch_rows,
+                    include_default.then_some(&mut default_rows),
+                    row_rest,
+                    name,
+                );
+            }
+            MatrixPat::Wildcard | MatrixPat::Error => {
+                push_constructor_wildcard_rows(
+                    test,
+                    layout,
+                    head_ctors,
+                    &mut branch_rows,
+                    include_default.then_some(&mut default_rows),
+                    row_rest,
+                );
+            }
+            MatrixPat::Tuple { .. } | MatrixPat::Lit { .. } | MatrixPat::ComptimeLabel => {}
+        }
+    }
+
+    (branch_rows, default_rows)
+}
+
+fn push_constructor_var_rows<'db>(
+    test: &MatchColumn<'db>,
+    layout: &AdtLayout<'db>,
+    head_ctors: &[usize],
+    branch_rows: &mut [Vec<MatchRow<'db>>],
+    default_rows: Option<&mut Vec<MatchRow<'db>>>,
+    row_rest: MatchRow<'db>,
+    name: String,
+) {
+    for (branch, index) in head_ctors.iter().copied().enumerate() {
+        let count = layout.ctors[index].fields.len();
+        branch_rows[branch].push(row_with_binding_and_wildcards(
+            row_rest.clone(),
+            name.clone(),
+            test.occurrence.clone(),
+            count,
+            test.span,
+        ));
+    }
+    if let Some(default_rows) = default_rows {
+        let mut row = row_rest;
+        row.bindings.push((name, test.occurrence.clone()));
+        default_rows.push(row);
+    }
+}
+
+fn push_constructor_wildcard_rows<'db>(
+    test: &MatchColumn<'db>,
+    layout: &AdtLayout<'db>,
+    head_ctors: &[usize],
+    branch_rows: &mut [Vec<MatchRow<'db>>],
+    default_rows: Option<&mut Vec<MatchRow<'db>>>,
+    row_rest: MatchRow<'db>,
+) {
+    for (branch, index) in head_ctors.iter().copied().enumerate() {
+        let count = layout.ctors[index].fields.len();
+        branch_rows[branch].push(row_with_wildcards(row_rest.clone(), count, test.span));
+    }
+    if let Some(default_rows) = default_rows {
+        default_rows.push(row_rest);
+    }
+}
+
+fn project_atomic_rows<'db>(
+    test: &MatchColumn<'db>,
+    head_lits: &[LitKind],
+    rows: Vec<MatchRow<'db>>,
+) -> (Vec<Vec<MatchRow<'db>>>, Vec<MatchRow<'db>>) {
+    let mut branch_rows = (0..head_lits.len()).map(|_| Vec::new()).collect::<Vec<_>>();
+    let mut default_rows = Vec::new();
+
+    for row in rows {
+        let (first, row_rest) = split_row(row);
+        match first {
+            MatrixPat::Lit { lit: candidate, .. } => {
+                if let Some(branch) = head_lits.iter().position(|lit| lit == &candidate) {
+                    branch_rows[branch].push(row_rest);
+                }
+            }
+            MatrixPat::Var { name, .. } => {
+                let mut row_rest = row_rest;
+                row_rest.bindings.push((name, test.occurrence.clone()));
+                push_projected_row(row_rest, &mut branch_rows, Some(&mut default_rows));
+            }
+            MatrixPat::Wildcard | MatrixPat::Error => {
+                push_projected_row(row_rest, &mut branch_rows, Some(&mut default_rows));
+            }
+            MatrixPat::Con { .. } | MatrixPat::Tuple { .. } | MatrixPat::ComptimeLabel => {}
+        }
+    }
+
+    (branch_rows, default_rows)
+}
+
+fn push_projected_row<'db>(
+    row: MatchRow<'db>,
+    branch_rows: &mut [Vec<MatchRow<'db>>],
+    default_rows: Option<&mut Vec<MatchRow<'db>>>,
+) {
+    let Some((last_branch, prefix_branches)) = branch_rows.split_last_mut() else {
+        if let Some(default_rows) = default_rows {
+            default_rows.push(row);
+        }
+        return;
+    };
+    for branch in prefix_branches {
+        branch.push(row.clone());
+    }
+    if let Some(default_rows) = default_rows {
+        last_branch.push(row.clone());
+        default_rows.push(row);
+    } else {
+        last_branch.push(row);
+    }
 }
 
 fn default_rows<'db>(
@@ -916,7 +1098,16 @@ fn build_nested_sum_match<'db>(
     target: Ty<'db>,
     branches: Vec<Branch<'db>>,
 ) -> Stmt<'db> {
-    match branches.as_slice() {
+    build_nested_sum_match_from_slice(span, scrutinee, target, &branches)
+}
+
+fn build_nested_sum_match_from_slice<'db>(
+    span: Span<'db>,
+    scrutinee: Expr<'db>,
+    target: Ty<'db>,
+    branches: &[Branch<'db>],
+) -> Stmt<'db> {
+    match branches {
         [] => Stmt {
             span,
             kind: StmtKind::Revert("empty branch list".to_owned()),
@@ -932,7 +1123,7 @@ fn build_nested_sum_match<'db>(
                 .map(|branch| branch.binder.clone())
                 .unwrap_or_else(|| "$alt".to_owned());
             let right_expr = Expr::var(span, right_binder.clone(), right_ty.clone());
-            let rest_stmt = build_nested_sum_match(span, right_expr, right_ty, rest.to_vec());
+            let rest_stmt = build_nested_sum_match_from_slice(span, right_expr, right_ty, rest);
             Stmt {
                 span,
                 kind: StmtKind::Match {

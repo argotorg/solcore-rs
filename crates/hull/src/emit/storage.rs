@@ -196,7 +196,7 @@ struct StorageLowerer<'a, 'db> {
     emitter: &'a Emitter<'db>,
     fields: &'a BTreeMap<String, StorageField>,
     storage_hash_helper: Option<&'a str>,
-    shadows: Vec<BTreeSet<String>>,
+    shadows: ScopeStack<BTreeSet<String>>,
     fresh: usize,
     mapping_value_helper_used: bool,
 }
@@ -212,7 +212,10 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
             emitter,
             fields,
             storage_hash_helper,
-            shadows: vec![args.iter().map(|arg| arg.name.clone()).collect()],
+            shadows: ScopeStack::new_root_with_message(
+                args.iter().map(|arg| arg.name.clone()).collect(),
+                "storage scope stack is never empty",
+            ),
             fresh: 0,
             mapping_value_helper_used: false,
         }
@@ -229,10 +232,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
     fn stmt(&mut self, stmt: Stmt<'db>) -> Vec<Stmt<'db>> {
         match stmt.kind {
             StmtKind::Let { name, ty } => {
-                self.shadows
-                    .last_mut()
-                    .expect("storage scope stack is never empty")
-                    .insert(name.clone());
+                self.shadows.last_mut().insert(name.clone());
                 vec![Stmt {
                     span: stmt.span,
                     kind: StmtKind::Let { name, ty },
@@ -451,10 +451,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
 
     fn alt(&mut self, alt: Alt<'db>) -> Alt<'db> {
         self.with_scope(|this| {
-            this.shadows
-                .last_mut()
-                .expect("storage scope stack is never empty")
-                .insert(alt.binder.clone());
+            this.shadows.last_mut().insert(alt.binder.clone());
             Alt {
                 span: alt.span,
                 pat: alt.pat,
@@ -667,7 +664,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
     fn with_scope<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         self.shadows.push(BTreeSet::new());
         let out = f(self);
-        self.shadows.pop();
+        let _ = self.shadows.pop();
         out
     }
 }

@@ -33,6 +33,7 @@ use crate::{
         Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
         StmtKind, Ty, TyKind,
     },
+    scope_stack::ScopeStack,
     word::wrap_word_literal,
 };
 
@@ -80,7 +81,7 @@ struct Emitter<'db> {
     module: Module<'db>,
     options: EmitOptions,
     diagnostics: Vec<EmitDiagnostic<'db>>,
-    scopes: Vec<BTreeMap<String, Expr<'db>>>,
+    scopes: ScopeStack<BTreeMap<String, Expr<'db>>>,
     function_names: BTreeSet<String>,
     layout_stack: Vec<(DefId<'db>, Vec<SemTy<'db>>)>,
     fresh: usize,

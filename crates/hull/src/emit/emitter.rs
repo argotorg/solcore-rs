@@ -16,7 +16,7 @@ impl<'db> Emitter<'db> {
             module: hir_module,
             options,
             diagnostics: Vec::new(),
-            scopes: vec![BTreeMap::new()],
+            scopes: ScopeStack::new_root(BTreeMap::new()),
             function_names: BTreeSet::new(),
             layout_stack: Vec::new(),
             fresh: 0,
@@ -749,10 +749,7 @@ impl<'db> Emitter<'db> {
     }
 
     pub(super) fn bind_expr(&mut self, name: String, expr: Expr<'db>) {
-        self.scopes
-            .last_mut()
-            .expect("scope stack is never empty")
-            .insert(name, expr);
+        self.scopes.last_mut().insert(name, expr);
     }
 
     fn lookup_expr(&self, name: &str) -> Option<Expr<'db>> {
@@ -765,7 +762,7 @@ impl<'db> Emitter<'db> {
     pub(super) fn with_scope<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
         self.scopes.push(BTreeMap::new());
         let out = f(self);
-        self.scopes.pop();
+        let _ = self.scopes.pop();
         out
     }
 

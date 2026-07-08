@@ -10,8 +10,12 @@ use hir::{
     span::{Span, SpannedElem},
 };
 
-use crate::ir::{
-    Alt, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt, StmtKind, Ty, TyKind,
+use crate::{
+    ir::{
+        Alt, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt, StmtKind, Ty,
+        TyKind,
+    },
+    scope_stack::ScopeStack,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -237,10 +241,9 @@ struct FunSig<'db> {
     ret: Ty<'db>,
 }
 
-#[derive(Default)]
 struct Env<'db> {
     db: Option<&'db dyn HirDb>,
-    vars: Vec<BTreeMap<String, Ty<'db>>>,
+    vars: ScopeStack<BTreeMap<String, Ty<'db>>>,
     funs: BTreeMap<String, FunSig<'db>>,
     ret: Option<Ty<'db>>,
     diagnostics: Vec<CheckDiagnostic<'db>>,
@@ -263,7 +266,7 @@ fn check_program_inner<'db>(
 ) -> Vec<CheckDiagnostic<'db>> {
     let mut env = Env {
         db,
-        vars: vec![BTreeMap::new()],
+        vars: ScopeStack::new_root(BTreeMap::new()),
         funs: builtin_funs(program.span),
         ret: None,
         diagnostics: Vec::new(),
@@ -836,10 +839,7 @@ impl<'db> Env<'db> {
     }
 
     fn insert_var(&mut self, name: String, ty: Ty<'db>) {
-        self.vars
-            .last_mut()
-            .expect("scope stack is never empty")
-            .insert(name, ty);
+        self.vars.last_mut().insert(name, ty);
     }
 
     fn lookup_var(&self, name: &str) -> Option<Ty<'db>> {
@@ -852,7 +852,7 @@ impl<'db> Env<'db> {
     fn with_scope(&mut self, f: impl FnOnce(&mut Self)) {
         self.vars.push(BTreeMap::new());
         f(self);
-        self.vars.pop();
+        let _ = self.vars.pop();
     }
 
     fn push(&mut self, span: Span<'db>, kind: CheckDiagnosticKind) {
