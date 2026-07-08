@@ -374,9 +374,12 @@ pub enum DiagnosticSeverity {
     Help,
 }
 
+/// Alias for the plain diagnostic severity used by adapters.
+pub type Severity = DiagnosticSeverity;
+
 /// Byte range in a source file.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DiagnosticSpan {
+pub struct DiagRange {
     /// File URL string.
     pub file_url: String,
     /// Inclusive start byte offset.
@@ -385,33 +388,36 @@ pub struct DiagnosticSpan {
     pub end: u32,
 }
 
-/// Secondary diagnostic label.
+/// Backward-compatible alias for a diagnostic byte range.
+pub type DiagnosticSpan = DiagRange;
+
+/// Diagnostic label with an absolute byte range.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DiagnosticLabel {
+pub struct DiagLabel {
+    /// Label byte range.
+    pub range: DiagRange,
     /// Label message, when available.
     pub message: Option<String>,
-    /// Label byte range.
-    pub span: DiagnosticSpan,
+    /// Whether this is the primary label.
+    pub is_primary: bool,
 }
+
+/// Backward-compatible alias for a diagnostic label.
+pub type DiagnosticLabel = DiagLabel;
 
 /// Serde-free owned diagnostic mirror for playground and LSP adapters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
-    /// Human-readable headline message.
-    pub message: String,
     /// Diagnostic severity.
     pub severity: DiagnosticSeverity,
     /// Optional diagnostic code such as `SC0101`.
     pub code: Option<String>,
-    /// Primary source location, when the compiler provided one.
-    ///
-    /// The current HIR diagnostic API does not expose label end offsets outside
-    /// `solcore-hir`, so this mirror reports a stable zero-length range at the
-    /// driver's primary sort offset. Use [`Workspace::raw_diagnostics`] when an
-    /// exact rendered diagnostic is required.
-    pub primary_span: Option<DiagnosticSpan>,
-    /// Secondary labels, when available through the public HIR diagnostic API.
-    pub secondary_labels: Vec<DiagnosticLabel>,
+    /// Human-readable headline message.
+    pub message: String,
+    /// Primary label range, when the compiler provided a source label.
+    pub primary: Option<DiagRange>,
+    /// All source labels, including the primary label.
+    pub labels: Vec<DiagLabel>,
     /// Additional note text.
     pub notes: Vec<String>,
     /// Additional help text.
@@ -420,21 +426,29 @@ pub struct Diagnostic {
 
 impl Diagnostic {
     fn from_hir(db: &AnalysisHost, diagnostic: RawDiagnostic) -> Self {
-        let sort_key = diagnostic.sort_key(db);
-        let primary_span = sort_key
-            .file
-            .zip(sort_key.primary_start)
-            .map(|(file_url, start)| DiagnosticSpan {
-                file_url,
-                start: start.as_u32(),
-                end: start.as_u32(),
-            });
+        let labels = diagnostic
+            .labels
+            .iter()
+            .map(|label| {
+                let absolute = label.span().resolve_to_absolute(db);
+                DiagLabel {
+                    range: range_from_absolute_span(db, absolute),
+                    message: label.message().map(str::to_owned),
+                    is_primary: label.is_primary(),
+                }
+            })
+            .collect::<Vec<_>>();
+        let primary = labels
+            .iter()
+            .find(|label| label.is_primary)
+            .or_else(|| labels.first())
+            .map(|label| label.range.clone());
         Self {
-            message: diagnostic.message,
             severity: diagnostic.level.into(),
             code: diagnostic.code,
-            primary_span,
-            secondary_labels: Vec::new(),
+            message: diagnostic.message,
+            primary,
+            labels,
             notes: diagnostic.notes,
             helps: diagnostic.helps,
         }
@@ -449,6 +463,15 @@ impl From<DiagnosticLevel> for DiagnosticSeverity {
             DiagnosticLevel::Note => Self::Note,
             DiagnosticLevel::Help => Self::Help,
         }
+    }
+}
+
+fn range_from_absolute_span(db: &AnalysisHost, span: hir::diag::AbsoluteSpan) -> DiagRange {
+    let file = span.file();
+    DiagRange {
+        file_url: file.url(db).as_str().to_owned(),
+        start: span.start().as_u32(),
+        end: span.end().as_u32(),
     }
 }
 
@@ -650,6 +673,16 @@ mod tests {
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("missingVar"));
         assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+        assert!(!diagnostics[0].labels.is_empty());
+        assert!(diagnostics[0].labels.iter().any(|label| label.is_primary));
+        let primary = diagnostics[0].primary.as_ref().expect("primary range");
+        assert!(primary.end > primary.start);
+        assert_eq!(
+            source
+                .get(primary.start as usize..primary.end as usize)
+                .expect("primary range is valid UTF-8 boundary"),
+            "missingVar"
+        );
     }
 
     #[test]

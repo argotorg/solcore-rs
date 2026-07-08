@@ -260,6 +260,21 @@ impl AnyDiagnostic {
 }
 
 impl DiagnosticLabel {
+    /// Returns this label's source span.
+    pub fn span(&self) -> &LabelSpan {
+        &self.span
+    }
+
+    /// Returns this label's optional message.
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
+
+    /// Returns whether this label is the primary diagnostic label.
+    pub fn is_primary(&self) -> bool {
+        matches!(self.style, LabelStyle::Primary)
+    }
+
     /// Creates a new diagnostic label.
     fn new(span: LabelSpan, style: LabelStyle, message: Option<impl Into<String>>) -> Self {
         Self {
