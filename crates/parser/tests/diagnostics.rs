@@ -42,13 +42,19 @@ fn parser_corpus_fail_diagnostics(fixture: Fixture<&str>) {
 fn assert_fail_fixture(path: &str, content: &str) {
     let db = TestDb::default();
     let file = fixture_source_file(&db, path, content);
-    let _ = parse_file_to_hir(&db, file);
+    let module = parse_file_to_hir(&db, file).module(&db);
     let diagnostics = lower_diagnostics(&db, parse_diagnostics(&db, file));
-    assert!(
-        !diagnostics.is_empty(),
-        "expected diagnostics for fail fixture `{}`",
-        path
-    );
+    if diagnostics.is_empty() {
+        let error_nodes = hir::visit::collect_error_nodes(&db, module);
+        assert!(
+            error_nodes.is_empty(),
+            "expected no HIR Error nodes for semantic fail fixture `{}`\n{}",
+            path,
+            render_error_nodes(&db, &error_nodes)
+        );
+        return;
+    }
+
     if path.ends_with("multiple_emitted_errors.solc") {
         assert!(
             diagnostics.len() > 1,

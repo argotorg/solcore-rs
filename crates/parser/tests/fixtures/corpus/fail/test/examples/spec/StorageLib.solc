@@ -1,12 +1,6 @@
 // v4: Simplified Member AccessProxy (no Proxy(offset))
 // variables holding field MAPs
 
-export {
-  add, Typedef, uint(*), storage(*), ContractStorage(*), storageRef(*), Proxy(*),
-  Assign, ref(*), StorageType, StorageSize, sload_, sstore_, MemberAccessProxy(*),
-  memberAccessD1, LValueMemberAccess, RValueMemberAccess, CStructField, StructField(*), rval,
-};
-
 function add(x : word, y : word) {
   let res: word;
   assembly {

@@ -1,4 +1,4 @@
-import StorageLib.{*};
+import StorageLib;
 
 /*
 // Translating contract:

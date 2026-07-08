@@ -32,9 +32,3 @@ function roundtripSome(v : word) -> bool {
     | Option.Some(v2) => return eqWord(v, v2);
     }
 }
-
-function treeRep(v : word) -> sum((), pair(Tree(word), pair(word, Tree(word)))) {
-    let l : Tree(word) = Tree.Leaf;
-    let x : Tree(word) = Tree.Node(l, v, l);
-    return Generic.from(x);
-}

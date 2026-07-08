@@ -1,0 +1,434 @@
+path	status	code
+Convertible.solc	fail	SC0001
+cases/Ackermann.solc	pass	
+cases/Add1.solc	pass	
+cases/BadInstance.solc	fail	SC0102
+cases/BoolNot.solc	pass	
+cases/Compose.solc	pass	
+cases/Compose3.solc	pass	
+cases/CondExp.solc	pass	
+cases/DupFun.solc	fail	SC0108
+cases/DuplicateFun.solc	pass	
+cases/EitherModule.solc	pass	
+cases/Enum.solc	fail	SC0108
+cases/Eq.solc	fail	SC0102
+cases/EqQual.solc	pass	
+cases/EvenOdd.solc	pass	
+cases/Filter.solc	fail	SC0102
+cases/Foo.solc	pass	
+cases/GetSet.solc	fail	SC0103
+cases/GoodInstance.solc	fail	SC0102
+cases/Id.solc	pass	
+cases/IncompleteInstDef.solc	fail	SC0299
+cases/Invokable.solc	fail	SC0102
+cases/KindTest.solc	fail	SC0103
+cases/ListModule.solc	pass	
+cases/Logic.solc	pass	
+cases/MatchCall.solc	pass	
+cases/Memory1.solc	pass	
+cases/Memory2.solc	pass	
+cases/Mutuals.solc	pass	
+cases/NegPair.solc	pass	
+cases/Option.solc	pass	
+cases/Pair.solc	pass	
+cases/PairMatch1.solc	fail	SC0209
+cases/PairMatch2.solc	fail	SC0209
+cases/Peano.solc	pass	
+cases/PeanoMatch.solc	pass	
+cases/Ref.solc	fail	SC0102
+cases/RefDeref.solc	pass	
+cases/SillyReturn.solc	fail	SC0220
+cases/SimpleInvoke.solc	fail	SC0102
+cases/SimpleLambda.solc	pass	
+cases/SingleFun.solc	pass	
+cases/StructMembers.solc	fail	SC0001
+cases/Uncurry.solc	pass	
+cases/abigeneric.solc	pass	
+cases/add-moritz.solc	fail	SC0102
+cases/another-subst.solc	pass	
+cases/app.solc	pass	
+cases/array.solc	pass	
+cases/asm-assign-no-return.solc	fail	SC0220
+cases/asm-assign-non-word.solc	fail	SC0001
+cases/asm-let-bool-lit.solc	pass	
+cases/asm-let-no-return.solc	fail	SC0220
+cases/asm-let-uninit.solc	pass	
+cases/asm-match-tuple-read.solc	pass	
+cases/asm-match-tuple-write-read.solc	pass	
+cases/assembly.solc	pass	
+cases/bal.solc	pass	
+cases/bar.solc	pass	
+cases/bitwise.solc	pass	
+cases/bool-elim.solc	pass	
+cases/bound-merge-case.solc	pass	
+cases/bound-minimal.solc	fail	SC0103
+cases/bound-only-test.solc	fail	SC0103
+cases/bound-with-pragma.solc	pass	
+cases/bug-import-default-inst-shadow.solc	pass	
+cases/bug-rep-name-capture.solc	pass	
+cases/bug-spec-generic-let.solc	fail	
+cases/catch-all.solc	pass	
+cases/catenable-err.solc	fail	SC0001
+cases/class-context.solc	pass	
+cases/class-return-type-miss.solc	fail	SC0221
+cases/class-type-name-collision.solc	fail	SC0108
+cases/closure-capture-only.solc	pass	
+cases/closure-free-bound-test.solc	pass	
+cases/closure-free-var-local.solc	pass	
+cases/closure-free-var-std.solc	pass	
+cases/closure-free-var.solc	pass	
+cases/closure.solc	pass	
+cases/comp.solc	fail	SC0220
+cases/comparisons.solc	pass	
+cases/complexproxy.solc	fail	SC0102
+cases/compose0.solc	pass	
+cases/compose_desugared.solc	fail	SC0209
+cases/const-array.solc	fail	SC0221
+cases/const.solc	pass	
+cases/constrained-instance-context.solc	pass	
+cases/constrained-instance.solc	pass	
+cases/constructor-weak-args.solc	pass	
+cases/copytomem.solc	pass	
+cases/cyclical-defs-inferred.solc	pass	
+cases/cyclical-defs.solc	pass	
+cases/default-inst.solc	fail	SC0102
+cases/default-instance-missing.solc	fail	SC0102
+cases/default-instance-weak.solc	fail	SC0102
+cases/derive-generic-excluded.solc	pass	
+cases/derive-generic-sum.solc	pass	
+cases/derive-self-return-poc.solc	fail	SC0001
+cases/dispatch.solc	fail	SC0103
+cases/dot-expression-assignment-context.solc	pass	
+cases/dot-expression-call-arg-context.solc	pass	
+cases/dot-expression-constructor.solc	pass	
+cases/dot-expression-match-return.solc	pass	
+cases/dot-expression-nested-context.solc	pass	
+cases/dot-expression-no-context-fail.solc	fail	SC0224
+cases/dot-expression-unknown-fail.solc	fail	SC0224
+cases/dot-pattern-constructor.solc	pass	
+cases/dot-pattern-nested-constructor.solc	pass	
+cases/dot-primitive-constructor.solc	pass	
+cases/duplicated-contract-name.solc	fail	SC0108
+cases/duplicated-type-name.solc	fail	SC0108
+cases/empty-asm.solc	pass	
+cases/encoder.solc	pass	
+cases/encoder1.solc	pass	
+cases/fallback-with-args.solc	fail	SC0001
+cases/fallback-with-return.solc	fail	SC0001
+cases/false-redundant-warning.solc	pass	
+cases/field-access.solc	fail	SC0201
+cases/field-helper-cxt-collision.solc	pass	
+cases/field-name-error.solc	pass	
+cases/foo-class.solc	pass	
+cases/for-body-shadow.solc	pass	
+cases/for-break.solc	pass	
+cases/for-continue.solc	pass	
+cases/for-empty-init.solc	pass	
+cases/for-init-shadow.solc	pass	
+cases/for-inner-block.solc	pass	
+cases/for-let-post.solc	fail	SC0001
+cases/for-let.solc	pass	
+cases/for-loop.solc	pass	
+cases/for-multi-init.solc	pass	
+cases/for-multi-post.solc	pass	
+cases/fresh-pat-arg-synonym.solc	pass	
+cases/fresh-pat-arg.solc	pass	
+cases/fresh-variable-shadowing.solc	pass	
+cases/generic-manual-no-pragma.solc	fail	
+cases/generic-product-no-pragma.solc	fail	
+cases/generic-sum-no-pragma.solc	fail	
+cases/if-examples.solc	pass	
+cases/import-std.solc	pass	
+cases/inc-closure.solc	pass	
+cases/index-example.solc	fail	SC0108
+cases/instance-closure-error-invalid-member.solc	fail	SC0201
+cases/instance-closure-error.solc	pass	
+cases/instance-context-wrong-kind.solc	fail	SC0299
+cases/instance-synonym-int.solc	pass	
+cases/instance-synonym.solc	pass	
+cases/instance-wrong-sig.solc	fail	SC0299
+cases/invokable-issue.solc	pass	
+cases/ixa.solc	pass	
+cases/join.solc	pass	
+cases/joinErr.solc	fail	SC0201
+cases/listeq.solc	fail	SC0220
+cases/listid.solc	pass	
+cases/ltimp.solc	pass	
+cases/ltproxy.solc	pass	
+cases/mainproxy.solc	fail	SC0102
+cases/match-bitwise.solc	pass	
+cases/match-compiler-undef-asm.solc	fail	SC0299
+cases/match-yul.solc	pass	
+cases/memory.solc	pass	
+cases/missing-instance.solc	fail	SC0223
+cases/mod-example.solc	pass	
+cases/modifier.solc	pass	
+cases/modulo.solc	pass	
+cases/monomorphic-require.solc	pass	
+cases/morefun.solc	pass	
+cases/mptc-both-templates.solc	pass	
+cases/mptc-chain-phantom.solc	pass	
+cases/mptc-guard-extras-concrete.solc	pass	
+cases/mptc-multi-instance.solc	pass	
+cases/mptc-nop-mainty-free.solc	pass	
+cases/mptc-partial-instance.solc	pass	
+cases/mptc-template-a-only.solc	pass	
+cases/mptc-template-b-only.solc	pass	
+cases/multi-stmt-var-leaf.solc	pass	
+cases/nano-desugared.solc	fail	SC0108
+cases/nid.solc	pass	
+cases/noclosure.solc	pass	
+cases/noconstr.solc	fail	SC0102
+cases/notif.solc	pass	
+cases/option2.solc	pass	
+cases/overlap-synonym-detected.solc	fail	SC0299
+cases/overlap-synonym-missed-order.solc	fail	SC0299
+cases/overlap-synonym-missed-two-synonyms.solc	fail	SC0299
+cases/overlapping-heads.solc	fail	SC0299
+cases/pair-bug.solc	pass	
+cases/pars.solc	pass	
+cases/patterson-bug.solc	fail	SC0108
+cases/payable-toplevel-function.solc	fail	SC0001
+cases/phantom-type-return-con.solc	pass	
+cases/polymatch-error.solc	pass	
+cases/polymorphic-require.solc	pass	
+cases/pragma_merge_base.solc	pass	
+cases/pragma_merge_fail_coverage.solc	fail	SC0299
+cases/pragma_merge_fail_patterson.solc	fail	SC0105
+cases/pragma_merge_import.solc	fail	SC0105
+cases/pragma_merge_verify.solc	fail	SC0105
+cases/pragma_test_patterson.solc	pass	
+cases/proxy-desugar.solc	pass	
+cases/proxy.solc	pass	
+cases/proxy1.solc	fail	SC0223
+cases/public-constructor.solc	fail	SC0001
+cases/public-fallback.solc	fail	SC0001
+cases/public-top-level-function.solc	fail	SC0001
+cases/rec.solc	pass	
+cases/redundant-match.solc	pass	
+cases/reference-encoding-good.solc	pass	
+cases/reference-encoding-good1.solc	pass	
+cases/reference-encoding.solc	fail	SC0102
+cases/reference-test.solc	fail	SC0102
+cases/reference.solc	fail	SC0001
+cases/references-daniel.solc	fail	SC0102
+cases/require-annotation-contract-method.solc	fail	SC0220
+cases/require-annotation-missing-both.solc	fail	SC0220
+cases/require-annotation-missing-param.solc	fail	SC0220
+cases/require-annotation-missing-return.solc	fail	SC0220
+cases/require-annotation-mutual.solc	fail	SC0220
+cases/return-fun-adder.solc	pass	
+cases/return-fun-bad-arity.solc	fail	SC0201
+cases/return-fun-bad-param.solc	fail	SC0201
+cases/return-fun-bad-return.solc	fail	SC0201
+cases/return-fun-bad-sig.solc	fail	SC0201
+cases/return-fun-const.solc	pass	
+cases/return-fun-eq.solc	pass	
+cases/return-fun-instance.solc	pass	
+cases/return-fun-not-fun.solc	fail	SC0201
+cases/same-name-constructor-qualifier.solc	pass	
+cases/signature.solc	fail	SC0001
+cases/simpleDiscount.solc	pass	
+cases/simpleIfExpr.solc	fail	SC0220
+cases/simpleIfStmt.solc	fail	SC0220
+cases/simpleid.solc	pass	
+cases/single-lambda.solc	pass	
+cases/skolem-let.solc	fail	SC0209
+cases/snds.solc	pass	
+cases/spec-fail-ungrounded.solc	pass	
+cases/strange-unbound.solc	pass	
+cases/string-const.solc	fail	SC0220
+cases/subject-index.solc	fail	SC0108
+cases/subject-reduction.solc	fail	SC0108
+cases/subsumption-constraint.solc	fail	SC0223
+cases/subsumption-test.solc	fail	SC0209
+cases/sum-match-default.solc	pass	
+cases/super-class-cycle-fail.solc	fail	SC0223
+cases/super-class-cycle.solc	pass	
+cases/super-class-num.solc	pass	
+cases/super-class-recursive-arg.solc	fail	SC0223
+cases/super-class.solc	pass	
+cases/synonym-arity-mismatch.solc	fail	SC0299
+cases/synonym-basic.solc	pass	
+cases/synonym-in-function.solc	pass	
+cases/synonym-long-cycle.solc	fail	SC0299
+cases/synonym-nested.solc	pass	
+cases/synonym-param.solc	pass	
+cases/synonym-recursive.solc	fail	SC0299
+cases/synonym-self-recursive.solc	fail	SC0299
+cases/tabled-answer-reuse.solc	fail	SC0299
+cases/tabled-cycle-fail.solc	timeout	
+cases/tabled-default-instance.solc	pass	
+cases/tabled-given-order.solc	pass	
+cases/tabled-left-recursive-fail.solc	timeout	
+cases/tabled-mutual-chain.solc	fail	SC0299
+cases/tabled-residual-given.solc	pass	
+cases/td.solc	pass	
+cases/tiamat.solc	pass	
+cases/toplevel-constructor.solc	fail	SC0001
+cases/toplevel-fallback.solc	fail	SC0001
+cases/tuple-trick.solc	pass	
+cases/tuva.solc	pass	
+cases/tyexp.solc	pass	
+cases/type-synonym-arg.solc	pass	
+cases/typedef.solc	pass	
+cases/uintdesugared.solc	pass	
+cases/unbound-instance-var.solc	fail	SC0103
+cases/unconstrained-instance.solc	fail	SC0001
+cases/undefined.solc	pass	
+cases/unit.solc	pass	
+cases/user-op-lambda.solc	fail	SC0001
+cases/vartyped.solc	fail	SC0220
+cases/weird-error-foo.solc	fail	SC0220
+cases/weirdfoo.solc	fail	SC0001
+cases/word-match-default.solc	pass	
+cases/word-match.solc	pass	
+cases/xref.solc	fail	SC0221
+cases/yul-asm-for-body.solc	pass	
+cases/yul-asm-switch-body.solc	pass	
+cases/yul-deposit-example.solc	pass	
+cases/yul-for.solc	pass	
+cases/yul-function-typing.solc	pass	
+cases/yul-multi-return-arity-fail.solc	fail	SC0299
+cases/yul-multi-return.solc	pass	
+cases/yul-return.solc	pass	
+comptime/CondExpr.solc	pass	
+comptime/CondStmt.solc	pass	
+comptime/OneOne.solc	fail	SC0001
+comptime/OneTwo.solc	pass	
+comptime/Plus.solc	pass	
+comptime/Size.solc	pass	
+comptime/StdSize.solc	pass	
+comptime/comptime_syntax.solc	pass	
+comptime/counter.solc	pass	
+comptime/ct_asm_mem.solc	pass	
+comptime/ct_asm_ret.solc	pass	
+comptime/ct_chain_ok.solc	pass	
+comptime/ct_let_ok.solc	pass	
+comptime/ct_let_runtime.solc	pass	
+comptime/ct_overloaded_bad.solc	pass	
+comptime/ct_overloaded_ok.solc	pass	
+comptime/ct_param_ok.solc	pass	
+comptime/ct_param_poly_runtime.solc	fail	SC0299
+comptime/ct_param_runtime.solc	fail	
+comptime/ct_runtime_arg.solc	pass	
+comptime/fib.solc	pass	
+comptime/fib2.solc	pass	
+comptime/fib3.solc	pass	
+comptime/fromInt.solc	fail	SC0103
+comptime/fromInt2.solc	fail	SC0103
+comptime/fromInt3.solc	fail	SC0103
+comptime/fromLit.solc	fail	SC0103
+comptime/int-untyped-let.solc	pass	
+comptime/integer-basic.solc	pass	
+comptime/integer-fib.solc	pass	
+comptime/integer-from-integer.solc	pass	
+comptime/integer-lit-class.solc	pass	
+comptime/integer-lit-cond.solc	pass	
+comptime/integer-lit-pat.solc	pass	
+comptime/integer-lit-poly.solc	pass	
+comptime/integer-lit-safe.solc	pass	
+comptime/integer-lit-word-site.solc	pass	
+comptime/integer-lit.solc	pass	
+comptime/match_labels.solc	pass	
+comptime/string-lit-keccak.solc	pass	
+comptime/string-lit-len.solc	pass	
+comptime/string-lit-ops.solc	pass	
+comptime/uint256-lit.solc	pass	
+dispatch/Revert.solc	pass	
+dispatch/assembly.solc	pass	
+dispatch/basic.solc	pass	
+dispatch/concat.solc	pass	
+dispatch/counter.solc	pass	
+dispatch/ecrecover.solc	pass	
+dispatch/empty.solc	pass	
+dispatch/empty_no_constructor.solc	pass	
+dispatch/fallback.solc	pass	
+dispatch/fib.solc	fail	SC0103
+dispatch/forloops.solc	pass	
+dispatch/generic_product.solc	pass	
+dispatch/generic_sum.solc	pass	
+dispatch/hashes.solc	pass	
+dispatch/memory.solc	pass	
+dispatch/miniERC20.solc	pass	
+dispatch/neg.solc	pass	
+dispatch/nonpayable_ctor.solc	pass	
+dispatch/ownable.solc	pass	
+dispatch/payable.solc	pass	
+dispatch/payable_ctor.solc	pass	
+dispatch/slices.solc	pass	
+dispatch/specialise_sum_of_product.solc	pass	
+dispatch/storage.solc	pass	
+dispatch/stringid.solc	pass	
+dispatch/sum_wide_product.solc	pass	
+dispatch/weth9.solc	pass	
+invokable/021nid.solc	fail	SC0220
+invokable/022nid-invoke.solc	fail	SC0001
+invokable/024lamid.solc	fail	SC0220
+invokable/025lamid-invoke.solc	fail	SC0001
+invokable/026capture.solc	fail	SC0001
+invokable/027retfun.solc	fail	SC0001
+invokable/028modifier.solc	fail	SC0001
+invokable/031enum.solc	fail	SC0001
+opcodes/all-shapes.solc	pass	
+pragmas/bound.solc	fail	SC0001
+pragmas/coverage.solc	pass	
+pragmas/patterson.solc	pass	
+spec/00answer.solc	pass	
+spec/010answer.solc	fail	SC0220
+spec/011id.solc	fail	SC0220
+spec/012nid.solc	fail	SC0220
+spec/013comp.solc	fail	SC0220
+spec/01id.solc	pass	
+spec/021not.solc	pass	
+spec/022add.solc	pass	
+spec/024arith.solc	pass	
+spec/027sstore.solc	fail	SC0220
+spec/02nid.solc	pass	
+spec/031maybe.solc	pass	
+spec/032simplejoin.solc	pass	
+spec/033join.solc	pass	
+spec/034cojoin.solc	pass	
+spec/035padding.solc	pass	
+spec/036wildcard.solc	pass	
+spec/037dwarves.solc	pass	
+spec/038food0.solc	pass	
+spec/039food.solc	pass	
+spec/041pair.solc	pass	
+spec/042triple.solc	pass	
+spec/043fstsnd.solc	pass	
+spec/047rgb.solc	pass	
+spec/048rgb2.solc	pass	
+spec/049rgb3.solc	pass	
+spec/051expreturn.solc	fail	SC0103
+spec/051negBool.solc	fail	SC0102
+spec/052negPair.solc	fail	SC0001
+spec/052return.solc	fail	SC0103
+spec/053return.solc	fail	SC0103
+spec/06comp.solc	pass	
+spec/09not.solc	pass	
+spec/101struct1Field.solc	fail	SC0102
+spec/102uintField.solc	fail	SC0102
+spec/103struct3Fields.solc	fail	SC0102
+spec/105nestedStruct.solc	fail	SC0102
+spec/10negBool.solc	pass	
+spec/111storageStruct.solc	fail	SC0102
+spec/112ContractStorage.solc	fail	SC0105
+spec/113counter.solc	fail	SC0105
+spec/11negPair.solc	pass	
+spec/120basicCounter.solc	pass	
+spec/121counter.solc	pass	
+spec/122counters.solc	pass	
+spec/123stackAndStorage.solc	pass	
+spec/126nanoerc20.solc	pass	
+spec/127microerc20.solc	pass	
+spec/128minierc20.solc	pass	
+spec/131constructor.solc	fail	SC0220
+spec/135cons3.solc	fail	SC0108
+spec/903badassign.solc	pass	
+spec/939badfood.solc	pass	
+spec/SimpleField.solc	pass	
+spec/StorageLib.solc	fail	SC0220
+spec/attic/051expreturn.solc	fail	SC0001
+spec/attic/052return.solc	fail	SC0001
+spec/attic/053return.solc	fail	SC0001

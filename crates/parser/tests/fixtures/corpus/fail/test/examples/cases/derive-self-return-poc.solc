@@ -1,0 +1,42 @@
+// PoC: #[derive(...)] currently accepts a single-parameter class whose method
+// returns the self type, but the generated method only applies Generic.from to
+// arguments and does not wrap the result back with Generic.to.
+//
+// Expected behavior:
+//   either reject this derive with a clear diagnostic, or generate:
+//     return Generic.to(CloneLike.clone(Generic.from(x)));
+//
+// Current behavior:
+//   generated clone(x : Box(a)) -> Box(a) returns the representation type,
+//   causing type inference to fail with an infinite type error.
+
+import std.{*};
+import std.Generic.{*};
+
+pragma no-patterson-condition;
+pragma no-bounded-variable-condition;
+
+forall a.
+class a : CloneLike {
+  function clone(x : a) -> a;
+}
+
+instance word : CloneLike {
+  function clone(x : word) -> word { return x; }
+}
+
+instance () : CloneLike {
+  function clone(x : ()) -> () { return (); }
+}
+
+forall f g . f:CloneLike, g:CloneLike =>
+instance (f, g) : CloneLike {
+  function clone(x : (f, g)) -> (f, g) { return x; }
+}
+
+#[derive(CloneLike)]
+data Box(a) = Box(a);
+
+function cloneBox(x : Box(word)) -> Box(word) {
+  return CloneLike.clone(x);
+}
