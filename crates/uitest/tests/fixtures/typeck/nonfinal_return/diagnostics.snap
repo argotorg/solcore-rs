@@ -3,11 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/nonfinal_return/main.solc
 ---
-error[SC0210]: return statement must be the final statement in its body
+error[SC0222]: illegal return statement
  --> /main/main.solc:2:3
   |
 1 | function g() -> word {
 2 |   return 1;
-  |   ^^^^^^^^^ non-final return
+  |   ^^^^^^^^^ return before end of block
 3 |   return 2;
   |
+  = note: return statements must be the final statement in a block

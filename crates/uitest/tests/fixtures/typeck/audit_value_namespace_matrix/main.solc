@@ -3,7 +3,7 @@ import util as U;
 data Opt = Some(word) | None;
 type Alias = word;
 contract K {}
-class a:C {}
+forall a . class a:C {}
 
 function adt_value() -> word {
   return Opt;

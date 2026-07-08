@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/nullary_type_applied_let/main.solc
+---
+error[SC0299]: Invalid number of type arguments!
+ --> /main/main.solc:4:10
+  |
+3 | function f() -> word {
+4 |   let x: M(word) = M.Mk;
+  |          ^^^^^^^ diagnostic reported here
+5 |   return 0;
+  |
+  = note: Type M is expected to have 0 type arguments
+  = note: but, type M(word) has 1 arguments

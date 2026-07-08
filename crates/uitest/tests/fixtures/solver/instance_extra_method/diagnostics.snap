@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/instance_extra_method/main.solc
+---
+error[SC0202]: undefined name: C.g
+ --> /main/main.solc:7:12
+  |
+6 |   function f(x: word) -> word { return x; }
+7 |   function g(x: word) -> word { return x; }
+  |            ^ unknown name
+8 | }
+  |

@@ -1,8 +1,8 @@
-class t:Add {
+forall t . class t:Add {
   function add(l:t, r:t) -> t;
 }
 
-class t:Ord {
+forall t . class t:Ord {
   function gt(l:t, r:t) -> bool;
 }
 

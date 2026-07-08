@@ -1,4 +1,4 @@
-class a:C {}
+forall a . class a:C {}
 
 function class_annotation() -> word {
   let x: C;

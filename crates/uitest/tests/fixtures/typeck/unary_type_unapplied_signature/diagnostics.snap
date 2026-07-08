@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/unary_type_unapplied_signature/main.solc
+---
+error[SC0299]: Invalid number of type arguments!
+ --> /main/main.solc:3:15
+  |
+2 |
+3 | function f(x: P) -> word {
+  |               ^ diagnostic reported here
+4 |   return 0;
+  |
+  = note: Type P is expected to have 1 type arguments
+  = note: but, type P has 0 arguments

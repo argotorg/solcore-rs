@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/method_extra_forall/main.solc
+---
+error[SC0299]: Ambiguous infered type
+ --> /main/main.solc:7:10
+  |
+6 |
+7 | instance word : C {
+  |          ^^^^^^^^ ambiguous inferred type
+8 |   forall b . b:D => function f(x: word) -> word { return x; }
+  |
+  = note: forall _. _:class:D => (word) -> word
+  = note: add a type signature to fix the ambiguous type variable

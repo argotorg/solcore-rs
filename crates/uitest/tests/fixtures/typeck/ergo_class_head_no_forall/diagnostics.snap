@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ergo_class_head_no_forall/main.solc
+---
+error[SC0102]: undefined type variables: a
+ --> /main/main.solc:1:7
+  |
+1 | class a : C {}
+  |       ^ undefined type variable

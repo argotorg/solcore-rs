@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/solver/ergo_inst_wrong_kind/main.solc
+---
+error[SC0299]: Invalid number of type arguments!
+ --> /main/main.solc:5:10
+  |
+3 | forall a . class a : C {}
+4 |
+5 | instance Box : C {}
+  |          ^^^ diagnostic reported here
+  |
+  = note: Type Box is expected to have 1 type arguments
+  = note: but, type Box has 0 arguments

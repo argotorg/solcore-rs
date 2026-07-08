@@ -527,6 +527,26 @@ pub enum TypeckDiagnostic {
         /// Generalized inferred type snapshot.
         scheme: String,
     },
+    /// `SC0299`: a type constructor was applied to the wrong number of type
+    /// arguments.
+    TypeConstructorArity {
+        /// Source span for the ill-kinded type annotation.
+        span: LabelSpan,
+        /// Type constructor name.
+        constructor: String,
+        /// Full type annotation snapshot.
+        ty: String,
+        /// Declared arity.
+        expected: usize,
+        /// Actual argument count.
+        actual: usize,
+    },
+    /// `SC0102`: a class head relies on a type variable that was not declared
+    /// by an explicit `forall`.
+    UndefinedTypeVariables {
+        /// Undeclared variables with their source spans.
+        vars: Vec<(LabelSpan, String)>,
+    },
     /// `SC0203`: function, constructor, or match arm arity mismatch.
     WrongArity {
         /// Source span for the call, constructor, signature, or syntactic
@@ -538,6 +558,14 @@ pub enum TypeckDiagnostic {
         expected: usize,
         /// Actual number of arguments/patterns.
         actual: usize,
+    },
+    /// `SC0203`: mutually recursive data declarations are rejected by the
+    /// reference frontend.
+    MutualRecursiveData {
+        /// Source span for one cross-recursive type reference.
+        span: LabelSpan,
+        /// Referenced type that would be unavailable in the reference order.
+        ty: String,
     },
     /// `SC0204`: a SAIL variable referenced by Yul is not word-typed.
     NonWordYulVar {
@@ -603,7 +631,7 @@ pub enum TypeckDiagnostic {
         /// Predicate snapshot.
         pred: String,
     },
-    /// `SC0210`: a `return` appears before the final statement in a body.
+    /// `SC0222`: a `return` appears before the final statement in a body.
     NonFinalReturn {
         /// Source span for the non-final return statement.
         span: LabelSpan,
@@ -706,6 +734,13 @@ pub enum TypeckDiagnostic {
         class: String,
         /// Missing method names.
         missing: Vec<String>,
+    },
+    /// `SC0202`: an instance defines a method not declared by the class.
+    UnknownInstanceMethod {
+        /// Source span for the extra method name.
+        span: LabelSpan,
+        /// Qualified method name as the reference reports it.
+        name: String,
     },
     /// `SC0220`: a top-level or contract function has an incomplete signature.
     IncompleteSignature {
@@ -1014,6 +1049,34 @@ impl TypeckDiagnostic {
                     .with_note(scheme.clone())
                     .with_note("add a type signature to fix the ambiguous type variable")
             }
+            TypeckDiagnostic::TypeConstructorArity {
+                span,
+                constructor,
+                ty,
+                expected,
+                actual,
+            } => Diagnostic::error("Invalid number of type arguments!")
+                .with_code("SC0299")
+                .with_primary_label_span(span.clone(), Some("diagnostic reported here"))
+                .with_note(format!(
+                    "Type {constructor} is expected to have {expected} type arguments"
+                ))
+                .with_note(format!("but, type {ty} has {actual} arguments")),
+            TypeckDiagnostic::UndefinedTypeVariables { vars } => {
+                let names = vars
+                    .iter()
+                    .map(|(_, name)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let mut diagnostic =
+                    Diagnostic::error(format!("undefined type variables: {names}"))
+                        .with_code("SC0102");
+                for (span, _) in vars {
+                    diagnostic = diagnostic
+                        .with_primary_label_span(span.clone(), Some("undefined type variable"));
+                }
+                diagnostic
+            }
             TypeckDiagnostic::WrongArity {
                 span,
                 context,
@@ -1024,6 +1087,11 @@ impl TypeckDiagnostic {
             ))
             .with_code("SC0203")
             .with_primary_label_span(span.clone(), Some("wrong arity here")),
+            TypeckDiagnostic::MutualRecursiveData { span, ty } => {
+                Diagnostic::error(format!("undefined type: {ty}"))
+                    .with_code("SC0203")
+                    .with_primary_label_span(span.clone(), Some("undefined type"))
+            }
             TypeckDiagnostic::NonWordYulVar { span, name, actual } => Diagnostic::error(format!(
                 "Yul reference `{name}` requires word type, got {actual}"
             ))
@@ -1088,9 +1156,10 @@ impl TypeckDiagnostic {
             .with_code("SC0209")
             .with_primary_label_span(span.clone(), Some("constraint originates here")),
             TypeckDiagnostic::NonFinalReturn { span } => {
-                Diagnostic::error("return statement must be the final statement in its body")
-                    .with_code("SC0210")
-                    .with_primary_label_span(span.clone(), Some("non-final return"))
+                Diagnostic::error("illegal return statement")
+                    .with_code("SC0222")
+                    .with_primary_label_span(span.clone(), Some("return before end of block"))
+                    .with_note("return statements must be the final statement in a block")
             }
             TypeckDiagnostic::UnknownYulName { span, name } => {
                 Diagnostic::error(format!("unknown Yul identifier or function: {name}"))
@@ -1183,6 +1252,11 @@ impl TypeckDiagnostic {
             ))
             .with_code("SC0244")
             .with_primary_label_span(span.clone(), Some("incomplete instance")),
+            TypeckDiagnostic::UnknownInstanceMethod { span, name } => {
+                Diagnostic::error(format!("undefined name: {name}"))
+                    .with_code("SC0202")
+                    .with_primary_label_span(span.clone(), Some("unknown name"))
+            }
             TypeckDiagnostic::IncompleteSignature { span, signature } => Diagnostic::error(
                 "top-level function must have complete type annotations",
             )
@@ -1286,6 +1360,585 @@ fn lowering_diagnostic_to_typeck(diagnostic: TypeLoweringDiagnostic) -> TypeckDi
             TypeckDiagnostic::ClassAsType { span, class }
         }
     }
+}
+
+fn item_type_constructor_arity_diagnostics<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    resolutions: &hir_nameres::ItemResolutionMap<'db>,
+) -> Vec<TypeckDiagnostic> {
+    resolutions
+        .types
+        .iter()
+        .filter_map(|resolution| {
+            type_constructor_arity_diagnostic(db, entry, resolution.ty, &resolution.resolution)
+        })
+        .collect()
+}
+
+fn body_type_constructor_arity_diagnostics<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    body: FuncBody<'db>,
+    resolutions: &hir_nameres::BodyResolutionMap<'db>,
+) -> Vec<TypeckDiagnostic> {
+    let mut skip = FxHashSet::default();
+    collect_uninitialized_let_type_refs(db, body, &mut skip);
+    resolutions
+        .types
+        .iter()
+        .filter(|resolution| !skip.contains(&resolution.ty))
+        .filter_map(|resolution| {
+            type_constructor_arity_diagnostic(db, entry, resolution.ty, &resolution.resolution)
+        })
+        .collect()
+}
+
+fn collect_uninitialized_let_type_refs<'db>(
+    db: &'db dyn HirDb,
+    body: FuncBody<'db>,
+    out: &mut FxHashSet<TypeRef<'db>>,
+) {
+    for stmt in body.top_level_stmts(db) {
+        collect_uninitialized_let_type_refs_from_stmt(db, body, *stmt, out);
+    }
+}
+
+fn collect_uninitialized_let_type_refs_from_stmt<'db>(
+    db: &'db dyn HirDb,
+    body: FuncBody<'db>,
+    stmt: Id<Stmt<'db>>,
+    out: &mut FxHashSet<TypeRef<'db>>,
+) {
+    match &body.stmts(db).get(stmt).kind {
+        StmtKind::Let {
+            ty: Some(ty),
+            init: None,
+            ..
+        } => {
+            collect_type_ref_tree(db, *ty, out);
+        }
+        StmtKind::Let { init, .. } => {
+            if let Some(init) = init {
+                collect_uninitialized_let_type_refs_from_expr(db, body, *init, out);
+            }
+        }
+        StmtKind::Return(expr) => {
+            if let Some(expr) = expr {
+                collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
+            }
+        }
+        StmtKind::Expr(expr) => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
+        }
+        StmtKind::Assign { lhs, rhs }
+        | StmtKind::AddAssign { lhs, rhs }
+        | StmtKind::SubAssign { lhs, rhs }
+        | StmtKind::BitXorAssign { lhs, rhs }
+        | StmtKind::BitAndAssign { lhs, rhs }
+        | StmtKind::BitOrAssign { lhs, rhs }
+        | StmtKind::ModAssign { lhs, rhs } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *lhs, out);
+            collect_uninitialized_let_type_refs_from_expr(db, body, *rhs, out);
+        }
+        StmtKind::Match { scrutinees, arms } => {
+            for scrutinee in scrutinees {
+                collect_uninitialized_let_type_refs_from_expr(db, body, *scrutinee, out);
+            }
+            for arm in arms {
+                for stmt in &arm.body {
+                    collect_uninitialized_let_type_refs_from_stmt(db, body, *stmt, out);
+                }
+            }
+        }
+        StmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *cond, out);
+            for stmt in then_body {
+                collect_uninitialized_let_type_refs_from_stmt(db, body, *stmt, out);
+            }
+            if let Some(else_body) = else_body {
+                for stmt in else_body {
+                    collect_uninitialized_let_type_refs_from_stmt(db, body, *stmt, out);
+                }
+            }
+        }
+        StmtKind::For {
+            init,
+            cond,
+            post,
+            body: for_body,
+        } => {
+            for stmt in init {
+                collect_uninitialized_let_type_refs_from_stmt(db, body, *stmt, out);
+            }
+            collect_uninitialized_let_type_refs_from_expr(db, body, *cond, out);
+            for stmt in post {
+                collect_uninitialized_let_type_refs_from_stmt(db, body, *stmt, out);
+            }
+            for stmt in for_body {
+                collect_uninitialized_let_type_refs_from_stmt(db, body, *stmt, out);
+            }
+        }
+        StmtKind::Block { body: block } => {
+            for stmt in block {
+                collect_uninitialized_let_type_refs_from_stmt(db, body, *stmt, out);
+            }
+        }
+        StmtKind::Assembly { .. } | StmtKind::Break | StmtKind::Continue | StmtKind::Error => {}
+    }
+}
+
+fn collect_uninitialized_let_type_refs_from_expr<'db>(
+    db: &'db dyn HirDb,
+    body: FuncBody<'db>,
+    expr: Id<Expr<'db>>,
+    out: &mut FxHashSet<TypeRef<'db>>,
+) {
+    match &body.exprs(db).get(expr).kind {
+        ExprKind::Lambda {
+            params: _,
+            ret: _,
+            body: lambda_body,
+        } => {
+            collect_uninitialized_let_type_refs(db, *lambda_body, out);
+        }
+        ExprKind::Tuple(exprs) | ExprKind::DotCtor { args: exprs, .. } => {
+            for expr in exprs {
+                collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
+            }
+        }
+        ExprKind::BinOp { lhs, rhs, .. } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *lhs, out);
+            collect_uninitialized_let_type_refs_from_expr(db, body, *rhs, out);
+        }
+        ExprKind::UnaryOp { expr, .. } | ExprKind::TypeAnnot { expr, .. } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
+        }
+        ExprKind::Call { callee, args } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *callee, out);
+            for arg in args {
+                collect_uninitialized_let_type_refs_from_expr(db, body, *arg, out);
+            }
+        }
+        ExprKind::Field { base, .. } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *base, out);
+        }
+        ExprKind::Index { base, index } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *base, out);
+            collect_uninitialized_let_type_refs_from_expr(db, body, *index, out);
+        }
+        ExprKind::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            collect_uninitialized_let_type_refs_from_expr(db, body, *cond, out);
+            collect_uninitialized_let_type_refs_from_expr(db, body, *then_expr, out);
+            collect_uninitialized_let_type_refs_from_expr(db, body, *else_expr, out);
+        }
+        ExprKind::Ident(_) | ExprKind::Lit(_) | ExprKind::Proxy { .. } | ExprKind::Error => {}
+    }
+}
+
+fn collect_type_ref_tree<'db>(
+    db: &'db dyn HirDb,
+    ty: TypeRef<'db>,
+    out: &mut FxHashSet<TypeRef<'db>>,
+) {
+    if !out.insert(ty) {
+        return;
+    }
+    match ty.kind(db) {
+        TypeRefKind::Named { args, .. } => {
+            for arg in args.atom() {
+                collect_type_ref_tree(db, *arg, out);
+            }
+        }
+        TypeRefKind::Fn { params, ret } => {
+            for param in params.atom() {
+                collect_type_ref_tree(db, *param, out);
+            }
+            collect_type_ref_tree(db, *ret, out);
+        }
+        TypeRefKind::Comptime { inner, .. } => collect_type_ref_tree(db, *inner, out),
+        TypeRefKind::Tuple { elems } => {
+            for elem in elems.atom() {
+                collect_type_ref_tree(db, *elem, out);
+            }
+        }
+        TypeRefKind::Error { .. } => {}
+    }
+}
+
+fn type_constructor_arity_diagnostic<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    ty: TypeRef<'db>,
+    resolution: &hir_nameres::Resolution<'db>,
+) -> Option<TypeckDiagnostic> {
+    let TypeRefKind::Named { args, .. } = ty.kind(db) else {
+        return None;
+    };
+    let expected = type_constructor_expected_arity(db, entry, resolution)?;
+    let actual = args.atom().len();
+    if expected == actual {
+        return None;
+    }
+    Some(TypeckDiagnostic::TypeConstructorArity {
+        span: LabelSpan::from_span(db, ty.span(db)),
+        constructor: type_ref_constructor_name(db, ty),
+        ty: format_type_ref(db, ty),
+        expected,
+        actual,
+    })
+}
+
+fn type_constructor_expected_arity<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    resolution: &hir_nameres::Resolution<'db>,
+) -> Option<usize> {
+    match resolution {
+        hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Type(ty)) => {
+            builtin_type_expected_arity(*ty)
+        }
+        hir_nameres::Resolution::Def { def, kind } => {
+            user_type_expected_arity(db, entry, *def, *kind)
+        }
+        _ => None,
+    }
+}
+
+fn builtin_type_expected_arity(ty: hir_nameres::BuiltinType) -> Option<usize> {
+    match ty {
+        hir_nameres::BuiltinType::Word
+        | hir_nameres::BuiltinType::Bool
+        | hir_nameres::BuiltinType::String
+        | hir_nameres::BuiltinType::Unit
+        | hir_nameres::BuiltinType::Integer => Some(0),
+        // The reference `kindCheck` explicitly exempts `pair`.
+        hir_nameres::BuiltinType::Pair => None,
+        hir_nameres::BuiltinType::Sum => Some(2),
+    }
+}
+
+fn user_type_expected_arity<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    def: DefId<'db>,
+    kind: hir_nameres::DefResolutionKind,
+) -> Option<usize> {
+    let module = module_hir(db, module_for_def(db, entry, def)?)?;
+    match kind {
+        hir_nameres::DefResolutionKind::Adt => {
+            find_adt_info(db, module, def).map(|info| info.adt.ty_param_elems(db).len())
+        }
+        // Type aliases already have dedicated normalization diagnostics in
+        // this crate; keep this pass scoped to kind-checking constructors.
+        hir_nameres::DefResolutionKind::TypeAlias => None,
+        hir_nameres::DefResolutionKind::Contract => find_contract_arity(db, module, def),
+        hir_nameres::DefResolutionKind::Function
+        | hir_nameres::DefResolutionKind::Class
+        | hir_nameres::DefResolutionKind::Instance => None,
+    }
+}
+
+fn find_contract_arity<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<usize> {
+    module.items(db).iter().find_map(|item| {
+        let Item::ContractDef(contract) = item else {
+            return None;
+        };
+        (contract.def_id_value(db) == def).then(|| contract.ty_param_elems(db).len())
+    })
+}
+
+fn type_ref_constructor_name<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>) -> String {
+    match ty.kind(db) {
+        TypeRefKind::Named {
+            qualifier, name, ..
+        } => {
+            if let Some(qualifier) = qualifier {
+                format!("{}.{}", ident_text(db, qualifier), ident_text(db, name))
+            } else {
+                ident_text(db, name)
+            }
+        }
+        _ => format_type_ref(db, ty),
+    }
+}
+
+fn implicit_class_head_binder_diagnostic<'db>(
+    db: &'db dyn HirDb,
+    class: ClassDef<'db>,
+) -> Option<TypeckDiagnostic> {
+    let vars = class.type_var_elems(db);
+    let [var] = vars.as_slice() else {
+        return None;
+    };
+    let head = class.head(db).kind(db);
+    let TypeRefKind::Named {
+        qualifier: None,
+        name,
+        args,
+    } = head.ty.kind(db)
+    else {
+        return None;
+    };
+    if !args.atom().is_empty() || builtin_type_name(ident_text(db, name).as_str()) {
+        return None;
+    }
+    if ident_text(db, var) != ident_text(db, name) || var.span(db) != name.span(db) {
+        return None;
+    }
+    Some(TypeckDiagnostic::UndefinedTypeVariables {
+        vars: vec![(
+            LabelSpan::from_span(db, name.span(db)),
+            ident_text(db, name),
+        )],
+    })
+}
+
+fn builtin_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "word" | "Word" | "bool" | "string" | "()" | "pair" | "sum" | "integer"
+    )
+}
+
+#[derive(Clone)]
+struct DataCycleNode<'db> {
+    adt: AdtDef<'db>,
+    name: String,
+}
+
+#[derive(Clone)]
+struct DataCycleEdge<'db> {
+    from: DefId<'db>,
+    to: DefId<'db>,
+    span: LabelSpan,
+    ty: String,
+}
+
+fn mutual_data_diagnostics<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    resolutions: &hir_nameres::ItemResolutionMap<'db>,
+) -> Vec<TypeckDiagnostic> {
+    let nodes = local_data_cycle_nodes(db, module);
+    if nodes.len() < 2 {
+        return Vec::new();
+    }
+    let local_defs = nodes
+        .iter()
+        .map(|node| node.adt.def_id_value(db))
+        .collect::<FxHashSet<_>>();
+    let names = nodes
+        .iter()
+        .map(|node| (node.adt.def_id_value(db), node.name.clone()))
+        .collect::<FxHashMap<_, _>>();
+    let type_resolutions = resolutions
+        .types
+        .iter()
+        .map(|resolution| (resolution.ty, resolution.resolution.clone()))
+        .collect::<FxHashMap<_, _>>();
+    let mut edges = Vec::new();
+    for node in &nodes {
+        let from = node.adt.def_id_value(db);
+        for ctor in node.adt.ctors(db) {
+            collect_data_cycle_edges(
+                db,
+                from,
+                *ctor.fields.atom(),
+                &type_resolutions,
+                &local_defs,
+                &names,
+                &mut edges,
+            );
+        }
+    }
+    if edges.is_empty() {
+        return Vec::new();
+    }
+    let adjacency = data_cycle_adjacency(&edges);
+    let mut reported = FxHashSet::default();
+    let mut diagnostics = Vec::new();
+    for edge in &edges {
+        if edge.from == edge.to || !data_path_exists(edge.to, edge.from, &adjacency) {
+            continue;
+        }
+        let mut component = local_defs
+            .iter()
+            .copied()
+            .filter(|def| {
+                data_path_exists(edge.from, *def, &adjacency)
+                    && data_path_exists(*def, edge.from, &adjacency)
+            })
+            .collect::<Vec<_>>();
+        if component.len() < 2 {
+            continue;
+        }
+        component.sort_by(|lhs, rhs| names[lhs].cmp(&names[rhs]));
+        let key = component
+            .iter()
+            .map(|def| names[def].as_str())
+            .collect::<Vec<_>>()
+            .join("\0");
+        if !reported.insert(key) {
+            continue;
+        }
+        let component_defs = component.iter().copied().collect::<FxHashSet<_>>();
+        let Some(chosen) = choose_data_cycle_edge(&edges, &component_defs, &names) else {
+            continue;
+        };
+        diagnostics.push(TypeckDiagnostic::MutualRecursiveData {
+            span: chosen.span.clone(),
+            ty: chosen.ty.clone(),
+        });
+    }
+    diagnostics
+}
+
+fn local_data_cycle_nodes<'db>(db: &'db dyn HirDb, module: Module<'db>) -> Vec<DataCycleNode<'db>> {
+    let mut nodes = Vec::new();
+    for item in module.items(db) {
+        collect_data_cycle_nodes_from_item(db, *item, &mut nodes);
+    }
+    nodes
+}
+
+fn collect_data_cycle_nodes_from_item<'db>(
+    db: &'db dyn HirDb,
+    item: Item<'db>,
+    nodes: &mut Vec<DataCycleNode<'db>>,
+) {
+    match item {
+        Item::AdtDef(adt) => nodes.push(DataCycleNode {
+            adt,
+            name: ident_text(db, &adt.name_elem(db)),
+        }),
+        Item::ContractDef(contract) => {
+            for item in contract.items(db) {
+                if let ContractItem::AdtDef(adt) = *item {
+                    collect_data_cycle_nodes_from_item(db, Item::AdtDef(adt), nodes);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_data_cycle_edges<'db>(
+    db: &'db dyn Db,
+    from: DefId<'db>,
+    ty: TypeRef<'db>,
+    resolutions: &FxHashMap<TypeRef<'db>, hir_nameres::Resolution<'db>>,
+    local_defs: &FxHashSet<DefId<'db>>,
+    names: &FxHashMap<DefId<'db>, String>,
+    edges: &mut Vec<DataCycleEdge<'db>>,
+) {
+    if let Some(hir_nameres::Resolution::Def {
+        def,
+        kind: hir_nameres::DefResolutionKind::Adt,
+    }) = resolutions.get(&ty)
+        && local_defs.contains(def)
+        && *def != from
+    {
+        edges.push(DataCycleEdge {
+            from,
+            to: *def,
+            span: LabelSpan::from_span(db, ty.span(db)),
+            ty: names
+                .get(def)
+                .cloned()
+                .unwrap_or_else(|| format_type_ref(db, ty)),
+        });
+    }
+    match ty.kind(db) {
+        TypeRefKind::Named { args, .. } => {
+            for arg in args.atom() {
+                collect_data_cycle_edges(db, from, *arg, resolutions, local_defs, names, edges);
+            }
+        }
+        TypeRefKind::Fn { params, ret } => {
+            for param in params.atom() {
+                collect_data_cycle_edges(db, from, *param, resolutions, local_defs, names, edges);
+            }
+            collect_data_cycle_edges(db, from, *ret, resolutions, local_defs, names, edges);
+        }
+        TypeRefKind::Comptime { inner, .. } => {
+            collect_data_cycle_edges(db, from, *inner, resolutions, local_defs, names, edges);
+        }
+        TypeRefKind::Tuple { elems } => {
+            for elem in elems.atom() {
+                collect_data_cycle_edges(db, from, *elem, resolutions, local_defs, names, edges);
+            }
+        }
+        TypeRefKind::Error { .. } => {}
+    }
+}
+
+fn data_cycle_adjacency<'db>(
+    edges: &[DataCycleEdge<'db>],
+) -> FxHashMap<DefId<'db>, Vec<DefId<'db>>> {
+    let mut adjacency = FxHashMap::default();
+    for edge in edges {
+        adjacency
+            .entry(edge.from)
+            .or_insert_with(Vec::new)
+            .push(edge.to);
+    }
+    adjacency
+}
+
+fn data_path_exists<'db>(
+    start: DefId<'db>,
+    goal: DefId<'db>,
+    adjacency: &FxHashMap<DefId<'db>, Vec<DefId<'db>>>,
+) -> bool {
+    if start == goal {
+        return true;
+    }
+    let mut seen = FxHashSet::default();
+    let mut stack = vec![start];
+    while let Some(current) = stack.pop() {
+        if !seen.insert(current) {
+            continue;
+        }
+        let Some(next) = adjacency.get(&current) else {
+            continue;
+        };
+        if next.contains(&goal) {
+            return true;
+        }
+        stack.extend(next.iter().copied());
+    }
+    false
+}
+
+fn choose_data_cycle_edge<'db>(
+    edges: &[DataCycleEdge<'db>],
+    component: &FxHashSet<DefId<'db>>,
+    names: &FxHashMap<DefId<'db>, String>,
+) -> Option<DataCycleEdge<'db>> {
+    let mut candidates = edges
+        .iter()
+        .filter(|edge| component.contains(&edge.from) && component.contains(&edge.to))
+        .cloned()
+        .collect::<Vec<_>>();
+    candidates.sort_by(|lhs, rhs| {
+        names[&rhs.from]
+            .cmp(&names[&lhs.from])
+            .then_with(|| names[&lhs.to].cmp(&names[&rhs.to]))
+    });
+    candidates.into_iter().next()
 }
 
 fn infer_ty_mentions_alias<'db>(ty: &InferTy<'db>) -> bool {
@@ -6983,6 +7636,16 @@ pub fn module_typeck_diagnostics<'db>(
         .iter()
         .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower()))
         .collect::<Vec<_>>();
+    diagnostics.extend(
+        item_type_constructor_arity_diagnostics(db, module, &item_resolutions)
+            .into_iter()
+            .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+    );
+    diagnostics.extend(
+        mutual_data_diagnostics(db, hir_module, &item_resolutions)
+            .into_iter()
+            .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+    );
     let alias_errors = type_alias_normalization_errors(db, hir_module, &item_resolutions);
     let alias_expansion_limit = alias_errors
         .iter()
@@ -7967,6 +8630,10 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         class: ClassDef<'db>,
         inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
     ) {
+        if let Some(diagnostic) = implicit_class_head_binder_diagnostic(self.db, class) {
+            self.diagnostics
+                .push(AnyDiagnostic::Typeck(diagnostic.lower()));
+        }
         let mut type_vars = inherited_type_vars.to_vec();
         type_vars.extend(type_var_bindings(
             class.def_id_value(self.db),
@@ -8046,6 +8713,16 @@ impl<'db> TypeckDiagnosticCollector<'db> {
             hir_nameres::NameresDiagnosticPolicy::Emit,
         );
         if !body_map.diagnostics.is_empty() {
+            return;
+        }
+        let body_arity_diagnostics =
+            body_type_constructor_arity_diagnostics(self.db, self.module, body, &body_map);
+        if !body_arity_diagnostics.is_empty() {
+            self.diagnostics.extend(
+                body_arity_diagnostics
+                    .into_iter()
+                    .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
+            );
             return;
         }
         let ComptimeCheckResult {

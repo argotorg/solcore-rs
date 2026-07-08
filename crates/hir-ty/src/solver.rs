@@ -24,8 +24,8 @@ use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TypeLowering,
-    TypeckDiagnostic,
+    BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TyScheme,
+    TypeLowering, TypeckDiagnostic,
     alias::{AliasError, AliasNormalizer, normalize_pred_aliases},
 };
 
@@ -807,6 +807,21 @@ fn check_instance_methods<'db>(
         .filter(|required| !method_names.iter().any(|name| name == *required))
         .cloned()
         .collect::<Vec<_>>();
+    let extra = method_names
+        .iter()
+        .filter(|name| !required.iter().any(|required| required == *name))
+        .collect::<Vec<_>>();
+    for extra in extra {
+        if let Some(method) = methods
+            .iter()
+            .find(|method| ident_text(db, &method.sig(db).name) == *extra)
+        {
+            diagnostics.push(TypeckDiagnostic::UnknownInstanceMethod {
+                span: LabelSpan::from_span(db, method.sig(db).name.span(db)),
+                name: format!("{class_name}.{extra}"),
+            });
+        }
+    }
     if !missing.is_empty() {
         diagnostics.push(TypeckDiagnostic::IncompleteInstance {
             span: LabelSpan::from_span(db, instance.head(db).span(db)),
@@ -829,6 +844,7 @@ fn check_instance_methods<'db>(
             item_resolutions,
             class_info: &class_info,
             instance_head: head,
+            instance_head_span: LabelSpan::from_span(db, instance.head(db).span(db)),
         };
         check_instance_method_signature(&ctx, class_method, *instance_method, diagnostics);
     }
@@ -840,6 +856,7 @@ struct InstanceMethodCheckCtx<'a, 'db> {
     item_resolutions: &'a hir_nameres::ItemResolutionMap<'db>,
     class_info: &'a ClassLookup<'db>,
     instance_head: Pred<'db>,
+    instance_head_span: LabelSpan,
 }
 
 fn check_instance_method_signature<'db>(
@@ -901,13 +918,16 @@ fn check_instance_method_signature<'db>(
         ctx.item_resolutions,
         BinderEnv::from_type_vars(&inherited),
     );
-    let actual = method_lowerer
-        .lower_function(instance_method)
-        .scheme
-        .body(db)
-        .ty(db);
     let mut actual_normalizer = AliasNormalizer::new(db, ctx.module, ctx.item_resolutions);
-    let mut actual = actual_normalizer.normalize_ty(actual);
+    let actual_scheme =
+        actual_normalizer.normalize_scheme(method_lowerer.lower_function(instance_method).scheme);
+    if scheme_is_ambiguous(db, actual_scheme) {
+        diagnostics.push(TypeckDiagnostic::AmbiguousInferredType {
+            span: ctx.instance_head_span.clone(),
+            scheme: actual_scheme.display(db),
+        });
+    }
+    let mut actual = actual_scheme.body(db).ty(db);
     if instance_method.sig(db).ret.is_none() {
         actual = fill_missing_instance_return(db, expected, actual);
     }
@@ -972,6 +992,36 @@ fn fill_missing_instance_return<'db>(
         ) => Ty::function(db, params.clone(), *expected_ret),
         _ => actual,
     }
+}
+
+fn scheme_is_ambiguous<'db>(db: &'db dyn Db, scheme: TyScheme<'db>) -> bool {
+    let body = scheme.body(db);
+    let preds = body.preds(db);
+    if preds.is_empty() {
+        return false;
+    }
+    let mut reachable_vars = FxHashSet::default();
+    collect_ty_vars(db, body.ty(db), &mut reachable_vars);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for pred in preds {
+            let mut pred_vars = FxHashSet::default();
+            collect_pred_vars(db, *pred, &mut pred_vars);
+            if pred_vars.iter().any(|var| reachable_vars.contains(var)) {
+                for var in pred_vars {
+                    changed |= reachable_vars.insert(var);
+                }
+            }
+        }
+    }
+    let mut all_pred_vars = FxHashSet::default();
+    for pred in preds {
+        collect_pred_vars(db, *pred, &mut all_pred_vars);
+    }
+    all_pred_vars
+        .iter()
+        .any(|var| !reachable_vars.contains(var))
 }
 
 fn bind_class_head_vars<'db>(
