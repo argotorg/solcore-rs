@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt};
 
 use hir::{
     Db as HirDb,
@@ -6,6 +6,7 @@ use hir::{
         Ident,
         function::{YulExpr, YulExprKind, YulStmt, YulStmtKind},
     },
+    diag::Diagnostic,
     span::{Span, SpannedElem},
 };
 
@@ -84,6 +85,140 @@ pub enum CheckDiagnosticKind {
         actual: String,
     },
     AssemblyVoidArgument,
+}
+
+impl<'db> CheckDiagnostic<'db> {
+    pub fn lower(&self, db: &'db dyn HirDb) -> Diagnostic {
+        Diagnostic::error(self.kind.to_string())
+            .with_code(self.kind.code())
+            .with_primary_label(db, self.span, Some(self.kind.primary_label()))
+    }
+}
+
+impl CheckDiagnosticKind {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::UndefinedVariable { .. } => "SC0430",
+            Self::UndefinedFunction { .. } => "SC0431",
+            Self::DuplicateFunction { .. } => "SC0432",
+            Self::ArityMismatch { .. } => "SC0433",
+            Self::TypeMismatch { .. } => "SC0434",
+            Self::ExprAnnotationMismatch { .. } => "SC0435",
+            Self::ExpectedProduct { .. } => "SC0436",
+            Self::ExpectedSum { .. } => "SC0437",
+            Self::ExpectedBool { .. } => "SC0438",
+            Self::BadInjectionIndex { .. } => "SC0439",
+            Self::BadMatchPattern { .. } => "SC0440",
+            Self::ReturnOutsideFunction => "SC0441",
+            Self::FunctionTypeNotFirstOrder { .. } => "SC0442",
+            Self::MissingTerminator { .. } => "SC0443",
+            Self::AssemblyRequiresDatabase => "SC0444",
+            Self::AssemblyReturnCountMismatch { .. } => "SC0445",
+            Self::AssemblyExpressionNotUnit { .. } => "SC0446",
+            Self::AssemblyExpectedWordArgument { .. } => "SC0447",
+            Self::AssemblyExpectedWordAssignment { .. } => "SC0448",
+            Self::AssemblyVoidArgument => "SC0449",
+        }
+    }
+
+    fn primary_label(&self) -> &'static str {
+        match self {
+            Self::UndefinedVariable { .. } => "undefined variable",
+            Self::UndefinedFunction { .. } => "undefined function",
+            Self::DuplicateFunction { .. } => "duplicate function",
+            Self::ArityMismatch { .. } => "wrong number of arguments",
+            Self::TypeMismatch { .. } => "type mismatch",
+            Self::ExprAnnotationMismatch { .. } => "annotation mismatch",
+            Self::ExpectedProduct { .. } => "product value required",
+            Self::ExpectedSum { .. } => "sum value required",
+            Self::ExpectedBool { .. } => "boolean value required",
+            Self::BadInjectionIndex { .. } => "bad injection index",
+            Self::BadMatchPattern { .. } => "bad match pattern",
+            Self::ReturnOutsideFunction => "return outside function",
+            Self::FunctionTypeNotFirstOrder { .. } => "function type is not first-order",
+            Self::MissingTerminator { .. } => "missing terminator",
+            Self::AssemblyRequiresDatabase => "database required for assembly check",
+            Self::AssemblyReturnCountMismatch { .. } => "assembly return count mismatch",
+            Self::AssemblyExpressionNotUnit { .. } => "assembly expression must be unit",
+            Self::AssemblyExpectedWordArgument { .. } => "assembly argument must be word",
+            Self::AssemblyExpectedWordAssignment { .. } => "assembly assignment must be word",
+            Self::AssemblyVoidArgument => "assembly argument has no value",
+        }
+    }
+}
+
+impl fmt::Display for CheckDiagnosticKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UndefinedVariable { name } => write!(f, "undefined Hull variable `{name}`"),
+            Self::UndefinedFunction { name } => write!(f, "undefined Hull function `{name}`"),
+            Self::DuplicateFunction { name } => write!(f, "duplicate Hull function `{name}`"),
+            Self::ArityMismatch {
+                name,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "wrong arity for Hull function `{name}`: expected {expected}, got {actual}"
+            ),
+            Self::TypeMismatch { expected, actual } => {
+                write!(f, "Hull type mismatch: expected {expected}, got {actual}")
+            }
+            Self::ExprAnnotationMismatch {
+                annotated,
+                inferred,
+            } => write!(
+                f,
+                "Hull expression annotation mismatch: annotated {annotated}, inferred {inferred}"
+            ),
+            Self::ExpectedProduct { actual } => write!(f, "expected Hull product, got {actual}"),
+            Self::ExpectedSum { actual } => write!(f, "expected Hull sum, got {actual}"),
+            Self::ExpectedBool { actual } => write!(f, "expected Hull bool, got {actual}"),
+            Self::BadInjectionIndex { index, ty } => {
+                write!(f, "bad Hull injection index {index} for {ty}")
+            }
+            Self::BadMatchPattern { pat, ty } => {
+                write!(f, "Hull pattern {pat} does not match {ty}")
+            }
+            Self::ReturnOutsideFunction => write!(f, "Hull return appears outside a function"),
+            Self::FunctionTypeNotFirstOrder { name } => {
+                write!(f, "Hull function `{name}` has a non-first-order type")
+            }
+            Self::MissingTerminator { function } => {
+                write!(f, "Hull function `{function}` is missing a terminator")
+            }
+            Self::AssemblyRequiresDatabase => {
+                write!(f, "cannot check inline assembly without a source database")
+            }
+            Self::AssemblyReturnCountMismatch {
+                context,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "inline assembly {context} returns {actual} values, expected {expected}"
+            ),
+            Self::AssemblyExpressionNotUnit { actual } => {
+                write!(
+                    f,
+                    "inline assembly expression must have unit type, got {actual}"
+                )
+            }
+            Self::AssemblyExpectedWordArgument { actual } => {
+                write!(
+                    f,
+                    "inline assembly argument must have word type, got {actual}"
+                )
+            }
+            Self::AssemblyExpectedWordAssignment { name, actual } => write!(
+                f,
+                "inline assembly assignment to `{name}` requires word type, got {actual}"
+            ),
+            Self::AssemblyVoidArgument => {
+                write!(f, "inline assembly argument does not produce a value")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

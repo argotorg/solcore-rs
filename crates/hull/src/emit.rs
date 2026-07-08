@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+};
 
 use hir::{
     Db as HirDb,
@@ -9,6 +12,7 @@ use hir::{
         item::{AdtDef, ContractDef, ContractItem, Item, Module},
         ty::TypeRefKind,
     },
+    diag::Diagnostic,
     span::{Span, SpannedElem},
 };
 use hir_ty::{BuiltinTyCtor, Ty as SemTy, TyCtor, TyKind as SemTyKind, UserTyCtorKind};
@@ -96,6 +100,84 @@ pub enum EmitDiagnosticKind {
     EmptyMatch,
     DispatcherDeferred { contract: String },
     UnsupportedDispatchEntry { signature: String, reason: String },
+}
+
+impl<'db> EmitDiagnostic<'db> {
+    pub fn lower(&self, db: &'db dyn HirDb) -> Diagnostic {
+        Diagnostic::error(self.kind.to_string())
+            .with_code(self.kind.code())
+            .with_primary_label(db, self.span, Some(self.kind.primary_label()))
+    }
+}
+
+impl EmitDiagnosticKind {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::UnsupportedType { .. } => "SC0420",
+            Self::UnsupportedLiteral { .. } => "SC0421",
+            Self::UnsupportedMonoConstruct { .. } => "SC0422",
+            Self::MissingAdtLayout { .. } => "SC0423",
+            Self::MissingConstructor { .. } => "SC0424",
+            Self::NonExhaustiveMatch => "SC0301",
+            Self::MultiScrutineeMatch { .. } => "SC0302",
+            Self::EmptyMatch => "SC0303",
+            Self::DispatcherDeferred { .. } => "SC0425",
+            Self::UnsupportedDispatchEntry { .. } => "SC0426",
+        }
+    }
+
+    fn primary_label(&self) -> &'static str {
+        match self {
+            Self::UnsupportedType { .. } => "unsupported type",
+            Self::UnsupportedLiteral { .. } => "unsupported literal",
+            Self::UnsupportedMonoConstruct { .. } => "unsupported construct",
+            Self::MissingAdtLayout { .. } => "missing ADT layout",
+            Self::MissingConstructor { .. } => "missing constructor layout",
+            Self::NonExhaustiveMatch => "match is not exhaustive",
+            Self::MultiScrutineeMatch { .. } => "multi-scrutinee match",
+            Self::EmptyMatch => "empty match",
+            Self::DispatcherDeferred { .. } => "dispatcher cannot be emitted",
+            Self::UnsupportedDispatchEntry { .. } => "unsupported dispatcher entry",
+        }
+    }
+}
+
+impl fmt::Display for EmitDiagnosticKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnsupportedType { ty } => write!(f, "cannot lower type `{ty}` to Hull"),
+            Self::UnsupportedLiteral { literal } => {
+                write!(f, "cannot lower literal `{literal}` to Hull")
+            }
+            Self::UnsupportedMonoConstruct { construct } => {
+                write!(f, "cannot lower {construct} to Hull")
+            }
+            Self::MissingAdtLayout { adt } => write!(f, "missing Hull layout for ADT `{adt}`"),
+            Self::MissingConstructor { constructor, ty } => {
+                write!(
+                    f,
+                    "missing Hull layout for constructor `{constructor}` of `{ty}`"
+                )
+            }
+            Self::NonExhaustiveMatch => write!(f, "match is not exhaustive"),
+            Self::MultiScrutineeMatch { count } => {
+                write!(
+                    f,
+                    "match with {count} scrutinees is not supported by Hull lowering"
+                )
+            }
+            Self::EmptyMatch => write!(f, "match has no arms"),
+            Self::DispatcherDeferred { contract } => {
+                write!(
+                    f,
+                    "dispatcher generation was deferred for contract `{contract}`"
+                )
+            }
+            Self::UnsupportedDispatchEntry { signature, reason } => {
+                write!(f, "cannot emit dispatcher entry `{signature}`: {reason}")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

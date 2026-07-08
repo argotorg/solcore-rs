@@ -17,6 +17,7 @@ use hir::{
             AdtDef, ContractItem, FunctionDef, Import, ImportSelector, InstanceDef, Item, Module,
         },
     },
+    diag::Diagnostic,
     input::SourceFile,
     nameres as hir_nameres,
     span::{Span, Spanned, SpannedElem},
@@ -94,6 +95,53 @@ pub enum SpecializeDiagnosticKind<'db> {
     ComptimeEvaluationFailed { context: String },
     ComptimeFuelExhausted { function: String, limit: usize },
     IntegerErasure { context: String, ty: String },
+}
+
+impl<'db> SpecializeDiagnostic<'db> {
+    pub fn lower(&self, db: &'db dyn HirDb) -> Diagnostic {
+        let diagnostic = Diagnostic::error(self.kind.to_string()).with_code(self.kind.code());
+        if let Some(span) = self.span {
+            diagnostic.with_primary_label(db, span, Some(self.kind.primary_label()))
+        } else {
+            diagnostic
+        }
+    }
+}
+
+impl SpecializeDiagnosticKind<'_> {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::FreeTypeVariable { .. } => "SC0401",
+            Self::InstantiationFuelExhausted { .. } => "SC0402",
+            Self::InstantiationDepthExceeded { .. } => "SC0403",
+            Self::TypeSizeExceeded { .. } => "SC0412",
+            Self::MissingBody { .. } => "SC0404",
+            Self::MissingResolution { .. } => "SC0405",
+            Self::MissingEvidence { .. } => "SC0406",
+            Self::UnsupportedEvidence { .. } => "SC0407",
+            Self::UnresolvedExternal { .. } => "SC0408",
+            Self::ComptimeEvaluationFailed { .. } => "SC0409",
+            Self::ComptimeFuelExhausted { .. } => "SC0410",
+            Self::IntegerErasure { .. } => "SC0411",
+        }
+    }
+
+    fn primary_label(&self) -> &'static str {
+        match self {
+            Self::FreeTypeVariable { .. } => "type must be concrete here",
+            Self::InstantiationFuelExhausted { .. } => "specialization limit reached here",
+            Self::InstantiationDepthExceeded { .. } => "specialization depth limit reached here",
+            Self::TypeSizeExceeded { .. } => "specialization type size limit reached here",
+            Self::MissingBody { .. } => "function body required here",
+            Self::MissingResolution { .. } => "name resolution required here",
+            Self::MissingEvidence { .. } => "class evidence required here",
+            Self::UnsupportedEvidence { .. } => "unsupported class evidence here",
+            Self::UnresolvedExternal { .. } => "external function required here",
+            Self::ComptimeEvaluationFailed { .. } => "comptime evaluation failed here",
+            Self::ComptimeFuelExhausted { .. } => "comptime fuel limit reached here",
+            Self::IntegerErasure { .. } => "comptime-only type remains here",
+        }
+    }
 }
 
 /// Specializes one HIR module from its backend entry surface.
@@ -3782,7 +3830,7 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
             Self::TypeSizeExceeded { limit } => {
                 write!(f, "specialization type size exceeded at {limit} type nodes")
             }
-            Self::MissingBody { function } => write!(f, "missing body for {function:?}"),
+            Self::MissingBody { .. } => write!(f, "missing function body during specialization"),
             Self::MissingResolution { context } => write!(f, "missing resolution: {context}"),
             Self::MissingEvidence { context } => write!(f, "missing evidence: {context}"),
             Self::UnsupportedEvidence { context } => write!(f, "unsupported evidence: {context}"),
