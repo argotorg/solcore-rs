@@ -604,6 +604,64 @@ contract C {
 }
 
 #[test]
+fn out_of_range_word_literals_wrap_in_hull_exprs_and_patterns() {
+    const TWO_256: &str =
+        "115792089237316195423570985008687907853269984665640564039457584007913129639936";
+    const TWO_256_PLUS_ONE: &str =
+        "115792089237316195423570985008687907853269984665640564039457584007913129639937";
+
+    let hull = pretty_src_hull(
+        "word_literal_wrap",
+        &format!(
+            r#"
+contract C {{
+  public function exact() -> word {{
+    return {TWO_256};
+  }}
+
+  public function plus() -> word {{
+    return {TWO_256_PLUS_ONE};
+  }}
+
+  public function pick(x : word) -> word {{
+    match x {{
+      | {TWO_256} => return 10;
+      | {TWO_256_PLUS_ONE} => return 11;
+      | _ => return 12;
+    }}
+  }}
+}}
+"#
+        ),
+    );
+
+    assert!(!hull.contains(TWO_256), "{hull}");
+    assert!(!hull.contains(TWO_256_PLUS_ONE), "{hull}");
+    assert!(
+        hull_function(&hull, "_exact_").contains("return 0"),
+        "{hull}"
+    );
+    assert!(
+        hull_function(&hull, "_plus_").contains("return 1"),
+        "{hull}"
+    );
+
+    let pick = hull_function(&hull, "_pick_");
+    assert_contains_in_order(
+        "wrapped word pattern literals",
+        pick,
+        &[
+            "match<word>",
+            "0 ",
+            "return 10",
+            "1 ",
+            "return 11",
+            "return 12",
+        ],
+    );
+}
+
+#[test]
 fn evaluator_does_not_fold_past_unknown_return() {
     let hull = pretty_src_hull(
         "eval_return_unknown_abort",

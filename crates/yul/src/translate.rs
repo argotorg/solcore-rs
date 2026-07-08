@@ -14,7 +14,7 @@ use hir::{
 use hull::{
     Alt, CodeBlock as HullCodeBlock, Con, Expr as HullExpr, ExprKind, Function as HullFunction,
     Object as HullObject, PatKind, Program as HullProgram, Stmt as HullStmt, StmtKind,
-    Ty as HullTy, TyKind,
+    Ty as HullTy, TyKind, wrap_word_literal,
 };
 
 use crate::{
@@ -328,9 +328,7 @@ impl<'db> Translator<'db> {
         expr: &HullExpr<'db>,
     ) -> Result<(Vec<Stmt>, Location), TranslationError> {
         match &expr.kind {
-            ExprKind::Word(value) => {
-                Ok((Vec::new(), Location::Word(canonical_numeric_lit(value)?)))
-            }
+            ExprKind::Word(value) => Ok((Vec::new(), Location::Word(canonical_word_lit(value)?))),
             ExprKind::Bool(value) => Ok((Vec::new(), Location::Bool(*value))),
             ExprKind::Unit => Ok((Vec::new(), Location::Seq(Vec::new()))),
             ExprKind::Var(name) => self.lookup_var(name).map(|loc| (Vec::new(), loc)),
@@ -466,7 +464,7 @@ impl<'db> Translator<'db> {
                         this.gen_stmts(&alt.body)
                     })?;
                     cases.push(Case {
-                        lit: Literal::Number(canonical_numeric_lit(value)?),
+                        lit: Literal::Number(canonical_word_lit(value)?),
                         body,
                     });
                 }
@@ -1469,6 +1467,11 @@ fn canonical_numeric_lit(value: &str) -> Result<String, TranslationError> {
     } else {
         canonical_decimal_lit(value)
     }
+}
+
+fn canonical_word_lit(value: &str) -> Result<String, TranslationError> {
+    let wrapped = wrap_word_literal(value).map_err(|err| TranslationError::new(err.to_string()))?;
+    canonical_numeric_lit(&wrapped)
 }
 
 fn canonical_hex_lit(value: &str) -> Result<String, TranslationError> {

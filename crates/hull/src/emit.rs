@@ -23,6 +23,7 @@ use crate::ir::{
     Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
     StmtKind, Ty, TyKind,
 };
+use crate::word::wrap_word_literal;
 
 const ADDRESS_MASK: &str = "0xffffffffffffffffffffffffffffffffffffffff";
 const STORAGE_INDEX_READ: &str = "__solcore_storage_index_read";
@@ -1888,7 +1889,7 @@ impl<'db> Emitter<'db> {
 
     fn emit_lit(&mut self, span: Span<'db>, lit: &LitKind) -> Expr<'db> {
         match lit {
-            LitKind::Number(value) | LitKind::Hex(value) => Expr::word(span, value.clone()),
+            LitKind::Number(value) | LitKind::Hex(value) => Expr::word(span, wrap_lit_text(value)),
             LitKind::String(value) => {
                 self.push(
                     span,
@@ -4065,7 +4066,9 @@ fn matrix_pat<'db>(pat: &MonoPat<'db>) -> MatrixPat {
         MonoPatKind::Var(id) => MatrixPat::Var {
             name: id.name.clone(),
         },
-        MonoPatKind::Lit(lit) => MatrixPat::Lit { lit: lit.clone() },
+        MonoPatKind::Lit(lit) => MatrixPat::Lit {
+            lit: wrap_word_lit_kind(lit),
+        },
         MonoPatKind::Con { ctor, args } => MatrixPat::Con {
             ctor: ctor.name.clone(),
             args: args.iter().map(matrix_pat).collect(),
@@ -4218,9 +4221,35 @@ fn head_literals(first_col: &[&MatrixPat]) -> Vec<LitKind> {
 
 fn hull_lit_pat(lit: &LitKind) -> PatKind {
     match lit {
-        LitKind::Number(value) | LitKind::Hex(value) => PatKind::IntLit(value.clone()),
+        LitKind::Number(value) | LitKind::Hex(value) => PatKind::IntLit(wrap_lit_text(value)),
         LitKind::String(_) | LitKind::Error => PatKind::Wildcard,
     }
+}
+
+fn wrap_word_lit_kind(lit: &LitKind) -> LitKind {
+    match lit {
+        LitKind::Number(value) => {
+            let wrapped = wrap_lit_text(value);
+            if wrapped == value.as_str() {
+                lit.clone()
+            } else {
+                LitKind::Number(wrapped)
+            }
+        }
+        LitKind::Hex(value) => {
+            let wrapped = wrap_lit_text(value);
+            if wrapped == value.as_str() {
+                lit.clone()
+            } else {
+                LitKind::Number(wrapped)
+            }
+        }
+        LitKind::String(_) | LitKind::Error => lit.clone(),
+    }
+}
+
+fn wrap_lit_text(value: &str) -> String {
+    wrap_word_literal(value).unwrap_or_else(|_| value.to_owned())
 }
 
 fn child_columns<'db>(

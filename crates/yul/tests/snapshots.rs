@@ -13,9 +13,10 @@ use hir::{
     span::{AnchorId, Span},
 };
 use hull::{
-    Arg as HullArg, CodeBlock as HullCodeBlock, Expr as HullExpr, ExprKind as HullExprKind,
-    Function as HullFunction, Object as HullObject, Program as HullProgram, Stmt as HullStmt,
-    StmtKind as HullStmtKind, Ty as HullTy,
+    Alt as HullAlt, Arg as HullArg, CodeBlock as HullCodeBlock, Expr as HullExpr,
+    ExprKind as HullExprKind, Function as HullFunction, Object as HullObject, Pat as HullPat,
+    PatKind as HullPatKind, Program as HullProgram, Stmt as HullStmt, StmtKind as HullStmtKind,
+    Ty as HullTy,
 };
 use nameres::{
     LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
@@ -279,6 +280,118 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
         "if_expression_branches_are_lowered_inside_switch",
         solcore_yul::render_hull_program(&db, &program).expect("Yul translation")
     );
+}
+
+#[test]
+fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
+    const TWO_256: &str =
+        "115792089237316195423570985008687907853269984665640564039457584007913129639936";
+    const TWO_256_PLUS_ONE: &str =
+        "115792089237316195423570985008687907853269984665640564039457584007913129639937";
+
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let word = HullTy::word(sp);
+    let program = HullProgram {
+        span: sp,
+        functions: Vec::new(),
+        objects: vec![HullObject {
+            span: sp,
+            name: "WordLiteralWrap".to_owned(),
+            code: HullCodeBlock {
+                span: sp,
+                stmts: Vec::new(),
+                functions: vec![
+                    HullFunction {
+                        span: sp,
+                        name: "exact".to_owned(),
+                        args: Vec::new(),
+                        ret: word.clone(),
+                        body: vec![HullStmt {
+                            span: sp,
+                            kind: HullStmtKind::Return(HullExpr::word(sp, TWO_256)),
+                        }],
+                    },
+                    HullFunction {
+                        span: sp,
+                        name: "plus".to_owned(),
+                        args: Vec::new(),
+                        ret: word.clone(),
+                        body: vec![HullStmt {
+                            span: sp,
+                            kind: HullStmtKind::Return(HullExpr::word(sp, TWO_256_PLUS_ONE)),
+                        }],
+                    },
+                    HullFunction {
+                        span: sp,
+                        name: "pick".to_owned(),
+                        args: vec![HullArg {
+                            span: sp,
+                            name: "x".to_owned(),
+                            ty: word.clone(),
+                        }],
+                        ret: word.clone(),
+                        body: vec![HullStmt {
+                            span: sp,
+                            kind: HullStmtKind::Match {
+                                target: word.clone(),
+                                scrutinee: HullExpr::var(sp, "x", word.clone()),
+                                alts: vec![
+                                    HullAlt {
+                                        span: sp,
+                                        pat: HullPat {
+                                            span: sp,
+                                            kind: HullPatKind::IntLit(TWO_256.to_owned()),
+                                        },
+                                        binder: "$_".to_owned(),
+                                        body: vec![HullStmt {
+                                            span: sp,
+                                            kind: HullStmtKind::Return(HullExpr::word(sp, "10")),
+                                        }],
+                                    },
+                                    HullAlt {
+                                        span: sp,
+                                        pat: HullPat {
+                                            span: sp,
+                                            kind: HullPatKind::IntLit(TWO_256_PLUS_ONE.to_owned()),
+                                        },
+                                        binder: "$_".to_owned(),
+                                        body: vec![HullStmt {
+                                            span: sp,
+                                            kind: HullStmtKind::Return(HullExpr::word(sp, "11")),
+                                        }],
+                                    },
+                                    HullAlt {
+                                        span: sp,
+                                        pat: HullPat {
+                                            span: sp,
+                                            kind: HullPatKind::Wildcard,
+                                        },
+                                        binder: "$_".to_owned(),
+                                        body: vec![HullStmt {
+                                            span: sp,
+                                            kind: HullStmtKind::Return(HullExpr::word(sp, "12")),
+                                        }],
+                                    },
+                                ],
+                            },
+                        }],
+                    },
+                ],
+            },
+            inners: Vec::new(),
+        }],
+    };
+
+    assert_eq!(hull::check_program_with_db(&db, &program), Vec::new());
+    let yul = solcore_yul::render_hull_program(&db, &program).expect("Yul translation");
+    assert!(!yul.contains(TWO_256), "{yul}");
+    assert!(!yul.contains(TWO_256_PLUS_ONE), "{yul}");
+    assert!(yul_function(&yul, "usr$exact").contains(":= 0"), "{yul}");
+    assert!(yul_function(&yul, "usr$plus").contains(":= 1"), "{yul}");
+    let pick = yul_function(&yul, "usr$pick");
+    assert!(pick.contains("case 0"), "{pick}");
+    assert!(pick.contains("case 1"), "{pick}");
 }
 
 #[test]
@@ -730,6 +843,18 @@ fn parse_module<'db>(db: &'db TestDb, name: &str, src: &str) -> Module<'db> {
     let url = format!("memory:///{name}.solc").parse().expect("valid URL");
     let file = SourceFile::new(db, url, Some(src.to_owned()));
     parse_file_to_hir(db, file).module(db)
+}
+
+fn yul_function<'a>(yul: &'a str, name: &str) -> &'a str {
+    let start = yul
+        .find(&format!("function {name}"))
+        .unwrap_or_else(|| panic!("missing function {name}\n{yul}"));
+    let rest = &yul[start..];
+    let next = rest["function ".len()..]
+        .find("\n      function ")
+        .map(|offset| "function ".len() + offset)
+        .unwrap_or(rest.len());
+    &rest[..next]
 }
 
 fn test_span<'db>(db: &'db TestDb) -> Span<'db> {
