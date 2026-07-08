@@ -31,6 +31,30 @@ pub mod span;
 /// HIR visitors and validation helpers.
 pub mod visit;
 
+/// Converts a file URL to a local path on native targets and wasm.
+///
+/// Native builds delegate to [`url::Url::to_file_path`] to preserve upstream
+/// behavior exactly. The `url` crate cfg-gates that API off for
+/// `wasm32-unknown-unknown`, so wasm builds use the same file-scheme and
+/// percent-decoding shape needed by Solcore's virtual absolute paths.
+pub fn url_to_file_path(url: &url::Url) -> Option<std::path::PathBuf> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        url.to_file_path().ok()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        if url.scheme() != "file" {
+            return None;
+        }
+        let decoded = percent_encoding::percent_decode_str(url.path())
+            .decode_utf8()
+            .ok()?;
+        Some(std::path::PathBuf::from(decoded.as_ref()))
+    }
+}
+
 /// Database contract required by HIR queries and boundary utilities.
 ///
 /// The trait is intentionally small. HIR owns the span and identity types, but

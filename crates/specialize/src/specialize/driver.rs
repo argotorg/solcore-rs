@@ -775,7 +775,7 @@ impl<'db> Driver<'db> {
     }
 
     fn std_intrinsic_for_def(&self, def: DefId<'db>) -> Option<MonoIntrinsic> {
-        let path = def.file(self.db).url(self.db).to_file_path().ok()?;
+        let path = hir::url_to_file_path(def.file(self.db).url(self.db))?;
         let std_key = module_key_for_path(
             LibraryId::Std,
             self.db.module_tree().std_root(self.db),

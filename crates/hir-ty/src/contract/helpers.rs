@@ -46,7 +46,7 @@ pub(super) fn resolve_contract_item_types<'db>(
     module: Module<'db>,
 ) -> hir_nameres::ItemResolutionFacts<'db> {
     let file = module.def_id_value(db).file(db);
-    let Ok(path) = file.url(db).to_file_path() else {
+    let Some(path) = hir::url_to_file_path(file.url(db)) else {
         return hir_nameres::resolve_item_type_facts(db, module);
     };
     let tree = db.module_tree();

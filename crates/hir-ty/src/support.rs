@@ -18,7 +18,7 @@ pub(crate) fn module_for_def_via_tree<'db>(
     db: &'db dyn Db,
     def: DefId<'db>,
 ) -> Option<ModuleId<'db>> {
-    let path = def.file(db).url(db).to_file_path().ok()?;
+    let path = hir::url_to_file_path(def.file(db).url(db))?;
     let tree = db.module_tree();
     let candidates = std::iter::once((LibraryId::Main, tree.main_root(db).clone()))
         .chain(std::iter::once((LibraryId::Std, tree.std_root(db).clone())))

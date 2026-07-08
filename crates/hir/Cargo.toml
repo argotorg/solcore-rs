@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 salsa = { workspace = true }
 annotate-snippets = { workspace = true }
+percent-encoding = { workspace = true }
 rustc-hash = { workspace = true }
 url = { workspace = true }
 tracing = { workspace = true }

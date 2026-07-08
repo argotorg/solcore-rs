@@ -1555,12 +1555,7 @@ pub(super) fn module_id_for_hir_module<'db>(
     module: Module<'db>,
 ) -> Option<ModuleId<'db>> {
     let file = module.def_id_value(db).file(db);
-    let path = module
-        .def_id_value(db)
-        .file(db)
-        .url(db)
-        .to_file_path()
-        .ok()?;
+    let path = hir::url_to_file_path(module.def_id_value(db).file(db).url(db))?;
     let tree = db.module_tree();
     let mut candidates = Vec::new();
     if let Some(key) = module_key_for_path(LibraryId::Main, tree.main_root(db), &path) {
