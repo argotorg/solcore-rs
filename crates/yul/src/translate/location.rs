@@ -183,11 +183,13 @@ pub(super) fn normalize_loc(loc: Location) -> Location {
 
 pub(super) fn pair_locs(loc: Location) -> Result<(Location, Location), TranslationError> {
     match loc {
-        Location::Seq(mut locs) if locs.len() == 2 => {
-            let rhs = locs.pop().expect("rhs");
-            let lhs = locs.pop().expect("lhs");
-            Ok((lhs, rhs))
-        }
+        Location::Seq(locs) => match <[Location; 2]>::try_from(locs) {
+            Ok([lhs, rhs]) => Ok((lhs, rhs)),
+            Err(locs) => Err(TranslationError::new(format!(
+                "expected product location, got {:?}",
+                Location::Seq(locs)
+            ))),
+        },
         loc => Err(TranslationError::new(format!(
             "expected product location, got {loc:?}"
         ))),

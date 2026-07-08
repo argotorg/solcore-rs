@@ -504,10 +504,20 @@ impl<'db> Translator<'db> {
         &mut self,
         f: impl FnOnce(&mut Self) -> Result<T, TranslationError>,
     ) -> Result<T, TranslationError> {
-        let saved = self.vars.clone();
+        let outer_depth = self.vars.len();
         self.vars.push(BTreeMap::new());
         let result = f(self);
-        self.vars = saved;
+        debug_assert_eq!(
+            self.vars.len(),
+            outer_depth + 1,
+            "local environment scope stack depth changed unexpectedly"
+        );
+        self.vars.pop().expect("scope stack is never empty");
+        debug_assert_eq!(
+            self.vars.len(),
+            outer_depth,
+            "local environment scope stack depth was not restored"
+        );
         result
     }
 }
