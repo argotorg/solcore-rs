@@ -28,7 +28,7 @@ fn select_strict_object<'a>(
         return program
             .objects
             .iter()
-            .find(|object| object.name == name)
+            .find(|object| object.name.as_str() == name)
             .ok_or_else(|| {
                 TranslationError::new(format!(
                     "Yul object `{name}` not found; available top-level objects: {}",
@@ -98,15 +98,15 @@ fn validate_stmt(stmt: &Stmt, region: ControlRegion) -> Result<(), TranslationEr
             returns,
             body,
         } => {
-            validate_decl_name(name)?;
+            validate_decl_name(name.as_str())?;
             for name in params.iter().chain(returns) {
-                validate_decl_name(name)?;
+                validate_decl_name(name.as_str())?;
             }
             validate_stmts(body, ControlRegion::Outside)
         }
         Stmt::Let { names, init } => {
             for name in names {
-                validate_decl_name(name)?;
+                validate_decl_name(name.as_str())?;
             }
             if let Some(init) = init {
                 validate_expr(init)?;
@@ -115,7 +115,7 @@ fn validate_stmt(stmt: &Stmt, region: ControlRegion) -> Result<(), TranslationEr
         }
         Stmt::Assign { names, value } => {
             for name in names {
-                validate_decl_name(name)?;
+                validate_decl_name(name.as_str())?;
             }
             validate_expr(value)
         }
@@ -174,13 +174,13 @@ fn validate_break_continue(keyword: &str, region: ControlRegion) -> Result<(), T
 fn validate_expr(expr: &Expr) -> Result<(), TranslationError> {
     match expr {
         Expr::Call { name, args } => {
-            validate_call_name(name)?;
+            validate_call_name(name.as_str())?;
             for arg in args {
                 validate_expr(arg)?;
             }
             Ok(())
         }
-        Expr::Ident(name) => validate_decl_name(name),
+        Expr::Ident(name) => validate_decl_name(name.as_str()),
         Expr::Lit(lit) => validate_lit(lit),
     }
 }

@@ -4,7 +4,7 @@ use hir::ast::function::{
     YulCase as HirYulCase, YulExpr as HirYulExpr, YulExprKind, YulStmt as HirYulStmt, YulStmtKind,
 };
 
-use crate::ast::{Case, Expr, Stmt};
+use crate::ast::{Case, Expr, FunctionName, Stmt, VarName};
 
 use super::{
     TranslationError, Translator,
@@ -14,8 +14,8 @@ use super::{
 
 #[derive(Debug, Clone)]
 pub(super) struct AsmScopes {
-    values: Vec<BTreeMap<String, String>>,
-    functions: Vec<BTreeMap<String, String>>,
+    values: Vec<BTreeMap<String, VarName>>,
+    functions: Vec<BTreeMap<String, FunctionName>>,
 }
 
 impl<'db> Translator<'db> {
@@ -135,7 +135,8 @@ impl<'db> Translator<'db> {
                 body,
             } => {
                 let raw_name = yul_name(self.db, name);
-                let name = self.fresh_asm_name(&raw_name);
+                let emitted = self.fresh_asm_name(&raw_name);
+                let name = FunctionName::new(emitted.as_str());
                 asm.insert_function(raw_name, name.clone());
 
                 asm.push_scope();
@@ -204,7 +205,9 @@ impl<'db> Translator<'db> {
             }
             YulExprKind::Call { name, args } => {
                 let raw_name = yul_name(self.db, name);
-                let name = asm.lookup_function(&raw_name).unwrap_or(raw_name);
+                let name = asm
+                    .lookup_function(&raw_name)
+                    .unwrap_or_else(|| raw_name.into());
                 Expr::call(
                     name,
                     args.iter()
@@ -229,7 +232,7 @@ impl<'db> Translator<'db> {
         }
     }
 
-    fn subst_asm_lhs_name(&self, name: &str) -> String {
+    fn subst_asm_lhs_name(&self, name: &str) -> VarName {
         match self.lookup_var_opt(name).and_then(|loc| {
             let flattened = flatten_lhs(&loc).ok()?;
             match flattened.as_slice() {
@@ -238,7 +241,7 @@ impl<'db> Translator<'db> {
             }
         }) {
             Some(name) => name,
-            None => name.to_owned(),
+            None => name.into(),
         }
     }
 }
@@ -261,28 +264,28 @@ impl AsmScopes {
         self.functions.pop().expect("assembly function scope");
     }
 
-    fn insert_value(&mut self, source: String, emitted: String) {
+    fn insert_value(&mut self, source: String, emitted: VarName) {
         self.values
             .last_mut()
             .expect("assembly value scope")
             .insert(source, emitted);
     }
 
-    fn insert_function(&mut self, source: String, emitted: String) {
+    fn insert_function(&mut self, source: String, emitted: FunctionName) {
         self.functions
             .last_mut()
             .expect("assembly function scope")
             .insert(source, emitted);
     }
 
-    fn lookup_value(&self, name: &str) -> Option<String> {
+    fn lookup_value(&self, name: &str) -> Option<VarName> {
         self.values
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
     }
 
-    fn lookup_function(&self, name: &str) -> Option<String> {
+    fn lookup_function(&self, name: &str) -> Option<FunctionName> {
         self.functions
             .iter()
             .rev()

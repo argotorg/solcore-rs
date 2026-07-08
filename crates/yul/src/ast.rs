@@ -1,3 +1,42 @@
+macro_rules! yul_name_type {
+    ($name:ident) => {
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $name(String);
+
+        impl $name {
+            pub fn new(s: impl Into<String>) -> Self {
+                Self(s.into())
+            }
+
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(value: String) -> Self {
+                Self(value)
+            }
+        }
+
+        impl From<&str> for $name {
+            fn from(value: &str) -> Self {
+                Self(value.to_owned())
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };
+}
+
+yul_name_type!(FunctionName);
+yul_name_type!(VarName);
+yul_name_type!(ObjectName);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
     pub objects: Vec<Object>,
@@ -5,7 +44,7 @@ pub struct Program {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Object {
-    pub name: String,
+    pub name: ObjectName,
     pub code: Code,
     pub inners: Vec<Inner>,
 }
@@ -18,7 +57,7 @@ pub enum Inner {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Data {
-    pub name: String,
+    pub name: ObjectName,
     pub value: DataValue,
 }
 
@@ -37,17 +76,17 @@ pub struct Code {
 pub enum Stmt {
     Block(Vec<Stmt>),
     Function {
-        name: String,
-        params: Vec<String>,
-        returns: Vec<String>,
+        name: FunctionName,
+        params: Vec<VarName>,
+        returns: Vec<VarName>,
         body: Vec<Stmt>,
     },
     Let {
-        names: Vec<String>,
+        names: Vec<VarName>,
         init: Option<Expr>,
     },
     Assign {
-        names: Vec<String>,
+        names: Vec<VarName>,
         value: Expr,
     },
     If {
@@ -80,8 +119,8 @@ pub struct Case {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
-    Call { name: String, args: Vec<Expr> },
-    Ident(String),
+    Call { name: FunctionName, args: Vec<Expr> },
+    Ident(VarName),
     Lit(Literal),
 }
 
@@ -108,14 +147,14 @@ impl Code {
 }
 
 impl Expr {
-    pub fn call(name: impl Into<String>, args: Vec<Expr>) -> Self {
+    pub fn call(name: impl Into<FunctionName>, args: Vec<Expr>) -> Self {
         Self::Call {
             name: name.into(),
             args,
         }
     }
 
-    pub fn ident(name: impl Into<String>) -> Self {
+    pub fn ident(name: impl Into<VarName>) -> Self {
         Self::Ident(name.into())
     }
 

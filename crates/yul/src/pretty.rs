@@ -1,6 +1,8 @@
 use std::fmt::Write as _;
 
-use crate::ast::{Case, Code, Data, DataValue, Expr, Inner, Literal, Object, Program, Stmt};
+use crate::ast::{
+    Case, Code, Data, DataValue, Expr, Inner, Literal, Object, Program, Stmt, VarName,
+};
 
 pub trait PrettyYul {
     fn to_yul_string(&self) -> String;
@@ -61,7 +63,7 @@ fn write_object(out: &mut String, object: &Object, indent: usize) {
     line(
         out,
         indent,
-        &format!("object \"{}\" {{", escape_string(&object.name)),
+        &format!("object \"{}\" {{", escape_string(object.name.as_str())),
     );
     write_code(out, &object.code, indent + 1);
     for inner in &object.inners {
@@ -89,7 +91,7 @@ fn write_data(out: &mut String, data: &Data, indent: usize) {
     line(
         out,
         indent,
-        &format!("data \"{}\" {value}", escape_string(&data.name)),
+        &format!("data \"{}\" {value}", escape_string(data.name.as_str())),
     );
 }
 
@@ -111,12 +113,12 @@ fn write_stmt(out: &mut String, stmt: &Stmt, indent: usize) {
             let returns = if returns.is_empty() {
                 String::new()
             } else {
-                format!(" -> {}", returns.join(", "))
+                format!(" -> {}", join_var_names(returns))
             };
             line(
                 out,
                 indent,
-                &format!("function {name}({}){returns} {{", params.join(", ")),
+                &format!("function {name}({}){returns} {{", join_var_names(params)),
             );
             for stmt in body {
                 write_stmt(out, stmt, indent + 1);
@@ -127,15 +129,15 @@ fn write_stmt(out: &mut String, stmt: &Stmt, indent: usize) {
             Some(init) => line(
                 out,
                 indent,
-                &format!("let {} := {}", names.join(", "), render_expr(init)),
+                &format!("let {} := {}", join_var_names(names), render_expr(init)),
             ),
-            None => line(out, indent, &format!("let {}", names.join(", "))),
+            None => line(out, indent, &format!("let {}", join_var_names(names))),
         },
         Stmt::Assign { names, value } => {
             line(
                 out,
                 indent,
-                &format!("{} := {}", names.join(", "), render_expr(value)),
+                &format!("{} := {}", join_var_names(names), render_expr(value)),
             );
         }
         Stmt::If { cond, body } => {
@@ -210,9 +212,17 @@ fn render_expr(expr: &Expr) -> String {
             let args = args.iter().map(render_expr).collect::<Vec<_>>().join(", ");
             format!("{name}({args})")
         }
-        Expr::Ident(name) => name.clone(),
+        Expr::Ident(name) => name.as_str().to_owned(),
         Expr::Lit(value) => lit(value),
     }
+}
+
+fn join_var_names(names: &[VarName]) -> String {
+    names
+        .iter()
+        .map(|name| name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn lit(lit: &Literal) -> String {

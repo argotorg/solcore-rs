@@ -1,6 +1,6 @@
 use hull::{Con, Ty as HullTy, TyKind};
 
-use crate::ast::{Expr, Literal, Stmt};
+use crate::ast::{Expr, Literal, Stmt, VarName};
 
 use super::{
     TranslationError,
@@ -12,7 +12,7 @@ pub(super) enum Location {
     Word(String),
     Bool(bool),
     Stack(usize),
-    Named(String),
+    Named(VarName),
     Seq(Vec<Location>),
     Empty(usize),
 }
@@ -89,16 +89,16 @@ pub(super) fn flatten_rhs(loc: &Location) -> Vec<Expr> {
         Location::Word(value) => vec![Expr::number(value.clone())],
         Location::Bool(value) => vec![Expr::bool(*value)],
         Location::Stack(index) => vec![Expr::ident(stack_name(*index))],
-        Location::Named(name) => vec![Expr::ident(yul_var_name(name))],
+        Location::Named(name) => vec![Expr::ident(yul_var_name(name.as_str()))],
         Location::Seq(locs) => locs.iter().flat_map(flatten_rhs).collect(),
         Location::Empty(size) => (0..*size).map(|_| Expr::number("911")).collect(),
     }
 }
 
-pub(super) fn flatten_lhs(loc: &Location) -> Result<Vec<String>, TranslationError> {
+pub(super) fn flatten_lhs(loc: &Location) -> Result<Vec<VarName>, TranslationError> {
     match loc {
         Location::Stack(index) => Ok(vec![stack_name(*index)]),
-        Location::Named(name) => Ok(vec![yul_var_name(name)]),
+        Location::Named(name) => Ok(vec![yul_var_name(name.as_str())]),
         Location::Seq(locs) => locs
             .iter()
             .map(flatten_lhs)
@@ -115,7 +115,7 @@ pub(super) fn load_loc(loc: &Location) -> Result<Expr, TranslationError> {
         Location::Word(value) => Ok(Expr::number(value.clone())),
         Location::Bool(value) => Ok(Expr::bool(*value)),
         Location::Stack(index) => Ok(Expr::ident(stack_name(*index))),
-        Location::Named(name) => Ok(Expr::ident(yul_var_name(name))),
+        Location::Named(name) => Ok(Expr::ident(yul_var_name(name.as_str()))),
         Location::Empty(_) => Ok(Expr::number("911")),
         Location::Seq(_) => Err(TranslationError::new(format!(
             "cannot load location: {loc:?}"
@@ -151,7 +151,7 @@ pub(super) fn copy_locs(lhs: &Location, rhs: &Location) -> Result<Vec<Stmt>, Tra
             value: load_loc(rhs)?,
         }]),
         (Location::Named(name), rhs) => Ok(vec![Stmt::Assign {
-            names: vec![yul_var_name(name)],
+            names: vec![yul_var_name(name.as_str())],
             value: load_loc(rhs)?,
         }]),
         _ => Err(TranslationError::new(format!(

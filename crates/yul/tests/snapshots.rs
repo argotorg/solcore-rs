@@ -663,9 +663,9 @@ contract LeadingZeroDecimal {
     assert!(!decimal_yul.contains(" 01"), "{decimal_yul}");
 
     let hex_program = Program::single_object(Object {
-        name: "HexPrinter".to_owned(),
+        name: "HexPrinter".into(),
         code: Code::new(vec![Stmt::Let {
-            names: vec!["x".to_owned()],
+            names: vec!["x".into()],
             init: Some(Expr::Lit(Literal::Hex("0X2a".to_owned()))),
         }]),
         inners: Vec::new(),
@@ -1017,17 +1017,17 @@ fn repo_root() -> PathBuf {
 
 fn printer_shapes_program() -> Program {
     Program::single_object(Object {
-        name: "PrinterShapes".to_owned(),
+        name: "PrinterShapes".into(),
         code: Code::new(vec![
             Stmt::Let {
-                names: vec!["i".to_owned()],
+                names: vec!["i".into()],
                 init: Some(Expr::number("0")),
             },
             Stmt::For {
                 init: Vec::new(),
                 cond: Expr::call("lt", vec![Expr::ident("i"), Expr::number("3")]),
                 post: vec![Stmt::Assign {
-                    names: vec!["i".to_owned()],
+                    names: vec!["i".into()],
                     value: Expr::call("add", vec![Expr::ident("i"), Expr::number("1")]),
                 }],
                 body: vec![Stmt::If {
@@ -1048,11 +1048,11 @@ fn printer_shapes_program() -> Program {
         ]),
         inners: vec![
             Inner::Data(Data {
-                name: "blob".to_owned(),
+                name: "blob".into(),
                 value: DataValue::Hex("60016002".to_owned()),
             }),
             Inner::Data(Data {
-                name: "label".to_owned(),
+                name: "label".into(),
                 value: DataValue::String("hello".to_owned()),
             }),
         ],

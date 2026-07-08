@@ -54,10 +54,10 @@ impl<'db> Translator<'db> {
             let mut code = self.translate_code_parts(&program.functions, &[])?;
             code.stmts.extend(main_result_return_block());
             return Ok(Program::single_object(Object {
-                name: "OutputDeploy".to_owned(),
+                name: "OutputDeploy".into(),
                 code: Code::new(Vec::new()),
                 inners: vec![Inner::Object(Object {
-                    name: "Output".to_owned(),
+                    name: "Output".into(),
                     code,
                     inners: Vec::new(),
                 })],
@@ -80,7 +80,7 @@ impl<'db> Translator<'db> {
             .map(|inner| self.translate_object(inner).map(Inner::Object))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Object {
-            name: object.name.as_str().to_owned(),
+            name: object.name.as_str().into(),
             code,
             inners,
         })

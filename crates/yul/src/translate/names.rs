@@ -3,35 +3,35 @@ use std::collections::BTreeSet;
 use hir::{Db as HirDb, ast::function::YulLitKind};
 use hull::wrap_word_literal;
 
-use crate::ast::Literal;
+use crate::ast::{FunctionName, Literal, VarName};
 
 use super::{TranslationError, Translator};
 
 pub(super) enum LoweredCallee {
-    Call(String),
+    Call(FunctionName),
     Identity,
 }
 
 impl<'db> Translator<'db> {
-    pub(super) fn fresh_source_name(&mut self, source: &str) -> String {
+    pub(super) fn fresh_source_name(&mut self, source: &str) -> VarName {
         self.fresh_yul_name("src", source)
     }
 
-    pub(super) fn fresh_asm_name(&mut self, source: &str) -> String {
+    pub(super) fn fresh_asm_name(&mut self, source: &str) -> VarName {
         self.fresh_yul_name("asm", source)
     }
 
-    pub(super) fn fresh_internal_name(&mut self, source: &str) -> String {
+    pub(super) fn fresh_internal_name(&mut self, source: &str) -> VarName {
         self.fresh_yul_name("gen", source)
     }
 
-    fn fresh_yul_name(&mut self, prefix: &str, source: &str) -> String {
+    fn fresh_yul_name(&mut self, prefix: &str, source: &str) -> VarName {
         let source = yul_ident_fragment(source);
         loop {
             let name = format!("{prefix}${source}_{}", self.name_counter);
             self.name_counter += 1;
             if !is_forbidden_yul_identifier(&name) && self.used_yul_names.insert(name.clone()) {
-                return name;
+                return name.into();
             }
         }
     }
@@ -48,16 +48,16 @@ pub(super) fn is_valid_yul_identifier(name: &str) -> bool {
     chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$'))
 }
 
-pub(super) fn yul_fun_name(name: &str) -> String {
-    format!("usr${name}")
+pub(super) fn yul_fun_name(name: &str) -> FunctionName {
+    format!("usr${name}").into()
 }
 
-pub(super) fn yul_var_name(name: &str) -> String {
-    name.to_owned()
+pub(super) fn yul_var_name(name: &str) -> VarName {
+    name.into()
 }
 
-pub(super) fn stack_name(index: usize) -> String {
-    format!("_v{index}")
+pub(super) fn stack_name(index: usize) -> VarName {
+    format!("_v{index}").into()
 }
 
 pub(super) fn lower_callee(callee: &str, user_functions: &BTreeSet<String>) -> LoweredCallee {
@@ -78,7 +78,7 @@ pub(super) fn lower_callee(callee: &str, user_functions: &BTreeSet<String>) -> L
         "wordFromInteger" | "wordToInteger" => return LoweredCallee::Identity,
         name => name,
     };
-    LoweredCallee::Call(name.to_owned())
+    LoweredCallee::Call(name.into())
 }
 
 pub(super) fn convert_yul_lit(lit: &YulLitKind) -> Result<Literal, TranslationError> {
