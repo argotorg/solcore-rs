@@ -148,9 +148,79 @@ pub struct ItemRef<'db> {
     pub source_name: String,
     /// Module/definition origin.
     pub origin: Origin<'db>,
-    /// `Some` marks data types. The set contains the public constructors; an
-    /// empty set means the data type is exported opaquely.
-    pub constructors: Option<BTreeSet<String>>,
+    /// Constructor visibility for data types.
+    pub constructors: ConstructorVisibility,
+}
+
+/// Constructor visibility carried by an item reference.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ConstructorVisibility {
+    /// The referenced item is not a data type.
+    NotData,
+    /// The referenced item is a data type, but no constructors are visible.
+    OpaqueData,
+    /// The referenced item is a data type with these visible constructors.
+    Visible(VisibleConstructors),
+}
+
+/// Non-empty ordered set of visible constructor names.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct VisibleConstructors {
+    names: BTreeSet<String>,
+}
+
+impl ConstructorVisibility {
+    /// Normalizes an empty visible set to opaque data.
+    pub fn from_visible(constructors: BTreeSet<String>) -> Self {
+        if constructors.is_empty() {
+            Self::OpaqueData
+        } else {
+            Self::Visible(VisibleConstructors {
+                names: constructors,
+            })
+        }
+    }
+
+    /// Returns whether this reference denotes a data type.
+    pub fn is_data(&self) -> bool {
+        !matches!(self, Self::NotData)
+    }
+}
+
+impl VisibleConstructors {
+    /// Creates a non-empty visible constructor set.
+    pub fn new(names: BTreeSet<String>) -> Option<Self> {
+        if names.is_empty() {
+            None
+        } else {
+            Some(Self { names })
+        }
+    }
+
+    /// Iterates over constructor names in deterministic order.
+    pub fn iter(&self) -> impl Iterator<Item = &String> {
+        self.names.iter()
+    }
+
+    /// Returns whether this set contains `name`.
+    pub fn contains(&self, name: &str) -> bool {
+        self.names.contains(name)
+    }
+
+    /// Returns the underlying ordered set.
+    pub fn as_set(&self) -> &BTreeSet<String> {
+        &self.names
+    }
+
+    /// Extends this set with another non-empty constructor set.
+    pub fn extend(&mut self, constructors: VisibleConstructors) {
+        self.names.extend(constructors.names);
+    }
+
+    /// Consumes this wrapper and returns the underlying ordered set.
+    pub fn into_names(self) -> BTreeSet<String> {
+        self.names
+    }
 }
 
 /// Public module alias exported by an interface.

@@ -438,28 +438,39 @@ impl<'db> ModuleEnvBuilder<'db> {
     }
 
     fn add_constructor_surface(&mut self, item_ref: &ItemRef<'db>, type_name: &str) {
-        let Some(visible) = &item_ref.constructors else {
-            return;
+        let visible = match &item_ref.constructors {
+            ConstructorVisibility::NotData => return,
+            ConstructorVisibility::OpaqueData => None,
+            ConstructorVisibility::Visible(constructors) => Some(constructors),
         };
         let all = constructor_entries_for_ref(self.db, item_ref);
         let all_names = all
             .iter()
             .map(|(name, _)| name.clone())
             .collect::<BTreeSet<_>>();
-        self.env
+        let constructor_visibility = self
+            .env
             .constructor_visibility
             .entry(type_name.to_owned())
-            .or_default()
-            .extend(visible.iter().cloned());
-        if visible != &all_names {
-            self.env
+            .or_default();
+        if let Some(visible) = visible {
+            constructor_visibility.extend(visible.iter().cloned());
+        }
+        let has_partial_visibility = visible.map_or(!all_names.is_empty(), |visible| {
+            visible.as_set() != &all_names
+        });
+        if has_partial_visibility {
+            let partial_data = self
+                .env
                 .partial_data
                 .entry(type_name.to_owned())
-                .or_default()
-                .extend(visible.iter().cloned());
+                .or_default();
+            if let Some(visible) = visible {
+                partial_data.extend(visible.iter().cloned());
+            }
         }
         for (ctor_name, index) in all {
-            if !visible.contains(&ctor_name) {
+            if !visible.is_some_and(|visible| visible.contains(&ctor_name)) {
                 continue;
             }
             self.env.constructor_leaves.insert(ctor_name.clone());

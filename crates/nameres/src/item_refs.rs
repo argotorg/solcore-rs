@@ -132,7 +132,7 @@ fn function_ref<'db>(
             module,
             def_id: def.def_id(db),
         },
-        constructors: None,
+        constructors: ConstructorVisibility::NotData,
     }
 }
 
@@ -150,7 +150,7 @@ fn type_alias_ref<'db>(
             module,
             def_id: def.def_id(db),
         },
-        constructors: None,
+        constructors: ConstructorVisibility::NotData,
     }
 }
 
@@ -162,9 +162,9 @@ fn adt_ref<'db>(
 ) -> ItemRef<'db> {
     let name = spanned_name_text(db, &def.name(db));
     let constructors = if include_data_ctors {
-        ctor_names(db, def).into_iter().collect()
+        ConstructorVisibility::from_visible(ctor_names(db, def).into_iter().collect())
     } else {
-        BTreeSet::new()
+        ConstructorVisibility::OpaqueData
     };
     ItemRef {
         namespace: Namespace::Type,
@@ -174,7 +174,7 @@ fn adt_ref<'db>(
             module,
             def_id: def.def_id(db),
         },
-        constructors: Some(constructors),
+        constructors,
     }
 }
 
@@ -188,7 +188,7 @@ fn class_ref<'db>(db: &'db dyn Db, module: ModuleId<'db>, def: ClassDef<'db>) ->
             module,
             def_id: def.def_id(db),
         },
-        constructors: None,
+        constructors: ConstructorVisibility::NotData,
     }
 }
 
@@ -206,7 +206,7 @@ fn contract_ref<'db>(
             module,
             def_id: def.def_id(db),
         },
-        constructors: None,
+        constructors: ConstructorVisibility::NotData,
     }
 }
 
@@ -234,7 +234,7 @@ pub(super) fn local_data_ref_with_constructors<'db>(
         }
     }
     let mut item_ref = adt_ref(db, module, def, false);
-    item_ref.constructors = Some(selected.into_iter().collect());
+    item_ref.constructors = ConstructorVisibility::from_visible(selected.into_iter().collect());
     Some(item_ref)
 }
 
@@ -251,15 +251,10 @@ pub(super) fn visible_data_ref_with_constructors<'db>(
         .find(|item_ref| {
             item_ref.namespace == Namespace::Type
                 && item_ref.public_name == type_name
-                && item_ref.constructors.is_some()
+                && item_ref.constructors.is_data()
         })?
         .clone();
-    let visible: Vec<String> = data_ref
-        .constructors
-        .clone()
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+    let visible = visible_constructor_names(&data_ref.constructors);
     let missing = missing_constructors(db, selector, &visible);
     if ctx.strict {
         for ctor in missing {
@@ -274,7 +269,7 @@ pub(super) fn visible_data_ref_with_constructors<'db>(
         }
     }
     let mut selected = data_ref;
-    selected.constructors = Some(
+    selected.constructors = ConstructorVisibility::from_visible(
         select_constructors(db, selector, &visible)
             .into_iter()
             .collect(),
@@ -348,8 +343,8 @@ fn missing_constructors<'db>(
 }
 
 pub(super) fn strip_constructor_visibility<'db>(mut item_ref: ItemRef<'db>) -> ItemRef<'db> {
-    if item_ref.constructors.is_some() {
-        item_ref.constructors = Some(BTreeSet::new());
+    if item_ref.constructors.is_data() {
+        item_ref.constructors = ConstructorVisibility::OpaqueData;
     }
     item_ref
 }
@@ -412,10 +407,10 @@ pub(super) fn select_import_refs<'db>(
                     .map(move |mut item_ref| {
                         item_ref.public_name = local_name.clone();
                         if let Some(selector) = &selected.constructors
-                            && let Some(visible) = &item_ref.constructors
+                            && item_ref.constructors.is_data()
                         {
-                            let visible = visible.iter().cloned().collect::<Vec<_>>();
-                            item_ref.constructors = Some(
+                            let visible = visible_constructor_names(&item_ref.constructors);
+                            item_ref.constructors = ConstructorVisibility::from_visible(
                                 select_constructors(db, selector, &visible)
                                     .into_iter()
                                     .collect(),
@@ -437,6 +432,13 @@ pub(super) fn select_import_refs<'db>(
         "filtered import refs"
     );
     selected
+}
+
+fn visible_constructor_names(visibility: &ConstructorVisibility) -> Vec<String> {
+    match visibility {
+        ConstructorVisibility::NotData | ConstructorVisibility::OpaqueData => Vec::new(),
+        ConstructorVisibility::Visible(constructors) => constructors.iter().cloned().collect(),
+    }
 }
 
 fn unique_import_bindings<'db>(refs: Vec<ItemRef<'db>>) -> Vec<ItemRef<'db>> {

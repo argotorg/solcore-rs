@@ -400,12 +400,21 @@ fn interface_from_raw<'db>(raw: RawInterface<'db>) -> Interface<'db> {
                     .types
                     .entry(item_ref.public_name.clone())
                     .or_insert_with(|| item_ref.origin.clone());
-                if let Some(constructors) = &item_ref.constructors {
-                    interface
-                        .constructor_visibility
-                        .entry(item_ref.public_name.clone())
-                        .or_default()
-                        .extend(constructors.iter().cloned());
+                match &item_ref.constructors {
+                    ConstructorVisibility::NotData => {}
+                    ConstructorVisibility::OpaqueData => {
+                        interface
+                            .constructor_visibility
+                            .entry(item_ref.public_name.clone())
+                            .or_default();
+                    }
+                    ConstructorVisibility::Visible(constructors) => {
+                        interface
+                            .constructor_visibility
+                            .entry(item_ref.public_name.clone())
+                            .or_default()
+                            .extend(constructors.iter().cloned());
+                    }
                 }
             }
             Namespace::Class => {
@@ -436,13 +445,9 @@ fn normalize_item_refs<'db>(refs: Vec<ItemRef<'db>>) -> Vec<ItemRef<'db>> {
                 && existing.public_name == item_ref.public_name
                 && existing.source_name == item_ref.source_name
                 && existing.origin == item_ref.origin
-                && existing.constructors.is_some() == item_ref.constructors.is_some()
+                && existing.constructors.is_data() == item_ref.constructors.is_data()
         }) {
-            match (&mut existing.constructors, item_ref.constructors) {
-                (Some(existing), Some(new)) => existing.extend(new),
-                (existing @ Some(_), None) => *existing = None,
-                _ => {}
-            }
+            merge_constructor_visibility(&mut existing.constructors, item_ref.constructors);
         } else {
             merged.push(item_ref);
         }
@@ -460,6 +465,24 @@ fn normalize_item_refs<'db>(refs: Vec<ItemRef<'db>>) -> Vec<ItemRef<'db>> {
             ))
     });
     merged
+}
+
+fn merge_constructor_visibility(existing: &mut ConstructorVisibility, new: ConstructorVisibility) {
+    match (existing, new) {
+        (ConstructorVisibility::Visible(existing), ConstructorVisibility::Visible(new)) => {
+            existing.extend(new);
+        }
+        (existing @ ConstructorVisibility::OpaqueData, ConstructorVisibility::Visible(new)) => {
+            *existing = ConstructorVisibility::from_visible(new.into_names());
+        }
+        (ConstructorVisibility::Visible(_), ConstructorVisibility::OpaqueData)
+        | (ConstructorVisibility::OpaqueData, ConstructorVisibility::OpaqueData)
+        | (ConstructorVisibility::NotData, ConstructorVisibility::NotData) => {}
+        (ConstructorVisibility::NotData, ConstructorVisibility::OpaqueData)
+        | (ConstructorVisibility::NotData, ConstructorVisibility::Visible(_))
+        | (ConstructorVisibility::OpaqueData, ConstructorVisibility::NotData)
+        | (ConstructorVisibility::Visible(_), ConstructorVisibility::NotData) => {}
+    }
 }
 
 pub(super) fn namespace_sort_key(namespace: Namespace) -> u8 {
