@@ -1,0 +1,9 @@
+contract C {
+  data Flag = Off | On;
+
+  public function pick(x : Flag) -> word {
+    match x {
+    | Flag.Off => return 0;
+    }
+  }
+}

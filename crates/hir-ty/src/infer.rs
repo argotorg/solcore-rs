@@ -774,6 +774,13 @@ pub enum TypeckDiagnostic {
         /// Function or body context.
         context: String,
     },
+    /// `SC0302`: a match does not cover every possible scrutinee value.
+    NonExhaustiveMatch {
+        /// Source span for the match scrutinee.
+        span: LabelSpan,
+        /// One uncovered pattern row.
+        missing: String,
+    },
 }
 
 /// Non-value namespace used as a value.
@@ -858,6 +865,41 @@ enum DotCtorLookup<'db> {
     NoExpected,
     NoMatch,
     Ambiguous(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum CoverageCtor<'db> {
+    User {
+        ty: DefId<'db>,
+        index: u32,
+        ty_name: String,
+        name: String,
+    },
+    Builtin(BuiltinCoverageCtor),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum BuiltinCoverageCtor {
+    True,
+    False,
+    Unit,
+    Tuple(usize),
+    Pair,
+    Inl,
+    Inr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CoveragePat<'db> {
+    Wild,
+    Ctor(CoverageCtor<'db>, Vec<CoveragePat<'db>>),
+    Atomic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WitnessPat<'db> {
+    Wild,
+    Ctor(CoverageCtor<'db>, Vec<WitnessPat<'db>>),
 }
 
 struct InferCtx<'db> {
@@ -1192,6 +1234,13 @@ impl TypeckDiagnostic {
             ))
             .with_code("SC0242")
             .with_primary_label_span(span.clone(), Some("runtime return expression")),
+            TypeckDiagnostic::NonExhaustiveMatch { span, missing } => {
+                Diagnostic::error("non-exhaustive pattern match")
+                    .with_code("SC0302")
+                    .with_primary_label_span(span.clone(), Some("non-exhaustive match"))
+                    .with_note(format!("missing case: {missing}"))
+                    .with_note("help: add a clause that covers the missing case")
+            }
         }
     }
 }
@@ -2081,6 +2130,7 @@ impl<'db> InferCtx<'db> {
                     let arm_ty = self.infer_match_arm(body, arm, &scrutinee_tys);
                     self.unify_span(arm.span(self.db), result_ty.clone(), arm_ty);
                 }
+                self.ensure_match_exhaustive(body, scrutinees, &scrutinee_tys, arms);
                 result_ty
             }
             StmtKind::For {
@@ -2217,6 +2267,537 @@ impl<'db> InferCtx<'db> {
                         .is_some_and(|leaf| leaf == name)
             })
             .then_some(name)
+    }
+
+    fn ensure_match_exhaustive(
+        &mut self,
+        body: FuncBody<'db>,
+        scrutinee_exprs: &[Id<Expr<'db>>],
+        scrutinees: &[InferTy<'db>],
+        arms: &[MatchArm<'db>],
+    ) {
+        if arms.iter().any(|arm| arm.pats.len() != scrutinees.len()) {
+            return;
+        }
+        for (index, scrutinee) in scrutinees.iter().enumerate() {
+            if self
+                .partial_data_scrutinee_name(scrutinee.clone())
+                .is_some()
+                && !arms
+                    .iter()
+                    .any(|arm| self.arm_has_catch_all_at(body, arm, index))
+            {
+                return;
+            }
+        }
+
+        let mut tys = Vec::with_capacity(scrutinees.len());
+        for scrutinee in scrutinees {
+            let ty = self.coverage_ty(scrutinee.clone());
+            if matches!(ty, InferTy::Error) {
+                return;
+            }
+            tys.push(ty);
+        }
+
+        let mut matrix = Vec::with_capacity(arms.len());
+        for arm in arms {
+            let mut row = Vec::with_capacity(arm.pats.len());
+            for (pat, ty) in arm.pats.iter().zip(tys.iter()) {
+                if self.pat_is_poisoned(body, *pat) {
+                    return;
+                }
+                let Some(coverage_pat) = self.coverage_pat(body, *pat, ty.clone()) else {
+                    return;
+                };
+                row.push(coverage_pat);
+            }
+            matrix.push(row);
+        }
+
+        if let Some(witness) = self.missing_witness(&tys, &matrix) {
+            let span = scrutinee_exprs
+                .first()
+                .map(|expr| self.expr_label_span(body, *expr))
+                .unwrap_or_else(|| self.body_label_span(body));
+            self.diagnostics.push(TypeckDiagnostic::NonExhaustiveMatch {
+                span,
+                missing: self.display_witness_row(&witness),
+            });
+        }
+    }
+
+    fn coverage_ty(&mut self, ty: InferTy<'db>) -> InferTy<'db> {
+        let ty = self.normalize_aliases(ty);
+        let ty = self.expand_infer_aliases(ty, &mut FxHashSet::default());
+        match self.engine.resolve(ty) {
+            InferTy::Comptime(inner) => self.coverage_ty(*inner),
+            ty => ty,
+        }
+    }
+
+    fn coverage_pat(
+        &mut self,
+        body: FuncBody<'db>,
+        pat_id: Id<Pat<'db>>,
+        expected: InferTy<'db>,
+    ) -> Option<CoveragePat<'db>> {
+        if self.pat_is_poisoned(body, pat_id) {
+            return None;
+        }
+        let kind = body.pats(self.db).get(pat_id).kind.clone();
+        match kind {
+            PatKind::Wildcard => Some(CoveragePat::Wild),
+            PatKind::Var(name) => {
+                let name = (*name.atom()).text(self.db).to_owned();
+                self.coverage_ctor_for_pat(body, pat_id, &name, &[], expected)
+                    .map(|(ctor, _)| CoveragePat::Ctor(ctor, Vec::new()))
+                    .or(Some(CoveragePat::Wild))
+            }
+            PatKind::Lit(_) | PatKind::ComptimeLabel { .. } => Some(CoveragePat::Atomic),
+            PatKind::Tuple { elems } => {
+                let expected = self.coverage_ty(expected);
+                let field_tys = match expected {
+                    InferTy::Tuple(field_tys) if field_tys.len() == elems.len() => field_tys,
+                    InferTy::Named {
+                        ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                        args,
+                    } if args.is_empty() && elems.is_empty() => Vec::new(),
+                    _ => return None,
+                };
+                let mut fields = Vec::with_capacity(elems.len());
+                for (elem, field_ty) in elems.into_iter().zip(field_tys) {
+                    fields.push(self.coverage_pat(body, elem, field_ty)?);
+                }
+                let ctor = if fields.is_empty() {
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::Unit)
+                } else {
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::Tuple(fields.len()))
+                };
+                Some(CoveragePat::Ctor(ctor, fields))
+            }
+            PatKind::Ctor { name, args, .. } => {
+                let name = (*name.atom()).text(self.db).to_owned();
+                let (ctor, field_tys) =
+                    self.coverage_ctor_for_pat(body, pat_id, &name, &args, expected)?;
+                if field_tys.len() != args.len() {
+                    return None;
+                }
+                let mut fields = Vec::with_capacity(args.len());
+                for (arg, field_ty) in args.into_iter().zip(field_tys) {
+                    fields.push(self.coverage_pat(body, arg, field_ty)?);
+                }
+                Some(CoveragePat::Ctor(ctor, fields))
+            }
+            PatKind::Error => None,
+        }
+    }
+
+    fn coverage_ctor_for_pat(
+        &mut self,
+        body: FuncBody<'db>,
+        pat_id: Id<Pat<'db>>,
+        name: &str,
+        args: &[Id<Pat<'db>>],
+        expected: InferTy<'db>,
+    ) -> Option<(CoverageCtor<'db>, Vec<InferTy<'db>>)> {
+        let resolution = self
+            .pat_resolutions
+            .get(&(body, pat_id))
+            .cloned()
+            .unwrap_or(hir_nameres::Resolution::Err);
+        let ctor = match resolution {
+            hir_nameres::Resolution::Ctor { ty, index } => self.user_ctor_head(ty, index)?,
+            hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(ctor)) => {
+                self.builtin_coverage_ctor_for_expected(ctor, expected.clone())?
+            }
+            hir_nameres::Resolution::DotCtorDeferred => {
+                self.coverage_ctor_by_name_for_expected(name, expected.clone())?
+            }
+            hir_nameres::Resolution::Err => return None,
+            _ if args.is_empty() => return None,
+            _ => return None,
+        };
+        let field_tys = self.field_tys_for_ctor(&ctor, expected)?;
+        Some((ctor, field_tys))
+    }
+
+    fn missing_witness(
+        &mut self,
+        tys: &[InferTy<'db>],
+        matrix: &[Vec<CoveragePat<'db>>],
+    ) -> Option<Vec<WitnessPat<'db>>> {
+        if tys.is_empty() {
+            return matrix.is_empty().then(Vec::new);
+        }
+        if matrix.is_empty() {
+            return Some(tys.iter().map(|_| WitnessPat::Wild).collect());
+        }
+
+        let has_ctor = matrix
+            .iter()
+            .filter_map(|row| row.first())
+            .any(|pat| matches!(pat, CoveragePat::Ctor(_, _)));
+        let has_atomic = matrix
+            .iter()
+            .filter_map(|row| row.first())
+            .any(|pat| matches!(pat, CoveragePat::Atomic));
+
+        if has_ctor {
+            let ctors = self.constructor_space(tys[0].clone())?;
+            for ctor in ctors {
+                let fields = self.field_tys_for_ctor(&ctor, tys[0].clone())?;
+                let field_count = fields.len();
+                let specialized = self.specialize_ctor_matrix(&ctor, field_count, matrix);
+                let mut next_tys = fields;
+                next_tys.extend_from_slice(&tys[1..]);
+                if let Some(witness) = self.missing_witness(&next_tys, &specialized) {
+                    let field_witness = witness[..field_count].to_vec();
+                    let rest_witness = witness[field_count..].to_vec();
+                    let mut row = Vec::with_capacity(1 + rest_witness.len());
+                    row.push(WitnessPat::Ctor(ctor, field_witness));
+                    row.extend(rest_witness);
+                    return Some(row);
+                }
+            }
+            return None;
+        }
+
+        let default = self.default_matrix(matrix);
+        if has_atomic {
+            return self
+                .missing_witness(&tys[1..], &default)
+                .map(|rest| self.prepend_wild(rest));
+        }
+        self.missing_witness(&tys[1..], &default)
+            .map(|rest| self.prepend_wild(rest))
+    }
+
+    fn specialize_ctor_matrix(
+        &self,
+        ctor: &CoverageCtor<'db>,
+        field_count: usize,
+        matrix: &[Vec<CoveragePat<'db>>],
+    ) -> Vec<Vec<CoveragePat<'db>>> {
+        let mut specialized = Vec::new();
+        for row in matrix {
+            let Some((head, rest)) = row.split_first() else {
+                continue;
+            };
+            match head {
+                CoveragePat::Ctor(head_ctor, fields) if head_ctor == ctor => {
+                    let mut next = fields.clone();
+                    next.extend(rest.iter().cloned());
+                    specialized.push(next);
+                }
+                CoveragePat::Wild => {
+                    let mut next = vec![CoveragePat::Wild; field_count];
+                    next.extend(rest.iter().cloned());
+                    specialized.push(next);
+                }
+                CoveragePat::Ctor(_, _) | CoveragePat::Atomic => {}
+            }
+        }
+        specialized
+    }
+
+    fn default_matrix(&self, matrix: &[Vec<CoveragePat<'db>>]) -> Vec<Vec<CoveragePat<'db>>> {
+        matrix
+            .iter()
+            .filter_map(|row| {
+                let (head, rest) = row.split_first()?;
+                matches!(head, CoveragePat::Wild).then(|| rest.to_vec())
+            })
+            .collect()
+    }
+
+    fn prepend_wild(&self, rest: Vec<WitnessPat<'db>>) -> Vec<WitnessPat<'db>> {
+        let mut row = Vec::with_capacity(rest.len() + 1);
+        row.push(WitnessPat::Wild);
+        row.extend(rest);
+        row
+    }
+
+    fn constructor_space(&mut self, ty: InferTy<'db>) -> Option<Vec<CoverageCtor<'db>>> {
+        match self.coverage_ty(ty) {
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Bool),
+                args,
+            } if args.is_empty() => Some(vec![
+                CoverageCtor::Builtin(BuiltinCoverageCtor::False),
+                CoverageCtor::Builtin(BuiltinCoverageCtor::True),
+            ]),
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                args,
+            } if args.is_empty() => Some(vec![CoverageCtor::Builtin(BuiltinCoverageCtor::Unit)]),
+            InferTy::Tuple(fields) if fields.is_empty() => {
+                Some(vec![CoverageCtor::Builtin(BuiltinCoverageCtor::Unit)])
+            }
+            InferTy::Tuple(fields) => Some(vec![CoverageCtor::Builtin(
+                BuiltinCoverageCtor::Tuple(fields.len()),
+            )]),
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+                args,
+            } if args.len() == 2 => Some(vec![CoverageCtor::Builtin(BuiltinCoverageCtor::Pair)]),
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Sum),
+                args,
+            } if args.len() == 2 => Some(vec![
+                CoverageCtor::Builtin(BuiltinCoverageCtor::Inl),
+                CoverageCtor::Builtin(BuiltinCoverageCtor::Inr),
+            ]),
+            InferTy::Named {
+                ctor:
+                    TyCtor::User(crate::UserTyCtor {
+                        def,
+                        kind: crate::UserTyCtorKind::Adt,
+                    }),
+                ..
+            } => {
+                let ctors = self.user_ctor_heads(def);
+                (!ctors.is_empty()).then_some(ctors)
+            }
+            _ => None,
+        }
+    }
+
+    fn coverage_ctor_by_name_for_expected(
+        &mut self,
+        name: &str,
+        expected: InferTy<'db>,
+    ) -> Option<CoverageCtor<'db>> {
+        match self.coverage_ty(expected.clone()) {
+            InferTy::Named {
+                ctor:
+                    TyCtor::User(crate::UserTyCtor {
+                        def,
+                        kind: crate::UserTyCtorKind::Adt,
+                    }),
+                ..
+            } => {
+                let matches = self
+                    .user_ctor_heads(def)
+                    .into_iter()
+                    .filter(|ctor| matches!(ctor, CoverageCtor::User { name: ctor_name, .. } if ctor_name == name))
+                    .collect::<Vec<_>>();
+                match matches.as_slice() {
+                    [ctor] => Some(ctor.clone()),
+                    _ => None,
+                }
+            }
+            _ => {
+                let kind = builtin_ctor_kind_by_name(name)?;
+                let hir_nameres::BuiltinKind::Constructor(ctor) = kind else {
+                    return None;
+                };
+                self.builtin_coverage_ctor_for_expected(ctor, expected)
+            }
+        }
+    }
+
+    fn field_tys_for_ctor(
+        &mut self,
+        ctor: &CoverageCtor<'db>,
+        scrutinee: InferTy<'db>,
+    ) -> Option<Vec<InferTy<'db>>> {
+        let scrutinee = self.coverage_ty(scrutinee);
+        match ctor {
+            CoverageCtor::Builtin(builtin) => self.builtin_field_tys(*builtin, scrutinee),
+            CoverageCtor::User { ty, index, .. } => {
+                let scheme = self.lookup_adt_ctor_scheme(*ty, *index)?;
+                let instantiated = self.engine.instantiate_scheme(scheme);
+                if !instantiated.obligations.is_empty() || !instantiated.equality_errors.is_empty()
+                {
+                    return None;
+                }
+                match self.engine.resolve(instantiated.ty) {
+                    InferTy::Function { params, ret } => {
+                        self.engine.unify(*ret, scrutinee).ok()?;
+                        Some(
+                            params
+                                .into_iter()
+                                .map(|param| self.coverage_ty(param))
+                                .collect(),
+                        )
+                    }
+                    ty => {
+                        self.engine.unify(ty, scrutinee).ok()?;
+                        Some(Vec::new())
+                    }
+                }
+            }
+        }
+    }
+
+    fn builtin_field_tys(
+        &mut self,
+        ctor: BuiltinCoverageCtor,
+        scrutinee: InferTy<'db>,
+    ) -> Option<Vec<InferTy<'db>>> {
+        match (ctor, self.coverage_ty(scrutinee)) {
+            (
+                BuiltinCoverageCtor::True | BuiltinCoverageCtor::False,
+                InferTy::Named {
+                    ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Bool),
+                    args,
+                },
+            ) if args.is_empty() => Some(Vec::new()),
+            (
+                BuiltinCoverageCtor::Unit,
+                InferTy::Named {
+                    ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                    args,
+                },
+            ) if args.is_empty() => Some(Vec::new()),
+            (BuiltinCoverageCtor::Unit, InferTy::Tuple(fields)) if fields.is_empty() => {
+                Some(Vec::new())
+            }
+            (BuiltinCoverageCtor::Tuple(len), InferTy::Tuple(fields)) if fields.len() == len => {
+                Some(fields)
+            }
+            (
+                BuiltinCoverageCtor::Pair,
+                InferTy::Named {
+                    ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+                    args,
+                },
+            ) if args.len() == 2 => Some(args),
+            (BuiltinCoverageCtor::Pair, InferTy::Tuple(fields)) if fields.len() == 2 => {
+                Some(fields)
+            }
+            (
+                BuiltinCoverageCtor::Inl,
+                InferTy::Named {
+                    ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Sum),
+                    args,
+                },
+            ) if args.len() == 2 => Some(vec![args[0].clone()]),
+            (
+                BuiltinCoverageCtor::Inr,
+                InferTy::Named {
+                    ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Sum),
+                    args,
+                },
+            ) if args.len() == 2 => Some(vec![args[1].clone()]),
+            _ => None,
+        }
+    }
+
+    fn builtin_coverage_ctor(&self, ctor: hir_nameres::BuiltinCtor) -> CoverageCtor<'db> {
+        let ctor = match ctor {
+            hir_nameres::BuiltinCtor::True => BuiltinCoverageCtor::True,
+            hir_nameres::BuiltinCtor::False => BuiltinCoverageCtor::False,
+            hir_nameres::BuiltinCtor::Unit => BuiltinCoverageCtor::Unit,
+            hir_nameres::BuiltinCtor::Pair => BuiltinCoverageCtor::Pair,
+            hir_nameres::BuiltinCtor::Inl => BuiltinCoverageCtor::Inl,
+            hir_nameres::BuiltinCtor::Inr => BuiltinCoverageCtor::Inr,
+        };
+        CoverageCtor::Builtin(ctor)
+    }
+
+    fn builtin_coverage_ctor_for_expected(
+        &mut self,
+        ctor: hir_nameres::BuiltinCtor,
+        expected: InferTy<'db>,
+    ) -> Option<CoverageCtor<'db>> {
+        let canonical = match (ctor, self.coverage_ty(expected.clone())) {
+            (hir_nameres::BuiltinCtor::Pair, InferTy::Tuple(fields)) if fields.len() == 2 => {
+                CoverageCtor::Builtin(BuiltinCoverageCtor::Tuple(2))
+            }
+            (hir_nameres::BuiltinCtor::Unit, InferTy::Tuple(fields)) if fields.is_empty() => {
+                CoverageCtor::Builtin(BuiltinCoverageCtor::Unit)
+            }
+            _ => self.builtin_coverage_ctor(ctor),
+        };
+        self.field_tys_for_ctor(&canonical, expected)
+            .map(|_| canonical)
+    }
+
+    fn user_ctor_heads(&self, ty: DefId<'db>) -> Vec<CoverageCtor<'db>> {
+        let Some(info) = self.adt_lookup(ty) else {
+            return Vec::new();
+        };
+        let ty_name = ty
+            .name(self.db)
+            .or_else(|| Some(ident_text(self.db, &info.adt.name_elem(self.db))))
+            .unwrap_or_else(|| "adt".to_owned());
+        info.adt
+            .ctors(self.db)
+            .iter()
+            .enumerate()
+            .map(|(index, ctor)| CoverageCtor::User {
+                ty,
+                index: index as u32,
+                ty_name: ty_name.clone(),
+                name: ident_text(self.db, &ctor.name),
+            })
+            .collect()
+    }
+
+    fn user_ctor_head(&self, ty: DefId<'db>, index: u32) -> Option<CoverageCtor<'db>> {
+        self.user_ctor_heads(ty)
+            .into_iter()
+            .find(|ctor| matches!(ctor, CoverageCtor::User { index: ctor_index, .. } if *ctor_index == index))
+    }
+
+    fn adt_lookup(&self, def: DefId<'db>) -> Option<AdtLookup<'db>> {
+        if let Some(info) = find_adt_info(self.db, self.module, def) {
+            return Some(info);
+        }
+        let entry = self.entry_module?;
+        let module = module_for_def(self.db, entry, def)?;
+        let hir_module = module_hir(self.db, module)?;
+        find_adt_info(self.db, hir_module, def)
+    }
+
+    fn display_witness_row(&self, row: &[WitnessPat<'db>]) -> String {
+        row.iter()
+            .map(|pat| self.display_witness_pat(pat))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn display_witness_pat(&self, pat: &WitnessPat<'db>) -> String {
+        match pat {
+            WitnessPat::Wild => "_".to_owned(),
+            WitnessPat::Ctor(ctor, fields) => {
+                let fields = fields
+                    .iter()
+                    .map(|field| self.display_witness_pat(field))
+                    .collect::<Vec<_>>();
+                match ctor {
+                    CoverageCtor::User { ty_name, name, .. } => {
+                        let name = format!("{ty_name}.{name}");
+                        self.display_ctor_pat(&name, &fields)
+                    }
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::True) => "true".to_owned(),
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::False) => "false".to_owned(),
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::Unit) => "()".to_owned(),
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::Tuple(_)) => {
+                        format!("({})", fields.join(", "))
+                    }
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::Pair) => {
+                        self.display_ctor_pat("pair", &fields)
+                    }
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::Inl) => {
+                        self.display_ctor_pat("inl", &fields)
+                    }
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::Inr) => {
+                        self.display_ctor_pat("inr", &fields)
+                    }
+                }
+            }
+        }
+    }
+
+    fn display_ctor_pat(&self, name: &str, fields: &[String]) -> String {
+        if fields.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{name}({})", fields.join(", "))
+        }
     }
 
     fn infer_expr(&mut self, body: FuncBody<'db>, expr_id: Id<Expr<'db>>) -> InferTy<'db> {
