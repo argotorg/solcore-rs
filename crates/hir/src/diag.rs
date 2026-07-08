@@ -589,6 +589,36 @@ impl Diagnostic {
         renderer.render(&report)
     }
 
+    /// Renders this diagnostic as a single line:
+    /// `path:line:column: error[CODE]: message`.
+    ///
+    /// Multi-line messages are compacted so short output remains one diagnostic
+    /// per line.
+    pub fn render_short(&self, db: &dyn crate::Db) -> String {
+        let mut output = String::new();
+        if let Some(label) = self.primary_label() {
+            let absolute = label.span.resolve_to_absolute(db);
+            let file = absolute.file();
+            let path = file.url(db).path();
+            if let Some(content) = file.content(db) {
+                let (line, column) = line_column_for_offset(content, absolute.start().as_usize());
+                output.push_str(&format!("{path}:{line}:{column}: "));
+            } else {
+                output.push_str(&format!("{path}: "));
+            }
+        }
+        output.push_str(self.level.as_str());
+        if let Some(code) = &self.code {
+            output.push('[');
+            output.push_str(code);
+            output.push(']');
+        }
+        output.push_str(": ");
+        output.push_str(&compact_diagnostic_message(&self.message));
+        output.push('\n');
+        output
+    }
+
     fn primary_label(&self) -> Option<&DiagnosticLabel> {
         self.labels
             .iter()
@@ -647,6 +677,15 @@ impl DiagnosticLevel {
             DiagnosticLevel::Warning => Level::WARNING,
             DiagnosticLevel::Note => Level::NOTE,
             DiagnosticLevel::Help => Level::HELP,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            DiagnosticLevel::Error => "error",
+            DiagnosticLevel::Warning => "warning",
+            DiagnosticLevel::Note => "note",
+            DiagnosticLevel::Help => "help",
         }
     }
 }
@@ -796,6 +835,22 @@ fn count_lines_in_span(source: &str, start: usize, end: usize) -> usize {
         count -= 1;
     }
     count
+}
+
+fn line_column_for_offset(source: &str, offset: usize) -> (usize, usize) {
+    let offset = floor_char_boundary(source, offset.min(source.len()));
+    let line = source[..offset]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1;
+    let line_start = line_start_at_or_before(source, offset);
+    let column = source[line_start..offset].chars().count() + 1;
+    (line, column)
+}
+
+fn compact_diagnostic_message(message: &str) -> String {
+    message.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn add_offset(base: Offset, rel: Offset) -> Offset {

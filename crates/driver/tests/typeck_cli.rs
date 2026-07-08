@@ -1,8 +1,50 @@
 use std::{
     fs,
+    path::{Path, PathBuf},
     process::Command,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+#[test]
+fn cli_prints_help_and_version() {
+    let help = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--help")
+        .output()
+        .expect("run driver help");
+    assert!(help.status.success(), "help failed");
+    let stdout = String::from_utf8_lossy(&help.stdout);
+    assert!(stdout.contains("--std-root DIR"), "{stdout}");
+    assert!(stdout.contains("--color auto|always|never"), "{stdout}");
+    assert!(
+        stdout.contains("--diagnostic-format human|short"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("-o, --output-dir DIR"), "{stdout}");
+    assert!(stdout.contains("--root DIR"), "{stdout}");
+
+    let version = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--version")
+        .output()
+        .expect("run driver version");
+    assert!(version.status.success(), "version failed");
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout),
+        format!("solcore-driver {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+#[test]
+fn cli_reports_usage_errors_with_exit_code_2() {
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--definitely-not-a-real-flag")
+        .output()
+        .expect("run driver usage error");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown option"), "{stderr}");
+    assert!(stderr.contains("--help"), "{stderr}");
+}
 
 #[test]
 fn cli_prints_typeck_mismatch_diagnostic() {
@@ -21,6 +63,34 @@ fn cli_prints_typeck_mismatch_diagnostic() {
     assert!(
         stderr.contains("^^^^ expression has mismatched type"),
         "expected caret label in stderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn cli_prints_short_diagnostics() {
+    let dir = temp_dir("short-diagnostic");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    fs::write(&input, "function main() -> word { return true; }\n").expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--color=never")
+        .arg("--diagnostic-format=short")
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("main.solc:1:34: error[SC0201]: type mismatch: expected word, got bool"),
+        "stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("function main()"),
+        "short output should not include source snippets:\n{stderr}"
     );
 }
 
@@ -67,11 +137,102 @@ forall a b . instance Box(a):MyClass(b) {}
 }
 
 #[test]
+fn cli_uses_root_override_for_main_library() {
+    let dir = temp_dir("root-override");
+    let nested = dir.join("nested");
+    fs::create_dir_all(&nested).expect("create temp dirs");
+    fs::write(
+        dir.join("lib.solc"),
+        "export { value };\nfunction value() -> word { return 5; }\n",
+    )
+    .expect("write lib");
+    let input = nested.join("main.solc");
+    fs::write(
+        &input,
+        "import lib.lib;\nfunction main() -> word { return lib.value(); }\n",
+    )
+    .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--root")
+        .arg(&dir)
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(
+        output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cli_uses_explicit_std_root() {
+    let dir = temp_dir("explicit-std-root");
+    let std_root = dir.join("custom-std");
+    let input_dir = dir.join("src");
+    fs::create_dir_all(&std_root).expect("create std dir");
+    fs::create_dir_all(&input_dir).expect("create input dir");
+    write_fake_std(&std_root);
+    let input = input_dir.join("main.solc");
+    write_fake_std_importer(&input);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--std-root")
+        .arg(&std_root)
+        .arg(&input)
+        .env_remove("SOLCORE_STD")
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(
+        output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn copied_binary_resolves_std_next_to_current_exe() {
+    let dir = temp_dir("copied-binary-std");
+    let input_dir = dir.join("src");
+    fs::create_dir_all(&input_dir).expect("create input dir");
+    let copied_driver = dir.join("solcore-driver");
+    fs::copy(env!("CARGO_BIN_EXE_solcore-driver"), &copied_driver).expect("copy driver");
+    write_fake_std(&dir.join("std"));
+    let input = input_dir.join("main.solc");
+    write_fake_std_importer(&input);
+
+    let output = Command::new(&copied_driver)
+        .arg(&input)
+        .env_remove("SOLCORE_STD")
+        .output()
+        .expect("run copied driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(
+        output.status.success(),
+        "copied driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn cli_emits_yul_to_stdout_and_hull_to_file() {
     let dir = temp_dir("emit-backends");
     fs::create_dir_all(&dir).expect("create temp dir");
     let input = dir.join("main.solc");
-    let hull_output = dir.join("main.hull");
+    let output_dir = dir.join("artifacts");
+    let hull_output = output_dir.join("main.hull");
     fs::write(
         &input,
         r#"
@@ -103,7 +264,9 @@ contract C {
     );
 
     let hull = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
-        .arg(format!("--emit-hull={}", hull_output.display()))
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--emit-hull=main.hull")
         .arg(&input)
         .output()
         .expect("run driver hull");
@@ -118,6 +281,43 @@ contract C {
     assert!(hull_text.contains("match<word>"), "{hull_text}");
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_renders_backend_diagnostics_with_stable_codes() {
+    let dir = temp_dir("backend-diagnostic");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    fs::write(
+        &input,
+        r#"
+contract C {
+  public function main() -> string {
+    return "nope";
+  }
+}
+"#,
+    )
+    .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--emit-hull")
+        .arg("--color=never")
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("error[SC0420]"), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("cannot lower type `string` to Hull"),
+        "stderr:\n{stderr}"
+    );
+    assert!(!stderr.contains("UnsupportedType {"), "stderr:\n{stderr}");
+    assert!(!stderr.contains("HULL-EMIT"), "stderr:\n{stderr}");
 }
 
 #[test]
@@ -194,7 +394,24 @@ fn driver_stderr(label: &str, source: &str) -> String {
     strip_ansi(&String::from_utf8_lossy(&output.stderr))
 }
 
-fn temp_dir(label: &str) -> std::path::PathBuf {
+fn write_fake_std(std_root: &Path) {
+    fs::create_dir_all(std_root).expect("create fake std root");
+    fs::write(
+        std_root.join("std.solc"),
+        "export { solcoreTempStdValue };\nfunction solcoreTempStdValue() -> word { return 7; }\n",
+    )
+    .expect("write fake std");
+}
+
+fn write_fake_std_importer(path: &Path) {
+    fs::write(
+        path,
+        "import std;\nfunction main() -> word { return std.solcoreTempStdValue(); }\n",
+    )
+    .expect("write fake std importer");
+}
+
+fn temp_dir(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "solcore-driver-typeck-{label}-{}-{}",
         std::process::id(),
