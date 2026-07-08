@@ -82,7 +82,12 @@ pub(super) fn local_importable_refs<'db>(
     let hir_module = parse_file_to_hir(db, file).module(db);
     let mut refs = Vec::new();
     for item in hir_module.items(db) {
-        refs.extend(local_refs_for_item(db, module, item, false));
+        refs.extend(local_refs_for_item(
+            db,
+            module,
+            item,
+            CtorInclusion::Exclude,
+        ));
     }
     refs
 }
@@ -102,12 +107,12 @@ fn local_refs_for_item<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     item: &Item<'db>,
-    include_data_ctors: bool,
+    ctor_inclusion: CtorInclusion,
 ) -> Vec<ItemRef<'db>> {
     match item {
         Item::FunctionDef(def) => vec![function_ref(db, module, *def)],
         Item::TypeAlias(def) => vec![type_alias_ref(db, module, *def)],
-        Item::AdtDef(def) => vec![adt_ref(db, module, *def, include_data_ctors)],
+        Item::AdtDef(def) => vec![adt_ref(db, module, *def, ctor_inclusion)],
         Item::ClassDef(def) => vec![class_ref(db, module, *def)],
         Item::ContractDef(def) => vec![contract_ref(db, module, *def)],
         Item::InstanceDef(_)
@@ -158,10 +163,10 @@ fn adt_ref<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     def: AdtDef<'db>,
-    include_data_ctors: bool,
+    ctor_inclusion: CtorInclusion,
 ) -> ItemRef<'db> {
     let name = spanned_name_text(db, &def.name(db));
-    let constructors = if include_data_ctors {
+    let constructors = if ctor_inclusion.includes_data_ctors() {
         ConstructorVisibility::from_visible(ctor_names(db, def).into_iter().collect())
     } else {
         ConstructorVisibility::OpaqueData
@@ -215,7 +220,7 @@ pub(super) fn local_data_ref_with_constructors<'db>(
     module: ModuleId<'db>,
     type_name: &str,
     selector: &ConstructorSelector<'db>,
-    strict: bool,
+    mode: ExportResolutionMode,
     diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
     exported: &ExportedName<'db>,
 ) -> Option<ItemRef<'db>> {
@@ -223,7 +228,7 @@ pub(super) fn local_data_ref_with_constructors<'db>(
     let available = ctor_names(db, def);
     let selected = select_constructors(db, selector, &available);
     let missing = missing_constructors(db, selector, &available);
-    if strict {
+    if mode.is_strict() {
         for ctor in missing {
             diagnostics.push(unknown_local_ctor_diag(
                 db,
@@ -233,7 +238,7 @@ pub(super) fn local_data_ref_with_constructors<'db>(
             ));
         }
     }
-    let mut item_ref = adt_ref(db, module, def, false);
+    let mut item_ref = adt_ref(db, module, def, CtorInclusion::Exclude);
     item_ref.constructors = ConstructorVisibility::from_visible(selected.into_iter().collect());
     Some(item_ref)
 }
@@ -256,7 +261,7 @@ pub(super) fn visible_data_ref_with_constructors<'db>(
         .clone();
     let visible = visible_constructor_names(&data_ref.constructors);
     let missing = missing_constructors(db, selector, &visible);
-    if ctx.strict {
+    if ctx.mode.is_strict() {
         for ctor in missing {
             ctx.diagnostics.push(match ctx.diagnostic {
                 ConstructorDiagnostic::Local => {
@@ -284,7 +289,7 @@ pub(super) enum ConstructorDiagnostic {
 }
 
 pub(super) struct ConstructorDiagnosticCtx<'a, 'db> {
-    pub(super) strict: bool,
+    pub(super) mode: ExportResolutionMode,
     pub(super) diagnostics: &'a mut Vec<ModuleDiagnostic<'db>>,
     pub(super) diagnostic: ConstructorDiagnostic,
 }
@@ -352,7 +357,7 @@ pub(super) fn strip_constructor_visibility<'db>(mut item_ref: ItemRef<'db>) -> I
 pub(super) fn selected_imported_refs<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
-    strict: bool,
+    mode: ExportResolutionMode,
     diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) -> Vec<ItemRef<'db>> {
     let Some(file) = db.module_file(module) else {
@@ -365,7 +370,7 @@ pub(super) fn selected_imported_refs<'db>(
             continue;
         };
         let path = path_ref_from_import(db, import);
-        let Some(target) = resolve_for_export(db, module, &path, strict, diagnostics) else {
+        let Some(target) = resolve_for_export(db, module, &path, mode, diagnostics) else {
             continue;
         };
         let interface = public_interface(db, target);

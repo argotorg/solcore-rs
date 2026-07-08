@@ -51,6 +51,7 @@ mod instances;
 mod interface;
 mod item_refs;
 mod model;
+mod modes;
 mod paths;
 mod scc;
 mod util;
@@ -97,6 +98,7 @@ use item_refs::{
     qualify, resolution_for_item_ref, select_import_refs, selected_imported_refs,
     strip_constructor_visibility, visible_data_ref_with_constructors,
 };
+use modes::{BodyDiagnosticPolicy, CtorInclusion, ExportResolutionMode};
 use paths::{module_path_span, path_segments};
 use util::{
     best_name_suggestion, ident_text, namespace_context, private_surface_key, record_body_field,

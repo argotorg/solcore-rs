@@ -159,7 +159,13 @@ fn validate_import_items_exist<'db>(
             continue;
         };
         let path = path_ref_from_import(db, *import);
-        let Some(target) = resolve_for_export(db, module, &path, false, diagnostics) else {
+        let Some(target) = resolve_for_export(
+            db,
+            module,
+            &path,
+            ExportResolutionMode::Lenient,
+            diagnostics,
+        ) else {
             continue;
         };
         if module_has_parse_errors(db, target) {
@@ -228,7 +234,13 @@ fn validate_ambiguous_selected_imports<'db>(
             continue;
         };
         let path = path_ref_from_import(db, *import);
-        let Some(target) = resolve_for_export(db, module, &path, false, diagnostics) else {
+        let Some(target) = resolve_for_export(
+            db,
+            module,
+            &path,
+            ExportResolutionMode::Lenient,
+            diagnostics,
+        ) else {
             continue;
         };
         let interface = public_interface(db, target);

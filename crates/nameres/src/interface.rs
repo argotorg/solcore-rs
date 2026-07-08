@@ -62,7 +62,12 @@ pub fn public_interface<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Interfac
     // provisional empty interfaces. Strict unknown-name diagnostics are emitted
     // by `validate_module` after the cycle has converged.
     let mut diagnostics = Vec::new();
-    interface_from_raw(expand_module_exports(db, module, false, &mut diagnostics))
+    interface_from_raw(expand_module_exports(
+        db,
+        module,
+        ExportResolutionMode::Lenient,
+        &mut diagnostics,
+    ))
 }
 
 fn public_interface_initial<'db>(
@@ -103,7 +108,7 @@ fn public_interface_cycle<'db>(
 pub(super) fn expand_module_exports<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
-    strict: bool,
+    mode: ExportResolutionMode,
     diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) -> RawInterface<'db> {
     let Some(file) = db.module_file(module) else {
@@ -115,14 +120,14 @@ pub(super) fn expand_module_exports<'db>(
     }
 
     let mut raw = RawInterface::default();
-    let selected_imports = selected_imported_refs(db, module, strict, diagnostics);
+    let selected_imports = selected_imported_refs(db, module, mode, diagnostics);
     for export in module_items.exports {
         expand_export(
             db,
             module,
             export,
             &selected_imports,
-            strict,
+            mode,
             diagnostics,
             &mut raw,
         );
@@ -135,19 +140,19 @@ fn expand_export<'db>(
     module: ModuleId<'db>,
     export: Export<'db>,
     selected_imports: &[ItemRef<'db>],
-    strict: bool,
+    mode: ExportResolutionMode,
     diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
     raw: &mut RawInterface<'db>,
 ) {
     match export.kind(db) {
         ExportKind::List(names) => {
             for name in names {
-                expand_exported_name(db, module, name, selected_imports, strict, diagnostics, raw);
+                expand_exported_name(db, module, name, selected_imports, mode, diagnostics, raw);
             }
         }
         ExportKind::Module(path) => {
             let path_ref = path_ref_from_segments(db, export.span(db), path.clone());
-            if let Some(target) = resolve_for_export(db, module, &path_ref, strict, diagnostics) {
+            if let Some(target) = resolve_for_export(db, module, &path_ref, mode, diagnostics) {
                 let span = path_ref
                     .segments
                     .last()
@@ -164,7 +169,7 @@ fn expand_export<'db>(
         }
         ExportKind::ModuleAs(path, alias) => {
             let path_ref = path_ref_from_segments(db, export.span(db), path.clone());
-            if let Some(target) = resolve_for_export(db, module, &path_ref, strict, diagnostics) {
+            if let Some(target) = resolve_for_export(db, module, &path_ref, mode, diagnostics) {
                 raw.push_module_alias(
                     ModuleAlias {
                         public_name: spanned_name_text(db, alias),
@@ -176,7 +181,7 @@ fn expand_export<'db>(
         }
         ExportKind::ItemsFrom(path, names) => {
             let path_ref = path_ref_from_segments(db, export.span(db), path.clone());
-            expand_reexport_items(db, module, &path_ref, names, strict, diagnostics, raw);
+            expand_reexport_items(db, module, &path_ref, names, mode, diagnostics, raw);
         }
     }
 }
@@ -186,7 +191,7 @@ fn expand_exported_name<'db>(
     module: ModuleId<'db>,
     name: &ExportedName<'db>,
     selected_imports: &[ItemRef<'db>],
-    strict: bool,
+    mode: ExportResolutionMode,
     diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
     raw: &mut RawInterface<'db>,
 ) {
@@ -207,7 +212,7 @@ fn expand_exported_name<'db>(
                 constructors: None,
                 is_operator: false,
             }],
-            strict,
+            mode,
             diagnostics,
             raw,
         );
@@ -217,12 +222,13 @@ fn expand_exported_name<'db>(
     match &name.constructors {
         Some(selector) => {
             let may_be_unknown = selected_import_may_be_unknown(db, module, &text);
+            let diagnostic_mode = mode.suppress_if(may_be_unknown);
             let refs = local_data_ref_with_constructors(
                 db,
                 module,
                 &text,
                 selector,
-                strict,
+                mode,
                 diagnostics,
                 name,
             )
@@ -234,7 +240,7 @@ fn expand_exported_name<'db>(
                     selected_imports,
                     name,
                     ConstructorDiagnosticCtx {
-                        strict: strict && !may_be_unknown,
+                        mode: diagnostic_mode,
                         diagnostics,
                         diagnostic: ConstructorDiagnostic::Local,
                     },
@@ -242,7 +248,7 @@ fn expand_exported_name<'db>(
             });
             if let Some(item_ref) = refs {
                 raw.push_item_ref(item_ref, export_span);
-            } else if strict && !may_be_unknown {
+            } else if diagnostic_mode.is_strict() {
                 diagnostics.push(unknown_local_export_diag(db, name.name.span(db), &text));
             }
         }
@@ -255,7 +261,10 @@ fn expand_exported_name<'db>(
                     .cloned(),
             );
             if refs.is_empty() {
-                if strict && !selected_import_may_be_unknown(db, module, &text) {
+                if mode
+                    .suppress_if(selected_import_may_be_unknown(db, module, &text))
+                    .is_strict()
+                {
                     diagnostics.push(unknown_local_export_diag(db, name.name.span(db), &text));
                 }
             } else {
@@ -279,7 +288,13 @@ fn selected_import_may_be_unknown<'db>(db: &'db dyn Db, module: ModuleId<'db>, n
         };
         let path = path_ref_from_import(db, import);
         let mut scratch = Vec::new();
-        let Some(target) = resolve_for_export(db, module, &path, false, &mut scratch) else {
+        let Some(target) = resolve_for_export(
+            db,
+            module,
+            &path,
+            ExportResolutionMode::Lenient,
+            &mut scratch,
+        ) else {
             continue;
         };
         if !module_has_parse_errors(db, target) {
@@ -309,15 +324,16 @@ fn expand_reexport_items<'db>(
     module: ModuleId<'db>,
     path: &ModulePathRef<'db>,
     names: &[ExportedName<'db>],
-    strict: bool,
+    mode: ExportResolutionMode,
     diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
     raw: &mut RawInterface<'db>,
 ) {
-    let Some(target) = resolve_for_export(db, module, path, strict, diagnostics) else {
+    let Some(target) = resolve_for_export(db, module, path, mode, diagnostics) else {
         return;
     };
     let interface = public_interface(db, target);
     let target_has_parse_errors = module_has_parse_errors(db, target);
+    let diagnostic_mode = mode.suppress_if(target_has_parse_errors);
 
     for name in names {
         let text = spanned_name_text(db, &name.name);
@@ -335,13 +351,13 @@ fn expand_reexport_items<'db>(
                 &interface.item_refs,
                 name,
                 ConstructorDiagnosticCtx {
-                    strict: strict && !target_has_parse_errors,
+                    mode: diagnostic_mode,
                     diagnostics,
                     diagnostic: ConstructorDiagnostic::ReExport,
                 },
             ) {
                 Some(item_ref) => raw.push_item_ref(item_ref, export_span),
-                None if strict && !target_has_parse_errors => {
+                None if diagnostic_mode.is_strict() => {
                     diagnostics.push(unknown_reexport_diag(db, name.name.span(db), &text));
                 }
                 None => {}
@@ -355,7 +371,7 @@ fn expand_reexport_items<'db>(
                     .map(strip_constructor_visibility)
                     .collect();
                 if matching.is_empty() {
-                    if strict && !target_has_parse_errors {
+                    if diagnostic_mode.is_strict() {
                         diagnostics.push(unknown_reexport_diag(db, name.name.span(db), &text));
                     }
                 } else {
@@ -370,13 +386,13 @@ pub(super) fn resolve_for_export<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     path: &ModulePathRef<'db>,
-    strict: bool,
+    mode: ExportResolutionMode,
     diagnostics: &mut Vec<ModuleDiagnostic<'db>>,
 ) -> Option<ModuleId<'db>> {
     match resolve_module_path(db, module, path.clone()) {
         Ok(target) => Some(target),
         Err(diagnostic) => {
-            if strict {
+            if mode.is_strict() {
                 diagnostics.push(*diagnostic);
             }
             None

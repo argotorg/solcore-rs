@@ -330,7 +330,13 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
                     .cloned()
                     .map(AnyDiagnostic::Nameres),
             );
-            collect_body_diagnostics(db, hir_module, &env, has_parse_errors, &mut diagnostics);
+            collect_body_diagnostics(
+                db,
+                hir_module,
+                &env,
+                BodyDiagnosticPolicy::from_parse_errors(has_parse_errors),
+                &mut diagnostics,
+            );
         }
     }
 
@@ -354,13 +360,14 @@ pub fn body_diagnostics<'db>(
     suppress_for_parse_errors: bool,
 ) -> Vec<AnyDiagnostic> {
     record_body_field(db, body);
-    let policy = if suppress_for_parse_errors {
-        hir_nameres::NameresDiagnosticPolicy::SuppressForParseErrors
-    } else {
-        hir_nameres::NameresDiagnosticPolicy::Emit
-    };
-    let resolution =
-        hir_nameres::resolve_body_with_imports_and_policy(db, body, &context, &env, policy);
+    let policy = BodyDiagnosticPolicy::from_suppress_for_parse_errors(suppress_for_parse_errors);
+    let resolution = hir_nameres::resolve_body_with_imports_and_policy(
+        db,
+        body,
+        &context,
+        &env,
+        policy.as_hir_policy(),
+    );
     let mut diagnostics = resolution
         .diagnostics
         .into_iter()
@@ -387,14 +394,14 @@ fn collect_body_diagnostics<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     env: &ModuleEnv<'db>,
-    suppress_for_parse_errors: bool,
+    policy: BodyDiagnosticPolicy,
     diagnostics: &mut Vec<AnyDiagnostic>,
 ) {
     let mut collector = BodyDiagnosticCollector {
         db,
         module,
         env,
-        suppress_for_parse_errors,
+        policy,
         diagnostics,
     };
     for item in module.items(db) {
@@ -406,7 +413,7 @@ struct BodyDiagnosticCollector<'a, 'db> {
     db: &'db dyn Db,
     module: Module<'db>,
     env: &'a ModuleEnv<'db>,
-    suppress_for_parse_errors: bool,
+    policy: BodyDiagnosticPolicy,
     diagnostics: &'a mut Vec<AnyDiagnostic>,
 }
 
@@ -485,7 +492,7 @@ impl<'a, 'db> BodyDiagnosticCollector<'a, 'db> {
                 body,
                 context,
                 self.env.clone(),
-                self.suppress_for_parse_errors,
+                self.policy.suppress_for_parse_errors(),
             )
             .iter()
             .cloned(),
@@ -534,7 +541,7 @@ fn collect_module_validation_diagnostics<'db>(
 
     validate_imports(db, module, &mut diagnostics);
     let _ = public_interface(db, module);
-    let raw = expand_module_exports(db, module, true, &mut diagnostics);
+    let raw = expand_module_exports(db, module, ExportResolutionMode::Strict, &mut diagnostics);
     validate_duplicate_exports(db, module, &raw, &mut diagnostics);
     diagnostics
 }
