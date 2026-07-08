@@ -827,7 +827,8 @@ impl<'db> InferCtx<'db> {
             }
             hir_nameres::Resolution::DotCtorDeferred => {
                 let name = match &body.pats(self.db).get(pat).kind {
-                    PatKind::Ctor { name, .. } | PatKind::Var(name) => (*name.atom()).text(self.db),
+                    PatKind::Ctor { head, .. } => (*head.name().atom()).text(self.db),
+                    PatKind::Var(name) => (*name.atom()).text(self.db),
                     _ => "",
                 };
                 let Some(expected) = expected else {
@@ -883,9 +884,8 @@ impl<'db> InferCtx<'db> {
             hir_nameres::Resolution::Err => InferTy::Error,
             _ => {
                 let name = match &body.pats(self.db).get(pat).kind {
-                    PatKind::Ctor { name, .. } | PatKind::Var(name) => {
-                        (*name.atom()).text(self.db).to_owned()
-                    }
+                    PatKind::Ctor { head, .. } => (*head.name().atom()).text(self.db).to_owned(),
+                    PatKind::Var(name) => (*name.atom()).text(self.db).to_owned(),
                     _ => "<pattern>".to_owned(),
                 };
                 self.emit_pat_error(

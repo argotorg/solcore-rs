@@ -184,8 +184,8 @@ impl<'db> InferCtx<'db> {
                 };
                 Some(CoveragePat::Ctor(ctor, fields))
             }
-            PatKind::Ctor { name, args, .. } => {
-                let name = (*name.atom()).text(self.db).to_owned();
+            PatKind::Ctor { head, args } => {
+                let name = (*head.name().atom()).text(self.db).to_owned();
                 let (ctor, field_tys) =
                     self.coverage_ctor_for_pat(body, pat_id, &name, &args, expected)?;
                 if field_tys.len() != args.len() {

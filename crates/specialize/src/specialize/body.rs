@@ -497,7 +497,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 }),
             },
             PatKind::Lit(lit) => MonoPatKind::Lit(lit.clone()),
-            PatKind::Ctor { name, args, .. } => MonoPatKind::Con {
+            PatKind::Ctor { head, args } => MonoPatKind::Con {
                 ctor: MonoId {
                     name: match self.pat_resolution(pat_id) {
                         Some(hir_nameres::Resolution::Ctor { ty: adt, index }) => ctor_name(
@@ -508,7 +508,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         Some(hir_nameres::Resolution::Builtin(
                             hir_nameres::BuiltinKind::Constructor(ctor),
                         )) => builtin_ctor_name(ctor).to_owned(),
-                        _ => ident_text(self.driver.db, name),
+                        _ => ident_text(self.driver.db, head.name()),
                     },
                     ty: mono_ty,
                     span: pat.span,

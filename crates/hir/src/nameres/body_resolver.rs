@@ -265,70 +265,68 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 };
                 self.map.record_pat(body, pat_id, resolution);
             }
-            PatKind::Ctor {
-                leading_dot,
-                qualifier,
-                name,
-                args,
-            } => {
+            PatKind::Ctor { head, args } => {
                 for arg in args {
                     self.pat(body, *arg);
                 }
-                let resolution = if leading_dot.is_some() {
-                    Resolution::DotCtorDeferred
-                } else if let Some(qualifier) = qualifier {
-                    let qualifier_text = ident_text_str(self.db, qualifier);
-                    let qualified = qualify(qualifier_text, ident_text_str(self.db, name));
-                    self.lookup_ctor(&qualified).unwrap_or_else(|| {
-                        if self
-                            .imports
-                            .has_incomplete_module_qualifier(self.db, qualifier_text)
-                        {
-                            return Resolution::Err;
+                let resolution = match head {
+                    PatCtorHead::Deferred { .. } => Resolution::DotCtorDeferred,
+                    PatCtorHead::Qualified { qualifier, name } => {
+                        let qualifier_text = ident_text_str(self.db, qualifier);
+                        let qualified = qualify(qualifier_text, ident_text_str(self.db, name));
+                        self.lookup_ctor(&qualified).unwrap_or_else(|| {
+                            if self
+                                .imports
+                                .has_incomplete_module_qualifier(self.db, qualifier_text)
+                            {
+                                return Resolution::Err;
+                            }
+                            self.map
+                                .diagnostics
+                                .push(self.undefined_name_diag(&qualified, name.span(self.db)));
+                            Resolution::Err
+                        })
+                    }
+                    PatCtorHead::Unqualified { name } => {
+                        let leaf = ident_text_str(self.db, name);
+                        if self.imports.may_contain_unknown_unqualified(
+                            self.db,
+                            Namespace::Term,
+                            leaf,
+                        ) {
+                            Resolution::Err
+                        } else if self.has_constructor_leaf(leaf) {
+                            self.same_name_constructor_resolution(leaf)
+                                .unwrap_or_else(|| {
+                                    if matches!(
+                                        builtin_term(leaf),
+                                        Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
+                                    ) {
+                                        // Primitive constructors (`pair`, `inl`, ...) stay
+                                        // legal unqualified; their concrete constructor is
+                                        // picked from the expected type during inference.
+                                        Resolution::DotCtorDeferred
+                                    } else {
+                                        self.map.diagnostics.push(unqualified_constructor(
+                                            self.db,
+                                            leaf,
+                                            name.span(self.db),
+                                            self.constructor_qualification(leaf),
+                                        ));
+                                        Resolution::Err
+                                    }
+                                })
+                        } else if args.is_empty() {
+                            let resolution =
+                                Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
+                            self.add_local(leaf, resolution.clone());
+                            resolution
+                        } else {
+                            self.map
+                                .diagnostics
+                                .push(invalid_pattern(self.db, pat.span));
+                            Resolution::Err
                         }
-                        self.map
-                            .diagnostics
-                            .push(self.undefined_name_diag(&qualified, name.span(self.db)));
-                        Resolution::Err
-                    })
-                } else {
-                    let leaf = ident_text_str(self.db, name);
-                    if self
-                        .imports
-                        .may_contain_unknown_unqualified(self.db, Namespace::Term, leaf)
-                    {
-                        Resolution::Err
-                    } else if self.has_constructor_leaf(leaf) {
-                        self.same_name_constructor_resolution(leaf)
-                            .unwrap_or_else(|| {
-                                if matches!(
-                                    builtin_term(leaf),
-                                    Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
-                                ) {
-                                    // Primitive constructors (`pair`, `inl`, ...) stay
-                                    // legal unqualified; their concrete constructor is
-                                    // picked from the expected type during inference.
-                                    Resolution::DotCtorDeferred
-                                } else {
-                                    self.map.diagnostics.push(unqualified_constructor(
-                                        self.db,
-                                        leaf,
-                                        name.span(self.db),
-                                        self.constructor_qualification(leaf),
-                                    ));
-                                    Resolution::Err
-                                }
-                            })
-                    } else if args.is_empty() {
-                        let resolution =
-                            Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
-                        self.add_local(leaf, resolution.clone());
-                        resolution
-                    } else {
-                        self.map
-                            .diagnostics
-                            .push(invalid_pattern(self.db, pat.span));
-                        Resolution::Err
                     }
                 };
                 self.map.record_pat(body, pat_id, resolution);

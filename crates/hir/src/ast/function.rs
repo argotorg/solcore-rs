@@ -314,6 +314,40 @@ pub struct Pat<'db> {
     pub kind: PatKind<'db>,
 }
 
+/// Constructor pattern head syntax.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum PatCtorHead<'db> {
+    /// Leading-dot constructor lookup deferred to the expected type.
+    Deferred {
+        /// Span of the leading dot.
+        dot: Span<'db>,
+        /// Constructor leaf name.
+        name: SpannedElem<'db, Ident<'db>>,
+    },
+    /// Qualified constructor lookup.
+    Qualified {
+        /// Qualifier path collapsed into a dotted identifier.
+        qualifier: SpannedElem<'db, Ident<'db>>,
+        /// Constructor leaf name.
+        name: SpannedElem<'db, Ident<'db>>,
+    },
+    /// Unqualified constructor or variable-like pattern head.
+    Unqualified {
+        /// Constructor leaf name.
+        name: SpannedElem<'db, Ident<'db>>,
+    },
+}
+
+impl<'db> PatCtorHead<'db> {
+    pub fn name(&self) -> &SpannedElem<'db, Ident<'db>> {
+        match self {
+            Self::Deferred { name, .. }
+            | Self::Qualified { name, .. }
+            | Self::Unqualified { name } => name,
+        }
+    }
+}
+
 /// Kinds of patterns accepted by match arms.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum PatKind<'db> {
@@ -325,12 +359,8 @@ pub enum PatKind<'db> {
     Lit(LitKind),
     /// Constructor pattern, possibly qualified.
     Ctor {
-        /// Span of a leading dot for deferred constructor lookup.
-        leading_dot: Option<Span<'db>>,
-        /// Qualifier path collapsed into a dotted identifier.
-        qualifier: Option<SpannedElem<'db, Ident<'db>>>,
-        /// Constructor leaf name.
-        name: SpannedElem<'db, Ident<'db>>,
+        /// Constructor pattern head syntax.
+        head: PatCtorHead<'db>,
         /// Constructor argument patterns.
         args: Vec<Id<Pat<'db>>>,
     },

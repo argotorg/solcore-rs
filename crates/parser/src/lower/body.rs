@@ -538,16 +538,18 @@ fn lower_parsed_pat<'db>(
             let leading_dot = leading_dot.map(|dot| span_from_absolute(anchor, dot, base_start));
             let qualifier = lower_qualifier_path(ctx.db, anchor, base_start, qualifiers);
             let name = lower_spanned_ident(ctx.db, anchor, base_start, name);
+            let head = if let Some(dot) = leading_dot {
+                function::PatCtorHead::Deferred { dot, name }
+            } else if let Some(qualifier) = qualifier {
+                function::PatCtorHead::Qualified { qualifier, name }
+            } else {
+                function::PatCtorHead::Unqualified { name }
+            };
             let args = args
                 .into_iter()
                 .map(|arg| lower_parsed_pat(ctx, anchor, base_start, arg, arenas))
                 .collect();
-            function::PatKind::Ctor {
-                leading_dot,
-                qualifier,
-                name,
-                args,
-            }
+            function::PatKind::Ctor { head, args }
         }
         ParsedPatKind::ComptimeLabel { kw, expr } => {
             let kw = span_from_absolute(anchor, kw, base_start);
