@@ -3,101 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/ergo_integer_erasure_branch/main.solc
 ---
-error[SC0411]: integer type survived comptime erasure: constructor 'Box_MkBox': (integer) -> adt:Box
-  --> /main/main.solc:14:19
-   |
-13 |     }
-14 |     let b : Box = Box.MkBox(1);
-   |                   ^^^^^^^^^^^^ comptime-only type remains here
-15 |     if (v > 0) {
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: expression: integer
-  --> /main/main.solc:14:29
-   |
-13 |     }
-14 |     let b : Box = Box.MkBox(1);
-   |                             ^ comptime-only type remains here
-15 |     if (v > 0) {
-   |
----
-
-error[SC0406]: missing evidence: gt
-  --> /main/main.solc:15:9
+error[SC0401]: cannot specialize expression: free type variable in _
+  --> /main/main.solc:15:13
    |
 14 |     let b : Box = Box.MkBox(1);
 15 |     if (v > 0) {
-   |         ^^^^^ class evidence required here
+   |             ^ type must be concrete here
 16 |       b = Box.MkBox(2);
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: constructor 'Box_MkBox': (integer) -> adt:Box
-  --> /main/main.solc:16:11
-   |
-15 |     if (v > 0) {
-16 |       b = Box.MkBox(2);
-   |           ^^^^^^^^^^^^ comptime-only type remains here
-17 |     }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: expression: integer
-  --> /main/main.solc:16:21
-   |
-15 |     if (v > 0) {
-16 |       b = Box.MkBox(2);
-   |                     ^ comptime-only type remains here
-17 |     }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: pattern variable 'i': integer
-  --> /main/main.solc:19:17
-   |
-18 |     match b {
-19 |     | Box.MkBox(i) => return wordFromInteger(i);
-   |                 ^ comptime-only type remains here
-20 |     }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: pattern: integer
-  --> /main/main.solc:19:17
-   |
-18 |     match b {
-19 |     | Box.MkBox(i) => return wordFromInteger(i);
-   |                 ^ comptime-only type remains here
-20 |     }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: callee 'wordFromInteger': (integer) -> word
-  --> /main/main.solc:19:30
-   |
-18 |     match b {
-19 |     | Box.MkBox(i) => return wordFromInteger(i);
-   |                              ^^^^^^^^^^^^^^^^^^ comptime-only type remains here
-20 |     }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: expression: integer
-  --> /main/main.solc:19:46
-   |
-18 |     match b {
-19 |     | Box.MkBox(i) => return wordFromInteger(i);
-   |                                              ^ comptime-only type remains here
-20 |     }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: variable 'i': integer
-  --> /main/main.solc:19:46
-   |
-18 |     match b {
-19 |     | Box.MkBox(i) => return wordFromInteger(i);
-   |                                              ^ comptime-only type remains here
-20 |     }
    |
