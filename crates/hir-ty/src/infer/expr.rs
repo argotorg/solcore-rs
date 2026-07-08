@@ -94,11 +94,14 @@ impl<'db> InferCtx<'db> {
                 let resolution = if let Some(resolution) = resolution {
                     resolution
                 } else {
-                    self.diagnostics.push(TypeckDiagnostic::UnknownField {
-                        span: self.field_label_span(body, expr_id),
-                        field: self.field_name(body, expr_id),
-                    });
-                    self.poison_expr(body, expr_id);
+                    self.emit_expr_error(
+                        body,
+                        expr_id,
+                        TypeckDiagnostic::UnknownField {
+                            span: self.field_label_span(body, expr_id),
+                            field: self.field_name(body, expr_id),
+                        },
+                    );
                     hir_nameres::Resolution::Err
                 };
                 self.infer_resolution(body, expr_id, resolution)
@@ -116,7 +119,7 @@ impl<'db> InferCtx<'db> {
                 else_expr,
             } => {
                 let cond_ty = self.infer_expr(body, *cond);
-                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                let bool_ty = self.bool();
                 self.unify_expr(body, *cond, cond_ty, bool_ty);
                 let then_ty = self.infer_expr_expected(body, *then_expr, expected.clone());
                 let else_ty = self.infer_expr_expected(body, *else_expr, expected.clone());
@@ -160,26 +163,34 @@ impl<'db> InferCtx<'db> {
             && self.is_concrete_non_numeric(else_ty.clone())
         {
             let actual = self.display_infer_ty(else_ty);
-            self.diagnostics.push(TypeckDiagnostic::Mismatch {
-                span: self.expr_label_span(body, else_expr),
-                expected: "numeric".to_owned(),
-                actual,
-            });
-            self.poison_expr(body, then_expr);
-            self.poison_expr(body, if_expr);
+            self.emit_error_with_poison(
+                TypeckDiagnostic::Mismatch {
+                    span: self.expr_label_span(body, else_expr),
+                    expected: "numeric".to_owned(),
+                    actual,
+                },
+                [
+                    PoisonTarget::Expr(body, then_expr),
+                    PoisonTarget::Expr(body, if_expr),
+                ],
+            );
             return true;
         }
         if self.expr_has_integer_literal_obligation(body, else_expr)
             && self.is_concrete_non_numeric(then_ty.clone())
         {
             let actual = self.display_infer_ty(then_ty);
-            self.diagnostics.push(TypeckDiagnostic::Mismatch {
-                span: self.expr_label_span(body, then_expr),
-                expected: "numeric".to_owned(),
-                actual,
-            });
-            self.poison_expr(body, else_expr);
-            self.poison_expr(body, if_expr);
+            self.emit_error_with_poison(
+                TypeckDiagnostic::Mismatch {
+                    span: self.expr_label_span(body, then_expr),
+                    expected: "numeric".to_owned(),
+                    actual,
+                },
+                [
+                    PoisonTarget::Expr(body, else_expr),
+                    PoisonTarget::Expr(body, if_expr),
+                ],
+            );
             return true;
         }
         false
@@ -304,13 +315,16 @@ impl<'db> InferCtx<'db> {
         if let Some(params) = &params
             && params.len() != args.len()
         {
-            self.diagnostics.push(TypeckDiagnostic::WrongArity {
-                span: self.expr_label_span(body, site.call_expr),
-                context: "call".to_owned(),
-                expected: params.len(),
-                actual: args.len(),
-            });
-            self.poison_expr(body, site.call_expr);
+            self.emit_expr_error(
+                body,
+                site.call_expr,
+                TypeckDiagnostic::WrongArity {
+                    span: self.expr_label_span(body, site.call_expr),
+                    context: "call".to_owned(),
+                    expected: params.len(),
+                    actual: args.len(),
+                },
+            );
             for (index, arg) in args.iter().enumerate() {
                 self.infer_expr_expected(body, *arg, params.get(index).cloned());
             }
@@ -370,13 +384,16 @@ impl<'db> InferCtx<'db> {
         if let Some(sig) = &callable_sig
             && sig.params.len() != args.len()
         {
-            self.diagnostics.push(TypeckDiagnostic::WrongArity {
-                span: self.expr_label_span(body, call_expr),
-                context: "call".to_owned(),
-                expected: sig.params.len(),
-                actual: args.len(),
-            });
-            self.poison_expr(body, call_expr);
+            self.emit_expr_error(
+                body,
+                call_expr,
+                TypeckDiagnostic::WrongArity {
+                    span: self.expr_label_span(body, call_expr),
+                    context: "call".to_owned(),
+                    expected: sig.params.len(),
+                    actual: args.len(),
+                },
+            );
             for (index, arg) in args.iter().enumerate() {
                 self.infer_expr_expected(body, *arg, sig.params.get(index).cloned());
             }
@@ -448,11 +465,14 @@ impl<'db> InferCtx<'db> {
                 let resolution = if let Some(resolution) = resolution {
                     resolution
                 } else {
-                    self.diagnostics.push(TypeckDiagnostic::UnknownField {
-                        span: self.field_label_span(body, callee_expr),
-                        field: self.field_name(body, callee_expr),
-                    });
-                    self.poison_expr(body, callee_expr);
+                    self.emit_expr_error(
+                        body,
+                        callee_expr,
+                        TypeckDiagnostic::UnknownField {
+                            span: self.field_label_span(body, callee_expr),
+                            field: self.field_name(body, callee_expr),
+                        },
+                    );
                     hir_nameres::Resolution::Err
                 };
                 let source = self.call_site_source(body, call_expr, callee_expr, &resolution);
@@ -600,7 +620,7 @@ impl<'db> InferCtx<'db> {
             }
             LitKind::String(_) => expected
                 .and_then(|expected| self.expected_string_lit_ty(expected))
-                .unwrap_or_else(|| self.engine.from_ty(Ty::string(self.db))),
+                .unwrap_or_else(|| self.string()),
             LitKind::Error => InferTy::Error,
         }
     }
@@ -791,7 +811,7 @@ impl<'db> InferCtx<'db> {
             BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::BitAnd | BinOp::BitXor | BinOp::BitOr => {
                 let lhs = self.infer_expr(body, lhs_expr);
                 let rhs = self.infer_expr(body, rhs_expr);
-                let word = self.engine.from_ty(Ty::word(self.db));
+                let word = self.word();
                 self.unify_expr(body, lhs_expr, lhs, word.clone());
                 self.unify_expr(body, rhs_expr, rhs, word.clone());
                 word
@@ -800,10 +820,10 @@ impl<'db> InferCtx<'db> {
                 let lhs = self.infer_expr(body, lhs_expr);
                 let rhs = self.infer_expr(body, rhs_expr);
                 self.unify_expr(body, rhs_expr, lhs, rhs);
-                self.engine.from_ty(Ty::bool(self.db))
+                self.bool()
             }
             BinOp::Lt => {
-                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                let bool_ty = self.bool();
                 self.infer_operator_function_call_expected(
                     body,
                     expr,
@@ -814,7 +834,7 @@ impl<'db> InferCtx<'db> {
                 )
             }
             BinOp::Gt => {
-                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                let bool_ty = self.bool();
                 self.infer_operator_call_expected(
                     body,
                     expr,
@@ -826,7 +846,7 @@ impl<'db> InferCtx<'db> {
                 )
             }
             BinOp::LtEq => {
-                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                let bool_ty = self.bool();
                 self.infer_operator_function_call_expected(
                     body,
                     expr,
@@ -837,7 +857,7 @@ impl<'db> InferCtx<'db> {
                 )
             }
             BinOp::GtEq => {
-                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                let bool_ty = self.bool();
                 self.infer_operator_function_call_expected(
                     body,
                     expr,
@@ -850,10 +870,10 @@ impl<'db> InferCtx<'db> {
             BinOp::And | BinOp::Or => {
                 let lhs = self.infer_expr(body, lhs_expr);
                 let rhs = self.infer_expr(body, rhs_expr);
-                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                let bool_ty = self.bool();
                 self.unify_expr(body, lhs_expr, lhs, bool_ty.clone());
                 self.unify_expr(body, rhs_expr, rhs, bool_ty);
-                self.engine.from_ty(Ty::bool(self.db))
+                self.bool()
             }
             BinOp::Error => InferTy::Error,
         }
@@ -873,12 +893,14 @@ impl<'db> InferCtx<'db> {
         let Some((class, name)) = self.lookup_operator_class_method(class_name, method) else {
             self.infer_expr(body, lhs);
             self.infer_expr(body, rhs);
-            self.diagnostics
-                .push(TypeckDiagnostic::UnsatisfiedConstraint {
+            self.emit_expr_error(
+                body,
+                expr,
+                TypeckDiagnostic::UnsatisfiedConstraint {
                     span: self.expr_label_span(body, expr),
                     pred: format!("operator {class_name}.{method}"),
-                });
-            self.poison_expr(body, expr);
+                },
+            );
             return InferTy::Error;
         };
 
@@ -938,12 +960,14 @@ impl<'db> InferCtx<'db> {
         let Some(resolution) = self.lookup_operator_function(name) else {
             self.infer_expr(body, lhs);
             self.infer_expr(body, rhs);
-            self.diagnostics
-                .push(TypeckDiagnostic::UnsatisfiedConstraint {
+            self.emit_expr_error(
+                body,
+                expr,
+                TypeckDiagnostic::UnsatisfiedConstraint {
                     span: self.expr_label_span(body, expr),
                     pred: format!("operator {name}"),
-                });
-            self.poison_expr(body, expr);
+                },
+            );
             return InferTy::Error;
         };
 
@@ -1074,7 +1098,7 @@ impl<'db> InferCtx<'db> {
         let expr = self.infer_expr(body, expr_id);
         match op {
             UnOp::Not => {
-                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                let bool_ty = self.bool();
                 self.unify_expr(body, expr_id, expr, bool_ty.clone());
                 bool_ty
             }

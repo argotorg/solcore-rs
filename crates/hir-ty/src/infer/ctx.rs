@@ -1,6 +1,11 @@
 use super::*;
 use crate::display::display_pred_source;
 
+pub(super) enum PoisonTarget<'db> {
+    Expr(FuncBody<'db>, Id<Expr<'db>>),
+    Pat(FuncBody<'db>, Id<Pat<'db>>),
+}
+
 pub(super) struct InferCtx<'db> {
     pub(super) db: &'db dyn Db,
     pub(super) lowerer: TypeLowering<'db>,
@@ -304,12 +309,59 @@ impl<'db> InferCtx<'db> {
         LabelSpan::from_span(self.db, span)
     }
 
+    pub(super) fn unit(&mut self) -> InferTy<'db> {
+        self.engine.from_ty(Ty::unit(self.db))
+    }
+
+    pub(super) fn word(&mut self) -> InferTy<'db> {
+        self.engine.from_ty(Ty::word(self.db))
+    }
+
+    pub(super) fn bool(&mut self) -> InferTy<'db> {
+        self.engine.from_ty(Ty::bool(self.db))
+    }
+
+    pub(super) fn string(&mut self) -> InferTy<'db> {
+        self.engine.from_ty(Ty::string(self.db))
+    }
+
     pub(super) fn poison_expr(&mut self, body: FuncBody<'db>, expr: Id<Expr<'db>>) {
         self.poisoned_exprs.insert((body, expr));
     }
 
     pub(super) fn poison_pat(&mut self, body: FuncBody<'db>, pat: Id<Pat<'db>>) {
         self.poisoned_pats.insert((body, pat));
+    }
+
+    pub(super) fn emit_expr_error(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        diagnostic: TypeckDiagnostic,
+    ) {
+        self.emit_error_with_poison(diagnostic, [PoisonTarget::Expr(body, expr)]);
+    }
+
+    pub(super) fn emit_pat_error(
+        &mut self,
+        body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
+        diagnostic: TypeckDiagnostic,
+    ) {
+        self.emit_error_with_poison(diagnostic, [PoisonTarget::Pat(body, pat)]);
+    }
+
+    pub(super) fn emit_error_with_poison<I>(&mut self, diagnostic: TypeckDiagnostic, targets: I)
+    where
+        I: IntoIterator<Item = PoisonTarget<'db>>,
+    {
+        self.diagnostics.push(diagnostic);
+        for target in targets {
+            match target {
+                PoisonTarget::Expr(body, expr) => self.poison_expr(body, expr),
+                PoisonTarget::Pat(body, pat) => self.poison_pat(body, pat),
+            }
+        }
     }
 
     pub(super) fn expr_is_poisoned(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> bool {

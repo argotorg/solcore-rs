@@ -105,7 +105,7 @@ fn render_abi_entry(out: &mut String, entry: &AbiJsonEntry, ind: usize) -> Resul
                 &format!("\"stateMutability\": \"{}\",", state_mutability(*payable)),
             );
             line(out, ind + 1, "\"type\": \"function\"");
-            write!(out, "{}}}", indent(ind)).unwrap();
+            push_close_brace(out, ind);
         }
         AbiJsonEntry::Constructor { inputs, payable } => {
             line(out, ind, "{");
@@ -116,7 +116,7 @@ fn render_abi_entry(out: &mut String, entry: &AbiJsonEntry, ind: usize) -> Resul
                 &format!("\"stateMutability\": \"{}\",", state_mutability(*payable)),
             );
             line(out, ind + 1, "\"type\": \"constructor\"");
-            write!(out, "{}}}", indent(ind)).unwrap();
+            push_close_brace(out, ind);
         }
         AbiJsonEntry::Fallback { payable } => {
             line(out, ind, "{");
@@ -126,7 +126,7 @@ fn render_abi_entry(out: &mut String, entry: &AbiJsonEntry, ind: usize) -> Resul
                 &format!("\"stateMutability\": \"{}\",", state_mutability(*payable)),
             );
             line(out, ind + 1, "\"type\": \"fallback\"");
-            write!(out, "{}}}", indent(ind)).unwrap();
+            push_close_brace(out, ind);
         }
     }
     Ok(())
@@ -155,7 +155,7 @@ fn render_named_params(
         if index > 0 {
             out.push_str(",\n");
         }
-        render_abi_param(out, ind + 1, param);
+        render_abi_param(out, ind + 1, param)?;
     }
     out.push('\n');
     line(
@@ -166,7 +166,7 @@ fn render_named_params(
     Ok(())
 }
 
-fn render_abi_param(out: &mut String, ind: usize, param: &AbiParam) {
+fn render_abi_param(out: &mut String, ind: usize, param: &AbiParam) -> Result<(), String> {
     line(out, ind, "{");
     line(
         out,
@@ -188,10 +188,10 @@ fn render_abi_param(out: &mut String, ind: usize, param: &AbiParam) {
         ),
     );
     if !param.components.is_empty() {
-        render_named_params(out, ind + 1, "components", &param.components, false)
-            .expect("components already validated");
+        render_named_params(out, ind + 1, "components", &param.components, false)?;
     }
-    write!(out, "{}}}", indent(ind)).unwrap();
+    push_close_brace(out, ind);
+    Ok(())
 }
 
 fn state_mutability(payable: bool) -> &'static str {
@@ -199,13 +199,20 @@ fn state_mutability(payable: bool) -> &'static str {
 }
 
 fn line(out: &mut String, ind: usize, text: &str) {
-    out.push_str(&indent(ind));
+    push_indent(out, ind);
     out.push_str(text);
     out.push('\n');
 }
 
-fn indent(ind: usize) -> String {
-    "  ".repeat(ind)
+fn push_close_brace(out: &mut String, ind: usize) {
+    push_indent(out, ind);
+    out.push('}');
+}
+
+fn push_indent(out: &mut String, ind: usize) {
+    for _ in 0..ind {
+        out.push_str("  ");
+    }
 }
 
 fn json_string(value: &str) -> String {

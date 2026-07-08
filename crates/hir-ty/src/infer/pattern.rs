@@ -36,12 +36,15 @@ impl<'db> InferCtx<'db> {
                 let label_ty = self.infer_expr_expected(body, *expr, expected.clone());
                 if !self.is_numeric_or_open(label_ty.clone()) {
                     let actual = self.display_infer_ty(label_ty);
-                    self.diagnostics.push(TypeckDiagnostic::Mismatch {
-                        span: self.expr_label_span(body, *expr),
-                        expected: "numeric".to_owned(),
-                        actual,
-                    });
-                    self.poison_expr(body, *expr);
+                    self.emit_expr_error(
+                        body,
+                        *expr,
+                        TypeckDiagnostic::Mismatch {
+                            span: self.expr_label_span(body, *expr),
+                            expected: "numeric".to_owned(),
+                            actual,
+                        },
+                    );
                 }
                 self.comptime_obligations.push(ComptimeObligation {
                     body,
@@ -88,12 +91,15 @@ impl<'db> InferCtx<'db> {
                         expected
                     } else {
                         let actual = self.display_infer_ty(expected.clone());
-                        self.diagnostics.push(TypeckDiagnostic::Mismatch {
-                            span: self.pat_label_span(body, pat),
-                            expected: "numeric".to_owned(),
-                            actual,
-                        });
-                        self.poison_pat(body, pat);
+                        self.emit_pat_error(
+                            body,
+                            pat,
+                            TypeckDiagnostic::Mismatch {
+                                span: self.pat_label_span(body, pat),
+                                expected: "numeric".to_owned(),
+                                actual,
+                            },
+                        );
                         InferTy::Error
                     }
                 } else {
@@ -102,7 +108,7 @@ impl<'db> InferCtx<'db> {
             }
             LitKind::String(_) => expected
                 .and_then(|expected| self.expected_string_lit_ty(expected))
-                .unwrap_or_else(|| self.engine.from_ty(Ty::string(self.db))),
+                .unwrap_or_else(|| self.string()),
             LitKind::Error => InferTy::Error,
         }
     }
@@ -207,13 +213,16 @@ impl<'db> InferCtx<'db> {
         namespace: ValueNamespace,
         position: ValuePosition,
     ) -> InferTy<'db> {
-        self.diagnostics.push(TypeckDiagnostic::NamespaceAsValue {
-            span: self.expr_label_span(body, expr),
-            name: self.expr_display_name(body, expr),
-            namespace,
-            position,
-        });
-        self.poison_expr(body, expr);
+        self.emit_expr_error(
+            body,
+            expr,
+            TypeckDiagnostic::NamespaceAsValue {
+                span: self.expr_label_span(body, expr),
+                name: self.expr_display_name(body, expr),
+                namespace,
+                position,
+            },
+        );
         InferTy::Error
     }
 
@@ -423,13 +432,16 @@ impl<'db> InferCtx<'db> {
         match self.engine.resolve(ctor_ty.clone()) {
             InferTy::Function { params, ret } => {
                 if params.len() != args.len() {
-                    self.diagnostics.push(TypeckDiagnostic::WrongArity {
-                        span: self.expr_label_span(body, expr),
-                        context: "constructor".to_owned(),
-                        expected: params.len(),
-                        actual: args.len(),
-                    });
-                    self.poison_expr(body, expr);
+                    self.emit_expr_error(
+                        body,
+                        expr,
+                        TypeckDiagnostic::WrongArity {
+                            span: self.expr_label_span(body, expr),
+                            context: "constructor".to_owned(),
+                            expected: params.len(),
+                            actual: args.len(),
+                        },
+                    );
                     for (index, arg) in args.iter().enumerate() {
                         self.infer_expr_expected(body, *arg, params.get(index).cloned());
                     }
@@ -488,11 +500,14 @@ impl<'db> InferCtx<'db> {
                     InferTy::Error | InferTy::Unknown | InferTy::Var(_)
                 ) {
                     let callee = self.display_infer_ty(non_function);
-                    self.diagnostics.push(TypeckDiagnostic::NonCallable {
-                        span: self.expr_label_span(body, expr),
-                        callee,
-                    });
-                    self.poison_expr(body, expr);
+                    self.emit_expr_error(
+                        body,
+                        expr,
+                        TypeckDiagnostic::NonCallable {
+                            span: self.expr_label_span(body, expr),
+                            callee,
+                        },
+                    );
                     for arg in args {
                         self.infer_expr(body, *arg);
                     }
@@ -686,13 +701,16 @@ impl<'db> InferCtx<'db> {
                     Some(expected_elems)
                 }
                 InferTy::Tuple(expected_elems) => {
-                    self.diagnostics.push(TypeckDiagnostic::WrongArity {
-                        span: self.expr_label_span(body, expr),
-                        context: "tuple".to_owned(),
-                        expected: expected_elems.len(),
-                        actual: elems.len(),
-                    });
-                    self.poison_expr(body, expr);
+                    self.emit_expr_error(
+                        body,
+                        expr,
+                        TypeckDiagnostic::WrongArity {
+                            span: self.expr_label_span(body, expr),
+                            context: "tuple".to_owned(),
+                            expected: expected_elems.len(),
+                            actual: elems.len(),
+                        },
+                    );
                     Some(expected_elems)
                 }
                 _ => None,
@@ -731,25 +749,31 @@ impl<'db> InferCtx<'db> {
             match expected {
                 InferTy::Tuple(expected_elems) => {
                     if expected_elems.len() != elems.len() {
-                        self.diagnostics.push(TypeckDiagnostic::WrongArity {
-                            span: self.pat_label_span(body, pat),
-                            context: "tuple pattern".to_owned(),
-                            expected: expected_elems.len(),
-                            actual: elems.len(),
-                        });
-                        self.poison_pat(body, pat);
+                        self.emit_pat_error(
+                            body,
+                            pat,
+                            TypeckDiagnostic::WrongArity {
+                                span: self.pat_label_span(body, pat),
+                                context: "tuple pattern".to_owned(),
+                                expected: expected_elems.len(),
+                                actual: elems.len(),
+                            },
+                        );
                     }
                     Some(expected_elems)
                 }
                 InferTy::Var(_) | InferTy::Unknown | InferTy::Error => None,
                 other => {
                     let actual = self.display_infer_ty(other);
-                    self.diagnostics.push(TypeckDiagnostic::Mismatch {
-                        span: self.pat_label_span(body, pat),
-                        expected: "tuple".to_owned(),
-                        actual,
-                    });
-                    self.poison_pat(body, pat);
+                    self.emit_pat_error(
+                        body,
+                        pat,
+                        TypeckDiagnostic::Mismatch {
+                            span: self.pat_label_span(body, pat),
+                            expected: "tuple".to_owned(),
+                            actual,
+                        },
+                    );
                     None
                 }
             }
@@ -864,12 +888,14 @@ impl<'db> InferCtx<'db> {
                     }
                     _ => "<pattern>".to_owned(),
                 };
-                self.diagnostics
-                    .push(TypeckDiagnostic::InvalidConstructorPattern {
+                self.emit_pat_error(
+                    body,
+                    pat,
+                    TypeckDiagnostic::InvalidConstructorPattern {
                         span: self.pat_label_span(body, pat),
                         name,
-                    });
-                self.poison_pat(body, pat);
+                    },
+                );
                 for arg in args {
                     self.infer_pat_expected(body, *arg, None);
                 }
@@ -898,13 +924,16 @@ impl<'db> InferCtx<'db> {
         match self.engine.resolve(ctor_ty.clone()) {
             InferTy::Function { params, ret } => {
                 if params.len() != args.len() {
-                    self.diagnostics.push(TypeckDiagnostic::WrongArity {
-                        span: self.pat_label_span(body, pat),
-                        context: "constructor pattern".to_owned(),
-                        expected: params.len(),
-                        actual: args.len(),
-                    });
-                    self.poison_pat(body, pat);
+                    self.emit_pat_error(
+                        body,
+                        pat,
+                        TypeckDiagnostic::WrongArity {
+                            span: self.pat_label_span(body, pat),
+                            context: "constructor pattern".to_owned(),
+                            expected: params.len(),
+                            actual: args.len(),
+                        },
+                    );
                     for (index, arg) in args.iter().enumerate() {
                         self.infer_pat_expected(body, *arg, params.get(index).cloned());
                     }
@@ -960,11 +989,14 @@ impl<'db> InferCtx<'db> {
                     }
                 } else {
                     let callee = self.display_infer_ty(concrete.clone());
-                    self.diagnostics.push(TypeckDiagnostic::NonCallable {
-                        span: self.pat_label_span(body, pat),
-                        callee,
-                    });
-                    self.poison_pat(body, pat);
+                    self.emit_pat_error(
+                        body,
+                        pat,
+                        TypeckDiagnostic::NonCallable {
+                            span: self.pat_label_span(body, pat),
+                            callee,
+                        },
+                    );
                     for arg in args {
                         self.infer_pat_expected(body, *arg, None);
                     }

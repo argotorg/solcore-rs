@@ -22,9 +22,9 @@ impl<'db> InferCtx<'db> {
         stmts: &[Id<Stmt<'db>>],
     ) -> InferTy<'db> {
         if stmts.is_empty() {
-            return self.engine.from_ty(Ty::unit(self.db));
+            return self.unit();
         }
-        let unit = self.engine.from_ty(Ty::unit(self.db));
+        let unit = self.unit();
         let mut result = unit.clone();
         for (index, stmt) in stmts.iter().enumerate() {
             if index + 1 != stmts.len() && self.is_return_stmt(body, *stmt) {
@@ -97,7 +97,7 @@ impl<'db> InferCtx<'db> {
                 let name = (*name.atom()).text(self.db).to_owned();
                 let ty = self.let_ty(body, stmt_id);
                 self.add_sail_local(name, ty);
-                self.engine.from_ty(Ty::unit(self.db))
+                self.unit()
             }
             StmtKind::Return(expr) => {
                 if let Some(expected) = self.return_stack.last().cloned() {
@@ -117,18 +117,18 @@ impl<'db> InferCtx<'db> {
                         self.unify_expr(body, *expr, expected, actual.clone());
                         actual
                     } else {
-                        let actual = self.engine.from_ty(Ty::unit(self.db));
+                        let actual = self.unit();
                         self.unify_stmt(body, stmt_id, expected, actual.clone());
                         actual
                     }
                 } else {
                     expr.map(|expr| self.infer_expr(body, expr))
-                        .unwrap_or_else(|| self.engine.from_ty(Ty::unit(self.db)))
+                        .unwrap_or_else(|| self.unit())
                 }
             }
             StmtKind::Expr(expr) => {
                 self.infer_expr(body, *expr);
-                self.engine.from_ty(Ty::unit(self.db))
+                self.unit()
             }
             StmtKind::Assign {
                 op: AssignOp::Plain,
@@ -140,7 +140,7 @@ impl<'db> InferCtx<'db> {
                     let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));
                     self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
                 }
-                self.engine.from_ty(Ty::unit(self.db))
+                self.unit()
             }
             StmtKind::Assign {
                 op: AssignOp::Add | AssignOp::Sub,
@@ -155,12 +155,12 @@ impl<'db> InferCtx<'db> {
                 // semantics coincide with the raw lowering; anything else
                 // (bool, address, custom instances) is a type error here.
                 if !self.is_storage_index_word_numeric(lhs_ty.clone()) {
-                    let word = self.engine.from_ty(Ty::word(self.db));
+                    let word = self.word();
                     self.unify_expr(body, *lhs, lhs_ty.clone(), word);
                 }
                 let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));
                 self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
-                self.engine.from_ty(Ty::unit(self.db))
+                self.unit()
             }
             StmtKind::Assign {
                 op:
@@ -175,10 +175,10 @@ impl<'db> InferCtx<'db> {
             } => {
                 let lhs_ty = self.infer_expr(body, *lhs);
                 let rhs_ty = self.infer_expr(body, *rhs);
-                let word = self.engine.from_ty(Ty::word(self.db));
+                let word = self.word();
                 self.unify_expr(body, *lhs, lhs_ty, word.clone());
                 self.unify_expr(body, *rhs, rhs_ty, word);
-                self.engine.from_ty(Ty::unit(self.db))
+                self.unit()
             }
             StmtKind::Match { scrutinees, arms } => {
                 let scrutinee_tys = scrutinees
@@ -202,11 +202,11 @@ impl<'db> InferCtx<'db> {
             } => {
                 self.infer_stmt_sequence(body, init);
                 let cond_ty = self.infer_expr(body, *cond);
-                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                let bool_ty = self.bool();
                 self.unify_expr(body, *cond, cond_ty, bool_ty);
                 self.infer_stmt_sequence(body, post);
                 self.infer_stmt_sequence(body, for_body);
-                self.engine.from_ty(Ty::unit(self.db))
+                self.unit()
             }
             StmtKind::If {
                 cond,
@@ -214,7 +214,7 @@ impl<'db> InferCtx<'db> {
                 else_body,
             } => {
                 let cond_ty = self.infer_expr(body, *cond);
-                let bool_ty = self.engine.from_ty(Ty::bool(self.db));
+                let bool_ty = self.bool();
                 self.unify_expr(body, *cond, cond_ty, bool_ty);
                 let then_ty = self.infer_stmt_sequence(body, then_body);
                 let else_ty = else_body
@@ -232,13 +232,13 @@ impl<'db> InferCtx<'db> {
             }
             StmtKind::Assembly { body: yul_body } => {
                 let (new_binds, ty) = self.infer_yul_block(yul_body);
-                let word = self.engine.from_ty(Ty::word(self.db));
+                let word = self.word();
                 for name in new_binds {
                     self.add_sail_local(name, word.clone());
                 }
                 ty
             }
-            StmtKind::Break | StmtKind::Continue => self.engine.from_ty(Ty::unit(self.db)),
+            StmtKind::Break | StmtKind::Continue => self.unit(),
             StmtKind::Error => InferTy::Error,
         }
     }

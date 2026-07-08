@@ -322,7 +322,7 @@ impl<'db> InferCtx<'db> {
             return;
         }
 
-        let word = self.engine.from_ty(Ty::word(self.db));
+        let word = self.word();
         for &index in unresolved {
             let obligation = &pending[index];
             if obligation.class != ClassId::Builtin(BuiltinClassId::Int)
@@ -713,7 +713,7 @@ impl<'db> InferCtx<'db> {
     }
 
     pub(super) fn default_integer_literal_patterns(&mut self) {
-        let word = self.engine.from_ty(Ty::word(self.db));
+        let word = self.word();
         for var in self.integer_literal_pattern_vars.clone() {
             if matches!(self.engine.resolve(InferTy::Var(var)), InferTy::Var(_)) {
                 self.unify(InferTy::Var(var), word.clone());
@@ -774,7 +774,7 @@ impl<'db> InferCtx<'db> {
             return;
         }
 
-        let word = self.engine.from_ty(Ty::word(self.db));
+        let word = self.word();
         for pending in self.pending.clone() {
             if pending.class != ClassId::Builtin(BuiltinClassId::Int)
                 || !pending.args.is_empty()

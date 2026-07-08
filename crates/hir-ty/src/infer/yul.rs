@@ -24,7 +24,7 @@ impl<'db> InferCtx<'db> {
         scopes: &mut Vec<YulScope<'db>>,
     ) -> (Vec<String>, InferTy<'db>) {
         let mut binds = Vec::new();
-        let mut ty = self.engine.from_ty(Ty::unit(self.db));
+        let mut ty = self.unit();
         for stmt in body {
             let (new_binds, stmt_ty) = self.infer_yul_stmt(stmt, scopes);
             binds.extend(new_binds);
@@ -43,7 +43,7 @@ impl<'db> InferCtx<'db> {
                 scopes.push(YulScope::default());
                 self.infer_yul_block_scoped(body, scopes);
                 scopes.pop();
-                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
+                (Vec::new(), self.unit())
             }
             YulStmtKind::Let { names, init } => {
                 if let Some(init) = init {
@@ -62,7 +62,7 @@ impl<'db> InferCtx<'db> {
                 for name in &binds {
                     self.add_yul_local(scopes, name);
                 }
-                (binds, self.engine.from_ty(Ty::unit(self.db)))
+                (binds, self.unit())
             }
             YulStmtKind::Assign { names, value } => {
                 let value_ty = self.infer_yul_expr(value, scopes);
@@ -78,7 +78,7 @@ impl<'db> InferCtx<'db> {
                         self.check_yul_sail_var_write(self.label_span(name.span(self.db)), text);
                     }
                 }
-                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
+                (Vec::new(), self.unit())
             }
             YulStmtKind::Expr(expr) => (Vec::new(), self.infer_yul_expr(expr, scopes)),
             YulStmtKind::If { cond, body } => {
@@ -86,7 +86,7 @@ impl<'db> InferCtx<'db> {
                 scopes.push(YulScope::default());
                 self.infer_yul_block_scoped(body, scopes);
                 scopes.pop();
-                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
+                (Vec::new(), self.unit())
             }
             YulStmtKind::For {
                 init,
@@ -100,7 +100,7 @@ impl<'db> InferCtx<'db> {
                 self.infer_yul_block_scoped(body, scopes);
                 self.infer_yul_block_scoped(post, scopes);
                 scopes.pop();
-                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
+                (Vec::new(), self.unit())
             }
             YulStmtKind::Switch {
                 expr,
@@ -116,7 +116,7 @@ impl<'db> InferCtx<'db> {
                     self.infer_yul_block_scoped(default, scopes);
                     scopes.pop();
                 }
-                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
+                (Vec::new(), self.unit())
             }
             YulStmtKind::FunctionDef {
                 name,
@@ -136,10 +136,10 @@ impl<'db> InferCtx<'db> {
                 }
                 self.infer_yul_block_scoped(body, scopes);
                 scopes.pop();
-                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
+                (Vec::new(), self.unit())
             }
             YulStmtKind::Leave | YulStmtKind::Break | YulStmtKind::Continue => {
-                (Vec::new(), self.engine.from_ty(Ty::unit(self.db)))
+                (Vec::new(), self.unit())
             }
             YulStmtKind::Error => (Vec::new(), InferTy::Error),
         }
@@ -162,7 +162,7 @@ impl<'db> InferCtx<'db> {
             YulExprKind::Ident(name) => {
                 let text = (*name.atom()).text(self.db);
                 if self.is_yul_local(scopes, text) {
-                    self.engine.from_ty(Ty::word(self.db))
+                    self.word()
                 } else {
                     self.check_yul_sail_var_read(self.yul_expr_label_span(expr), text)
                 }
@@ -202,10 +202,8 @@ impl<'db> InferCtx<'db> {
 
     fn infer_yul_lit(&mut self, lit: &YulLitKind) -> InferTy<'db> {
         match lit {
-            YulLitKind::Number(_) | YulLitKind::Hex(_) | YulLitKind::Bool(_) => {
-                self.engine.from_ty(Ty::word(self.db))
-            }
-            YulLitKind::String(_) => self.engine.from_ty(Ty::string(self.db)),
+            YulLitKind::Number(_) | YulLitKind::Hex(_) | YulLitKind::Bool(_) => self.word(),
+            YulLitKind::String(_) => self.string(),
             YulLitKind::Error => InferTy::Error,
         }
     }
@@ -250,7 +248,7 @@ impl<'db> InferCtx<'db> {
             });
             return InferTy::Error;
         };
-        let word = self.engine.from_ty(Ty::word(self.db));
+        let word = self.word();
         if self.can_unify(ty.clone(), word.clone()) {
             self.unify_at(span, ty, word.clone());
         } else {
@@ -268,7 +266,7 @@ impl<'db> InferCtx<'db> {
         let Some(ty) = self.lookup_sail_local(name) else {
             return;
         };
-        let word = self.engine.from_ty(Ty::word(self.db));
+        let word = self.word();
         if self.can_unify(ty.clone(), word.clone()) {
             self.unify_at(span, ty, word);
         } else {
@@ -320,22 +318,22 @@ impl<'db> InferCtx<'db> {
     }
 
     fn yul_word_tys(&mut self, count: usize) -> Vec<InferTy<'db>> {
-        let word = self.engine.from_ty(Ty::word(self.db));
+        let word = self.word();
         vec![word; count]
     }
 
     fn yul_return_ty(&mut self, count: usize) -> InferTy<'db> {
         match count {
-            0 => self.engine.from_ty(Ty::unit(self.db)),
-            1 => self.engine.from_ty(Ty::word(self.db)),
+            0 => self.unit(),
+            1 => self.word(),
             _ => InferTy::Tuple(self.yul_word_tys(count)),
         }
     }
 
     fn yul_builtin_sig(&mut self, name: &str) -> Option<YulFunctionSig<'db>> {
-        let word = self.engine.from_ty(Ty::word(self.db));
-        let string = self.engine.from_ty(Ty::string(self.db));
-        let unit = self.engine.from_ty(Ty::unit(self.db));
+        let word = self.word();
+        let string = self.string();
+        let unit = self.unit();
         let word_params = |count: usize| vec![word.clone(); count];
         let sig = match name {
             "stop" | "invalid" => YulFunctionSig {
