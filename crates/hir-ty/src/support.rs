@@ -1,5 +1,5 @@
 use hir::anchor::DefId;
-use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path};
+use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path, reachable_modules};
 
 use crate::Db;
 
@@ -9,8 +9,7 @@ pub(crate) fn module_for_def_via_graph<'db>(
     def: DefId<'db>,
 ) -> Option<ModuleId<'db>> {
     let file = def.file(db);
-    nameres::module_graph(db, entry)
-        .modules
+    reachable_modules(db, entry)
         .into_iter()
         .find(|module| db.module_file(*module) == Some(file))
 }

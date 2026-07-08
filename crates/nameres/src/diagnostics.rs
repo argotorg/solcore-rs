@@ -510,9 +510,8 @@ impl<'a, 'db> BodyDiagnosticCollector<'a, 'db> {
 )]
 pub fn reachable_diagnostics<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Vec<AnyDiagnostic> {
     record_module_field(db, entry);
-    let graph = module_graph(db, entry);
     let mut diagnostics = Vec::new();
-    for module in graph.modules {
+    for module in reachable_modules(db, entry) {
         diagnostics.extend(module_diagnostics(db, module).iter().cloned());
     }
     sort_dedup_query_diagnostics(db, &mut diagnostics);

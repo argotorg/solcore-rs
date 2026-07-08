@@ -11,16 +11,13 @@ pub fn validate_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Validatio
 }
 
 /// Validates every module reachable from `entry`.
-///
-/// The returned graph is the same graph used for traversal, allowing callers to
-/// inspect reachability after forcing diagnostics.
 #[salsa::tracked]
-pub fn validate_reachable<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'db> {
-    let graph = module_graph(db, entry);
-    for module in &graph.modules {
+pub fn validate_reachable<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Vec<ModuleId<'db>> {
+    let modules = reachable_modules(db, entry);
+    for module in &modules {
         validate_module(db, *module);
     }
-    graph
+    modules
 }
 
 pub(super) fn validate_imports<'db>(

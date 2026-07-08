@@ -25,8 +25,7 @@ pub(crate) fn maybe_emit_abi_outputs(
         return Ok(());
     }
 
-    let graph = nameres::module_graph(db, entry);
-    for module_id in graph.modules {
+    for module_id in nameres::reachable_modules(db, entry) {
         if matches!(module_id.library(db), LibraryId::Std) {
             continue;
         }

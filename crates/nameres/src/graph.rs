@@ -48,6 +48,29 @@ pub fn module_imports<'db>(db: &'db dyn Db, file: SourceFile) -> ModuleImports<'
 /// participate in public-interface cycles.
 #[salsa::tracked]
 pub fn module_graph<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'db> {
+    let reachable = collect_reachable_modules(db, entry);
+    ModuleGraph {
+        entry,
+        modules: reachable.modules,
+        import_edges: reachable.import_edges,
+        reference_edges: reachable.reference_edges,
+    }
+}
+
+/// Returns modules reachable from `entry` in the same traversal order as
+/// [`module_graph`].
+#[salsa::tracked]
+pub fn reachable_modules<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Vec<ModuleId<'db>> {
+    collect_reachable_modules(db, entry).modules
+}
+
+struct ReachableModules<'db> {
+    modules: Vec<ModuleId<'db>>,
+    import_edges: Vec<ModuleEdge<'db>>,
+    reference_edges: Vec<ModuleEdge<'db>>,
+}
+
+fn collect_reachable_modules<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ReachableModules<'db> {
     let mut modules = Vec::new();
     let mut seen = FxHashSet::default();
     let mut queue = VecDeque::from([entry]);
@@ -90,8 +113,7 @@ pub fn module_graph<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> ModuleGraph<'
         }
     }
 
-    ModuleGraph {
-        entry,
+    ReachableModules {
         modules,
         import_edges,
         reference_edges,

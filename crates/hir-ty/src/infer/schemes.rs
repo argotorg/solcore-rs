@@ -568,9 +568,8 @@ pub fn reachable_typeck_diagnostics<'db>(
     db: &'db dyn Db,
     entry: ModuleId<'db>,
 ) -> Vec<AnyDiagnostic> {
-    let graph = nameres::module_graph(db, entry);
     let mut diagnostics = Vec::new();
-    for module in graph.modules {
+    for module in nameres::reachable_modules(db, entry) {
         diagnostics.extend(module_typeck_diagnostics(db, module).iter().cloned());
     }
     sort_dedup_query_diagnostics(db, &mut diagnostics);
