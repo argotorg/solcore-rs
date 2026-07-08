@@ -3,21 +3,15 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_ambiguous_defaulting/main.solc
 ---
-error[SC0207]: unsatisfied class constraint: _:class:Conv
-  --> /main/main.solc:29:10
+error[SC0299]: ambiguous inferred type
+  --> /main/main.solc:28:22
    |
-28 | function f() -> word {
-29 |   return Conv.out(Conv.make(1));
-   |          ^^^^^^^^^^^^^^^^^^^^^^ constraint originates here
-30 | }
+27 |
+28 |   function f() -> word {
+   |  ______________________^
+29 | |   return Conv.out(Conv.make(1));
+30 | | }
+   | |_^ ambiguous inferred type
    |
----
-
-error[SC0207]: unsatisfied class constraint: _:class:Conv
-  --> /main/main.solc:29:19
-   |
-28 | function f() -> word {
-29 |   return Conv.out(Conv.make(1));
-   |                   ^^^^^^^^^^^^ constraint originates here
-30 | }
-   |
+   = note: forall _ . _ : Conv => () -> word
+   = help: add a type annotation or a matching instance to fix the ambiguous type variable

@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/final_if_branch_mismatch/main.solc
 ---
-error[SC0201]: type mismatch: expected word, got ()
+error[SC0201]: type mismatch: expected word, found ()
  --> /main/main.solc:2:3
   |
 1 | function f(x : bool) -> word {
@@ -11,3 +11,5 @@ error[SC0201]: type mismatch: expected word, got ()
   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^ expression has mismatched type
 3 | }
   |
+  = note: expected type: word
+  = note: found type: ()

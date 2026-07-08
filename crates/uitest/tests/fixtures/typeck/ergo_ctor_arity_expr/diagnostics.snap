@@ -3,11 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_ctor_arity_expr/main.solc
 ---
-error[SC0203]: wrong arity for constructor: expected 2, got 1
+error[SC0203]: constructor expects 2 arguments, but 1 was provided
  --> /main/main.solc:4:10
   |
 3 | function f() -> Pair(word, word) {
 4 |   return Pair.Mk(1);
-  |          ^^^^^^^^^^ wrong arity here
+  |          ^^^^^^^^^^ wrong number of arguments
 5 | }
   |
+  = note: expected 2 arguments
+  = note: found 1 argument

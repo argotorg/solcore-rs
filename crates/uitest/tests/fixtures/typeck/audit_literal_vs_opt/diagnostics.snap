@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_literal_vs_opt/main.solc
 ---
-error[SC0201]: type mismatch: expected numeric, got adt:Opt
+error[SC0201]: type mismatch: expected numeric, found Opt
  --> /main/main.solc:4:10
   |
 3 | function f() -> Opt {
@@ -11,3 +11,5 @@ error[SC0201]: type mismatch: expected numeric, got adt:Opt
   |          ^ expression has mismatched type
 5 | }
   |
+  = note: expected type: numeric
+  = note: found type: Opt

@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_arg_type_mismatch/main.solc
 ---
-error[SC0201]: type mismatch: expected adt:Color, got bool
+error[SC0201]: type mismatch: expected Color, found bool
  --> /main/main.solc:8:19
   |
 7 | function go() -> Color {
@@ -11,3 +11,5 @@ error[SC0201]: type mismatch: expected adt:Color, got bool
   |                   ^^^^ expression has mismatched type
 9 | }
   |
+  = note: expected type: Color
+  = note: found type: bool

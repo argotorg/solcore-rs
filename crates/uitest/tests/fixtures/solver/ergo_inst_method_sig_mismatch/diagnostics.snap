@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_inst_method_sig_mismatch/main.solc
 ---
-error[SC0221]: Invalid instance member signature for `size`: expected (adt:Bool) -> word, got (adt:Bool) -> adt:Bool
+error[SC0221]: invalid instance member signature for `size`: expected (Bool) -> word, got (Bool) -> Bool
  --> /main/main.solc:8:3
   |
 7 | instance Bool : Sz {
@@ -11,3 +11,4 @@ error[SC0221]: Invalid instance member signature for `size`: expected (adt:Bool)
   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid instance method signature
 9 |     return x;
   |
+  = note: the instance method must match the class method after substituting the instance head

@@ -3,17 +3,19 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/yul_opcode_errors/main.solc
 ---
-error[SC0203]: wrong arity for Yul call `add`: expected 2, got 1
+error[SC0203]: Yul call `add` expects 2 arguments, but 1 was provided
  --> /main/main.solc:4:16
   |
 3 |   assembly {
 4 |     let one := add(1)
-  |                ^^^^^^ wrong arity here
+  |                ^^^^^^ wrong number of arguments
 5 |     let two := add("bad", 1)
   |
+  = note: expected 2 arguments
+  = note: found 1 argument
 ---
 
-error[SC0201]: type mismatch: expected word, got string
+error[SC0201]: type mismatch: expected word, found string
  --> /main/main.solc:5:20
   |
 4 |     let one := add(1)
@@ -21,16 +23,20 @@ error[SC0201]: type mismatch: expected word, got string
   |                    ^^^^^ expression has mismatched type
 6 |     x := mstore(1, 1)
   |
+  = note: expected type: word
+  = note: found type: string
 ---
 
-error[SC0203]: wrong arity for Yul assignment: expected 1, got 0
+error[SC0203]: Yul assignment expects 1 argument, but 0 were provided
  --> /main/main.solc:6:5
   |
 5 |     let two := add("bad", 1)
 6 |     x := mstore(1, 1)
-  |     ^^^^^^^^^^^^^^^^^ wrong arity here
+  |     ^^^^^^^^^^^^^^^^^ wrong number of arguments
 7 |     x := add(missing, 1)
   |
+  = note: expected 1 argument
+  = note: found 0 arguments
 ---
 
 error[SC0211]: unknown Yul identifier or function: missing

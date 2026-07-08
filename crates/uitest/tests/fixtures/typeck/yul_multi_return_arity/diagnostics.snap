@@ -3,11 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/yul_multi_return_arity/main.solc
 ---
-error[SC0203]: wrong arity for Yul assignment: expected 3, got 2
+error[SC0203]: Yul assignment expects 3 arguments, but 2 were provided
   --> /main/main.solc:11:7
    |
 10 |       }
 11 |       x, y, z := pair()
-   |       ^^^^^^^^^^^^^^^^^ wrong arity here
+   |       ^^^^^^^^^^^^^^^^^ wrong number of arguments
 12 |     }
    |
+   = note: expected 3 arguments
+   = note: found 2 arguments

@@ -11,3 +11,4 @@ error[SC0228]: type name used as value: `Pair`
   |           ^^^^ not a value
 5 |   return 0;
   |
+  = help: use a constructor or value binding here, not a namespace name

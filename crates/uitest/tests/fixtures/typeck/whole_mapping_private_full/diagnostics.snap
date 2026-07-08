@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/whole_mapping_private_full/main.solc
 ---
-error[SC0201]: type mismatch: expected adt:mapping(adt:address, adt:uint256), got adt:storage(adt:mapping(adt:address, adt:uint256))
+error[SC0201]: type mismatch: expected mapping(address, uint256), found storage(mapping(address, uint256))
   --> /main/main.solc:10:12
    |
  9 |   function leak() -> mapping(address, uint256) {
@@ -11,3 +11,5 @@ error[SC0201]: type mismatch: expected adt:mapping(adt:address, adt:uint256), go
    |            ^^^^^^^^ expression has mismatched type
 11 |   }
    |
+   = note: expected type: mapping(address, uint256)
+   = note: found type: storage(mapping(address, uint256))

@@ -14,7 +14,7 @@ error[SC0109]: import std: file not found
   = help: check the module path or add the missing source file
 ---
 
-error[SC0207]: unsatisfied class constraint: operator Add.add
+error[SC0207]: cannot satisfy class constraint: operator Add.add
   --> /main/main.solc:17:12
    |
 16 |   function double(comptime x : word) -> comptime word {
@@ -22,6 +22,8 @@ error[SC0207]: unsatisfied class constraint: operator Add.add
    |            ^^^^^ constraint originates here
 18 |   }
    |
+   = note: no visible instance matches `operator Add.add`
+   = help: add a matching instance or strengthen the surrounding type context
 ---
 
 error[SC0240]: runtime value passed to comptime parameter 'x' of 'double'

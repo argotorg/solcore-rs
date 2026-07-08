@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/occurs_check/main.solc
 ---
-error[SC0202]: recursive type: _ occurs in (_) -> _
+error[SC0202]: recursive type would be required
  --> /main/main.solc:2:30
   |
 1 | function f() -> () {
@@ -11,3 +11,6 @@ error[SC0202]: recursive type: _ occurs in (_) -> _
   |                              ^^^^ recursive type required here
 3 |   return ();
   |
+  = note: an inferred type would need to contain itself
+  = note: recursive shape: (_) -> _
+  = help: add an explicit type annotation or split the recursive call

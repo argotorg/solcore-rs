@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_occurs_lambda_msg/main.solc
 ---
-error[SC0202]: recursive type: _ occurs in ((_) -> _) -> _
+error[SC0202]: recursive type would be required
  --> /main/main.solc:4:12
   |
 3 |     let g = x(y);
@@ -11,3 +11,6 @@ error[SC0202]: recursive type: _ occurs in ((_) -> _) -> _
   |            ^^^^ recursive type required here
 5 |   };
   |
+  = note: an inferred type would need to contain itself
+  = note: recursive shape: ((_) -> _) -> _
+  = help: add an explicit type annotation or split the recursive call

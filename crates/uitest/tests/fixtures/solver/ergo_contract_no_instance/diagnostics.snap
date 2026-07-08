@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_contract_no_instance/main.solc
 ---
-error[SC0207]: unsatisfied class constraint: word:class:Eq
+error[SC0207]: cannot satisfy class constraint: word : Eq
   --> /main/main.solc:9:12
    |
  8 |   function go(x: word) -> Bool {
@@ -11,3 +11,5 @@ error[SC0207]: unsatisfied class constraint: word:class:Eq
    |            ^^^^^^^^^^^ constraint originates here
 10 |   }
    |
+   = note: no visible instance matches `word : Eq`
+   = help: add a matching instance or strengthen the surrounding type context

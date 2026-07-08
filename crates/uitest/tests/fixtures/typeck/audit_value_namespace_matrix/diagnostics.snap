@@ -11,6 +11,7 @@ error[SC0228]: type name used as value: `Opt`
    |          ^^^ not a value
 10 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as value: `Alias`
@@ -21,6 +22,7 @@ error[SC0228]: type name used as value: `Alias`
    |          ^^^^^ not a value
 14 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as value: `K`
@@ -31,6 +33,7 @@ error[SC0228]: type name used as value: `K`
    |          ^ not a value
 18 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: class name used as value: `C`
@@ -41,6 +44,7 @@ error[SC0228]: class name used as value: `C`
    |          ^ not a value
 22 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as value: `word`
@@ -51,6 +55,7 @@ error[SC0228]: type name used as value: `word`
    |          ^^^^ not a value
 26 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: class name used as value: `Int`
@@ -61,6 +66,7 @@ error[SC0228]: class name used as value: `Int`
    |          ^^^ not a value
 30 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type variable used as value: `a`
@@ -71,6 +77,7 @@ error[SC0228]: type variable used as value: `a`
    |          ^ not a value
 34 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: module used as value: `U`
@@ -81,6 +88,7 @@ error[SC0228]: module used as value: `U`
    |          ^ not a value
 38 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as callee: `Opt`
@@ -91,6 +99,7 @@ error[SC0228]: type name used as callee: `Opt`
    |          ^^^ not a value
 42 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: module used as callee: `U`
@@ -101,9 +110,10 @@ error[SC0228]: module used as callee: `U`
    |          ^ not a value
 46 | }
    |
+   = help: use a constructor or value binding here, not a namespace name
 ---
 
-error[SC0207]: unsatisfied class constraint: operator Add.add
+error[SC0207]: cannot satisfy class constraint: operator Add.add
   --> /main/main.solc:49:10
    |
 48 | function type_in_binop() -> word {
@@ -111,6 +121,8 @@ error[SC0207]: unsatisfied class constraint: operator Add.add
    |          ^^^^^^^ constraint originates here
 50 | }
    |
+   = note: no visible instance matches `operator Add.add`
+   = help: add a matching instance or strengthen the surrounding type context
 ---
 
 error[SC0228]: type name used as value: `Opt`
@@ -121,3 +133,4 @@ error[SC0228]: type name used as value: `Opt`
    |          ^^^ not a value
 50 | }
    |
+   = help: use a constructor or value binding here, not a namespace name

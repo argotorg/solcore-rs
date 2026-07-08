@@ -3,11 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_field_access_non_struct/main.solc
 ---
-error[SC0205]: unknown field: red
- --> /main/main.solc:4:10
+error[SC0205]: cannot resolve field `red`
+ --> /main/main.solc:4:12
   |
 3 | function f(c: Color) -> word {
 4 |   return c.red;
-  |          ^^^^^ unknown field
+  |            ^^^ unknown field
 5 | }
   |
+  = help: check that the receiver has this field or constructor path

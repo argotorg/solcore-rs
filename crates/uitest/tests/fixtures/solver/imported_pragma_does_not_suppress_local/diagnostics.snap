@@ -18,22 +18,23 @@ error[SC0212]: Coverage condition fails for class:
   |
 ---
 
-error[SC0213]: Instance
-               x : C(word, word)
-               does not satisfy the Patterson conditions.
+error[SC0213]: instance `x : C(word, word)` does not satisfy the Patterson conditions
  --> /main/main.solc:8:40
   |
 6 |
 7 | forall a b . instance List(b) : C(a, List(a)) {}
 8 | forall x . x:C(word, word) => instance x:C(word, word) {}
   |                                        ^^^^^^^^^^^^^^^ instance head violates Patterson condition
+  |
+  = note: each instance context must be structurally smaller than the instance head
+  = help: remove the recursive context, add a more specific instance, or use the Patterson-condition pragma intentionally
 ---
 
 error[SC0218]: Overlapping instances are not supported
                instance:
                x : C(word, word)
                overlaps with:
-               adt:List(_):class:C(_, adt:List(_))
+               List(_) : C(_, List(_))
  --> /main/main.solc:8:40
   |
 6 |

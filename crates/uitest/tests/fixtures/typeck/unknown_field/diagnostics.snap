@@ -3,11 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/unknown_field/main.solc
 ---
-error[SC0205]: unknown field: foo
- --> /main/main.solc:2:10
+error[SC0205]: cannot resolve field `foo`
+ --> /main/main.solc:2:12
   |
 1 | function f(x: word) -> word {
 2 |   return x.foo;
-  |          ^^^^^ unknown field
+  |            ^^^ unknown field
 3 | }
   |
+  = help: check that the receiver has this field or constructor path

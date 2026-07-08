@@ -11,3 +11,4 @@ error[SC0228]: type name used as value: `Opt`
   |          ^^^ not a value
 5 | }
   |
+  = help: use a constructor or value binding here, not a namespace name

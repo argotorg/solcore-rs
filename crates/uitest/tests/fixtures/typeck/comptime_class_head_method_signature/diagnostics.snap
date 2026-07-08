@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/comptime_class_head_method_signature/main.solc
 ---
-error[SC0221]: Invalid instance member signature for `f`: expected (word) -> word, got (word) -> bool
+error[SC0221]: invalid instance member signature for `f`: expected (word) -> word, got (word) -> bool
  --> /main/main.solc:6:3
   |
 5 | instance word : C {
@@ -11,3 +11,4 @@ error[SC0221]: Invalid instance member signature for `f`: expected (word) -> wor
   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ invalid instance method signature
 7 |     return true;
   |
+  = note: the instance method must match the class method after substituting the instance head

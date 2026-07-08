@@ -3,11 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/call_wrong_arity/main.solc
 ---
-error[SC0203]: wrong arity for call: expected 1, got 0
+error[SC0203]: call expects 1 argument, but 0 were provided
  --> /main/main.solc:6:10
   |
 5 | function g() -> word {
 6 |   return f();
-  |          ^^^ wrong arity here
+  |          ^^^ wrong number of arguments
 7 | }
   |
+  = note: expected 1 argument
+  = note: found 0 arguments

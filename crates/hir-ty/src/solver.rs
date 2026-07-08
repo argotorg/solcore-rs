@@ -733,7 +733,7 @@ fn check_overlapping_instance<'db>(
                 instance_span: head_span,
                 overlaps_span: Some(prior.span.clone()),
                 instance: display_pred_source(db, head, type_var_names),
-                overlaps: prior.pred.display(db),
+                overlaps: display_pred_source(db, prior.pred, &[]),
             });
             return;
         }
@@ -924,7 +924,7 @@ fn check_instance_method_signature<'db>(
     if scheme_is_ambiguous(db, actual_scheme) {
         diagnostics.push(TypeckDiagnostic::AmbiguousInferredType {
             span: ctx.instance_head_span.clone(),
-            scheme: actual_scheme.display(db),
+            scheme: display_scheme_source(db, actual_scheme, &inherited),
         });
     }
     let mut actual = actual_scheme.body(db).ty(db);
@@ -939,13 +939,14 @@ fn check_instance_method_signature<'db>(
     );
 
     if !ty_equal(db, expected, actual) {
+        let inherited_names = type_var_names(db, &inherited);
         diagnostics.push(TypeckDiagnostic::InvalidInstanceMethodSignature {
             span: LabelSpan::from_span(db, instance_method.sig(db).span(db)),
             method: method_name,
             reason: format!(
                 "expected {}, got {}",
-                expected.display(db),
-                actual.display(db)
+                display_ty_source(db, expected, &inherited_names),
+                display_ty_source(db, actual, &inherited_names)
             ),
         });
     }
@@ -1693,6 +1694,38 @@ fn display_pred_source<'db>(db: &'db dyn Db, pred: Pred<'db>, names: &[String]) 
             display_ty_source(db, *rhs, names)
         ),
         PredKind::Error => "<error predicate>".to_owned(),
+    }
+}
+
+fn display_scheme_source<'db>(
+    db: &'db dyn Db,
+    scheme: TyScheme<'db>,
+    type_vars: &[hir_nameres::TypeVarBinding<'db>],
+) -> String {
+    let names = type_vars
+        .iter()
+        .map(|var| (*var.name.atom()).text(db).to_owned())
+        .collect::<Vec<_>>();
+    let body = scheme.body(db);
+    let preds = body
+        .preds(db)
+        .iter()
+        .map(|pred| display_pred_source(db, *pred, &names))
+        .collect::<Vec<_>>();
+    let ty = display_ty_source(db, body.ty(db), &names);
+    let qualified = if preds.is_empty() {
+        ty
+    } else {
+        format!("{} => {ty}", preds.join(", "))
+    };
+    if scheme.binder_count(db) == 0 {
+        qualified
+    } else {
+        let vars = (0..scheme.binder_count(db))
+            .map(|index| display_var(index, &names))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("forall {vars}. {qualified}")
     }
 }
 

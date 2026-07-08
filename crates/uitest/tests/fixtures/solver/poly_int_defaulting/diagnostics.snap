@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/poly_int_defaulting/main.solc
 ---
-error[SC0299]: Ambiguous infered type
+error[SC0299]: ambiguous inferred type
  --> /main/main.solc:5:22
   |
 4 |
@@ -14,5 +14,5 @@ error[SC0299]: Ambiguous infered type
 8 | | }
   | |_^ ambiguous inferred type
   |
-  = note: forall _ . _:Int => () -> word
-  = note: add a type signature to fix the ambiguous type variable
+  = note: forall _ . _ : Int => () -> word
+  = help: add a type annotation or a matching instance to fix the ambiguous type variable

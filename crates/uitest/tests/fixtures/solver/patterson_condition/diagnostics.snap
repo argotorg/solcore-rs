@@ -3,12 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/patterson_condition/main.solc
 ---
-error[SC0213]: Instance
-               U : C1
-               does not satisfy the Patterson conditions.
+error[SC0213]: instance `U : C1` does not satisfy the Patterson conditions
  --> /main/main.solc:4:35
   |
 2 | forall a . class a:C2 {}
 3 |
 4 | forall U . U:C1, U:C2 => instance U:C1 {}
   |                                   ^^^^ instance head violates Patterson condition
+  |
+  = note: each instance context must be structurally smaller than the instance head
+  = help: remove the recursive context, add a more specific instance, or use the Patterson-condition pragma intentionally

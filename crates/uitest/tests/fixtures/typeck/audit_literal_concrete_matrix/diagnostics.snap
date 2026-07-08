@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_literal_concrete_matrix/main.solc
 ---
-error[SC0201]: type mismatch: expected numeric, got adt:Opt
+error[SC0201]: type mismatch: expected numeric, found Opt
  --> /main/main.solc:5:10
   |
 4 | function opt_ret() -> Opt {
@@ -11,9 +11,11 @@ error[SC0201]: type mismatch: expected numeric, got adt:Opt
   |          ^ expression has mismatched type
 6 | }
   |
+  = note: expected type: numeric
+  = note: found type: Opt
 ---
 
-error[SC0201]: type mismatch: expected numeric, got bool
+error[SC0201]: type mismatch: expected numeric, found bool
   --> /main/main.solc:9:10
    |
  8 | function bool_ret() -> bool {
@@ -21,6 +23,8 @@ error[SC0201]: type mismatch: expected numeric, got bool
    |          ^ expression has mismatched type
 10 | }
    |
+   = note: expected type: numeric
+   = note: found type: bool
 ---
 
 error[SC0103]: undefined type constructor: string
@@ -33,7 +37,7 @@ error[SC0103]: undefined type constructor: string
    |
 ---
 
-error[SC0299]: Ambiguous infered type
+error[SC0299]: ambiguous inferred type
   --> /main/main.solc:12:33
    |
 11 |
@@ -44,11 +48,11 @@ error[SC0299]: Ambiguous infered type
    | |_^ ambiguous inferred type
 15 |
    |
-   = note: forall _ . _:Int => () -> <error>
-   = note: add a type signature to fix the ambiguous type variable
+   = note: forall _ . _ : Int => () -> <error>
+   = help: add a type annotation or a matching instance to fix the ambiguous type variable
 ---
 
-error[SC0201]: type mismatch: expected numeric, got ()
+error[SC0201]: type mismatch: expected numeric, found ()
   --> /main/main.solc:17:10
    |
 16 | function unit_ret() -> () {
@@ -56,9 +60,11 @@ error[SC0201]: type mismatch: expected numeric, got ()
    |          ^ expression has mismatched type
 18 | }
    |
+   = note: expected type: numeric
+   = note: found type: ()
 ---
 
-error[SC0201]: type mismatch: expected numeric, got contract:K
+error[SC0201]: type mismatch: expected numeric, found K
   --> /main/main.solc:21:10
    |
 20 | function contract_ret() -> K {
@@ -66,9 +72,11 @@ error[SC0201]: type mismatch: expected numeric, got contract:K
    |          ^ expression has mismatched type
 22 | }
    |
+   = note: expected type: numeric
+   = note: found type: K
 ---
 
-error[SC0201]: type mismatch: expected numeric, got pair(word, word)
+error[SC0201]: type mismatch: expected numeric, found pair(word, word)
   --> /main/main.solc:25:10
    |
 24 | function pair_ret() -> pair(word, word) {
@@ -76,9 +84,11 @@ error[SC0201]: type mismatch: expected numeric, got pair(word, word)
    |          ^ expression has mismatched type
 26 | }
    |
+   = note: expected type: numeric
+   = note: found type: pair(word, word)
 ---
 
-error[SC0201]: type mismatch: expected numeric, got sum(word, word)
+error[SC0201]: type mismatch: expected numeric, found sum(word, word)
   --> /main/main.solc:29:10
    |
 28 | function sum_ret() -> sum(word, word) {
@@ -86,9 +96,11 @@ error[SC0201]: type mismatch: expected numeric, got sum(word, word)
    |          ^ expression has mismatched type
 30 | }
    |
+   = note: expected type: numeric
+   = note: found type: sum(word, word)
 ---
 
-error[SC0201]: type mismatch: expected numeric, got (word, word)
+error[SC0201]: type mismatch: expected numeric, found (word, word)
   --> /main/main.solc:33:10
    |
 32 | function tuple_ret() -> (word, word) {
@@ -96,9 +108,11 @@ error[SC0201]: type mismatch: expected numeric, got (word, word)
    |          ^ expression has mismatched type
 34 | }
    |
+   = note: expected type: numeric
+   = note: found type: (word, word)
 ---
 
-error[SC0201]: type mismatch: expected numeric, got (()) -> word
+error[SC0201]: type mismatch: expected numeric, found (()) -> word
   --> /main/main.solc:37:10
    |
 36 | function function_ret() -> () -> word {
@@ -106,3 +120,5 @@ error[SC0201]: type mismatch: expected numeric, got (()) -> word
    |          ^ expression has mismatched type
 38 | }
    |
+   = note: expected type: numeric
+   = note: found type: (()) -> word

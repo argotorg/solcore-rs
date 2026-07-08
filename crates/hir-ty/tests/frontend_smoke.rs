@@ -54,10 +54,8 @@ macro_rules! std_known {
     };
 }
 
-const STD_SOLC_KNOWN_DIVERGENCES: &[StdSolcKnownDivergence] = &[
-    std_known!(Typeck, "SC0203", "needs-std-comptime-yul-arity"),
-    std_known!(Typeck, "SC0211", "needs-std-yul-builtins"),
-];
+const STD_SOLC_KNOWN_DIVERGENCES: &[StdSolcKnownDivergence] =
+    &[std_known!(Typeck, "SC0211", "needs-std-yul-builtins")];
 
 struct RunOutcome {
     unresolved_imports: Vec<String>,
