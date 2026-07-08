@@ -1,0 +1,81 @@
+:root {
+  color-scheme: light;
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
+    monospace;
+
+  --bg-canvas: #f5f7fb;
+  --bg-subtle: #eef2f7;
+  --surface-1: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --surface-hover: #fff7ed;
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text-primary: #111827;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-inverse: #fff7ed;
+
+  --accent: #c2410c;
+  --accent-strong: #9a3412;
+  --accent-soft: #ffedd5;
+  --accent-ring: rgba(194, 65, 12, 0.26);
+  --info: #4f46e5;
+  --info-soft: #eef2ff;
+  --success: #15803d;
+  --success-soft: #dcfce7;
+  --warning: #b45309;
+  --warning-soft: #fef3c7;
+  --error: #dc2626;
+  --error-soft: #fee2e2;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  --radius-1: 6px;
+  --radius-2: 8px;
+  --radius-3: 10px;
+  --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.08);
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.78) inset;
+  --topbar-height: 58px;
+  --statusbar-height: 30px;
+  --transition-fast: 160ms ease;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-canvas: #0d1016;
+  --bg-subtle: #111827;
+  --surface-1: #151922;
+  --surface-2: #111318;
+  --surface-3: #1c2330;
+  --surface-hover: #25202a;
+  --border-subtle: #242b39;
+  --border-strong: #334155;
+  --text-primary: #f1f5f9;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-inverse: #111827;
+
+  --accent: #fb923c;
+  --accent-strong: #fdba74;
+  --accent-soft: rgba(251, 146, 60, 0.13);
+  --accent-ring: rgba(251, 146, 60, 0.32);
+  --info: #a5b4fc;
+  --info-soft: rgba(99, 102, 241, 0.16);
+  --success: #4ade80;
+  --success-soft: rgba(34, 197, 94, 0.14);
+  --warning: #fbbf24;
+  --warning-soft: rgba(245, 158, 11, 0.14);
+  --error: #f87171;
+  --error-soft: rgba(239, 68, 68, 0.15);
+
+  --shadow-soft: 0 22px 55px rgba(0, 0, 0, 0.28);
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}

@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Local env / editor
+*.local
+.DS_Store
+*.log
+
+# Generated wasm package is produced by `wasm-pack build crates/wasm --target web`
+# (referenced via the "solcore-wasm": "file:../crates/wasm/pkg" dependency)
