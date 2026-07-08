@@ -688,9 +688,11 @@ contract RetUnknown {
 
 #[test]
 fn evaluator_does_not_inline_storage_writing_helpers() {
-    let mapping_hull = pretty_src_hull(
+    let mapping_hull = pretty_src_hull_with_std(
         "eval_storage_writer_mapping",
         r#"
+import std.{*};
+
 contract MappingWriter {
   m: mapping(word, word);
 
@@ -717,9 +719,11 @@ contract MappingWriter {
         "{mapping_main}\n{mapping_hull}"
     );
 
-    let direct_hull = pretty_src_hull(
+    let direct_hull = pretty_src_hull_with_std(
         "eval_storage_writer_direct",
         r#"
+import std.{*};
+
 contract DirectWriter {
   x: word;
 
@@ -753,7 +757,7 @@ contract DirectWriter {
 
 #[test]
 fn storage_index_assignment_materializes_slot_before_rhs() {
-    let hull = pretty_src_hull(
+    let hull = pretty_src_hull_with_std(
         "storage_index_order",
         r#"
 import std.{*};
@@ -785,13 +789,13 @@ contract StorageIndexOrder {
         "storage index assignment order",
         main,
         &[
-            "storage_store_storage_index_slot_1 := __solcore_storage_hash2(1, storage_index_order_StorageIndexOrder_next_",
-            "storage_store_storage_index_2 := storage_index_order_StorageIndexOrder_next_",
+            "storage_store_storage_index_slot_1 := __solcore_storage_hash2(1, main_StorageIndexOrder_next_",
+            "storage_store_storage_index_2 := main_StorageIndexOrder_next_",
             "sstore(storage_store_storage_index_slot_1, storage_store_storage_index_2)",
         ],
     );
 
-    let compound_hull = pretty_src_hull(
+    let compound_hull = pretty_src_hull_with_std(
         "storage_index_compound",
         r#"
 import std.{*};
@@ -824,14 +828,14 @@ contract StorageIndexCompound {
         "compound storage index assignment order",
         compound_main,
         &[
-            "storage_store_storage_index_slot_3 := __solcore_storage_hash2(1, storage_index_compound_StorageIndexCompound_next_",
-            "storage_store_storage_index_4 := add(sload(storage_store_storage_index_slot_3), storage_index_compound_StorageIndexCompound_next_",
+            "storage_store_storage_index_slot_3 := __solcore_storage_hash2(1, main_StorageIndexCompound_next_",
+            "storage_store_storage_index_4 := add(sload(storage_store_storage_index_slot_3), main_StorageIndexCompound_next_",
             "sstore(storage_store_storage_index_slot_3, storage_store_storage_index_4)",
         ],
     );
     assert_eq!(
         compound_main
-            .matches("storage_index_compound_StorageIndexCompound_next_")
+            .matches("main_StorageIndexCompound_next_")
             .count(),
         2,
         "{compound_main}"
@@ -1017,6 +1021,18 @@ fn parse_module<'db>(db: &'db TestDb, name: &str, src: &str) -> Module<'db> {
     parse_file_to_hir(db, file).module(db)
 }
 
+/// Specializes an in-memory source with the standard library on the module
+/// path. Unlike `specialize_src`, this mirrors the real driver: `import std`
+/// and its instances (e.g. `word:Int`) resolve, so integer literals are typed
+/// by their use rather than by eager defaulting.
+fn specialize_src_with_std(name: &str, src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {
+    let main_root = repo_root().join("target/hull-smoke-tmp").join(name);
+    fs::create_dir_all(&main_root).expect("create temp main root");
+    let path = main_root.join("main.solc");
+    fs::write(&path, src).expect("write temp source");
+    specialize_fixture(&path)
+}
+
 fn specialize_fixture(path: &Path) -> (&'static TestDb, SpecializeOutput<'static>) {
     let db = Box::leak(Box::new(TestDb::default()));
     let main_root = path.parent().expect("fixture parent").to_path_buf();
@@ -1168,6 +1184,11 @@ fn pretty_fixture_hull(relative: &str) -> String {
 
 fn pretty_src_hull(name: &str, src: &str) -> String {
     let (db, output) = specialize_src(name, src);
+    pretty_output_hull(db, output, name)
+}
+
+fn pretty_src_hull_with_std(name: &str, src: &str) -> String {
+    let (db, output) = specialize_src_with_std(name, src);
     pretty_output_hull(db, output, name)
 }
 
