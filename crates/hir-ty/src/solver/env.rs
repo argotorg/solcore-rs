@@ -1,0 +1,288 @@
+use super::*;
+
+#[salsa::tracked]
+pub fn trait_env_for_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> TraitEnvId<'db> {
+    let env = nameres::module_env(db, module);
+    let mut builder = TraitEnvBuilder::new(db);
+    builder.add_builtin_instances();
+
+    let mut modules = Vec::new();
+    modules.push(module);
+    modules.extend(env.instances.iter().map(|origin| origin.module));
+    modules.extend(visible_class_modules(db, &env));
+    let modules = unique_modules(modules);
+
+    for visible_module in &modules {
+        if let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, *visible_module)
+        {
+            builder.add_module_superclasses(scope.module, &item_resolutions);
+        }
+    }
+
+    for origin in &env.instances {
+        let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, origin.module)
+        else {
+            continue;
+        };
+        if let Some(instance) = scope
+            .instances
+            .iter()
+            .find(|instance| instance.def_id_value(db) == origin.def_id)
+            .copied()
+        {
+            builder.add_instance(scope.module, instance, &item_resolutions);
+        }
+    }
+    if let Some(generic) = visible_generic_class(db, &env)
+        && let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, module)
+    {
+        builder.add_derived_generic_instances(scope.module, &item_resolutions, generic);
+    }
+
+    builder.finish(Vec::new())
+}
+
+/// Builds a trait environment from an already resolved HIR module.
+///
+/// This is primarily useful for tests and direct HIR clients that do not have a
+/// logical [`ModuleId`] available.
+pub fn trait_env_from_module_resolution<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
+) -> TraitEnvId<'db> {
+    let mut builder = TraitEnvBuilder::new(db);
+    builder.add_builtin_instances();
+    builder.add_module_superclasses(module, &module_resolution.item_resolutions);
+    for item in module.items(db) {
+        if let Item::InstanceDef(instance) = item {
+            builder.add_instance(module, *instance, &module_resolution.item_resolutions);
+        }
+    }
+    if let Some(generic) = local_generic_class(db, module)
+        .or_else(|| imported_generic_class(db, &module_resolution.item_resolutions))
+    {
+        builder.add_derived_generic_instances(module, &module_resolution.item_resolutions, generic);
+    }
+    builder.finish(Vec::new())
+}
+
+/// Extends an existing trait environment with local given predicates.
+pub fn trait_env_with_givens<'db>(
+    db: &'db dyn Db,
+    env: TraitEnvId<'db>,
+    givens: Vec<Pred<'db>>,
+) -> TraitEnvId<'db> {
+    let mut local_givens = env.local_givens(db).clone();
+    local_givens.extend(givens);
+    TraitEnvId::new(
+        db,
+        env.base(db),
+        LocalGivensId::new(db, unique_preds(local_givens)),
+    )
+}
+
+struct TraitEnvBuilder<'db> {
+    db: &'db dyn Db,
+    clauses: Vec<ProgramClause<'db>>,
+}
+
+impl<'db> TraitEnvBuilder<'db> {
+    fn new(db: &'db dyn Db) -> Self {
+        Self {
+            db,
+            clauses: Vec::new(),
+        }
+    }
+
+    fn finish(self, local_givens: Vec<Pred<'db>>) -> TraitEnvId<'db> {
+        TraitEnvId::new(
+            self.db,
+            BaseTraitEnvId::new(self.db, self.clauses),
+            LocalGivensId::new(self.db, unique_preds(local_givens)),
+        )
+    }
+
+    fn add_builtin_instances(&mut self) {
+        let int = ClassId::Builtin(BuiltinClassId::Int);
+        for ty in [Ty::word(self.db), Ty::integer(self.db)] {
+            self.clauses.push(ProgramClause {
+                binder_count: 0,
+                head: Pred::in_class(self.db, int, ty, Vec::new()),
+                conditions: Vec::new(),
+                origin: ClauseOrigin::Builtin,
+                is_default: false,
+            });
+        }
+        self.add_builtin_function_invokables();
+    }
+
+    fn add_builtin_function_invokables(&mut self) {
+        let invokable = ClassId::Builtin(BuiltinClassId::Invokable);
+        for arity in 0..=8 {
+            let params = (0..arity)
+                .map(|index| Ty::bound(self.db, index))
+                .collect::<Vec<_>>();
+            let ret = Ty::bound(self.db, arity);
+            let main = Ty::function(self.db, params.clone(), ret);
+            self.clauses.push(ProgramClause {
+                binder_count: arity + 1,
+                head: Pred::in_class(
+                    self.db,
+                    invokable,
+                    main,
+                    vec![invokable_arg_ty(self.db, params), ret],
+                ),
+                conditions: Vec::new(),
+                origin: ClauseOrigin::Builtin,
+                is_default: false,
+            });
+        }
+    }
+
+    fn add_module_superclasses(
+        &mut self,
+        module: Module<'db>,
+        item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    ) {
+        for item in module.items(self.db) {
+            if let Item::ClassDef(class) = item {
+                self.add_class_superclasses(module, *class, item_resolutions);
+            }
+        }
+    }
+
+    fn add_class_superclasses(
+        &mut self,
+        module: Module<'db>,
+        class: ClassDef<'db>,
+        item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    ) {
+        let type_vars =
+            type_var_bindings(class.def_id_value(self.db), class.type_var_elems(self.db));
+        let lowerer = TypeLowering::from_item_resolutions(
+            self.db,
+            item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        let mut normalizer = AliasNormalizer::new(self.db, module, item_resolutions);
+        let class_head = normalizer.normalize_pred(lowerer.lower_pred(class.head(self.db)));
+        for super_pred in class.super_preds(self.db) {
+            self.clauses.push(ProgramClause {
+                binder_count: type_vars.len() as u32,
+                head: normalizer.normalize_pred(lowerer.lower_pred(*super_pred)),
+                conditions: vec![class_head],
+                origin: ClauseOrigin::Superclass(class.def_id_value(self.db)),
+                is_default: false,
+            });
+        }
+    }
+
+    fn add_instance(
+        &mut self,
+        module: Module<'db>,
+        instance: InstanceDef<'db>,
+        item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    ) {
+        let type_vars = type_var_bindings(
+            instance.def_id_value(self.db),
+            instance.type_var_elems(self.db),
+        );
+        let lowerer = TypeLowering::from_item_resolutions(
+            self.db,
+            item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        let mut normalizer = AliasNormalizer::new(self.db, module, item_resolutions);
+        let head = normalizer.normalize_pred(lowerer.lower_pred(instance.head(self.db)));
+        let conditions = instance
+            .preds(self.db)
+            .iter()
+            .map(|pred| normalizer.normalize_pred(lowerer.lower_pred(*pred)))
+            .collect();
+
+        // Instance soundness checks are intentionally run by the module-level
+        // `instance_soundness_diagnostics` query, not while building clauses.
+        self.clauses.push(ProgramClause {
+            binder_count: type_vars.len() as u32,
+            head,
+            conditions,
+            origin: ClauseOrigin::Instance(instance.def_id_value(self.db)),
+            is_default: instance.default_kw(self.db).is_some(),
+        });
+    }
+
+    fn add_derived_generic_instances(
+        &mut self,
+        module: Module<'db>,
+        item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+        generic: DefId<'db>,
+    ) {
+        let excluded = no_generic_instance_for(self.db, module);
+        let manual = manual_generic_instance_types(self.db, module, item_resolutions, generic);
+        for info in local_adt_infos(self.db, module) {
+            if info.adt.ctors(self.db).is_empty() {
+                continue;
+            }
+            if excluded.contains(&adt_name(self.db, info.adt))
+                || manual.contains(&info.adt.def_id_value(self.db))
+            {
+                continue;
+            }
+            let params = info
+                .adt
+                .ty_param_elems(self.db)
+                .iter()
+                .enumerate()
+                .map(|(index, _)| Ty::bound(self.db, index as u32))
+                .collect::<Vec<_>>();
+            let main = Ty::named(
+                self.db,
+                TyCtor::User(crate::UserTyCtor {
+                    def: info.adt.def_id_value(self.db),
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+                params,
+            );
+            self.clauses.push(ProgramClause {
+                binder_count: info.type_vars.len() as u32,
+                head: Pred::in_class(
+                    self.db,
+                    ClassId::User(generic),
+                    main,
+                    vec![
+                        derived_generic_plan_with_resolutions(
+                            self.db,
+                            module,
+                            item_resolutions,
+                            &info,
+                        )
+                        .rep,
+                    ],
+                ),
+                conditions: Vec::new(),
+                origin: ClauseOrigin::Derived(DerivedClauseKind::Generic {
+                    adt: info.adt.def_id_value(self.db),
+                }),
+                is_default: false,
+            });
+        }
+    }
+}
+
+fn invokable_arg_ty<'db>(db: &'db dyn Db, params: Vec<Ty<'db>>) -> Ty<'db> {
+    let mut params = params.into_iter();
+    let Some(first) = params.next() else {
+        return Ty::unit(db);
+    };
+    let rest = params.collect::<Vec<_>>();
+    if rest.is_empty() {
+        first
+    } else {
+        Ty::named(
+            db,
+            TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+            vec![first, invokable_arg_ty(db, rest)],
+        )
+    }
+}
