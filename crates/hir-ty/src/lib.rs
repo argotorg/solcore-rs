@@ -7,6 +7,7 @@
 pub mod alias;
 pub mod contract;
 mod coverage;
+mod display;
 pub mod infer;
 pub mod lower;
 pub mod solver;

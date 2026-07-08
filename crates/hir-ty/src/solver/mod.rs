@@ -77,6 +77,7 @@ pub use derived_generic::{derived_generic_plan, generic_derivation_diagnostics};
 pub use env::{trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens};
 pub use soundness::instance_soundness_diagnostics;
 
+use crate::display::{display_class_source, display_pred_source, display_ty_source};
 use canonical::{
     GoalRenaming, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
 };
@@ -85,10 +86,7 @@ use derived_generic::{
     local_generic_class, manual_generic_instance_types, no_generic_instance_for,
     visible_generic_class,
 };
-use display::{
-    display_class_source, display_pred_source, display_scheme_source, display_ty_source,
-    display_vars,
-};
+use display::{display_scheme_source, display_vars};
 use engine::{Answer, TabledEngine};
 use evidence::{apply_evidence, clause_evidence, solution_from_answers};
 use r#match::{

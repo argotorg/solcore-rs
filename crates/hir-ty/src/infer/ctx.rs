@@ -1,4 +1,5 @@
 use super::*;
+use crate::display::display_pred_source;
 
 pub(super) struct InferCtx<'db> {
     pub(super) db: &'db dyn Db,

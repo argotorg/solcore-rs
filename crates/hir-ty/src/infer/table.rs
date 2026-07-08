@@ -1,4 +1,5 @@
 use super::*;
+use crate::display::display_ty_source;
 
 /// Ephemeral inference variable identifier.
 ///
@@ -176,13 +177,13 @@ pub struct Instantiated<'db> {
 
 /// Ephemeral ena-backed unification table.
 pub struct InferTable<'db> {
-    db: &'db dyn HirDb,
+    db: &'db dyn Db,
     pub(super) table: InPlaceUnificationTable<TyVid<'db>>,
 }
 
 impl<'db> InferTable<'db> {
     /// Creates an empty ephemeral unification table.
-    pub fn new(db: &'db dyn HirDb) -> Self {
+    pub fn new(db: &'db dyn Db) -> Self {
         Self {
             db,
             table: InPlaceUnificationTable::new(),
@@ -329,44 +330,8 @@ impl<'db> InferTable<'db> {
     }
 
     pub(super) fn display_with_names(&mut self, ty: InferTy<'db>, names: &[String]) -> String {
-        match self.resolve(ty) {
-            InferTy::Error => "<error>".to_owned(),
-            InferTy::Unknown | InferTy::Var(_) => "_".to_owned(),
-            InferTy::BoundVar(index) => display_var_name(index, names),
-            InferTy::Named { ctor, args } => {
-                let ty = Ty::named(
-                    self.db,
-                    ctor,
-                    args.into_iter().map(|arg| self.ground_ty(arg)).collect(),
-                );
-                display_ty_source(self.db, ty, names)
-            }
-            InferTy::Function { params, ret } => {
-                let params = params
-                    .into_iter()
-                    .map(|param| self.display_with_names(param, names))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("({params}) -> {}", self.display_with_names(*ret, names))
-            }
-            InferTy::Tuple(elems) => {
-                if elems.is_empty() {
-                    "()".to_owned()
-                } else {
-                    format!(
-                        "({})",
-                        elems
-                            .into_iter()
-                            .map(|elem| self.display_with_names(elem, names))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                }
-            }
-            InferTy::Comptime(inner) => {
-                format!("comptime {}", self.display_with_names(*inner, names))
-            }
-        }
+        let ty = self.ground_ty(ty);
+        display_ty_source(self.db, ty, names)
     }
 
     fn infer_from_ty(&mut self, ty: Ty<'db>) -> InferTy<'db> {
