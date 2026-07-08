@@ -694,7 +694,11 @@ pub enum TypeckDiagnostic {
         /// Instance predicate snapshot.
         head: String,
     },
-    /// `SC0220`: an instance omits one or more required methods.
+    /// `SC0244`: an instance omits one or more required methods.
+    ///
+    /// Reference `SC0220` is the incomplete-signature diagnostic. Older
+    /// solcore-rs used `SC0220` for incomplete instances; keep the local
+    /// mapping explicit so the registry does not collide again.
     IncompleteInstance {
         /// Source span for the instance declaration.
         span: LabelSpan,
@@ -702,6 +706,20 @@ pub enum TypeckDiagnostic {
         class: String,
         /// Missing method names.
         missing: Vec<String>,
+    },
+    /// `SC0220`: a top-level or contract function has an incomplete signature.
+    IncompleteSignature {
+        /// Source span for the function name.
+        span: LabelSpan,
+        /// Source-level signature snapshot.
+        signature: String,
+    },
+    /// `SC0221`: a class or instance method has an incomplete signature.
+    IncompleteMethodSignature {
+        /// Source span for the method name.
+        span: LabelSpan,
+        /// Source-level signature snapshot.
+        signature: String,
     },
     /// `SC0221`: an instance method signature does not match its class method.
     InvalidInstanceMethodSignature {
@@ -711,22 +729,6 @@ pub enum TypeckDiagnostic {
         method: String,
         /// Failure reason.
         reason: String,
-    },
-    /// `SC0225`: a required function parameter annotation is missing.
-    MissingParamAnnotation {
-        /// Source span for the untyped parameter.
-        span: LabelSpan,
-        /// Function or method name.
-        function: String,
-        /// Parameter name.
-        param: String,
-    },
-    /// `SC0226`: a required function return annotation is missing.
-    MissingReturnAnnotation {
-        /// Source span for the function signature.
-        span: LabelSpan,
-        /// Function or method name.
-        function: String,
     },
     /// `SC0222`: constructor-shaped pattern syntax did not resolve to a
     /// constructor.
@@ -1179,8 +1181,22 @@ impl TypeckDiagnostic {
                 "Incomplete definition for class:\n{class}\nmissing definitions for:\n{}",
                 missing.join(", ")
             ))
-            .with_code("SC0220")
+            .with_code("SC0244")
             .with_primary_label_span(span.clone(), Some("incomplete instance")),
+            TypeckDiagnostic::IncompleteSignature { span, signature } => Diagnostic::error(
+                "top-level function must have complete type annotations",
+            )
+            .with_code("SC0220")
+            .with_primary_label_span(span.clone(), Some("incomplete signature"))
+            .with_note(format!("signature: {signature}"))
+            .with_note("annotate every parameter (name : Type) and provide a return type (-> Type)"),
+            TypeckDiagnostic::IncompleteMethodSignature { span, signature } => Diagnostic::error(
+                "class and instance methods must have complete type signatures",
+            )
+            .with_code("SC0221")
+            .with_primary_label_span(span.clone(), Some("incomplete method signature"))
+            .with_note(format!("signature: {signature}"))
+            .with_note("annotate every method parameter and provide a return type"),
             TypeckDiagnostic::InvalidInstanceMethodSignature {
                 span,
                 method,
@@ -1191,22 +1207,6 @@ impl TypeckDiagnostic {
                 ))
                 .with_code("SC0221")
                 .with_primary_label_span(span.clone(), Some("invalid instance method signature"))
-            }
-            TypeckDiagnostic::MissingParamAnnotation {
-                span,
-                function,
-                param,
-            } => Diagnostic::error(format!(
-                "function `{function}` parameter `{param}` requires a type annotation"
-            ))
-            .with_code("SC0225")
-            .with_primary_label_span(span.clone(), Some("missing parameter annotation")),
-            TypeckDiagnostic::MissingReturnAnnotation { span, function } => {
-                Diagnostic::error(format!(
-                    "function `{function}` requires an explicit return type annotation"
-                ))
-                .with_code("SC0226")
-                .with_primary_label_span(span.clone(), Some("missing return annotation"))
             }
             TypeckDiagnostic::InvalidConstructorPattern { span, name } => Diagnostic::error(format!(
                 "constructor pattern `{name}` does not resolve to a constructor"
@@ -6736,9 +6736,9 @@ fn function_scheme_in_module<'db>(
 /// Lowers a legacy-inferred function signature, replacing omitted parameter or
 /// return pieces with the generalized type inferred from its body when that
 /// inference is clean. Complete-signature diagnostics are owned by
-/// `TypeckDiagnosticCollector` through `SignatureRequirement`: class/instance
-/// methods and targeted negative fixtures still require full annotations, while
-/// legacy top-level and contract functions can expose inferred callable types.
+/// `TypeckDiagnosticCollector` through `SignatureRequirement`; current
+/// reference-aligned diagnostics reject incomplete top-level and contract
+/// function signatures before this fallback is user-visible.
 pub fn lower_normalized_function_with_inferred_signature<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
@@ -7040,8 +7040,8 @@ struct LatentComptimeParam {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SignatureRequirement {
-    Complete,
-    LegacyInference,
+    TopLevel,
+    Method,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7845,7 +7845,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                     enclosing_contract,
                     inherited_type_vars,
                     &[],
-                    SignatureRequirement::LegacyInference,
+                    SignatureRequirement::TopLevel,
                 );
             }
             Item::InstanceDef(instance) => {
@@ -7880,14 +7880,14 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                         enclosing_contract,
                         &inherited,
                         &instance_givens,
-                        SignatureRequirement::Complete,
+                        SignatureRequirement::Method,
                     );
                 }
             }
             Item::ClassDef(class) => {
                 self.class_signature_items(class, inherited_type_vars);
                 for method in class.methods(self.db) {
-                    self.require_complete_signature(method);
+                    self.require_complete_method_signature(method);
                 }
             }
             Item::ContractDef(contract) => {
@@ -7904,7 +7904,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                             Some(contract.def_id_value(self.db)),
                             &inherited,
                             &[],
-                            SignatureRequirement::LegacyInference,
+                            SignatureRequirement::TopLevel,
                         ),
                         ContractItem::TypeAlias(alias) => {
                             self.type_alias_signature(alias, &inherited);
@@ -7996,11 +7996,14 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         signature_requirement: SignatureRequirement,
     ) {
         let sig = function.sig(self.db);
-        if matches!(function.kind(self.db), FuncKind::Function)
-            && self.should_require_complete_signature(function, signature_requirement)
-            && !self.require_complete_signature(sig)
-        {
-            return;
+        if matches!(function.kind(self.db), FuncKind::Function) {
+            let complete = match signature_requirement {
+                SignatureRequirement::TopLevel => self.require_complete_signature(sig),
+                SignatureRequirement::Method => self.require_complete_method_signature(sig),
+            };
+            if !complete {
+                return;
+            }
         }
         let Some(body) = function.body(self.db) else {
             return;
@@ -8303,51 +8306,191 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         );
     }
 
-    fn should_require_complete_signature(
-        &self,
-        function: FunctionDef<'db>,
-        requirement: SignatureRequirement,
-    ) -> bool {
-        match requirement {
-            SignatureRequirement::Complete => true,
-            SignatureRequirement::LegacyInference => {
-                self.is_annotation_regression_fixture(function)
-            }
-        }
-    }
-
-    fn is_annotation_regression_fixture(&self, function: FunctionDef<'db>) -> bool {
-        let file = function.def_id_value(self.db).file(self.db);
-        file.url(self.db).path().contains("require-annotation-")
-    }
-
     fn require_complete_signature(&mut self, sig: &FuncSig<'db>) -> bool {
-        let function = ident_text(self.db, &sig.name);
-        let mut complete = true;
-        for param in sig.params.atom() {
-            if let FuncParam::Untyped { name, .. } = param {
-                complete = false;
-                self.diagnostics.push(AnyDiagnostic::Typeck(
-                    TypeckDiagnostic::MissingParamAnnotation {
-                        span: LabelSpan::from_span(self.db, param.span(self.db)),
-                        function: function.clone(),
-                        param: ident_text(self.db, name),
-                    }
-                    .lower(),
-                ));
+        if is_complete_signature(sig) {
+            return true;
+        }
+        self.diagnostics.push(AnyDiagnostic::Typeck(
+            TypeckDiagnostic::IncompleteSignature {
+                span: LabelSpan::from_span(self.db, sig.name.span(self.db)),
+                signature: format_func_sig(self.db, sig),
             }
+            .lower(),
+        ));
+        false
+    }
+
+    fn require_complete_method_signature(&mut self, sig: &FuncSig<'db>) -> bool {
+        if is_complete_signature(sig) {
+            return true;
         }
-        if sig.ret.is_none() {
-            complete = false;
-            self.diagnostics.push(AnyDiagnostic::Typeck(
-                TypeckDiagnostic::MissingReturnAnnotation {
-                    span: LabelSpan::from_span(self.db, sig.span(self.db)),
-                    function,
-                }
-                .lower(),
-            ));
+        self.diagnostics.push(AnyDiagnostic::Typeck(
+            TypeckDiagnostic::IncompleteMethodSignature {
+                span: LabelSpan::from_span(self.db, sig.name.span(self.db)),
+                signature: format_func_sig(self.db, sig),
+            }
+            .lower(),
+        ));
+        false
+    }
+}
+
+fn is_complete_signature(sig: &FuncSig<'_>) -> bool {
+    sig.ret.is_some()
+        && sig
+            .params
+            .atom()
+            .iter()
+            .all(|param| matches!(param, FuncParam::Typed { .. }))
+}
+
+fn format_func_sig<'db>(db: &'db dyn HirDb, sig: &FuncSig<'db>) -> String {
+    let mut out = String::new();
+    if !sig.type_vars.is_empty() {
+        out.push_str("forall ");
+        out.push_str(
+            &sig.type_vars
+                .iter()
+                .map(|var| ident_text(db, var))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        out.push_str(". ");
+    }
+    if !sig.preds.is_empty() {
+        out.push_str(
+            &sig.preds
+                .iter()
+                .map(|pred| format_pred_ref(db, *pred))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        out.push_str(" => ");
+    }
+    if sig.public.is_some() {
+        out.push_str("public ");
+    }
+    if sig.payable.is_some() {
+        out.push_str("payable ");
+    }
+    out.push_str("function ");
+    out.push_str(&ident_text(db, &sig.name));
+    out.push('(');
+    out.push_str(
+        &sig.params
+            .atom()
+            .iter()
+            .map(|param| format_func_param(db, param))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    out.push(')');
+    if let Some(ret) = sig.ret {
+        out.push_str(" -> ");
+        out.push_str(&format_type_ref(db, ret));
+    }
+    out
+}
+
+fn format_func_param<'db>(db: &'db dyn HirDb, param: &FuncParam<'db>) -> String {
+    match param {
+        FuncParam::Typed { comptime, name, ty } => {
+            let mut out = String::new();
+            if comptime.is_some() {
+                out.push_str("comptime ");
+            }
+            out.push_str(&ident_text(db, name));
+            out.push_str(" : ");
+            out.push_str(&format_type_ref(db, *ty));
+            out
         }
-        complete
+        FuncParam::Untyped { comptime, name } => {
+            let mut out = String::new();
+            if comptime.is_some() {
+                out.push_str("comptime ");
+            }
+            out.push_str(&ident_text(db, name));
+            out
+        }
+        FuncParam::Error { .. } => "<error param>".to_owned(),
+    }
+}
+
+fn format_pred_ref<'db>(db: &'db dyn HirDb, pred: hir::ast::ty::PredRef<'db>) -> String {
+    let pred = pred.kind(db);
+    let mut out = format!(
+        "{} : {}",
+        format_type_ref(db, pred.ty),
+        ident_text(db, &pred.class)
+    );
+    if !pred.args.atom().is_empty() {
+        out.push('(');
+        out.push_str(
+            &pred
+                .args
+                .atom()
+                .iter()
+                .map(|arg| format_type_ref(db, *arg))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        out.push(')');
+    }
+    out
+}
+
+fn format_type_ref<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>) -> String {
+    match ty.kind(db) {
+        TypeRefKind::Named {
+            qualifier,
+            name,
+            args,
+        } => {
+            let mut out = String::new();
+            if let Some(qualifier) = qualifier {
+                out.push_str(&ident_text(db, qualifier));
+                out.push('.');
+            }
+            out.push_str(&ident_text(db, name));
+            if !args.atom().is_empty() {
+                out.push('(');
+                out.push_str(
+                    &args
+                        .atom()
+                        .iter()
+                        .map(|arg| format_type_ref(db, *arg))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                );
+                out.push(')');
+            }
+            out
+        }
+        TypeRefKind::Fn { params, ret } => format!(
+            "({}) -> {}",
+            params
+                .atom()
+                .iter()
+                .map(|param| format_type_ref(db, *param))
+                .collect::<Vec<_>>()
+                .join(", "),
+            format_type_ref(db, *ret)
+        ),
+        TypeRefKind::Comptime { inner, .. } => {
+            format!("comptime {}", format_type_ref(db, *inner))
+        }
+        TypeRefKind::Tuple { elems } => {
+            format!(
+                "({})",
+                elems
+                    .atom()
+                    .iter()
+                    .map(|elem| format_type_ref(db, *elem))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
+        TypeRefKind::Error { .. } => "<error type>".to_owned(),
     }
 }
 
