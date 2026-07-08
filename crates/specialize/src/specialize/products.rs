@@ -1,0 +1,230 @@
+use super::*;
+
+pub(super) struct ProductVar<'db> {
+    id: MonoId<'db>,
+}
+
+pub(super) fn product_vars<'db>(
+    db: &'db dyn Db,
+    ty: Ty<'db>,
+    span: Span<'db>,
+    prefix: &str,
+) -> Vec<ProductVar<'db>> {
+    product_fields(db, ty)
+        .into_iter()
+        .enumerate()
+        .map(|(index, ty)| ProductVar {
+            id: MonoId {
+                name: format!("{prefix}{index}"),
+                ty: MonoTy::new_unchecked(ty),
+                span,
+            },
+        })
+        .collect()
+}
+
+fn product_fields<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Vec<Ty<'db>> {
+    if ty_is_builtin(db, ty, BuiltinTyCtor::Unit) {
+        return Vec::new();
+    }
+    match ty.kind(db) {
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } if args.len() == 2 => {
+            let mut fields = vec![args[0]];
+            fields.extend(product_fields(db, args[1]));
+            fields
+        }
+        TyKind::Tuple(elems) => elems.clone(),
+        _ => vec![ty],
+    }
+}
+
+pub(super) fn var_expr<'db>(var: &ProductVar<'db>, span: Span<'db>) -> MonoExpr<'db> {
+    MonoExpr {
+        span,
+        ty: var.id.ty,
+        kind: MonoExprKind::Var(var.id.clone()),
+    }
+}
+
+pub(super) fn var_pattern<'db>(var: &ProductVar<'db>, span: Span<'db>) -> MonoPat<'db> {
+    MonoPat {
+        span,
+        ty: var.id.ty,
+        kind: MonoPatKind::Var(var.id.clone()),
+    }
+}
+
+pub(super) fn product_expr_from_vars<'db>(
+    db: &'db dyn Db,
+    vars: &[ProductVar<'db>],
+    ty: Ty<'db>,
+    span: Span<'db>,
+) -> MonoExpr<'db> {
+    match vars {
+        [] => MonoExpr {
+            span,
+            ty: MonoTy::new_unchecked(Ty::unit(db)),
+            kind: MonoExprKind::Con {
+                ctor: MonoId {
+                    name: "()".to_owned(),
+                    ty: MonoTy::new_unchecked(Ty::unit(db)),
+                    span,
+                },
+                args: Vec::new(),
+            },
+        },
+        [one] => var_expr(one, span),
+        [head, tail @ ..] => MonoExpr {
+            span,
+            ty: MonoTy::new_unchecked(ty),
+            kind: MonoExprKind::Con {
+                ctor: MonoId {
+                    name: "pair".to_owned(),
+                    ty: MonoTy::new_unchecked(ty),
+                    span,
+                },
+                args: vec![
+                    var_expr(head, span),
+                    product_expr_from_vars(db, tail, pair_tail_ty(db, ty), span),
+                ],
+            },
+        },
+    }
+}
+
+pub(super) fn product_pat_from_vars<'db>(
+    db: &'db dyn Db,
+    vars: &[ProductVar<'db>],
+    ty: Ty<'db>,
+    span: Span<'db>,
+) -> MonoPat<'db> {
+    match vars {
+        [] => MonoPat {
+            span,
+            ty: MonoTy::new_unchecked(Ty::unit(db)),
+            kind: MonoPatKind::Con {
+                ctor: MonoId {
+                    name: "()".to_owned(),
+                    ty: MonoTy::new_unchecked(Ty::unit(db)),
+                    span,
+                },
+                args: Vec::new(),
+            },
+        },
+        [one] => var_pattern(one, span),
+        [head, tail @ ..] => MonoPat {
+            span,
+            ty: MonoTy::new_unchecked(ty),
+            kind: MonoPatKind::Con {
+                ctor: MonoId {
+                    name: "pair".to_owned(),
+                    ty: MonoTy::new_unchecked(ty),
+                    span,
+                },
+                args: vec![
+                    var_pattern(head, span),
+                    product_pat_from_vars(db, tail, pair_tail_ty(db, ty), span),
+                ],
+            },
+        },
+    }
+}
+
+fn pair_tail_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } if args.len() == 2 => args[1],
+        _ => Ty::unit(db),
+    }
+}
+
+pub(super) fn wrap_sum_expr<'db>(
+    db: &'db dyn Db,
+    mut expr: MonoExpr<'db>,
+    rep: Ty<'db>,
+    inr_depth: u32,
+    wraps_inl: bool,
+    span: Span<'db>,
+) -> MonoExpr<'db> {
+    if wraps_inl {
+        expr = MonoExpr {
+            span,
+            ty: MonoTy::new_unchecked(rep),
+            kind: MonoExprKind::Con {
+                ctor: MonoId {
+                    name: "inl".to_owned(),
+                    ty: MonoTy::new_unchecked(rep),
+                    span,
+                },
+                args: vec![expr],
+            },
+        };
+    }
+    for _ in 0..inr_depth {
+        expr = MonoExpr {
+            span,
+            ty: MonoTy::new_unchecked(rep),
+            kind: MonoExprKind::Con {
+                ctor: MonoId {
+                    name: "inr".to_owned(),
+                    ty: MonoTy::new_unchecked(rep),
+                    span,
+                },
+                args: vec![expr],
+            },
+        };
+    }
+    if inr_depth == 0 && !wraps_inl {
+        expr.ty = MonoTy::new_unchecked(rep);
+    }
+    let _ = db;
+    expr
+}
+
+pub(super) fn unwrap_sum_pat<'db>(
+    db: &'db dyn Db,
+    mut pat: MonoPat<'db>,
+    rep: Ty<'db>,
+    inr_depth: u32,
+    wraps_inl: bool,
+    span: Span<'db>,
+) -> MonoPat<'db> {
+    if wraps_inl {
+        pat = MonoPat {
+            span,
+            ty: MonoTy::new_unchecked(rep),
+            kind: MonoPatKind::Con {
+                ctor: MonoId {
+                    name: "inl".to_owned(),
+                    ty: MonoTy::new_unchecked(rep),
+                    span,
+                },
+                args: vec![pat],
+            },
+        };
+    }
+    for _ in 0..inr_depth {
+        pat = MonoPat {
+            span,
+            ty: MonoTy::new_unchecked(rep),
+            kind: MonoPatKind::Con {
+                ctor: MonoId {
+                    name: "inr".to_owned(),
+                    ty: MonoTy::new_unchecked(rep),
+                    span,
+                },
+                args: vec![pat],
+            },
+        };
+    }
+    if inr_depth == 0 && !wraps_inl {
+        pat.ty = MonoTy::new_unchecked(rep);
+    }
+    let _ = db;
+    pat
+}
