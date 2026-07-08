@@ -19,7 +19,7 @@ use std::ops::Add;
 
 use crate::{
     Db,
-    anchor::{DefId, resolve_def_location},
+    anchor::{DefId, resolve_def_location_or_bug},
     diag::{AbsoluteSpan, Offset},
     input::SourceFile,
 };
@@ -86,9 +86,7 @@ impl<'db> AnchorId<'db> {
             AnchorKind::Root(file) => file,
             AnchorKind::Def(def) => {
                 let locations = db.def_location_table(def.file(db));
-                resolve_def_location(locations, def)
-                    .unwrap_or_else(|| panic!("missing DefLocation for def anchor: {:?}", def))
-                    .file
+                resolve_def_location_or_bug(locations, def, "def anchor", def).file
             }
         }
     }
@@ -103,9 +101,7 @@ impl<'db> AnchorId<'db> {
             AnchorKind::Root(_) => Offset::new(0),
             AnchorKind::Def(def) => {
                 let locations = db.def_location_table(def.file(db));
-                resolve_def_location(locations, def)
-                    .unwrap_or_else(|| panic!("missing DefLocation for def anchor: {:?}", def))
-                    .base_offset
+                resolve_def_location_or_bug(locations, def, "def anchor", def).base_offset
             }
         }
     }
@@ -176,17 +172,10 @@ impl<'db> Span<'db> {
     pub fn resolve_to_absolute(self, db: &'db dyn Db) -> AbsoluteSpan {
         let file = self.anchor.source_file(db);
         let base = self.anchor.base_offset(db);
-        let start = add_offset(base, self.begin);
-        let end = add_offset(base, self.end);
+        let start = Offset::checked_add_or_bug(base, self.begin, "resolving span");
+        let end = Offset::checked_add_or_bug(base, self.end, "resolving span");
         AbsoluteSpan::new(file, start, end)
     }
-}
-
-fn add_offset(base: Offset, rel: Offset) -> Offset {
-    let Some(raw) = base.as_u32().checked_add(rel.as_u32()) else {
-        panic!("offset overflow while resolving span");
-    };
-    Offset::new(raw)
 }
 
 impl<'db> Add for Span<'db> {

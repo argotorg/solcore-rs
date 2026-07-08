@@ -1,5 +1,5 @@
 use crate::{
-    anchor::{DefId, DefKey, resolve_def_location},
+    anchor::{DefId, DefKey, resolve_def_location_or_bug},
     input::SourceFile,
     span::{AnchorKind, Span},
 };
@@ -73,15 +73,14 @@ impl LabelSpan {
             LabelAnchor::Def(key) => {
                 let table = db.def_location_table(key.file);
                 let def = DefId::from_key(db, key);
-                let loc = resolve_def_location(table, def)
-                    .unwrap_or_else(|| panic!("missing DefLocation for def key: {:?}", key));
+                let loc = resolve_def_location_or_bug(table, def, "def key", key);
                 (loc.file, loc.base_offset)
             }
         };
         AbsoluteSpan::new(
             file,
-            add_offset(base, self.begin),
-            add_offset(base, self.end),
+            Offset::checked_add_or_bug(base, self.begin, "resolving diagnostic span"),
+            Offset::checked_add_or_bug(base, self.end, "resolving diagnostic span"),
         )
     }
 }
@@ -113,6 +112,13 @@ impl Offset {
     /// Tries to create an offset from `usize`.
     pub fn try_from_usize(raw: usize) -> Option<Self> {
         u32::try_from(raw).ok().map(Self)
+    }
+
+    pub(crate) fn checked_add_or_bug(base: Self, rel: Self, context: &'static str) -> Self {
+        let Some(raw) = base.as_u32().checked_add(rel.as_u32()) else {
+            panic!("offset overflow while {}", context);
+        };
+        Self::new(raw)
     }
 }
 
@@ -164,11 +170,4 @@ impl AbsoluteSpan {
     pub fn is_empty(self) -> bool {
         self.start == self.end
     }
-}
-
-fn add_offset(base: Offset, rel: Offset) -> Offset {
-    let Some(raw) = base.as_u32().checked_add(rel.as_u32()) else {
-        panic!("offset overflow while resolving diagnostic span");
-    };
-    Offset::new(raw)
 }

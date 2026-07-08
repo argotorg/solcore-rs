@@ -15,7 +15,10 @@
 //! should be non-zero only when otherwise identical base keys occur more than
 //! once in the same owner.
 
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::{
+    fmt,
+    hash::{DefaultHasher, Hash, Hasher},
+};
 
 use rustc_hash::FxHashMap;
 
@@ -228,6 +231,20 @@ pub fn resolve_def_location<'db>(
         .iter()
         .find(|entry| entry.def_id == def)
         .map(|entry| entry.location)
+}
+
+/// Resolves `def` or panics with a compiler-bug invariant message.
+///
+/// This helper is for output-edge span resolution only. Tracked semantic
+/// queries should keep spans relative instead of reading def-location tables.
+pub(crate) fn resolve_def_location_or_bug<'db>(
+    table: &DefLocationTable<'db>,
+    def: DefId<'db>,
+    context: &'static str,
+    debug_key: impl fmt::Debug,
+) -> DefLocation {
+    resolve_def_location(table, def)
+        .unwrap_or_else(|| panic!("missing DefLocation for {}: {:?}", context, debug_key))
 }
 
 fn def_id_hash<'db>(def: DefId<'db>) -> u64 {
