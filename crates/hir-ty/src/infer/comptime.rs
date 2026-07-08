@@ -166,7 +166,7 @@ impl<'db> ComptimeChecker<'db> {
             };
             let key = ComptimeBindingKey::Param(hir_nameres::ParamId {
                 body,
-                index: index as u32,
+                index: hir_nameres::ParamIndex::from_usize(index),
             });
             let value = if param_is_comptime(self.db, param) || self.current_return_comptime {
                 ComptimeValue::Comptime

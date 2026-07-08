@@ -149,7 +149,7 @@ pub fn resolve_body_with_imports_and_policy<'db>(
     resolver.with_type_vars(&context.type_vars, |resolver| {
         resolver.with_scope(|resolver| {
             for (index, param) in context.params.iter().enumerate() {
-                resolver.add_param(body, index as u32, &param.name);
+                resolver.add_param(body, index, &param.name);
             }
             resolver.body(body);
         });

@@ -111,12 +111,34 @@ pub struct TypeVarId<'db> {
 }
 
 /// Stable reference to a function-body parameter.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ParamIndex(u32);
+
+impl ParamIndex {
+    pub const fn from_u32(v: u32) -> Self {
+        Self(v)
+    }
+
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    pub fn from_usize(v: usize) -> Self {
+        Self(v as u32)
+    }
+
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ParamId<'db> {
     /// Body whose parameter list introduced this parameter.
     pub body: FuncBody<'db>,
     /// Zero-based parameter index.
-    pub index: u32,
+    pub index: ParamIndex,
 }
 
 /// Local binding introduced inside a body or type binder list.

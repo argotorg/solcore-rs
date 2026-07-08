@@ -175,7 +175,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 self.with_scope(|resolver| {
                     for (index, param) in params.atom().iter().enumerate() {
                         if let Some(name) = param_name(param) {
-                            resolver.add_param(*lambda_body, index as u32, name);
+                            resolver.add_param(*lambda_body, index, name);
                         }
                     }
                     resolver.body(*lambda_body);
@@ -806,12 +806,15 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     pub(super) fn add_param(
         &mut self,
         body: FuncBody<'db>,
-        index: u32,
+        index: usize,
         name: &SpannedElem<'db, Ident<'db>>,
     ) {
         self.add_local(
             ident_text_str(self.db, name),
-            Resolution::Param(ParamId { body, index }),
+            Resolution::Param(ParamId {
+                body,
+                index: ParamIndex::from_usize(index),
+            }),
         );
     }
 

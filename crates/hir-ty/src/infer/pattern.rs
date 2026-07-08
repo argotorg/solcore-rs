@@ -131,7 +131,9 @@ impl<'db> InferCtx<'db> {
         position: ValuePosition,
     ) -> InferTy<'db> {
         match resolution {
-            hir_nameres::Resolution::Param(param) => self.param_ty(param.body, param.index),
+            hir_nameres::Resolution::Param(param) => {
+                self.param_ty(param.body, param.index.as_u32())
+            }
             hir_nameres::Resolution::Local(hir_nameres::LocalBinding::Let { body, stmt }) => {
                 self.let_ty(body, stmt)
             }
