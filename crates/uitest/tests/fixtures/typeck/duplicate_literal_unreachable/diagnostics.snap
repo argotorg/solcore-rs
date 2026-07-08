@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/duplicate_literal_unreachable/main.solc
+---
+warning[SC0303]: unreachable match arm
+ --> /main/main.solc:4:3
+  |
+3 |   | 0 => return 0;
+4 |   | 0 => return 1;
+  |   ^^^^^^^^^^^^^^^^ this arm is unreachable
+5 |   | _ => return 2;
+  |
+  = note: this arm is covered by previous match arms

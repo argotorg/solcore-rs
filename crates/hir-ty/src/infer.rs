@@ -34,6 +34,9 @@ use crate::{
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
     builtin_scheme, canonical_goal_with_allowed,
     contract::module_contract_diagnostics,
+    coverage::{
+        self, BuiltinCoverageCtor, ConstructorOracle, CoverageCtor, CoveragePat, WitnessPat,
+    },
     solver::{
         DerivedClauseKind, Evidence, Solution, Substitution, TraitEnvId,
         instance_soundness_diagnostics, solve_report,
@@ -833,6 +836,11 @@ pub enum TypeckDiagnostic {
         /// One uncovered pattern row.
         missing: String,
     },
+    /// `SC0303`: a match arm is covered by previous arms.
+    UnreachableMatchArm {
+        /// Source span for the unreachable arm.
+        span: LabelSpan,
+    },
 }
 
 /// Non-value namespace used as a value.
@@ -917,41 +925,6 @@ enum DotCtorLookup<'db> {
     NoExpected,
     NoMatch,
     Ambiguous(Vec<String>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum CoverageCtor<'db> {
-    User {
-        ty: DefId<'db>,
-        index: u32,
-        ty_name: String,
-        name: String,
-    },
-    Builtin(BuiltinCoverageCtor),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum BuiltinCoverageCtor {
-    True,
-    False,
-    Unit,
-    Tuple(usize),
-    Pair,
-    Inl,
-    Inr,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum CoveragePat<'db> {
-    Wild,
-    Ctor(CoverageCtor<'db>, Vec<CoveragePat<'db>>),
-    Atomic,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum WitnessPat<'db> {
-    Wild,
-    Ctor(CoverageCtor<'db>, Vec<WitnessPat<'db>>),
 }
 
 struct InferCtx<'db> {
@@ -1370,6 +1343,12 @@ impl TypeckDiagnostic {
                     .with_primary_label_span(span.clone(), Some("non-exhaustive match"))
                     .with_note(format!("missing case: {missing}"))
                     .with_note("help: add a clause that covers the missing case")
+            }
+            TypeckDiagnostic::UnreachableMatchArm { span } => {
+                Diagnostic::warning("unreachable match arm")
+                    .with_code("SC0303")
+                    .with_primary_label_span(span.clone(), Some("this arm is unreachable"))
+                    .with_note("this arm is covered by previous match arms")
             }
         }
     }
@@ -3142,7 +3121,7 @@ impl<'db> InferCtx<'db> {
                     let arm_ty = self.infer_match_arm(body, arm, &scrutinee_tys);
                     self.unify_span(arm.span(self.db), result_ty.clone(), arm_ty);
                 }
-                self.ensure_match_exhaustive(body, scrutinees, &scrutinee_tys, arms);
+                self.ensure_match_coverage(body, scrutinees, &scrutinee_tys, arms);
                 result_ty
             }
             StmtKind::For {
@@ -3281,7 +3260,7 @@ impl<'db> InferCtx<'db> {
             .then_some(name)
     }
 
-    fn ensure_match_exhaustive(
+    fn ensure_match_coverage(
         &mut self,
         body: FuncBody<'db>,
         scrutinee_exprs: &[Id<Expr<'db>>],
@@ -3327,7 +3306,18 @@ impl<'db> InferCtx<'db> {
             matrix.push(row);
         }
 
-        if let Some(witness) = self.missing_witness(&tys, &matrix) {
+        let analysis = coverage::analyze(self, &tys, &matrix);
+
+        for arm_index in analysis.unreachable {
+            if let Some(arm) = arms.get(arm_index) {
+                self.diagnostics
+                    .push(TypeckDiagnostic::UnreachableMatchArm {
+                        span: self.label_span(arm.span(self.db)),
+                    });
+            }
+        }
+
+        if let Some(witness) = analysis.missing {
             let span = scrutinee_exprs
                 .first()
                 .map(|expr| self.expr_label_span(body, *expr))
@@ -3366,7 +3356,9 @@ impl<'db> InferCtx<'db> {
                     .map(|(ctor, _)| CoveragePat::Ctor(ctor, Vec::new()))
                     .or(Some(CoveragePat::Wild))
             }
-            PatKind::Lit(_) | PatKind::ComptimeLabel { .. } => Some(CoveragePat::Atomic),
+            PatKind::Lit(LitKind::Error) => None,
+            PatKind::Lit(lit) => Some(CoveragePat::Literal(Self::coverage_lit_key(&lit))),
+            PatKind::ComptimeLabel { .. } => Some(CoveragePat::Opaque),
             PatKind::Tuple { elems } => {
                 let expected = self.coverage_ty(expected);
                 let field_tys = match expected {
@@ -3432,102 +3424,6 @@ impl<'db> InferCtx<'db> {
         };
         let field_tys = self.field_tys_for_ctor(&ctor, expected)?;
         Some((ctor, field_tys))
-    }
-
-    fn missing_witness(
-        &mut self,
-        tys: &[InferTy<'db>],
-        matrix: &[Vec<CoveragePat<'db>>],
-    ) -> Option<Vec<WitnessPat<'db>>> {
-        if tys.is_empty() {
-            return matrix.is_empty().then(Vec::new);
-        }
-        if matrix.is_empty() {
-            return Some(tys.iter().map(|_| WitnessPat::Wild).collect());
-        }
-
-        let has_ctor = matrix
-            .iter()
-            .filter_map(|row| row.first())
-            .any(|pat| matches!(pat, CoveragePat::Ctor(_, _)));
-        let has_atomic = matrix
-            .iter()
-            .filter_map(|row| row.first())
-            .any(|pat| matches!(pat, CoveragePat::Atomic));
-
-        if has_ctor {
-            let ctors = self.constructor_space(tys[0].clone())?;
-            for ctor in ctors {
-                let fields = self.field_tys_for_ctor(&ctor, tys[0].clone())?;
-                let field_count = fields.len();
-                let specialized = self.specialize_ctor_matrix(&ctor, field_count, matrix);
-                let mut next_tys = fields;
-                next_tys.extend_from_slice(&tys[1..]);
-                if let Some(witness) = self.missing_witness(&next_tys, &specialized) {
-                    let field_witness = witness[..field_count].to_vec();
-                    let rest_witness = witness[field_count..].to_vec();
-                    let mut row = Vec::with_capacity(1 + rest_witness.len());
-                    row.push(WitnessPat::Ctor(ctor, field_witness));
-                    row.extend(rest_witness);
-                    return Some(row);
-                }
-            }
-            return None;
-        }
-
-        let default = self.default_matrix(matrix);
-        if has_atomic {
-            return self
-                .missing_witness(&tys[1..], &default)
-                .map(|rest| self.prepend_wild(rest));
-        }
-        self.missing_witness(&tys[1..], &default)
-            .map(|rest| self.prepend_wild(rest))
-    }
-
-    fn specialize_ctor_matrix(
-        &self,
-        ctor: &CoverageCtor<'db>,
-        field_count: usize,
-        matrix: &[Vec<CoveragePat<'db>>],
-    ) -> Vec<Vec<CoveragePat<'db>>> {
-        let mut specialized = Vec::new();
-        for row in matrix {
-            let Some((head, rest)) = row.split_first() else {
-                continue;
-            };
-            match head {
-                CoveragePat::Ctor(head_ctor, fields) if head_ctor == ctor => {
-                    let mut next = fields.clone();
-                    next.extend(rest.iter().cloned());
-                    specialized.push(next);
-                }
-                CoveragePat::Wild => {
-                    let mut next = vec![CoveragePat::Wild; field_count];
-                    next.extend(rest.iter().cloned());
-                    specialized.push(next);
-                }
-                CoveragePat::Ctor(_, _) | CoveragePat::Atomic => {}
-            }
-        }
-        specialized
-    }
-
-    fn default_matrix(&self, matrix: &[Vec<CoveragePat<'db>>]) -> Vec<Vec<CoveragePat<'db>>> {
-        matrix
-            .iter()
-            .filter_map(|row| {
-                let (head, rest) = row.split_first()?;
-                matches!(head, CoveragePat::Wild).then(|| rest.to_vec())
-            })
-            .collect()
-    }
-
-    fn prepend_wild(&self, rest: Vec<WitnessPat<'db>>) -> Vec<WitnessPat<'db>> {
-        let mut row = Vec::with_capacity(rest.len() + 1);
-        row.push(WitnessPat::Wild);
-        row.extend(rest);
-        row
     }
 
     fn constructor_space(&mut self, ty: InferTy<'db>) -> Option<Vec<CoverageCtor<'db>>> {
@@ -3809,6 +3705,15 @@ impl<'db> InferCtx<'db> {
             name.to_owned()
         } else {
             format!("{name}({})", fields.join(", "))
+        }
+    }
+
+    fn coverage_lit_key(lit: &LitKind) -> String {
+        match lit {
+            LitKind::Number(value) => format!("number:{value}"),
+            LitKind::Hex(value) => format!("hex:{value}"),
+            LitKind::String(value) => format!("string:{value}"),
+            LitKind::Error => "error".to_owned(),
         }
     }
 
@@ -7509,6 +7414,16 @@ impl<'db> InferCtx<'db> {
             InferTy::Comptime(inner) => self.collect_infer_vars(*inner, out),
             InferTy::Error | InferTy::Unknown | InferTy::BoundVar(_) => {}
         }
+    }
+}
+
+impl<'db> ConstructorOracle<'db, InferTy<'db>> for InferCtx<'db> {
+    fn constructors(&mut self, ty: InferTy<'db>) -> Option<Vec<CoverageCtor<'db>>> {
+        self.constructor_space(ty)
+    }
+
+    fn fields(&mut self, ctor: &CoverageCtor<'db>, ty: InferTy<'db>) -> Option<Vec<InferTy<'db>>> {
+        self.field_tys_for_ctor(ctor, ty)
     }
 }
 
