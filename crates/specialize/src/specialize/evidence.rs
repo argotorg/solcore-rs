@@ -45,7 +45,7 @@ impl<'db> Driver<'db> {
                 Some(self.enqueue(key, depth + 1))
             }
             Evidence::Superclass { pred, child, .. } => {
-                if let Some(evidence) = self.solve_closed_pred(pred)
+                if let Some(evidence) = self.solve_closed_pred(pred, Some(call_span))
                     && !matches!(evidence, Evidence::Superclass { .. })
                 {
                     return self
@@ -65,7 +65,7 @@ impl<'db> Driver<'db> {
                 self.specialize_derived_generic(adt, method, *main, rep, target_ty, call_span)
             }
             Evidence::Builtin { pred } => {
-                if let Some(evidence) = self.solve_closed_pred(pred)
+                if let Some(evidence) = self.solve_closed_pred(pred, Some(call_span))
                     && !matches!(evidence, Evidence::Builtin { .. })
                 {
                     return self
@@ -77,27 +77,38 @@ impl<'db> Driver<'db> {
         }
     }
 
-    fn solve_closed_pred(&mut self, pred: Pred<'db>) -> Option<Evidence<'db>> {
+    fn solve_closed_pred(
+        &mut self,
+        pred: Pred<'db>,
+        span: Option<Span<'db>>,
+    ) -> Option<Evidence<'db>> {
         if !pred_is_closed(self.db, pred) {
             return None;
         }
-        match solve(
-            self.db,
-            self.module_trait_env(self.module),
-            canonical_goal(self.db, pred),
-        ) {
+        let Some(trait_env) = self.try_module_trait_env(self.module) else {
+            self.push_missing_module_trait_env(span);
+            return None;
+        };
+        match solve(self.db, trait_env, canonical_goal(self.db, pred)) {
             Solution::Unique { evidence, .. } => Some(evidence),
             Solution::Ambiguous { .. } | Solution::NoSolution => None,
         }
     }
 
-    fn solve_reachable_pred(&mut self, pred: Pred<'db>) -> Option<Evidence<'db>> {
+    fn solve_reachable_pred(
+        &mut self,
+        pred: Pred<'db>,
+        span: Option<Span<'db>>,
+    ) -> Option<Evidence<'db>> {
         if !pred_is_closed(self.db, pred) {
             return None;
         }
         let mut found = None;
         for module in self.modules.clone() {
-            let trait_env = self.module_trait_env(module);
+            let Some(trait_env) = self.try_module_trait_env(module) else {
+                self.push_missing_module_trait_env(span);
+                continue;
+            };
             let Solution::Unique { evidence, .. } =
                 solve(self.db, trait_env, canonical_goal(self.db, pred))
             else {
@@ -116,6 +127,7 @@ impl<'db> Driver<'db> {
         class: DefId<'db>,
         method: &str,
         callee_ty: Ty<'db>,
+        span: Option<Span<'db>>,
     ) -> Option<Evidence<'db>> {
         let info = self.classes.get(&class)?.clone();
         let method_sig = info
@@ -123,16 +135,17 @@ impl<'db> Driver<'db> {
             .methods(self.db)
             .iter()
             .find(|candidate| ident_text(self.db, &candidate.name) == method)?;
+        let Some(resolution) = self.try_module_resolution(info.module) else {
+            self.push_missing_module_resolution(span);
+            return None;
+        };
         let lowerer = TypeLowering::from_item_resolutions(
             self.db,
-            &self.module_resolution(info.module).item_resolutions,
+            &resolution.item_resolutions,
             BinderEnv::from_type_vars(&info.type_vars),
         );
-        let mut normalizer = AliasNormalizer::new(
-            self.db,
-            info.module,
-            &self.module_resolution(info.module).item_resolutions,
-        );
+        let mut normalizer =
+            AliasNormalizer::new(self.db, info.module, &resolution.item_resolutions);
         let scheme =
             normalizer.normalize_scheme(lowerer.lower_class_method(info.class, method_sig));
         let mut subst = TySubst::default();
@@ -153,8 +166,8 @@ impl<'db> Driver<'db> {
                     } if *def == class
                 )
             })?;
-        self.solve_closed_pred(pred)
-            .or_else(|| self.solve_reachable_pred(pred))
+        self.solve_closed_pred(pred, span)
+            .or_else(|| self.solve_reachable_pred(pred, span))
     }
 
     pub(super) fn solve_operator_method_pred(
@@ -162,6 +175,7 @@ impl<'db> Driver<'db> {
         class_name: &str,
         method: &str,
         callee_ty: Ty<'db>,
+        span: Option<Span<'db>>,
     ) -> Option<Evidence<'db>> {
         let classes = self
             .classes
@@ -173,7 +187,8 @@ impl<'db> Driver<'db> {
             .collect::<Vec<_>>();
         let mut found = None;
         for class in classes {
-            let Some(evidence) = self.solve_class_method_pred(class, method, callee_ty) else {
+            let Some(evidence) = self.solve_class_method_pred(class, method, callee_ty, span)
+            else {
                 continue;
             };
             if found.as_ref().is_some_and(|existing| existing != &evidence) {

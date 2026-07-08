@@ -255,12 +255,29 @@ impl<'db> Driver<'db> {
                     instance.def_id_value(self.db),
                     instance.type_var_elems(self.db),
                 ));
-                let head = self.lower_pred_with_vars(module, instance.head(self.db), &type_vars);
-                let preds = instance
+                let Some(head) = self.try_lower_pred_with_vars(
+                    module,
+                    instance.head(self.db),
+                    &type_vars,
+                    Some(instance.span(self.db)),
+                ) else {
+                    return;
+                };
+                let Some(preds) = instance
                     .preds(self.db)
                     .iter()
-                    .map(|pred| self.lower_pred_with_vars(module, *pred, &type_vars))
-                    .collect();
+                    .map(|pred| {
+                        self.try_lower_pred_with_vars(
+                            module,
+                            *pred,
+                            &type_vars,
+                            Some(instance.span(self.db)),
+                        )
+                    })
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    return;
+                };
                 self.instances.insert(
                     instance.def_id_value(self.db),
                     InstanceInfo {
@@ -372,18 +389,13 @@ impl<'db> Driver<'db> {
                     blocked_dispatch_entry = true;
                     continue;
                 }
-                if self
-                    .functions
-                    .get(&method.def)
-                    .map(|info| {
-                        lowered_function_has_inferred_dispatch_placeholder(
-                            self.db,
-                            &self.lower_normalized_function(info),
-                        )
-                    })
-                    .unwrap_or(false)
-                {
-                    continue;
+                if let Some(info) = self.functions.get(&method.def).cloned() {
+                    let Some(lowered) = self.try_lower_normalized_function(&info) else {
+                        continue;
+                    };
+                    if lowered_function_has_inferred_dispatch_placeholder(self.db, &lowered) {
+                        continue;
+                    }
                 }
                 if let Some(key) = self.root_for_def(method.def) {
                     entries.push(MonoEntry::SelectorMethod {
@@ -519,7 +531,7 @@ impl<'db> Driver<'db> {
 
     fn root_for_def(&mut self, def: DefId<'db>) -> Option<SpecKey<'db>> {
         let info = self.functions.get(&def)?.clone();
-        let lowered = self.lower_normalized_function(&info);
+        let lowered = self.try_lower_normalized_function(&info)?;
         let ty = lowered.scheme.body(self.db).ty(self.db);
         let span = info.function.span(self.db);
         if !self.ensure_closed(ty, "entry specialization", Some(span)) {
@@ -590,7 +602,9 @@ impl<'db> Driver<'db> {
             });
             return;
         };
-        let lowered = self.lower_normalized_function(&info);
+        let Some(lowered) = self.try_lower_normalized_function(&info) else {
+            return;
+        };
         let mut subst = TySubst::default();
         if !subst.match_ty(
             self.db,
@@ -634,7 +648,9 @@ impl<'db> Driver<'db> {
             });
             return;
         };
-        let result = self.infer_result(&info, body, &body_map, &lowered);
+        let Some(result) = self.try_infer_result(&info, body, &body_map, &lowered) else {
+            return;
+        };
         let mut ctx = BodyCtx {
             driver: self,
             info: &info,
@@ -801,13 +817,16 @@ impl<'db> Driver<'db> {
         matches.next().is_none().then_some(first)
     }
 
-    pub(super) fn lower_normalized_function(
-        &self,
+    pub(super) fn try_lower_normalized_function(
+        &mut self,
         info: &FunctionInfo<'db>,
-    ) -> LoweredFunction<'db> {
-        let resolution = self.module_resolution(info.module);
+    ) -> Option<LoweredFunction<'db>> {
+        let Some(resolution) = self.try_module_resolution(info.module) else {
+            self.push_missing_module_resolution(Some(info.function.span(self.db)));
+            return None;
+        };
         let body_map = info.body.and_then(|body| self.body_resolution_for(body));
-        lower_normalized_function_with_inferred_signature(
+        Some(lower_normalized_function_with_inferred_signature(
             self.db,
             info.module,
             &resolution.item_resolutions,
@@ -815,51 +834,79 @@ impl<'db> Driver<'db> {
             &info.type_vars,
             body_map,
             self.entry_module,
-        )
+        ))
     }
 
-    fn lower_pred_with_vars(
-        &self,
+    fn try_lower_pred_with_vars(
+        &mut self,
         module: Module<'db>,
         pred: hir::ast::ty::PredRef<'db>,
         type_vars: &[hir_nameres::TypeVarBinding<'db>],
-    ) -> Pred<'db> {
-        let resolution = self.module_resolution(module);
+        span: Option<Span<'db>>,
+    ) -> Option<Pred<'db>> {
+        let Some(resolution) = self.try_module_resolution(module) else {
+            self.push_missing_module_resolution(span);
+            return None;
+        };
         let lowerer = TypeLowering::from_item_resolutions(
             self.db,
             &resolution.item_resolutions,
             BinderEnv::from_type_vars(type_vars),
         );
         let mut normalizer = AliasNormalizer::new(self.db, module, &resolution.item_resolutions);
-        normalizer.normalize_pred(lowerer.lower_pred(pred))
+        Some(normalizer.normalize_pred(lowerer.lower_pred(pred)))
     }
 
-    pub(super) fn module_resolution(
+    pub(super) fn try_module_resolution(
         &self,
         module: Module<'db>,
-    ) -> &hir_nameres::ModuleResolutionMap<'db> {
-        self.module_resolutions
-            .get(&module.def_id_value(self.db))
-            .expect("module resolution indexed")
+    ) -> Option<&hir_nameres::ModuleResolutionMap<'db>> {
+        let resolution = self.module_resolutions.get(&module.def_id_value(self.db));
+        debug_assert!(resolution.is_some(), "module resolution indexed");
+        resolution
     }
 
-    pub(super) fn module_trait_env(&self, module: Module<'db>) -> hir_ty::TraitEnvId<'db> {
-        *self
-            .module_trait_envs
-            .get(&module.def_id_value(self.db))
-            .expect("module trait environment indexed")
-    }
-
-    fn infer_result(
+    pub(super) fn try_module_trait_env(
         &self,
+        module: Module<'db>,
+    ) -> Option<hir_ty::TraitEnvId<'db>> {
+        let trait_env = self.module_trait_envs.get(&module.def_id_value(self.db));
+        debug_assert!(trait_env.is_some(), "module trait environment indexed");
+        trait_env.copied()
+    }
+
+    pub(super) fn push_missing_module_resolution(&mut self, span: Option<Span<'db>>) {
+        self.diagnostics.push(SpecializeDiagnostic {
+            kind: SpecializeDiagnosticKind::MissingResolution {
+                context: "module resolution".to_owned(),
+            },
+            span,
+        });
+    }
+
+    pub(super) fn push_missing_module_trait_env(&mut self, span: Option<Span<'db>>) {
+        self.diagnostics.push(SpecializeDiagnostic {
+            kind: SpecializeDiagnosticKind::MissingResolution {
+                context: "module trait environment".to_owned(),
+            },
+            span,
+        });
+    }
+
+    fn try_infer_result(
+        &mut self,
         info: &FunctionInfo<'db>,
         body: FuncBody<'db>,
         body_map: &hir_nameres::BodyResolutionMap<'db>,
         lowered: &LoweredFunction<'db>,
-    ) -> InferenceResult<'db> {
+    ) -> Option<InferenceResult<'db>> {
+        let Some(module_trait_env) = self.try_module_trait_env(info.module) else {
+            self.push_missing_module_trait_env(Some(info.function.span(self.db)));
+            return None;
+        };
         let trait_env = trait_env_with_givens(
             self.db,
-            self.module_trait_env(info.module),
+            module_trait_env,
             lowered.scheme.body(self.db).preds(self.db).clone(),
         );
         let ctx = BodyTyContext::new(
@@ -876,9 +923,9 @@ impl<'db> Driver<'db> {
         .with_trait_env(trait_env);
         if let Some(entry_module) = self.entry_module {
             let ctx = ctx.with_entry_module(entry_module);
-            return infer_body(self.db, body, ctx);
+            return Some(infer_body(self.db, body, ctx));
         }
-        infer_body(self.db, body, ctx)
+        Some(infer_body(self.db, body, ctx))
     }
 
     pub(super) fn body_resolution_for(

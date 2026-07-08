@@ -37,13 +37,14 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     Some(expr) => Some(self.expr(*expr)?),
                     None => None,
                 };
+                let annotation_ty = match ty {
+                    Some(ty) => Some(self.lower_body_ty(*ty)?),
+                    None => None,
+                };
                 let sem_ty = self
                     .result
                     .let_ty(self.body, stmt_id)
-                    .or_else(|| {
-                        init.and_then(|expr| self.expr_ty(expr))
-                            .or_else(|| ty.map(|ty| self.lower_body_ty(ty)))
-                    })
+                    .or_else(|| init.and_then(|expr| self.expr_ty(expr)).or(annotation_ty))
                     .map(|ty| self.subst.apply_ty(self.driver.db, ty))
                     .unwrap_or_else(|| Ty::unknown(self.driver.db));
                 let id = MonoId {
@@ -52,15 +53,18 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     span: name.span(self.driver.db),
                 };
                 self.locals.insert(id.name.clone(), sem_ty);
+                let annotation_is_comptime = annotation_ty
+                    .as_ref()
+                    .is_some_and(|ty| ty_is_comptime(self.driver.db, *ty));
                 let comptime = comptime.is_some()
-                    || ty.is_some_and(|ty| ty_is_comptime(self.driver.db, self.lower_body_ty(ty)))
+                    || annotation_is_comptime
                     || self.stmt_has_comptime_let_obligation(stmt_id);
                 MonoStmtKind::Let {
                     comptime,
                     id,
-                    ty: match ty {
+                    ty: match annotation_ty {
                         Some(ty) => {
-                            let ty = self.subst.apply_ty(self.driver.db, self.lower_body_ty(*ty));
+                            let ty = self.subst.apply_ty(self.driver.db, ty);
                             Some(self.driver.mono_ty(ty, "let annotation", span)?)
                         }
                         None => None,
@@ -263,11 +267,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 }
             }
             ExprKind::Proxy { ty, .. } => {
-                let ty = self.subst.apply_ty(self.driver.db, self.lower_body_ty(*ty));
+                let ty = self.lower_body_ty(*ty)?;
+                let ty = self.subst.apply_ty(self.driver.db, ty);
                 MonoExprKind::Proxy(self.driver.mono_ty(ty, "proxy", expr.span)?)
             }
             ExprKind::TypeAnnot { expr: inner, ty } => {
-                let ty = self.subst.apply_ty(self.driver.db, self.lower_body_ty(*ty));
+                let ty = self.lower_body_ty(*ty)?;
+                let ty = self.subst.apply_ty(self.driver.db, ty);
                 MonoExprKind::TypeAnnot {
                     expr: Box::new(self.expr(*inner)?),
                     ty: self.driver.mono_ty(ty, "type annotation", expr.span)?,
@@ -664,19 +670,23 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         )
     }
 
-    fn lower_body_ty(&self, ty: hir::ast::ty::TypeRef<'db>) -> Ty<'db> {
+    fn lower_body_ty(&mut self, ty: hir::ast::ty::TypeRef<'db>) -> Option<Ty<'db>> {
         let lowerer = TypeLowering::from_body_resolutions(
             self.driver.db,
             &self.body_map,
             BinderEnv::from_type_vars(&self.info.type_vars),
         );
-        let resolution = self.driver.module_resolution(self.info.module);
+        let Some(resolution) = self.driver.try_module_resolution(self.info.module) else {
+            self.driver
+                .push_missing_module_resolution(Some(ty.span(self.driver.db)));
+            return None;
+        };
         let mut normalizer = AliasNormalizer::new(
             self.driver.db,
             self.info.module,
             &resolution.item_resolutions,
         );
-        normalizer.normalize_ty(lowerer.lower_type(ty))
+        Some(normalizer.normalize_ty(lowerer.lower_type(ty)))
     }
 
     fn stmt_has_comptime_let_obligation(&self, stmt: Id<Stmt<'db>>) -> bool {

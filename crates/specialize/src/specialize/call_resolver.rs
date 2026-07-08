@@ -29,8 +29,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             .call_evidence(expr.expr_id, expr.expr_id)
             .map(|evidence| self.subst.apply_evidence(self.driver.db, evidence.evidence))
             .or_else(|| {
-                self.driver
-                    .solve_operator_method_pred(class_name, method, callee_ty)
+                self.driver.solve_operator_method_pred(
+                    class_name,
+                    method,
+                    callee_ty,
+                    Some(expr.span),
+                )
             });
         let Some(evidence) = evidence else {
             self.driver.diagnostics.push(SpecializeDiagnostic {
@@ -252,7 +256,10 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 let evidence = self
                     .call_evidence(call_expr, callee)
                     .map(|evidence| self.subst.apply_evidence(self.driver.db, evidence.evidence))
-                    .or_else(|| self.driver.solve_class_method_pred(class, &name, callee_ty));
+                    .or_else(|| {
+                        self.driver
+                            .solve_class_method_pred(class, &name, callee_ty, Some(span))
+                    });
                 if let Some(evidence) = evidence
                     && let Some(name) = self
                         .driver
@@ -348,7 +355,10 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         .map(|evidence| {
                             self.subst.apply_evidence(self.driver.db, evidence.evidence)
                         })
-                        .or_else(|| self.driver.solve_class_method_pred(class, &name, callee_ty));
+                        .or_else(|| {
+                            self.driver
+                                .solve_class_method_pred(class, &name, callee_ty, Some(span))
+                        });
                     if let Some(evidence) = evidence
                         && let Some(name) = self
                             .driver
@@ -532,7 +542,10 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)));
         }
         if let Some(info) = self.driver.functions.get(&def).cloned() {
-            let lowered = self.driver.lower_normalized_function(&info);
+            let base = self.driver.source_base_name(&info);
+            let Some(lowered) = self.driver.try_lower_normalized_function(&info) else {
+                return base;
+            };
             let mut subst = TySubst::default();
             subst.match_ty(
                 self.driver.db,
@@ -545,7 +558,6 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 &mut subst,
             );
             let args = subst.specialization_args();
-            let base = self.driver.source_base_name(&info);
             if !self
                 .driver
                 .ensure_specialization_type_size(&args, Some(span))
