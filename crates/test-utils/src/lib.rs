@@ -7,7 +7,7 @@ use std::{
 
 use annotate_snippets::Renderer;
 use hir::{
-    diag::{AnyDiagnostic, Diagnostic, DiagnosticId},
+    diag::{AnyDiagnostic, Diagnostic, sort_dedup_rendered_diagnostics},
     input::SourceFile,
 };
 use nameres::{
@@ -246,9 +246,7 @@ pub fn lower_any_diagnostics(
 }
 
 pub fn sort_dedup_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.sort_by_key(|diagnostic| diagnostic.sort_key(db));
-    let mut seen = FxHashSet::<DiagnosticId>::default();
-    diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
+    sort_dedup_rendered_diagnostics(db, diagnostics);
 }
 
 pub fn render_diagnostics(db: &dyn hir::Db, diagnostics: &[Diagnostic]) -> String {

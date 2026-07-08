@@ -54,16 +54,20 @@ impl<'db> EmitDiagnostic<'db> {
 impl EmitDiagnosticKind {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::UnsupportedType { .. } => "SC0420",
-            Self::UnsupportedLiteral { .. } => "SC0421",
-            Self::UnsupportedMonoConstruct { .. } => "SC0422",
-            Self::MissingAdtLayout { .. } => "SC0423",
-            Self::MissingConstructor { .. } => "SC0424",
-            Self::NonExhaustiveMatch => "SC0302",
-            Self::MultiScrutineeMatch { .. } => "SC0427",
-            Self::EmptyMatch => "SC0303",
-            Self::DispatcherDeferred { .. } => "SC0425",
-            Self::UnsupportedDispatchEntry { .. } => "SC0426",
+            Self::UnsupportedType { .. } => DiagnosticCode::EMIT_UNSUPPORTED_TYPE,
+            Self::UnsupportedLiteral { .. } => DiagnosticCode::EMIT_UNSUPPORTED_LITERAL,
+            Self::UnsupportedMonoConstruct { .. } => {
+                DiagnosticCode::EMIT_UNSUPPORTED_MONO_CONSTRUCT
+            }
+            Self::MissingAdtLayout { .. } => DiagnosticCode::EMIT_MISSING_ADT_LAYOUT,
+            Self::MissingConstructor { .. } => DiagnosticCode::EMIT_MISSING_CONSTRUCTOR,
+            Self::NonExhaustiveMatch => DiagnosticCode::EMIT_NON_EXHAUSTIVE_MATCH,
+            Self::MultiScrutineeMatch { .. } => DiagnosticCode::EMIT_MULTI_SCRUTINEE_MATCH,
+            Self::EmptyMatch => DiagnosticCode::EMIT_EMPTY_MATCH,
+            Self::DispatcherDeferred { .. } => DiagnosticCode::EMIT_DISPATCHER_DEFERRED,
+            Self::UnsupportedDispatchEntry { .. } => {
+                DiagnosticCode::EMIT_UNSUPPORTED_DISPATCH_ENTRY
+            }
         }
     }
 

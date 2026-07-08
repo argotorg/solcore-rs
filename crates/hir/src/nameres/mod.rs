@@ -40,7 +40,7 @@ use crate::{
         },
         ty::{PredRef, TypeRef, TypeRefKind},
     },
-    diag::{Diagnostic, LabelSpan},
+    diag::{Diagnostic, DiagnosticCode, LabelSpan},
     span::{Span, Spanned, SpannedElem},
 };
 

@@ -1,8 +1,7 @@
 use std::{env, io::IsTerminal};
 
 use annotate_snippets::{Renderer, renderer::DecorStyle};
-use hir::diag::{Diagnostic, DiagnosticId, DiagnosticLevel};
-use rustc_hash::FxHashSet;
+use hir::diag::{Diagnostic, DiagnosticLevel};
 
 use crate::args::{
     Args, ColorChoice, DiagnosticFormat, UnicodeChoice, WarningPolicy, default_diagnostic_width,
@@ -72,12 +71,6 @@ fn normalize_rendered_diagnostic(mut rendered: String) -> String {
     }
     rendered.push('\n');
     rendered
-}
-
-pub(crate) fn sort_dedup_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.sort_by_key(|diagnostic| diagnostic.sort_key(db));
-    let mut seen = FxHashSet::<DiagnosticId>::default();
-    diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
 }
 
 pub(crate) fn apply_warning_policy(diagnostics: &mut Vec<Diagnostic>, policy: WarningPolicy) {

@@ -33,7 +33,9 @@ use hir::{
             SelectedName, TypeAlias,
         },
     },
-    diag::{AnyDiagnostic, Diagnostic, DiagnosticId, LabelSpan, Offset},
+    diag::{
+        AnyDiagnostic, Diagnostic, DiagnosticCode, LabelSpan, Offset, sort_dedup_query_diagnostics,
+    },
     input::SourceFile,
     nameres as hir_nameres,
     span::{AnchorId, Span, Spanned, SpannedElem},

@@ -131,7 +131,7 @@ impl<'db> ModuleDiagnostic<'db> {
                 suggestion,
             } => {
                 let mut diagnostic = Diagnostic::error(format!("import {path}: file not found"))
-                    .with_code("SC0109")
+                    .with_code(DiagnosticCode::MODULE_NOT_FOUND)
                     .with_primary_label_span(span.clone(), Some("module reference"))
                     .with_help("check the module path or add the missing source file");
                 if let Some(suggestion) = suggestion {
@@ -146,7 +146,7 @@ impl<'db> ModuleDiagnostic<'db> {
                 suggestion,
             } => {
                 let mut diagnostic = Diagnostic::error(format!("unknown import item `{name}`"))
-                    .with_code("SC0110")
+                    .with_code(DiagnosticCode::MODULE_UNKNOWN_IMPORT_ITEM)
                     .with_primary_label_span(span.clone(), Some("unknown import item"));
                 if let Some(module) = module {
                     diagnostic = diagnostic
@@ -160,7 +160,7 @@ impl<'db> ModuleDiagnostic<'db> {
             ModuleDiagnostic::DuplicateExportedItemName { name, span } => {
                 let diagnostic =
                     Diagnostic::error(format!("duplicate exported item name `{name}`"))
-                        .with_code("SC0111")
+                        .with_code(DiagnosticCode::MODULE_DUPLICATE_EXPORTED_ITEM_NAME)
                         .with_note("export each item name from only one origin");
                 if let Some(span) = span {
                     diagnostic.with_primary_label_span(
@@ -174,7 +174,7 @@ impl<'db> ModuleDiagnostic<'db> {
             ModuleDiagnostic::DuplicateExportedModuleName { name, span } => {
                 let diagnostic =
                     Diagnostic::error(format!("duplicate exported module name `{name}`"))
-                        .with_code("SC0112")
+                        .with_code(DiagnosticCode::MODULE_DUPLICATE_EXPORTED_MODULE_NAME)
                         .with_note("export each module name from only one target");
                 if let Some(span) = span {
                     diagnostic.with_primary_label_span(
@@ -187,7 +187,7 @@ impl<'db> ModuleDiagnostic<'db> {
             }
             ModuleDiagnostic::UnknownLocalExport { name, span } => {
                 Diagnostic::error(format!("unknown export `{name}`"))
-                    .with_code("SC0113")
+                    .with_code(DiagnosticCode::MODULE_UNKNOWN_LOCAL_EXPORT)
                     .with_primary_label_span(span.clone(), Some("unknown export"))
                     .with_note(
                         "export a top-level item defined in this module or selected from an import",
@@ -200,12 +200,12 @@ impl<'db> ModuleDiagnostic<'db> {
             } => Diagnostic::error(format!(
                 "unknown exported constructor `{type_name}.{ctor_name}`"
             ))
-            .with_code("SC0114")
+            .with_code(DiagnosticCode::MODULE_UNKNOWN_LOCAL_CONSTRUCTOR)
             .with_primary_label_span(span.clone(), Some("unknown exported constructor"))
             .with_note("select constructors defined by the exported type"),
             ModuleDiagnostic::UnknownReExport { name, span } => {
                 Diagnostic::error(format!("unknown re-exported name `{name}`"))
-                    .with_code("SC0115")
+                    .with_code(DiagnosticCode::MODULE_UNKNOWN_REEXPORT)
                     .with_primary_label_span(span.clone(), Some("unknown re-exported name"))
                     .with_note("re-export a name provided by the target module")
             }
@@ -216,7 +216,7 @@ impl<'db> ModuleDiagnostic<'db> {
             } => Diagnostic::error(format!(
                 "unknown re-exported constructor `{type_name}.{ctor_name}`"
             ))
-            .with_code("SC0115")
+            .with_code(DiagnosticCode::MODULE_UNKNOWN_REEXPORT_CONSTRUCTOR)
             .with_primary_label_span(span.clone(), Some("unknown re-exported constructor"))
             .with_note("re-export constructors provided by the target module"),
             ModuleDiagnostic::DuplicateImportQualifier {
@@ -224,7 +224,7 @@ impl<'db> ModuleDiagnostic<'db> {
                 first,
                 second,
             } => Diagnostic::error(format!("duplicate import qualifier `{name}`"))
-                .with_code("SC0116")
+                .with_code(DiagnosticCode::MODULE_DUPLICATE_IMPORT_QUALIFIER)
                 .with_primary_label_span(second.clone(), Some("duplicate import qualifier"))
                 .with_secondary_label_span(first.clone(), Some("first qualifier with this name"))
                 .with_note("use an explicit alias to disambiguate one of the imports"),
@@ -233,7 +233,7 @@ impl<'db> ModuleDiagnostic<'db> {
                 first,
                 second,
             } => Diagnostic::error(format!("duplicate name `{name}` in selective import"))
-                .with_code("SC0117")
+                .with_code(DiagnosticCode::MODULE_DUPLICATE_IMPORT_SELECTOR)
                 .with_primary_label_span(second.clone(), Some("duplicate selected import"))
                 .with_secondary_label_span(
                     first.clone(),
@@ -242,7 +242,7 @@ impl<'db> ModuleDiagnostic<'db> {
                 .with_note("list each selected or hidden name only once"),
             ModuleDiagnostic::MissingExternalRoot { name, span } => {
                 Diagnostic::error(format!("external library root is not configured: @{name}"))
-                    .with_code("SC0118")
+                    .with_code(DiagnosticCode::MODULE_MISSING_EXTERNAL_ROOT)
                     .with_primary_label_span(span.clone(), Some("external library import"))
                     .with_note("configure the external library root")
             }
@@ -260,7 +260,7 @@ impl<'db> ModuleDiagnostic<'db> {
                 let context = namespace_context(namespaces);
                 let label = format!("ambiguous selected import {context}");
                 Diagnostic::error(format!("ambiguous selected import `{name}` {context}"))
-                    .with_code("SC0120")
+                    .with_code(DiagnosticCode::MODULE_AMBIGUOUS_SELECTED_IMPORT)
                     .with_primary_label_span(span.clone(), Some(label))
                     .with_note(format!("`{name}` is imported from {module_list} {context}"))
                     .with_note("use an explicit module qualifier or narrow the selected imports")
@@ -270,7 +270,7 @@ impl<'db> ModuleDiagnostic<'db> {
                 import_span,
                 local_span,
             } => Diagnostic::error(format!("conflicting unqualified name `{name}`"))
-                .with_code("SC0121")
+                .with_code(DiagnosticCode::MODULE_CONFLICTING_UNQUALIFIED_NAME)
                 .with_primary_label_span(import_span.clone(), Some("conflicting imported name"))
                 .with_secondary_label_span(local_span.clone(), Some("local binding with this name"))
                 .with_note("rename the local binding or use an import alias"),
@@ -298,7 +298,7 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
         // compiler stops before nameres in this state, so we publish only parse
         // diagnostics here while still allowing resolution queries to run for
         // editor features.
-        sort_dedup_any_diagnostics(db, &mut diagnostics);
+        sort_dedup_query_diagnostics(db, &mut diagnostics);
         return diagnostics;
     }
 
@@ -334,7 +334,7 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
         }
     }
 
-    sort_dedup_any_diagnostics(db, &mut diagnostics);
+    sort_dedup_query_diagnostics(db, &mut diagnostics);
     diagnostics
 }
 
@@ -367,7 +367,7 @@ pub fn body_diagnostics<'db>(
         .filter(|diagnostic| !is_suppressed_unknown_diagnostic(&env, diagnostic))
         .map(AnyDiagnostic::Nameres)
         .collect::<Vec<_>>();
-    sort_dedup_any_diagnostics(db, &mut diagnostics);
+    sort_dedup_query_diagnostics(db, &mut diagnostics);
     diagnostics
 }
 
@@ -508,7 +508,7 @@ pub fn reachable_diagnostics<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Vec<
     for module in graph.modules {
         diagnostics.extend(module_diagnostics(db, module).iter().cloned());
     }
-    sort_dedup_any_diagnostics(db, &mut diagnostics);
+    sort_dedup_query_diagnostics(db, &mut diagnostics);
     diagnostics
 }
 
@@ -537,12 +537,6 @@ fn collect_module_validation_diagnostics<'db>(
     let raw = expand_module_exports(db, module, true, &mut diagnostics);
     validate_duplicate_exports(db, module, &raw, &mut diagnostics);
     diagnostics
-}
-
-fn sort_dedup_any_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<AnyDiagnostic>) {
-    diagnostics.sort_by_key(|diagnostic| diagnostic.query_sort_key(db));
-    let mut seen: FxHashSet<DiagnosticId> = FxHashSet::default();
-    diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
 }
 
 fn param_bindings<'db>(params: &[FuncParam<'db>]) -> Vec<hir_nameres::ParamBinding<'db>> {

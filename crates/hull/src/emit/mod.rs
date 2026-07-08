@@ -12,7 +12,7 @@ use hir::{
         item::{AdtDef, ContractDef, ContractItem, Item, Module},
         ty::TypeRefKind,
     },
-    diag::Diagnostic,
+    diag::{Diagnostic, DiagnosticCode},
     span::{Span, Spanned, SpannedElem},
 };
 use hir_ty::{

@@ -42,19 +42,27 @@ impl<'db> SpecializeDiagnostic<'db> {
 impl SpecializeDiagnosticKind<'_> {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::FreeTypeVariable { .. } => "SC0401",
-            Self::InstantiationFuelExhausted { .. } => "SC0402",
-            Self::InstantiationDepthExceeded { .. } => "SC0403",
-            Self::TypeSizeExceeded { .. } => "SC0412",
-            Self::MissingBody { .. } => "SC0404",
-            Self::MissingResolution { .. } => "SC0405",
-            Self::MissingEvidence { .. } => "SC0406",
-            Self::UnsupportedEvidence { .. } => "SC0407",
-            Self::UnresolvedExternal { .. } => "SC0408",
-            Self::ComptimeEvaluationFailed { .. } => "SC0409",
-            Self::ComptimeFuelExhausted { .. } => "SC0410",
-            Self::IntegerErasure { .. } => "SC0411",
-            Self::PublicComptimeParam { .. } => "SC0413",
+            Self::FreeTypeVariable { .. } => DiagnosticCode::SPECIALIZE_FREE_TYPE_VARIABLE,
+            Self::InstantiationFuelExhausted { .. } => {
+                DiagnosticCode::SPECIALIZE_INSTANTIATION_FUEL_EXHAUSTED
+            }
+            Self::InstantiationDepthExceeded { .. } => {
+                DiagnosticCode::SPECIALIZE_INSTANTIATION_DEPTH_EXCEEDED
+            }
+            Self::TypeSizeExceeded { .. } => DiagnosticCode::SPECIALIZE_TYPE_SIZE_EXCEEDED,
+            Self::MissingBody { .. } => DiagnosticCode::SPECIALIZE_MISSING_BODY,
+            Self::MissingResolution { .. } => DiagnosticCode::SPECIALIZE_MISSING_RESOLUTION,
+            Self::MissingEvidence { .. } => DiagnosticCode::SPECIALIZE_MISSING_EVIDENCE,
+            Self::UnsupportedEvidence { .. } => DiagnosticCode::SPECIALIZE_UNSUPPORTED_EVIDENCE,
+            Self::UnresolvedExternal { .. } => DiagnosticCode::SPECIALIZE_UNRESOLVED_EXTERNAL,
+            Self::ComptimeEvaluationFailed { .. } => {
+                DiagnosticCode::SPECIALIZE_COMPTIME_EVALUATION_FAILED
+            }
+            Self::ComptimeFuelExhausted { .. } => {
+                DiagnosticCode::SPECIALIZE_COMPTIME_FUEL_EXHAUSTED
+            }
+            Self::IntegerErasure { .. } => DiagnosticCode::SPECIALIZE_INTEGER_ERASURE,
+            Self::PublicComptimeParam { .. } => DiagnosticCode::SPECIALIZE_PUBLIC_COMPTIME_PARAM,
         }
     }
 

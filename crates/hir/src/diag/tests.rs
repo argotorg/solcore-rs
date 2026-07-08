@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use annotate_snippets::Renderer;
 
 use super::span::LabelAnchor;
@@ -122,6 +124,51 @@ fn diagnostic_sort_key_uses_diagnostic_id_tiebreaker() {
         .map(|diagnostic| diagnostic.diagnostic_id(&db))
         .collect::<Vec<_>>();
     assert_eq!(original_ids, reversed_ids);
+}
+
+#[test]
+fn diagnostic_code_registry_has_only_documented_aliases() {
+    let mut by_code = BTreeMap::<&str, Vec<&str>>::new();
+    for entry in DiagnosticCode::ALL {
+        by_code.entry(entry.code()).or_default().push(entry.name());
+    }
+
+    let mut allowed = BTreeMap::<&str, &str>::new();
+    for alias in DiagnosticCode::INTENTIONAL_DUPLICATES {
+        assert!(
+            !alias.reason().trim().is_empty(),
+            "intentional duplicate {} needs a reason",
+            alias.code()
+        );
+        assert!(
+            allowed.insert(alias.code(), alias.reason()).is_none(),
+            "duplicate allow-list entry for {}",
+            alias.code()
+        );
+    }
+
+    let mut undocumented = Vec::new();
+    for (code, names) in &by_code {
+        if names.len() > 1 && !allowed.contains_key(code) {
+            undocumented.push(format!("{code}: {}", names.join(", ")));
+        }
+    }
+    assert!(
+        undocumented.is_empty(),
+        "duplicate diagnostic codes need explicit allow-list entries: {}",
+        undocumented.join("; ")
+    );
+
+    let duplicate_codes = by_code
+        .iter()
+        .filter_map(|(code, names)| (names.len() > 1).then_some(*code))
+        .collect::<BTreeSet<_>>();
+    for code in allowed.keys() {
+        assert!(
+            duplicate_codes.contains(*code),
+            "allow-list entry {code} does not correspond to duplicate registry values"
+        );
+    }
 }
 
 #[test]

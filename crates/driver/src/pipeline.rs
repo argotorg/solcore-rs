@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, env, ffi::OsString, fs};
 
-use hir::diag::DiagnosticLevel;
+use hir::diag::{DiagnosticLevel, sort_dedup_rendered_diagnostics};
 use nameres::{
     LibraryId, ModuleTree, module_id_from_key, module_key_for_path, reachable_diagnostics,
     resolve_reachable_full,
@@ -9,7 +9,7 @@ use nameres::{
 use crate::{
     args::{ParsedArgs, help_text, parse_args, usage_text},
     db::DriverDb,
-    diagnostics::{apply_warning_policy, render_diagnostics, sort_dedup_diagnostics},
+    diagnostics::{apply_warning_policy, render_diagnostics},
     emit::{BackendFailure, maybe_emit_abi_outputs, maybe_emit_backend_outputs},
     modules::load_reachable_modules,
     paths::{absolutize, resolve_main_root, resolve_std_root, source_file_for_path},
@@ -130,7 +130,7 @@ pub(crate) fn run_compiler() {
             .iter()
             .map(|diagnostic| diagnostic.lower(&db)),
     );
-    sort_dedup_diagnostics(&db, &mut diagnostics);
+    sort_dedup_rendered_diagnostics(&db, &mut diagnostics);
     apply_warning_policy(&mut diagnostics, args.warning_policy);
     let has_errors = diagnostics
         .iter()
@@ -149,7 +149,7 @@ pub(crate) fn run_compiler() {
         match maybe_emit_backend_outputs(&db, entry_file, &args) {
             Ok(()) => {}
             Err(BackendFailure::Diagnostics(mut diagnostics)) => {
-                sort_dedup_diagnostics(&db, &mut diagnostics);
+                sort_dedup_rendered_diagnostics(&db, &mut diagnostics);
                 apply_warning_policy(&mut diagnostics, args.warning_policy);
                 eprint!("{}", render_diagnostics(&db, &diagnostics, &args));
                 if diagnostics

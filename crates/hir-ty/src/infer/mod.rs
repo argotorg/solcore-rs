@@ -18,7 +18,7 @@ use hir::{
         },
         ty::{TypeRef, TypeRefKind},
     },
-    diag::{AnyDiagnostic, Diagnostic, LabelSpan},
+    diag::{AnyDiagnostic, Diagnostic, DiagnosticCode, LabelSpan, sort_dedup_query_diagnostics},
     nameres as hir_nameres,
     span::{Span, Spanned},
 };

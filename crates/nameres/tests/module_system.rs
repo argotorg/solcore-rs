@@ -6,7 +6,7 @@ use std::{
 
 use annotate_snippets::Renderer;
 use hir::{
-    diag::{Diagnostic, DiagnosticId},
+    diag::{Diagnostic, sort_dedup_rendered_diagnostics},
     input::SourceFile,
 };
 use parser::parse_file_to_hir;
@@ -499,9 +499,7 @@ fn render_diagnostics(db: &dyn hir::Db, diagnostics: &[Diagnostic]) -> String {
 }
 
 fn sort_dedup_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.sort_by_key(|diagnostic| diagnostic.sort_key(db));
-    let mut seen = FxHashSet::<DiagnosticId>::default();
-    diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
+    sort_dedup_rendered_diagnostics(db, diagnostics);
 }
 
 fn fixture_dir(relative: &str) -> PathBuf {

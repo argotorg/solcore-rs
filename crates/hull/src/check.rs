@@ -6,7 +6,7 @@ use hir::{
         Ident,
         function::{YulExpr, YulExprKind, YulStmt, YulStmtKind},
     },
-    diag::Diagnostic,
+    diag::{Diagnostic, DiagnosticCode},
     span::{Span, SpannedElem},
 };
 
@@ -98,26 +98,36 @@ impl<'db> CheckDiagnostic<'db> {
 impl CheckDiagnosticKind {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::UndefinedVariable { .. } => "SC0430",
-            Self::UndefinedFunction { .. } => "SC0431",
-            Self::DuplicateFunction { .. } => "SC0432",
-            Self::ArityMismatch { .. } => "SC0433",
-            Self::TypeMismatch { .. } => "SC0434",
-            Self::ExprAnnotationMismatch { .. } => "SC0435",
-            Self::ExpectedProduct { .. } => "SC0436",
-            Self::ExpectedSum { .. } => "SC0437",
-            Self::ExpectedBool { .. } => "SC0438",
-            Self::BadInjectionIndex { .. } => "SC0439",
-            Self::BadMatchPattern { .. } => "SC0440",
-            Self::ReturnOutsideFunction => "SC0441",
-            Self::FunctionTypeNotFirstOrder { .. } => "SC0442",
-            Self::MissingTerminator { .. } => "SC0443",
-            Self::AssemblyRequiresDatabase => "SC0444",
-            Self::AssemblyReturnCountMismatch { .. } => "SC0445",
-            Self::AssemblyExpressionNotUnit { .. } => "SC0446",
-            Self::AssemblyExpectedWordArgument { .. } => "SC0447",
-            Self::AssemblyExpectedWordAssignment { .. } => "SC0448",
-            Self::AssemblyVoidArgument => "SC0449",
+            Self::UndefinedVariable { .. } => DiagnosticCode::HULL_UNDEFINED_VARIABLE,
+            Self::UndefinedFunction { .. } => DiagnosticCode::HULL_UNDEFINED_FUNCTION,
+            Self::DuplicateFunction { .. } => DiagnosticCode::HULL_DUPLICATE_FUNCTION,
+            Self::ArityMismatch { .. } => DiagnosticCode::HULL_ARITY_MISMATCH,
+            Self::TypeMismatch { .. } => DiagnosticCode::HULL_TYPE_MISMATCH,
+            Self::ExprAnnotationMismatch { .. } => DiagnosticCode::HULL_EXPR_ANNOTATION_MISMATCH,
+            Self::ExpectedProduct { .. } => DiagnosticCode::HULL_EXPECTED_PRODUCT,
+            Self::ExpectedSum { .. } => DiagnosticCode::HULL_EXPECTED_SUM,
+            Self::ExpectedBool { .. } => DiagnosticCode::HULL_EXPECTED_BOOL,
+            Self::BadInjectionIndex { .. } => DiagnosticCode::HULL_BAD_INJECTION_INDEX,
+            Self::BadMatchPattern { .. } => DiagnosticCode::HULL_BAD_MATCH_PATTERN,
+            Self::ReturnOutsideFunction => DiagnosticCode::HULL_RETURN_OUTSIDE_FUNCTION,
+            Self::FunctionTypeNotFirstOrder { .. } => {
+                DiagnosticCode::HULL_FUNCTION_TYPE_NOT_FIRST_ORDER
+            }
+            Self::MissingTerminator { .. } => DiagnosticCode::HULL_MISSING_TERMINATOR,
+            Self::AssemblyRequiresDatabase => DiagnosticCode::HULL_ASSEMBLY_REQUIRES_DATABASE,
+            Self::AssemblyReturnCountMismatch { .. } => {
+                DiagnosticCode::HULL_ASSEMBLY_RETURN_COUNT_MISMATCH
+            }
+            Self::AssemblyExpressionNotUnit { .. } => {
+                DiagnosticCode::HULL_ASSEMBLY_EXPRESSION_NOT_UNIT
+            }
+            Self::AssemblyExpectedWordArgument { .. } => {
+                DiagnosticCode::HULL_ASSEMBLY_EXPECTED_WORD_ARGUMENT
+            }
+            Self::AssemblyExpectedWordAssignment { .. } => {
+                DiagnosticCode::HULL_ASSEMBLY_EXPECTED_WORD_ASSIGNMENT
+            }
+            Self::AssemblyVoidArgument => DiagnosticCode::HULL_ASSEMBLY_VOID_ARGUMENT,
         }
     }
 

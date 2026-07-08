@@ -79,7 +79,7 @@ impl NameresDiagnostic {
                 private_candidate,
             } => {
                 let mut diagnostic = Diagnostic::error(format!("undefined name: {name}"))
-                    .with_code("SC0101")
+                    .with_code(DiagnosticCode::NAMERES_UNDEFINED_NAME)
                     .with_primary_label_span(span.clone(), Some("unknown name"));
                 if let Some(private) = private_candidate {
                     diagnostic = diagnostic
@@ -105,7 +105,7 @@ impl NameresDiagnostic {
             } => {
                 let mut diagnostic =
                     Diagnostic::error(format!("undefined type constructor: {name}"))
-                        .with_code("SC0103")
+                        .with_code(DiagnosticCode::NAMERES_UNDEFINED_TYPE_CONSTRUCTOR)
                         .with_primary_label_span(span.clone(), Some("undefined type constructor"));
                 if let Some(constructor) = constructor_candidate {
                     diagnostic = diagnostic
@@ -125,7 +125,7 @@ impl NameresDiagnostic {
             }
             NameresDiagnostic::UndefinedClass { name, span } => {
                 Diagnostic::error(format!("undefined class: {name}"))
-                    .with_code("SC0105")
+                    .with_code(DiagnosticCode::NAMERES_UNDEFINED_CLASS)
                     .with_primary_label_span(span.clone(), Some("undefined class"))
             }
             NameresDiagnostic::UnqualifiedConstructor {
@@ -138,13 +138,13 @@ impl NameresDiagnostic {
                     .map(|qualified| format!("use `{qualified}`"))
                     .unwrap_or_else(|| "use Type.Constructor form".to_owned());
                 Diagnostic::error(format!("unqualified constructor: {name}"))
-                    .with_code("SC0106")
+                    .with_code(DiagnosticCode::NAMERES_UNQUALIFIED_CONSTRUCTOR)
                     .with_primary_label_span(span.clone(), Some("constructor must be qualified"))
                     .with_help(help)
             }
             NameresDiagnostic::InvalidPattern { span } => {
                 Diagnostic::error("invalid pattern syntax")
-                    .with_code("SC0107")
+                    .with_code(DiagnosticCode::NAMERES_INVALID_PATTERN)
                     .with_primary_label_span(span.clone(), Some("invalid pattern"))
             }
             NameresDiagnostic::DuplicateDeclaration {
@@ -162,7 +162,7 @@ impl NameresDiagnostic {
                 let mut diagnostic = Diagnostic::error(format!(
                     "duplicate declaration `{name}` in {namespace_text}"
                 ))
-                .with_code("SC0108")
+                .with_code(DiagnosticCode::NAMERES_DUPLICATE_DECLARATION)
                 .with_primary_label_span(span.clone(), Some("duplicate declaration"))
                 .with_secondary_label_span(previous.clone(), Some("previous declaration"));
                 if let Some(context) = context {

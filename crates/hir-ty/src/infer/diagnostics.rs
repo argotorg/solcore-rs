@@ -377,14 +377,14 @@ impl TypeckDiagnostic {
                 actual,
             } => {
                 Diagnostic::error(format!("type mismatch: expected {expected}, found {actual}"))
-                    .with_code("SC0201")
+                    .with_code(DiagnosticCode::TYPECK_MISMATCH)
                     .with_primary_label_span(span.clone(), Some("expression has mismatched type"))
                     .with_note(format!("expected type: {expected}"))
                     .with_note(format!("found type: {actual}"))
             }
             TypeckDiagnostic::OccursCheck { span, var, ty } => {
                 Diagnostic::error("recursive type would be required")
-                    .with_code("SC0202")
+                    .with_code(DiagnosticCode::TYPECK_RECURSIVE_TYPE_OR_UNKNOWN_INSTANCE_METHOD)
                     .with_primary_label_span(span.clone(), Some("recursive type required here"))
                     .with_note(format!("{var} would need to contain itself"))
                     .with_note(format!("recursive shape: {ty}"))
@@ -392,7 +392,7 @@ impl TypeckDiagnostic {
             }
             TypeckDiagnostic::AmbiguousInferredType { span, scheme } => {
                 Diagnostic::error("ambiguous inferred type")
-                    .with_code("SC0299")
+                    .with_code(DiagnosticCode::TYPECK_AMBIGUOUS_INFERENCE_OR_TYPE_CONSTRUCTOR_ARITY)
                     .with_primary_label_span(span.clone(), Some("ambiguous inferred type"))
                     .with_note(scheme.clone())
                     .with_help("add a type annotation or a matching instance to fix the ambiguous type variable")
@@ -404,7 +404,7 @@ impl TypeckDiagnostic {
                 expected,
                 actual,
             } => Diagnostic::error("Invalid number of type arguments!")
-                .with_code("SC0299")
+                .with_code(DiagnosticCode::TYPECK_AMBIGUOUS_INFERENCE_OR_TYPE_CONSTRUCTOR_ARITY)
                 .with_primary_label_span(span.clone(), Some("diagnostic reported here"))
                 .with_note(format!(
                     "Type {constructor} is expected to have {expected} type arguments"
@@ -418,7 +418,7 @@ impl TypeckDiagnostic {
                     .join(" ");
                 let mut diagnostic =
                     Diagnostic::error(format!("undefined type variables: {names}"))
-                        .with_code("SC0102");
+                        .with_code(DiagnosticCode::TYPECK_UNDEFINED_TYPE_VARIABLES);
                 for (span, _) in vars {
                     diagnostic = diagnostic
                         .with_primary_label_span(span.clone(), Some("undefined type variable"));
@@ -437,30 +437,30 @@ impl TypeckDiagnostic {
                 Diagnostic::error(format!(
                     "{context} expects {expected} {expected_noun}, but {actual} {actual_verb} provided"
                 ))
-                .with_code("SC0203")
+                .with_code(DiagnosticCode::TYPECK_WRONG_ARITY)
                 .with_primary_label_span(span.clone(), Some("wrong number of arguments"))
                 .with_note(format!("expected {expected} {expected_noun}"))
                 .with_note(format!("found {actual} {actual_noun}"))
             }
             TypeckDiagnostic::MutualRecursiveData { span, ty } => {
                 Diagnostic::error(format!("undefined type: {ty}"))
-                    .with_code("SC0203")
+                    .with_code(DiagnosticCode::TYPECK_MUTUAL_RECURSIVE_DATA)
                     .with_primary_label_span(span.clone(), Some("undefined type"))
             }
             TypeckDiagnostic::NonWordYulVar { span, name, actual } => Diagnostic::error(format!(
                 "Yul reference `{name}` requires word type, got {actual}"
             ))
-            .with_code("SC0204")
+            .with_code(DiagnosticCode::TYPECK_NON_WORD_YUL_VAR)
             .with_primary_label_span(span.clone(), Some("Yul reference has non-word type")),
             TypeckDiagnostic::UnknownField { span, field } => {
                 Diagnostic::error(format!("cannot resolve field `{field}`"))
-                    .with_code("SC0205")
+                    .with_code(DiagnosticCode::TYPECK_UNKNOWN_FIELD)
                     .with_primary_label_span(span.clone(), Some("unknown field"))
                     .with_help("check that the receiver has this field or constructor path")
             }
             TypeckDiagnostic::NonCallable { span, callee } => {
                 Diagnostic::error(format!("non-callable value of type {callee}"))
-                    .with_code("SC0206")
+                    .with_code(DiagnosticCode::TYPECK_NON_CALLABLE)
                     .with_primary_label_span(span.clone(), Some("callee is not callable"))
             }
             TypeckDiagnostic::NamespaceAsValue {
@@ -480,18 +480,18 @@ impl TypeckDiagnostic {
                     ValuePosition::Callee => format!("{subject} used as callee: `{name}`"),
                 };
                 Diagnostic::error(message)
-                    .with_code("SC0228")
+                    .with_code(DiagnosticCode::TYPECK_NAMESPACE_AS_VALUE)
                     .with_primary_label_span(span.clone(), Some("not a value"))
                     .with_help("use a constructor or value binding here, not a namespace name")
             }
             TypeckDiagnostic::ClassAsType { span, class } => {
                 Diagnostic::error(format!("class name used as type: `{class}`"))
-                    .with_code("SC0229")
+                    .with_code(DiagnosticCode::TYPECK_CLASS_AS_TYPE)
                     .with_primary_label_span(span.clone(), Some("class is not a type"))
             }
             TypeckDiagnostic::DuplicateType { span, name } => {
                 Diagnostic::error(format!("duplicate type definition: {name}"))
-                    .with_code("SC0229")
+                    .with_code(DiagnosticCode::TYPECK_DUPLICATE_TYPE)
                     .with_primary_label_span(span.clone(), Some("duplicate type"))
                     .with_note(format!("new definition: data {name}"))
                     .with_note(format!("existing definition: data {name}"))
@@ -499,7 +499,7 @@ impl TypeckDiagnostic {
             }
             TypeckDiagnostic::UnsatisfiedConstraint { span, pred } => {
                 Diagnostic::error(format!("cannot satisfy class constraint: {pred}"))
-                    .with_code("SC0207")
+                    .with_code(DiagnosticCode::TYPECK_UNSATISFIED_CONSTRAINT)
                     .with_primary_label_span(span.clone(), Some("constraint originates here"))
                     .with_note(format!("no visible instance matches `{pred}`"))
                     .with_help("add a matching instance or strengthen the surrounding type context")
@@ -512,7 +512,7 @@ impl TypeckDiagnostic {
                 let mut diagnostic = Diagnostic::error(format!(
                     "ambiguous class constraint: {pred}"
                 ))
-                    .with_code("SC0208")
+                    .with_code(DiagnosticCode::TYPECK_AMBIGUOUS_CONSTRAINT)
                     .with_primary_label_span(span.clone(), Some("ambiguous constraint here"))
                     .with_help("make the type more specific or remove overlapping instances");
                 for candidate in candidates {
@@ -523,18 +523,18 @@ impl TypeckDiagnostic {
             TypeckDiagnostic::SolverFuelExhausted { span, pred } => Diagnostic::error(format!(
                 "cannot solve class constraint `{pred}`: solver exceeded its iteration bound"
             ))
-            .with_code("SC0209")
+            .with_code(DiagnosticCode::TYPECK_SOLVER_FUEL_EXHAUSTED)
             .with_primary_label_span(span.clone(), Some("constraint originates here"))
             .with_help("simplify the instance chain or add a more direct instance"),
             TypeckDiagnostic::NonFinalReturn { span } => {
                 Diagnostic::error("illegal return statement")
-                    .with_code("SC0222")
+                    .with_code(DiagnosticCode::TYPECK_NON_FINAL_RETURN_OR_INVALID_CONSTRUCTOR_PATTERN)
                     .with_primary_label_span(span.clone(), Some("return before end of block"))
                     .with_note("return statements must be the final statement in a block")
             }
             TypeckDiagnostic::UnknownYulName { span, name } => {
                 Diagnostic::error(format!("unknown Yul identifier or function: {name}"))
-                    .with_code("SC0211")
+                    .with_code(DiagnosticCode::TYPECK_UNKNOWN_YUL_NAME)
                     .with_primary_label_span(span.clone(), Some("unknown Yul name"))
             }
             TypeckDiagnostic::CoverageCondition {
@@ -546,23 +546,23 @@ impl TypeckDiagnostic {
                 "Coverage condition fails for class:\n{class}\n- the type:\n{main}\ndoes not determine:\n{}",
                 undetermined.join(", ")
             ))
-            .with_code("SC0212")
+            .with_code(DiagnosticCode::TYPECK_COVERAGE_CONDITION)
             .with_primary_label_span(span.clone(), Some("instance head does not determine these variables")),
             TypeckDiagnostic::PattersonCondition { span, head } => Diagnostic::error(format!(
                 "instance `{head}` does not satisfy the Patterson conditions"
             ))
-            .with_code("SC0213")
+            .with_code(DiagnosticCode::TYPECK_PATTERSON_CONDITION)
             .with_primary_label_span(span.clone(), Some("instance head violates Patterson condition"))
             .with_note("each instance context must be structurally smaller than the instance head")
             .with_help("remove the recursive context, add a more specific instance, or use the Patterson-condition pragma intentionally"),
             TypeckDiagnostic::BoundedVariableCondition { span } => {
                 Diagnostic::error("Bounded variable condition fails!")
-                    .with_code("SC0214")
+                    .with_code(DiagnosticCode::TYPECK_BOUNDED_VARIABLE_CONDITION)
                     .with_primary_label_span(span.clone(), Some("instance head is missing context variables"))
             }
             TypeckDiagnostic::TypeAliasCycle { span, alias } => {
                 Diagnostic::error(format!("recursive type alias `{alias}`"))
-                    .with_code("SC0215")
+                    .with_code(DiagnosticCode::TYPECK_TYPE_ALIAS_CYCLE)
                     .with_primary_label_span(span.clone(), Some("recursive alias"))
             }
             TypeckDiagnostic::TypeAliasArity {
@@ -573,12 +573,12 @@ impl TypeckDiagnostic {
             } => Diagnostic::error(format!(
                 "type synonym arity mismatch for `{alias}`: expected {expected}, got {actual}"
             ))
-            .with_code("SC0216")
+            .with_code(DiagnosticCode::TYPECK_TYPE_ALIAS_ARITY)
             .with_primary_label_span(span.clone(), Some("type alias arity mismatch")),
             TypeckDiagnostic::TypeAliasExpansionLimit { span, limit } => Diagnostic::error(
                 format!("type synonym expansion exceeded {limit} type nodes"),
             )
-            .with_code("SC0243")
+            .with_code(DiagnosticCode::TYPECK_TYPE_ALIAS_EXPANSION_LIMIT)
             .with_primary_label_span(span.clone(), Some("type alias expansion starts here")),
             TypeckDiagnostic::ClassArity {
                 span,
@@ -588,7 +588,7 @@ impl TypeckDiagnostic {
             } => Diagnostic::error(format!(
                 "class arity mismatch for `{class}`: expected {expected}, got {actual}"
             ))
-            .with_code("SC0217")
+            .with_code(DiagnosticCode::TYPECK_CLASS_ARITY)
             .with_primary_label_span(span.clone(), Some("class predicate arity mismatch")),
             TypeckDiagnostic::OverlappingInstance {
                 instance_span,
@@ -599,7 +599,7 @@ impl TypeckDiagnostic {
                 let diagnostic = Diagnostic::error(format!(
                     "Overlapping instances are not supported\ninstance:\n{instance}\noverlaps with:\n{overlaps}"
                 ))
-                .with_code("SC0218")
+                .with_code(DiagnosticCode::TYPECK_OVERLAPPING_INSTANCE)
                 .with_primary_label_span(instance_span.clone(), Some("overlapping instance"));
                 if let Some(overlaps_span) = overlaps_span {
                     diagnostic.with_secondary_label_span(
@@ -613,7 +613,7 @@ impl TypeckDiagnostic {
             TypeckDiagnostic::InvalidDefaultInstance { span, head } => Diagnostic::error(format!(
                 "Cannot have a default instance with a non-type variable as main argument: {head}"
             ))
-            .with_code("SC0219")
+            .with_code(DiagnosticCode::TYPECK_INVALID_DEFAULT_INSTANCE)
             .with_primary_label_span(span.clone(), Some("invalid default instance head")),
             TypeckDiagnostic::IncompleteInstance {
                 span,
@@ -623,24 +623,24 @@ impl TypeckDiagnostic {
                 "Incomplete definition for class:\n{class}\nmissing definitions for:\n{}",
                 missing.join(", ")
             ))
-            .with_code("SC0244")
+            .with_code(DiagnosticCode::TYPECK_INCOMPLETE_INSTANCE)
             .with_primary_label_span(span.clone(), Some("incomplete instance")),
             TypeckDiagnostic::UnknownInstanceMethod { span, name } => {
                 Diagnostic::error(format!("undefined name: {name}"))
-                    .with_code("SC0202")
+                    .with_code(DiagnosticCode::TYPECK_RECURSIVE_TYPE_OR_UNKNOWN_INSTANCE_METHOD)
                     .with_primary_label_span(span.clone(), Some("unknown name"))
             }
             TypeckDiagnostic::IncompleteSignature { span, signature } => Diagnostic::error(
                 "top-level function must have complete type annotations",
             )
-            .with_code("SC0220")
+            .with_code(DiagnosticCode::TYPECK_INCOMPLETE_SIGNATURE)
             .with_primary_label_span(span.clone(), Some("incomplete signature"))
             .with_note(format!("signature: {signature}"))
             .with_note("annotate every parameter (name : Type) and provide a return type (-> Type)"),
             TypeckDiagnostic::IncompleteMethodSignature { span, signature } => Diagnostic::error(
                 "class and instance methods must have complete type signatures",
             )
-            .with_code("SC0221")
+            .with_code(DiagnosticCode::TYPECK_INCOMPLETE_METHOD_SIGNATURE)
             .with_primary_label_span(span.clone(), Some("incomplete method signature"))
             .with_note(format!("signature: {signature}"))
             .with_note("annotate every method parameter and provide a return type"),
@@ -652,29 +652,29 @@ impl TypeckDiagnostic {
                 Diagnostic::error(format!(
                     "invalid instance member signature for `{method}`: {reason}"
                 ))
-                .with_code("SC0221")
+                .with_code(DiagnosticCode::TYPECK_INVALID_INSTANCE_METHOD_SIGNATURE)
                 .with_primary_label_span(span.clone(), Some("invalid instance method signature"))
                 .with_note("the instance method must match the class method after substituting the instance head")
             }
             TypeckDiagnostic::InvalidConstructorPattern { span, name } => Diagnostic::error(format!(
                 "constructor pattern `{name}` does not resolve to a constructor"
             ))
-            .with_code("SC0222")
+            .with_code(DiagnosticCode::TYPECK_NON_FINAL_RETURN_OR_INVALID_CONSTRUCTOR_PATTERN)
             .with_primary_label_span(span.clone(), Some("invalid constructor pattern")),
             TypeckDiagnostic::HiddenConstructorCoverage { span, ty } => Diagnostic::error(format!(
                 "pattern match on type with hidden constructors requires a wildcard arm: {ty}"
             ))
-            .with_code("SC0223")
+            .with_code(DiagnosticCode::TYPECK_HIDDEN_CONSTRUCTOR_COVERAGE)
             .with_primary_label_span(span.clone(), Some("match needs a wildcard arm")),
             TypeckDiagnostic::ShorthandConstructor { span, name, reason } => Diagnostic::error(format!(
                 "cannot resolve shorthand constructor `.{name}`: {reason}"
             ))
-            .with_code("SC0224")
+            .with_code(DiagnosticCode::TYPECK_SHORTHAND_CONSTRUCTOR)
             .with_primary_label_span(span.clone(), Some("shorthand constructor")),
             TypeckDiagnostic::GenericDeriveConflict { span, ty } => Diagnostic::error(format!(
                 "type '{ty}' has a manual Generic instance but no 'pragma no-generic-instance-for {ty}'; add the pragma to suppress auto-derivation"
             ))
-            .with_code("SC0227")
+            .with_code(DiagnosticCode::TYPECK_GENERIC_DERIVE_CONFLICT)
             .with_primary_label_span(span.clone(), Some("manual Generic instance conflicts with auto-derivation")),
             TypeckDiagnostic::RuntimeToComptimeParam {
                 span,
@@ -684,29 +684,29 @@ impl TypeckDiagnostic {
                 Diagnostic::error(format!(
                     "runtime value passed to comptime parameter '{param}' of '{function}'"
                 ))
-                .with_code("SC0240")
+                .with_code(DiagnosticCode::TYPECK_RUNTIME_TO_COMPTIME_PARAM)
                 .with_primary_label_span(span.clone(), Some("runtime value passed here"))
             }
             TypeckDiagnostic::ComptimeLetRuntime { span, name } => Diagnostic::error(format!(
                 "comptime let '{name}' is bound to a runtime expression"
             ))
-            .with_code("SC0241")
+            .with_code(DiagnosticCode::TYPECK_COMPTIME_LET_RUNTIME)
             .with_primary_label_span(span.clone(), Some("runtime initializer")),
             TypeckDiagnostic::ComptimeReturnRuntime { span, context } => Diagnostic::error(format!(
                 "{context}: function annotated '-> comptime' returns a runtime expression"
             ))
-            .with_code("SC0242")
+            .with_code(DiagnosticCode::TYPECK_COMPTIME_RETURN_RUNTIME)
             .with_primary_label_span(span.clone(), Some("runtime return expression")),
             TypeckDiagnostic::NonExhaustiveMatch { span, missing } => {
                 Diagnostic::error("non-exhaustive pattern match")
-                    .with_code("SC0302")
+                    .with_code(DiagnosticCode::TYPECK_NON_EXHAUSTIVE_MATCH)
                     .with_primary_label_span(span.clone(), Some("non-exhaustive match"))
                     .with_note(format!("missing case: {missing}"))
                     .with_note("help: add a clause that covers the missing case")
             }
             TypeckDiagnostic::UnreachableMatchArm { span } => {
                 Diagnostic::warning("unreachable match arm")
-                    .with_code("SC0303")
+                    .with_code(DiagnosticCode::TYPECK_UNREACHABLE_MATCH_ARM)
                     .with_primary_label_span(span.clone(), Some("this arm is unreachable"))
                     .with_note("this arm is covered by previous match arms")
             }
@@ -1869,10 +1869,4 @@ fn format_type_ref<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>) -> String {
         }
         TypeRefKind::Error { .. } => "<error type>".to_owned(),
     }
-}
-
-pub(super) fn sort_dedup_typeck_diagnostics(db: &dyn Db, diagnostics: &mut Vec<AnyDiagnostic>) {
-    diagnostics.sort_by_key(|diagnostic| diagnostic.query_sort_key(db));
-    let mut seen = FxHashSet::default();
-    diagnostics.retain(|diagnostic| seen.insert(diagnostic.diagnostic_id(db)));
 }

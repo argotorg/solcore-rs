@@ -17,7 +17,7 @@ use hir::{
             AdtDef, ContractItem, FunctionDef, Import, ImportSelector, InstanceDef, Item, Module,
         },
     },
-    diag::Diagnostic,
+    diag::{Diagnostic, DiagnosticCode},
     input::SourceFile,
     nameres as hir_nameres,
     span::{Span, Spanned, SpannedElem},

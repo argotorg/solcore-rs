@@ -573,7 +573,7 @@ pub fn reachable_typeck_diagnostics<'db>(
     for module in graph.modules {
         diagnostics.extend(module_typeck_diagnostics(db, module).iter().cloned());
     }
-    sort_dedup_typeck_diagnostics(db, &mut diagnostics);
+    sort_dedup_query_diagnostics(db, &mut diagnostics);
     diagnostics
 }
 
@@ -635,7 +635,7 @@ pub fn module_typeck_diagnostics<'db>(
             .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
     );
     if alias_expansion_limit {
-        sort_dedup_typeck_diagnostics(db, &mut diagnostics);
+        sort_dedup_query_diagnostics(db, &mut diagnostics);
         return diagnostics;
     }
     diagnostics.extend(
@@ -649,7 +649,7 @@ pub fn module_typeck_diagnostics<'db>(
             .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
     );
     if suppress_body_after_instance_error {
-        sort_dedup_typeck_diagnostics(db, &mut diagnostics);
+        sort_dedup_query_diagnostics(db, &mut diagnostics);
         return diagnostics;
     }
     let mut collector = TypeckDiagnosticCollector {
@@ -663,6 +663,6 @@ pub fn module_typeck_diagnostics<'db>(
     for item in hir_module.items(db) {
         collector.item(*item, None, &[]);
     }
-    sort_dedup_typeck_diagnostics(db, &mut collector.diagnostics);
+    sort_dedup_query_diagnostics(db, &mut collector.diagnostics);
     collector.diagnostics
 }
