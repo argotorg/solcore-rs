@@ -1149,30 +1149,131 @@ fn assert_fixture_emits_and_checks(relative: &str) {
 
 #[test]
 fn overloaded_binary_operators_emit_instance_results() {
-    let custom_uint = pretty_fixture_hull("cases/operator-custom-uint-add.solc");
+    let custom_uint =
+        pretty_src_hull_with_std("operator-custom-uint-add", OPERATOR_CUSTOM_UINT_ADD);
     assert!(
         custom_uint.contains("42"),
         "custom uint Add instance was not reflected in Hull:\n{custom_uint}"
     );
 
-    let meters = pretty_fixture_hull("cases/operator-meters-add.solc");
+    let meters = pretty_src_hull_with_std("operator-meters-add", OPERATOR_METERS_ADD);
     assert!(
         meters.contains("3"),
         "meters Add instance did not emit the expected result:\n{meters}"
     );
 
-    let meters_ord = pretty_fixture_hull("cases/operator-meters-ord.solc");
+    let meters_ord = pretty_src_hull_with_std("operator-meters-ord", OPERATOR_METERS_ORD);
     assert!(
         meters_ord.contains("42"),
         "meters Ord instance did not emit the expected result:\n{meters_ord}"
     );
 
-    let word = pretty_fixture_hull("cases/operator-word-add.solc");
+    let word = pretty_src_hull_with_std("operator-word-add", OPERATOR_WORD_ADD);
     assert!(
         word.contains("3"),
         "word Add instance changed observable Hull result:\n{word}"
     );
 }
+
+const OPERATOR_CUSTOM_UINT_ADD: &str = r#"
+import std.{*};
+
+data uint = u(word);
+
+instance uint:Add {
+  function add(x:uint, y:uint) -> uint {
+    return uint.u(42);
+  }
+}
+
+function unwrap(x:uint) -> word {
+  match x {
+  | uint.u(w) => return w;
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let a:uint = uint.u(1);
+    let b:uint = uint.u(2);
+    let c:uint = a + b;
+    return unwrap(c);
+  }
+}
+"#;
+
+const OPERATOR_METERS_ADD: &str = r#"
+import std.{*};
+
+data meters = meters(word);
+
+instance meters:Add {
+  function add(x:meters, y:meters) -> meters {
+    match x, y {
+    | meters(xw), meters(yw) => return meters(addWord(xw, yw));
+    }
+  }
+}
+
+function unwrap(x:meters) -> word {
+  match x {
+  | meters(w) => return w;
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let a:meters = meters(1);
+    let b:meters = meters(2);
+    let c:meters = a + b;
+    return unwrap(c);
+  }
+}
+"#;
+
+const OPERATOR_METERS_ORD: &str = r#"
+import std.{*};
+
+data meters = meters(word);
+
+instance meters:Eq {
+  function eq(x:meters, y:meters) -> bool {
+    match x, y {
+    | meters(xw), meters(yw) => return eqWord(xw, yw);
+    }
+  }
+}
+
+instance meters:Ord {
+  function gt(x:meters, y:meters) -> bool {
+    match x, y {
+    | meters(xw), meters(yw) => return gtWord(xw, yw);
+    }
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let a:meters = meters(1);
+    let b:meters = meters(2);
+    if (a < b) {
+      return 42;
+    } else {
+      return 0;
+    }
+  }
+}
+"#;
+
+const OPERATOR_WORD_ADD: &str = r#"
+import std.{*};
+
+contract C {
+  public function main() -> word {
+    return 1 + 2;
+  }
+}
+"#;
 
 fn pretty_fixture_hull(relative: &str) -> String {
     let fixture = repo_root()

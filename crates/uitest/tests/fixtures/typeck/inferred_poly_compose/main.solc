@@ -1,0 +1,16 @@
+contract C {
+  public function compose(f, g) {
+    return lam (x) {
+      return f(g(x));
+    };
+  }
+
+  public function id(x : word) -> word {
+    return x;
+  }
+
+  public function main() -> word {
+    let f = compose(id, id);
+    return f(42);
+  }
+}

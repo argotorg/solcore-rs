@@ -193,7 +193,7 @@ fn evm_e2e_execution_harness() {
 fn spec_expectation_manifest_covers_all_fixtures() {
     let cases = spec_cases().expect("spec manifest covers every fixture");
     assert!(cases.iter().any(|case| {
-        case.label.ends_with("010answer.solc")
+        case.label.ends_with("00answer.solc")
             && matches!(
                 case.expectation,
                 SpecExpectation::Run {
@@ -203,12 +203,14 @@ fn spec_expectation_manifest_covers_all_fixtures() {
             )
     }));
     assert!(cases.iter().any(|case| {
-        case.label.ends_with("StorageLib.solc")
-            && matches!(case.expectation, SpecExpectation::Skip { reason } if !reason.is_empty())
-    }));
-    assert!(cases.iter().any(|case| {
-        case.label.ends_with("012nid.solc")
-            && matches!(case.expectation, SpecExpectation::Neg { reason } if !reason.is_empty())
+        case.label.ends_with("11negPair.solc")
+            && matches!(
+                case.expectation,
+                SpecExpectation::Run {
+                    expected: Expected::Word(1),
+                    mode: RunMode::ReferenceDirect
+                }
+            )
     }));
 }
 
@@ -230,12 +232,6 @@ fn run_spec_case(
         SpecExpectation::Blocked { category } => {
             record_blocked_fixture(scoreboard, case.label, &case.path, category);
         }
-        SpecExpectation::Neg { reason } => {
-            record_neg_fixture(scoreboard, case.label, &case.path, reason);
-        }
-        SpecExpectation::Skip { reason } => {
-            scoreboard.record_skip(reason);
-        }
     }
 }
 
@@ -250,12 +246,6 @@ fn run_spec_case_pipeline_only(scoreboard: &mut Scoreboard, case: SpecCase) {
         }
         SpecExpectation::Blocked { category } => {
             record_blocked_fixture(scoreboard, case.label, &case.path, category);
-        }
-        SpecExpectation::Neg { reason } => {
-            record_neg_fixture(scoreboard, case.label, &case.path, reason);
-        }
-        SpecExpectation::Skip { reason } => {
-            scoreboard.record_skip(reason);
         }
     }
 }
@@ -288,23 +278,6 @@ fn record_blocked_fixture(
                 failure.message
             ),
         ),
-    }
-}
-
-fn record_neg_fixture(
-    scoreboard: &mut Scoreboard,
-    label: impl Into<String>,
-    path: &Path,
-    reason: &'static str,
-) {
-    scoreboard.files_run += 1;
-    match render_fixture(path) {
-        Ok(_) => scoreboard.record_stale_neg(
-            label,
-            reason,
-            "pipeline unexpectedly compiled a reference-rejected fixture".to_owned(),
-        ),
-        Err(_) => scoreboard.record_neg_parity(),
     }
 }
 
@@ -1558,12 +1531,6 @@ enum SpecExpectation {
     Blocked {
         category: BlockedCategory,
     },
-    Neg {
-        reason: &'static str,
-    },
-    Skip {
-        reason: &'static str,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1622,20 +1589,6 @@ fn spec_cases() -> Result<Vec<SpecCase>, E2eFailure> {
                         ),
                     )
                 })?;
-                if matches!(&expectation, SpecExpectation::Skip { reason } if reason.is_empty()) {
-                    return Err(E2eFailure::new(
-                        FailureKind::Pipeline,
-                        format!("spec fixture `{file_name}` has an empty skip reason"),
-                    ));
-                }
-                if matches!(&expectation, SpecExpectation::Neg { reason } if reason.is_empty()) {
-                    return Err(E2eFailure::new(
-                        FailureKind::Pipeline,
-                        format!(
-                            "spec fixture `{file_name}` has an empty negative-classification reason"
-                        ),
-                    ));
-                }
                 Ok(Some(SpecCase {
                     label: format!("spec/{file_name}"),
                     path,
@@ -1660,33 +1613,12 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
             mode: RunMode::ReferenceDirect,
         }
     }
-    fn skip(reason: &'static str) -> SpecExpectation {
-        SpecExpectation::Skip { reason }
-    }
-    fn neg(reason: &'static str) -> SpecExpectation {
-        SpecExpectation::Neg { reason }
-    }
-    let typedef_forall_neg = "reference HEAD rejects: class declarations lack forall binders \
-        (unbound type variables, upstream commit 7ad5622); legacy pre-std StructField \
-        experiment superseded by std/assign.solc";
-
     BTreeMap::from([
         ("00answer.solc", run(42)),
-        ("010answer.solc", run(42)),
-        ("011id.solc", run(42)),
-        (
-            "012nid.solc",
-            neg(
-                "reference HEAD rejects: over-application of direct call `nid(42)` fails \
-                unification; superseded upstream by 02nid.solc (invoke-through-variable)",
-            ),
-        ),
-        ("013comp.solc", run(42)),
         ("01id.solc", run(42)),
         ("021not.solc", run(1)),
         ("022add.solc", run(42)),
         ("024arith.solc", run(42)),
-        ("027sstore.solc", run(42)),
         ("02nid.solc", run(42)),
         ("031maybe.solc", run(42)),
         ("032simplejoin.solc", run(42)),
@@ -1703,28 +1635,9 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("047rgb.solc", run(42)),
         ("048rgb2.solc", run(42)),
         ("049rgb3.solc", run(44)),
-        ("051expreturn.solc", run(0)),
-        ("051negBool.solc", run(1)),
-        (
-            "052negPair.solc",
-            neg(
-                "reference HEAD rejects: legacy `instance (ctx) => head` syntax removed from \
-                grammar; instance methods also lack complete signatures (matches SC0226); \
-                superseded upstream by 11negPair.solc",
-            ),
-        ),
-        ("052return.solc", run(0)),
-        ("053return.solc", run(0)),
         ("06comp.solc", run(42)),
         ("09not.solc", run(1)),
-        ("101struct1Field.solc", neg(typedef_forall_neg)),
-        ("102uintField.solc", neg(typedef_forall_neg)),
-        ("103struct3Fields.solc", neg(typedef_forall_neg)),
-        ("105nestedStruct.solc", neg(typedef_forall_neg)),
         ("10negBool.solc", run(1)),
-        ("111storageStruct.solc", neg(typedef_forall_neg)),
-        ("112ContractStorage.solc", run(7)),
-        ("113counter.solc", run(1)),
         ("11negPair.solc", run(1)),
         ("120basicCounter.solc", run(42)),
         ("121counter.solc", run(1)),
@@ -1733,20 +1646,9 @@ fn spec_manifest() -> BTreeMap<&'static str, SpecExpectation> {
         ("126nanoerc20.solc", run(42)),
         ("127microerc20.solc", run(42)),
         ("128minierc20.solc", run(958)),
-        (
-            "131constructor.solc",
-            SpecExpectation::Run {
-                expected: Expected::Word(42),
-                mode: RunMode::DeployedDispatch,
-            },
-        ),
         ("903badassign.solc", run(42)),
         ("939badfood.solc", run(2)),
         ("SimpleField.solc", run(0)),
-        (
-            "StorageLib.solc",
-            skip("support module imported by storage fixtures; no public main oracle"),
-        ),
     ])
 }
 
@@ -1755,11 +1657,8 @@ struct Scoreboard {
     files_run: usize,
     files_passed: usize,
     files_failed: usize,
-    neg_parity: usize,
     blocked_by_category: BTreeMap<BlockedCategory, usize>,
     stale_blocked: Vec<String>,
-    stale_neg: Vec<String>,
-    skipped_with_reason: BTreeMap<&'static str, usize>,
     failures: BTreeMap<FailureKind, Vec<String>>,
 }
 
@@ -1789,37 +1688,19 @@ impl Scoreboard {
         ));
     }
 
-    fn record_neg_parity(&mut self) {
-        self.neg_parity += 1;
-    }
-
-    fn record_stale_neg(&mut self, label: impl Into<String>, reason: &str, message: String) {
-        self.stale_neg.push(format!(
-            "{}: expected reference-parity rejection ({reason}); {message}",
-            label.into()
-        ));
-    }
-
-    fn record_skip(&mut self, reason: &'static str) {
-        *self.skipped_with_reason.entry(reason).or_default() += 1;
-    }
-
     fn is_clean(&self) -> bool {
-        self.failures.is_empty() && self.stale_blocked.is_empty() && self.stale_neg.is_empty()
+        self.failures.is_empty() && self.stale_blocked.is_empty()
     }
 
     fn render(&self) -> String {
-        let skipped = self.skipped_with_reason.values().sum::<usize>();
         let blocked = self.blocked_by_category.values().sum::<usize>();
         let mut out = format!(
-            "E2E scoreboard: files run={} passed={} blocked={} neg-parity={} stale={} failed={} skipped-with-reason={}",
+            "E2E scoreboard: files run={} passed={} blocked={} stale={} failed={}",
             self.files_run,
             self.files_passed,
             blocked,
-            self.neg_parity,
-            self.stale_blocked.len() + self.stale_neg.len(),
-            self.files_failed,
-            skipped
+            self.stale_blocked.len(),
+            self.files_failed
         );
         if !self.blocked_by_category.is_empty() {
             out.push_str("\nblocked by category:\n");
@@ -1827,14 +1708,7 @@ impl Scoreboard {
                 out.push_str(&format!("  {count}: {category}\n"));
             }
         }
-        if !self.skipped_with_reason.is_empty() {
-            out.push_str("\nskips by reason:\n");
-            for (reason, count) in &self.skipped_with_reason {
-                out.push_str(&format!("  {count}: {reason}\n"));
-            }
-        }
-        if !self.failures.is_empty() || !self.stale_blocked.is_empty() || !self.stale_neg.is_empty()
-        {
+        if !self.failures.is_empty() || !self.stale_blocked.is_empty() {
             out.push_str("\nharness failures:\n");
             out.push_str(&self.render_failures());
         }
@@ -1849,17 +1723,6 @@ impl Scoreboard {
                 self.stale_blocked.len()
             ));
             for stale in &self.stale_blocked {
-                out.push_str("  ");
-                out.push_str(stale);
-                out.push('\n');
-            }
-        }
-        if !self.stale_neg.is_empty() {
-            out.push_str(&format!(
-                "stale negative ledger: {}\n",
-                self.stale_neg.len()
-            ));
-            for stale in &self.stale_neg {
                 out.push_str("  ");
                 out.push_str(stale);
                 out.push('\n');

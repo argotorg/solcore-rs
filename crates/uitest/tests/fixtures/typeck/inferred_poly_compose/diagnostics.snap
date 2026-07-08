@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/inferred_poly_compose/main.solc
+---
+error[SC0220]: top-level function must have complete type annotations
+ --> /main/main.solc:2:19
+  |
+1 | contract C {
+2 |   public function compose(f, g) {
+  |                   ^^^^^^^ incomplete signature
+3 |     return lam (x) {
+  |
+  = note: signature: public function compose(f, g)
+  = note: annotate every parameter (name : Type) and provide a return type (-> Type)

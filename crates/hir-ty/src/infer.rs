@@ -10269,7 +10269,7 @@ instance word:Eq {}
     #[test]
     fn pragma_corpus_files_have_no_instance_soundness_diagnostics() {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let corpus = manifest.join("../parser/tests/fixtures/corpus/ok/test/examples");
+        let corpus = manifest.join("../parser/tests/fixtures/corpus");
         let files = [
             "pragmas/coverage.solc",
             "cases/array.solc",
@@ -10280,7 +10280,11 @@ instance word:Eq {}
         ];
 
         for file in files {
-            let path = corpus.join(file);
+            let path = ["ok", "fail"]
+                .into_iter()
+                .map(|status| corpus.join(status).join("test/examples").join(file))
+                .find(|path| path.exists())
+                .expect("corpus fixture");
             let src = std::fs::read_to_string(path).expect("fixture source");
             let (db, key) = db_with_main_typeck(&src);
             let source = *db.module_files.get(&key).expect("main source");

@@ -1,0 +1,9 @@
+function id(x) {
+  return x;
+}
+
+contract C {
+  public function main() -> word {
+    return id(42);
+  }
+}

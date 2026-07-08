@@ -400,18 +400,18 @@ fn storage_mapping_compound_assign_requires_numeric_element() {
     let common = "data mapping(key, value) = mapping(word);\ndata uint256 = uint256(word);\n";
 
     let ok_word = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, word); function f(k: word) {{ m[k] += 1; }} }}"
+        "{common}contract C {{ m : mapping(word, word); function f(k: word) -> () {{ m[k] += 1; }} }}"
     ));
     assert!(ok_word.is_empty(), "{ok_word:?}");
 
     let ok_uint = diagnostics(&format!(
         "{common}contract C {{ m : mapping(word, uint256); \
-         function f(k: word, v: uint256) {{ m[k] += v; }} }}"
+         function f(k: word, v: uint256) -> () {{ m[k] += v; }} }}"
     ));
     assert!(ok_uint.is_empty(), "{ok_uint:?}");
 
     let bad_add = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, bool); function f(k: word) {{ m[k] += true; }} }}"
+        "{common}contract C {{ m : mapping(word, bool); function f(k: word) -> () {{ m[k] += true; }} }}"
     ));
     assert!(
         bad_add
@@ -421,7 +421,7 @@ fn storage_mapping_compound_assign_requires_numeric_element() {
     );
 
     let bad_sub = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, bool); function f(k: word) {{ m[k] -= true; }} }}"
+        "{common}contract C {{ m : mapping(word, bool); function f(k: word) -> () {{ m[k] -= true; }} }}"
     ));
     assert!(
         bad_sub

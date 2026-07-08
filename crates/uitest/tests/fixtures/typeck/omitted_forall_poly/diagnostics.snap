@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/omitted_forall_poly/main.solc
+---
+error[SC0220]: top-level function must have complete type annotations
+ --> /main/main.solc:1:10
+  |
+1 | function id(x) {
+  |          ^^ incomplete signature
+2 |   return x;
+3 | }
+  |
+  = note: signature: function id(x)
+  = note: annotate every parameter (name : Type) and provide a return type (-> Type)

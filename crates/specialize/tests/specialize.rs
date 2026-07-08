@@ -84,6 +84,28 @@ fn specialize_src(src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {
     (db, output)
 }
 
+fn specialize_src_with_std(src: &str) -> SpecializeOutput<'static> {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    let repo = repo_root();
+    let std_root = repo.join("crates/parser/tests/fixtures/corpus/ok/std");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        std_root,
+        BTreeMap::new(),
+    ));
+    let main_path = main_root.join("main.solc");
+    let key =
+        module_key_for_path(LibraryId::Main, &main_root, &main_path).expect("file under main root");
+    let file = source_file_at_path(db, &main_path, src);
+    db.module_files.insert(key.clone(), file);
+    let unresolved = load_reachable_modules(db, key);
+    assert!(unresolved.is_empty(), "{unresolved:?}");
+    let module = parse_file_to_hir(db, file).module(db);
+    specialize_module(db, module, SpecializeOptions::default())
+}
+
 fn function_names(output: &SpecializeOutput<'_>) -> Vec<String> {
     let mut names = output
         .module
@@ -490,17 +512,6 @@ contract C {
 }
 
 #[test]
-fn omitted_return_annotations_use_inferred_call_site_return() {
-    let repo = repo_root();
-    let fixture =
-        repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/comptime/OneOne.solc");
-    let output = specialize_fixture(&fixture);
-
-    assert_eq!(output.diagnostics, Vec::new());
-    assert!(main_return_number(&output).is_some(), "{:?}", output.module);
-}
-
-#[test]
 fn source_names_are_qualified_across_contracts() {
     let (_db, output) = specialize_src(
         r#"
@@ -637,11 +648,8 @@ fn specializes_p7_cited_regression_corpus() {
     let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples");
     for fixture in [
         "cases/app.solc",
-        "cases/compose_desugared.solc",
         "cases/mptc-chain-phantom.solc",
-        "cases/bug-spec-generic-let.solc",
         "cases/mptc-both-templates.solc",
-        "comptime/OneOne.solc",
         "dispatch/nonpayable_ctor.solc",
         "dispatch/storage.solc",
         "cases/SimpleLambda.solc",
@@ -695,29 +703,127 @@ fn specializes_p7_cited_regression_corpus() {
 fn folds_direct_function_compose_closure_fixture() {
     let repo = repo_root();
     let output = specialize_fixture(
-        &repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec/013comp.solc"),
+        &repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec/06comp.solc"),
     );
 
     assert_eq!(output.diagnostics, Vec::new());
     assert_eq!(main_return_number(&output), Some("42".to_owned()));
 }
 
+const OPERATOR_CUSTOM_UINT_ADD: &str = r#"
+import std.{*};
+
+data uint = u(word);
+
+instance uint:Add {
+  function add(x:uint, y:uint) -> uint {
+    return uint.u(42);
+  }
+}
+
+function unwrap(x:uint) -> word {
+  match x {
+  | uint.u(w) => return w;
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let a:uint = uint.u(1);
+    let b:uint = uint.u(2);
+    let c:uint = a + b;
+    return unwrap(c);
+  }
+}
+"#;
+
+const OPERATOR_METERS_ADD: &str = r#"
+import std.{*};
+
+data meters = meters(word);
+
+instance meters:Add {
+  function add(x:meters, y:meters) -> meters {
+    match x, y {
+    | meters(xw), meters(yw) => return meters(addWord(xw, yw));
+    }
+  }
+}
+
+function unwrap(x:meters) -> word {
+  match x {
+  | meters(w) => return w;
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let a:meters = meters(1);
+    let b:meters = meters(2);
+    let c:meters = a + b;
+    return unwrap(c);
+  }
+}
+"#;
+
+const OPERATOR_METERS_ORD: &str = r#"
+import std.{*};
+
+data meters = meters(word);
+
+instance meters:Eq {
+  function eq(x:meters, y:meters) -> bool {
+    match x, y {
+    | meters(xw), meters(yw) => return eqWord(xw, yw);
+    }
+  }
+}
+
+instance meters:Ord {
+  function gt(x:meters, y:meters) -> bool {
+    match x, y {
+    | meters(xw), meters(yw) => return gtWord(xw, yw);
+    }
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let a:meters = meters(1);
+    let b:meters = meters(2);
+    if (a < b) {
+      return 42;
+    } else {
+      return 0;
+    }
+  }
+}
+"#;
+
+const OPERATOR_WORD_ADD: &str = r#"
+import std.{*};
+
+contract C {
+  public function main() -> word {
+    return 1 + 2;
+  }
+}
+"#;
+
 #[test]
 fn overloaded_binary_operators_specialize_through_instances() {
-    let repo = repo_root();
-    let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases");
-    for (fixture, expected) in [
-        ("operator-custom-uint-add.solc", "42"),
-        ("operator-meters-add.solc", "3"),
-        ("operator-meters-ord.solc", "42"),
-        ("operator-word-add.solc", "3"),
+    for (label, src, expected) in [
+        ("custom uint Add", OPERATOR_CUSTOM_UINT_ADD, "42"),
+        ("meters Add", OPERATOR_METERS_ADD, "3"),
+        ("meters Ord", OPERATOR_METERS_ORD, "42"),
+        ("word Add", OPERATOR_WORD_ADD, "3"),
     ] {
-        let output = specialize_fixture(&corpus.join(fixture));
-        assert_eq!(output.diagnostics, Vec::new(), "{fixture}");
+        let output = specialize_src_with_std(src);
+        assert_eq!(output.diagnostics, Vec::new(), "{label}");
         assert_eq!(
             main_return_number(&output),
             Some(expected.to_owned()),
-            "{fixture}"
+            "{label}"
         );
     }
 }

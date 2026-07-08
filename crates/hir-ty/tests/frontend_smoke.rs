@@ -188,9 +188,9 @@ fn curated_solver_files_execute_solver_and_soundness_queries() {
     let corpus_root = repo.join("crates/parser/tests/fixtures/corpus");
     let std_root = corpus_root.join("ok/std");
     let fixtures = [
-        "examples/cases/p4-local-instance.solc",
-        "examples/cases/tabled-answer-reuse.solc",
         "examples/cases/tabled-default-instance.solc",
+        "examples/cases/tabled-given-order.solc",
+        "examples/cases/tabled-residual-given.solc",
     ];
 
     for fixture in fixtures {
