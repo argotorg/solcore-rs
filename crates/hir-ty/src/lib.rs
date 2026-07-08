@@ -38,9 +38,10 @@ pub use lower::{
     TypeLoweringDiagnostic, builtin_scheme,
 };
 pub use solver::{
-    BaseTraitEnvId, Candidate, CanonicalGoal, ClauseOrigin, DerivedGenericFromArm,
-    DerivedGenericPlan, DerivedGenericToArm, Evidence, LocalGivensId, ProgramClause, Solution,
-    SolverReport, Substitution, TraitEnvId, canonical_goal, canonical_goal_with_allowed,
+    BaseTraitEnvId, BaseTraitEnvSource, Candidate, CanonicalGoal, ClauseOrigin,
+    DerivedGenericClauseSource, DerivedGenericFromArm, DerivedGenericPlan, DerivedGenericToArm,
+    Evidence, LocalGivensId, ModuleTraitEnvSource, ProgramClause, Solution, SolverReport,
+    Substitution, TraitClauseSetId, TraitEnvId, canonical_goal, canonical_goal_with_allowed,
     derived_generic_plan, instance_soundness_diagnostics, solve, solve_report,
     trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens,
 };

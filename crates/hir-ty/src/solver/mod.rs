@@ -108,12 +108,54 @@ pub struct CanonicalGoal<'db> {
     pub allowed_vars: Vec<u32>,
 }
 
+/// Interned deterministic subset of trait solver clauses.
+#[salsa::interned(debug)]
+pub struct TraitClauseSetId<'db> {
+    /// Clauses in their local resolution order.
+    #[returns(ref)]
+    pub clauses: Vec<ProgramClause<'db>>,
+}
+
+/// Stable sources that define a module-backed trait environment.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ModuleTraitEnvSource<'db> {
+    /// Modules whose visible class definitions contribute superclass clauses.
+    pub superclass_modules: Vec<ModuleId<'db>>,
+    /// Visible instance origins, in resolution order.
+    pub instance_origins: Vec<nameres::Origin<'db>>,
+    /// Local source for derived `Generic` clauses, when `Generic` is visible.
+    pub derived_generic: Option<DerivedGenericClauseSource<'db>>,
+}
+
+/// Stable source of synthesized `Generic` clauses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub struct DerivedGenericClauseSource<'db> {
+    /// Module whose local ADTs may receive synthesized `Generic` clauses.
+    pub module: ModuleId<'db>,
+    /// Visible `Generic` class definition.
+    pub generic: DefId<'db>,
+}
+
+/// Source layout for a base trait environment.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum BaseTraitEnvSource<'db> {
+    /// File-backed module environment. Clause contents are queried from these
+    /// stable sources so edits to one origin do not churn the whole env key.
+    Module(ModuleTraitEnvSource<'db>),
+    /// Ad-hoc environment built from an already resolved HIR module.
+    Resolved {
+        /// Clause subsets in final solver concatenation order.
+        clause_sets: Vec<TraitClauseSetId<'db>>,
+    },
+}
+
 /// Interned base trait environment for one module.
 #[salsa::interned(debug)]
 pub struct BaseTraitEnvId<'db> {
-    /// Visible instance, superclass, and builtin clauses.
+    /// Stable source description for visible builtin, superclass, instance,
+    /// and synthesized clauses.
     #[returns(ref)]
-    pub clauses: Vec<ProgramClause<'db>>,
+    pub source: BaseTraitEnvSource<'db>,
 }
 
 /// Interned local assumptions layered on top of a base trait environment.
@@ -378,8 +420,8 @@ impl<'db> SolverReport<'db> {
 
 impl<'db> TraitEnvId<'db> {
     /// Returns the base program clauses visible to this environment.
-    pub fn clauses(self, db: &'db dyn Db) -> &'db Vec<ProgramClause<'db>> {
-        self.base(db).clauses(db)
+    pub fn clauses(self, db: &'db dyn Db) -> Vec<ProgramClause<'db>> {
+        env::base_trait_env_clauses(db, self.base(db))
     }
 
     /// Returns local given predicates layered over the base environment.
@@ -447,7 +489,8 @@ impl<'db> Solver<'db> {
     ) -> bool {
         let mut goal_vars = allowed_goal_vars.clone();
         collect_pred_vars(self.db, goal, &mut goal_vars);
-        self.env.clauses(self.db).iter().any(|clause| {
+        let base_clauses = self.env.clauses(self.db);
+        base_clauses.iter().any(|clause| {
             !clause.is_default
                 && !matches!(clause.origin, ClauseOrigin::Superclass(_))
                 && head_can_unify(self.db, clause, goal, &goal_vars)

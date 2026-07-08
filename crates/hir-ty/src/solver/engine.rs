@@ -120,18 +120,18 @@ impl<'db> TabledEngine<'db> {
                     is_default: false,
                 }),
         );
-        clauses.extend(self.env.clauses(self.db).iter().filter_map(|clause| {
+        let base_clauses = self.env.clauses(self.db);
+        clauses.extend(base_clauses.iter().filter_map(|clause| {
             (!clause.is_default && !matches!(clause.origin, ClauseOrigin::Superclass(_)))
                 .then_some(clause.clone())
         }));
-        clauses.extend(self.env.clauses(self.db).iter().filter_map(|clause| {
+        clauses.extend(base_clauses.iter().filter_map(|clause| {
             (!clause.is_default && matches!(clause.origin, ClauseOrigin::Superclass(_)))
                 .then_some(clause.clone())
         }));
         if self.include_defaults && !self.has_non_default_unifying_head(key) {
             clauses.extend(
-                self.env
-                    .clauses(self.db)
+                base_clauses
                     .iter()
                     .filter(|clause| clause.is_default)
                     .cloned(),
@@ -143,7 +143,8 @@ impl<'db> TabledEngine<'db> {
     fn has_non_default_unifying_head(&self, key: &TableKey<'db>) -> bool {
         let mut goal_vars = key.allowed_vars();
         collect_pred_vars(self.db, key.pred, &mut goal_vars);
-        self.env.clauses(self.db).iter().any(|clause| {
+        let base_clauses = self.env.clauses(self.db);
+        base_clauses.iter().any(|clause| {
             !clause.is_default
                 && !matches!(clause.origin, ClauseOrigin::Superclass(_))
                 && head_can_unify(self.db, clause, key.pred, &goal_vars)

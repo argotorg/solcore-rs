@@ -3,43 +3,23 @@ use super::*;
 #[salsa::tracked]
 pub fn trait_env_for_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> TraitEnvId<'db> {
     let env = nameres::module_import_surface(db, module);
-    let mut builder = TraitEnvBuilder::new(db);
-    builder.add_builtin_instances();
 
     let mut modules = Vec::new();
     modules.push(module);
     modules.extend(env.instances.iter().map(|origin| origin.module));
     modules.extend(visible_class_modules(db, &env));
-    let modules = unique_modules(modules);
 
-    for visible_module in &modules {
-        if let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, *visible_module)
-        {
-            builder.add_module_superclasses(scope.module, &item_resolutions);
-        }
-    }
-
-    for origin in &env.instances {
-        let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, origin.module)
-        else {
-            continue;
-        };
-        if let Some(instance) = scope
-            .instances
-            .iter()
-            .find(|instance| instance.def_id_value(db) == origin.def_id)
-            .copied()
-        {
-            builder.add_instance(scope.module, instance, &item_resolutions);
-        }
-    }
-    if let Some(generic) = visible_generic_class(db, &env)
-        && let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, module)
-    {
-        builder.add_derived_generic_instances(scope.module, &item_resolutions, generic);
-    }
-
-    builder.finish(Vec::new())
+    let source = ModuleTraitEnvSource {
+        superclass_modules: unique_modules(modules),
+        instance_origins: env.instances.clone(),
+        derived_generic: visible_generic_class(db, &env)
+            .map(|generic| DerivedGenericClauseSource { module, generic }),
+    };
+    TraitEnvId::new(
+        db,
+        BaseTraitEnvId::new(db, BaseTraitEnvSource::Module(source)),
+        LocalGivensId::new(db, Vec::new()),
+    )
 }
 
 /// Builds a trait environment from an already resolved HIR module.
@@ -51,20 +31,36 @@ pub fn trait_env_from_module_resolution<'db>(
     module: Module<'db>,
     module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
 ) -> TraitEnvId<'db> {
-    let mut builder = TraitEnvBuilder::new(db);
-    builder.add_builtin_instances();
-    builder.add_module_superclasses(module, &module_resolution.item_resolutions);
+    let mut clause_sets = Vec::new();
+    clause_sets.push(builtin_trait_clause_set(db));
+
+    let mut superclass_builder = TraitClauseBuilder::new(db);
+    superclass_builder.add_module_superclasses(module, &module_resolution.item_resolutions);
+    clause_sets.push(superclass_builder.finish());
+
     for item in module.items(db) {
         if let Item::InstanceDef(instance) = item {
-            builder.add_instance(module, *instance, &module_resolution.item_resolutions);
+            let mut instance_builder = TraitClauseBuilder::new(db);
+            instance_builder.add_instance(module, *instance, &module_resolution.item_resolutions);
+            clause_sets.push(instance_builder.finish());
         }
     }
     if let Some(generic) = local_generic_class(db, module)
         .or_else(|| imported_generic_class(db, &module_resolution.item_resolutions))
     {
-        builder.add_derived_generic_instances(module, &module_resolution.item_resolutions, generic);
+        let mut derived_builder = TraitClauseBuilder::new(db);
+        derived_builder.add_derived_generic_instances(
+            module,
+            &module_resolution.item_resolutions,
+            generic,
+        );
+        clause_sets.push(derived_builder.finish());
     }
-    builder.finish(Vec::new())
+    TraitEnvId::new(
+        db,
+        BaseTraitEnvId::new(db, BaseTraitEnvSource::Resolved { clause_sets }),
+        LocalGivensId::new(db, Vec::new()),
+    )
 }
 
 /// Extends an existing trait environment with local given predicates.
@@ -82,12 +78,110 @@ pub fn trait_env_with_givens<'db>(
     )
 }
 
-struct TraitEnvBuilder<'db> {
+pub(super) fn base_trait_env_clauses<'db>(
+    db: &'db dyn Db,
+    base: BaseTraitEnvId<'db>,
+) -> Vec<ProgramClause<'db>> {
+    match base.source(db) {
+        BaseTraitEnvSource::Module(source) => {
+            let mut clauses = Vec::new();
+            extend_clause_set(&mut clauses, db, builtin_trait_clause_set(db));
+            for module in &source.superclass_modules {
+                extend_clause_set(&mut clauses, db, module_superclass_clause_set(db, *module));
+            }
+            for origin in &source.instance_origins {
+                extend_clause_set(
+                    &mut clauses,
+                    db,
+                    instance_origin_clause_set(db, origin.module, origin.def_id),
+                );
+            }
+            if let Some(source) = source.derived_generic {
+                extend_clause_set(
+                    &mut clauses,
+                    db,
+                    derived_generic_clause_set(db, source.module, source.generic),
+                );
+            }
+            clauses
+        }
+        BaseTraitEnvSource::Resolved { clause_sets } => {
+            let mut clauses = Vec::new();
+            for set in clause_sets {
+                extend_clause_set(&mut clauses, db, *set);
+            }
+            clauses
+        }
+    }
+}
+
+fn extend_clause_set<'db>(
+    clauses: &mut Vec<ProgramClause<'db>>,
+    db: &'db dyn Db,
+    set: TraitClauseSetId<'db>,
+) {
+    clauses.extend(set.clauses(db).iter().cloned());
+}
+
+#[salsa::tracked]
+fn builtin_trait_clause_set<'db>(db: &'db dyn Db) -> TraitClauseSetId<'db> {
+    let mut builder = TraitClauseBuilder::new(db);
+    builder.add_builtin_instances();
+    builder.finish()
+}
+
+#[salsa::tracked]
+fn module_superclass_clause_set<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+) -> TraitClauseSetId<'db> {
+    let mut builder = TraitClauseBuilder::new(db);
+    if let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, module) {
+        builder.add_module_superclasses(scope.module, &item_resolutions);
+    }
+    builder.finish()
+}
+
+#[salsa::tracked]
+fn instance_origin_clause_set<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    def_id: DefId<'db>,
+) -> TraitClauseSetId<'db> {
+    let mut builder = TraitClauseBuilder::new(db);
+    let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, module) else {
+        return builder.finish();
+    };
+    if let Some(instance) = scope
+        .instances
+        .iter()
+        .find(|instance| instance.def_id_value(db) == def_id)
+        .copied()
+    {
+        builder.add_instance(scope.module, instance, &item_resolutions);
+    }
+    builder.finish()
+}
+
+#[salsa::tracked]
+fn derived_generic_clause_set<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    generic: DefId<'db>,
+) -> TraitClauseSetId<'db> {
+    let mut builder = TraitClauseBuilder::new(db);
+    if let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, module) {
+        builder.add_derived_generic_instances(scope.module, &item_resolutions, generic);
+    }
+    builder.finish()
+}
+
+struct TraitClauseBuilder<'db> {
     db: &'db dyn Db,
     clauses: Vec<ProgramClause<'db>>,
 }
 
-impl<'db> TraitEnvBuilder<'db> {
+impl<'db> TraitClauseBuilder<'db> {
     fn new(db: &'db dyn Db) -> Self {
         Self {
             db,
@@ -95,12 +189,8 @@ impl<'db> TraitEnvBuilder<'db> {
         }
     }
 
-    fn finish(self, local_givens: Vec<Pred<'db>>) -> TraitEnvId<'db> {
-        TraitEnvId::new(
-            self.db,
-            BaseTraitEnvId::new(self.db, self.clauses),
-            LocalGivensId::new(self.db, unique_preds(local_givens)),
-        )
+    fn finish(self) -> TraitClauseSetId<'db> {
+        TraitClauseSetId::new(self.db, self.clauses)
     }
 
     fn add_builtin_instances(&mut self) {
