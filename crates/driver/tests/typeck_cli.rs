@@ -221,6 +221,73 @@ fn cli_accepts_warning_policy_and_diagnostic_rendering_flags() {
 }
 
 #[test]
+fn cli_warning_policy_default_prints_warnings() {
+    let dir = temp_dir("warning-policy-output");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    fs::write(
+        &input,
+        r#"data Flag = Off | On;
+
+function pick(x : Flag) -> word {
+  match x {
+  | _ => return 0;
+  | Flag.Off => return 1;
+  }
+}
+"#,
+    )
+    .expect("write source");
+
+    let default = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--unicode=never")
+        .arg("--diagnostic-format=short")
+        .arg(&input)
+        .output()
+        .expect("run driver");
+    assert!(
+        default.status.success(),
+        "default warning policy failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&default.stdout),
+        String::from_utf8_lossy(&default.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&default.stderr);
+    assert!(stderr.contains("warning[SC0303]"), "stderr:\n{stderr}");
+
+    let never = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--warnings=never")
+        .arg("--unicode=never")
+        .arg("--diagnostic-format=short")
+        .arg(&input)
+        .output()
+        .expect("run driver");
+    assert!(
+        never.status.success(),
+        "never warning policy failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&never.stdout),
+        String::from_utf8_lossy(&never.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&never.stderr);
+    assert!(
+        !stderr.contains("warning[SC0303]"),
+        "stderr should not contain warnings:\n{stderr}"
+    );
+
+    let deny = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--warnings=deny")
+        .arg("--unicode=never")
+        .arg("--diagnostic-format=short")
+        .arg(&input)
+        .output()
+        .expect("run driver");
+    assert_eq!(deny.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&deny.stderr);
+    assert!(stderr.contains("error[SC0303]"), "stderr:\n{stderr}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_prints_solver_diagnostic_with_obligation_span() {
     let stderr = driver_stderr(
         "solver",

@@ -359,10 +359,10 @@ fn sort_dedup_diagnostics(db: &dyn hir::Db, diagnostics: &mut Vec<Diagnostic>) {
 
 fn apply_warning_policy(diagnostics: &mut Vec<Diagnostic>, policy: WarningPolicy) {
     match policy {
-        WarningPolicy::Default | WarningPolicy::Never => {
+        WarningPolicy::Default | WarningPolicy::Always => {}
+        WarningPolicy::Never => {
             diagnostics.retain(|diagnostic| diagnostic.level != DiagnosticLevel::Warning);
         }
-        WarningPolicy::Always => {}
         WarningPolicy::Deny => {
             for diagnostic in diagnostics
                 .iter_mut()
