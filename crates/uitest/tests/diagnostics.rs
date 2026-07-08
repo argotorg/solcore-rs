@@ -1,6 +1,5 @@
 use std::{
     collections::BTreeMap,
-    fmt,
     path::{Path, PathBuf},
 };
 
@@ -120,15 +119,7 @@ fn specialize_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
     let mut diagnostics = output
         .diagnostics
         .iter()
-        .map(|diagnostic| {
-            let mut rendered =
-                Diagnostic::error(diagnostic.kind.to_string()).with_code("SPECIALIZE");
-            if let Some(span) = diagnostic.span {
-                rendered =
-                    rendered.with_primary_label(db, span, Some("specialization failed here"));
-            }
-            rendered
-        })
+        .map(|diagnostic| diagnostic.lower(db))
         .collect::<Vec<_>>();
     sort_dedup_diagnostics(db, &mut diagnostics);
     diagnostics
@@ -145,15 +136,7 @@ fn hull_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
     let mut diagnostics = output
         .diagnostics
         .iter()
-        .map(|diagnostic| {
-            let mut rendered =
-                Diagnostic::error(diagnostic.kind.to_string()).with_code("SPECIALIZE");
-            if let Some(span) = diagnostic.span {
-                rendered =
-                    rendered.with_primary_label(db, span, Some("specialization failed here"));
-            }
-            rendered
-        })
+        .map(|diagnostic| diagnostic.lower(db))
         .collect::<Vec<_>>();
     if !diagnostics.is_empty() {
         sort_dedup_diagnostics(db, &mut diagnostics);
@@ -161,28 +144,21 @@ fn hull_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
     }
 
     let emitted = hull::emit_module(db, &output.module, hull::EmitOptions::default());
-    diagnostics.extend(emitted.diagnostics.iter().map(|diagnostic| {
-        Diagnostic::error(format_hull_kind(&diagnostic.kind))
-            .with_code("HULL-EMIT")
-            .with_primary_label(db, diagnostic.span, Some("emit failed here"))
-    }));
+    diagnostics.extend(
+        emitted
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.lower(db)),
+    );
     if diagnostics.is_empty() {
         diagnostics.extend(
             hull::check_program_with_db(db, &emitted.program)
                 .iter()
-                .map(|diagnostic| {
-                    Diagnostic::error(format_hull_kind(&diagnostic.kind))
-                        .with_code("HULL-CHECK")
-                        .with_primary_label(db, diagnostic.span, Some("check failed here"))
-                }),
+                .map(|diagnostic| diagnostic.lower(db)),
         );
     }
     sort_dedup_diagnostics(db, &mut diagnostics);
     diagnostics
-}
-
-fn format_hull_kind(kind: &impl fmt::Debug) -> String {
-    format!("{kind:?}")
 }
 
 fn assert_failure_snapshot(db: &TestDb, case_dir: &Path, diagnostics: Vec<Diagnostic>) {

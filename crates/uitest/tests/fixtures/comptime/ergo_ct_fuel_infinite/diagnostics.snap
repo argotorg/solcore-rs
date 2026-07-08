@@ -3,143 +3,143 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ergo_ct_fuel_infinite/main.solc
 ---
-error[SPECIALIZE]: integer type survived comptime erasure: return type in 'main_spin_defca4534': comptime integer
+error[SC0411]: integer type survived comptime erasure: return type in 'main_spin_defca4534': comptime integer
  --> /main/main.solc:5:1
   |
 4 |
 5 | / function spin(comptime n : integer) -> comptime integer {
 6 | |   return spin(integerAdd(n, 1));
 7 | | }
-  | |_^ specialization failed here
+  | |_^ comptime-only type remains here
 8 |
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: parameter 'n': comptime integer
+error[SC0411]: integer type survived comptime erasure: parameter 'n': comptime integer
  --> /main/main.solc:5:15
   |
 4 |
 5 | function spin(comptime n : integer) -> comptime integer {
-  |               ^^^^^^^^^^^^^^^^^^^^ specialization failed here
+  |               ^^^^^^^^^^^^^^^^^^^^ comptime-only type remains here
 6 |   return spin(integerAdd(n, 1));
   |
 ---
 
-error[SPECIALIZE]: comptime evaluation fuel exhausted in main_spin_defca4534 at 256 unfold steps
+error[SC0410]: comptime evaluation fuel exhausted in main_spin_defca4534 at 256 unfold steps
  --> /main/main.solc:6:10
   |
 5 | function spin(comptime n : integer) -> comptime integer {
 6 |   return spin(integerAdd(n, 1));
-  |          ^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+  |          ^^^^^^^^^^^^^^^^^^^^^^ comptime fuel limit reached here
 7 | }
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: callee 'main_spin_defca4534': (comptime integer) -> comptime integer
+error[SC0411]: integer type survived comptime erasure: callee 'main_spin_defca4534': (comptime integer) -> comptime integer
  --> /main/main.solc:6:10
   |
 5 | function spin(comptime n : integer) -> comptime integer {
 6 |   return spin(integerAdd(n, 1));
-  |          ^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+  |          ^^^^^^^^^^^^^^^^^^^^^^ comptime-only type remains here
 7 | }
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime integer
+error[SC0411]: integer type survived comptime erasure: expression: comptime integer
  --> /main/main.solc:6:10
   |
 5 | function spin(comptime n : integer) -> comptime integer {
 6 |   return spin(integerAdd(n, 1));
-  |          ^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+  |          ^^^^^^^^^^^^^^^^^^^^^^ comptime-only type remains here
 7 | }
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: callee 'integerAdd': (comptime integer, integer) -> comptime integer
+error[SC0411]: integer type survived comptime erasure: callee 'integerAdd': (comptime integer, integer) -> comptime integer
  --> /main/main.solc:6:15
   |
 5 | function spin(comptime n : integer) -> comptime integer {
 6 |   return spin(integerAdd(n, 1));
-  |               ^^^^^^^^^^^^^^^^ specialization failed here
+  |               ^^^^^^^^^^^^^^^^ comptime-only type remains here
 7 | }
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime integer
+error[SC0411]: integer type survived comptime erasure: expression: comptime integer
  --> /main/main.solc:6:15
   |
 5 | function spin(comptime n : integer) -> comptime integer {
 6 |   return spin(integerAdd(n, 1));
-  |               ^^^^^^^^^^^^^^^^ specialization failed here
+  |               ^^^^^^^^^^^^^^^^ comptime-only type remains here
 7 | }
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime integer
+error[SC0411]: integer type survived comptime erasure: expression: comptime integer
  --> /main/main.solc:6:26
   |
 5 | function spin(comptime n : integer) -> comptime integer {
 6 |   return spin(integerAdd(n, 1));
-  |                          ^ specialization failed here
+  |                          ^ comptime-only type remains here
 7 | }
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: variable 'n': comptime integer
+error[SC0411]: integer type survived comptime erasure: variable 'n': comptime integer
  --> /main/main.solc:6:26
   |
 5 | function spin(comptime n : integer) -> comptime integer {
 6 |   return spin(integerAdd(n, 1));
-  |                          ^ specialization failed here
+  |                          ^ comptime-only type remains here
 7 | }
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: integer
+error[SC0411]: integer type survived comptime erasure: expression: integer
  --> /main/main.solc:6:29
   |
 5 | function spin(comptime n : integer) -> comptime integer {
 6 |   return spin(integerAdd(n, 1));
-  |                             ^ specialization failed here
+  |                             ^ comptime-only type remains here
 7 | }
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: callee 'wordFromInteger': (integer) -> word
+error[SC0411]: integer type survived comptime erasure: callee 'wordFromInteger': (integer) -> word
   --> /main/main.solc:11:12
    |
 10 |   function main() -> word {
 11 |     return wordFromInteger(spin(0));
-   |            ^^^^^^^^^^^^^^^^^^^^^^^^ specialization failed here
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^ comptime-only type remains here
 12 |   }
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: callee 'main_spin_defca4534': (comptime integer) -> integer
+error[SC0411]: integer type survived comptime erasure: callee 'main_spin_defca4534': (comptime integer) -> integer
   --> /main/main.solc:11:28
    |
 10 |   function main() -> word {
 11 |     return wordFromInteger(spin(0));
-   |                            ^^^^^^^ specialization failed here
+   |                            ^^^^^^^ comptime-only type remains here
 12 |   }
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: integer
+error[SC0411]: integer type survived comptime erasure: expression: integer
   --> /main/main.solc:11:28
    |
 10 |   function main() -> word {
 11 |     return wordFromInteger(spin(0));
-   |                            ^^^^^^^ specialization failed here
+   |                            ^^^^^^^ comptime-only type remains here
 12 |   }
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime integer
+error[SC0411]: integer type survived comptime erasure: expression: comptime integer
   --> /main/main.solc:11:33
    |
 10 |   function main() -> word {
 11 |     return wordFromInteger(spin(0));
-   |                                 ^ specialization failed here
+   |                                 ^ comptime-only type remains here
 12 |   }
    |

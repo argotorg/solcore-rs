@@ -3,45 +3,45 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/ergo_hull_string_return/main.solc
 ---
-error[HULL-EMIT]: UnsupportedDispatchEntry { signature: "main()", reason: "non-word ABI shape" }
+error[SC0420]: cannot lower type `string` to Hull
  --> /main/main.solc:4:3
   |
 3 |   contract Answer {
 4 | /   public function main() {
 5 | |     return "42";
 6 | |   }
-  | |___^ emit failed here
+  | |___^ unsupported type
 7 |   }
   |
 ---
 
-error[HULL-EMIT]: UnsupportedType { ty: "string" }
+error[SC0426]: cannot emit dispatcher entry `main()`: non-word ABI shape
  --> /main/main.solc:4:3
   |
 3 |   contract Answer {
 4 | /   public function main() {
 5 | |     return "42";
 6 | |   }
-  | |___^ emit failed here
+  | |___^ unsupported dispatcher entry
 7 |   }
   |
 ---
 
-error[HULL-EMIT]: UnsupportedLiteral { literal: "/"42/"" }
+error[SC0420]: cannot lower type `string` to Hull
  --> /main/main.solc:5:12
   |
 4 |   public function main() {
 5 |     return "42";
-  |            ^^^^ emit failed here
+  |            ^^^^ unsupported type
 6 |   }
   |
 ---
 
-error[HULL-EMIT]: UnsupportedType { ty: "string" }
+error[SC0421]: cannot lower literal `"42"` to Hull
  --> /main/main.solc:5:12
   |
 4 |   public function main() {
 5 |     return "42";
-  |            ^^^^ emit failed here
+  |            ^^^^ unsupported literal
 6 |   }
   |

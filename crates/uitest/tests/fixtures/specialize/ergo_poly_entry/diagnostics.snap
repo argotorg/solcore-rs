@@ -3,11 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/ergo_poly_entry/main.solc
 ---
-error[SPECIALIZE]: cannot specialize entry specialization: free type variable in (_) -> _
+error[SC0401]: cannot specialize entry specialization: free type variable in (_) -> _
  --> /main/main.solc:5:1
   |
 4 |
 5 | / forall a . function main(x : a) -> a {
 6 | |   return x;
 7 | | }
-  | |_^ specialization failed here
+  | |_^ type must be concrete here

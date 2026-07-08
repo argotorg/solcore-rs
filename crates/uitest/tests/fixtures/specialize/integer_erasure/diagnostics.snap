@@ -3,23 +3,23 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/integer_erasure/main.solc
 ---
-error[SPECIALIZE]: integer type survived comptime erasure: return type in 'main_C_main_d5c2bc27d': integer
+error[SC0411]: integer type survived comptime erasure: return type in 'main_C_main_d5c2bc27d': integer
  --> /main/main.solc:2:3
   |
 1 |   contract C {
 2 | /   public function main() -> integer {
 3 | |     return 1;
 4 | |   }
-  | |___^ specialization failed here
+  | |___^ comptime-only type remains here
 5 |   }
   |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: integer
+error[SC0411]: integer type survived comptime erasure: expression: integer
  --> /main/main.solc:3:12
   |
 2 |   public function main() -> integer {
 3 |     return 1;
-  |            ^ specialization failed here
+  |            ^ comptime-only type remains here
 4 |   }
   |

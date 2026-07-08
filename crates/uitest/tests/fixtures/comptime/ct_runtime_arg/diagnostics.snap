@@ -3,113 +3,113 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_runtime_arg/main.solc
 ---
-error[SPECIALIZE]: integer type survived comptime erasure: return type in 'main_ComptimeRuntimeArg_double_dcc88aa59': comptime word
+error[SC0411]: integer type survived comptime erasure: return type in 'main_ComptimeRuntimeArg_double_dcc88aa59': comptime word
   --> /main/main.solc:16:3
    |
 15 |   contract ComptimeRuntimeArg {
 16 | /   function double(comptime x : word) -> comptime word {
 17 | |     return x + x;
 18 | |   }
-   | |___^ specialization failed here
+   | |___^ comptime-only type remains here
 19 |     function main() -> word {
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: parameter 'x': comptime word
+error[SC0411]: integer type survived comptime erasure: parameter 'x': comptime word
   --> /main/main.solc:16:19
    |
 15 | contract ComptimeRuntimeArg {
 16 |   function double(comptime x : word) -> comptime word {
-   |                   ^^^^^^^^^^^^^^^^^ specialization failed here
+   |                   ^^^^^^^^^^^^^^^^^ comptime-only type remains here
 17 |     return x + x;
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+error[SC0406]: missing evidence: add
   --> /main/main.solc:17:12
    |
 16 |   function double(comptime x : word) -> comptime word {
 17 |     return x + x;
-   |            ^ specialization failed here
+   |            ^^^^^ class evidence required here
 18 |   }
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: variable 'x': comptime word
+error[SC0411]: integer type survived comptime erasure: expression: comptime word
   --> /main/main.solc:17:12
    |
 16 |   function double(comptime x : word) -> comptime word {
 17 |     return x + x;
-   |            ^ specialization failed here
+   |            ^ comptime-only type remains here
 18 |   }
    |
 ---
 
-error[SPECIALIZE]: missing evidence: add
+error[SC0411]: integer type survived comptime erasure: variable 'x': comptime word
   --> /main/main.solc:17:12
    |
 16 |   function double(comptime x : word) -> comptime word {
 17 |     return x + x;
-   |            ^^^^^ specialization failed here
+   |            ^ comptime-only type remains here
 18 |   }
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+error[SC0411]: integer type survived comptime erasure: expression: comptime word
   --> /main/main.solc:17:16
    |
 16 |   function double(comptime x : word) -> comptime word {
 17 |     return x + x;
-   |                ^ specialization failed here
+   |                ^ comptime-only type remains here
 18 |   }
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: variable 'x': comptime word
+error[SC0411]: integer type survived comptime erasure: variable 'x': comptime word
   --> /main/main.solc:17:16
    |
 16 |   function double(comptime x : word) -> comptime word {
 17 |     return x + x;
-   |                ^ specialization failed here
+   |                ^ comptime-only type remains here
 18 |   }
    |
 ---
 
-error[SPECIALIZE]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'main_ComptimeRuntimeArg_double_dcc88aa59'
+error[SC0409]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'main_ComptimeRuntimeArg_double_dcc88aa59'
   --> /main/main.solc:20:12
    |
 19 |   function main() -> word {
 20 |     return double(sloadWord());
-   |            ^^^^^^^^^^^^^^^^^^^ specialization failed here
+   |            ^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
 21 |   }
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: callee 'main_ComptimeRuntimeArg_double_dcc88aa59': (comptime word) -> word
+error[SC0411]: integer type survived comptime erasure: callee 'main_ComptimeRuntimeArg_double_dcc88aa59': (comptime word) -> word
   --> /main/main.solc:20:12
    |
 19 |   function main() -> word {
 20 |     return double(sloadWord());
-   |            ^^^^^^^^^^^^^^^^^^^ specialization failed here
+   |            ^^^^^^^^^^^^^^^^^^^ comptime-only type remains here
 21 |   }
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: callee 'main_sloadWord_d96e43b9c': () -> comptime word
+error[SC0411]: integer type survived comptime erasure: callee 'main_sloadWord_d96e43b9c': () -> comptime word
   --> /main/main.solc:20:19
    |
 19 |   function main() -> word {
 20 |     return double(sloadWord());
-   |                   ^^^^^^^^^^^ specialization failed here
+   |                   ^^^^^^^^^^^ comptime-only type remains here
 21 |   }
    |
 ---
 
-error[SPECIALIZE]: integer type survived comptime erasure: expression: comptime word
+error[SC0411]: integer type survived comptime erasure: expression: comptime word
   --> /main/main.solc:20:19
    |
 19 |   function main() -> word {
 20 |     return double(sloadWord());
-   |                   ^^^^^^^^^^^ specialization failed here
+   |                   ^^^^^^^^^^^ comptime-only type remains here
 21 |   }
    |

@@ -3,21 +3,21 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/unsupported_dispatch_storage/main.solc
 ---
-error[HULL-CHECK]: UndefinedVariable { name: "content" }
+error[SC0430]: undefined Hull variable `content`
   --> /main/main.solc:11:5
    |
 10 |   public function set(value: memory(bytes)) -> () {
 11 |     content = value;
-   |     ^^^^^^^ check failed here
+   |     ^^^^^^^ undefined variable
 12 |   }
    |
 ---
 
-error[HULL-CHECK]: UndefinedVariable { name: "content" }
+error[SC0430]: undefined Hull variable `content`
   --> /main/main.solc:15:12
    |
 14 |   public function get() -> memory(bytes) {
 15 |     return content;
-   |            ^^^^^^^ check failed here
+   |            ^^^^^^^ undefined variable
 16 |   }
    |

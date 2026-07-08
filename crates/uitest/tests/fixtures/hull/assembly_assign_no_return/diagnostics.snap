@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/assembly_assign_no_return/main.solc
 ---
-error[SPECIALIZE]: cannot specialize entry specialization: free type variable in () -> _
+error[SC0401]: cannot specialize entry specialization: free type variable in () -> _
   --> /main/main.solc:3:3
    |
  2 |   contract Test {
@@ -14,6 +14,6 @@ error[SPECIALIZE]: cannot specialize entry specialization: free type variable in
  7 | |     }
  8 | |     return x;
  9 | |   }
-   | |___^ specialization failed here
+   | |___^ type must be concrete here
 10 |   }
    |

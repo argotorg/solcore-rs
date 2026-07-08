@@ -3,13 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/unsupported_public_fallback_return/main.solc
 ---
-error[HULL-EMIT]: UnsupportedDispatchEntry { signature: "fallback", reason: "fallback ABI must be unit -> unit" }
+error[SC0426]: cannot emit dispatcher entry `fallback`: fallback ABI must be unit -> unit
  --> /main/main.solc:2:3
   |
 1 |   contract C {
 2 | /   fallback() -> word {
 3 | |     return 1;
 4 | |   }
-  | |___^ emit failed here
+  | |___^ unsupported dispatcher entry
 5 |   }
   |

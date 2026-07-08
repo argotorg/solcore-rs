@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_asm_ret/main.solc
 ---
-error[SPECIALIZE]: integer type survived comptime erasure: return type in 'main_ComptimeAsmRet_loadFromStorage_dc6783c5c': comptime word
+error[SC0411]: integer type survived comptime erasure: return type in 'main_ComptimeAsmRet_loadFromStorage_dc6783c5c': comptime word
   --> /main/main.solc:7:3
    |
  6 |   contract ComptimeAsmRet {
@@ -14,16 +14,16 @@ error[SPECIALIZE]: integer type survived comptime erasure: return type in 'main_
 11 | |     }
 12 | |     return v;
 13 | |   }
-   | |___^ specialization failed here
+   | |___^ comptime-only type remains here
 14 |     function main() -> word {
    |
 ---
 
-error[SPECIALIZE]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
+error[SC0409]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
   --> /main/main.solc:12:5
    |
 11 |     }
 12 |     return v;
-   |     ^^^^^^^^^ specialization failed here
+   |     ^^^^^^^^^ comptime evaluation failed here
 13 |   }
    |
