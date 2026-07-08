@@ -1,16 +1,16 @@
 ---
 source: crates/test-utils/src/lib.rs
 expression: rendered
-input_file: crates/uitest/tests/fixtures/solver/local_given_rigid_var_unsatisfied/main.solc
+input_file: crates/uitest/tests/fixtures/typeck/let_unannotated_literal/main.solc
 ---
 error[SC0299]: Ambiguous infered type
- --> /main/main.solc:5:42
+ --> /main/main.solc:1:22
   |
-4 |
-5 |   forall a . a:C => function bad() -> word {
-  |  __________________________________________^
-6 | |   return C.c(1);
-7 | | }
+1 |   function f() -> word {
+  |  ______________________^
+2 | |   let y = 7;
+3 | |   return 0;
+4 | | }
   | |_^ ambiguous inferred type
   |
   = note: forall _ . _:Int => () -> word

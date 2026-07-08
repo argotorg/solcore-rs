@@ -519,6 +519,14 @@ pub enum TypeckDiagnostic {
         /// Type snapshot containing the variable.
         ty: String,
     },
+    /// `SC0299`: inferred constraints mention variables not determined by the
+    /// inferred function type.
+    AmbiguousInferredType {
+        /// Source span for the ambiguous definition.
+        span: LabelSpan,
+        /// Generalized inferred type snapshot.
+        scheme: String,
+    },
     /// `SC0203`: function, constructor, or match arm arity mismatch.
     WrongArity {
         /// Source span for the call, constructor, signature, or syntactic
@@ -926,7 +934,7 @@ struct InferCtx<'db> {
     trait_env: Option<TraitEnvId<'db>>,
     partial_data: Vec<(String, Vec<String>)>,
     closure_sigs: FxHashMap<DefId<'db>, ClosureSig<'db>>,
-    integer_literal_vars: Vec<TyVid<'db>>,
+    integer_literal_pattern_vars: Vec<TyVid<'db>>,
     poisoned_exprs: FxHashSet<(FuncBody<'db>, Id<Expr<'db>>)>,
     poisoned_pats: FxHashSet<(FuncBody<'db>, Id<Pat<'db>>)>,
     diagnostics: Vec<TypeckDiagnostic>,
@@ -996,6 +1004,13 @@ impl TypeckDiagnostic {
                 Diagnostic::error(format!("recursive type: {var} occurs in {ty}"))
                     .with_code("SC0202")
                     .with_primary_label_span(span.clone(), Some("recursive type required here"))
+            }
+            TypeckDiagnostic::AmbiguousInferredType { span, scheme } => {
+                Diagnostic::error("Ambiguous infered type")
+                    .with_code("SC0299")
+                    .with_primary_label_span(span.clone(), Some("ambiguous inferred type"))
+                    .with_note(scheme.clone())
+                    .with_note("add a type signature to fix the ambiguous type variable")
             }
             TypeckDiagnostic::WrongArity {
                 span,
@@ -1833,7 +1848,7 @@ impl<'db> InferCtx<'db> {
             trait_env: ctx.trait_env,
             partial_data: ctx.partial_data,
             closure_sigs: FxHashMap::default(),
-            integer_literal_vars: Vec::new(),
+            integer_literal_pattern_vars: Vec::new(),
             poisoned_exprs: FxHashSet::default(),
             poisoned_pats: FxHashSet::default(),
             diagnostics: Vec::new(),
@@ -1841,12 +1856,16 @@ impl<'db> InferCtx<'db> {
     }
 
     fn finish(mut self) -> InferenceResult<'db> {
-        self.default_integer_literals();
         let solved = if let Some(trait_env) = self.trait_env {
             self.solve_pending_obligations(trait_env)
         } else {
             ObligationSolveOutput::default()
         };
+        self.default_integer_literal_patterns();
+        if self.diagnostics.is_empty() {
+            self.check_ambiguous_integer_literals();
+        }
+        self.default_root_integer_literals();
         let poisoned_exprs = self.poisoned_exprs.clone();
         let poisoned_pats = self.poisoned_pats.clone();
         let root_scheme = self.inferred_root_scheme();
@@ -3369,7 +3388,6 @@ impl<'db> InferCtx<'db> {
             LitKind::Number(_) | LitKind::Hex(_) => {
                 let vid = self.engine.fresh_vid();
                 let ty = InferTy::Var(vid);
-                self.integer_literal_vars.push(vid);
                 self.pending.push(PendingObligation {
                     class: ClassId::Builtin(BuiltinClassId::Int),
                     main: ty.clone(),
@@ -3931,7 +3949,7 @@ impl<'db> InferCtx<'db> {
             LitKind::Number(_) | LitKind::Hex(_) => {
                 let vid = self.engine.fresh_vid();
                 let ty = InferTy::Var(vid);
-                self.integer_literal_vars.push(vid);
+                self.integer_literal_pattern_vars.push(vid);
                 self.pending.push(PendingObligation {
                     class: ClassId::Builtin(BuiltinClassId::Int),
                     main: ty.clone(),
@@ -5588,6 +5606,8 @@ impl<'db> InferCtx<'db> {
             }
         }
 
+        self.default_integer_literals_with_non_int_obligations(&pending, &unresolved);
+
         // Final phase: no further improvement is possible, so report the
         // remaining deferred obligations exactly as the single-pass solver
         // did, in ascending obligation order.
@@ -5619,6 +5639,47 @@ impl<'db> InferCtx<'db> {
         }
     }
 
+    fn default_integer_literals_with_non_int_obligations(
+        &mut self,
+        pending: &[PendingObligation<'db>],
+        unresolved: &[usize],
+    ) {
+        let mut constrained_vars = FxHashSet::default();
+        for &index in unresolved {
+            let obligation = &pending[index];
+            if obligation.class == ClassId::Builtin(BuiltinClassId::Int) {
+                continue;
+            }
+            self.collect_infer_vars(obligation.main.clone(), &mut constrained_vars);
+            for arg in &obligation.args {
+                self.collect_infer_vars(arg.clone(), &mut constrained_vars);
+            }
+        }
+        if constrained_vars.is_empty() {
+            return;
+        }
+
+        let word = self.engine.from_ty(Ty::word(self.db));
+        for &index in unresolved {
+            let obligation = &pending[index];
+            if obligation.class != ClassId::Builtin(BuiltinClassId::Int)
+                || !obligation.args.is_empty()
+                || !matches!(
+                    obligation.source,
+                    ObligationSource::IntegerLiteral { .. }
+                        | ObligationSource::IntegerLiteralPattern { .. }
+                )
+            {
+                continue;
+            }
+            let mut vars = FxHashSet::default();
+            self.collect_infer_vars(obligation.main.clone(), &mut vars);
+            if vars.iter().any(|var| constrained_vars.contains(var)) {
+                self.unify(obligation.main.clone(), word.clone());
+            }
+        }
+    }
+
     /// Attempts a single pending obligation.
     ///
     /// When `defer_unsolved` is true (improvement rounds), failures on goals
@@ -5643,6 +5704,13 @@ impl<'db> InferCtx<'db> {
             || self.pending_obligation_has_error(pending)
         {
             return ObligationAttempt::Settled;
+        }
+        if self.open_integer_obligation(pending) {
+            return if defer_unsolved {
+                ObligationAttempt::Deferred
+            } else {
+                ObligationAttempt::Settled
+            };
         }
         if let Some(proof) = self.solve_local_closure_obligation(pending) {
             record_obligation_evidence(index, pending, proof, evidence, call_site_evidence);
@@ -5833,6 +5901,15 @@ impl<'db> InferCtx<'db> {
                 .any(|arg| self.infer_ty_contains_error(arg))
     }
 
+    fn open_integer_obligation(&mut self, pending: &PendingObligation<'db>) -> bool {
+        pending.class == ClassId::Builtin(BuiltinClassId::Int)
+            && pending.args.is_empty()
+            && matches!(
+                self.engine.resolve(pending.main.clone()),
+                InferTy::Unknown | InferTy::Var(_)
+            )
+    }
+
     fn infer_ty_contains_error(&mut self, ty: InferTy<'db>) -> bool {
         match self.engine.resolve(ty) {
             InferTy::Error => true,
@@ -5955,12 +6032,119 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn default_integer_literals(&mut self) {
+    fn default_integer_literal_patterns(&mut self) {
         let word = self.engine.from_ty(Ty::word(self.db));
-        for var in self.integer_literal_vars.clone() {
+        for var in self.integer_literal_pattern_vars.clone() {
             if matches!(self.engine.resolve(InferTy::Var(var)), InferTy::Var(_)) {
                 self.unify(InferTy::Var(var), word.clone());
             }
+        }
+    }
+
+    fn check_ambiguous_integer_literals(&mut self) {
+        let root_ty = self.root_infer_ty();
+        let mut root_vars = FxHashSet::default();
+        self.collect_infer_vars(root_ty.clone(), &mut root_vars);
+
+        let mut ambiguous = Vec::new();
+        for pending in self.pending.clone() {
+            if pending.class != ClassId::Builtin(BuiltinClassId::Int)
+                || pending.args.len() != 0
+                || matches!(
+                    pending.source,
+                    ObligationSource::IntegerLiteralPattern { .. }
+                )
+                || self.obligation_source_poisoned(&pending.source)
+                || self.pending_obligation_has_error(&pending)
+            {
+                continue;
+            }
+            let mut vars = FxHashSet::default();
+            self.collect_infer_vars(pending.main.clone(), &mut vars);
+            if vars.is_empty() || vars.iter().all(|var| root_vars.contains(var)) {
+                continue;
+            }
+            ambiguous.push(self.engine.display(pending.main));
+        }
+
+        ambiguous.sort();
+        ambiguous.dedup();
+        if ambiguous.is_empty() {
+            return;
+        }
+
+        let preds = ambiguous
+            .into_iter()
+            .map(|main| format!("{main}:Int"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let scheme = format!("forall _ . {preds} => {}", self.engine.display(root_ty));
+        self.diagnostics
+            .push(TypeckDiagnostic::AmbiguousInferredType {
+                span: self.body_label_span(self.root_body),
+                scheme,
+            });
+    }
+
+    fn default_root_integer_literals(&mut self) {
+        let root_ty = self.root_infer_ty();
+        let mut root_vars = FxHashSet::default();
+        self.collect_infer_vars(root_ty, &mut root_vars);
+        if root_vars.is_empty() {
+            return;
+        }
+
+        let word = self.engine.from_ty(Ty::word(self.db));
+        for pending in self.pending.clone() {
+            if pending.class != ClassId::Builtin(BuiltinClassId::Int)
+                || !pending.args.is_empty()
+                || self.obligation_source_poisoned(&pending.source)
+                || self.pending_obligation_has_error(&pending)
+            {
+                continue;
+            }
+            let mut vars = FxHashSet::default();
+            self.collect_infer_vars(pending.main.clone(), &mut vars);
+            if !vars.is_empty() && vars.iter().all(|var| root_vars.contains(var)) {
+                self.unify(pending.main.clone(), word.clone());
+            }
+        }
+    }
+
+    fn root_infer_ty(&mut self) -> InferTy<'db> {
+        let params = (0..self.root_param_count)
+            .map(|index| {
+                self.param_tys
+                    .get(&(self.root_body, index as u32))
+                    .cloned()
+                    .unwrap_or(InferTy::Error)
+            })
+            .collect::<Vec<_>>();
+        let ret = self.return_stack.first().cloned().unwrap_or(InferTy::Error);
+        InferTy::Function {
+            params,
+            ret: Box::new(ret),
+        }
+    }
+
+    fn collect_infer_vars(&mut self, ty: InferTy<'db>, out: &mut FxHashSet<TyVid<'db>>) {
+        match self.engine.resolve(ty) {
+            InferTy::Var(var) => {
+                out.insert(var);
+            }
+            InferTy::Named { args, .. } | InferTy::Tuple(args) => {
+                for arg in args {
+                    self.collect_infer_vars(arg, out);
+                }
+            }
+            InferTy::Function { params, ret } => {
+                for param in params {
+                    self.collect_infer_vars(param, out);
+                }
+                self.collect_infer_vars(*ret, out);
+            }
+            InferTy::Comptime(inner) => self.collect_infer_vars(*inner, out),
+            InferTy::Error | InferTy::Unknown | InferTy::BoundVar(_) => {}
         }
     }
 }
@@ -6845,6 +7029,13 @@ struct TypeckDiagnosticCollector<'db> {
     env: nameres::ModuleEnv<'db>,
     item_resolutions: hir_nameres::ItemResolutionMap<'db>,
     diagnostics: Vec<AnyDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LatentComptimeParam {
+    index: usize,
+    function: String,
+    param: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7873,7 +8064,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         );
         let ctx = BodyTyContext::new(
             self.hir_module,
-            body_map,
+            body_map.clone(),
             type_vars,
             lowered.params,
             Some(lowered.ret),
@@ -7882,11 +8073,121 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         .with_entry_module(self.module)
         .with_trait_env(trait_env)
         .with_partial_data(partial_data_entries(&self.env));
+        let result = infer_body(self.db, body, ctx);
+        self.latent_comptime_call_diagnostics(body, &body_map, &result);
         self.diagnostics.extend(
-            body_ty_diagnostics(self.db, body, ctx)
+            result
+                .diagnostics
                 .iter()
                 .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
         );
+    }
+
+    fn latent_comptime_call_diagnostics(
+        &mut self,
+        body: FuncBody<'db>,
+        body_map: &hir_nameres::BodyResolutionMap<'db>,
+        result: &InferenceResult<'db>,
+    ) {
+        for (call_expr, expr) in body.exprs(self.db).iter() {
+            let ExprKind::Call { callee, args } = &expr.kind else {
+                continue;
+            };
+            let Some(hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Function,
+            }) = body_expr_resolution(body_map, body, *callee)
+            else {
+                continue;
+            };
+            let latent = self.latent_comptime_params(*def);
+            if latent.is_empty() {
+                continue;
+            }
+            for latent_param in latent {
+                let Some(arg) = args.get(latent_param.index).copied() else {
+                    continue;
+                };
+                let Some(arg_ty) = result.expr_ty(body, arg) else {
+                    continue;
+                };
+                if !ty_is_closed_concrete(self.db, arg_ty)
+                    || ty_requires_comptime(self.db, arg_ty)
+                    || expr_is_literal_comptime(self.db, body, arg)
+                {
+                    continue;
+                }
+                self.diagnostics.push(AnyDiagnostic::Typeck(
+                    TypeckDiagnostic::RuntimeToComptimeParam {
+                        span: LabelSpan::from_span(
+                            self.db,
+                            body.exprs(self.db).get(arg).span(self.db),
+                        ),
+                        function: latent_param.function,
+                        param: latent_param.param,
+                    }
+                    .lower(),
+                ));
+                let _ = call_expr;
+            }
+        }
+    }
+
+    fn latent_comptime_params(&self, def: DefId<'db>) -> Vec<LatentComptimeParam> {
+        let Some(info) = self.function_lookup(def) else {
+            return Vec::new();
+        };
+        let Some(body) = info.function.body(self.db) else {
+            return Vec::new();
+        };
+        let module = module_for_def(self.db, self.module, def)
+            .and_then(|module| module_hir(self.db, module))
+            .unwrap_or(self.hir_module);
+        let Some(body_map) =
+            body_resolution_for_function_with_imports(self.db, module, &info, Some(&self.env))
+        else {
+            return Vec::new();
+        };
+        if !body_map.diagnostics.is_empty() {
+            return Vec::new();
+        }
+        let ComptimeCheckResult {
+            diagnostics: _,
+            obligations,
+        } = ComptimeChecker::new(self.db, self.module, module, &body_map, info.function)
+            .check_function(info.function, body);
+        let param_names = param_names(self.db, info.function.sig(self.db).params.atom());
+        let mut out = Vec::new();
+        for obligation in obligations {
+            let ComptimeObligationKind::CallParam {
+                function, param, ..
+            } = obligation.kind
+            else {
+                continue;
+            };
+            let ExprKind::Ident(name) = &body.exprs(self.db).get(obligation.expr).kind else {
+                continue;
+            };
+            let name = (*name.atom()).text(self.db);
+            let Some(index) = param_names.iter().position(|param| param == name) else {
+                continue;
+            };
+            out.push(LatentComptimeParam {
+                index,
+                function,
+                param,
+            });
+        }
+        out.sort_by_key(|param| param.index);
+        out.dedup();
+        out
+    }
+
+    fn function_lookup(&self, def: DefId<'db>) -> Option<FunctionLookup<'db>> {
+        let module = module_for_def(self.db, self.module, def)
+            .and_then(|module| module_hir(self.db, module))
+            .unwrap_or(self.hir_module);
+        find_function_info(self.db, module, def)
     }
 
     fn contract_field_initializers(
@@ -8470,6 +8771,66 @@ fn param_name<'db>(db: &'db dyn HirDb, param: &FuncParam<'db>) -> Option<&'db st
             Some((*name.atom()).text(db))
         }
         FuncParam::Error { .. } => None,
+    }
+}
+
+fn body_expr_resolution<'a, 'db>(
+    body_map: &'a hir_nameres::BodyResolutionMap<'db>,
+    body: FuncBody<'db>,
+    expr: Id<Expr<'db>>,
+) -> Option<&'a hir_nameres::Resolution<'db>> {
+    body_map
+        .exprs
+        .iter()
+        .find(|entry| entry.body == body && entry.expr == expr)
+        .map(|entry| &entry.resolution)
+}
+
+fn ty_is_closed_concrete<'db>(db: &'db dyn HirDb, ty: Ty<'db>) -> bool {
+    match ty.kind(db) {
+        TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => false,
+        TyKind::Named { args, .. } | TyKind::Tuple(args) => {
+            args.iter().all(|arg| ty_is_closed_concrete(db, *arg))
+        }
+        TyKind::Function { params, ret } => {
+            params.iter().all(|param| ty_is_closed_concrete(db, *param))
+                && ty_is_closed_concrete(db, *ret)
+        }
+        TyKind::Comptime(inner) => ty_is_closed_concrete(db, *inner),
+    }
+}
+
+fn expr_is_literal_comptime<'db>(
+    db: &'db dyn HirDb,
+    body: FuncBody<'db>,
+    expr: Id<Expr<'db>>,
+) -> bool {
+    match &body.exprs(db).get(expr).kind {
+        ExprKind::Lit(_) | ExprKind::Proxy { .. } => true,
+        ExprKind::Tuple(elems) | ExprKind::DotCtor { args: elems, .. } => elems
+            .iter()
+            .all(|elem| expr_is_literal_comptime(db, body, *elem)),
+        ExprKind::TypeAnnot { expr, .. } | ExprKind::UnaryOp { expr, .. } => {
+            expr_is_literal_comptime(db, body, *expr)
+        }
+        ExprKind::BinOp { lhs, rhs, .. } => {
+            expr_is_literal_comptime(db, body, *lhs) && expr_is_literal_comptime(db, body, *rhs)
+        }
+        ExprKind::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            expr_is_literal_comptime(db, body, *cond)
+                && expr_is_literal_comptime(db, body, *then_expr)
+                && expr_is_literal_comptime(db, body, *else_expr)
+        }
+        ExprKind::Ident(_)
+        | ExprKind::Call { .. }
+        | ExprKind::Field { .. }
+        | ExprKind::Index { .. }
+        | ExprKind::Lambda { .. }
+        | ExprKind::Error => false,
     }
 }
 
