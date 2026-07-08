@@ -418,7 +418,7 @@ fn maybe_emit_backend_outputs(
             specialized
                 .diagnostics
                 .iter()
-                .map(|diagnostic| format!("  {:?}", diagnostic.kind))
+                .map(|diagnostic| format!("  {}", diagnostic.kind))
                 .collect::<Vec<_>>()
                 .join("\n")
         ));

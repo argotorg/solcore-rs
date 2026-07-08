@@ -649,6 +649,13 @@ pub enum TypeckDiagnostic {
         /// Actual argument count.
         actual: usize,
     },
+    /// `SC0243`: type alias expansion exceeded the normalizer's node budget.
+    TypeAliasExpansionLimit {
+        /// Source span for the alias declaration or use.
+        span: LabelSpan,
+        /// Maximum number of type nodes visited while expanding aliases.
+        limit: usize,
+    },
     /// `SC0217`: a class predicate used the wrong number of weak arguments.
     ClassArity {
         /// Source span for the class predicate.
@@ -1067,6 +1074,11 @@ impl TypeckDiagnostic {
             ))
             .with_code("SC0216")
             .with_primary_label_span(span.clone(), Some("type alias arity mismatch")),
+            TypeckDiagnostic::TypeAliasExpansionLimit { span, limit } => Diagnostic::error(
+                format!("type synonym expansion exceeded {limit} type nodes"),
+            )
+            .with_code("SC0243")
+            .with_primary_label_span(span.clone(), Some("type alias expansion starts here")),
             TypeckDiagnostic::ClassArity {
                 span,
                 class,
@@ -1198,6 +1210,9 @@ fn alias_error_to_diagnostic(error: AliasError) -> TypeckDiagnostic {
             expected,
             actual,
         },
+        AliasError::ExpansionLimit { span, limit } => {
+            TypeckDiagnostic::TypeAliasExpansionLimit { span, limit }
+        }
     }
 }
 
@@ -6203,12 +6218,20 @@ pub fn module_typeck_diagnostics<'db>(
         .iter()
         .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower()))
         .collect::<Vec<_>>();
+    let alias_errors = type_alias_normalization_errors(db, hir_module, &item_resolutions);
+    let alias_expansion_limit = alias_errors
+        .iter()
+        .any(|error| matches!(error, AliasError::ExpansionLimit { .. }));
     diagnostics.extend(
-        type_alias_normalization_errors(db, hir_module, &item_resolutions)
+        alias_errors
             .into_iter()
             .map(alias_error_to_diagnostic)
             .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
     );
+    if alias_expansion_limit {
+        sort_dedup_typeck_diagnostics(db, &mut diagnostics);
+        return diagnostics;
+    }
     diagnostics.extend(
         module_contract_diagnostics(db, hir_module)
             .into_iter()

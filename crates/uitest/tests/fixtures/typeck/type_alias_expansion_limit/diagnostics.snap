@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/type_alias_expansion_limit/main.solc
+---
+error[SC0243]: type synonym expansion exceeded 16384 type nodes
+  --> /main/main.solc:14:6
+   |
+13 | type T12 = (T11, T11);
+14 | type T13 = (T12, T12);
+   |      ^^^ type alias expansion starts here
+15 |
+   |

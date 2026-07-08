@@ -51,6 +51,7 @@ use crate::{
 pub struct SpecializeOptions {
     pub max_instantiations: usize,
     pub max_depth: usize,
+    pub max_type_nodes: usize,
     pub eval_fuel: usize,
 }
 
@@ -59,6 +60,7 @@ impl Default for SpecializeOptions {
         Self {
             max_instantiations: 2048,
             max_depth: 128,
+            max_type_nodes: 4096,
             eval_fuel: 256,
         }
     }
@@ -83,6 +85,7 @@ pub enum SpecializeDiagnosticKind<'db> {
     FreeTypeVariable { context: String, ty: String },
     InstantiationFuelExhausted { limit: usize },
     InstantiationDepthExceeded { limit: usize },
+    TypeSizeExceeded { limit: usize },
     MissingBody { function: DefId<'db> },
     MissingResolution { context: String },
     MissingEvidence { context: String },
@@ -647,6 +650,9 @@ impl<'db> Driver<'db> {
         if let Some(name) = self.specs.get(&key) {
             return name.clone();
         }
+        if !self.ensure_specialization_type_size(&[key.ty], None) {
+            return key.base_name;
+        }
         if self.specs.len() >= self.options.max_instantiations {
             self.diagnostics.push(SpecializeDiagnostic {
                 kind: SpecializeDiagnosticKind::InstantiationFuelExhausted {
@@ -1014,6 +1020,27 @@ impl<'db> Driver<'db> {
         }
     }
 
+    fn ensure_specialization_type_size(
+        &mut self,
+        tys: &[Ty<'db>],
+        span: Option<Span<'db>>,
+    ) -> bool {
+        if tys
+            .iter()
+            .any(|ty| ty_node_budget_exceeded(self.db, *ty, self.options.max_type_nodes))
+        {
+            self.diagnostics.push(SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::TypeSizeExceeded {
+                    limit: self.options.max_type_nodes,
+                },
+                span,
+            });
+            false
+        } else {
+            true
+        }
+    }
+
     fn mono_ty(&mut self, ty: Ty<'db>, context: &str, span: Span<'db>) -> Option<MonoTy<'db>> {
         self.ensure_closed(ty, context, Some(span))
             .then(|| MonoTy::new_unchecked(ty))
@@ -1040,6 +1067,11 @@ impl<'db> Driver<'db> {
                 let subst = TySubst::from_args(args);
                 let head = subst.apply_pred(self.db, info.head);
                 let (class_name, head_tys) = class_method_name_parts(self.db, head);
+                if !self.ensure_specialization_type_size(&head_tys, Some(call_span))
+                    || !self.ensure_specialization_type_size(&[target_ty], Some(call_span))
+                {
+                    return None;
+                }
                 let base = specialize_name(
                     self.db,
                     &format!("{class_name}_{method}"),
@@ -1293,6 +1325,9 @@ impl<'db> Driver<'db> {
         };
         if let Some(name) = self.synthetic.get(&key) {
             return Some(name.clone());
+        }
+        if !self.ensure_specialization_type_size(&[main, rep, target_ty], Some(span)) {
+            return None;
         }
         let name = specialize_name(self.db, &format!("Generic_{method}"), &[main, rep]);
         self.synthetic.insert(key.clone(), name.clone());
@@ -2423,6 +2458,14 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         callee_ty: Ty<'db>,
         span: Span<'db>,
     ) -> String {
+        if !self
+            .driver
+            .ensure_specialization_type_size(&[callee_ty], Some(span))
+        {
+            return def
+                .name(self.driver.db)
+                .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)));
+        }
         if let Some(info) = self.driver.functions.get(&def).cloned() {
             let lowered = self.driver.lower_normalized_function(&info);
             let mut subst = TySubst::default();
@@ -2438,6 +2481,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             );
             let args = subst.specialization_args();
             let base = self.driver.source_base_name(&info);
+            if !self
+                .driver
+                .ensure_specialization_type_size(&args, Some(span))
+            {
+                return base;
+            }
             let name = specialize_name(self.driver.db, &base, &args);
             let key = SpecKey {
                 def,
@@ -3315,6 +3364,34 @@ fn ty_is_closed<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
     }
 }
 
+fn ty_node_budget_exceeded<'db>(db: &'db dyn Db, ty: Ty<'db>, limit: usize) -> bool {
+    let mut remaining = limit;
+    !consume_ty_node_budget(db, ty, &mut remaining)
+}
+
+fn consume_ty_node_budget<'db>(db: &'db dyn Db, ty: Ty<'db>, remaining: &mut usize) -> bool {
+    if *remaining == 0 {
+        return false;
+    }
+    *remaining -= 1;
+    match ty.kind(db) {
+        TyKind::Named { args, .. } => args
+            .iter()
+            .all(|arg| consume_ty_node_budget(db, *arg, remaining)),
+        TyKind::Function { params, ret } => {
+            params
+                .iter()
+                .all(|param| consume_ty_node_budget(db, *param, remaining))
+                && consume_ty_node_budget(db, *ret, remaining)
+        }
+        TyKind::Tuple(elems) => elems
+            .iter()
+            .all(|elem| consume_ty_node_budget(db, *elem, remaining)),
+        TyKind::Comptime(inner) => consume_ty_node_budget(db, *inner, remaining),
+        TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => true,
+    }
+}
+
 fn pred_is_closed<'db>(db: &'db dyn Db, pred: Pred<'db>) -> bool {
     match pred.kind(db) {
         PredKind::InClass { main, args, .. } => {
@@ -3701,6 +3778,9 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
             }
             Self::InstantiationDepthExceeded { limit } => {
                 write!(f, "specialization depth exceeded at {limit}")
+            }
+            Self::TypeSizeExceeded { limit } => {
+                write!(f, "specialization type size exceeded at {limit} type nodes")
             }
             Self::MissingBody { function } => write!(f, "missing body for {function:?}"),
             Self::MissingResolution { context } => write!(f, "missing resolution: {context}"),

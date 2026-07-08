@@ -19,6 +19,9 @@ use crate::{
     UserTyCtorKind,
 };
 
+/// Maximum number of type nodes visited while normalizing one alias-rooted type.
+const DEFAULT_ALIAS_NORMALIZATION_NODE_BUDGET: usize = 16_384;
+
 /// Alias-normalization diagnostic independent of the final typecheck surface.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AliasError {
@@ -39,6 +42,13 @@ pub enum AliasError {
         expected: usize,
         /// Actual argument count.
         actual: usize,
+    },
+    /// Type-alias expansion exceeded the normalizer's node budget.
+    ExpansionLimit {
+        /// Source span for the alias declaration or use.
+        span: LabelSpan,
+        /// Maximum number of type nodes visited while expanding aliases.
+        limit: usize,
     },
 }
 
@@ -183,6 +193,8 @@ pub struct AliasNormalizer<'a, 'db> {
     item_resolutions: &'a hir_nameres::ItemResolutionMap<'db>,
     expanding: Vec<DefId<'db>>,
     errors: Vec<AliasError>,
+    remaining_nodes: usize,
+    budget_exhausted: bool,
 }
 
 impl<'a, 'db> AliasNormalizer<'a, 'db> {
@@ -198,6 +210,8 @@ impl<'a, 'db> AliasNormalizer<'a, 'db> {
             item_resolutions,
             expanding: Vec::new(),
             errors: Vec::new(),
+            remaining_nodes: DEFAULT_ALIAS_NORMALIZATION_NODE_BUDGET,
+            budget_exhausted: false,
         }
     }
 
@@ -206,6 +220,9 @@ impl<'a, 'db> AliasNormalizer<'a, 'db> {
     where
         T: AliasType<'db>,
     {
+        if !self.consume_node() {
+            return T::alias_error(self.db);
+        }
         match ty.alias_kind(self.db) {
             AliasTypeKind::Error | AliasTypeKind::Unknown | AliasTypeKind::BoundVar(_) => ty,
             AliasTypeKind::Named { ctor, args } => {
@@ -316,6 +333,35 @@ impl<'a, 'db> AliasNormalizer<'a, 'db> {
         self.expanding.pop();
         expanded
     }
+
+    fn consume_node(&mut self) -> bool {
+        if self.remaining_nodes == 0 {
+            self.report_expansion_limit();
+            false
+        } else {
+            self.remaining_nodes -= 1;
+            true
+        }
+    }
+
+    fn report_expansion_limit(&mut self) {
+        if self.budget_exhausted {
+            return;
+        }
+        self.budget_exhausted = true;
+        self.errors.push(AliasError::ExpansionLimit {
+            span: self.expansion_limit_span(),
+            limit: DEFAULT_ALIAS_NORMALIZATION_NODE_BUDGET,
+        });
+    }
+
+    fn expansion_limit_span(&self) -> LabelSpan {
+        self.expanding
+            .first()
+            .copied()
+            .map(|def| alias_label_span(self.db, self.module, def))
+            .unwrap_or_else(|| LabelSpan::from_span(self.db, self.module.span(self.db)))
+    }
 }
 
 /// Normalizes aliases inside a ground type.
@@ -382,7 +428,14 @@ pub fn type_alias_normalization_errors<'db>(
         let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
         normalizer.expanding.push(info.alias.def_id_value(db));
         normalizer.normalize_ty::<Ty<'db>>(ty);
-        errors.extend(normalizer.take_errors());
+        let alias_errors = normalizer.take_errors();
+        let hit_expansion_limit = alias_errors
+            .iter()
+            .any(|error| matches!(error, AliasError::ExpansionLimit { .. }));
+        errors.extend(alias_errors);
+        if hit_expansion_limit {
+            break;
+        }
     }
     dedup_errors(errors)
 }

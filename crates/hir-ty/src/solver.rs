@@ -599,6 +599,9 @@ fn alias_error_to_diagnostic(error: AliasError) -> TypeckDiagnostic {
             expected,
             actual,
         },
+        AliasError::ExpansionLimit { span, limit } => {
+            TypeckDiagnostic::TypeAliasExpansionLimit { span, limit }
+        }
     }
 }
 
