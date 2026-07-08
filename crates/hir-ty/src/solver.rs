@@ -1,9 +1,40 @@
-//! Minimal tabled type-class solver.
+//! Tabled type-class resolution.
 //!
-//! The solver lowers class/instance declarations into Horn-style program
-//! clauses and evaluates canonicalized class goals against an interned trait
-//! environment. It deliberately leaves the P5 instance soundness checks as hook
-//! points; this wave only consumes the resulting clauses.
+//! Class and instance declarations are lowered into Horn-style `ProgramClause`s
+//! (`head :- conditions`) and interned into a per-module `TraitEnvId`. A class
+//! goal is canonicalized (`canonicalize_goal`) and discharged by a tabled
+//! resolution engine (`TabledEngine`).
+//!
+//! Tabling memoizes each distinct (canonicalized) subgoal in a `TableEntry` that
+//! records both the answers found so far and the consumers suspended on it:
+//!
+//! - a `GeneratorNode` resolves the program clauses applicable to a subgoal
+//!   (local givens, instances, superclass projections, and — only when nothing
+//!   else applies — default instances) one at a time, producing answers;
+//! - a `ConsumerNode` is a partially-solved clause suspended on one of its
+//!   condition subgoals; it resumes (`WorkItem::Resume`) once per answer that
+//!   subgoal yields, threading the answer's substitution and evidence;
+//! - `produce_answer` admits an answer only when an equal one is not already
+//!   tabled (the paper's answer-subsumption step, here exact-duplicate
+//!   elimination on the canonical substitution), so duplicate answers are
+//!   never stored or re-propagated.
+//!
+//! Because every subgoal is solved once and shared, diamond-shaped constraint
+//! graphs are resolved without the exponential blow-up of naive backtracking,
+//! and cyclic instance dependencies saturate instead of diverging: re-entering
+//! an in-progress subgoal only registers another consumer on its existing table
+//! entry. A `DEFAULT_SOLVER_FUEL` bound is retained purely as a backstop for
+//! constraint spaces that keep generating strictly larger types (which tabling
+//! alone does not bound); cyclic and diamond goals terminate without consuming
+//! it to exhaustion.
+//!
+//! The tabling strategy follows Selsam, Ullrich & de Moura, "Tabled Typeclass
+//! Resolution" (<https://arxiv.org/abs/2001.04301>).
+//!
+//! Instance soundness (the coverage, Patterson, and bounded-variable
+//! conditions) is checked separately by the module-level
+//! `instance_soundness_diagnostics` query and does not affect the answers the
+//! engine returns.
 
 use std::collections::VecDeque;
 
@@ -2113,6 +2144,10 @@ impl<'db> Solver<'db> {
         }
     }
 
+    /// Solve `goal` in two phases: first without default instances, then — only
+    /// if that found no answer, did not run out of fuel, and no non-default
+    /// clause head could even unify with the goal — a second run that admits
+    /// default instances. This keeps defaults from masking a real instance.
     fn solve_pred_with_allowed(
         &mut self,
         goal: Pred<'db>,
@@ -2167,13 +2202,23 @@ impl SolverStats {
     }
 }
 
+/// Tabled resolution engine (see the module docs).
+///
+/// It memoizes subgoals in `table` and drives a `worklist` of generator and
+/// consumer steps to a fixpoint, or until `fuel` is exhausted.
 struct TabledEngine<'db> {
     db: &'db dyn Db,
     env: TraitEnvId<'db>,
+    /// Whether default instances may be used when no other clause applies.
     include_defaults: bool,
+    /// Variables fixed by the surrounding checked body; never solved by the
+    /// engine and preserved verbatim across canonicalization.
     local_context_vars: FxHashSet<u32>,
+    /// Memo table: one `TableEntry` per canonicalized subgoal.
     table: FxHashMap<TableKey<'db>, TableEntry<'db>>,
+    /// Pending generator/consumer work.
     worklist: VecDeque<WorkItem<'db>>,
+    /// Remaining step budget; a backstop against unbounded type growth.
     fuel: usize,
     exhausted: bool,
     stats: SolverStats,
@@ -2198,6 +2243,8 @@ impl<'db> TabledEngine<'db> {
         }
     }
 
+    /// Drive the worklist to a fixpoint (or until fuel runs out) and return the
+    /// answers tabled for `goal`, mapped back into the caller's variables.
     fn run(&mut self, goal: Pred<'db>, allowed_goal_vars: &FxHashSet<u32>) -> EngineResult<'db> {
         let (top_key, top_renaming) =
             canonicalize_goal(self.db, goal, allowed_goal_vars, &self.local_context_vars);
@@ -2236,6 +2283,9 @@ impl<'db> TabledEngine<'db> {
         }
     }
 
+    /// Create a table slot for `key` and schedule its generator if the subgoal
+    /// is new. Re-entering an in-progress subgoal is a no-op — that is what lets
+    /// cyclic instance dependencies terminate.
     fn ensure_entry(&mut self, key: TableKey<'db>) {
         if self.table.contains_key(&key) {
             return;
@@ -2249,6 +2299,9 @@ impl<'db> TabledEngine<'db> {
         }));
     }
 
+    /// Program clauses eligible for `key`, in resolution order: local givens,
+    /// then non-default instances, then superclass projections, and — only when
+    /// no non-default clause head can unify with the goal — default instances.
     fn applicable_clauses(&self, key: &TableKey<'db>) -> Vec<ProgramClause<'db>> {
         let mut clauses = Vec::new();
         clauses.extend(
@@ -2294,6 +2347,9 @@ impl<'db> TabledEngine<'db> {
         })
     }
 
+    /// Try the generator's next clause against its subgoal, re-queuing the node
+    /// for the remaining clauses so clause resolution is interleaved fairly with
+    /// the rest of the worklist.
     fn step_generator(&mut self, mut node: GeneratorNode<'db>) {
         if node.next_clause >= node.clauses.len() {
             return;
@@ -2340,6 +2396,9 @@ impl<'db> TabledEngine<'db> {
         });
     }
 
+    /// Suspend `consumer` on its current condition subgoal: ensure that
+    /// subgoal's table entry, register the consumer as a waiter, and immediately
+    /// resume it against any answers already tabled for it.
     fn register_for_next_condition(&mut self, mut consumer: ConsumerNode<'db>) {
         let condition = consumer
             .subst
@@ -2369,6 +2428,10 @@ impl<'db> TabledEngine<'db> {
         }
     }
 
+    /// Feed one `answer` for the current condition into `consumer`: merge the
+    /// answer's substitution and evidence, then either suspend on the next
+    /// condition or, if this was the last one, emit an answer for `parent`.
+    /// A substitution merge conflict silently drops this resumption.
     fn resume_consumer(&mut self, mut consumer: ConsumerNode<'db>, answer: Answer<'db>) {
         let alternative = actualize_answer(self.db, &answer, &consumer.waiting_renaming);
         let mut combined_subst = consumer.subst.clone();
@@ -2419,6 +2482,9 @@ impl<'db> TabledEngine<'db> {
         );
     }
 
+    /// Admit `answer` to `key`'s table entry unless an equal answer is already
+    /// present (exact-duplicate elimination on the canonical substitution), then
+    /// resume every consumer currently waiting on `key` with it.
     fn produce_answer(&mut self, key: TableKey<'db>, answer: Answer<'db>) {
         let consumers = {
             let entry = self
@@ -2452,11 +2518,19 @@ struct EngineResult<'db> {
     stats: SolverStats,
 }
 
+/// Canonical identity of a subgoal — the tabling key.
+///
+/// Goals equal up to renaming of their solvable (flex) variables map to the same
+/// key, so each distinct subgoal is resolved once and its answers are shared.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TableKey<'db> {
+    /// Goal predicate with flex variables renamed to `0..flex_count`.
     pred: Pred<'db>,
+    /// Number of solvable (flex) variables in `pred`.
     flex_count: u32,
+    /// Original ids of the flex variables, in canonical order.
     flex_actuals: Vec<u32>,
+    /// Original ids of the fixed context variables carried into the subgoal.
     context_actuals: Vec<u32>,
 }
 
@@ -2484,30 +2558,44 @@ impl<'db> TableKey<'db> {
     }
 }
 
+/// Memo slot for one subgoal: the answers found and the consumers waiting.
 #[derive(Default)]
 struct TableEntry<'db> {
+    /// Distinct (non-subsumed) answers produced for this subgoal so far.
     answers: Vec<Answer<'db>>,
+    /// Consumers suspended on this subgoal, resumed as new answers arrive.
     consumers: Vec<ConsumerNode<'db>>,
 }
 
+/// Produces answers for `key` by resolving its applicable clauses in turn.
 #[derive(Clone)]
 struct GeneratorNode<'db> {
     key: TableKey<'db>,
     clauses: Vec<ProgramClause<'db>>,
+    /// Index of the next clause to try; each step advances one clause.
     next_clause: usize,
 }
 
+/// A partially-solved clause suspended on one of its condition subgoals.
+///
+/// It resumes once for every answer that `clause.conditions[next_condition]`
+/// yields, extending `subst`/`sub_evidence` and moving on to the next condition
+/// (or emitting an answer for `parent` when all conditions are discharged).
 #[derive(Clone)]
 struct ConsumerNode<'db> {
+    /// Subgoal this consumer will emit an answer for once fully solved.
     parent: TableKey<'db>,
     clause: InstantiatedClause<'db>,
     subst: MatchSubst<'db>,
     sub_evidence: Vec<Evidence<'db>>,
+    /// Index of the condition currently being solved.
     next_condition: usize,
     condition_vars: FxHashSet<u32>,
+    /// Maps the current condition subgoal's canonical vars back to this clause.
     waiting_renaming: GoalRenaming,
 }
 
+/// A unit of engine work: advance a generator, or feed one answer to a consumer.
 enum WorkItem<'db> {
     Generator(GeneratorNode<'db>),
     Resume {
@@ -2516,6 +2604,8 @@ enum WorkItem<'db> {
     },
 }
 
+/// One answer for a subgoal: a substitution over its flex variables plus the
+/// evidence that discharges the goal, tagged with the clause it came from.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct Answer<'db> {
     candidate: Candidate<'db>,
@@ -2563,6 +2653,12 @@ impl GoalRenaming {
     }
 }
 
+/// Compute a goal's canonical tabling `TableKey` together with the
+/// `GoalRenaming` that maps the key's canonical variables back to the caller's.
+///
+/// Solvable variables in `allowed_vars` are renumbered to `0..flex_count` so
+/// that goals equal up to renaming share one table entry; `context_vars` (fixed
+/// by the surrounding body) are preserved and never solved.
 fn canonicalize_goal<'db>(
     db: &'db dyn Db,
     pred: Pred<'db>,
