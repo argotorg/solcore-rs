@@ -73,6 +73,25 @@ fn plain_import_has_no_diagnostics() {
 }
 
 #[test]
+fn std_subpath_falls_back_to_local_module_when_std_module_is_missing() {
+    let fixture = fixture_dir("ok/local_std_subpath");
+    let (db, entry) = load_fixture(&fixture, BTreeMap::new());
+    let (graph, diagnostics) = run(&db, &entry);
+    assert_no_diagnostics(&db, &diagnostics);
+
+    let local = module_id_from_key(
+        &db,
+        &ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec!["std".to_owned(), "a".to_owned(), "b".to_owned()],
+        },
+    );
+    assert!(graph.modules.contains(&local));
+    let interface = public_interface(&db, local);
+    assert!(interface.terms.contains_key("value"));
+}
+
+#[test]
 fn import_and_export_module_aliases_are_public_bindings() {
     let fixture = fixture_dir("ok/alias");
     let (db, entry) = load_fixture(&fixture, BTreeMap::new());

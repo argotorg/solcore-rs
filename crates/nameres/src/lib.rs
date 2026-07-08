@@ -827,7 +827,21 @@ pub fn resolve_module_path_candidate<'db>(
         } else {
             segments[1..].to_vec()
         };
-        (LibraryId::Std, logical_path, tree.std_root(db).clone())
+        let std_root = tree.std_root(db).clone();
+        let file_path = std_root.join(module_file_path(&logical_path));
+        if segments.len() > 1 && !file_path.is_file() {
+            let library = importing.library(db).clone();
+            let root = root_for_library(db, tree, &library, path)?;
+            let mut local_path = module_directory(importing.logical_path(db));
+            local_path.extend(segments.clone());
+            if root.join(module_file_path(&local_path)).is_file() {
+                (library, local_path, root)
+            } else {
+                (LibraryId::Std, logical_path, std_root)
+            }
+        } else {
+            (LibraryId::Std, logical_path, std_root)
+        }
     } else if segments.first().is_some_and(|segment| segment == "lib") && segments.len() > 1 {
         let library = importing.library(db).clone();
         let root = root_for_library(db, tree, &library, path)?;
@@ -1663,12 +1677,32 @@ impl<'db> ModuleEnvBuilder<'db> {
                 .conflict_diagnostics
                 .insert((namespace, item_ref.public_name.clone()))
         {
-            self.env.diagnostics.push(conflicting_unqualified_name_diag(
-                self.db,
-                span,
-                *local_span,
+            self.push_duplicate_import_diagnostic(
+                namespace,
                 &item_ref.public_name,
-            ));
+                *local_span,
+                span,
+            );
+        }
+    }
+
+    fn push_duplicate_import_diagnostic(
+        &mut self,
+        namespace: hir_nameres::Namespace,
+        name: &str,
+        local_span: Span<'db>,
+        import_span: Span<'db>,
+    ) {
+        if let Some(item_scope) = &mut self.env.item_scope {
+            item_scope
+                .diagnostics
+                .push(hir_nameres::NameresDiagnostic::DuplicateDeclaration {
+                    namespace,
+                    name: name.to_owned(),
+                    span: LabelSpan::from_span(self.db, local_span),
+                    previous: LabelSpan::from_span(self.db, import_span),
+                    context: None,
+                });
         }
     }
 
