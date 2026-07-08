@@ -179,7 +179,6 @@ pub(super) struct InstantiatedClause<'db> {
     pub(super) head: Pred<'db>,
     pub(super) conditions: Vec<Pred<'db>>,
     pub(super) origin: ClauseOrigin<'db>,
-    pub(super) is_default: bool,
     pub(super) binder_vars: Vec<u32>,
 }
 
@@ -203,7 +202,6 @@ pub(super) fn instantiate_clause<'db>(
             .map(|condition| rewriter.pred(*condition))
             .collect(),
         origin: clause.origin.clone(),
-        is_default: clause.is_default,
         binder_vars: (0..clause.binder_count).map(|index| base + index).collect(),
     }
 }

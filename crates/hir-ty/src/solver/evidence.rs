@@ -112,12 +112,10 @@ fn answer_priority<'db>(db: &'db dyn Db, env: TraitEnvId<'db>, answer: &Answer<'
     if evidence_root_is_local_given(db, env, &answer.candidate.evidence) {
         return 0;
     }
-    if answer.is_default {
-        return 3;
-    }
     match &answer.origin {
+        ClauseOrigin::Instance { default: true, .. } => 3,
         ClauseOrigin::Superclass(_) => 2,
-        ClauseOrigin::Instance(_)
+        ClauseOrigin::Instance { default: false, .. }
         | ClauseOrigin::Builtin
         | ClauseOrigin::Derived(_)
         | ClauseOrigin::Given => 1,
@@ -135,10 +133,11 @@ fn answer_root<'db>(
             .unwrap_or(AnswerRoot::Other);
     }
     match &answer.origin {
-        ClauseOrigin::Instance(instance) if answer.is_default => {
-            AnswerRoot::DefaultInstance(*instance)
-        }
-        ClauseOrigin::Instance(instance) => AnswerRoot::Instance(*instance),
+        ClauseOrigin::Instance {
+            def: instance,
+            default: true,
+        } => AnswerRoot::DefaultInstance(*instance),
+        ClauseOrigin::Instance { def: instance, .. } => AnswerRoot::Instance(*instance),
         ClauseOrigin::Builtin => evidence_root_pred(&answer.candidate.evidence)
             .map(AnswerRoot::Builtin)
             .unwrap_or(AnswerRoot::Other),
@@ -179,7 +178,7 @@ pub(super) fn clause_evidence<'db>(
     sub_evidence: Vec<Evidence<'db>>,
 ) -> Evidence<'db> {
     match clause.origin {
-        ClauseOrigin::Instance(instance) => Evidence::Instance {
+        ClauseOrigin::Instance { def: instance, .. } => Evidence::Instance {
             instance,
             args: subst.args_for_vars(db, &clause.binder_vars),
             sub_evidence,

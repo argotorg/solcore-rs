@@ -117,23 +117,22 @@ impl<'db> TabledEngine<'db> {
                     head: canonicalize_local_given(self.db, given, key),
                     conditions: Vec::new(),
                     origin: ClauseOrigin::Given,
-                    is_default: false,
                 }),
         );
         let base_clauses = self.env.clauses(self.db);
         clauses.extend(base_clauses.iter().filter_map(|clause| {
-            (!clause.is_default && !matches!(clause.origin, ClauseOrigin::Superclass(_)))
+            (!clause.origin.is_default() && !matches!(clause.origin, ClauseOrigin::Superclass(_)))
                 .then_some(clause.clone())
         }));
         clauses.extend(base_clauses.iter().filter_map(|clause| {
-            (!clause.is_default && matches!(clause.origin, ClauseOrigin::Superclass(_)))
+            (!clause.origin.is_default() && matches!(clause.origin, ClauseOrigin::Superclass(_)))
                 .then_some(clause.clone())
         }));
         if self.include_defaults && !self.has_non_default_unifying_head(key) {
             clauses.extend(
                 base_clauses
                     .iter()
-                    .filter(|clause| clause.is_default)
+                    .filter(|clause| clause.origin.is_default())
                     .cloned(),
             );
         }
@@ -145,7 +144,7 @@ impl<'db> TabledEngine<'db> {
         collect_pred_vars(self.db, key.pred, &mut goal_vars);
         let base_clauses = self.env.clauses(self.db);
         base_clauses.iter().any(|clause| {
-            !clause.is_default
+            !clause.origin.is_default()
                 && !matches!(clause.origin, ClauseOrigin::Superclass(_))
                 && head_can_unify(self.db, clause, key.pred, &goal_vars)
         })
@@ -281,7 +280,6 @@ impl<'db> TabledEngine<'db> {
             Answer {
                 candidate,
                 origin: clause.origin.clone(),
-                is_default: clause.is_default,
             },
         );
     }
@@ -375,11 +373,8 @@ enum WorkItem<'db> {
 pub(super) struct Answer<'db> {
     pub(super) candidate: Candidate<'db>,
     pub(super) origin: ClauseOrigin<'db>,
-    pub(super) is_default: bool,
 }
 
 fn same_table_answer<'db>(lhs: &Answer<'db>, rhs: &Answer<'db>) -> bool {
-    lhs.candidate.subst == rhs.candidate.subst
-        && lhs.origin == rhs.origin
-        && lhs.is_default == rhs.is_default
+    lhs.candidate.subst == rhs.candidate.subst && lhs.origin == rhs.origin
 }

@@ -221,7 +221,6 @@ pub(super) fn actualize_answer<'db>(
             evidence: actualizer.evidence(answer.candidate.evidence.clone()),
         },
         origin: answer.origin.clone(),
-        is_default: answer.is_default,
     }
 }
 

@@ -201,7 +201,6 @@ impl<'db> TraitClauseBuilder<'db> {
                 head: Pred::in_class(self.db, int, ty, Vec::new()),
                 conditions: Vec::new(),
                 origin: ClauseOrigin::Builtin,
-                is_default: false,
             });
         }
         self.add_builtin_function_invokables();
@@ -225,7 +224,6 @@ impl<'db> TraitClauseBuilder<'db> {
                 ),
                 conditions: Vec::new(),
                 origin: ClauseOrigin::Builtin,
-                is_default: false,
             });
         }
     }
@@ -263,7 +261,6 @@ impl<'db> TraitClauseBuilder<'db> {
                 head: normalizer.normalize_pred(lowerer.lower_pred(*super_pred)),
                 conditions: vec![class_head],
                 origin: ClauseOrigin::Superclass(class.def_id_value(self.db)),
-                is_default: false,
             });
         }
     }
@@ -297,8 +294,10 @@ impl<'db> TraitClauseBuilder<'db> {
             binder_count: type_vars.len() as u32,
             head,
             conditions,
-            origin: ClauseOrigin::Instance(instance.def_id_value(self.db)),
-            is_default: instance.default_kw(self.db).is_some(),
+            origin: ClauseOrigin::Instance {
+                def: instance.def_id_value(self.db),
+                default: instance.default_kw(self.db).is_some(),
+            },
         });
     }
 
@@ -354,7 +353,6 @@ impl<'db> TraitClauseBuilder<'db> {
                 origin: ClauseOrigin::Derived(DerivedClauseKind::Generic {
                     adt: info.adt.def_id_value(self.db),
                 }),
-                is_default: false,
             });
         }
     }

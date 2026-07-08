@@ -186,15 +186,13 @@ pub struct ProgramClause<'db> {
     pub conditions: Vec<Pred<'db>>,
     /// Evidence constructor produced by this clause.
     pub origin: ClauseOrigin<'db>,
-    /// Whether this is a default instance clause.
-    pub is_default: bool,
 }
 
 /// Source of a program clause.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum ClauseOrigin<'db> {
     /// User-defined instance declaration.
-    Instance(DefId<'db>),
+    Instance { def: DefId<'db>, default: bool },
     /// Compiler-defined fact.
     Builtin,
     /// Compiler-synthesized instance-like clause.
@@ -203,6 +201,12 @@ pub enum ClauseOrigin<'db> {
     Given,
     /// Superclass projection clause.
     Superclass(DefId<'db>),
+}
+
+impl<'db> ClauseOrigin<'db> {
+    pub(crate) fn is_default(&self) -> bool {
+        matches!(self, ClauseOrigin::Instance { default: true, .. })
+    }
 }
 
 /// Family of compiler-synthesized clauses.
@@ -491,7 +495,7 @@ impl<'db> Solver<'db> {
         collect_pred_vars(self.db, goal, &mut goal_vars);
         let base_clauses = self.env.clauses(self.db);
         base_clauses.iter().any(|clause| {
-            !clause.is_default
+            !clause.origin.is_default()
                 && !matches!(clause.origin, ClauseOrigin::Superclass(_))
                 && head_can_unify(self.db, clause, goal, &goal_vars)
         })
