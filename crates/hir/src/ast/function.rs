@@ -98,6 +98,25 @@ pub struct Stmt<'db> {
     pub kind: StmtKind<'db>,
 }
 
+/// Assignment operator used by a statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum AssignOp {
+    /// `=` assignment.
+    Plain,
+    /// `+=` assignment.
+    Add,
+    /// `-=` assignment.
+    Sub,
+    /// `^=` assignment.
+    BitXor,
+    /// `&=` assignment.
+    BitAnd,
+    /// `|=` assignment.
+    BitOr,
+    /// `%=` assignment.
+    Mod,
+}
+
 /// Kinds of statements accepted in lowered function bodies.
 ///
 /// Child expressions, patterns, and statements are referenced by IDs into the
@@ -121,50 +140,10 @@ pub enum StmtKind<'db> {
     Return(Option<Id<Expr<'db>>>),
     /// Expression used as a statement.
     Expr(Id<Expr<'db>>),
-    /// Plain assignment.
+    /// Assignment.
     Assign {
-        /// Assignment target expression.
-        lhs: Id<Expr<'db>>,
-        /// Assigned value expression.
-        rhs: Id<Expr<'db>>,
-    },
-    /// `+=` assignment.
-    AddAssign {
-        /// Assignment target expression.
-        lhs: Id<Expr<'db>>,
-        /// Assigned value expression.
-        rhs: Id<Expr<'db>>,
-    },
-    /// `-=` assignment.
-    SubAssign {
-        /// Assignment target expression.
-        lhs: Id<Expr<'db>>,
-        /// Assigned value expression.
-        rhs: Id<Expr<'db>>,
-    },
-    /// `^=` assignment.
-    BitXorAssign {
-        /// Assignment target expression.
-        lhs: Id<Expr<'db>>,
-        /// Assigned value expression.
-        rhs: Id<Expr<'db>>,
-    },
-    /// `&=` assignment.
-    BitAndAssign {
-        /// Assignment target expression.
-        lhs: Id<Expr<'db>>,
-        /// Assigned value expression.
-        rhs: Id<Expr<'db>>,
-    },
-    /// `|=` assignment.
-    BitOrAssign {
-        /// Assignment target expression.
-        lhs: Id<Expr<'db>>,
-        /// Assigned value expression.
-        rhs: Id<Expr<'db>>,
-    },
-    /// `%=` assignment.
-    ModAssign {
+        /// Assignment operator.
+        op: AssignOp,
         /// Assignment target expression.
         lhs: Id<Expr<'db>>,
         /// Assigned value expression.

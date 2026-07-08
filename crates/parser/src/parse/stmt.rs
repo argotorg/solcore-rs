@@ -9,17 +9,6 @@ use super::{
     yul::parsed_yul_stmt_parser,
 };
 
-#[derive(Debug, Clone, Copy)]
-enum ParsedAssignOp {
-    Eq,
-    AddEq,
-    SubEq,
-    BitXorEq,
-    BitAndEq,
-    BitOrEq,
-    ModEq,
-}
-
 fn assign_op_parser<'src, I>() -> impl Parser<'src, I, ParsedAssignOp, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -39,13 +28,7 @@ fn assign_stmt_kind<'src>(
     rhs: Option<(ParsedAssignOp, ParsedExpr<'src>)>,
 ) -> ParsedStmtKind<'src> {
     match rhs {
-        Some((ParsedAssignOp::Eq, rhs)) => ParsedStmtKind::Assign { lhs, rhs },
-        Some((ParsedAssignOp::AddEq, rhs)) => ParsedStmtKind::AddAssign { lhs, rhs },
-        Some((ParsedAssignOp::SubEq, rhs)) => ParsedStmtKind::SubAssign { lhs, rhs },
-        Some((ParsedAssignOp::BitXorEq, rhs)) => ParsedStmtKind::BitXorAssign { lhs, rhs },
-        Some((ParsedAssignOp::BitAndEq, rhs)) => ParsedStmtKind::BitAndAssign { lhs, rhs },
-        Some((ParsedAssignOp::BitOrEq, rhs)) => ParsedStmtKind::BitOrAssign { lhs, rhs },
-        Some((ParsedAssignOp::ModEq, rhs)) => ParsedStmtKind::ModAssign { lhs, rhs },
+        Some((op, rhs)) => ParsedStmtKind::Assign { op, lhs, rhs },
         None => ParsedStmtKind::Expr(lhs),
     }
 }

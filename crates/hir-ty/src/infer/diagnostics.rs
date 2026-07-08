@@ -817,13 +817,7 @@ fn collect_uninitialized_let_type_refs_from_stmt<'db>(
         StmtKind::Expr(expr) => {
             collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
         }
-        StmtKind::Assign { lhs, rhs }
-        | StmtKind::AddAssign { lhs, rhs }
-        | StmtKind::SubAssign { lhs, rhs }
-        | StmtKind::BitXorAssign { lhs, rhs }
-        | StmtKind::BitAndAssign { lhs, rhs }
-        | StmtKind::BitOrAssign { lhs, rhs }
-        | StmtKind::ModAssign { lhs, rhs } => {
+        StmtKind::Assign { lhs, rhs, .. } => {
             collect_uninitialized_let_type_refs_from_expr(db, body, *lhs, out);
             collect_uninitialized_let_type_refs_from_expr(db, body, *rhs, out);
         }

@@ -1,7 +1,9 @@
 use std::{cmp::Ordering, collections::BTreeMap};
 
 use hir::{
-    ast::function::{BinOp, UnOp, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
+    ast::function::{
+        AssignOp, BinOp, UnOp, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
+    },
     span::Span,
 };
 use hir_ty::{BuiltinTyCtor, Db};
@@ -65,13 +67,7 @@ struct StmtWriteEffectsCollector<'effects> {
 impl<'effects, 'db> Visitor<'db> for StmtWriteEffectsCollector<'effects> {
     fn visit_stmt(&mut self, stmt: &MonoStmt<'db>) {
         match &stmt.kind {
-            MonoStmtKind::Assign { lhs, .. }
-            | MonoStmtKind::AddAssign { lhs, .. }
-            | MonoStmtKind::SubAssign { lhs, .. }
-            | MonoStmtKind::BitXorAssign { lhs, .. }
-            | MonoStmtKind::BitAndAssign { lhs, .. }
-            | MonoStmtKind::BitOrAssign { lhs, .. }
-            | MonoStmtKind::ModAssign { lhs, .. } => {
+            MonoStmtKind::Assign { lhs, .. } => {
                 if let Some(name) = lvalue_root_name(lhs) {
                     self.effects.insert(name);
                 } else {
@@ -303,7 +299,11 @@ impl<'db> Evaluator<'db> {
                     )
                 }
             }
-            MonoStmtKind::Assign { lhs, rhs } => {
+            MonoStmtKind::Assign {
+                op: AssignOp::Plain,
+                lhs,
+                rhs,
+            } => {
                 let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
                 let lhs_effects = self.expr_write_effects(&lhs);
                 let rhs_env = remove_assigned(env.clone(), &lhs_effects);
@@ -342,40 +342,27 @@ impl<'db> Evaluator<'db> {
                     comptime_env,
                     vec![MonoStmt {
                         span,
-                        kind: MonoStmtKind::Assign { lhs, rhs },
+                        kind: MonoStmtKind::Assign {
+                            op: AssignOp::Plain,
+                            lhs,
+                            rhs,
+                        },
                     }],
                 )
             }
-            MonoStmtKind::AddAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
-                    MonoStmtKind::AddAssign { lhs, rhs }
-                })
-            }
-            MonoStmtKind::SubAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
-                    MonoStmtKind::SubAssign { lhs, rhs }
-                })
-            }
-            MonoStmtKind::BitXorAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
-                    MonoStmtKind::BitXorAssign { lhs, rhs }
-                })
-            }
-            MonoStmtKind::BitAndAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
-                    MonoStmtKind::BitAndAssign { lhs, rhs }
-                })
-            }
-            MonoStmtKind::BitOrAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
-                    MonoStmtKind::BitOrAssign { lhs, rhs }
-                })
-            }
-            MonoStmtKind::ModAssign { lhs, rhs } => {
-                self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
-                    MonoStmtKind::ModAssign { lhs, rhs }
-                })
-            }
+            MonoStmtKind::Assign {
+                op:
+                    op @ (AssignOp::Add
+                    | AssignOp::Sub
+                    | AssignOp::BitXor
+                    | AssignOp::BitAnd
+                    | AssignOp::BitOr
+                    | AssignOp::Mod),
+                lhs,
+                rhs,
+            } => self.eval_compound_assign(env, comptime_env, span, lhs, rhs, |lhs, rhs| {
+                MonoStmtKind::Assign { op, lhs, rhs }
+            }),
             MonoStmtKind::If {
                 cond,
                 then_body,
@@ -1345,7 +1332,11 @@ impl<'db> Evaluator<'db> {
                         comptime_env.remove(&id.name);
                     }
                 }
-                MonoStmtKind::Assign { lhs, rhs } => {
+                MonoStmtKind::Assign {
+                    op: AssignOp::Plain,
+                    lhs,
+                    rhs,
+                } => {
                     let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
                     let rhs = self.eval_expr(&env, &comptime_env, rhs);
                     if let Some(id) = target {
@@ -1464,12 +1455,16 @@ impl<'db> Evaluator<'db> {
                 MonoStmtKind::For { .. }
                 | MonoStmtKind::Break
                 | MonoStmtKind::Continue
-                | MonoStmtKind::AddAssign { .. }
-                | MonoStmtKind::SubAssign { .. }
-                | MonoStmtKind::BitXorAssign { .. }
-                | MonoStmtKind::BitAndAssign { .. }
-                | MonoStmtKind::BitOrAssign { .. }
-                | MonoStmtKind::ModAssign { .. }
+                | MonoStmtKind::Assign {
+                    op:
+                        AssignOp::Add
+                        | AssignOp::Sub
+                        | AssignOp::BitXor
+                        | AssignOp::BitAnd
+                        | AssignOp::BitOr
+                        | AssignOp::Mod,
+                    ..
+                }
                 | MonoStmtKind::Error => return FoldOutcome::ReturnedUnknownAbort,
             }
         }

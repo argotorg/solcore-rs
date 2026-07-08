@@ -8,7 +8,9 @@ use hir::{
     anchor::DefId,
     ast::{
         Ident,
-        function::{BinOp, LitKind, UnOp, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
+        function::{
+            AssignOp, BinOp, LitKind, UnOp, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
+        },
         item::{AdtDef, ContractDef, ContractItem, Item, Module},
         ty::TypeRefKind,
     },

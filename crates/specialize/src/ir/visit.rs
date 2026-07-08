@@ -30,13 +30,7 @@ where
             }
         }
         MonoStmtKind::Expr(expr) => visitor.visit_expr(expr),
-        MonoStmtKind::Assign { lhs, rhs }
-        | MonoStmtKind::AddAssign { lhs, rhs }
-        | MonoStmtKind::SubAssign { lhs, rhs }
-        | MonoStmtKind::BitXorAssign { lhs, rhs }
-        | MonoStmtKind::BitAndAssign { lhs, rhs }
-        | MonoStmtKind::BitOrAssign { lhs, rhs }
-        | MonoStmtKind::ModAssign { lhs, rhs } => {
+        MonoStmtKind::Assign { lhs, rhs, .. } => {
             visitor.visit_expr(lhs);
             visitor.visit_expr(rhs);
         }

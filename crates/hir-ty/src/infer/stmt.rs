@@ -130,7 +130,11 @@ impl<'db> InferCtx<'db> {
                 self.infer_expr(body, *expr);
                 self.engine.from_ty(Ty::unit(self.db))
             }
-            StmtKind::Assign { lhs, rhs } => {
+            StmtKind::Assign {
+                op: AssignOp::Plain,
+                lhs,
+                rhs,
+            } => {
                 if !self.infer_storage_assign(body, *lhs, *rhs) {
                     let lhs_ty = self.infer_expr(body, *lhs);
                     let rhs_ty = self.infer_expr_expected(body, *rhs, Some(lhs_ty.clone()));
@@ -138,9 +142,11 @@ impl<'db> InferCtx<'db> {
                 }
                 self.engine.from_ty(Ty::unit(self.db))
             }
-            StmtKind::AddAssign { lhs, rhs } | StmtKind::SubAssign { lhs, rhs }
-                if self.is_storage_index_expr(body, *lhs) =>
-            {
+            StmtKind::Assign {
+                op: AssignOp::Add | AssignOp::Sub,
+                lhs,
+                rhs,
+            } if self.is_storage_index_expr(body, *lhs) => {
                 let lhs_ty = self.infer_expr(body, *lhs);
                 // The reference elaborates `m[k] += v` to `m[k] = m[k] + v`
                 // through Add.add, but our indexed compound assignment still
@@ -156,12 +162,17 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(body, *rhs, lhs_ty, rhs_ty);
                 self.engine.from_ty(Ty::unit(self.db))
             }
-            StmtKind::AddAssign { lhs, rhs }
-            | StmtKind::SubAssign { lhs, rhs }
-            | StmtKind::BitXorAssign { lhs, rhs }
-            | StmtKind::BitAndAssign { lhs, rhs }
-            | StmtKind::BitOrAssign { lhs, rhs }
-            | StmtKind::ModAssign { lhs, rhs } => {
+            StmtKind::Assign {
+                op:
+                    AssignOp::Add
+                    | AssignOp::Sub
+                    | AssignOp::BitXor
+                    | AssignOp::BitAnd
+                    | AssignOp::BitOr
+                    | AssignOp::Mod,
+                lhs,
+                rhs,
+            } => {
                 let lhs_ty = self.infer_expr(body, *lhs);
                 let rhs_ty = self.infer_expr(body, *rhs);
                 let word = self.engine.from_ty(Ty::word(self.db));

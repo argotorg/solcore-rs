@@ -160,25 +160,47 @@ impl<'db> Emitter<'db> {
                 span: stmt.span,
                 kind: StmtKind::Expr(self.emit_expr(expr)),
             }],
-            MonoStmtKind::Assign { lhs, rhs } => vec![Stmt {
+            MonoStmtKind::Assign {
+                op: AssignOp::Plain,
+                lhs,
+                rhs,
+            } => vec![Stmt {
                 span: stmt.span,
                 kind: StmtKind::Assign {
                     lhs: self.emit_expr(lhs),
                     rhs: self.emit_expr(rhs),
                 },
             }],
-            MonoStmtKind::AddAssign { lhs, rhs } => self.emit_assign_op(stmt.span, lhs, "add", rhs),
-            MonoStmtKind::SubAssign { lhs, rhs } => self.emit_assign_op(stmt.span, lhs, "sub", rhs),
-            MonoStmtKind::BitXorAssign { lhs, rhs } => {
-                self.emit_assign_op(stmt.span, lhs, "xor", rhs)
-            }
-            MonoStmtKind::BitAndAssign { lhs, rhs } => {
-                self.emit_assign_op(stmt.span, lhs, "and", rhs)
-            }
-            MonoStmtKind::BitOrAssign { lhs, rhs } => {
-                self.emit_assign_op(stmt.span, lhs, "or", rhs)
-            }
-            MonoStmtKind::ModAssign { lhs, rhs } => self.emit_assign_op(stmt.span, lhs, "mod", rhs),
+            MonoStmtKind::Assign {
+                op: AssignOp::Add,
+                lhs,
+                rhs,
+            } => self.emit_assign_op(stmt.span, lhs, "add", rhs),
+            MonoStmtKind::Assign {
+                op: AssignOp::Sub,
+                lhs,
+                rhs,
+            } => self.emit_assign_op(stmt.span, lhs, "sub", rhs),
+            MonoStmtKind::Assign {
+                op: AssignOp::BitXor,
+                lhs,
+                rhs,
+            } => self.emit_assign_op(stmt.span, lhs, "xor", rhs),
+            MonoStmtKind::Assign {
+                op: AssignOp::BitAnd,
+                lhs,
+                rhs,
+            } => self.emit_assign_op(stmt.span, lhs, "and", rhs),
+            MonoStmtKind::Assign {
+                op: AssignOp::BitOr,
+                lhs,
+                rhs,
+            } => self.emit_assign_op(stmt.span, lhs, "or", rhs),
+            MonoStmtKind::Assign {
+                op: AssignOp::Mod,
+                lhs,
+                rhs,
+            } => self.emit_assign_op(stmt.span, lhs, "mod", rhs),
             MonoStmtKind::Match { scrutinees, arms } => {
                 self.emit_match(stmt.span, scrutinees, arms)
             }

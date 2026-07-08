@@ -1302,13 +1302,7 @@ fn stmt_has_closure_dispatch(stmt: &MonoStmt<'_>) -> bool {
         MonoStmtKind::Let { init, .. } => init.as_ref().is_some_and(expr_has_closure_dispatch),
         MonoStmtKind::Return(expr) => expr.as_ref().is_some_and(expr_has_closure_dispatch),
         MonoStmtKind::Expr(expr) => expr_has_closure_dispatch(expr),
-        MonoStmtKind::Assign { lhs, rhs }
-        | MonoStmtKind::AddAssign { lhs, rhs }
-        | MonoStmtKind::SubAssign { lhs, rhs }
-        | MonoStmtKind::BitXorAssign { lhs, rhs }
-        | MonoStmtKind::BitAndAssign { lhs, rhs }
-        | MonoStmtKind::BitOrAssign { lhs, rhs }
-        | MonoStmtKind::ModAssign { lhs, rhs } => {
+        MonoStmtKind::Assign { lhs, rhs, .. } => {
             expr_has_closure_dispatch(lhs) || expr_has_closure_dispatch(rhs)
         }
         MonoStmtKind::Match { scrutinees, arms } => {

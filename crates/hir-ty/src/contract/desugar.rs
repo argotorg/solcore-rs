@@ -338,13 +338,7 @@ impl<'db> DesugarCollector<'db> {
                 }
             }
             StmtKind::Expr(expr) => self.expr(*expr),
-            StmtKind::Assign { lhs, rhs }
-            | StmtKind::AddAssign { lhs, rhs }
-            | StmtKind::SubAssign { lhs, rhs }
-            | StmtKind::BitXorAssign { lhs, rhs }
-            | StmtKind::BitAndAssign { lhs, rhs }
-            | StmtKind::BitOrAssign { lhs, rhs }
-            | StmtKind::ModAssign { lhs, rhs } => {
+            StmtKind::Assign { lhs, rhs, .. } => {
                 self.field_write(stmt_id, *lhs);
                 self.expr(*rhs);
             }

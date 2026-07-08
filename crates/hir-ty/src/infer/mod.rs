@@ -9,8 +9,9 @@ use hir::{
     arena::{Arena, Id},
     ast::{
         function::{
-            BinOp, Expr, ExprKind, FuncBody, FuncParam, FuncSig, LitKind, MatchArm, Pat, PatKind,
-            Stmt, StmtKind, UnOp, YulCase, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
+            AssignOp, BinOp, Expr, ExprKind, FuncBody, FuncParam, FuncSig, LitKind, MatchArm, Pat,
+            PatKind, Stmt, StmtKind, UnOp, YulCase, YulExpr, YulExprKind, YulLitKind, YulStmt,
+            YulStmtKind,
         },
         item::{
             AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FuncKind, FunctionDef, Item,

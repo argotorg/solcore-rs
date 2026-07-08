@@ -112,13 +112,7 @@ fn stmt_is_pure<'db>(
         }
         MonoStmtKind::Return(expr) => expr.as_ref().is_none_or(|expr| expr_is_pure(expr, pure)),
         MonoStmtKind::Expr(expr) => expr_is_pure(expr, pure),
-        MonoStmtKind::Assign { lhs, rhs }
-        | MonoStmtKind::AddAssign { lhs, rhs }
-        | MonoStmtKind::SubAssign { lhs, rhs }
-        | MonoStmtKind::BitXorAssign { lhs, rhs }
-        | MonoStmtKind::BitAndAssign { lhs, rhs }
-        | MonoStmtKind::BitOrAssign { lhs, rhs }
-        | MonoStmtKind::ModAssign { lhs, rhs } => {
+        MonoStmtKind::Assign { lhs, rhs, .. } => {
             !lvalue_writes_storage(lhs, storage_fields, locals)
                 && expr_is_pure(lhs, pure)
                 && expr_is_pure(rhs, pure)
@@ -289,13 +283,7 @@ fn collect_write_effects_in_stmts<'db>(
             MonoStmtKind::Expr(expr) => {
                 effects.merge(expr_write_effects_from_call_summaries(expr, call_effects));
             }
-            MonoStmtKind::Assign { lhs, rhs }
-            | MonoStmtKind::AddAssign { lhs, rhs }
-            | MonoStmtKind::SubAssign { lhs, rhs }
-            | MonoStmtKind::BitXorAssign { lhs, rhs }
-            | MonoStmtKind::BitAndAssign { lhs, rhs }
-            | MonoStmtKind::BitOrAssign { lhs, rhs }
-            | MonoStmtKind::ModAssign { lhs, rhs } => {
+            MonoStmtKind::Assign { lhs, rhs, .. } => {
                 if lvalue_writes_storage(lhs, storage_fields, locals) {
                     if let Some(name) = lvalue_root_name(lhs) {
                         effects.insert(name);

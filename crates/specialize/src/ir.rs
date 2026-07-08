@@ -1,6 +1,6 @@
 use hir::{
     anchor::DefId,
-    ast::function::{BinOp, LitKind, UnOp, YulStmt},
+    ast::function::{AssignOp, BinOp, LitKind, UnOp, YulStmt},
     span::Span,
 };
 use hir_ty::{FrontendDesugarPlan, Ty};
@@ -231,30 +231,7 @@ pub enum MonoStmtKind<'db> {
     Return(Option<MonoExpr<'db>>),
     Expr(MonoExpr<'db>),
     Assign {
-        lhs: MonoExpr<'db>,
-        rhs: MonoExpr<'db>,
-    },
-    AddAssign {
-        lhs: MonoExpr<'db>,
-        rhs: MonoExpr<'db>,
-    },
-    SubAssign {
-        lhs: MonoExpr<'db>,
-        rhs: MonoExpr<'db>,
-    },
-    BitXorAssign {
-        lhs: MonoExpr<'db>,
-        rhs: MonoExpr<'db>,
-    },
-    BitAndAssign {
-        lhs: MonoExpr<'db>,
-        rhs: MonoExpr<'db>,
-    },
-    BitOrAssign {
-        lhs: MonoExpr<'db>,
-        rhs: MonoExpr<'db>,
-    },
-    ModAssign {
+        op: AssignOp,
         lhs: MonoExpr<'db>,
         rhs: MonoExpr<'db>,
     },

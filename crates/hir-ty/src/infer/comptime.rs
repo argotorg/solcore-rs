@@ -280,13 +280,7 @@ impl<'db> ComptimeChecker<'db> {
                 }
                 value
             }
-            StmtKind::Assign { lhs, rhs }
-            | StmtKind::AddAssign { lhs, rhs }
-            | StmtKind::SubAssign { lhs, rhs }
-            | StmtKind::BitXorAssign { lhs, rhs }
-            | StmtKind::BitAndAssign { lhs, rhs }
-            | StmtKind::BitOrAssign { lhs, rhs }
-            | StmtKind::ModAssign { lhs, rhs } => {
+            StmtKind::Assign { lhs, rhs, .. } => {
                 let rhs_value = self.classify_expr(body, *rhs);
                 if let Some(key) = self.binding_key_for_expr(body, *lhs) {
                     self.bindings.insert(key, rhs_value);

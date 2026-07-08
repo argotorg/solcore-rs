@@ -60,13 +60,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 }
             }
             StmtKind::Expr(expr) => self.expr(body, *expr),
-            StmtKind::Assign { lhs, rhs }
-            | StmtKind::AddAssign { lhs, rhs }
-            | StmtKind::SubAssign { lhs, rhs }
-            | StmtKind::BitXorAssign { lhs, rhs }
-            | StmtKind::BitAndAssign { lhs, rhs }
-            | StmtKind::BitOrAssign { lhs, rhs }
-            | StmtKind::ModAssign { lhs, rhs } => {
+            StmtKind::Assign { lhs, rhs, .. } => {
                 self.expr(body, *lhs);
                 self.expr(body, *rhs);
             }

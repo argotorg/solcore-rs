@@ -35,6 +35,18 @@ fn lower_parsed_lit(lit: ParsedLitKind<'_>) -> function::LitKind {
     }
 }
 
+fn lower_assign_op(op: ParsedAssignOp) -> function::AssignOp {
+    match op {
+        ParsedAssignOp::Eq => function::AssignOp::Plain,
+        ParsedAssignOp::AddEq => function::AssignOp::Add,
+        ParsedAssignOp::SubEq => function::AssignOp::Sub,
+        ParsedAssignOp::BitXorEq => function::AssignOp::BitXor,
+        ParsedAssignOp::BitAndEq => function::AssignOp::BitAnd,
+        ParsedAssignOp::BitOrEq => function::AssignOp::BitOr,
+        ParsedAssignOp::ModEq => function::AssignOp::Mod,
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct BodyArenas<'db> {
     stmts: Arena<function::Stmt<'db>>,
@@ -379,31 +391,8 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedStmtKind::Expr(expr) => {
                 function::StmtKind::Expr(self.lower_expr(anchor, base_start, expr, arenas))
             }
-            ParsedStmtKind::Assign { lhs, rhs } => function::StmtKind::Assign {
-                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
-                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
-            },
-            ParsedStmtKind::AddAssign { lhs, rhs } => function::StmtKind::AddAssign {
-                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
-                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
-            },
-            ParsedStmtKind::SubAssign { lhs, rhs } => function::StmtKind::SubAssign {
-                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
-                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
-            },
-            ParsedStmtKind::BitXorAssign { lhs, rhs } => function::StmtKind::BitXorAssign {
-                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
-                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
-            },
-            ParsedStmtKind::BitAndAssign { lhs, rhs } => function::StmtKind::BitAndAssign {
-                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
-                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
-            },
-            ParsedStmtKind::BitOrAssign { lhs, rhs } => function::StmtKind::BitOrAssign {
-                lhs: self.lower_expr(anchor, base_start, lhs, arenas),
-                rhs: self.lower_expr(anchor, base_start, rhs, arenas),
-            },
-            ParsedStmtKind::ModAssign { lhs, rhs } => function::StmtKind::ModAssign {
+            ParsedStmtKind::Assign { op, lhs, rhs } => function::StmtKind::Assign {
+                op: lower_assign_op(op),
                 lhs: self.lower_expr(anchor, base_start, lhs, arenas),
                 rhs: self.lower_expr(anchor, base_start, rhs, arenas),
             },

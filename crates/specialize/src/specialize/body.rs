@@ -73,31 +73,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 None => None,
             }),
             StmtKind::Expr(expr) => MonoStmtKind::Expr(self.expr(*expr)?),
-            StmtKind::Assign { lhs, rhs } => MonoStmtKind::Assign {
-                lhs: self.expr(*lhs)?,
-                rhs: self.expr(*rhs)?,
-            },
-            StmtKind::AddAssign { lhs, rhs } => MonoStmtKind::AddAssign {
-                lhs: self.expr(*lhs)?,
-                rhs: self.expr(*rhs)?,
-            },
-            StmtKind::SubAssign { lhs, rhs } => MonoStmtKind::SubAssign {
-                lhs: self.expr(*lhs)?,
-                rhs: self.expr(*rhs)?,
-            },
-            StmtKind::BitXorAssign { lhs, rhs } => MonoStmtKind::BitXorAssign {
-                lhs: self.expr(*lhs)?,
-                rhs: self.expr(*rhs)?,
-            },
-            StmtKind::BitAndAssign { lhs, rhs } => MonoStmtKind::BitAndAssign {
-                lhs: self.expr(*lhs)?,
-                rhs: self.expr(*rhs)?,
-            },
-            StmtKind::BitOrAssign { lhs, rhs } => MonoStmtKind::BitOrAssign {
-                lhs: self.expr(*lhs)?,
-                rhs: self.expr(*rhs)?,
-            },
-            StmtKind::ModAssign { lhs, rhs } => MonoStmtKind::ModAssign {
+            StmtKind::Assign { op, lhs, rhs } => MonoStmtKind::Assign {
+                op: *op,
                 lhs: self.expr(*lhs)?,
                 rhs: self.expr(*rhs)?,
             },

@@ -598,6 +598,25 @@ pub(crate) struct ParsedStmt<'src> {
     pub(crate) kind: ParsedStmtKind<'src>,
 }
 
+/// Parsed assignment operator.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ParsedAssignOp {
+    /// `=` assignment.
+    Eq,
+    /// `+=` assignment.
+    AddEq,
+    /// `-=` assignment.
+    SubEq,
+    /// `^=` assignment.
+    BitXorEq,
+    /// `&=` assignment.
+    BitAndEq,
+    /// `|=` assignment.
+    BitOrEq,
+    /// `%=` assignment.
+    ModEq,
+}
+
 /// Parsed statement payload.
 #[derive(Debug, Clone)]
 pub(crate) enum ParsedStmtKind<'src> {
@@ -616,50 +635,10 @@ pub(crate) enum ParsedStmtKind<'src> {
     Return(Option<ParsedExpr<'src>>),
     /// Expression statement.
     Expr(ParsedExpr<'src>),
-    /// Plain assignment.
+    /// Assignment.
     Assign {
-        /// Assignment target.
-        lhs: ParsedExpr<'src>,
-        /// Assigned value.
-        rhs: ParsedExpr<'src>,
-    },
-    /// `+=` assignment.
-    AddAssign {
-        /// Assignment target.
-        lhs: ParsedExpr<'src>,
-        /// Assigned value.
-        rhs: ParsedExpr<'src>,
-    },
-    /// `-=` assignment.
-    SubAssign {
-        /// Assignment target.
-        lhs: ParsedExpr<'src>,
-        /// Assigned value.
-        rhs: ParsedExpr<'src>,
-    },
-    /// `^=` assignment.
-    BitXorAssign {
-        /// Assignment target.
-        lhs: ParsedExpr<'src>,
-        /// Assigned value.
-        rhs: ParsedExpr<'src>,
-    },
-    /// `&=` assignment.
-    BitAndAssign {
-        /// Assignment target.
-        lhs: ParsedExpr<'src>,
-        /// Assigned value.
-        rhs: ParsedExpr<'src>,
-    },
-    /// `|=` assignment.
-    BitOrAssign {
-        /// Assignment target.
-        lhs: ParsedExpr<'src>,
-        /// Assigned value.
-        rhs: ParsedExpr<'src>,
-    },
-    /// `%=` assignment.
-    ModAssign {
+        /// Assignment operator.
+        op: ParsedAssignOp,
         /// Assignment target.
         lhs: ParsedExpr<'src>,
         /// Assigned value.
