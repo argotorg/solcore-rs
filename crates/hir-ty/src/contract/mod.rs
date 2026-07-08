@@ -12,7 +12,7 @@ mod desugar;
 mod dispatch;
 mod helpers;
 
-pub use abi::{AbiParam, AbiSignature, abi_selector};
+pub use abi::{AbiParam, AbiSelector, AbiSignature, abi_selector};
 pub use abi_json::contract_abi_json;
 pub use desugar::{
     BodyDesugarPlan, BoolNode, FrontendDesugarPlan, FrontendTransform, IndirectArgShape,

@@ -731,12 +731,13 @@ fn collect_abi_entries(
             let signature = signature.clone();
             let selector_hex = selector_hex(selector);
             let derived = hir_ty::abi_selector(db, AbiSignature::new(db, signature.clone()));
-            if derived != selector_hex {
+            if derived.0 != selector {
                 return Err(E2eFailure::new(
                     FailureKind::Pipeline,
                     format!(
-                        "{}: metadata selector {selector_hex} disagrees with hir_ty {derived}",
-                        signature
+                        "{}: metadata selector {selector_hex} disagrees with hir_ty {}",
+                        signature,
+                        derived.to_hex()
                     ),
                 ));
             }

@@ -407,8 +407,7 @@ impl<'db> Driver<'db> {
                             .get(&method.def)
                             .map(|info| info.function.span(self.db))
                             .unwrap_or_else(|| contract.span(self.db)),
-                        selector: selector_bytes(&method.selector)
-                            .expect("ABI selector should be a 4-byte hex string"),
+                        selector: method.selector.0,
                         signature: method.signature,
                         payable: method.payable,
                         inputs: mono_abi_params(method.inputs),

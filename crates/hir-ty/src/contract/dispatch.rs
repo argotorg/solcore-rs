@@ -11,7 +11,7 @@ use crate::Db;
 
 use super::{
     abi::{
-        AbiParam, AbiSignature, abi_outputs, abi_params, abi_selector,
+        AbiParam, AbiSelector, AbiSignature, abi_outputs, abi_params, abi_selector,
         contract_diag_unsupported_abi_type, method_signature_string,
     },
     helpers::{
@@ -52,8 +52,8 @@ pub struct DispatchMethod<'db> {
     pub payable: bool,
     /// ABI selector preimage, e.g. `transfer(address,uint256)`.
     pub signature: String,
-    /// First four bytes of `keccak256(signature)`, rendered as `0x` + hex.
-    pub selector: String,
+    /// First four bytes of `keccak256(signature)`.
+    pub selector: AbiSelector,
     /// ABI input parameters.
     pub inputs: Vec<AbiParam>,
     /// ABI output parameters.

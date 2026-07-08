@@ -18,10 +18,10 @@ pub use alias::{
     normalize_scheme_aliases, normalize_ty_aliases, type_alias_normalization_errors,
 };
 pub use contract::{
-    AbiParam, AbiSignature, BodyDesugarPlan, BoolNode, DispatchConstructor, DispatchFallback,
-    DispatchMethod, DispatchSurface, FrontendDesugarPlan, FrontendTransform, IndirectArgShape,
-    abi_selector, contract_abi_json, contract_dispatch_surface, frontend_desugar_plan,
-    module_contract_diagnostics,
+    AbiParam, AbiSelector, AbiSignature, BodyDesugarPlan, BoolNode, DispatchConstructor,
+    DispatchFallback, DispatchMethod, DispatchSurface, FrontendDesugarPlan, FrontendTransform,
+    IndirectArgShape, abi_selector, contract_abi_json, contract_dispatch_surface,
+    frontend_desugar_plan, module_contract_diagnostics,
 };
 pub use hir::sema::ty::{
     BoundTyVar, BuiltinClassId, BuiltinTyCtor, ClassId, Pred, PredKind, QualTy, Ty, TyCtor, TyKind,

@@ -14,6 +14,18 @@ pub struct AbiParam {
     pub components: Vec<AbiParam>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub struct AbiSelector(pub [u8; 4]);
+
+impl AbiSelector {
+    pub fn to_hex(self) -> String {
+        format!(
+            "0x{:02x}{:02x}{:02x}{:02x}",
+            self.0[0], self.0[1], self.0[2], self.0[3]
+        )
+    }
+}
+
 /// Interned ABI signature preimage used as the selector query key.
 #[salsa::interned(debug)]
 pub struct AbiSignature<'db> {
@@ -24,12 +36,9 @@ pub struct AbiSignature<'db> {
 
 /// Computes the ABI selector for a canonical signature.
 #[salsa::tracked]
-pub fn abi_selector<'db>(db: &'db dyn Db, signature: AbiSignature<'db>) -> String {
+pub fn abi_selector<'db>(db: &'db dyn Db, signature: AbiSignature<'db>) -> AbiSelector {
     let hash = hir::keccak::keccak256(signature.text(db).as_bytes());
-    format!(
-        "0x{:02x}{:02x}{:02x}{:02x}",
-        hash[0], hash[1], hash[2], hash[3]
-    )
+    AbiSelector([hash[0], hash[1], hash[2], hash[3]])
 }
 
 pub(super) fn method_signature_string<'db>(

@@ -243,18 +243,6 @@ fn ty_has_inferred_dispatch_placeholder<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bo
     }
 }
 
-pub(super) fn selector_bytes(selector: &str) -> Option<[u8; 4]> {
-    let hex = selector.strip_prefix("0x").unwrap_or(selector);
-    if hex.len() != 8 {
-        return None;
-    }
-    let mut bytes = [0_u8; 4];
-    for index in 0..4 {
-        bytes[index] = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok()?;
-    }
-    Some(bytes)
-}
-
 pub(super) fn function_param_ty<'db>(
     db: &'db dyn Db,
     ty: Ty<'db>,
