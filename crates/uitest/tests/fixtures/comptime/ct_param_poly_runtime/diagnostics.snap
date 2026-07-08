@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_param_poly_runtime/main.solc
 ---
-error[SC0409]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'Wrap_unwrap$word'
+error[SC0409]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'unwrap'
   --> /main/main.solc:20:10
    |
 19 | forall t. t:Wrap => function process(z : t) -> word {

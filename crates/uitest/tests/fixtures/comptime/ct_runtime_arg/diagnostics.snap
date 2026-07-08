@@ -3,28 +3,6 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_runtime_arg/main.solc
 ---
-error[SC0411]: integer type survived comptime erasure: return type in 'main_ComptimeRuntimeArg_double_dcc88aa59': comptime word
-  --> /main/main.solc:16:3
-   |
-15 |   contract ComptimeRuntimeArg {
-16 | /   function double(comptime x : word) -> comptime word {
-17 | |     return x + x;
-18 | |   }
-   | |___^ comptime-only type remains here
-19 |     function main() -> word {
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: parameter 'x': comptime word
-  --> /main/main.solc:16:19
-   |
-15 | contract ComptimeRuntimeArg {
-16 |   function double(comptime x : word) -> comptime word {
-   |                   ^^^^^^^^^^^^^^^^^ comptime-only type remains here
-17 |     return x + x;
-   |
----
-
 error[SC0406]: missing evidence: add
   --> /main/main.solc:17:12
    |
@@ -35,81 +13,11 @@ error[SC0406]: missing evidence: add
    |
 ---
 
-error[SC0411]: integer type survived comptime erasure: expression: comptime word
-  --> /main/main.solc:17:12
-   |
-16 |   function double(comptime x : word) -> comptime word {
-17 |     return x + x;
-   |            ^ comptime-only type remains here
-18 |   }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: variable 'x': comptime word
-  --> /main/main.solc:17:12
-   |
-16 |   function double(comptime x : word) -> comptime word {
-17 |     return x + x;
-   |            ^ comptime-only type remains here
-18 |   }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: expression: comptime word
-  --> /main/main.solc:17:16
-   |
-16 |   function double(comptime x : word) -> comptime word {
-17 |     return x + x;
-   |                ^ comptime-only type remains here
-18 |   }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: variable 'x': comptime word
-  --> /main/main.solc:17:16
-   |
-16 |   function double(comptime x : word) -> comptime word {
-17 |     return x + x;
-   |                ^ comptime-only type remains here
-18 |   }
-   |
----
-
-error[SC0409]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'main_ComptimeRuntimeArg_double_dcc88aa59'
+error[SC0409]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'double'
   --> /main/main.solc:20:12
    |
 19 |   function main() -> word {
 20 |     return double(sloadWord());
    |            ^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-21 |   }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: callee 'main_ComptimeRuntimeArg_double_dcc88aa59': (comptime word) -> word
-  --> /main/main.solc:20:12
-   |
-19 |   function main() -> word {
-20 |     return double(sloadWord());
-   |            ^^^^^^^^^^^^^^^^^^^ comptime-only type remains here
-21 |   }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: callee 'main_sloadWord_d96e43b9c': () -> comptime word
-  --> /main/main.solc:20:19
-   |
-19 |   function main() -> word {
-20 |     return double(sloadWord());
-   |                   ^^^^^^^^^^^ comptime-only type remains here
-21 |   }
-   |
----
-
-error[SC0411]: integer type survived comptime erasure: expression: comptime word
-  --> /main/main.solc:20:19
-   |
-19 |   function main() -> word {
-20 |     return double(sloadWord());
-   |                   ^^^^^^^^^^^ comptime-only type remains here
 21 |   }
    |

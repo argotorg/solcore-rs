@@ -3,23 +3,15 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/integer_erasure/main.solc
 ---
-error[SC0411]: integer type survived comptime erasure: return type in 'main_C_main_d5c2bc27d': integer
+error[SC0411]: runtime lowering cannot represent `integer` in return type of `main`
  --> /main/main.solc:2:3
   |
 1 |   contract C {
 2 | /   public function main() -> integer {
 3 | |     return 1;
 4 | |   }
-  | |___^ comptime-only type remains here
+  | |___^ not representable at runtime
 5 |   }
   |
----
-
-error[SC0411]: integer type survived comptime erasure: expression: integer
- --> /main/main.solc:3:12
-  |
-2 |   public function main() -> integer {
-3 |     return 1;
-  |            ^ comptime-only type remains here
-4 |   }
-  |
+  = note: `integer` and `comptime` values must be eliminated before runtime lowering
+  = note: help: evaluate the value at comptime or change it to a runtime-representable type

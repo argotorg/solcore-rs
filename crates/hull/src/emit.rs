@@ -107,9 +107,13 @@ pub enum EmitDiagnosticKind {
 
 impl<'db> EmitDiagnostic<'db> {
     pub fn lower(&self, db: &'db dyn HirDb) -> Diagnostic {
-        Diagnostic::error(self.kind.to_string())
+        let mut diagnostic = Diagnostic::error(self.kind.to_string())
             .with_code(self.kind.code())
-            .with_primary_label(db, self.span, Some(self.kind.primary_label()))
+            .with_primary_label(db, self.span, Some(self.kind.primary_label()));
+        for note in self.kind.notes() {
+            diagnostic = diagnostic.with_note(note);
+        }
+        diagnostic
     }
 }
 
@@ -121,8 +125,8 @@ impl EmitDiagnosticKind {
             Self::UnsupportedMonoConstruct { .. } => "SC0422",
             Self::MissingAdtLayout { .. } => "SC0423",
             Self::MissingConstructor { .. } => "SC0424",
-            Self::NonExhaustiveMatch => "SC0301",
-            Self::MultiScrutineeMatch { .. } => "SC0302",
+            Self::NonExhaustiveMatch => "SC0302",
+            Self::MultiScrutineeMatch { .. } => "SC0427",
             Self::EmptyMatch => "SC0303",
             Self::DispatcherDeferred { .. } => "SC0425",
             Self::UnsupportedDispatchEntry { .. } => "SC0426",
@@ -141,6 +145,16 @@ impl EmitDiagnosticKind {
             Self::EmptyMatch => "empty match",
             Self::DispatcherDeferred { .. } => "dispatcher cannot be emitted",
             Self::UnsupportedDispatchEntry { .. } => "unsupported dispatcher entry",
+        }
+    }
+
+    fn notes(&self) -> Vec<String> {
+        match self {
+            Self::NonExhaustiveMatch => vec![
+                "missing case: _".to_owned(),
+                "help: add a default or catch-all arm that covers the remaining values".to_owned(),
+            ],
+            _ => Vec::new(),
         }
     }
 }
@@ -162,7 +176,7 @@ impl fmt::Display for EmitDiagnosticKind {
                     "missing Hull layout for constructor `{constructor}` of `{ty}`"
                 )
             }
-            Self::NonExhaustiveMatch => write!(f, "match is not exhaustive"),
+            Self::NonExhaustiveMatch => write!(f, "non-exhaustive pattern match"),
             Self::MultiScrutineeMatch { count } => {
                 write!(
                     f,
@@ -359,6 +373,7 @@ impl<'db> Emitter<'db> {
             }
         };
 
+        prune_emit_diagnostics(self.db, &mut self.diagnostics);
         EmitOutput {
             program,
             diagnostics: self.diagnostics,
@@ -2376,6 +2391,7 @@ impl<'db> Emitter<'db> {
         rows: Vec<MatchRow<'db>>,
     ) -> DecisionTree<'db> {
         if rows.is_empty() {
+            let span = columns.first().map(|column| column.span).unwrap_or(span);
             self.push(span, EmitDiagnosticKind::NonExhaustiveMatch);
             return DecisionTree::Fail { span };
         }
@@ -2577,11 +2593,16 @@ impl<'db> Emitter<'db> {
             None
         } else {
             let (default_rows, default_columns) = default_rows(test.occurrence.clone(), rows, rest);
-            Some(Box::new(self.compile_match_matrix(
-                span,
-                default_columns,
-                default_rows,
-            )))
+            if default_rows.is_empty() {
+                self.push(test.span, EmitDiagnosticKind::NonExhaustiveMatch);
+                Some(Box::new(DecisionTree::Fail { span: test.span }))
+            } else {
+                Some(Box::new(self.compile_match_matrix(
+                    span,
+                    default_columns,
+                    default_rows,
+                )))
+            }
         };
 
         DecisionTree::Switch {
@@ -2630,11 +2651,16 @@ impl<'db> Emitter<'db> {
         }
 
         let (default_rows, default_columns) = default_rows(test.occurrence.clone(), rows, rest);
-        let default = Some(Box::new(self.compile_match_matrix(
-            span,
-            default_columns,
-            default_rows,
-        )));
+        let default = if default_rows.is_empty() {
+            self.push(test.span, EmitDiagnosticKind::NonExhaustiveMatch);
+            Some(Box::new(DecisionTree::Fail { span: test.span }))
+        } else {
+            Some(Box::new(self.compile_match_matrix(
+                span,
+                default_columns,
+                default_rows,
+            )))
+        };
 
         DecisionTree::AtomicSwitch {
             occurrence: test.occurrence,
@@ -3048,6 +3074,45 @@ impl<'db> Emitter<'db> {
     fn push(&mut self, span: Span<'db>, kind: EmitDiagnosticKind) {
         self.diagnostics.push(EmitDiagnostic { span, kind });
     }
+}
+
+fn prune_emit_diagnostics<'db>(
+    db: &'db dyn hir_ty::Db,
+    diagnostics: &mut Vec<EmitDiagnostic<'db>>,
+) {
+    let unsupported_literals = diagnostics
+        .iter()
+        .filter_map(|diagnostic| match diagnostic.kind {
+            EmitDiagnosticKind::UnsupportedLiteral { .. } => Some(diagnostic.span),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if unsupported_literals.is_empty() {
+        return;
+    }
+
+    diagnostics.retain(|diagnostic| {
+        if matches!(
+            diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedType { .. }
+                | EmitDiagnosticKind::UnsupportedDispatchEntry { .. }
+        ) {
+            !unsupported_literals
+                .iter()
+                .any(|literal| span_contains(db, diagnostic.span, *literal))
+        } else {
+            true
+        }
+    });
+}
+
+fn span_contains<'db>(db: &'db dyn HirDb, outer: Span<'db>, inner: Span<'db>) -> bool {
+    if outer.anchor() == inner.anchor() {
+        return outer.begin() <= inner.begin() && inner.end() <= outer.end();
+    }
+    let outer = outer.resolve_to_absolute(db);
+    let inner = inner.resolve_to_absolute(db);
+    outer.file() == inner.file() && outer.start() <= inner.start() && inner.end() <= outer.end()
 }
 
 fn sem_ty_needs_untyped_word_default<'db>(db: &'db dyn hir_ty::Db, ty: SemTy<'db>) -> bool {

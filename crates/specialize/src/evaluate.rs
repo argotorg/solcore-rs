@@ -22,7 +22,7 @@ use crate::{
         MonoArm, MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoId, MonoIntrinsic,
         MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
     },
-    specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind},
+    specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind, display_backend_ty},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +47,15 @@ pub(crate) fn evaluate_module<'db>(
     }
     module.items = items;
     module = eliminate_dead_functions(module);
-    evaluator.check_integer_erasure(&module);
+    if !evaluator.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic.kind,
+            SpecializeDiagnosticKind::ComptimeEvaluationFailed { .. }
+                | SpecializeDiagnosticKind::ComptimeFuelExhausted { .. }
+        )
+    }) {
+        evaluator.check_integer_erasure(&module);
+    }
     (module, evaluator.diagnostics)
 }
 
@@ -1390,7 +1398,7 @@ impl<'db> Evaluator<'db> {
         if self.fuel == 0 {
             self.diagnostics.push(SpecializeDiagnostic {
                 kind: SpecializeDiagnosticKind::ComptimeFuelExhausted {
-                    function: name.to_owned(),
+                    function: display_mono_function_name(self.db, &function),
                     limit: self.fuel_limit,
                 },
                 span: Some(span),
@@ -1586,6 +1594,11 @@ impl<'db> Evaluator<'db> {
         if !self.enforce_comptime {
             return;
         }
+        let function_name = self
+            .functions
+            .get(name)
+            .map(|function| display_mono_function_name(self.db, function))
+            .unwrap_or_else(|| display_backend_symbol(name));
         let contexts = self
             .functions
             .get(name)
@@ -1606,7 +1619,7 @@ impl<'db> Evaluator<'db> {
             self.comptime_failed(
                 format!(
                     "runtime value passed to comptime parameter '{}' of '{}'",
-                    param, name
+                    param, function_name
                 ),
                 Some(span),
             );
@@ -1778,11 +1791,16 @@ impl<'db> Evaluator<'db> {
             let MonoItem::Function(function) = item else {
                 continue;
             };
-            self.check_erasure_ty(
-                format!("return type in '{}'", function.name),
+            if self.check_erasure_ty(
+                format!(
+                    "return type of `{}`",
+                    display_mono_function_name(self.db, function)
+                ),
                 function.ret.ty(),
                 Some(function.span),
-            );
+            ) {
+                continue;
+            }
             for param in &function.params {
                 self.check_erasure_ty(
                     format!("parameter '{}'", param.name),
@@ -1798,17 +1816,20 @@ impl<'db> Evaluator<'db> {
         for stmt in stmts {
             match &stmt.kind {
                 MonoStmtKind::Let { id, ty, init, .. } => {
-                    self.check_erasure_ty(
+                    let mut failed = self.check_erasure_ty(
                         format!("let '{}'", id.name),
                         id.ty.ty(),
                         Some(stmt.span),
                     );
                     if let Some(ty) = ty {
-                        self.check_erasure_ty(
+                        failed |= self.check_erasure_ty(
                             format!("let annotation '{}'", id.name),
                             ty.ty(),
                             Some(stmt.span),
                         );
+                    }
+                    if failed {
+                        continue;
                     }
                     if let Some(init) = init {
                         self.check_erasure_expr(init);
@@ -1874,7 +1895,9 @@ impl<'db> Evaluator<'db> {
     }
 
     fn check_erasure_expr(&mut self, expr: &MonoExpr<'db>) {
-        self.check_erasure_ty("expression", expr.ty.ty(), Some(expr.span));
+        if self.check_erasure_ty("expression", expr.ty.ty(), Some(expr.span)) {
+            return;
+        }
         match &expr.kind {
             MonoExprKind::Var(id) => {
                 self.check_erasure_ty(
@@ -1889,22 +1912,33 @@ impl<'db> Evaluator<'db> {
                     self.check_erasure_expr(elem);
                 }
             }
-            MonoExprKind::Call { callee, args, .. } => {
-                self.check_erasure_ty(
-                    format!("callee '{}'", callee.name),
+            MonoExprKind::Call {
+                callee,
+                args,
+                origin,
+            } => {
+                if self.check_erasure_ty(
+                    format!(
+                        "call to `{}`",
+                        display_call_name(self.db, *origin, &callee.name)
+                    ),
                     callee.ty.ty(),
                     Some(expr.span),
-                );
+                ) {
+                    return;
+                }
                 for arg in args {
                     self.check_erasure_expr(arg);
                 }
             }
             MonoExprKind::Con { ctor, args } => {
-                self.check_erasure_ty(
-                    format!("constructor '{}'", ctor.name),
+                if self.check_erasure_ty(
+                    format!("constructor `{}`", display_backend_symbol(&ctor.name)),
                     ctor.ty.ty(),
                     Some(expr.span),
-                );
+                ) {
+                    return;
+                }
                 for arg in args {
                     self.check_erasure_expr(arg);
                 }
@@ -1949,7 +1983,9 @@ impl<'db> Evaluator<'db> {
     }
 
     fn check_erasure_pat(&mut self, pat: &MonoPat<'db>) {
-        self.check_erasure_ty("pattern", pat.ty.ty(), Some(pat.span));
+        if self.check_erasure_ty("pattern", pat.ty.ty(), Some(pat.span)) {
+            return;
+        }
         match &pat.kind {
             MonoPatKind::Var(id) => {
                 self.check_erasure_ty(
@@ -1959,11 +1995,16 @@ impl<'db> Evaluator<'db> {
                 );
             }
             MonoPatKind::Con { ctor, args } => {
-                self.check_erasure_ty(
-                    format!("pattern constructor '{}'", ctor.name),
+                if self.check_erasure_ty(
+                    format!(
+                        "pattern constructor `{}`",
+                        display_backend_symbol(&ctor.name)
+                    ),
                     ctor.ty.ty(),
                     Some(pat.span),
-                );
+                ) {
+                    return;
+                }
                 for arg in args {
                     self.check_erasure_pat(arg);
                 }
@@ -1983,17 +2024,19 @@ impl<'db> Evaluator<'db> {
         context: impl Into<String>,
         ty: Ty<'db>,
         span: Option<Span<'db>>,
-    ) {
-        if ty_needs_erasure(self.db, ty) {
+    ) -> bool {
+        let needs_erasure = ty_needs_erasure(self.db, ty);
+        if needs_erasure {
             self.integer_erasure(context.into(), ty, span);
         }
+        needs_erasure
     }
 
     fn integer_erasure(&mut self, context: String, ty: Ty<'db>, span: Option<Span<'db>>) {
         self.diagnostics.push(SpecializeDiagnostic {
             kind: SpecializeDiagnosticKind::IntegerErasure {
                 context,
-                ty: ty.display(self.db),
+                ty: display_backend_ty(self.db, ty),
             },
             span,
         });
@@ -3194,6 +3237,40 @@ fn param_is_comptime<'db>(db: &'db dyn Db, param: &MonoParam<'db>) -> bool {
 
 fn ty_is_comptime<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
     matches!(ty.kind(db), TyKind::Comptime(_))
+}
+
+fn display_mono_function_name<'db>(db: &'db dyn Db, function: &MonoFunction<'db>) -> String {
+    function
+        .source
+        .and_then(|def| def.name(db))
+        .unwrap_or_else(|| display_backend_symbol(&function.name))
+}
+
+fn display_call_name<'db>(db: &'db dyn Db, origin: MonoCallOrigin<'db>, fallback: &str) -> String {
+    match origin {
+        MonoCallOrigin::Source(def) => def
+            .name(db)
+            .unwrap_or_else(|| display_backend_symbol(fallback)),
+        MonoCallOrigin::Builtin(_) | MonoCallOrigin::Unknown => display_backend_symbol(fallback),
+    }
+}
+
+fn display_backend_symbol(name: &str) -> String {
+    let base = name.split_once('$').map_or(name, |(base, _)| base);
+    let base = strip_hash_suffix(base).unwrap_or(base);
+    let base = base.strip_prefix("main_").unwrap_or(base);
+    if let Some((owner, member)) = base.split_once('_')
+        && owner.chars().next().is_some_and(char::is_uppercase)
+    {
+        return format!("{owner}.{member}");
+    }
+    base.to_owned()
+}
+
+fn strip_hash_suffix(name: &str) -> Option<&str> {
+    let (base, suffix) = name.rsplit_once('_')?;
+    let hex = suffix.strip_prefix('d')?;
+    (hex.len() == 8 && hex.chars().all(|ch| ch.is_ascii_hexdigit())).then_some(base)
 }
 
 fn ty_is_function<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {

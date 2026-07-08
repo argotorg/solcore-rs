@@ -95,16 +95,21 @@ pub enum SpecializeDiagnosticKind<'db> {
     ComptimeEvaluationFailed { context: String },
     ComptimeFuelExhausted { function: String, limit: usize },
     IntegerErasure { context: String, ty: String },
+    PublicComptimeParam { function: String, param: String },
 }
 
 impl<'db> SpecializeDiagnostic<'db> {
     pub fn lower(&self, db: &'db dyn HirDb) -> Diagnostic {
-        let diagnostic = Diagnostic::error(self.kind.to_string()).with_code(self.kind.code());
-        if let Some(span) = self.span {
+        let mut diagnostic = Diagnostic::error(self.kind.to_string()).with_code(self.kind.code());
+        diagnostic = if let Some(span) = self.span {
             diagnostic.with_primary_label(db, span, Some(self.kind.primary_label()))
         } else {
             diagnostic
+        };
+        for note in self.kind.notes() {
+            diagnostic = diagnostic.with_note(note);
         }
+        diagnostic
     }
 }
 
@@ -123,6 +128,7 @@ impl SpecializeDiagnosticKind<'_> {
             Self::ComptimeEvaluationFailed { .. } => "SC0409",
             Self::ComptimeFuelExhausted { .. } => "SC0410",
             Self::IntegerErasure { .. } => "SC0411",
+            Self::PublicComptimeParam { .. } => "SC0413",
         }
     }
 
@@ -139,7 +145,41 @@ impl SpecializeDiagnosticKind<'_> {
             Self::UnresolvedExternal { .. } => "external function required here",
             Self::ComptimeEvaluationFailed { .. } => "comptime evaluation failed here",
             Self::ComptimeFuelExhausted { .. } => "comptime fuel limit reached here",
-            Self::IntegerErasure { .. } => "comptime-only type remains here",
+            Self::IntegerErasure { .. } => "not representable at runtime",
+            Self::PublicComptimeParam { .. } => "public entry parameter is runtime",
+        }
+    }
+
+    fn notes(&self) -> Vec<String> {
+        match self {
+            Self::FreeTypeVariable { context, .. } if context == "entry specialization" => vec![
+                "entry points are specialization roots and must have a single concrete type"
+                    .to_owned(),
+                "help: give the entry point a monomorphic signature or call a polymorphic helper from a monomorphic wrapper"
+                    .to_owned(),
+            ],
+            Self::FreeTypeVariable { .. } => vec![
+                "this can happen when a constructor or expression leaves a type parameter unresolved"
+                    .to_owned(),
+                "help: add a type annotation that fixes the concrete type".to_owned(),
+            ],
+            Self::ComptimeFuelExhausted { .. } => vec![
+                "comptime evaluation did not finish before the fuel limit was reached".to_owned(),
+                "help: make the comptime recursion reach a base case or reduce the compile-time work"
+                    .to_owned(),
+            ],
+            Self::IntegerErasure { .. } => vec![
+                "`integer` and `comptime` values must be eliminated before runtime lowering"
+                    .to_owned(),
+                "help: evaluate the value at comptime or change it to a runtime-representable type"
+                    .to_owned(),
+            ],
+            Self::PublicComptimeParam { .. } => vec![
+                "public function parameters are supplied from calldata at runtime".to_owned(),
+                "help: remove `comptime` from the public parameter or call a private comptime helper with a compile-time value"
+                    .to_owned(),
+            ],
+            _ => Vec::new(),
         }
     }
 }
@@ -527,6 +567,7 @@ impl<'db> Driver<'db> {
             let constructor_surface = surface.constructor.clone();
             let fallback_surface = surface.fallback.clone();
             let mut entries = Vec::new();
+            let mut blocked_dispatch_entry = false;
             let mut constructor_meta = MonoConstructor {
                 source: None,
                 explicit: constructor_surface.explicit,
@@ -545,6 +586,12 @@ impl<'db> Driver<'db> {
                 span: contract.span(self.db),
             };
             for method in surface.methods {
+                if let Some(info) = self.functions.get(&method.def).cloned()
+                    && self.reject_public_comptime_params(&info)
+                {
+                    blocked_dispatch_entry = true;
+                    continue;
+                }
                 if self
                     .functions
                     .get(&method.def)
@@ -627,7 +674,7 @@ impl<'db> Driver<'db> {
                 });
                 roots.push(key);
             }
-            if entries.is_empty() {
+            if entries.is_empty() && !blocked_dispatch_entry {
                 for item in contract.items(self.db) {
                     if let ContractItem::FunctionDef(function) = *item
                         && ident_text(self.db, &function.sig(self.db).name) == "main"
@@ -674,6 +721,26 @@ impl<'db> Driver<'db> {
         }
 
         (contracts, roots)
+    }
+
+    fn reject_public_comptime_params(&mut self, info: &FunctionInfo<'db>) -> bool {
+        let function = ident_text(self.db, &info.function.sig(self.db).name);
+        let mut rejected = false;
+        for param in info.function.sig(self.db).params.atom() {
+            if !param_comptime(param) {
+                continue;
+            }
+            let param_name = param_name(self.db, param).unwrap_or("_").to_owned();
+            self.diagnostics.push(SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::PublicComptimeParam {
+                    function: function.clone(),
+                    param: param_name,
+                },
+                span: Some(param.span(self.db)),
+            });
+            rejected = true;
+        }
+        rejected
     }
 
     fn root_for_def(&mut self, def: DefId<'db>) -> Option<SpecKey<'db>> {
@@ -1060,7 +1127,7 @@ impl<'db> Driver<'db> {
             self.diagnostics.push(SpecializeDiagnostic {
                 kind: SpecializeDiagnosticKind::FreeTypeVariable {
                     context: context.to_owned(),
-                    ty: ty.display(self.db),
+                    ty: display_backend_ty(self.db, ty),
                 },
                 span,
             });
@@ -3097,6 +3164,48 @@ fn param_names<'db>(db: &'db dyn HirDb, params: &[FuncParam<'db>]) -> Vec<String
         .collect()
 }
 
+pub(crate) fn display_backend_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> String {
+    match ty.kind(db) {
+        TyKind::Error => "<error>".to_owned(),
+        TyKind::Unknown | TyKind::BoundVar(_) => "_".to_owned(),
+        TyKind::Named { ctor, args } => {
+            let name = match ctor {
+                TyCtor::Builtin(ctor) => ctor.name().to_owned(),
+                TyCtor::User(user) => user.def.name(db).unwrap_or_else(|| user.kind.to_string()),
+            };
+            if args.is_empty() {
+                name
+            } else {
+                format!(
+                    "{name}({})",
+                    args.iter()
+                        .map(|arg| display_backend_ty(db, *arg))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+        TyKind::Function { params, ret } => {
+            let params = params
+                .iter()
+                .map(|param| display_backend_ty(db, *param))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("({params}) -> {}", display_backend_ty(db, *ret))
+        }
+        TyKind::Tuple(elems) if elems.is_empty() => "()".to_owned(),
+        TyKind::Tuple(elems) => format!(
+            "({})",
+            elems
+                .iter()
+                .map(|elem| display_backend_ty(db, *elem))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        TyKind::Comptime(inner) => format!("comptime {}", display_backend_ty(db, *inner)),
+    }
+}
+
 fn param_comptime(param: &FuncParam<'_>) -> bool {
     match param {
         FuncParam::Typed { comptime, .. } | FuncParam::Untyped { comptime, .. } => {
@@ -3819,7 +3928,19 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::FreeTypeVariable { context, ty } => {
-                write!(f, "cannot specialize {context}: free type variable in {ty}")
+                if context == "entry specialization" {
+                    write!(
+                        f,
+                        "entry point must have a concrete, non-polymorphic type before specialization"
+                    )
+                } else if ty == "_" {
+                    write!(f, "cannot specialize {context}: type is not concrete")
+                } else {
+                    write!(
+                        f,
+                        "cannot specialize {context}: unresolved type parameter in {ty}"
+                    )
+                }
             }
             Self::InstantiationFuelExhausted { limit } => {
                 write!(f, "specialization fuel exhausted at {limit} instantiations")
@@ -3843,8 +3964,12 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
                 "comptime evaluation fuel exhausted in {function} at {limit} unfold steps"
             ),
             Self::IntegerErasure { context, ty } => {
-                write!(f, "integer type survived comptime erasure: {context}: {ty}")
+                write!(f, "runtime lowering cannot represent `{ty}` in {context}")
             }
+            Self::PublicComptimeParam { function, param } => write!(
+                f,
+                "public function `{function}` cannot take comptime parameter `{param}`"
+            ),
         }
     }
 }

@@ -3,14 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/ergo_hull_word_match_no_default/main.solc
 ---
-error[SC0301]: match is not exhaustive
- --> /main/main.solc:3:5
+error[SC0302]: non-exhaustive pattern match
+ --> /main/main.solc:3:11
   |
-2 |     public function name(d : word) -> word {
-3 | /     match d {
-4 | |     | 0 => return 100;
-5 | |     | 1 => return 101;
-6 | |     }
-  | |_____^ match is not exhaustive
-7 |     }
+2 |   public function name(d : word) -> word {
+3 |     match d {
+  |           ^ match is not exhaustive
+4 |     | 0 => return 100;
   |
+  = note: missing case: _
+  = note: help: add a default or catch-all arm that covers the remaining values

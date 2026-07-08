@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/ergo_poly_entry/main.solc
 ---
-error[SC0401]: cannot specialize entry specialization: free type variable in (_) -> _
+error[SC0401]: entry point must have a concrete, non-polymorphic type before specialization
  --> /main/main.solc:5:1
   |
 4 |
@@ -11,3 +11,6 @@ error[SC0401]: cannot specialize entry specialization: free type variable in (_)
 6 | |   return x;
 7 | | }
   | |_^ type must be concrete here
+  |
+  = note: entry points are specialization roots and must have a single concrete type
+  = note: help: give the entry point a monomorphic signature or call a polymorphic helper from a monomorphic wrapper
