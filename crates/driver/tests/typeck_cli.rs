@@ -457,6 +457,7 @@ fn cli_renders_backend_diagnostics_with_stable_codes() {
     fs::write(
         &input,
         r#"
+import std.{string};
 contract C {
   public function main() -> string {
     return "nope";
@@ -477,9 +478,9 @@ contract C {
 
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("error[SC0420]"), "stderr:\n{stderr}");
+    assert!(stderr.contains("error[SC0421]"), "stderr:\n{stderr}");
     assert!(
-        stderr.contains("cannot lower type `string` to Hull"),
+        stderr.contains("cannot lower literal `\"nope\"` to Hull"),
         "stderr:\n{stderr}"
     );
     assert!(!stderr.contains("UnsupportedType {"), "stderr:\n{stderr}");
