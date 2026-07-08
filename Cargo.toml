@@ -15,6 +15,7 @@ parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
 nameres = { path = "crates/nameres", package = "solcore-nameres" }
 hir-ty = { path = "crates/hir-ty", package = "solcore-hir-ty" }
+vfs = { path = "crates/vfs", package = "solcore-vfs" }
 
 [workspace.package]
 edition = "2024"

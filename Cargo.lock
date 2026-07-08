@@ -965,6 +965,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "solcore-vfs"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash",
+ "salsa",
+ "solcore-hir",
+ "solcore-hir-ty",
+ "solcore-nameres",
+ "solcore-parser",
+ "url",
+]
+
+[[package]]
 name = "solcore-yul"
 version = "0.1.0"
 dependencies = [
