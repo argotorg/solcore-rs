@@ -148,6 +148,12 @@ contract DispatchBasicShape {
 }
 
 #[test]
+fn data_type_storage_full_yul_snapshot() {
+    let fixture = repo_root().join("crates/yul/tests/fixtures/data_type_storage_full/main.solc");
+    insta::assert_snapshot!("data_type_storage_full", render_fixture(&fixture));
+}
+
+#[test]
 fn ink_binary_sum_preserves_nested_layout_snapshot() {
     let db = TestDb::default();
     let sp = test_span(&db);

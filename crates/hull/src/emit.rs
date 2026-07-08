@@ -13,9 +13,12 @@ use hir::{
         ty::TypeRefKind,
     },
     diag::Diagnostic,
-    span::{Span, SpannedElem},
+    span::{Span, Spanned, SpannedElem},
 };
-use hir_ty::{BuiltinTyCtor, Ty as SemTy, TyCtor, TyKind as SemTyKind, UserTyCtorKind};
+use hir_ty::{
+    BinderEnv, BuiltinTyCtor, Ty as SemTy, TyCtor, TyKind as SemTyKind, TypeLowering,
+    UserTyCtorKind,
+};
 use parser::parse_file_to_hir;
 use specialize::{
     MonoAbiParam, MonoArm, MonoCallOrigin, MonoContract, MonoEntry, MonoEntryKind, MonoExpr,
@@ -593,18 +596,42 @@ impl<'db> Emitter<'db> {
         let Some(contract) = find_contract(self.db, module, def) else {
             return BTreeMap::new();
         };
-        contract
-            .fields(self.db)
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, field)| {
-                let kind = field_storage_kind(self.db, field.ty())?;
-                Some((
+        let resolutions = hir::nameres::resolve_item_types(self.db, module);
+        let lowerer =
+            TypeLowering::from_item_resolutions(self.db, &resolutions, BinderEnv::empty());
+        let mut fields = BTreeMap::new();
+        for (slot, field) in contract.fields(self.db).iter().enumerate() {
+            let kind = field_storage_kind(self.db, field.ty()).or_else(|| {
+                let ty = lowerer.lower_field(field).ty;
+                self.user_adt_storage_field_kind(ty, field.ty().span(self.db))
+            });
+            if let Some(kind) = kind {
+                fields.insert(
                     field.name().atom().text(self.db).to_owned(),
                     StorageField { slot, kind },
-                ))
-            })
-            .collect()
+                );
+            }
+        }
+        fields
+    }
+
+    fn user_adt_storage_field_kind(
+        &mut self,
+        ty: SemTy<'db>,
+        span: Span<'db>,
+    ) -> Option<StorageFieldKind> {
+        let SemTyKind::Named {
+            ctor: TyCtor::User(user),
+            ..
+        } = ty.kind(self.db)
+        else {
+            return None;
+        };
+        if !matches!(user.kind, UserTyCtorKind::Adt) {
+            return None;
+        }
+        let ty = self.try_hull_ty(ty, span)?;
+        (hull_ty_word_slots(&ty) == Some(1)).then_some(StorageFieldKind::DirectWord)
     }
 
     fn lower_storage_fields_in_function(
