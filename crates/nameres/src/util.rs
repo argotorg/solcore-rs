@@ -1,27 +1,174 @@
+use std::fmt;
+
 use super::*;
+
+/// Borrowed display adapter for logical module IDs.
+#[derive(Clone, Copy)]
+pub struct ModuleDisplay<'db> {
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+}
+
+impl<'db> ModuleDisplay<'db> {
+    /// Creates a display adapter for `module`.
+    pub fn new(db: &'db dyn Db, module: ModuleId<'db>) -> Self {
+        Self { db, module }
+    }
+}
+
+impl fmt::Display for ModuleDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let path = self.module.logical_path(self.db);
+        match self.module.library(self.db) {
+            LibraryId::Main => write_dot_segments(f, path.iter().map(String::as_str)),
+            LibraryId::Std if path.as_slice() == ["std"] => f.write_str("std"),
+            LibraryId::Std => {
+                f.write_str("std.")?;
+                write_dot_segments(f, path.iter().map(String::as_str))
+            }
+            LibraryId::External(name) => {
+                write!(f, "@{name}.")?;
+                write_dot_segments(f, path.iter().map(String::as_str))
+            }
+        }
+    }
+}
+
+impl fmt::Debug for ModuleDisplay<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl PartialEq<&str> for ModuleDisplay<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        let path = self.module.logical_path(self.db);
+        match self.module.library(self.db) {
+            LibraryId::Main => dot_segments_eq(path.iter().map(String::as_str), other),
+            LibraryId::Std if path.as_slice() == ["std"] => *other == "std",
+            LibraryId::Std => other
+                .strip_prefix("std.")
+                .is_some_and(|tail| dot_segments_eq(path.iter().map(String::as_str), tail)),
+            LibraryId::External(name) => other
+                .strip_prefix('@')
+                .and_then(|tail| tail.strip_prefix(name.as_str()))
+                .and_then(|tail| tail.strip_prefix('.'))
+                .is_some_and(|tail| dot_segments_eq(path.iter().map(String::as_str), tail)),
+        }
+    }
+}
+
+impl PartialEq<String> for ModuleDisplay<'_> {
+    fn eq(&self, other: &String) -> bool {
+        PartialEq::<&str>::eq(self, &other.as_str())
+    }
+}
+
+/// Borrowed display adapter for module paths as written in import/export syntax.
+#[derive(Clone, Copy)]
+pub struct ModulePathDisplay<'a, 'db> {
+    db: &'db dyn Db,
+    path: &'a ModulePathRef<'db>,
+}
+
+impl<'a, 'db> ModulePathDisplay<'a, 'db> {
+    /// Creates a display adapter for `path`.
+    pub fn new(db: &'db dyn Db, path: &'a ModulePathRef<'db>) -> Self {
+        Self { db, path }
+    }
+}
+
+impl fmt::Display for ModulePathDisplay<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.path.external.is_some() {
+            f.write_str("@")?;
+        }
+        write_dot_segments(f, module_path_segment_texts(self.db, self.path))
+    }
+}
+
+impl fmt::Debug for ModulePathDisplay<'_, '_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
+impl PartialEq<&str> for ModulePathDisplay<'_, '_> {
+    fn eq(&self, other: &&str) -> bool {
+        if self.path.external.is_some() {
+            other.strip_prefix('@').is_some_and(|tail| {
+                dot_segments_eq(module_path_segment_texts(self.db, self.path), tail)
+            })
+        } else {
+            dot_segments_eq(module_path_segment_texts(self.db, self.path), other)
+        }
+    }
+}
+
+impl PartialEq<String> for ModulePathDisplay<'_, '_> {
+    fn eq(&self, other: &String) -> bool {
+        PartialEq::<&str>::eq(self, &other.as_str())
+    }
+}
+
+fn write_dot_segments<'a>(
+    f: &mut fmt::Formatter<'_>,
+    segments: impl IntoIterator<Item = &'a str>,
+) -> fmt::Result {
+    let mut first = true;
+    for segment in segments {
+        if first {
+            first = false;
+        } else {
+            f.write_str(".")?;
+        }
+        f.write_str(segment)?;
+    }
+    Ok(())
+}
+
+fn dot_segments_eq<'a>(segments: impl IntoIterator<Item = &'a str>, text: &str) -> bool {
+    let mut tail = text;
+    let mut first = true;
+    for segment in segments {
+        if first {
+            first = false;
+        } else if let Some(next) = tail.strip_prefix('.') {
+            tail = next;
+        } else {
+            return false;
+        }
+        let Some(next) = tail.strip_prefix(segment) else {
+            return false;
+        };
+        tail = next;
+    }
+    tail.is_empty()
+}
+
+fn module_path_segment_texts<'a, 'db>(
+    db: &'db dyn Db,
+    path: &'a ModulePathRef<'db>,
+) -> impl Iterator<Item = &'db str> + 'a
+where
+    'db: 'a,
+{
+    path.segments
+        .iter()
+        .map(move |segment| (*segment.atom()).text(db))
+}
 
 /// Formats a logical module ID as user-facing text.
 ///
 /// Main modules omit a prefix, standard-library modules use `std`, and external
 /// modules use `@name.path` form.
 pub fn module_id_display<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> String {
-    let path = module.logical_path(db).join(".");
-    match module.library(db) {
-        LibraryId::Main => path,
-        LibraryId::Std if module.logical_path(db).as_slice() == ["std"] => "std".to_owned(),
-        LibraryId::Std => format!("std.{path}"),
-        LibraryId::External(name) => format!("@{name}.{path}"),
-    }
+    module.display(db).to_string()
 }
 
 /// Formats a module path reference as it appeared in import/export syntax.
 pub fn module_path_display<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> String {
-    let segments = path_segments(db, path).join(".");
-    if path.external.is_some() {
-        format!("@{segments}")
-    } else {
-        segments
-    }
+    ModulePathDisplay::new(db, path).to_string()
 }
 
 /// Converts a logical module path into the conventional source file path.
@@ -116,17 +263,28 @@ pub(super) fn trace_import_decision<'db>(
     status: &'static str,
 ) {
     if tracing::enabled!(target: "nameres::imports", Level::TRACE) {
-        let target = target
-            .map(|module| module.display(db))
-            .unwrap_or_else(|| "<none>".to_owned());
-        tracing::trace!(
-            target: "nameres::imports",
-            module = %importing.display(db),
-            path = %module_path_display(db, path),
-            target = %target,
-            status,
-            "import resolution decision"
-        );
+        match target {
+            Some(target) => {
+                tracing::trace!(
+                    target: "nameres::imports",
+                    module = %importing.display(db),
+                    path = %ModulePathDisplay::new(db, path),
+                    target = %target.display(db),
+                    status,
+                    "import resolution decision"
+                );
+            }
+            None => {
+                tracing::trace!(
+                    target: "nameres::imports",
+                    module = %importing.display(db),
+                    path = %ModulePathDisplay::new(db, path),
+                    target = "<none>",
+                    status,
+                    "import resolution decision"
+                );
+            }
+        }
     }
 }
 

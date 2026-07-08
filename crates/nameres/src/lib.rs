@@ -73,8 +73,8 @@ pub use model::{
 pub use paths::{resolve_module_path, resolve_module_path_candidate};
 pub use scc::strongly_connected_components;
 pub use util::{
-    module_file_path, module_id_display, module_id_from_key, module_key_for_path,
-    module_path_display,
+    ModuleDisplay, ModulePathDisplay, module_file_path, module_id_display, module_id_from_key,
+    module_key_for_path, module_path_display,
 };
 pub use validation::{validate_module, validate_reachable};
 

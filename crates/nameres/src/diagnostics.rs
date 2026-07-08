@@ -105,8 +105,8 @@ pub enum ModuleDiagnostic<'db> {
         namespaces: Vec<Namespace>,
         /// Ambiguous selected name.
         name: String,
-        /// Span of the import that introduced the ambiguity.
-        span: LabelSpan,
+        /// Optional span of the import that introduced the ambiguity.
+        span: Option<LabelSpan>,
         /// Modules that provide the same name.
         modules: Vec<ModuleId<'db>>,
     },
@@ -252,16 +252,16 @@ impl<'db> ModuleDiagnostic<'db> {
                 span,
                 modules,
             } => {
-                let module_list = modules
-                    .iter()
-                    .map(|module| module_id_display(db, *module))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let module_list = module_list_display(db, modules);
                 let context = namespace_context(namespaces);
                 let label = format!("ambiguous selected import {context}");
-                Diagnostic::error(format!("ambiguous selected import `{name}` {context}"))
-                    .with_code(DiagnosticCode::MODULE_AMBIGUOUS_SELECTED_IMPORT)
-                    .with_primary_label_span(span.clone(), Some(label))
+                let mut diagnostic =
+                    Diagnostic::error(format!("ambiguous selected import `{name}` {context}"))
+                        .with_code(DiagnosticCode::MODULE_AMBIGUOUS_SELECTED_IMPORT);
+                if let Some(span) = span {
+                    diagnostic = diagnostic.with_primary_label_span(span.clone(), Some(label));
+                }
+                diagnostic
                     .with_note(format!("`{name}` is imported from {module_list} {context}"))
                     .with_note("use an explicit module qualifier or narrow the selected imports")
             }
@@ -276,6 +276,19 @@ impl<'db> ModuleDiagnostic<'db> {
                 .with_note("rename the local binding or use an import alias"),
         }
     }
+}
+
+fn module_list_display<'db>(db: &'db dyn Db, modules: &[ModuleId<'db>]) -> String {
+    use std::fmt::Write as _;
+
+    let mut result = String::new();
+    for module in modules {
+        if !result.is_empty() {
+            result.push_str(", ");
+        }
+        let _ = write!(&mut result, "{}", module.display(db));
+    }
+    result
 }
 
 #[salsa::tracked(returns(ref))]
@@ -574,12 +587,10 @@ fn type_var_bindings<'db>(
         .collect()
 }
 
-pub(super) fn module_root_span<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Span<'db> {
-    let file = db
-        .module_file(module)
-        .unwrap_or_else(|| panic!("validated module missing file"));
+pub(super) fn module_root_span<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Option<Span<'db>> {
+    let file = db.module_file(module)?;
     let anchor = AnchorId::root(db, file);
-    Span::new(anchor, Offset::new(0), Offset::new(0))
+    Some(Span::new(anchor, Offset::new(0), Offset::new(0)))
 }
 
 pub(super) fn module_not_found_diag<'db>(
@@ -648,7 +659,7 @@ pub(super) fn duplicate_selector_diag<'db>(
 
 pub(super) fn ambiguous_import_diag<'db>(
     db: &'db dyn Db,
-    span: Span<'db>,
+    span: Option<Span<'db>>,
     namespaces: &[Namespace],
     name: &str,
     modules: Vec<ModuleId<'db>>,
@@ -656,7 +667,7 @@ pub(super) fn ambiguous_import_diag<'db>(
     ModuleDiagnostic::AmbiguousSelectedImport {
         namespaces: namespaces.to_vec(),
         name: name.to_owned(),
-        span: LabelSpan::from_span(db, span),
+        span: span.map(|span| LabelSpan::from_span(db, span)),
         modules,
     }
 }

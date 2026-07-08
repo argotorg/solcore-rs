@@ -226,8 +226,12 @@ pub(super) fn local_data_ref_with_constructors<'db>(
 ) -> Option<ItemRef<'db>> {
     let def = find_local_data_type(db, module, type_name)?;
     let available = ctor_names(db, def);
-    let selected = select_constructors(db, selector, &available);
-    let missing = missing_constructors(db, selector, &available);
+    let selected = select_constructors(db, selector, available.iter().cloned(), |name| {
+        available.iter().any(|available| available.as_str() == name)
+    });
+    let missing = missing_constructors(db, selector, |name| {
+        available.iter().any(|available| available.as_str() == name)
+    });
     if mode.is_strict() {
         for ctor in missing {
             diagnostics.push(unknown_local_ctor_diag(
@@ -239,7 +243,7 @@ pub(super) fn local_data_ref_with_constructors<'db>(
         }
     }
     let mut item_ref = adt_ref(db, module, def, CtorInclusion::Exclude);
-    item_ref.constructors = ConstructorVisibility::from_visible(selected.into_iter().collect());
+    item_ref.constructors = ConstructorVisibility::from_visible(selected);
     Some(item_ref)
 }
 
@@ -259,8 +263,10 @@ pub(super) fn visible_data_ref_with_constructors<'db>(
                 && item_ref.constructors.is_data()
         })?
         .clone();
-    let visible = visible_constructor_names(&data_ref.constructors);
-    let missing = missing_constructors(db, selector, &visible);
+    let visible = visible_constructor_set(&data_ref.constructors);
+    let missing = missing_constructors(db, selector, |name| {
+        visible.is_some_and(|visible| visible.contains(name))
+    });
     if ctx.mode.is_strict() {
         for ctor in missing {
             ctx.diagnostics.push(match ctx.diagnostic {
@@ -273,12 +279,16 @@ pub(super) fn visible_data_ref_with_constructors<'db>(
             });
         }
     }
-    let mut selected = data_ref;
-    selected.constructors = ConstructorVisibility::from_visible(
-        select_constructors(db, selector, &visible)
+    let selected_constructors = select_constructors(
+        db,
+        selector,
+        visible
             .into_iter()
-            .collect(),
+            .flat_map(|visible| visible.iter().cloned()),
+        |name| visible.is_some_and(|visible| visible.contains(name)),
     );
+    let mut selected = data_ref;
+    selected.constructors = ConstructorVisibility::from_visible(selected_constructors);
     Some(selected)
 }
 
@@ -317,16 +327,20 @@ fn ctor_names<'db>(db: &'db dyn Db, def: AdtDef<'db>) -> Vec<String> {
 fn select_constructors<'db>(
     db: &'db dyn Db,
     selector: &ConstructorSelector<'db>,
-    available: &[String],
-) -> Vec<String> {
+    available: impl IntoIterator<Item = String>,
+    contains: impl Fn(&str) -> bool,
+) -> BTreeSet<String> {
     match selector {
-        ConstructorSelector::All => unique_strings(available.iter().cloned()),
+        ConstructorSelector::All => available.into_iter().collect(),
         ConstructorSelector::Named(names) => {
-            let requested = names.iter().map(|name| spanned_name_text(db, name));
-            unique_strings(requested)
-                .into_iter()
-                .filter(|name| available.contains(name))
-                .collect()
+            let mut seen = FxHashSet::default();
+            let mut selected = BTreeSet::new();
+            for name in names.iter().map(|name| spanned_name_text(db, name)) {
+                if seen.insert(name.clone()) && contains(&name) {
+                    selected.insert(name);
+                }
+            }
+            selected
         }
     }
 }
@@ -334,15 +348,19 @@ fn select_constructors<'db>(
 fn missing_constructors<'db>(
     db: &'db dyn Db,
     selector: &ConstructorSelector<'db>,
-    available: &[String],
+    contains: impl Fn(&str) -> bool,
 ) -> Vec<String> {
     match selector {
         ConstructorSelector::All => Vec::new(),
         ConstructorSelector::Named(names) => {
-            unique_strings(names.iter().map(|name| spanned_name_text(db, name)))
-                .into_iter()
-                .filter(|name| !available.contains(name))
-                .collect()
+            let mut seen = FxHashSet::default();
+            let mut missing = Vec::new();
+            for name in names.iter().map(|name| spanned_name_text(db, name)) {
+                if seen.insert(name.clone()) && !contains(&name) {
+                    missing.push(name);
+                }
+            }
+            missing
         }
     }
 }
@@ -414,12 +432,17 @@ pub(super) fn select_import_refs<'db>(
                         if let Some(selector) = &selected.constructors
                             && item_ref.constructors.is_data()
                         {
-                            let visible = visible_constructor_names(&item_ref.constructors);
-                            item_ref.constructors = ConstructorVisibility::from_visible(
-                                select_constructors(db, selector, &visible)
+                            let visible = visible_constructor_set(&item_ref.constructors);
+                            let selected_constructors = select_constructors(
+                                db,
+                                selector,
+                                visible
                                     .into_iter()
-                                    .collect(),
+                                    .flat_map(|visible| visible.iter().cloned()),
+                                |name| visible.is_some_and(|visible| visible.contains(name)),
                             );
+                            item_ref.constructors =
+                                ConstructorVisibility::from_visible(selected_constructors);
                         }
                         item_ref
                     })
@@ -439,10 +462,10 @@ pub(super) fn select_import_refs<'db>(
     selected
 }
 
-fn visible_constructor_names(visibility: &ConstructorVisibility) -> Vec<String> {
+fn visible_constructor_set(visibility: &ConstructorVisibility) -> Option<&BTreeSet<String>> {
     match visibility {
-        ConstructorVisibility::NotData | ConstructorVisibility::OpaqueData => Vec::new(),
-        ConstructorVisibility::Visible(constructors) => constructors.iter().cloned().collect(),
+        ConstructorVisibility::NotData | ConstructorVisibility::OpaqueData => None,
+        ConstructorVisibility::Visible(constructors) => Some(constructors.as_set()),
     }
 }
 

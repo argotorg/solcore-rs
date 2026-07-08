@@ -96,9 +96,9 @@ impl<'db> ModuleId<'db> {
         }
     }
 
-    /// Returns a human-readable module path.
-    pub fn display(self, db: &'db dyn Db) -> String {
-        module_id_display(db, self)
+    /// Returns a borrowed human-readable module path formatter.
+    pub fn display(self, db: &'db dyn Db) -> ModuleDisplay<'db> {
+        ModuleDisplay::new(db, self)
     }
 }
 

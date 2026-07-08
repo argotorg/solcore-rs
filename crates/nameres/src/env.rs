@@ -155,7 +155,7 @@ impl<'db> ModuleEnvBuilder<'db> {
         tracing::trace!(
             target: "nameres::imports",
             module = %self.module.display(self.db),
-            path = %module_path_display(self.db, &path),
+            path = %ModulePathDisplay::new(self.db, &path),
             target = %target.display(self.db),
             selector = selector.as_ref().map(selector_kind).unwrap_or("module"),
             target_has_parse_errors,

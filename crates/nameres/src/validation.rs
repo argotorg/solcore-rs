@@ -280,7 +280,7 @@ fn validate_ambiguous_selected_imports<'db>(
                 let span = occurrences
                     .first()
                     .map(|occurrence| occurrence.span)
-                    .unwrap_or_else(|| module_root_span(db, module));
+                    .or_else(|| module_root_span(db, module));
                 diagnostics.push(ambiguous_import_diag(
                     db,
                     span,
@@ -298,7 +298,7 @@ fn validate_ambiguous_selected_imports<'db>(
             let span = occurrences
                 .first()
                 .map(|occurrence| occurrence.span)
-                .unwrap_or_else(|| module_root_span(db, module));
+                .or_else(|| module_root_span(db, module));
             diagnostics.push(ambiguous_import_diag(
                 db,
                 span,
@@ -345,8 +345,8 @@ pub(super) fn validate_duplicate_exports<'db>(
         if unique.len() > 1 {
             let span = duplicate_span
                 .or_else(|| refs.first().and_then(|raw_ref| raw_ref.export_span))
-                .unwrap_or_else(|| module_root_span(db, module));
-            diagnostics.push(duplicate_export_item_diag(db, Some(span), &name));
+                .or_else(|| module_root_span(db, module));
+            diagnostics.push(duplicate_export_item_diag(db, span, &name));
         }
     }
 
@@ -375,8 +375,8 @@ pub(super) fn validate_duplicate_exports<'db>(
         if targets.len() > 1 {
             let span = duplicate_span
                 .or_else(|| aliases.first().and_then(|raw_alias| raw_alias.export_span))
-                .unwrap_or_else(|| module_root_span(db, module));
-            diagnostics.push(duplicate_export_module_diag(db, Some(span), &name));
+                .or_else(|| module_root_span(db, module));
+            diagnostics.push(duplicate_export_module_diag(db, span, &name));
         }
     }
 }
