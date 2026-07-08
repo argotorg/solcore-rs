@@ -285,16 +285,16 @@ fn check_program_inner<'db>(
 
 impl<'db> Env<'db> {
     fn register_function(&mut self, function: &Function<'db>) {
-        if self.funs.contains_key(&function.name) {
+        if self.funs.contains_key(function.name.as_str()) {
             self.push(
                 function.span,
                 CheckDiagnosticKind::DuplicateFunction {
-                    name: function.name.clone(),
+                    name: function.name.as_str().to_owned(),
                 },
             );
         }
         self.funs.insert(
-            function.name.clone(),
+            function.name.as_str().to_owned(),
             FunSig {
                 args: function.args.iter().map(|arg| arg.ty.clone()).collect(),
                 ret: function.ret.clone(),
@@ -327,7 +327,7 @@ impl<'db> Env<'db> {
                 self.push(
                     arg.span,
                     CheckDiagnosticKind::FunctionTypeNotFirstOrder {
-                        name: function.name.clone(),
+                        name: function.name.as_str().to_owned(),
                     },
                 );
             }
@@ -336,13 +336,13 @@ impl<'db> Env<'db> {
             self.push(
                 function.ret.span,
                 CheckDiagnosticKind::FunctionTypeNotFirstOrder {
-                    name: function.name.clone(),
+                    name: function.name.as_str().to_owned(),
                 },
             );
         }
         self.with_scope(|env| {
             for arg in &function.args {
-                env.insert_var(arg.name.clone(), arg.ty.clone());
+                env.insert_var(arg.name.as_str().to_owned(), arg.ty.clone());
             }
             let saved_ret = env.ret.clone();
             env.ret = Some(function.ret.clone());
@@ -351,7 +351,7 @@ impl<'db> Env<'db> {
                 env.push(
                     function.span,
                     CheckDiagnosticKind::MissingTerminator {
-                        function: function.name.clone(),
+                        function: function.name.as_str().to_owned(),
                     },
                 );
             }
@@ -367,7 +367,7 @@ impl<'db> Env<'db> {
 
     fn check_stmt(&mut self, stmt: &Stmt<'db>) {
         match &stmt.kind {
-            StmtKind::Let { name, ty } => self.insert_var(name.clone(), ty.clone()),
+            StmtKind::Let { name, ty } => self.insert_var(name.as_str().to_owned(), ty.clone()),
             StmtKind::Assign { lhs, rhs } => {
                 let lhs_ty = self.check_expr(lhs);
                 let rhs_ty = self.check_expr(rhs);
@@ -441,7 +441,7 @@ impl<'db> Env<'db> {
             }
         };
         self.with_scope(|env| {
-            env.insert_var(alt.binder.clone(), payload);
+            env.insert_var(alt.binder.as_str().to_owned(), payload);
             env.check_body(&alt.body);
         });
     }
@@ -465,10 +465,12 @@ impl<'db> Env<'db> {
             ExprKind::Word(_) => Ty::word(expr.span),
             ExprKind::Bool(_) => Ty::bool(expr.span),
             ExprKind::Unit => Ty::unit(expr.span),
-            ExprKind::Var(name) => self.lookup_var(name).unwrap_or_else(|| {
+            ExprKind::Var(name) => self.lookup_var(name.as_str()).unwrap_or_else(|| {
                 self.push(
                     expr.span,
-                    CheckDiagnosticKind::UndefinedVariable { name: name.clone() },
+                    CheckDiagnosticKind::UndefinedVariable {
+                        name: name.as_str().to_owned(),
+                    },
                 );
                 expr.ty.clone()
             }),
@@ -558,11 +560,11 @@ impl<'db> Env<'db> {
                 target.clone()
             }
             ExprKind::Call { callee, args } => {
-                let Some(sig) = self.funs.get(callee).cloned() else {
+                let Some(sig) = self.funs.get(callee.as_str()).cloned() else {
                     self.push(
                         expr.span,
                         CheckDiagnosticKind::UndefinedFunction {
-                            name: callee.clone(),
+                            name: callee.as_str().to_owned(),
                         },
                     );
                     return expr.ty.clone();
@@ -571,7 +573,7 @@ impl<'db> Env<'db> {
                     self.push(
                         expr.span,
                         CheckDiagnosticKind::ArityMismatch {
-                            name: callee.clone(),
+                            name: callee.as_str().to_owned(),
                             expected: sig.args.len(),
                             actual: args.len(),
                         },
@@ -1220,7 +1222,7 @@ fn ty_display(ty: &Ty<'_>) -> String {
         TyKind::Product(lhs, rhs) => format!("({} * {})", ty_display(lhs), ty_display(rhs)),
         TyKind::Sum(lhs, rhs) => format!("({} + {})", ty_display(lhs), ty_display(rhs)),
         TyKind::Named { name, inner } => format!("{name}{{{}}}", ty_display(inner)),
-        TyKind::NamedRef { name } => name.clone(),
+        TyKind::NamedRef { name } => name.as_str().to_owned(),
         TyKind::Function { params, ret } => {
             let params = params.iter().map(ty_display).collect::<Vec<_>>().join(", ");
             format!("({params} -> {})", ty_display(ret))
@@ -1230,7 +1232,7 @@ fn ty_display(ty: &Ty<'_>) -> String {
 
 fn pat_display(pat: &Pat<'_>) -> String {
     match &pat.kind {
-        PatKind::Var(name) => name.clone(),
+        PatKind::Var(name) => name.as_str().to_owned(),
         PatKind::Con(Con::Inl) => "inl".to_owned(),
         PatKind::Con(Con::Inr) => "inr".to_owned(),
         PatKind::Con(Con::InK(index)) => format!("in({index})"),

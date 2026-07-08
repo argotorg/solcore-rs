@@ -91,7 +91,7 @@ fn collect_expr_callees<'db>(expr: &Expr<'db>, out: &mut BTreeSet<String>) {
             collect_expr_callees(value, out)
         }
         ExprKind::Call { callee, args } => {
-            out.insert(callee.clone());
+            out.insert(callee.as_str().to_owned());
             for arg in args {
                 collect_expr_callees(arg, out);
             }

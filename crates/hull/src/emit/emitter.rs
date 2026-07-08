@@ -39,7 +39,7 @@ impl<'db> Emitter<'db> {
             match item {
                 MonoItem::Function(function) => {
                     let function = self.emit_function(function);
-                    functions.insert(function.name.clone(), function);
+                    functions.insert(function.name.as_str().to_owned(), function);
                 }
                 MonoItem::Contract(contract) => contracts.push(contract.clone()),
                 MonoItem::Adt(_) => {}
@@ -90,7 +90,7 @@ impl<'db> Emitter<'db> {
                     let ty = this.hull_ty(param.ty.ty(), param.span);
                     Some(Arg {
                         span: param.span,
-                        name: param.name.clone(),
+                        name: param.name.clone().into(),
                         ty,
                     })
                 })
@@ -99,7 +99,7 @@ impl<'db> Emitter<'db> {
             let body = this.emit_stmts(&function.body);
             Function {
                 span: function.span,
-                name: function.name.clone(),
+                name: function.name.clone().into(),
                 args,
                 ret,
                 body,
@@ -126,7 +126,7 @@ impl<'db> Emitter<'db> {
                 let mut out = vec![Stmt {
                     span: stmt.span,
                     kind: StmtKind::Let {
-                        name: id.name.clone(),
+                        name: id.name.clone().into(),
                         ty: declared.clone(),
                     },
                 }];
@@ -261,7 +261,7 @@ impl<'db> Emitter<'db> {
             span,
             ty: lhs_expr.ty.clone(),
             kind: ExprKind::Call {
-                callee: callee.to_owned(),
+                callee: callee.to_owned().into(),
                 args: vec![lhs_expr.clone(), rhs_expr],
             },
         };
@@ -299,7 +299,7 @@ impl<'db> Emitter<'db> {
                             span,
                             kind: PatKind::Con(Con::Inr),
                         },
-                        binder: self.fresh_alt(),
+                        binder: self.fresh_alt().into(),
                         body: then_stmts,
                     },
                     Alt {
@@ -308,7 +308,7 @@ impl<'db> Emitter<'db> {
                             span,
                             kind: PatKind::Con(Con::Inl),
                         },
-                        binder: self.fresh_alt(),
+                        binder: self.fresh_alt().into(),
                         body: else_stmts,
                     },
                 ],
@@ -325,7 +325,7 @@ impl<'db> Emitter<'db> {
             return Expr {
                 span: expr.span,
                 ty,
-                kind: ExprKind::Var(id.name.clone()),
+                kind: ExprKind::Var(id.name.clone().into()),
             };
         }
         let ty = self.hull_ty(expr.ty.ty(), expr.span);
@@ -347,7 +347,7 @@ impl<'db> Emitter<'db> {
                 span: expr.span,
                 ty,
                 kind: ExprKind::Call {
-                    callee: call_name(origin, &callee.name),
+                    callee: call_name(origin, &callee.name).into(),
                     args: args.iter().map(|arg| self.emit_expr(arg)).collect(),
                 },
             },
@@ -360,7 +360,7 @@ impl<'db> Emitter<'db> {
                 span: expr.span,
                 ty,
                 kind: ExprKind::Call {
-                    callee: STORAGE_INDEX_READ.to_owned(),
+                    callee: STORAGE_INDEX_READ.into(),
                     args: vec![self.emit_storage_slot_expr(expr)],
                 },
             },
@@ -385,7 +385,7 @@ impl<'db> Emitter<'db> {
                         span: expr.span,
                         ty,
                         kind: ExprKind::Call {
-                            callee: callee_name,
+                            callee: callee_name.into(),
                             args: args.iter().map(|arg| self.emit_expr(arg)).collect(),
                         },
                     }
@@ -400,7 +400,7 @@ impl<'db> Emitter<'db> {
                         span: expr.span,
                         ty,
                         kind: ExprKind::Call {
-                            callee: "unsupported".to_owned(),
+                            callee: "unsupported".into(),
                             args: Vec::new(),
                         },
                     }
@@ -421,7 +421,7 @@ impl<'db> Emitter<'db> {
                     span: expr.span,
                     ty,
                     kind: ExprKind::Call {
-                        callee: "unsupported".to_owned(),
+                        callee: "unsupported".into(),
                         args: Vec::new(),
                     },
                 }
@@ -461,7 +461,7 @@ impl<'db> Emitter<'db> {
                 span: expr.span,
                 ty: Ty::word(expr.span),
                 kind: ExprKind::Call {
-                    callee: STORAGE_INDEX_SLOT.to_owned(),
+                    callee: STORAGE_INDEX_SLOT.into(),
                     args: vec![self.emit_storage_slot_expr(base), self.emit_expr(index)],
                 },
             },
@@ -550,7 +550,7 @@ impl<'db> Emitter<'db> {
                 span: expr.span,
                 ty: target,
                 kind: ExprKind::Call {
-                    callee: ctor_name.to_owned(),
+                    callee: ctor_name.into(),
                     args: args.iter().map(|arg| self.emit_expr(arg)).collect(),
                 },
             };
@@ -571,7 +571,7 @@ impl<'db> Emitter<'db> {
                 span: expr.span,
                 ty: target,
                 kind: ExprKind::Call {
-                    callee: ctor_name.to_owned(),
+                    callee: ctor_name.into(),
                     args: args.iter().map(|arg| self.emit_expr(arg)).collect(),
                 },
             };
@@ -599,7 +599,7 @@ impl<'db> Emitter<'db> {
                     span,
                     ty: ty.clone(),
                     kind: ExprKind::Call {
-                        callee: "primEqWord".to_owned(),
+                        callee: "primEqWord".into(),
                         args: vec![self.emit_expr(lhs), self.emit_expr(rhs)],
                     },
                 };
@@ -607,7 +607,7 @@ impl<'db> Emitter<'db> {
                     span,
                     ty: ty.clone(),
                     kind: ExprKind::Call {
-                        callee: "iszero".to_owned(),
+                        callee: "iszero".into(),
                         args: vec![eq],
                     },
                 };
@@ -622,7 +622,7 @@ impl<'db> Emitter<'db> {
                     span,
                     ty: ty.clone(),
                     kind: ExprKind::Call {
-                        callee: callee.to_owned(),
+                        callee: callee.into(),
                         args: vec![self.emit_expr(lhs), self.emit_expr(rhs)],
                     },
                 };
@@ -630,7 +630,7 @@ impl<'db> Emitter<'db> {
                     span,
                     ty: ty.clone(),
                     kind: ExprKind::Call {
-                        callee: "iszero".to_owned(),
+                        callee: "iszero".into(),
                         args: vec![cmp],
                     },
                 };
@@ -672,7 +672,7 @@ impl<'db> Emitter<'db> {
                 span,
                 ty,
                 kind: ExprKind::Call {
-                    callee: "unsupported".to_owned(),
+                    callee: "unsupported".into(),
                     args: Vec::new(),
                 },
             };
@@ -681,7 +681,7 @@ impl<'db> Emitter<'db> {
             span,
             ty,
             kind: ExprKind::Call {
-                callee: callee.to_owned(),
+                callee: callee.into(),
                 args: vec![self.emit_expr(lhs), self.emit_expr(rhs)],
             },
         }
@@ -734,7 +734,7 @@ impl<'db> Emitter<'db> {
                     span,
                     ty,
                     kind: ExprKind::Call {
-                        callee: "unsupported".to_owned(),
+                        callee: "unsupported".into(),
                         args: Vec::new(),
                     },
                 }

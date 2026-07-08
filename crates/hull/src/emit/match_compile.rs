@@ -496,7 +496,7 @@ impl<'db> Emitter<'db> {
                         materialized.push(Stmt {
                             span,
                             kind: StmtKind::Let {
-                                name: name.clone(),
+                                name: name.clone().into(),
                                 ty: expr.ty.clone(),
                             },
                         });
@@ -657,7 +657,7 @@ impl<'db> Emitter<'db> {
                     span,
                     kind: hull_lit_pat(&branch.lit),
                 },
-                binder: self.fresh_alt(),
+                binder: self.fresh_alt().into(),
                 body: self.tree_to_body(span, occurrences, &branch.tree),
             })
             .collect::<Vec<_>>();
@@ -668,7 +668,7 @@ impl<'db> Emitter<'db> {
                     span,
                     kind: PatKind::Wildcard,
                 },
-                binder: self.fresh_alt(),
+                binder: self.fresh_alt().into(),
                 body: self.tree_to_body(span, occurrences, default),
             });
         }
@@ -1136,7 +1136,7 @@ fn build_nested_sum_match_from_slice<'db>(
                                 span,
                                 kind: PatKind::Con(Con::Inl),
                             },
-                            binder: left.binder.clone(),
+                            binder: left.binder.clone().into(),
                             body: left.body.clone(),
                         },
                         Alt {
@@ -1145,7 +1145,7 @@ fn build_nested_sum_match_from_slice<'db>(
                                 span,
                                 kind: PatKind::Con(Con::Inr),
                             },
-                            binder: right_binder,
+                            binder: right_binder.into(),
                             body: vec![rest_stmt],
                         },
                     ],

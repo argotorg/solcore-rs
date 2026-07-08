@@ -278,7 +278,7 @@ pub(super) fn abi_words_to_expr<'db>(
                         span,
                         ty: bool_sum_ty(span),
                         kind: ExprKind::Call {
-                            callee: "primEqWord".to_owned(),
+                            callee: "primEqWord".into(),
                             args: vec![tag, Expr::word(span, "0")],
                         },
                     }),
@@ -375,7 +375,7 @@ pub(super) fn write_expr_to_abi_slots<'db>(
                                 span,
                                 kind: PatKind::Con(Con::Inl),
                             },
-                            binder: lhs_binder,
+                            binder: lhs_binder.into(),
                             body: lhs_body,
                         },
                         Alt {
@@ -384,7 +384,7 @@ pub(super) fn write_expr_to_abi_slots<'db>(
                                 span,
                                 kind: PatKind::Con(Con::Inr),
                             },
-                            binder: rhs_binder,
+                            binder: rhs_binder.into(),
                             body: rhs_body,
                         },
                     ],
@@ -441,7 +441,7 @@ pub(super) fn abi_word_to_bool_expr<'db>(
                 span,
                 ty: bool_sum_ty(span),
                 kind: ExprKind::Call {
-                    callee: "primEqWord".to_owned(),
+                    callee: "primEqWord".into(),
                     args: vec![word, Expr::word(span, "0")],
                 },
             }),

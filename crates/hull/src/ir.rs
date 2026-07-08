@@ -1,6 +1,37 @@
 use hir::{ast::function::YulStmt, span::Span};
 
-pub type Name = String;
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct HullName(String);
+
+impl HullName {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for HullName {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for HullName {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+impl std::fmt::Display for HullName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+pub type Name = HullName;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program<'db> {

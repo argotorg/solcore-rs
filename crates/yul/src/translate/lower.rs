@@ -80,7 +80,7 @@ impl<'db> Translator<'db> {
             .map(|inner| self.translate_object(inner).map(Inner::Object))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Object {
-            name: object.name.clone(),
+            name: object.name.as_str().to_owned(),
             code,
             inners,
         })
@@ -102,7 +102,7 @@ impl<'db> Translator<'db> {
         let saved_functions = std::mem::take(&mut self.user_functions);
         self.user_functions = functions
             .iter()
-            .map(|function| function.name.clone())
+            .map(|function| function.name.as_str().to_owned())
             .collect::<BTreeSet<_>>();
 
         let result = (|| {
@@ -129,13 +129,13 @@ impl<'db> Translator<'db> {
             let mut params = Vec::new();
             for arg in &function.args {
                 if is_word_type(&arg.ty) {
-                    let name = self.fresh_source_name(&arg.name);
-                    self.insert_var(arg.name.clone(), Location::Named(name.clone()));
+                    let name = self.fresh_source_name(arg.name.as_str());
+                    self.insert_var(arg.name.as_str().to_owned(), Location::Named(name.clone()));
                     params.push(name);
                 } else {
                     let loc = self.build_loc(&arg.ty)?;
                     params.extend(flatten_lhs(&loc)?);
-                    self.insert_var(arg.name.clone(), loc);
+                    self.insert_var(arg.name.as_str().to_owned(), loc);
                 }
             }
 
@@ -157,7 +157,7 @@ impl<'db> Translator<'db> {
 
             let body = self.gen_stmts(&function.body)?;
             Ok(Stmt::Function {
-                name: yul_fun_name(&function.name),
+                name: yul_fun_name(function.name.as_str()),
                 params,
                 returns,
                 body,
@@ -178,7 +178,7 @@ impl<'db> Translator<'db> {
 
     fn gen_stmt(&mut self, stmt: &HullStmt<'db>) -> Result<Vec<Stmt>, TranslationError> {
         match &stmt.kind {
-            StmtKind::Let { name, ty } => self.alloc_var(name, ty),
+            StmtKind::Let { name, ty } => self.alloc_var(name.as_str(), ty),
             StmtKind::Assign { lhs, rhs } => self.hull_assign(lhs, rhs),
             StmtKind::Expr(expr) => self.gen_expr(expr).map(|(stmts, _)| stmts),
             StmtKind::Return(expr) => {
@@ -264,7 +264,7 @@ impl<'db> Translator<'db> {
             ExprKind::Word(value) => Ok((Vec::new(), Location::Word(canonical_word_lit(value)?))),
             ExprKind::Bool(value) => Ok((Vec::new(), Location::Bool(*value))),
             ExprKind::Unit => Ok((Vec::new(), Location::Seq(Vec::new()))),
-            ExprKind::Var(name) => self.lookup_var(name).map(|loc| (Vec::new(), loc)),
+            ExprKind::Var(name) => self.lookup_var(name.as_str()).map(|loc| (Vec::new(), loc)),
             ExprKind::Pair(lhs, rhs) => {
                 let (mut lhs_stmts, lhs_loc) = self.gen_expr(lhs)?;
                 let (rhs_stmts, rhs_loc) = self.gen_expr(rhs)?;
@@ -319,7 +319,7 @@ impl<'db> Translator<'db> {
                 }
 
                 if matches!(
-                    lower_callee(callee, &self.user_functions),
+                    lower_callee(callee.as_str(), &self.user_functions),
                     LoweredCallee::Identity
                 ) {
                     let Some(loc) = arg_locs.into_iter().next() else {
@@ -330,7 +330,8 @@ impl<'db> Translator<'db> {
 
                 let (alloc_stmts, result_loc) = self.hull_alloc(&expr.ty)?;
                 out.extend(alloc_stmts);
-                let LoweredCallee::Call(name) = lower_callee(callee, &self.user_functions) else {
+                let LoweredCallee::Call(name) = lower_callee(callee.as_str(), &self.user_functions)
+                else {
                     unreachable!("identity handled above");
                 };
                 let call = Expr::call(name, yul_args);
@@ -386,14 +387,14 @@ impl<'db> Translator<'db> {
                     let lit = con_lit(target, *con)?;
                     let payload = con_payload(target, *con, &payload)?;
                     let body = self.with_local_env(|this| {
-                        this.insert_var(alt.binder.clone(), payload);
+                        this.insert_var(alt.binder.as_str().to_owned(), payload);
                         this.gen_stmts(&alt.body)
                     })?;
                     cases.push(Case { lit, body });
                 }
                 PatKind::IntLit(value) => {
                     let body = self.with_local_env(|this| {
-                        this.insert_var(alt.binder.clone(), payload.clone());
+                        this.insert_var(alt.binder.as_str().to_owned(), payload.clone());
                         this.gen_stmts(&alt.body)
                     })?;
                     cases.push(Case {
@@ -403,15 +404,15 @@ impl<'db> Translator<'db> {
                 }
                 PatKind::Var(name) => {
                     let body = self.with_local_env(|this| {
-                        this.insert_var(name.clone(), payload.clone());
-                        this.insert_var(alt.binder.clone(), payload.clone());
+                        this.insert_var(name.as_str().to_owned(), payload.clone());
+                        this.insert_var(alt.binder.as_str().to_owned(), payload.clone());
                         this.gen_stmts(&alt.body)
                     })?;
                     default = Some(body);
                 }
                 PatKind::Wildcard => {
                     let body = self.with_local_env(|this| {
-                        this.insert_var(alt.binder.clone(), payload.clone());
+                        this.insert_var(alt.binder.as_str().to_owned(), payload.clone());
                         this.gen_stmts(&alt.body)
                     })?;
                     default = Some(body);

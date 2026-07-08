@@ -48,13 +48,13 @@ impl<'db> Emitter<'db> {
                     span,
                     ty: bool_sum_ty(span),
                     kind: ExprKind::Call {
-                        callee: "lt".to_owned(),
+                        callee: "lt".into(),
                         args: vec![
                             Expr {
                                 span,
                                 ty: Ty::word(span),
                                 kind: ExprKind::Call {
-                                    callee: "calldatasize".to_owned(),
+                                    callee: "calldatasize".into(),
                                     args: Vec::new(),
                                 },
                             },
@@ -69,7 +69,7 @@ impl<'db> Emitter<'db> {
                             span,
                             kind: PatKind::Con(Con::Inr),
                         },
-                        binder: self.fresh_alt(),
+                        binder: self.fresh_alt().into(),
                         body: fallback_body,
                     },
                     Alt {
@@ -78,7 +78,7 @@ impl<'db> Emitter<'db> {
                             span,
                             kind: PatKind::Con(Con::Inl),
                         },
-                        binder: self.fresh_alt(),
+                        binder: self.fresh_alt().into(),
                         body: method_body,
                     },
                 ],
@@ -100,7 +100,7 @@ impl<'db> Emitter<'db> {
             Stmt {
                 span,
                 kind: StmtKind::Let {
-                    name: selector_name.clone(),
+                    name: selector_name.clone().into(),
                     ty: Ty::word(span),
                 },
             },
@@ -166,7 +166,7 @@ impl<'db> Emitter<'db> {
                     span: *entry_span,
                     kind: PatKind::IntLit(selector_hex(*selector)),
                 },
-                binder: self.fresh_alt(),
+                binder: self.fresh_alt().into(),
                 body: self.emit_dispatch_entry(
                     SelectorDispatchEntry {
                         span: *entry_span,
@@ -187,7 +187,7 @@ impl<'db> Emitter<'db> {
                 span,
                 kind: PatKind::Wildcard,
             },
-            binder: self.fresh_alt(),
+            binder: self.fresh_alt().into(),
             body: fallback_body,
         });
 
@@ -250,7 +250,7 @@ impl<'db> Emitter<'db> {
             body.push(Stmt {
                 span,
                 kind: StmtKind::Let {
-                    name: arg_name.clone(),
+                    name: arg_name.clone().into(),
                     ty: arg.ty.clone(),
                 },
             });
@@ -286,7 +286,7 @@ impl<'db> Emitter<'db> {
                 body.push(Stmt {
                     span,
                     kind: StmtKind::Let {
-                        name: ret_name.clone(),
+                        name: ret_name.clone().into(),
                         ty: function.ret.clone(),
                     },
                 });
@@ -326,7 +326,7 @@ impl<'db> Emitter<'db> {
             body.push(Stmt {
                 span,
                 kind: StmtKind::Let {
-                    name: name.clone(),
+                    name: name.clone().into(),
                     ty: Ty::word(span),
                 },
             });
@@ -350,7 +350,7 @@ impl<'db> Emitter<'db> {
             body.push(Stmt {
                 span,
                 kind: StmtKind::Let {
-                    name: name.clone(),
+                    name: name.clone().into(),
                     ty: Ty::word(span),
                 },
             });

@@ -17,8 +17,8 @@ mod word;
 pub use check::{CheckDiagnostic, CheckDiagnosticKind, check_program, check_program_with_db};
 pub use emit::{EmitDiagnostic, EmitDiagnosticKind, EmitOptions, EmitOutput, emit_module};
 pub use ir::{
-    Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
-    StmtKind, Ty, TyKind,
+    Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, HullName, Name, Object, Pat, PatKind,
+    Program, Stmt, StmtKind, Ty, TyKind,
 };
 pub use pretty::{PrettyHull, pretty_program};
 pub use word::{WordLiteralError, wrap_word_literal};

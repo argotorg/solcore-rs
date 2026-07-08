@@ -78,16 +78,16 @@ impl<'db> Emitter<'db> {
         let word = Ty::word(span);
         Function {
             span,
-            name: name.to_owned(),
+            name: name.into(),
             args: vec![
                 Arg {
                     span,
-                    name: "x".to_owned(),
+                    name: "x".into(),
                     ty: word.clone(),
                 },
                 Arg {
                     span,
-                    name: "y".to_owned(),
+                    name: "y".into(),
                     ty: word.clone(),
                 },
             ],
@@ -96,7 +96,7 @@ impl<'db> Emitter<'db> {
                 Stmt {
                     span,
                     kind: StmtKind::Let {
-                        name: "out".to_owned(),
+                        name: "out".into(),
                         ty: word.clone(),
                     },
                 },
@@ -151,10 +151,10 @@ impl<'db> Emitter<'db> {
         let word = Ty::word(span);
         Function {
             span,
-            name: name.to_owned(),
+            name: name.into(),
             args: vec![Arg {
                 span,
-                name: "slot".to_owned(),
+                name: "slot".into(),
                 ty: word.clone(),
             }],
             ret: word.clone(),
@@ -213,7 +213,9 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
             fields,
             storage_hash_helper,
             shadows: ScopeStack::new_root_with_message(
-                args.iter().map(|arg| arg.name.clone()).collect(),
+                args.iter()
+                    .map(|arg| arg.name.as_str().to_owned())
+                    .collect(),
                 "storage scope stack is never empty",
             ),
             fresh: 0,
@@ -232,7 +234,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
     fn stmt(&mut self, stmt: Stmt<'db>) -> Vec<Stmt<'db>> {
         match stmt.kind {
             StmtKind::Let { name, ty } => {
-                self.shadows.last_mut().insert(name.clone());
+                self.shadows.last_mut().insert(name.as_str().to_owned());
                 vec![Stmt {
                     span: stmt.span,
                     kind: StmtKind::Let { name, ty },
@@ -240,15 +242,15 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
             }
             StmtKind::Assign { lhs, rhs } => {
                 if let ExprKind::Var(name) = &lhs.kind
-                    && let Some(slot) = self.direct_field(name).map(|field| field.slot)
+                    && let Some(slot) = self.direct_field(name.as_str()).map(|field| field.slot)
                 {
                     let rhs = self.expr(rhs);
-                    let temp = self.fresh_temp(name);
+                    let temp = self.fresh_temp(name.as_str());
                     return vec![
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
-                                name: temp.clone(),
+                                name: temp.clone().into(),
                                 ty: lhs.ty.clone(),
                             },
                         },
@@ -276,7 +278,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                     ];
                 }
                 if let ExprKind::Var(name) = &lhs.kind
-                    && let Some(slot) = self.mapping_field(name).map(|field| field.slot)
+                    && let Some(slot) = self.mapping_field(name.as_str()).map(|field| field.slot)
                 {
                     // A whole mapping field as an assignment target: the
                     // reference compiles this via `CanStore.store`, which
@@ -284,14 +286,14 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                     // runtime trap.
                     self.mapping_value_helper_used = true;
                     let rhs = self.expr(rhs);
-                    let temp = self.fresh_temp(name);
-                    let trap = self.fresh_temp(name);
+                    let temp = self.fresh_temp(name.as_str());
+                    let trap = self.fresh_temp(name.as_str());
                     let word = Ty::word(stmt.span);
                     return vec![
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
-                                name: temp.clone(),
+                                name: temp.clone().into(),
                                 ty: lhs.ty.clone(),
                             },
                         },
@@ -305,7 +307,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
-                                name: trap.clone(),
+                                name: trap.clone().into(),
                                 ty: word.clone(),
                             },
                         },
@@ -317,7 +319,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                                     span: stmt.span,
                                     ty: word,
                                     kind: ExprKind::Call {
-                                        callee: STORAGE_MAPPING_VALUE_HELPER.to_owned(),
+                                        callee: STORAGE_MAPPING_VALUE_HELPER.into(),
                                         args: vec![Expr::word(stmt.span, slot.to_string())],
                                     },
                                 },
@@ -336,7 +338,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
-                                name: slot_temp.clone(),
+                                name: slot_temp.clone().into(),
                                 ty: Ty::word(stmt.span),
                             },
                         },
@@ -350,7 +352,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
-                                name: value_temp.clone(),
+                                name: value_temp.clone().into(),
                                 ty: lhs.ty.clone(),
                             },
                         },
@@ -367,7 +369,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                                 span: stmt.span,
                                 ty: Ty::unit(stmt.span),
                                 kind: ExprKind::Call {
-                                    callee: "sstore".to_owned(),
+                                    callee: "sstore".into(),
                                     args: vec![
                                         slot_ref,
                                         Expr::var(stmt.span, value_temp, Ty::word(stmt.span)),
@@ -451,7 +453,9 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
 
     fn alt(&mut self, alt: Alt<'db>) -> Alt<'db> {
         self.with_scope(|this| {
-            this.shadows.last_mut().insert(alt.binder.clone());
+            this.shadows
+                .last_mut()
+                .insert(alt.binder.as_str().to_owned());
             Alt {
                 span: alt.span,
                 pat: alt.pat,
@@ -464,16 +468,17 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
     fn expr(&mut self, expr: Expr<'db>) -> Expr<'db> {
         match expr.kind {
             ExprKind::Var(name) => {
-                if let Some(slot) = self.direct_field(&name).map(|field| field.slot) {
+                if let Some(slot) = self.direct_field(name.as_str()).map(|field| field.slot) {
                     Expr {
                         span: expr.span,
                         ty: expr.ty,
                         kind: ExprKind::Call {
-                            callee: "sload".to_owned(),
+                            callee: "sload".into(),
                             args: vec![Expr::word(expr.span, slot.to_string())],
                         },
                     }
-                } else if let Some(slot) = self.mapping_field(&name).map(|field| field.slot) {
+                } else if let Some(slot) = self.mapping_field(name.as_str()).map(|field| field.slot)
+                {
                     // A whole mapping field read as a value: the reference
                     // compiles this via `CanStore.load`, which is an
                     // `unimplemented()` runtime trap returning the base slot.
@@ -482,7 +487,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                         span: expr.span,
                         ty: expr.ty,
                         kind: ExprKind::Call {
-                            callee: STORAGE_MAPPING_VALUE_HELPER.to_owned(),
+                            callee: STORAGE_MAPPING_VALUE_HELPER.into(),
                             args: vec![Expr::word(expr.span, slot.to_string())],
                         },
                     }
@@ -494,19 +499,23 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                     }
                 }
             }
-            ExprKind::Call { callee, args } if callee == STORAGE_INDEX_READ && args.len() == 1 => {
+            ExprKind::Call { callee, args }
+                if callee.as_str() == STORAGE_INDEX_READ && args.len() == 1 =>
+            {
                 let mut args = args.into_iter();
                 let slot = self.expr(args.next().expect("checked len"));
                 Expr {
                     span: expr.span,
                     ty: expr.ty,
                     kind: ExprKind::Call {
-                        callee: "sload".to_owned(),
+                        callee: "sload".into(),
                         args: vec![slot],
                     },
                 }
             }
-            ExprKind::Call { callee, args } if callee == STORAGE_INDEX_SLOT && args.len() == 2 => {
+            ExprKind::Call { callee, args }
+                if callee.as_str() == STORAGE_INDEX_SLOT && args.len() == 2 =>
+            {
                 let mut args = args.into_iter();
                 let base = args.next().expect("checked len");
                 let index = args.next().expect("checked len");
@@ -604,7 +613,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
         let ExprKind::Call { callee, args } = &expr.kind else {
             return None;
         };
-        if callee != STORAGE_INDEX_READ || args.len() != 1 {
+        if callee.as_str() != STORAGE_INDEX_READ || args.len() != 1 {
             return None;
         }
         args.first().cloned()
@@ -626,7 +635,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                 callee: self
                     .storage_hash_helper
                     .unwrap_or(STORAGE_HASH2_HELPER)
-                    .to_owned(),
+                    .into(),
                 args: vec![base, index],
             },
         }
@@ -635,7 +644,7 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
     fn storage_slot_base_expr(&mut self, base: Expr<'db>) -> Expr<'db> {
         match base.kind {
             ExprKind::Var(name) => {
-                if let Some(slot) = self.field(&name).map(|field| field.slot) {
+                if let Some(slot) = self.field(name.as_str()).map(|field| field.slot) {
                     Expr::word(base.span, slot.to_string())
                 } else {
                     Expr {
@@ -645,7 +654,9 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                     }
                 }
             }
-            ExprKind::Call { callee, args } if callee == STORAGE_INDEX_SLOT && args.len() == 2 => {
+            ExprKind::Call { callee, args }
+                if callee.as_str() == STORAGE_INDEX_SLOT && args.len() == 2 =>
+            {
                 let mut args = args.into_iter();
                 let nested_base = args.next().expect("checked len");
                 let nested_index = args.next().expect("checked len");
@@ -675,7 +686,7 @@ fn replace_storage_index_read_slot<'db>(
     slot_ref: &Expr<'db>,
 ) -> Expr<'db> {
     if let ExprKind::Call { callee, args } = &expr.kind
-        && callee == STORAGE_INDEX_READ
+        && callee.as_str() == STORAGE_INDEX_READ
         && args.len() == 1
         && args.first() == Some(slot)
     {
@@ -683,7 +694,7 @@ fn replace_storage_index_read_slot<'db>(
             span: expr.span,
             ty: expr.ty,
             kind: ExprKind::Call {
-                callee: "sload".to_owned(),
+                callee: "sload".into(),
                 args: vec![slot_ref.clone()],
             },
         };

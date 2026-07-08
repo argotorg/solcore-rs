@@ -51,10 +51,10 @@ fn identity_function_snapshot() {
         span: sp,
         functions: vec![Function {
             span: sp,
-            name: "id".to_owned(),
+            name: "id".into(),
             args: vec![Arg {
                 span: sp,
-                name: "x".to_owned(),
+                name: "x".into(),
                 ty: word.clone(),
             }],
             ret: word.clone(),
@@ -84,16 +84,16 @@ fn maybe_option_snapshot() {
         span: sp,
         functions: vec![Function {
             span: sp,
-            name: "maybe$Word".to_owned(),
+            name: "maybe$Word".into(),
             args: vec![
                 Arg {
                     span: sp,
-                    name: "n".to_owned(),
+                    name: "n".into(),
                     ty: word.clone(),
                 },
                 Arg {
                     span: sp,
-                    name: "o".to_owned(),
+                    name: "o".into(),
                     ty: option.clone(),
                 },
             ],
@@ -110,7 +110,7 @@ fn maybe_option_snapshot() {
                                 span: sp,
                                 kind: PatKind::Con(Con::Inl),
                             },
-                            binder: "$alt".to_owned(),
+                            binder: "$alt".into(),
                             body: vec![
                                 Stmt {
                                     span: sp,
@@ -128,7 +128,7 @@ fn maybe_option_snapshot() {
                                 span: sp,
                                 kind: PatKind::Con(Con::Inr),
                             },
-                            binder: "$alt".to_owned(),
+                            binder: "$alt".into(),
                             body: vec![
                                 Stmt {
                                     span: sp,
@@ -137,7 +137,7 @@ fn maybe_option_snapshot() {
                                 Stmt {
                                     span: sp,
                                     kind: StmtKind::Let {
-                                        name: "var_1".to_owned(),
+                                        name: "var_1".into(),
                                         ty: alt_ty.clone(),
                                     },
                                 },
@@ -198,10 +198,10 @@ fn color_enum_snapshot() {
         span: sp,
         functions: vec![Function {
             span: sp,
-            name: "fromEnum".to_owned(),
+            name: "fromEnum".into(),
             args: vec![Arg {
                 span: sp,
-                name: "c".to_owned(),
+                name: "c".into(),
                 ty: color.clone(),
             }],
             ret: word.clone(),
@@ -217,7 +217,7 @@ fn color_enum_snapshot() {
                                 span: sp,
                                 kind: PatKind::Con(Con::Inl),
                             },
-                            binder: "$alt".to_owned(),
+                            binder: "$alt".into(),
                             body: vec![
                                 Stmt {
                                     span: sp,
@@ -235,7 +235,7 @@ fn color_enum_snapshot() {
                                 span: sp,
                                 kind: PatKind::Con(Con::Inr),
                             },
-                            binder: "$alt".to_owned(),
+                            binder: "$alt".into(),
                             body: vec![Stmt {
                                 span: sp,
                                 kind: StmtKind::Match {
@@ -248,7 +248,7 @@ fn color_enum_snapshot() {
                                                 span: sp,
                                                 kind: PatKind::Con(Con::Inl),
                                             },
-                                            binder: "$alt".to_owned(),
+                                            binder: "$alt".into(),
                                             body: vec![
                                                 Stmt {
                                                     span: sp,
@@ -266,7 +266,7 @@ fn color_enum_snapshot() {
                                                 span: sp,
                                                 kind: PatKind::Con(Con::Inr),
                                             },
-                                            binder: "$alt".to_owned(),
+                                            binder: "$alt".into(),
                                             body: vec![
                                                 Stmt {
                                                     span: sp,
@@ -348,14 +348,14 @@ fn add1_contract_object_snapshot() {
     };
     let main = Function {
         span: sp,
-        name: "main".to_owned(),
+        name: "main".into(),
         args: Vec::new(),
         ret: word.clone(),
         body: vec![
             Stmt {
                 span: sp,
                 kind: StmtKind::Let {
-                    name: "res".to_owned(),
+                    name: "res".into(),
                     ty: word.clone(),
                 },
             },
@@ -374,7 +374,7 @@ fn add1_contract_object_snapshot() {
         functions: Vec::new(),
         objects: vec![Object {
             span: sp,
-            name: "Add1".to_owned(),
+            name: "Add1".into(),
             code: CodeBlock {
                 span: sp,
                 stmts: vec![Stmt {
@@ -385,7 +385,7 @@ fn add1_contract_object_snapshot() {
             },
             inners: vec![Object {
                 span: sp,
-                name: "Add1_deployed".to_owned(),
+                name: "Add1_deployed".into(),
                 code: CodeBlock {
                     span: sp,
                     stmts: Vec::new(),
@@ -428,7 +428,7 @@ fn for_condition_must_be_bool_like() {
         span: sp,
         functions: vec![Function {
             span: sp,
-            name: "main".to_owned(),
+            name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(sp),
             body: vec![Stmt {
@@ -464,10 +464,10 @@ fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
         functions: vec![
             Function {
                 span: sp,
-                name: "id".to_owned(),
+                name: "id".into(),
                 args: vec![Arg {
                     span: sp,
-                    name: "x".to_owned(),
+                    name: "x".into(),
                     ty: word.clone(),
                 }],
                 ret: word.clone(),
@@ -478,21 +478,21 @@ fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
             },
             Function {
                 span: sp,
-                name: "main".to_owned(),
+                name: "main".into(),
                 args: Vec::new(),
                 ret: word.clone(),
                 body: vec![
                     Stmt {
                         span: sp,
                         kind: StmtKind::Let {
-                            name: "x".to_owned(),
+                            name: "x".into(),
                             ty: word.clone(),
                         },
                     },
                     Stmt {
                         span: sp,
                         kind: StmtKind::Let {
-                            name: "b".to_owned(),
+                            name: "b".into(),
                             ty: bool_sum,
                         },
                     },
@@ -580,28 +580,28 @@ fn assembly_checker_rejects_multi_return_arity_mismatch() {
         span: sp,
         functions: vec![Function {
             span: sp,
-            name: "main".to_owned(),
+            name: "main".into(),
             args: Vec::new(),
             ret: word.clone(),
             body: vec![
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
-                        name: "x".to_owned(),
+                        name: "x".into(),
                         ty: word.clone(),
                     },
                 },
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
-                        name: "y".to_owned(),
+                        name: "y".into(),
                         ty: word.clone(),
                     },
                 },
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
-                        name: "z".to_owned(),
+                        name: "z".into(),
                         ty: word.clone(),
                     },
                 },
@@ -659,7 +659,7 @@ fn terminal_yul_return_satisfies_terminator_analysis() {
         span: sp,
         functions: vec![Function {
             span: sp,
-            name: "main".to_owned(),
+            name: "main".into(),
             args: Vec::new(),
             ret: Ty::word(sp),
             body: vec![Stmt {
@@ -686,14 +686,14 @@ fn expression_type_annotations_must_match_inferred_type() {
         span: sp,
         functions: vec![Function {
             span: sp,
-            name: "main".to_owned(),
+            name: "main".into(),
             args: Vec::new(),
             ret: Ty::unit(sp),
             body: vec![
                 Stmt {
                     span: sp,
                     kind: StmtKind::Let {
-                        name: "x".to_owned(),
+                        name: "x".into(),
                         ty: word,
                     },
                 },

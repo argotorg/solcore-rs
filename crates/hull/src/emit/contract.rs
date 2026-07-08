@@ -26,7 +26,7 @@ impl<'db> Emitter<'db> {
         let mut mapping_value_helper_used = false;
         let mut deployment_functions = functions
             .iter()
-            .filter(|function| deployment_names.contains(&function.name))
+            .filter(|function| deployment_names.contains(function.name.as_str()))
             .cloned()
             .map(|function| {
                 self.lower_storage_fields_in_function(
@@ -40,7 +40,7 @@ impl<'db> Emitter<'db> {
             .collect::<Vec<_>>();
         let mut runtime_functions = functions
             .iter()
-            .filter(|function| !constructor_names.contains(&function.name))
+            .filter(|function| !constructor_names.contains(function.name.as_str()))
             .cloned()
             .map(|function| {
                 self.lower_storage_fields_in_function(
@@ -96,7 +96,7 @@ impl<'db> Emitter<'db> {
 
         Object {
             span: contract.span,
-            name: deployer_name,
+            name: deployer_name.into(),
             code: CodeBlock {
                 span: contract.span,
                 stmts: deploy_stmts,
@@ -104,7 +104,7 @@ impl<'db> Emitter<'db> {
             },
             inners: vec![Object {
                 span: contract.span,
-                name: runtime_name,
+                name: runtime_name.into(),
                 code: CodeBlock {
                     span: contract.span,
                     stmts: runtime_stmts,
@@ -132,7 +132,7 @@ impl<'db> Emitter<'db> {
         if let Some(constructor_name) = contract.constructor.specialized.as_deref() {
             let Some(function) = deployment_functions
                 .iter()
-                .find(|function| function.name == constructor_name)
+                .find(|function| function.name.as_str() == constructor_name)
             else {
                 self.push(
                     contract.constructor.span,
@@ -168,7 +168,7 @@ impl<'db> Emitter<'db> {
                     body.push(Stmt {
                         span,
                         kind: StmtKind::Let {
-                            name: raw_name.clone(),
+                            name: raw_name.clone().into(),
                             ty: Ty::word(span),
                         },
                     });
@@ -182,7 +182,7 @@ impl<'db> Emitter<'db> {
                     body.push(Stmt {
                         span,
                         kind: StmtKind::Let {
-                            name: arg_name.clone(),
+                            name: arg_name.clone().into(),
                             ty: arg.ty.clone(),
                         },
                     });
@@ -201,7 +201,7 @@ impl<'db> Emitter<'db> {
                     body.push(Stmt {
                         span,
                         kind: StmtKind::Let {
-                            name: arg_name.clone(),
+                            name: arg_name.clone().into(),
                             ty: arg.ty.clone(),
                         },
                     });

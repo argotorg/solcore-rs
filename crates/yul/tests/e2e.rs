@@ -817,7 +817,7 @@ fn render_reference_direct(module: &RenderedModule, signature: &str) -> Result<S
                 .code
                 .functions
                 .iter()
-                .find(|function| function.name == entry.specialized)
+                .find(|function| function.name.as_str() == entry.specialized)
                 .map(|function| (runtime, function))
         })
     else {
@@ -834,11 +834,11 @@ fn render_reference_direct(module: &RenderedModule, signature: &str) -> Result<S
         functions: Vec::new(),
         objects: vec![Object {
             span,
-            name: format!("{}ReferenceDirect", entry.contract),
+            name: format!("{}ReferenceDirect", entry.contract).into(),
             code: CodeBlock {
                 span,
                 functions: runtime.code.functions.clone(),
-                stmts: direct_main_stmts(module.db, span, &function.name, ret_ty),
+                stmts: direct_main_stmts(module.db, span, function.name.as_str(), ret_ty),
             },
             inners: Vec::new(),
         }],
@@ -877,7 +877,7 @@ fn direct_main_stmts(
         Stmt {
             span,
             kind: StmtKind::Let {
-                name: "_mainresult".to_owned(),
+                name: "_mainresult".into(),
                 ty: ret_ty.clone(),
             },
         },
@@ -889,7 +889,7 @@ fn direct_main_stmts(
                     span,
                     ty: ret_ty,
                     kind: ExprKind::Call {
-                        callee: callee.to_owned(),
+                        callee: callee.into(),
                         args: Vec::new(),
                     },
                 },

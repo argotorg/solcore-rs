@@ -56,7 +56,7 @@ fn write_object<'db>(db: &'db dyn HirDb, out: &mut String, object: &Object<'db>,
     line(
         out,
         indent,
-        &format!("object \"{}\" {{", escape_string(&object.name)),
+        &format!("object \"{}\" {{", escape_string(object.name.as_str())),
     );
     line(out, indent + 1, "code {");
     write_code_block(db, out, &object.code, indent + 2);
@@ -257,7 +257,7 @@ fn write_ty<'db>(ty: &Ty<'db>) -> String {
         TyKind::Product(lhs, rhs) => format!("({} * {})", write_ty(lhs), write_ty(rhs)),
         TyKind::Sum(lhs, rhs) => format!("({} + {})", write_ty(lhs), write_ty(rhs)),
         TyKind::Named { name, inner } => format!("{name}{{{}}}", write_ty(inner)),
-        TyKind::NamedRef { name } => name.clone(),
+        TyKind::NamedRef { name } => name.as_str().to_owned(),
         TyKind::Function { params, ret } => {
             let params = params.iter().map(write_ty).collect::<Vec<_>>().join(", ");
             format!("({params} -> {})", write_ty(ret))
@@ -270,7 +270,7 @@ fn write_expr<'db>(expr: &Expr<'db>) -> String {
         ExprKind::Word(value) => value.clone(),
         ExprKind::Bool(value) => value.to_string(),
         ExprKind::Unit => "()".to_owned(),
-        ExprKind::Var(name) => name.clone(),
+        ExprKind::Var(name) => name.as_str().to_owned(),
         ExprKind::Pair(lhs, rhs) => format!("({}, {})", write_expr(lhs), write_expr(rhs)),
         ExprKind::Fst(expr) => format!("fst({})", write_expr(expr)),
         ExprKind::Snd(expr) => format!("snd({})", write_expr(expr)),
@@ -306,7 +306,7 @@ fn write_expr<'db>(expr: &Expr<'db>) -> String {
 
 fn write_pat(pat: &Pat<'_>) -> String {
     match &pat.kind {
-        PatKind::Var(name) => name.clone(),
+        PatKind::Var(name) => name.as_str().to_owned(),
         PatKind::Con(con) => match con {
             Con::Inl => "inl".to_owned(),
             Con::Inr => "inr".to_owned(),

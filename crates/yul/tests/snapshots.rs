@@ -174,13 +174,13 @@ fn ink_binary_sum_preserves_nested_layout_snapshot() {
         functions: Vec::new(),
         objects: vec![HullObject {
             span: sp,
-            name: "InkBinarySum".to_owned(),
+            name: "InkBinarySum".into(),
             code: HullCodeBlock {
                 span: sp,
                 stmts: Vec::new(),
                 functions: vec![HullFunction {
                     span: sp,
-                    name: "pick_third".to_owned(),
+                    name: "pick_third".into(),
                     args: Vec::new(),
                     ret: target.clone(),
                     body: vec![HullStmt {
@@ -219,14 +219,14 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
         functions: Vec::new(),
         objects: vec![HullObject {
             span: sp,
-            name: "LazyIf".to_owned(),
+            name: "LazyIf".into(),
             code: HullCodeBlock {
                 span: sp,
                 stmts: Vec::new(),
                 functions: vec![
                     HullFunction {
                         span: sp,
-                        name: "then_value".to_owned(),
+                        name: "then_value".into(),
                         args: Vec::new(),
                         ret: word.clone(),
                         body: vec![HullStmt {
@@ -236,7 +236,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                     },
                     HullFunction {
                         span: sp,
-                        name: "else_value".to_owned(),
+                        name: "else_value".into(),
                         args: Vec::new(),
                         ret: word.clone(),
                         body: vec![HullStmt {
@@ -246,7 +246,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                     },
                     HullFunction {
                         span: sp,
-                        name: "main".to_owned(),
+                        name: "main".into(),
                         args: Vec::new(),
                         ret: word.clone(),
                         body: vec![HullStmt {
@@ -265,7 +265,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                                         span: sp,
                                         ty: word.clone(),
                                         kind: HullExprKind::Call {
-                                            callee: "then_value".to_owned(),
+                                            callee: "then_value".into(),
                                             args: Vec::new(),
                                         },
                                     }),
@@ -273,7 +273,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
                                         span: sp,
                                         ty: word.clone(),
                                         kind: HullExprKind::Call {
-                                            callee: "else_value".to_owned(),
+                                            callee: "else_value".into(),
                                             args: Vec::new(),
                                         },
                                     }),
@@ -309,14 +309,14 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
         functions: Vec::new(),
         objects: vec![HullObject {
             span: sp,
-            name: "WordLiteralWrap".to_owned(),
+            name: "WordLiteralWrap".into(),
             code: HullCodeBlock {
                 span: sp,
                 stmts: Vec::new(),
                 functions: vec![
                     HullFunction {
                         span: sp,
-                        name: "exact".to_owned(),
+                        name: "exact".into(),
                         args: Vec::new(),
                         ret: word.clone(),
                         body: vec![HullStmt {
@@ -326,7 +326,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                     },
                     HullFunction {
                         span: sp,
-                        name: "plus".to_owned(),
+                        name: "plus".into(),
                         args: Vec::new(),
                         ret: word.clone(),
                         body: vec![HullStmt {
@@ -336,10 +336,10 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                     },
                     HullFunction {
                         span: sp,
-                        name: "pick".to_owned(),
+                        name: "pick".into(),
                         args: vec![HullArg {
                             span: sp,
-                            name: "x".to_owned(),
+                            name: "x".into(),
                             ty: word.clone(),
                         }],
                         ret: word.clone(),
@@ -355,7 +355,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                                             span: sp,
                                             kind: HullPatKind::IntLit(TWO_256.to_owned()),
                                         },
-                                        binder: "$_".to_owned(),
+                                        binder: "$_".into(),
                                         body: vec![HullStmt {
                                             span: sp,
                                             kind: HullStmtKind::Return(HullExpr::word(sp, "10")),
@@ -367,7 +367,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                                             span: sp,
                                             kind: HullPatKind::IntLit(TWO_256_PLUS_ONE.to_owned()),
                                         },
-                                        binder: "$_".to_owned(),
+                                        binder: "$_".into(),
                                         body: vec![HullStmt {
                                             span: sp,
                                             kind: HullStmtKind::Return(HullExpr::word(sp, "11")),
@@ -379,7 +379,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
                                             span: sp,
                                             kind: HullPatKind::Wildcard,
                                         },
-                                        binder: "$_".to_owned(),
+                                        binder: "$_".into(),
                                         body: vec![HullStmt {
                                             span: sp,
                                             kind: HullStmtKind::Return(HullExpr::word(sp, "12")),
@@ -421,19 +421,19 @@ fn copy_locs_rejects_arity_mismatch() {
         functions: Vec::new(),
         objects: vec![HullObject {
             span: sp,
-            name: "BadCopy".to_owned(),
+            name: "BadCopy".into(),
             code: HullCodeBlock {
                 span: sp,
                 functions: vec![HullFunction {
                     span: sp,
-                    name: "bad".to_owned(),
+                    name: "bad".into(),
                     args: Vec::new(),
                     ret: HullTy::unit(sp),
                     body: vec![
                         HullStmt {
                             span: sp,
                             kind: HullStmtKind::Let {
-                                name: "x".to_owned(),
+                                name: "x".into(),
                                 ty: target.clone(),
                             },
                         },
@@ -586,10 +586,10 @@ fn top_level_no_object_hull_wraps_like_assemble_hs_snapshot() {
         span: sp,
         functions: vec![HullFunction {
             span: sp,
-            name: "main".to_owned(),
+            name: "main".into(),
             args: vec![HullArg {
                 span: sp,
-                name: "x".to_owned(),
+                name: "x".into(),
                 ty: word.clone(),
             }],
             ret: word.clone(),
