@@ -23,7 +23,7 @@ use hir::{
     input::SourceFile,
     span::{Span, SpannedElem},
 };
-use hir_ty::AbiSignature;
+use hir_ty::{AbiSignature, AbiType};
 use hull::{
     CheckDiagnostic, CheckDiagnosticKind, CodeBlock, EmitDiagnostic, EmitDiagnosticKind, Expr,
     ExprKind, Object, Program, Stmt, StmtKind, Ty,
@@ -780,10 +780,17 @@ fn calldata(entry: &AbiEntry, args: &[AbiArg]) -> Result<String, E2eFailure> {
 }
 
 fn encode_abi_arg(param: &MonoAbiParam, arg: AbiArg) -> Result<String, E2eFailure> {
-    match (param.ty.as_str(), arg) {
-        ("uint256" | "uint" | "word" | "bytes32", AbiArg::Word(value)) => Ok(word_hex(value)),
-        ("bool", AbiArg::Bool(false)) => Ok(word_hex(0)),
-        ("bool", AbiArg::Bool(true)) => Ok(word_hex(1)),
+    match (&param.ty, arg) {
+        (AbiType::Uint256, AbiArg::Word(value)) => Ok(word_hex(value)),
+        (AbiType::Named(name), AbiArg::Word(value))
+            if matches!(name.as_str(), "uint256" | "uint" | "word" | "bytes32") =>
+        {
+            Ok(word_hex(value))
+        }
+        (AbiType::Bool, AbiArg::Bool(value)) => Ok(word_hex(if value { 1 } else { 0 })),
+        (AbiType::Named(name), AbiArg::Bool(value)) if name == "bool" => {
+            Ok(word_hex(if value { 1 } else { 0 }))
+        }
         _ => Err(E2eFailure::new(
             FailureKind::Pipeline,
             format!("cannot encode {arg:?} as ABI type `{}`", param.ty),

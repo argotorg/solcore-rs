@@ -3,7 +3,7 @@ use hir::{
     ast::function::{AssignOp, BinOp, LitKind, UnOp, YulStmt},
     span::Span,
 };
-use hir_ty::{FrontendDesugarPlan, Ty};
+use hir_ty::{AbiType, FrontendDesugarPlan, Ty};
 
 pub(crate) mod visit;
 
@@ -154,7 +154,7 @@ pub struct MonoFallback<'db> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MonoAbiParam {
     pub name: String,
-    pub ty: String,
+    pub ty: AbiType,
     pub components: Vec<MonoAbiParam>,
 }
 

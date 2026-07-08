@@ -1,6 +1,6 @@
 use hir::diag::Diagnostic;
 
-use crate::{BuiltinTyCtor, Db, Ty, TyCtor, TyKind};
+use crate::{BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtor};
 
 /// ABI parameter or tuple component.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -8,10 +8,35 @@ pub struct AbiParam {
     /// Parameter name. Outputs and tuple components use the empty name,
     /// matching the reference ABI emitter.
     pub name: String,
-    /// Canonical ABI type string.
-    pub ty: String,
-    /// Tuple components, if `ty == "tuple"`.
+    /// Canonical ABI type.
+    pub ty: AbiType,
+    /// Tuple components, if `ty` is `AbiType::Tuple`.
     pub components: Vec<AbiParam>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub enum AbiType {
+    Uint256,
+    Bool,
+    String,
+    Unit,
+    Tuple,
+    Named(String),
+    Unsupported,
+}
+
+impl std::fmt::Display for AbiType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AbiType::Uint256 => f.write_str("uint256"),
+            AbiType::Bool => f.write_str("bool"),
+            AbiType::String => f.write_str("string"),
+            AbiType::Unit => Ok(()),
+            AbiType::Tuple => f.write_str("tuple"),
+            AbiType::Named(name) => f.write_str(name),
+            AbiType::Unsupported => f.write_str("<unsupported>"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
@@ -64,19 +89,19 @@ fn signature_type_string<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Result<String, St
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
             args,
-        } if args.is_empty() => Ok("uint256".to_owned()),
+        } if args.is_empty() => Ok(AbiType::Uint256.to_string()),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Bool),
             args,
-        } if args.is_empty() => Ok("bool".to_owned()),
+        } if args.is_empty() => Ok(AbiType::Bool.to_string()),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::String),
             args,
-        } if args.is_empty() => Ok("string".to_owned()),
+        } if args.is_empty() => Ok(AbiType::String.to_string()),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
             args,
-        } if args.is_empty() => Ok(String::new()),
+        } if args.is_empty() => Ok(AbiType::Unit.to_string()),
         TyKind::Tuple(elems) => tuple_signature_string(db, elems),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
@@ -97,10 +122,7 @@ fn signature_type_string<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Result<String, St
         TyKind::Named {
             ctor: TyCtor::User(user),
             args,
-        } if args.is_empty() => Ok(user
-            .def
-            .name(db)
-            .unwrap_or_else(|| format!("{:?}", user.kind))),
+        } if args.is_empty() => Ok(user_abi_type(db, user).to_string()),
         TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => Err(ty.display(db)),
         TyKind::Named { .. } | TyKind::Function { .. } | TyKind::Comptime(_) => Err(ty.display(db)),
     }
@@ -135,7 +157,7 @@ pub(super) fn abi_params<'db>(
                     ));
                     AbiParam {
                         name: names.get(index).cloned().unwrap_or_default(),
-                        ty: "<unsupported>".to_owned(),
+                        ty: AbiType::Unsupported,
                         components: Vec::new(),
                     }
                 }
@@ -166,7 +188,7 @@ pub(super) fn abi_outputs<'db>(
                 ));
                 AbiParam {
                     name: String::new(),
-                    ty: "<unsupported>".to_owned(),
+                    ty: AbiType::Unsupported,
                     components: Vec::new(),
                 }
             }
@@ -183,27 +205,27 @@ fn abi_param<'db>(db: &'db dyn Db, name: String, ty: Ty<'db>) -> Result<AbiParam
     })
 }
 
-fn abi_type_of<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Result<(String, Vec<AbiParam>), String> {
+fn abi_type_of<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Result<(AbiType, Vec<AbiParam>), String> {
     match ty.kind(db) {
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
             args,
-        } if args.is_empty() => Ok(("uint256".to_owned(), Vec::new())),
+        } if args.is_empty() => Ok((AbiType::Uint256, Vec::new())),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Bool),
             args,
-        } if args.is_empty() => Ok(("bool".to_owned(), Vec::new())),
+        } if args.is_empty() => Ok((AbiType::Bool, Vec::new())),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::String),
             args,
-        } if args.is_empty() => Ok(("string".to_owned(), Vec::new())),
+        } if args.is_empty() => Ok((AbiType::String, Vec::new())),
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
             args,
-        } if args.is_empty() => Ok(("".to_owned(), Vec::new())),
-        TyKind::Tuple(elems) if elems.is_empty() => Ok(("".to_owned(), Vec::new())),
+        } if args.is_empty() => Ok((AbiType::Unit, Vec::new())),
+        TyKind::Tuple(elems) if elems.is_empty() => Ok((AbiType::Unit, Vec::new())),
         TyKind::Tuple(elems) => Ok((
-            "tuple".to_owned(),
+            AbiType::Tuple,
             flatten_tuple(db, elems)
                 .into_iter()
                 .map(|elem| abi_param(db, String::new(), elem))
@@ -213,7 +235,7 @@ fn abi_type_of<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Result<(String, Vec<AbiPara
             ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
             args,
         } if args.len() == 2 => Ok((
-            "tuple".to_owned(),
+            AbiType::Tuple,
             flatten_tuple(db, args)
                 .into_iter()
                 .map(|elem| abi_param(db, String::new(), elem))
@@ -234,14 +256,17 @@ fn abi_type_of<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Result<(String, Vec<AbiPara
         TyKind::Named {
             ctor: TyCtor::User(user),
             args,
-        } if args.is_empty() => Ok((
-            user.def
-                .name(db)
-                .unwrap_or_else(|| format!("{:?}", user.kind)),
-            Vec::new(),
-        )),
+        } if args.is_empty() => Ok((user_abi_type(db, user), Vec::new())),
         _ => Err(ty.display(db)),
     }
+}
+
+fn user_abi_type<'db>(db: &'db dyn Db, user: &UserTyCtor<'db>) -> AbiType {
+    AbiType::Named(
+        user.def
+            .name(db)
+            .unwrap_or_else(|| format!("{:?}", user.kind)),
+    )
 }
 
 fn flatten_output_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Vec<Ty<'db>> {

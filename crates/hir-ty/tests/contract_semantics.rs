@@ -159,7 +159,7 @@ contract Token {
     };
     assert!(*payable);
     assert_eq!(inputs[0].name, "amount");
-    assert_eq!(inputs[0].ty, "uint256");
+    assert_eq!(inputs[0].ty.to_string(), "uint256");
     let DispatchFallback::Explicit { payable, .. } = &surface.fallback else {
         panic!("expected explicit fallback: {:?}", surface.fallback);
     };
@@ -169,8 +169,8 @@ contract Token {
     assert!(surface.methods[0].payable);
     assert_eq!(surface.methods[0].signature, "pay(uint256)");
     assert_eq!(surface.methods[0].selector.to_hex(), "0xc290d691");
-    assert_eq!(surface.methods[0].outputs[0].ty, "uint256");
-    assert_eq!(surface.methods[0].outputs[1].ty, "bool");
+    assert_eq!(surface.methods[0].outputs[0].ty.to_string(), "uint256");
+    assert_eq!(surface.methods[0].outputs[1].ty.to_string(), "bool");
 }
 
 #[test]
@@ -282,7 +282,7 @@ contract AliasDispatch {
     let DispatchConstructor::Explicit { inputs, .. } = &surface.constructor else {
         panic!("expected explicit constructor: {:?}", surface.constructor);
     };
-    assert_eq!(inputs[0].ty, "uint256");
+    assert_eq!(inputs[0].ty.to_string(), "uint256");
     let DispatchFallback::Explicit { outputs, .. } = &surface.fallback else {
         panic!("expected explicit fallback: {:?}", surface.fallback);
     };

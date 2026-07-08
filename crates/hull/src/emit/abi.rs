@@ -1,4 +1,5 @@
 use super::*;
+use hir_ty::AbiType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AbiWordKind {
@@ -76,7 +77,7 @@ fn static_abi_layout_for_param<'db>(
     if abi_param_is_dynamic(param) {
         return None;
     }
-    if param.ty == "tuple" {
+    if matches!(&param.ty, AbiType::Tuple) {
         return static_abi_tuple_layout(ty, &param.components);
     }
     if !param.components.is_empty() {
@@ -186,24 +187,32 @@ fn static_abi_product_layout<'db>(
 }
 
 fn abi_param_is_dynamic(param: &MonoAbiParam) -> bool {
-    matches!(param.ty.as_str(), "string" | "bytes")
+    matches!(&param.ty, AbiType::String)
+        || matches!(&param.ty, AbiType::Named(name) if matches!(name.as_str(), "string" | "bytes"))
         || param.components.iter().any(abi_param_is_dynamic)
 }
 
 fn abi_param_is_static_word(param: &specialize::MonoAbiParam) -> bool {
     param.components.is_empty()
-        && matches!(
-            param.ty.as_str(),
-            "uint256" | "uint" | "word" | "bytes32" | "address" | "bool"
-        )
+        && (matches!(&param.ty, AbiType::Uint256 | AbiType::Bool)
+            || matches!(
+                &param.ty,
+                AbiType::Named(name)
+                    if matches!(
+                        name.as_str(),
+                        "uint256" | "uint" | "word" | "bytes32" | "address" | "bool"
+                    )
+            ))
 }
 
 fn abi_param_is_address(param: &MonoAbiParam) -> bool {
-    param.components.is_empty() && param.ty == "address"
+    param.components.is_empty() && matches!(&param.ty, AbiType::Named(name) if name == "address")
 }
 
 fn abi_param_is_bool(param: &MonoAbiParam) -> bool {
-    param.components.is_empty() && param.ty == "bool"
+    param.components.is_empty()
+        && (matches!(&param.ty, AbiType::Bool)
+            || matches!(&param.ty, AbiType::Named(name) if name == "bool"))
 }
 
 pub(super) fn abi_word_kind(param: &MonoAbiParam) -> AbiWordKind {

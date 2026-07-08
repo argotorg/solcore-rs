@@ -5,7 +5,7 @@ use hir::ast::item::{ContractDef, Module};
 use crate::Db;
 
 use super::{
-    abi::AbiParam,
+    abi::{AbiParam, AbiType},
     dispatch::{DispatchConstructor, DispatchFallback, contract_dispatch_surface},
 };
 
@@ -139,7 +139,7 @@ fn render_named_params(
     params: &[AbiParam],
     trailing_comma: bool,
 ) -> Result<(), String> {
-    if params.iter().any(|param| param.ty == "<unsupported>") {
+    if params.iter().any(abi_param_is_unsupported) {
         return Err("cannot represent type in ABI".to_owned());
     }
     if params.is_empty() {
@@ -167,11 +167,12 @@ fn render_named_params(
 }
 
 fn render_abi_param(out: &mut String, ind: usize, param: &AbiParam) -> Result<(), String> {
+    let ty = param.ty.to_string();
     line(out, ind, "{");
     line(
         out,
         ind + 1,
-        &format!("\"internalType\": {},", json_string(&param.ty)),
+        &format!("\"internalType\": {},", json_string(&ty)),
     );
     line(
         out,
@@ -183,7 +184,7 @@ fn render_abi_param(out: &mut String, ind: usize, param: &AbiParam) -> Result<()
         ind + 1,
         &format!(
             "\"type\": {}{}",
-            json_string(&param.ty),
+            json_string(&ty),
             if param.components.is_empty() { "" } else { "," }
         ),
     );
@@ -192,6 +193,11 @@ fn render_abi_param(out: &mut String, ind: usize, param: &AbiParam) -> Result<()
     }
     push_close_brace(out, ind);
     Ok(())
+}
+
+fn abi_param_is_unsupported(param: &AbiParam) -> bool {
+    matches!(&param.ty, AbiType::Unsupported)
+        || param.components.iter().any(abi_param_is_unsupported)
 }
 
 fn state_mutability(payable: bool) -> &'static str {

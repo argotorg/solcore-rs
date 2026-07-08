@@ -11,7 +11,7 @@ use crate::Db;
 
 use super::{
     abi::{
-        AbiParam, AbiSelector, AbiSignature, abi_outputs, abi_params, abi_selector,
+        AbiParam, AbiSelector, AbiSignature, AbiType, abi_outputs, abi_params, abi_selector,
         contract_diag_unsupported_abi_type, method_signature_string,
     },
     helpers::{
@@ -297,7 +297,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
 
     let mut seen = FxHashMap::<String, DefId<'db>>::default();
     for method in &methods {
-        if method.signature.contains("<unsupported>") {
+        if abi_params_contain_unsupported(&method.inputs) {
             continue;
         }
         if let Some(previous) = seen.insert(method.signature.clone(), method.def) {
@@ -319,6 +319,13 @@ fn contract_dispatch_surface_with_resolutions<'db>(
         fallback,
         diagnostics,
     }
+}
+
+fn abi_params_contain_unsupported(params: &[AbiParam]) -> bool {
+    params.iter().any(|param| {
+        matches!(&param.ty, AbiType::Unsupported)
+            || abi_params_contain_unsupported(&param.components)
+    })
 }
 
 fn contract_diag_duplicate_signature<'db>(

@@ -439,7 +439,7 @@ return 42;
 
     assert_eq!(surface.methods.len(), 1);
     assert_eq!(surface.methods[0].outputs.len(), 1);
-    assert_eq!(surface.methods[0].outputs[0].ty, "uint256");
+    assert_eq!(surface.methods[0].outputs[0].ty.to_string(), "uint256");
 }
 
 #[test]
