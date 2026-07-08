@@ -14,6 +14,10 @@ pub mod native;
 mod resolve;
 pub mod state;
 pub mod symbols;
+#[cfg(feature = "wasm")]
+pub mod wasm;
+#[cfg(all(test, not(feature = "wasm")))]
+mod wasm;
 
 pub use capabilities::{initialize_result, server_capabilities};
 pub use definition::handle_definition;

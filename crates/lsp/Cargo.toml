@@ -12,7 +12,7 @@ default = []
 # Native stdio LSP server (tower-lsp + tokio) — never in the wasm build.
 native = ["dep:tower-lsp", "dep:tokio"]
 # WASM Web Worker entry (JSON-RPC over postMessage; no tokio).
-wasm = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen"]
+wasm = ["dep:wasm-bindgen"]
 
 [dependencies]
 vfs = { workspace = true }
