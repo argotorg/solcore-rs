@@ -93,7 +93,7 @@ fn cli_prints_short_diagnostics() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("main.solc:1:34: error[SC0201]: type mismatch: expected word, got bool"),
+        stderr.contains("main.solc:1:34: error[SC0201]: type mismatch: expected word, found bool"),
         "stderr:\n{stderr}"
     );
     assert!(
