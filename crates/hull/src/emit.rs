@@ -26,11 +26,13 @@ use specialize::{
     MonoStmt, MonoStmtKind,
 };
 
-use crate::ir::{
-    Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
-    StmtKind, Ty, TyKind,
+use crate::{
+    ir::{
+        Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
+        StmtKind, Ty, TyKind,
+    },
+    word::wrap_word_literal,
 };
-use crate::word::wrap_word_literal;
 
 const ADDRESS_MASK: &str = "0xffffffffffffffffffffffffffffffffffffffff";
 const STORAGE_INDEX_READ: &str = "__solcore_storage_index_read";

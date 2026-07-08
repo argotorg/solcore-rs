@@ -19,7 +19,8 @@ use crate::{
     UserTyCtorKind,
 };
 
-/// Maximum number of type nodes visited while normalizing one alias-rooted type.
+/// Maximum number of type nodes visited while normalizing one alias-rooted
+/// type.
 const DEFAULT_ALIAS_NORMALIZATION_NODE_BUDGET: usize = 16_384;
 
 /// Alias-normalization diagnostic independent of the final typecheck surface.

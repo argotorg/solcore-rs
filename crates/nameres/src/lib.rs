@@ -290,7 +290,8 @@ pub struct ModuleEnv<'db> {
     pub unknown_unqualified_wildcard: bool,
     /// Module qualifiers whose target provider had parse errors.
     pub incomplete_modules: BTreeSet<String>,
-    /// Private imported items addressable by qualified module syntax but not exported.
+    /// Private imported items addressable by qualified module syntax but not
+    /// exported.
     pub private_surfaces: BTreeMap<String, hir_nameres::PrivateCandidate>,
     /// Instances visible from local and imported modules.
     pub instances: Vec<Origin<'db>>,

@@ -5,8 +5,9 @@
 //! goal is canonicalized (`canonicalize_goal`) and discharged by a tabled
 //! resolution engine (`TabledEngine`).
 //!
-//! Tabling memoizes each distinct (canonicalized) subgoal in a `TableEntry` that
-//! records both the answers found so far and the consumers suspended on it:
+//! Tabling memoizes each distinct (canonicalized) subgoal in a `TableEntry`
+//! that records both the answers found so far and the consumers suspended on
+//! it:
 //!
 //! - a `GeneratorNode` resolves the program clauses applicable to a subgoal
 //!   (local givens, instances, superclass projections, and — only when nothing
@@ -16,8 +17,8 @@
 //!   subgoal yields, threading the answer's substitution and evidence;
 //! - `produce_answer` admits an answer only when an equal one is not already
 //!   tabled (the paper's answer-subsumption step, here exact-duplicate
-//!   elimination on the canonical substitution), so duplicate answers are
-//!   never stored or re-propagated.
+//!   elimination on the canonical substitution), so duplicate answers are never
+//!   stored or re-propagated.
 //!
 //! Because every subgoal is solved once and shared, diamond-shaped constraint
 //! graphs are resolved without the exponential blow-up of naive backtracking,
@@ -2284,8 +2285,8 @@ impl<'db> TabledEngine<'db> {
     }
 
     /// Create a table slot for `key` and schedule its generator if the subgoal
-    /// is new. Re-entering an in-progress subgoal is a no-op — that is what lets
-    /// cyclic instance dependencies terminate.
+    /// is new. Re-entering an in-progress subgoal is a no-op — that is what
+    /// lets cyclic instance dependencies terminate.
     fn ensure_entry(&mut self, key: TableKey<'db>) {
         if self.table.contains_key(&key) {
             return;
@@ -2348,8 +2349,8 @@ impl<'db> TabledEngine<'db> {
     }
 
     /// Try the generator's next clause against its subgoal, re-queuing the node
-    /// for the remaining clauses so clause resolution is interleaved fairly with
-    /// the rest of the worklist.
+    /// for the remaining clauses so clause resolution is interleaved fairly
+    /// with the rest of the worklist.
     fn step_generator(&mut self, mut node: GeneratorNode<'db>) {
         if node.next_clause >= node.clauses.len() {
             return;
@@ -2397,8 +2398,8 @@ impl<'db> TabledEngine<'db> {
     }
 
     /// Suspend `consumer` on its current condition subgoal: ensure that
-    /// subgoal's table entry, register the consumer as a waiter, and immediately
-    /// resume it against any answers already tabled for it.
+    /// subgoal's table entry, register the consumer as a waiter, and
+    /// immediately resume it against any answers already tabled for it.
     fn register_for_next_condition(&mut self, mut consumer: ConsumerNode<'db>) {
         let condition = consumer
             .subst
@@ -2483,8 +2484,8 @@ impl<'db> TabledEngine<'db> {
     }
 
     /// Admit `answer` to `key`'s table entry unless an equal answer is already
-    /// present (exact-duplicate elimination on the canonical substitution), then
-    /// resume every consumer currently waiting on `key` with it.
+    /// present (exact-duplicate elimination on the canonical substitution),
+    /// then resume every consumer currently waiting on `key` with it.
     fn produce_answer(&mut self, key: TableKey<'db>, answer: Answer<'db>) {
         let consumers = {
             let entry = self
@@ -2520,8 +2521,9 @@ struct EngineResult<'db> {
 
 /// Canonical identity of a subgoal — the tabling key.
 ///
-/// Goals equal up to renaming of their solvable (flex) variables map to the same
-/// key, so each distinct subgoal is resolved once and its answers are shared.
+/// Goals equal up to renaming of their solvable (flex) variables map to the
+/// same key, so each distinct subgoal is resolved once and its answers are
+/// shared.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct TableKey<'db> {
     /// Goal predicate with flex variables renamed to `0..flex_count`.
@@ -2595,7 +2597,8 @@ struct ConsumerNode<'db> {
     waiting_renaming: GoalRenaming,
 }
 
-/// A unit of engine work: advance a generator, or feed one answer to a consumer.
+/// A unit of engine work: advance a generator, or feed one answer to a
+/// consumer.
 enum WorkItem<'db> {
     Generator(GeneratorNode<'db>),
     Resume {

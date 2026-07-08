@@ -1203,9 +1203,9 @@ fn emit_salsa_event(event: salsa::Event) {
 /// references.
 ///
 /// Missing or unreadable modules are left unloaded so the name-resolution graph
-/// can emit normal diagnostics for them. A reachable import through a configured
-/// external root that is not a directory is reported directly because the later
-/// module-not-found diagnostic cannot name the bad root.
+/// can emit normal diagnostics for them. A reachable import through a
+/// configured external root that is not a directory is reported directly
+/// because the later module-not-found diagnostic cannot name the bad root.
 fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) -> Result<(), String> {
     let mut queue = VecDeque::from([entry]);
     let mut visited = FxHashSet::default();

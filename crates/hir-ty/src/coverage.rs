@@ -2,7 +2,8 @@
 //!
 //! This module implements Maranget's usefulness test over pattern matrices. The
 //! surrounding inference code is responsible for translating HIR patterns into
-//! this small pattern language and for supplying type-specific constructor data.
+//! this small pattern language and for supplying type-specific constructor
+//! data.
 
 use hir::anchor::DefId;
 
@@ -90,7 +91,8 @@ enum Usefulness<'db> {
     Unknown,
 }
 
-/// Computes exhaustiveness and unreachable-arm information for a pattern matrix.
+/// Computes exhaustiveness and unreachable-arm information for a pattern
+/// matrix.
 pub(crate) fn analyze<'db, Ty, O>(
     oracle: &mut O,
     tys: &[Ty],

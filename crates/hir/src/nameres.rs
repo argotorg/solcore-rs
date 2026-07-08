@@ -654,9 +654,11 @@ pub enum NameresDiagnostic {
         name: String,
         /// Source span of the failed lookup.
         span: LabelSpan,
-        /// Nearest visible type name, when one is close enough to be actionable.
+        /// Nearest visible type name, when one is close enough to be
+        /// actionable.
         suggestion: Option<String>,
-        /// Constructor with this name, when a value constructor was used as a type.
+        /// Constructor with this name, when a value constructor was used as a
+        /// type.
         constructor_candidate: Option<ConstructorTypeCandidate>,
     },
     /// `SC0105`: failed class lookup.
@@ -672,7 +674,8 @@ pub enum NameresDiagnostic {
         name: String,
         /// Source span of the constructor occurrence.
         span: LabelSpan,
-        /// Concrete qualified form, when the constructor leaf has one visible owner.
+        /// Concrete qualified form, when the constructor leaf has one visible
+        /// owner.
         qualification: Option<String>,
     },
     /// `SC0107`: parser recovery produced an invalid pattern shape.
