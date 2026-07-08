@@ -694,6 +694,93 @@ contract DirectWriter {
 }
 
 #[test]
+fn storage_index_assignment_materializes_slot_before_rhs() {
+    let hull = pretty_src_hull(
+        "storage_index_order",
+        r#"
+import std.{*};
+
+contract StorageIndexOrder {
+  counter: word;
+  m: mapping(word, word);
+
+  function next() -> word {
+    let cur: word = counter;
+    let res: word;
+    assembly {
+      res := add(cur, 1)
+    }
+    counter = res;
+    return res;
+  }
+
+  public function main() -> word {
+    counter = 0;
+    m[next()] = next();
+    return m[1];
+  }
+}
+"#,
+    );
+    let main = hull_function(&hull, "_main_");
+    assert_contains_in_order(
+        "storage index assignment order",
+        main,
+        &[
+            "storage_store_storage_index_slot_1 := __solcore_storage_hash2(1, storage_index_order_StorageIndexOrder_next_",
+            "storage_store_storage_index_2 := storage_index_order_StorageIndexOrder_next_",
+            "sstore(storage_store_storage_index_slot_1, storage_store_storage_index_2)",
+        ],
+    );
+
+    let compound_hull = pretty_src_hull(
+        "storage_index_compound",
+        r#"
+import std.{*};
+
+contract StorageIndexCompound {
+  counter: word;
+  m: mapping(word, word);
+
+  function next() -> word {
+    let cur: word = counter;
+    let res: word;
+    assembly {
+      res := add(cur, 1)
+    }
+    counter = res;
+    return res;
+  }
+
+  public function main() -> word {
+    counter = 0;
+    m[1] = 10;
+    m[next()] += next();
+    return m[1];
+  }
+}
+"#,
+    );
+    let compound_main = hull_function(&compound_hull, "_main_");
+    assert_contains_in_order(
+        "compound storage index assignment order",
+        compound_main,
+        &[
+            "storage_store_storage_index_slot_3 := __solcore_storage_hash2(1, storage_index_compound_StorageIndexCompound_next_",
+            "storage_store_storage_index_4 := add(sload(storage_store_storage_index_slot_3), storage_index_compound_StorageIndexCompound_next_",
+            "sstore(storage_store_storage_index_slot_3, storage_store_storage_index_4)",
+        ],
+    );
+    assert_eq!(
+        compound_main
+            .matches("storage_index_compound_StorageIndexCompound_next_")
+            .count(),
+        2,
+        "{compound_main}"
+    );
+}
+
+#[test]
 fn evaluator_invalidates_storage_bindings_after_residual_calls() {
     let hull = pretty_src_hull(
         "eval_stale_storage_call",

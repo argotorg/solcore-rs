@@ -3078,21 +3078,38 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                     ];
                 }
                 if let Some(slot) = self.storage_index_read_slot(&lhs) {
+                    let lowered_slot = self.expr(slot.clone());
+                    let slot_temp = self.fresh_temp("storage_index_slot");
+                    let slot_ref = Expr::var(stmt.span, slot_temp.clone(), Ty::word(stmt.span));
+                    let rhs = replace_storage_index_read_slot(rhs, &slot, &slot_ref);
                     let rhs = self.expr(rhs);
-                    let slot = self.expr(slot);
-                    let temp = self.fresh_temp("storage_index");
+                    let value_temp = self.fresh_temp("storage_index");
                     return vec![
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Let {
-                                name: temp.clone(),
+                                name: slot_temp.clone(),
+                                ty: Ty::word(stmt.span),
+                            },
+                        },
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Assign {
+                                lhs: slot_ref.clone(),
+                                rhs: lowered_slot,
+                            },
+                        },
+                        Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Let {
+                                name: value_temp.clone(),
                                 ty: lhs.ty.clone(),
                             },
                         },
                         Stmt {
                             span: stmt.span,
                             kind: StmtKind::Assign {
-                                lhs: Expr::var(stmt.span, temp.clone(), lhs.ty),
+                                lhs: Expr::var(stmt.span, value_temp.clone(), lhs.ty),
                                 rhs,
                             },
                         },
@@ -3104,8 +3121,8 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                                 kind: ExprKind::Call {
                                     callee: "sstore".to_owned(),
                                     args: vec![
-                                        slot,
-                                        Expr::var(stmt.span, temp, Ty::word(stmt.span)),
+                                        slot_ref,
+                                        Expr::var(stmt.span, value_temp, Ty::word(stmt.span)),
                                     ],
                                 },
                             }),
@@ -3404,6 +3421,83 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
         let out = f(self);
         self.shadows.pop();
         out
+    }
+}
+
+fn replace_storage_index_read_slot<'db>(
+    expr: Expr<'db>,
+    slot: &Expr<'db>,
+    slot_ref: &Expr<'db>,
+) -> Expr<'db> {
+    if let ExprKind::Call { callee, args } = &expr.kind
+        && callee == STORAGE_INDEX_READ
+        && args.len() == 1
+        && args.first() == Some(slot)
+    {
+        return Expr {
+            span: expr.span,
+            ty: expr.ty,
+            kind: ExprKind::Call {
+                callee: "sload".to_owned(),
+                args: vec![slot_ref.clone()],
+            },
+        };
+    }
+
+    Expr {
+        span: expr.span,
+        ty: expr.ty,
+        kind: match expr.kind {
+            ExprKind::Pair(lhs, rhs) => ExprKind::Pair(
+                Box::new(replace_storage_index_read_slot(*lhs, slot, slot_ref)),
+                Box::new(replace_storage_index_read_slot(*rhs, slot, slot_ref)),
+            ),
+            ExprKind::Fst(inner) => ExprKind::Fst(Box::new(replace_storage_index_read_slot(
+                *inner, slot, slot_ref,
+            ))),
+            ExprKind::Snd(inner) => ExprKind::Snd(Box::new(replace_storage_index_read_slot(
+                *inner, slot, slot_ref,
+            ))),
+            ExprKind::Inl { target, value } => ExprKind::Inl {
+                target,
+                value: Box::new(replace_storage_index_read_slot(*value, slot, slot_ref)),
+            },
+            ExprKind::Inr { target, value } => ExprKind::Inr {
+                target,
+                value: Box::new(replace_storage_index_read_slot(*value, slot, slot_ref)),
+            },
+            ExprKind::InK {
+                index,
+                target,
+                value,
+            } => ExprKind::InK {
+                index,
+                target,
+                value: Box::new(replace_storage_index_read_slot(*value, slot, slot_ref)),
+            },
+            ExprKind::Call { callee, args } => ExprKind::Call {
+                callee,
+                args: args
+                    .into_iter()
+                    .map(|arg| replace_storage_index_read_slot(arg, slot, slot_ref))
+                    .collect(),
+            },
+            ExprKind::If {
+                target,
+                cond,
+                then_expr,
+                else_expr,
+            } => ExprKind::If {
+                target,
+                cond: Box::new(replace_storage_index_read_slot(*cond, slot, slot_ref)),
+                then_expr: Box::new(replace_storage_index_read_slot(*then_expr, slot, slot_ref)),
+                else_expr: Box::new(replace_storage_index_read_slot(*else_expr, slot, slot_ref)),
+            },
+            ExprKind::Word(value) => ExprKind::Word(value),
+            ExprKind::Bool(value) => ExprKind::Bool(value),
+            ExprKind::Unit => ExprKind::Unit,
+            ExprKind::Var(name) => ExprKind::Var(name),
+        },
     }
 }
 

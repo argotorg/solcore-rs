@@ -388,6 +388,103 @@ contract ReferenceDirectSmokeE2E {
 }
 "#;
 
+const STORAGE_INDEX_ORDER_SRC: &str = r#"
+import std.{*};
+
+contract StorageIndexOrderE2E {
+  counter: word;
+  m: mapping(word, word);
+
+  function next() -> word {
+    let cur: word = counter;
+    let res: word;
+    assembly {
+      res := add(cur, 1)
+    }
+    counter = res;
+    return res;
+  }
+
+  public function main() -> word {
+    counter = 0;
+    m[1] = 0;
+    m[2] = 0;
+    m[next()] = next();
+
+    let one: word = m[1];
+    let two: word = m[2];
+    let packed: word;
+    assembly {
+      packed := add(one, mul(two, 10))
+    }
+    return packed;
+  }
+
+  public function get(k: word) -> word {
+    return m[k];
+  }
+}
+"#;
+
+#[test]
+fn storage_index_assignment_order_e2e() {
+    if env::var_os("E2E").as_deref() != Some(std::ffi::OsStr::new("1")) {
+        eprintln!("set E2E=1 to run the storage index assignment order E2E test");
+        return;
+    }
+
+    if env::var_os("E2E_PIPELINE_ONLY").as_deref() == Some(std::ffi::OsStr::new("1")) {
+        let module = render_source("storage_index_order_e2e", STORAGE_INDEX_ORDER_SRC)
+            .expect("storage-index order fixture renders");
+        render_reference_direct(&module, "main()")
+            .expect("storage-index order fixture renders direct main");
+        return;
+    }
+
+    let solc = solc_path();
+    if !command_available(&solc) {
+        eprintln!(
+            "skipping E2E: solc not found at {}; set SOLC=/path/to/solc",
+            solc.display()
+        );
+        return;
+    }
+
+    let cast = foundry_tool_path("CAST", "cast");
+    if !command_available(&cast) {
+        eprintln!(
+            "skipping E2E: cast not found at {}; set CAST=/path/to/cast",
+            cast.display()
+        );
+        return;
+    }
+
+    let anvil = foundry_tool_path("ANVIL", "anvil");
+    if !command_available(&anvil) {
+        eprintln!(
+            "skipping E2E: anvil not found at {}; set ANVIL=/path/to/anvil",
+            anvil.display()
+        );
+        return;
+    }
+
+    let runtime = match Anvil::spawn(&anvil, &cast) {
+        Ok(runtime) => runtime,
+        Err(message) => {
+            eprintln!("skipping E2E: {message}");
+            return;
+        }
+    };
+    let module = render_source("storage_index_order_e2e", STORAGE_INDEX_ORDER_SRC)
+        .expect("storage-index order fixture renders");
+    let yul = render_reference_direct(&module, "main()")
+        .expect("storage-index order fixture renders direct main");
+    let bytecode = compile_yul(&solc, "storage_index_order_e2e", &yul).expect("compile Yul");
+    let returndata = execute_creation(&cast, runtime.url(), &bytecode).expect("execute creation");
+    assert_return("storage-index order", &Expected::Word(2), &returndata)
+        .expect("storage-index assignment evaluates index before rhs");
+}
+
 fn run_reference_direct_smoke(solc: &Path, cast: &Path, rpc_url: &str) -> Result<(), E2eFailure> {
     let module = render_source("reference_direct_smoke_e2e", REFERENCE_DIRECT_SMOKE_SRC)?;
     let yul = render_reference_direct(&module, "main()")?;
