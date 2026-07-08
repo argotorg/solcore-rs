@@ -2,7 +2,7 @@ use super::*;
 
 #[salsa::tracked]
 pub fn trait_env_for_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> TraitEnvId<'db> {
-    let env = nameres::module_env(db, module);
+    let env = nameres::module_import_surface(db, module);
     let mut builder = TraitEnvBuilder::new(db);
     builder.add_builtin_instances();
 
@@ -143,7 +143,7 @@ impl<'db> TraitEnvBuilder<'db> {
     fn add_module_superclasses(
         &mut self,
         module: Module<'db>,
-        item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+        item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     ) {
         for item in module.items(self.db) {
             if let Item::ClassDef(class) = item {
@@ -156,7 +156,7 @@ impl<'db> TraitEnvBuilder<'db> {
         &mut self,
         module: Module<'db>,
         class: ClassDef<'db>,
-        item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+        item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     ) {
         let type_vars =
             type_var_bindings(class.def_id_value(self.db), class.type_var_elems(self.db));
@@ -182,7 +182,7 @@ impl<'db> TraitEnvBuilder<'db> {
         &mut self,
         module: Module<'db>,
         instance: InstanceDef<'db>,
-        item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+        item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     ) {
         let type_vars = type_var_bindings(
             instance.def_id_value(self.db),
@@ -215,7 +215,7 @@ impl<'db> TraitEnvBuilder<'db> {
     fn add_derived_generic_instances(
         &mut self,
         module: Module<'db>,
-        item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+        item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
         generic: DefId<'db>,
     ) {
         let excluded = no_generic_instance_for(self.db, module);

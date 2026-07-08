@@ -8,7 +8,10 @@ use hir::{
     ast::item::{ContractDef, Item, Module},
     input::SourceFile,
 };
-use nameres::{LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
+use nameres::{
+    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_diagnostics,
+    module_id_from_key,
+};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
@@ -272,6 +275,50 @@ contract C {
     }
 }
 
+#[test]
+fn import_diagnostic_span_edit_does_not_rerun_unrelated_body_inference() {
+    let before = concat!(
+        "\n",
+        "import util.{f}; \x20\n",
+        "function f() -> word { return 1; }\n",
+        "function main() -> word { return f(); }\n",
+    );
+    let after = r#"
+import util.{f} ;
+function f() -> word { return 1; }
+function main() -> word { return f(); }
+"#;
+    let (mut db, file, key) = db_with_selected_import_conflict(before);
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        assert_eq!(diagnostic_count(&db, module, "SC0108"), 1);
+        assert!(module_typeck_diagnostics(&db, module).is_empty());
+        let executed = db.take_executed();
+        assert_eq!(
+            query_executions(&executed, "infer_body"),
+            2,
+            "{executed:#?}"
+        );
+    }
+
+    file.set_content(&mut db).to(Some(after.to_owned()));
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        assert_eq!(diagnostic_count(&db, module, "SC0108"), 1);
+        assert!(module_typeck_diagnostics(&db, module).is_empty());
+        let executed = db.take_executed();
+        assert_eq!(
+            query_executions(&executed, "infer_body"),
+            0,
+            "{executed:#?}"
+        );
+    }
+}
+
 fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
@@ -292,6 +339,47 @@ fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
     };
     db.module_files.insert(key.clone(), file);
     (db, file, key)
+}
+
+fn db_with_selected_import_conflict(content: &str) -> (TestDb, SourceFile, ModuleKey) {
+    let mut db = TestDb::default();
+    db.module_tree = Some(ModuleTree::new(
+        &db,
+        PathBuf::from("/memory"),
+        PathBuf::from("/memory/std"),
+        BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(ModuleFsSnapshot::new(&db, BTreeSet::new(), BTreeMap::new()));
+
+    let util_key = ModuleKey {
+        library: LibraryId::Main,
+        logical_path: vec!["util".to_owned()],
+    };
+    let util_file = SourceFile::new(
+        &db,
+        "memory:///util.solc".parse().expect("valid URL"),
+        Some("function f() -> word { return 0; }\nexport { f };\n".to_owned()),
+    );
+    db.module_files.insert(util_key, util_file);
+
+    let file = SourceFile::new(
+        &db,
+        "memory:///main.solc".parse().expect("valid URL"),
+        Some(content.to_owned()),
+    );
+    let key = ModuleKey {
+        library: LibraryId::Main,
+        logical_path: vec!["main".to_owned()],
+    };
+    db.module_files.insert(key.clone(), file);
+    (db, file, key)
+}
+
+fn diagnostic_count(db: &TestDb, module: ModuleId<'_>, code: &str) -> usize {
+    module_diagnostics(db, module)
+        .iter()
+        .filter(|diagnostic| diagnostic.lower(db).code.as_deref() == Some(code))
+        .count()
 }
 
 fn contract_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> ContractDef<'db> {

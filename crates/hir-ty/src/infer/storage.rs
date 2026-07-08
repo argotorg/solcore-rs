@@ -139,7 +139,7 @@ impl<'db> InferCtx<'db> {
             .entry_module
             .or_else(|| module_id_for_hir_module(self.db, self.module))
         {
-            let env = nameres::module_env(self.db, module_id);
+            let env = nameres::module_import_surface(self.db, module_id);
             let local = env
                 .item_scope
                 .as_ref()
@@ -147,7 +147,7 @@ impl<'db> InferCtx<'db> {
             return local.or_else(|| env.types.get(name).cloned());
         }
 
-        hir_nameres::item_scope(self.db, self.module).type_resolution(name)
+        hir_nameres::item_scope_facts(self.db, self.module).type_resolution(name)
     }
 
     fn instantiate_field_ref(

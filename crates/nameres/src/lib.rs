@@ -60,15 +60,15 @@ mod validation;
 pub use diagnostics::{
     ModuleDiagnostic, body_diagnostics, module_diagnostics, reachable_diagnostics,
 };
-pub use env::{module_env, resolve_module_full};
+pub use env::{module_env, module_import_surface, resolve_module_full};
 pub use graph::{module_graph, module_imports, reachable_modules, resolve_reachable_full};
 pub use instances::{instance_imports, module_instances};
 pub use interface::public_interface;
 pub use model::{
     ConstructorVisibility, Db, FullResolutionSummary, InstanceImports, Interface, ItemRef,
     LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleFsSnapshot, ModuleGraph, ModuleId,
-    ModuleImports, ModuleKey, ModulePathRef, ModuleTree, Namespace, Origin, ResolvedModulePath,
-    ValidationSummary, VisibleConstructors,
+    ModuleImportSurface, ModuleImports, ModuleKey, ModulePathRef, ModuleTree, Namespace, Origin,
+    ResolvedModulePath, ValidationSummary, VisibleConstructors,
 };
 pub use paths::{resolve_module_path, resolve_module_path_candidate};
 pub use scc::strongly_connected_components;

@@ -269,7 +269,9 @@ pub(super) fn param_names<'db>(db: &'db dyn HirDb, params: &[FuncParam<'db>]) ->
         .collect()
 }
 
-pub(super) fn partial_data_entries(env: &nameres::ModuleEnv<'_>) -> Vec<(String, Vec<String>)> {
+pub(super) fn partial_data_entries(
+    env: &nameres::ModuleImportSurface<'_>,
+) -> Vec<(String, Vec<String>)> {
     env.partial_data
         .iter()
         .map(|(name, ctors)| (name.clone(), ctors.iter().cloned().collect()))

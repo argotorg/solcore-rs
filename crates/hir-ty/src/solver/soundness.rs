@@ -121,7 +121,7 @@ fn check_instance_soundness<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     instance: InstanceDef<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     pragmas: &InstanceSoundnessPragmas,
     prior_heads: &[InstanceHead<'db>],
     diagnostics: &mut Vec<TypeckDiagnostic>,
@@ -235,7 +235,7 @@ fn alias_error_to_diagnostic(error: AliasError) -> TypeckDiagnostic {
 fn imported_non_default_heads<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
-    env: &nameres::ModuleEnv<'db>,
+    env: &nameres::ModuleImportSurface<'db>,
 ) -> Vec<InstanceHead<'db>> {
     let mut heads = Vec::new();
     for origin in &env.instances {
@@ -396,7 +396,7 @@ fn check_instance_methods<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     instance: InstanceDef<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     head: Pred<'db>,
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) {
@@ -480,7 +480,7 @@ fn check_instance_methods<'db>(
 struct InstanceMethodCheckCtx<'a, 'db> {
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &'a hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &'a hir_nameres::ItemResolutionFacts<'db>,
     class_info: &'a ClassLookup<'db>,
     instance_head: Pred<'db>,
     instance_head_span: LabelSpan,

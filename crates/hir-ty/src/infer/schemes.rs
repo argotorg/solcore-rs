@@ -14,10 +14,10 @@ pub fn function_scheme<'db>(
     def: DefId<'db>,
 ) -> Option<TyScheme<'db>> {
     let hir_module = module_hir(db, module)?;
-    let env = nameres::module_env(db, module);
+    let env = nameres::module_import_surface(db, module);
     let scope = env.item_scope.clone()?;
     let item_resolutions =
-        hir_nameres::resolve_item_types_with_imports(db, hir_module, &scope, &env);
+        hir_nameres::resolve_item_type_facts_with_imports(db, hir_module, &scope, &env);
     let info = find_function_info(db, hir_module, def)?;
     let body_map = body_resolution_for_function_with_imports(db, hir_module, &info, Some(&env));
     Some(
@@ -58,7 +58,7 @@ fn function_scheme_cycle_initial<'db>(
     def: DefId<'db>,
 ) -> Option<TyScheme<'db>> {
     let hir_module = module_hir(db, module)?;
-    let item_resolutions = item_resolutions_for_module(db, module)?;
+    let item_resolutions = item_resolution_facts_for_module(db, module)?;
     let info = find_function_info(db, hir_module, def)?;
     Some(
         lower_normalized_function_syntactic(
@@ -80,7 +80,7 @@ pub fn field_scheme<'db>(
     field: hir_nameres::FieldId<'db>,
 ) -> Option<TyScheme<'db>> {
     let hir_module = module_hir(db, module)?;
-    let item_resolutions = item_resolutions_for_module(db, module)?;
+    let item_resolutions = item_resolution_facts_for_module(db, module)?;
     field_scheme_in_module(db, hir_module, &item_resolutions, field)
 }
 
@@ -93,7 +93,7 @@ pub fn adt_ctor_scheme<'db>(
     index: u32,
 ) -> Option<TyScheme<'db>> {
     let hir_module = module_hir(db, module)?;
-    let item_resolutions = item_resolutions_for_module(db, module)?;
+    let item_resolutions = item_resolution_facts_for_module(db, module)?;
     adt_ctor_scheme_in_module(db, hir_module, &item_resolutions, ty, index)
 }
 
@@ -106,7 +106,7 @@ pub fn class_method_scheme<'db>(
     name: String,
 ) -> Option<TyScheme<'db>> {
     let hir_module = module_hir(db, module)?;
-    let item_resolutions = item_resolutions_for_module(db, module)?;
+    let item_resolutions = item_resolution_facts_for_module(db, module)?;
     class_method_scheme_in_module(db, hir_module, &item_resolutions, class, &name)
 }
 
@@ -194,13 +194,26 @@ pub(super) fn item_resolutions_for_module<'db>(
     ))
 }
 
+#[salsa::tracked]
+pub(super) fn item_resolution_facts_for_module<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+) -> Option<hir_nameres::ItemResolutionFacts<'db>> {
+    let hir_module = module_hir(db, module)?;
+    let env = nameres::module_import_surface(db, module);
+    let scope = env.item_scope.clone()?;
+    Some(hir_nameres::resolve_item_type_facts_with_imports(
+        db, hir_module, &scope, &env,
+    ))
+}
+
 #[salsa::tracked(cycle_fn = function_scheme_in_hir_module_cycle, cycle_initial = function_scheme_in_hir_module_cycle_initial)]
 pub(super) fn function_scheme_in_hir_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     def: DefId<'db>,
 ) -> Option<TyScheme<'db>> {
-    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    let item_resolutions = hir_nameres::resolve_item_type_facts(db, module);
     function_scheme_in_module(db, module, &item_resolutions, def)
 }
 
@@ -224,7 +237,7 @@ fn function_scheme_in_hir_module_cycle_initial<'db>(
     module: Module<'db>,
     def: DefId<'db>,
 ) -> Option<TyScheme<'db>> {
-    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    let item_resolutions = hir_nameres::resolve_item_type_facts(db, module);
     let info = find_function_info(db, module, def)?;
     Some(
         lower_normalized_function_syntactic(
@@ -244,7 +257,7 @@ pub(super) fn field_scheme_in_hir_module<'db>(
     module: Module<'db>,
     field: hir_nameres::FieldId<'db>,
 ) -> Option<TyScheme<'db>> {
-    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    let item_resolutions = hir_nameres::resolve_item_type_facts(db, module);
     field_scheme_in_module(db, module, &item_resolutions, field)
 }
 
@@ -255,7 +268,7 @@ pub(super) fn adt_ctor_scheme_in_hir_module<'db>(
     ty: DefId<'db>,
     index: u32,
 ) -> Option<TyScheme<'db>> {
-    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    let item_resolutions = hir_nameres::resolve_item_type_facts(db, module);
     adt_ctor_scheme_in_module(db, module, &item_resolutions, ty, index)
 }
 
@@ -266,7 +279,7 @@ pub(super) fn class_method_scheme_in_hir_module<'db>(
     class: DefId<'db>,
     name: String,
 ) -> Option<TyScheme<'db>> {
-    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    let item_resolutions = hir_nameres::resolve_item_type_facts(db, module);
     class_method_scheme_in_module(db, module, &item_resolutions, class, &name)
 }
 
@@ -336,7 +349,7 @@ pub(super) fn ctor_result_ty<'db>(ty: &InferTy<'db>) -> InferTy<'db> {
 fn function_scheme_in_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     def: DefId<'db>,
 ) -> Option<TyScheme<'db>> {
     let info = find_function_info(db, module, def)?;
@@ -364,7 +377,7 @@ fn function_scheme_in_module<'db>(
 pub fn lower_normalized_function_with_inferred_signature<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     function: FunctionDef<'db>,
     type_vars: &[hir_nameres::TypeVarBinding<'db>],
     body_map: Option<&hir_nameres::BodyResolutionMap<'db>>,
@@ -418,7 +431,7 @@ pub fn lower_normalized_function_with_inferred_signature<'db>(
 fn lower_normalized_function_syntactic<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     function: FunctionDef<'db>,
     type_vars: &[hir_nameres::TypeVarBinding<'db>],
 ) -> LoweredFunction<'db> {
@@ -434,7 +447,7 @@ fn lower_normalized_function_syntactic<'db>(
 fn normalize_lowered_function<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     mut lowered: LoweredFunction<'db>,
 ) -> LoweredFunction<'db> {
     let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
@@ -465,7 +478,7 @@ pub(super) fn body_resolution_for_function_with_imports<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     info: &FunctionLookup<'db>,
-    imports: Option<&nameres::ModuleEnv<'db>>,
+    imports: Option<&dyn hir_nameres::ImportedNames<'db>>,
 ) -> Option<hir_nameres::BodyResolutionMap<'db>> {
     let body = info.function.body(db)?;
     let context = hir_nameres::BodyResolutionContext {
@@ -489,7 +502,7 @@ pub(super) fn body_resolution_for_function_with_imports<'db>(
 fn field_scheme_in_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     field: hir_nameres::FieldId<'db>,
 ) -> Option<TyScheme<'db>> {
     let info = find_field_info(db, module, field)?;
@@ -505,7 +518,7 @@ fn field_scheme_in_module<'db>(
 fn adt_ctor_scheme_in_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     ty: DefId<'db>,
     index: u32,
 ) -> Option<TyScheme<'db>> {
@@ -523,7 +536,7 @@ fn adt_ctor_scheme_in_module<'db>(
 fn class_method_scheme_in_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     class: DefId<'db>,
     name: &str,
 ) -> Option<TyScheme<'db>> {

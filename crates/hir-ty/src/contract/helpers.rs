@@ -16,7 +16,7 @@ use crate::{Db, LoweredFunction, lower_normalized_function_with_inferred_signatu
 pub(super) fn lower_normalized_function<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     enclosing_contract: DefId<'db>,
     function: FunctionDef<'db>,
     type_vars: &[hir_nameres::TypeVarBinding<'db>],
@@ -44,10 +44,10 @@ pub(super) fn lower_normalized_function<'db>(
 pub(super) fn resolve_contract_item_types<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-) -> hir_nameres::ItemResolutionMap<'db> {
+) -> hir_nameres::ItemResolutionFacts<'db> {
     let file = module.def_id_value(db).file(db);
     let Ok(path) = file.url(db).to_file_path() else {
-        return hir_nameres::resolve_item_types(db, module);
+        return hir_nameres::resolve_item_type_facts(db, module);
     };
     let tree = db.module_tree();
     let key = module_key_for_path(LibraryId::Main, tree.main_root(db), &path)
@@ -58,14 +58,14 @@ pub(super) fn resolve_contract_item_types<'db>(
             })
         });
     let Some(key) = key else {
-        return hir_nameres::resolve_item_types(db, module);
+        return hir_nameres::resolve_item_type_facts(db, module);
     };
     let module_id = module_id_from_key(db, &key);
-    let env = nameres::module_env(db, module_id);
+    let env = nameres::module_import_surface(db, module_id);
     let Some(item_scope) = env.item_scope.as_ref() else {
-        return hir_nameres::resolve_item_types(db, module);
+        return hir_nameres::resolve_item_type_facts(db, module);
     };
-    hir_nameres::resolve_item_types_with_imports(db, module, item_scope, &env)
+    hir_nameres::resolve_item_type_facts_with_imports(db, module, item_scope, &env)
 }
 
 pub(super) fn find_contract_by_def<'db>(

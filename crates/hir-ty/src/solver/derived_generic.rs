@@ -3,8 +3,8 @@ use super::*;
 pub fn generic_derivation_diagnostics<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
-    env: &nameres::ModuleEnv<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
+    env: &nameres::ModuleImportSurface<'db>,
 ) -> Vec<TypeckDiagnostic> {
     let Some(generic) = visible_generic_class(db, env).or_else(|| local_generic_class(db, module))
     else {
@@ -31,7 +31,7 @@ pub(super) struct AdtDeriveInfo<'db> {
 
 pub(super) fn visible_generic_class<'db>(
     db: &'db dyn Db,
-    env: &nameres::ModuleEnv<'db>,
+    env: &nameres::ModuleImportSurface<'db>,
 ) -> Option<DefId<'db>> {
     env.types
         .get("Generic")
@@ -45,7 +45,7 @@ pub(super) fn visible_generic_class<'db>(
 
 pub(super) fn imported_generic_class<'db>(
     db: &'db dyn Db,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
 ) -> Option<DefId<'db>> {
     item_resolutions
         .preds
@@ -82,7 +82,7 @@ pub(super) fn local_generic_class<'db>(db: &'db dyn Db, module: Module<'db>) -> 
             ..
         } = TypeLowering::from_item_resolutions(
             db,
-            &hir_nameres::resolve_item_types(db, module),
+            &hir_nameres::resolve_item_type_facts(db, module),
             BinderEnv::from_type_vars(&type_var_bindings(
                 class.def_id_value(db),
                 class.type_var_elems(db),
@@ -122,7 +122,7 @@ pub(super) fn no_generic_instance_for<'db>(
 pub(super) fn manual_generic_instance_types<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     generic: DefId<'db>,
 ) -> FxHashSet<DefId<'db>> {
     let mut types = FxHashSet::default();
@@ -223,7 +223,7 @@ pub fn derived_generic_plan<'db>(
     module: Module<'db>,
     adt: AdtDef<'db>,
 ) -> Option<DerivedGenericPlan<'db>> {
-    let item_resolutions = hir_nameres::resolve_item_types(db, module);
+    let item_resolutions = hir_nameres::resolve_item_type_facts(db, module);
     let info = local_adt_infos(db, module)
         .into_iter()
         .find(|info| info.adt.def_id_value(db) == adt.def_id_value(db))?;
@@ -241,7 +241,7 @@ pub fn derived_generic_plan<'db>(
 pub(super) fn derived_generic_plan_with_resolutions<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     info: &AdtDeriveInfo<'db>,
 ) -> DerivedGenericPlan<'db> {
     let lowerer = TypeLowering::from_item_resolutions(

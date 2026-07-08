@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) struct BodyResolver<'db, 'a> {
     db: &'db dyn Db,
-    scope: &'a ItemScope<'db>,
+    scope: &'a ItemScopeFacts<'db>,
     imports: &'a dyn ImportedNames<'db>,
     contract: Option<DefId<'db>>,
     local_scopes: Vec<FxHashMap<String, Resolution<'db>>>,
@@ -13,7 +13,7 @@ pub(super) struct BodyResolver<'db, 'a> {
 impl<'db, 'a> BodyResolver<'db, 'a> {
     pub(super) fn new(
         db: &'db dyn Db,
-        scope: &'a ItemScope<'db>,
+        scope: &'a ItemScopeFacts<'db>,
         imports: &'a dyn ImportedNames<'db>,
         contract: Option<DefId<'db>>,
     ) -> Self {

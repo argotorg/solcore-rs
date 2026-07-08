@@ -981,7 +981,7 @@ impl<'db> InferCtx<'db> {
     ) -> Option<(DefId<'db>, String)> {
         let qualified = format!("{class_name}.{method}");
         if let Some(module_id) = module_id_for_hir_module(self.db, self.module) {
-            let env = nameres::module_env(self.db, module_id);
+            let env = nameres::module_import_surface(self.db, module_id);
             let local = env
                 .item_scope
                 .as_ref()
@@ -999,7 +999,7 @@ impl<'db> InferCtx<'db> {
             return unique_visible_class_method(&env.terms, &qualified, method);
         }
 
-        hir_nameres::item_scope(self.db, self.module)
+        hir_nameres::item_scope_facts(self.db, self.module)
             .term_resolution(&qualified)
             .and_then(|resolution| class_method_resolution(resolution, method))
     }
@@ -1017,7 +1017,7 @@ impl<'db> InferCtx<'db> {
             let Ok(imported_module) = nameres::resolve_module_path(self.db, module_id, path) else {
                 continue;
             };
-            let env = nameres::module_env(self.db, imported_module);
+            let env = nameres::module_import_surface(self.db, imported_module);
             let local = env
                 .item_scope
                 .as_ref()
@@ -1042,7 +1042,7 @@ impl<'db> InferCtx<'db> {
 
     fn lookup_operator_function(&self, name: &str) -> Option<hir_nameres::Resolution<'db>> {
         if let Some(module_id) = module_id_for_hir_module(self.db, self.module) {
-            let env = nameres::module_env(self.db, module_id);
+            let env = nameres::module_import_surface(self.db, module_id);
             let local = env
                 .item_scope
                 .as_ref()
@@ -1050,7 +1050,7 @@ impl<'db> InferCtx<'db> {
             return local.or_else(|| env.terms.get(name).cloned());
         }
 
-        hir_nameres::item_scope(self.db, self.module).term_resolution(name)
+        hir_nameres::item_scope_facts(self.db, self.module).term_resolution(name)
     }
 
     pub(super) fn is_storage_index_word_numeric(&mut self, ty: InferTy<'db>) -> bool {

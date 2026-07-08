@@ -309,13 +309,18 @@ pub struct InstanceImports<'db> {
     pub imported: Vec<Origin<'db>>,
 }
 
-/// Imported-name environment supplied to HIR name resolution.
+/// Facts imported from other modules and supplied to HIR name resolution.
+///
+/// This surface intentionally excludes diagnostics. Type lowering, trait-env
+/// construction, and body inference should depend on this value rather than on
+/// [`ModuleEnv`] so import-diagnostic-only edits can backdate before reaching
+/// type queries.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
-pub struct ModuleEnv<'db> {
+pub struct ModuleImportSurface<'db> {
     /// Owner used when synthesizing module qualifier resolutions.
     pub owner: Option<DefId<'db>>,
-    /// Local item scope, when loaded.
-    pub item_scope: Option<hir_nameres::ItemScope<'db>>,
+    /// Local item-scope facts, when loaded.
+    pub item_scope: Option<hir_nameres::ItemScopeFacts<'db>>,
     /// Imported term names.
     pub terms: BTreeMap<String, hir_nameres::Resolution<'db>>,
     /// Imported type/class names.
@@ -340,11 +345,24 @@ pub struct ModuleEnv<'db> {
     pub private_surfaces: BTreeMap<String, hir_nameres::PrivateCandidate>,
     /// Instances visible from local and imported modules.
     pub instances: Vec<Origin<'db>>,
+}
+
+/// Imported-name environment supplied to HIR name resolution.
+///
+/// This compatibility composite keeps diagnostics together with the import
+/// facts for frontend diagnostic aggregation. Facts-only consumers should use
+/// [`ModuleImportSurface`].
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ModuleEnv<'db> {
+    /// Facts used by lookup and type inference.
+    pub surface: ModuleImportSurface<'db>,
+    /// Local item scope with diagnostics, when loaded.
+    pub item_scope: Option<hir_nameres::ItemScope<'db>>,
     /// Diagnostics found while building the import environment.
     pub diagnostics: Vec<ModuleDiagnostic<'db>>,
 }
 
-impl<'db> ModuleEnv<'db> {
+impl<'db> ModuleImportSurface<'db> {
     pub(super) fn empty() -> Self {
         Self {
             owner: None,
@@ -360,12 +378,40 @@ impl<'db> ModuleEnv<'db> {
             incomplete_modules: BTreeSet::new(),
             private_surfaces: BTreeMap::new(),
             instances: Vec::new(),
-            diagnostics: Vec::new(),
         }
     }
 }
 
-impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
+impl<'db> ModuleEnv<'db> {
+    pub(super) fn empty() -> Self {
+        Self {
+            surface: ModuleImportSurface::empty(),
+            item_scope: None,
+            diagnostics: Vec::new(),
+        }
+    }
+
+    /// Returns the import facts without diagnostics.
+    pub fn import_surface(&self) -> ModuleImportSurface<'db> {
+        self.surface.clone()
+    }
+}
+
+impl<'db> std::ops::Deref for ModuleEnv<'db> {
+    type Target = ModuleImportSurface<'db>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.surface
+    }
+}
+
+impl<'db> std::ops::DerefMut for ModuleEnv<'db> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.surface
+    }
+}
+
+impl<'db> hir_nameres::ImportedNames<'db> for ModuleImportSurface<'db> {
     fn imported(
         &self,
         _db: &'db dyn hir::Db,
@@ -427,6 +473,54 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
         self.private_surfaces
             .get(&private_surface_key(namespace, qualifier, name))
             .cloned()
+    }
+}
+
+impl<'db> hir_nameres::ImportedNames<'db> for ModuleEnv<'db> {
+    fn imported(
+        &self,
+        db: &'db dyn hir::Db,
+        namespace: hir_nameres::Namespace,
+        name: &str,
+    ) -> Option<hir_nameres::Resolution<'db>> {
+        self.surface.imported(db, namespace, name)
+    }
+
+    fn has_constructor_leaf(&self, db: &'db dyn hir::Db, leaf: &str) -> bool {
+        self.surface.has_constructor_leaf(db, leaf)
+    }
+
+    fn may_contain_unknown_unqualified(
+        &self,
+        db: &'db dyn hir::Db,
+        namespace: hir_nameres::Namespace,
+        name: &str,
+    ) -> bool {
+        self.surface
+            .may_contain_unknown_unqualified(db, namespace, name)
+    }
+
+    fn has_incomplete_module_qualifier(&self, db: &'db dyn hir::Db, qualifier: &str) -> bool {
+        self.surface.has_incomplete_module_qualifier(db, qualifier)
+    }
+
+    fn candidate_names(
+        &self,
+        db: &'db dyn hir::Db,
+        namespace: hir_nameres::Namespace,
+    ) -> Vec<String> {
+        self.surface.candidate_names(db, namespace)
+    }
+
+    fn private_candidate(
+        &self,
+        db: &'db dyn hir::Db,
+        namespace: hir_nameres::Namespace,
+        qualifier: &str,
+        name: &str,
+    ) -> Option<hir_nameres::PrivateCandidate> {
+        self.surface
+            .private_candidate(db, namespace, qualifier, name)
     }
 }
 

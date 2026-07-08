@@ -5,7 +5,7 @@ pub(super) use hir_nameres::{ident_text, type_var_bindings};
 
 pub(super) fn visible_class_modules<'db>(
     db: &'db dyn Db,
-    env: &nameres::ModuleEnv<'db>,
+    env: &nameres::ModuleImportSurface<'db>,
 ) -> Vec<ModuleId<'db>> {
     env.types
         .values()
@@ -23,13 +23,13 @@ pub(super) fn scope_resolution_for_module_id<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
 ) -> Option<(
-    hir_nameres::ItemScope<'db>,
-    hir_nameres::ItemResolutionMap<'db>,
+    hir_nameres::ItemScopeFacts<'db>,
+    hir_nameres::ItemResolutionFacts<'db>,
 )> {
-    let env = nameres::module_env(db, module);
+    let env = nameres::module_import_surface(db, module);
     let scope = env.item_scope.clone()?;
     let item_resolutions =
-        hir_nameres::resolve_item_types_with_imports(db, scope.module, &scope, &env);
+        hir_nameres::resolve_item_type_facts_with_imports(db, scope.module, &scope, &env);
     Some((scope, item_resolutions))
 }
 

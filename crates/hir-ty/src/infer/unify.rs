@@ -128,11 +128,11 @@ impl<'db> InferCtx<'db> {
         value
     }
 
-    fn item_resolutions_for_aliases(&self) -> hir_nameres::ItemResolutionMap<'db> {
+    fn item_resolutions_for_aliases(&self) -> hir_nameres::ItemResolutionFacts<'db> {
         if let Some(entry_module) = self.entry_module {
-            let env = nameres::module_env(self.db, entry_module);
+            let env = nameres::module_import_surface(self.db, entry_module);
             if let Some(scope) = env.item_scope.as_ref() {
-                return hir_nameres::resolve_item_types_with_imports(
+                return hir_nameres::resolve_item_type_facts_with_imports(
                     self.db,
                     self.module,
                     scope,
@@ -140,6 +140,6 @@ impl<'db> InferCtx<'db> {
                 );
             }
         }
-        hir_nameres::resolve_item_types(self.db, self.module)
+        hir_nameres::resolve_item_type_facts(self.db, self.module)
     }
 }

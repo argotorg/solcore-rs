@@ -41,13 +41,15 @@ impl<'db> ItemScopeBuilder<'db> {
 
     pub(super) fn finish(self) -> ItemScope<'db> {
         ItemScope {
-            module: self.module,
-            types: self.types,
-            terms: self.terms,
-            modules: self.modules,
-            ctor_lists: self.ctor_lists,
-            contracts: self.contracts,
-            instances: self.instances,
+            facts: ItemScopeFacts {
+                module: self.module,
+                types: self.types,
+                terms: self.terms,
+                modules: self.modules,
+                ctor_lists: self.ctor_lists,
+                contracts: self.contracts,
+                instances: self.instances,
+            },
             diagnostics: self.diagnostics,
         }
     }

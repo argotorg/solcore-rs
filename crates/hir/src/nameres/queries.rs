@@ -21,6 +21,19 @@ pub fn item_scope<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemScope<'db> {
     builder.finish()
 }
 
+/// Returns item-level lookup facts without duplicate-name diagnostics.
+#[salsa::tracked]
+#[tracing::instrument(
+    target = "hir::query",
+    level = "debug",
+    skip(db, module),
+    fields(file = field::Empty, def = field::Empty)
+)]
+pub fn item_scope_facts<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemScopeFacts<'db> {
+    record_module_fields(db, module);
+    item_scope(db, module).facts()
+}
+
 /// Resolves type and predicate references in item signatures without imports.
 ///
 /// This is the standalone HIR query. Inter-module callers should use
@@ -39,6 +52,24 @@ pub fn resolve_item_types<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemReso
     resolve_item_types_with_imports(db, module, &scope, &imports)
 }
 
+/// Resolves item-signature type and predicate facts without diagnostics.
+#[salsa::tracked]
+#[tracing::instrument(
+    target = "hir::query",
+    level = "debug",
+    skip(db, module),
+    fields(file = field::Empty, def = field::Empty)
+)]
+pub fn resolve_item_type_facts<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+) -> ItemResolutionFacts<'db> {
+    record_module_fields(db, module);
+    let scope = item_scope_facts(db, module);
+    let imports = EmptyImportedNames;
+    resolve_item_type_facts_with_imports(db, module, &scope, &imports)
+}
+
 /// Resolves type and predicate references in item signatures with imported
 /// names.
 ///
@@ -47,7 +78,7 @@ pub fn resolve_item_types<'db>(db: &'db dyn Db, module: Module<'db>) -> ItemReso
 pub fn resolve_item_types_with_imports<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    scope: &ItemScope<'db>,
+    scope: &ItemScopeFacts<'db>,
     imports: &dyn ImportedNames<'db>,
 ) -> ItemResolutionMap<'db> {
     let mut resolver = TypeResolver::new(db, scope, imports);
@@ -55,6 +86,17 @@ pub fn resolve_item_types_with_imports<'db>(
         resolver.item(*item, None, &[]);
     }
     resolver.map
+}
+
+/// Resolves type and predicate references in item signatures with imported
+/// names and returns only lookup facts.
+pub fn resolve_item_type_facts_with_imports<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    scope: &ItemScopeFacts<'db>,
+    imports: &dyn ImportedNames<'db>,
+) -> ItemResolutionFacts<'db> {
+    resolve_item_types_with_imports(db, module, scope, imports).facts()
 }
 
 /// Resolves one function body without imported names.
@@ -102,7 +144,7 @@ pub fn resolve_body_with_imports_and_policy<'db>(
     imports: &dyn ImportedNames<'db>,
     policy: NameresDiagnosticPolicy,
 ) -> BodyResolutionMap<'db> {
-    let scope = item_scope(db, context.module);
+    let scope = item_scope_facts(db, context.module);
     let mut resolver = BodyResolver::new(db, &scope, imports, context.enclosing_contract);
     resolver.with_type_vars(&context.type_vars, |resolver| {
         resolver.with_scope(|resolver| {

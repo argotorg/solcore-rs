@@ -327,13 +327,15 @@ pub struct ContractScope<'db> {
     pub ctor_lists: Vec<CtorList<'db>>,
 }
 
-/// Item-level scope for one module.
+/// Diagnostic side of an item-level scope.
+pub type ItemScopeDiagnostics = Vec<NameresDiagnostic>;
+
+/// Item-level lookup facts for one module.
 ///
 /// The scope records declarations before body resolution so functions can refer
-/// to later items in the same module. Duplicate diagnostics are emitted while
-/// building this value.
+/// to later items in the same module.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub struct ItemScope<'db> {
+pub struct ItemScopeFacts<'db> {
     /// Module this scope belongs to.
     pub module: Module<'db>,
     /// Type namespace entries.
@@ -348,8 +350,19 @@ pub struct ItemScope<'db> {
     pub contracts: Vec<ContractScope<'db>>,
     /// Instance definitions in source order.
     pub instances: Vec<InstanceDef<'db>>,
+}
+
+/// Item-level scope for one module.
+///
+/// This is the compatibility composite used by diagnostic paths. Facts-only
+/// consumers should depend on [`ItemScopeFacts`] so diagnostic changes do not
+/// invalidate downstream type work.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ItemScope<'db> {
+    /// Lookup facts for item and body resolution.
+    pub facts: ItemScopeFacts<'db>,
     /// Diagnostics found while building item scopes.
-    pub diagnostics: Vec<NameresDiagnostic>,
+    pub diagnostics: ItemScopeDiagnostics,
 }
 
 /// Resolution attached to an unresolved type reference.
@@ -370,15 +383,29 @@ pub struct PredResolution<'db> {
     pub resolution: Resolution<'db>,
 }
 
-/// Type and predicate resolutions for item signatures.
+/// Diagnostic side of item-signature resolution.
+pub type ItemResolutionDiagnostics = Vec<NameresDiagnostic>;
+
+/// Type and predicate resolution facts for item signatures.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
-pub struct ItemResolutionMap<'db> {
+pub struct ItemResolutionFacts<'db> {
     /// Resolved type references.
     pub types: Vec<TypeResolution<'db>>,
     /// Resolved predicate references.
     pub preds: Vec<PredResolution<'db>>,
+}
+
+/// Type and predicate resolutions for item signatures.
+///
+/// This compatibility composite preserves diagnostics for callers that publish
+/// nameres output. Facts-only consumers should depend on
+/// [`ItemResolutionFacts`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update, Default)]
+pub struct ItemResolutionMap<'db> {
+    /// Resolution facts used by type lowering and inference.
+    pub facts: ItemResolutionFacts<'db>,
     /// Diagnostics found while resolving item signatures.
-    pub diagnostics: Vec<NameresDiagnostic>,
+    pub diagnostics: ItemResolutionDiagnostics,
 }
 
 /// Resolution attached to an expression occurrence.
@@ -585,7 +612,49 @@ impl<'db> ImportedNames<'db> for EmptyImportedNames {
     }
 }
 
+impl<'db> std::ops::Deref for ItemScope<'db> {
+    type Target = ItemScopeFacts<'db>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.facts
+    }
+}
+
+impl<'db> std::ops::DerefMut for ItemScope<'db> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.facts
+    }
+}
+
+impl<'db> std::ops::Deref for ItemResolutionMap<'db> {
+    type Target = ItemResolutionFacts<'db>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.facts
+    }
+}
+
+impl<'db> std::ops::DerefMut for ItemResolutionMap<'db> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.facts
+    }
+}
+
 impl<'db> ItemScope<'db> {
+    /// Returns the lookup facts without diagnostics.
+    pub fn facts(&self) -> ItemScopeFacts<'db> {
+        self.facts.clone()
+    }
+}
+
+impl<'db> ItemResolutionMap<'db> {
+    /// Returns the resolution facts without diagnostics.
+    pub fn facts(&self) -> ItemResolutionFacts<'db> {
+        self.facts.clone()
+    }
+}
+
+impl<'db> ItemScopeFacts<'db> {
     /// Resolves a type name declared in this module scope.
     pub fn type_resolution(&self, name: &str) -> Option<Resolution<'db>> {
         self.types

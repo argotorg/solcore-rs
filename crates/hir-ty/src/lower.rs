@@ -154,7 +154,7 @@ impl<'db> TypeLowering<'db> {
     /// Creates a lowerer from item-level resolution records.
     pub fn from_item_resolutions(
         db: &'db dyn HirDb,
-        map: &hir_nameres::ItemResolutionMap<'db>,
+        map: &hir_nameres::ItemResolutionFacts<'db>,
         binders: BinderEnv<'db>,
     ) -> Self {
         Self::new(db, &map.types, &map.preds, binders)

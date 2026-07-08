@@ -27,6 +27,22 @@ pub fn module_env<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ModuleEnv<'db>
     builder.finish()
 }
 
+/// Returns imported-name facts for a module without diagnostics.
+#[salsa::tracked]
+#[tracing::instrument(
+    target = "nameres::query",
+    level = "debug",
+    skip(db, module),
+    fields(module = field::Empty, file = field::Empty)
+)]
+pub fn module_import_surface<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+) -> ModuleImportSurface<'db> {
+    record_module_field(db, module);
+    module_env(db, module).import_surface()
+}
+
 pub(super) fn module_has_parse_errors<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> bool {
     db.module_file(module)
         .is_some_and(|file| !parse_diagnostics(db, file).is_empty())
@@ -79,6 +95,7 @@ impl<'db> ModuleEnvBuilder<'db> {
         instances: InstanceImports<'db>,
     ) -> Self {
         let owner = item_scope.module.def_id_value(db);
+        let item_scope_facts = item_scope.facts();
         let local_terms = item_scope
             .terms
             .iter()
@@ -93,19 +110,24 @@ impl<'db> ModuleEnvBuilder<'db> {
             db,
             module,
             env: ModuleEnv {
-                owner: Some(owner),
+                surface: ModuleImportSurface {
+                    owner: Some(owner),
+                    item_scope: Some(item_scope_facts),
+                    terms: BTreeMap::new(),
+                    types: BTreeMap::new(),
+                    modules: BTreeMap::new(),
+                    constructor_leaves: BTreeSet::new(),
+                    constructor_visibility: BTreeMap::new(),
+                    partial_data: BTreeMap::new(),
+                    unknown_unqualified_names: BTreeSet::new(),
+                    unknown_unqualified_wildcard: false,
+                    incomplete_modules: BTreeSet::new(),
+                    private_surfaces: BTreeMap::new(),
+                    instances: unique_origins(
+                        instances.local.into_iter().chain(instances.imported),
+                    ),
+                },
                 item_scope: Some(item_scope),
-                terms: BTreeMap::new(),
-                types: BTreeMap::new(),
-                modules: BTreeMap::new(),
-                constructor_leaves: BTreeSet::new(),
-                constructor_visibility: BTreeMap::new(),
-                partial_data: BTreeMap::new(),
-                unknown_unqualified_names: BTreeSet::new(),
-                unknown_unqualified_wildcard: false,
-                incomplete_modules: BTreeSet::new(),
-                private_surfaces: BTreeMap::new(),
-                instances: unique_origins(instances.local.into_iter().chain(instances.imported)),
                 diagnostics: Vec::new(),
             },
             local_terms,

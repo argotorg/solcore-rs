@@ -167,7 +167,7 @@ fn contract_generates_dispatch<'db>(db: &'db dyn Db, contract: ContractDef<'db>)
 fn contract_dispatch_surface_with_resolutions<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     contract: ContractDef<'db>,
 ) -> DispatchSurface<'db> {
     let contract_name = ident_text(db, &contract.name_elem(db));

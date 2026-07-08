@@ -188,7 +188,7 @@ pub struct AliasNorm<T> {
 pub struct AliasNormalizer<'a, 'db> {
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &'a hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &'a hir_nameres::ItemResolutionFacts<'db>,
     expanding: Vec<DefId<'db>>,
     errors: Vec<AliasError>,
     remaining_nodes: usize,
@@ -200,7 +200,7 @@ impl<'a, 'db> AliasNormalizer<'a, 'db> {
     pub fn new(
         db: &'db dyn Db,
         module: Module<'db>,
-        item_resolutions: &'a hir_nameres::ItemResolutionMap<'db>,
+        item_resolutions: &'a hir_nameres::ItemResolutionFacts<'db>,
     ) -> Self {
         Self {
             db,
@@ -366,7 +366,7 @@ impl<'a, 'db> AliasNormalizer<'a, 'db> {
 pub fn normalize_ty_aliases<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     ty: Ty<'db>,
 ) -> AliasNorm<Ty<'db>> {
     let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
@@ -381,7 +381,7 @@ pub fn normalize_ty_aliases<'db>(
 pub fn normalize_pred_aliases<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     pred: Pred<'db>,
 ) -> AliasNorm<Pred<'db>> {
     let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
@@ -396,7 +396,7 @@ pub fn normalize_pred_aliases<'db>(
 pub fn normalize_scheme_aliases<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     scheme: TyScheme<'db>,
 ) -> AliasNorm<TyScheme<'db>> {
     let mut normalizer = AliasNormalizer::new(db, module, item_resolutions);
@@ -412,7 +412,7 @@ pub fn normalize_scheme_aliases<'db>(
 pub fn type_alias_normalization_errors<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
 ) -> Vec<AliasError> {
     let mut errors = Vec::new();
     for info in type_alias_infos(db, module, &[]) {
@@ -463,7 +463,7 @@ fn alias_label_span<'db>(db: &'db dyn Db, module: Module<'db>, def: DefId<'db>) 
 fn lower_type_alias_info<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    item_resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     def: DefId<'db>,
 ) -> Option<LoweredAliasInfo<'db>> {
     if let Some(info) = find_type_alias_info(db, module, def, &[]) {
@@ -594,13 +594,13 @@ fn scope_resolution_for_module_id<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
 ) -> Option<(
-    hir_nameres::ItemScope<'db>,
-    hir_nameres::ItemResolutionMap<'db>,
+    hir_nameres::ItemScopeFacts<'db>,
+    hir_nameres::ItemResolutionFacts<'db>,
 )> {
-    let env = nameres::module_env(db, module);
+    let env = nameres::module_import_surface(db, module);
     let scope = env.item_scope.clone()?;
     let item_resolutions =
-        hir_nameres::resolve_item_types_with_imports(db, scope.module, &scope, &env);
+        hir_nameres::resolve_item_type_facts_with_imports(db, scope.module, &scope, &env);
     Some((scope, item_resolutions))
 }
 

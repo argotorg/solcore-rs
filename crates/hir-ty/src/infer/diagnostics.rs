@@ -751,7 +751,7 @@ pub(super) fn lowering_diagnostic_to_typeck(
 pub(super) fn item_type_constructor_arity_diagnostics<'db>(
     db: &'db dyn Db,
     entry: ModuleId<'db>,
-    resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    resolutions: &hir_nameres::ItemResolutionFacts<'db>,
 ) -> Vec<TypeckDiagnostic> {
     resolutions
         .types
@@ -1110,7 +1110,7 @@ struct DataCycleEdge<'db> {
 pub(super) fn mutual_data_diagnostics<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    resolutions: &hir_nameres::ItemResolutionMap<'db>,
+    resolutions: &hir_nameres::ItemResolutionFacts<'db>,
 ) -> Vec<TypeckDiagnostic> {
     let nodes = local_data_cycle_nodes(db, module);
     if nodes.len() < 2 {

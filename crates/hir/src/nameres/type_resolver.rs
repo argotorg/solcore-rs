@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) struct TypeResolver<'db, 'a> {
     db: &'db dyn Db,
-    scope: &'a ItemScope<'db>,
+    scope: &'a ItemScopeFacts<'db>,
     imports: &'a dyn ImportedNames<'db>,
     contract: Option<DefId<'db>>,
     type_vars: Vec<TypeVarBinding<'db>>,
@@ -14,7 +14,7 @@ pub(super) struct TypeResolver<'db, 'a> {
 impl<'db, 'a> TypeResolver<'db, 'a> {
     pub(super) fn new(
         db: &'db dyn Db,
-        scope: &'a ItemScope<'db>,
+        scope: &'a ItemScopeFacts<'db>,
         imports: &'a dyn ImportedNames<'db>,
     ) -> Self {
         Self {
