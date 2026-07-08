@@ -121,27 +121,48 @@ fn sorted_fingerprints<T>(items: &[T], fingerprint: fn(&T) -> String) -> String 
     fingerprints.join(",")
 }
 
-fn source_snippet_fingerprint(source: &str, span: LexSpan) -> String {
-    source.get(span.start..span.end).unwrap_or("").to_owned()
+pub(super) fn lambda_fingerprint(
+    params: &[ParsedFuncParam<'_>],
+    ret: Option<&ParsedTy<'_>>,
+) -> String {
+    let mut components = Vec::with_capacity(params.len() + 1);
+    for param in params {
+        components.push(lambda_param_fingerprint(param));
+    }
+    components.push(optional_ty_fingerprint(ret));
+    structural_fingerprint("lambda", &components)
 }
 
-fn optional_ty_snippet_fingerprint(source: &str, ty: Option<&ParsedTy<'_>>) -> String {
-    ty.map(|ty| source_snippet_fingerprint(source, ty.span))
+fn lambda_param_fingerprint(param: &ParsedFuncParam<'_>) -> String {
+    match param {
+        ParsedFuncParam::Typed { comptime, name, ty } => structural_fingerprint(
+            "param",
+            &[
+                "typed".to_owned(),
+                comptime.is_some().to_string(),
+                name.0.to_owned(),
+                ty_fingerprint_or_error(ty),
+            ],
+        ),
+        ParsedFuncParam::Untyped { comptime, name } => structural_fingerprint(
+            "param",
+            &[
+                "untyped".to_owned(),
+                comptime.is_some().to_string(),
+                name.0.to_owned(),
+            ],
+        ),
+        ParsedFuncParam::Error { .. } => structural_fingerprint("param", &["error".to_owned()]),
+    }
+}
+
+fn optional_ty_fingerprint(ty: Option<&ParsedTy<'_>>) -> String {
+    ty.map(ty_fingerprint_or_error)
         .unwrap_or_else(|| "<none>".to_owned())
 }
 
-pub(super) fn lambda_fingerprint(
-    source: &str,
-    params_span: LexSpan,
-    ret: Option<&ParsedTy<'_>>,
-) -> String {
-    structural_fingerprint(
-        "lambda",
-        &[
-            source_snippet_fingerprint(source, params_span),
-            optional_ty_snippet_fingerprint(source, ret),
-        ],
-    )
+fn ty_fingerprint_or_error(ty: &ParsedTy<'_>) -> String {
+    canonical_ty_fingerprint(ty, &[]).unwrap_or_else(|| "<error>".to_owned())
 }
 
 pub(super) fn instance_head_fingerprint(

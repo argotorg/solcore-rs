@@ -284,7 +284,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         ret: Option<ParsedTy<'_>>,
         body_span: LexSpan,
     ) -> function::ExprKind<'db> {
-        let fingerprint = lambda_fingerprint(self.source, params_span, ret.as_ref());
+        let fingerprint = lambda_fingerprint(&params, ret.as_ref());
         let params = params
             .into_iter()
             .map(|param| self.lower_func_param(anchor, base_start, param))

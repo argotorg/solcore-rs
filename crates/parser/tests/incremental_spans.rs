@@ -6,7 +6,10 @@
 use std::sync::{Arc, Mutex};
 
 use hir::{
-    ast::item::{FunctionDef, Item},
+    ast::{
+        function::{ExprKind, FuncBody},
+        item::{FunctionDef, Item},
+    },
     input::SourceFile,
     span::Spanned,
 };
@@ -68,6 +71,17 @@ fn function_relative_span<'db>(db: &'db dyn hir::Db, function: FunctionDef<'db>)
     (span.begin().as_u32(), span.end().as_u32())
 }
 
+#[salsa::tracked]
+fn lambda_first_stmt_relative_span<'db>(db: &'db dyn hir::Db, body: FuncBody<'db>) -> (u32, u32) {
+    let stmt_id = body
+        .top_level_stmts(db)
+        .first()
+        .copied()
+        .expect("lambda body statement");
+    let span = body.stmts(db).get(stmt_id).span(db);
+    (span.begin().as_u32(), span.end().as_u32())
+}
+
 fn first_function<'db>(db: &'db TestDb, file: SourceFile) -> FunctionDef<'db> {
     parse_file_to_hir(db, file)
         .module(db)
@@ -78,6 +92,18 @@ fn first_function<'db>(db: &'db TestDb, file: SourceFile) -> FunctionDef<'db> {
             _ => None,
         })
         .expect("a top-level function")
+}
+
+fn first_lambda_body<'db>(db: &'db TestDb, file: SourceFile) -> FuncBody<'db> {
+    let function_body = first_function(db, file).body(db).expect("function body");
+    function_body
+        .exprs(db)
+        .iter()
+        .find_map(|(_, expr)| match &expr.kind {
+            ExprKind::Lambda { body, .. } => Some(*body),
+            _ => None,
+        })
+        .expect("lambda expression")
 }
 
 #[test]
@@ -148,9 +174,85 @@ fn relative_span_query_backdates_after_edit_above_def() {
     assert_eq!(abs.start().as_u32(), abs_start + prefix.len() as u32);
 }
 
+#[test]
+fn lambda_body_relative_span_backdates_after_cosmetic_signature_edit() {
+    let mut db = TestDb::default();
+    let url = "memory:///lambda-incr.solc".parse().expect("valid url");
+    let before_src = "function make(z: word) -> word {
+  let n = lam (x: word) -> word {
+    return x;
+  };
+  return n(z);
+}
+";
+    let file = SourceFile::new(&db, url, Some(before_src.to_owned()));
+
+    let before_fact = {
+        let body = first_lambda_body(&db, file);
+        let _ = db.take_executed();
+        let fact = lambda_first_stmt_relative_span(&db, body);
+        let executed = db.take_executed();
+        assert_eq!(lambda_span_query_executions(&executed), 1);
+        fact
+    };
+
+    file.set_content(&mut db).to(Some(
+        "function make(z: word) -> word {
+  let n = lam (
+    x /* same binder */ : /* same parameter type */ word
+  ) -> /* same return type */ word {
+    return x;
+  };
+  return n(z);
+}
+"
+        .to_owned(),
+    ));
+
+    let after_cosmetic_fact = {
+        let body = first_lambda_body(&db, file);
+        let _ = db.take_executed();
+        let fact = lambda_first_stmt_relative_span(&db, body);
+        let executed = db.take_executed();
+        assert_eq!(lambda_span_query_executions(&executed), 0);
+        fact
+    };
+
+    assert_eq!(after_cosmetic_fact, before_fact);
+
+    file.set_content(&mut db).to(Some(
+        "function make(z: word) -> word {
+  let n = lam (x: uint) -> word {
+    return x;
+  };
+  return n(z);
+}
+"
+        .to_owned(),
+    ));
+
+    let after_structural_fact = {
+        let body = first_lambda_body(&db, file);
+        let _ = db.take_executed();
+        let fact = lambda_first_stmt_relative_span(&db, body);
+        let executed = db.take_executed();
+        assert_eq!(lambda_span_query_executions(&executed), 1);
+        fact
+    };
+
+    assert_eq!(after_structural_fact, before_fact);
+}
+
 fn relative_span_query_executions(events: &[String]) -> usize {
     events
         .iter()
         .filter(|event| event.contains("function_relative_span"))
+        .count()
+}
+
+fn lambda_span_query_executions(events: &[String]) -> usize {
+    events
+        .iter()
+        .filter(|event| event.contains("lambda_first_stmt_relative_span"))
         .count()
 }
