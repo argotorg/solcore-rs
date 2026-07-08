@@ -3,11 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/assembly_trailing_semicolon/main.solc
 ---
-error: unexpected `;`; expected end of input, or statement
+error[SC0001]: parse error: unexpected `;`
  --> /main/main.solc:4:4
   |
 3 |     mstore(0, 0)
 4 |   };
-  |    ^
+  |    ^ unexpected token
 5 | }
   |
+  = note: expecting end of input, or statement

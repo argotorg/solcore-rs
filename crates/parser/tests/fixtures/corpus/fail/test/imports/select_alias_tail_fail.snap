@@ -3,11 +3,13 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/imports/select_alias_tail_fail.solc
 ---
-error: unexpected `as`; expected `;` while parsing import declaration
+error[SC0001]: parse error: unexpected `as`
  --> /select_alias_tail_fail.solc:1:25
   |
 1 | import selectlib.{keep} as keep_;
-  |                         ^^
+  |                         ^^ unexpected token
 2 |
 3 | function main(x: word) -> word {
   |
+  = note: expecting `;`
+  = note: while parsing import declaration

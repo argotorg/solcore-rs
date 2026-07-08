@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/multiple_errors_continue/main.solc
 ---
-error: import declaration requires trailing `;` while parsing import declaration
+error[SC0001]: import declaration requires trailing `;`
  --> /main/main.solc:2:1
   |
 1 | import core.math
@@ -11,13 +11,15 @@ error: import declaration requires trailing `;` while parsing import declaration
   | ^^^^^^^^
 3 |     let x = ;
   |
+  = note: while parsing import declaration
 ---
 
-error: unexpected `let`; expected `!`, `(`, `.`, `@`, `if`, or `lam`
- --> /main/main.solc:3:5
+error[SC0001]: parse error: unexpected `;`
+ --> /main/main.solc:3:13
   |
 2 | function bad() {
 3 |     let x = ;
-  |     ^^^
+  |             ^ unexpected token
 4 |     return 1;
   |
+  = note: expecting expression after `=`

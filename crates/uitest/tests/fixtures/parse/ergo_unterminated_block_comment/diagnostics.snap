@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_unterminated_block_comment/main.solc
 ---
-error: unterminated block comment
+error[SC0001]: unterminated block comment
  --> /main/main.solc:4:1
   |
 3 |   }
@@ -11,4 +11,6 @@ error: unterminated block comment
 5 | | function g() -> word {
 6 | |     return 2;
 7 | | }
-  | |__^
+  | |__^ comment starts here
+  |
+  = note: add `*/` before the end of file

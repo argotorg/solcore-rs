@@ -3,21 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_invalid_token_unicode/main.solc
 ---
-error: unexpected `let`; expected `!`, `(`, `.`, `@`, `if`, or `lam`
- --> /main/main.solc:2:5
-  |
-1 | function f() -> word {
-2 |     let x = 1 § 2;
-  |     ^^^
-3 |     return x;
-  |
----
-
-error: invalid token `§`
+error[SC0001]: invalid token `§`
  --> /main/main.solc:2:15
   |
 1 | function f() -> word {
 2 |     let x = 1 § 2;
-  |               ^
+  |               ^ invalid token
 3 |     return x;
   |

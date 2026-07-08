@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/payable-toplevel-function.solc
 ---
-error: `payable` is only allowed on a function, constructor, or fallback inside a contract while parsing function signature
+error[SC0001]: `payable` is only allowed on a function, constructor, or fallback inside a contract
  --> /payable-toplevel-function.solc:3:1
   |
 2 | // never on a top-level function. This must fail to parse.
@@ -11,3 +11,4 @@ error: `payable` is only allowed on a function, constructor, or fallback inside 
   | ^^^^^^^
 4 |     return 0;
   |
+  = note: while parsing function signature

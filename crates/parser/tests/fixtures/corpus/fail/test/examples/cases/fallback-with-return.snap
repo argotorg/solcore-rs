@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/fallback-with-return.solc
 ---
-error: fallback function must return unit (`()`) while parsing fallback definition
+error[SC0001]: fallback function must return unit (`()`)
  --> /fallback-with-return.solc:7:19
   |
 6 |
@@ -11,3 +11,4 @@ error: fallback function must return unit (`()`) while parsing fallback definiti
   |                   ^^^^^^^
 8 |         return uint256(0);
   |
+  = note: while parsing fallback definition

@@ -3,8 +3,10 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/keyword_comptime_identifier/main.solc
 ---
-error: `comptime` is a parameter modifier; expected parameter name while parsing function parameter
+error[SC0001]: `comptime` is a parameter modifier; expected parameter name
  --> /main/main.solc:1:12
   |
 1 | function f(comptime) -> word { return comptime; }
   |            ^^^^^^^^
+  |
+  = note: while parsing function parameter

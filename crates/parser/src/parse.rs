@@ -2637,10 +2637,7 @@ fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedErr
             Ok(tok) => tokens.push((tok, span)),
             Err(err) => {
                 trace_recovery("invalid_token", span);
-                errors.push(ParsedError {
-                    span,
-                    message: lex_error_message(src, raw_span.start, raw_span.end, err),
-                });
+                errors.push(lex_error(src, raw_span.start, raw_span.end, span, err));
             }
         }
     }
@@ -2668,12 +2665,12 @@ fn truncate_excessive_nesting(
                 if depth > MAX_DELIMITER_NESTING {
                     let span = *span;
                     trace_recovery("nesting_limit", span);
-                    errors.push(ParsedError {
+                    errors.push(ParsedError::new(
                         span,
-                        message: format!(
+                        format!(
                             "delimiter nesting exceeds the compiler limit of {MAX_DELIMITER_NESTING}"
                         ),
-                    });
+                    ));
                     tokens.truncate(idx);
                     return;
                 }
@@ -2686,21 +2683,50 @@ fn truncate_excessive_nesting(
     }
 }
 
-fn lex_error_message(source: &str, start: usize, end: usize, error: LexError) -> String {
+fn lex_error(
+    source: &str,
+    start: usize,
+    end: usize,
+    span: LexSpan,
+    error: LexError,
+) -> ParsedError {
     match error {
-        LexError::Invalid => invalid_token_message(source, start, end),
-        LexError::UnterminatedBlockComment => "unterminated block comment".to_owned(),
-        LexError::InvalidStringEscape => invalid_string_escape_message(source, start, end),
+        LexError::Invalid => invalid_token_error(source, start, end, span),
+        LexError::UnterminatedBlockComment => ParsedError::new(span, "unterminated block comment")
+            .with_label("comment starts here")
+            .with_note("add `*/` before the end of file"),
+        LexError::InvalidStringEscape => {
+            ParsedError::new(span, invalid_string_escape_message(source, start, end))
+                .with_label("invalid escape sequence")
+        }
     }
 }
 
-fn invalid_token_message(source: &str, start: usize, end: usize) -> String {
+fn invalid_token_error(source: &str, start: usize, end: usize, span: LexSpan) -> ParsedError {
     let snippet = source.get(start..end).unwrap_or("");
     if snippet.is_empty() {
-        "invalid token".to_owned()
+        ParsedError::new(span, "invalid token").with_label("invalid token")
+    } else if snippet.starts_with('"') && !string_literal_is_terminated(snippet) {
+        ParsedError::new(span, "unterminated string literal")
+            .with_label("string literal starts here")
+            .with_note("add a closing `\"` before the end of file")
     } else {
-        format!("invalid token `{snippet}`")
+        ParsedError::new(span, format!("invalid token `{snippet}`")).with_label("invalid token")
     }
+}
+
+fn string_literal_is_terminated(snippet: &str) -> bool {
+    let mut escaped = false;
+    for ch in snippet.chars().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            return true;
+        }
+    }
+    false
 }
 
 fn invalid_string_escape_message(source: &str, start: usize, end: usize) -> String {
@@ -2862,16 +2888,12 @@ fn format_expected_list(expected: &[chumsky::error::RichPattern<'_, Token<'_>>])
 }
 
 fn expected_found_message(
-    expected: &[chumsky::error::RichPattern<'_, Token<'_>>],
+    _expected: &[chumsky::error::RichPattern<'_, Token<'_>>],
     found: Option<&Token<'_>>,
 ) -> String {
-    let expected_text = format_expected_list(expected);
     match found {
-        Some(found) => format!(
-            "unexpected {}; expected {expected_text}",
-            token_found_description(found)
-        ),
-        None => format!("unexpected end of input; expected {expected_text}"),
+        Some(found) => format!("parse error: unexpected {}", token_found_description(found)),
+        None => "parse error: unexpected end of input".to_owned(),
     }
 }
 
@@ -2882,21 +2904,112 @@ fn parser_context(error: &Rich<'_, Token<'_>, LexSpan>) -> Option<String> {
     })
 }
 
+fn expected_note(
+    expected: &[chumsky::error::RichPattern<'_, Token<'_>>],
+    context: Option<&str>,
+    found: Option<&Token<'_>>,
+) -> Option<String> {
+    let mut expected_text = format_expected_list(expected);
+    if matches!(expected_text.as_str(), "something else" | "different token")
+        && matches!(
+            context,
+            Some(
+                "contract declaration"
+                    | "function signature"
+                    | "function parameter"
+                    | "pragma declaration"
+            )
+        )
+    {
+        expected_text = "identifier".to_owned();
+    }
+    if matches!(context, Some("import declaration"))
+        && matches!(found, Some(Token::Semi))
+        && expected_text == "`{`"
+    {
+        expected_text = "import selector after `.`".to_owned();
+    }
+
+    if matches!(expected_text.as_str(), "something else" | "different token") {
+        None
+    } else {
+        Some(format!("expecting {expected_text}"))
+    }
+}
+
+fn keyword_identifier_note(
+    context: Option<&str>,
+    found: Option<&Token<'_>>,
+) -> Option<&'static str> {
+    let found = found?;
+    if !matches!(
+        context,
+        Some("function signature" | "contract declaration" | "function parameter")
+    ) || !is_reserved_keyword(found)
+    {
+        return None;
+    }
+    Some("keywords cannot be used as identifiers; choose a different name")
+}
+
+fn is_reserved_keyword(token: &Token<'_>) -> bool {
+    matches!(
+        token,
+        Token::Contract
+            | Token::Import
+            | Token::Export
+            | Token::As
+            | Token::Let
+            | Token::Data
+            | Token::Class
+            | Token::Forall
+            | Token::Instance
+            | Token::If
+            | Token::Else
+            | Token::For
+            | Token::Switch
+            | Token::Type
+            | Token::Case
+            | Token::Default
+            | Token::Match
+            | Token::Public
+            | Token::Payable
+            | Token::Function
+            | Token::Constructor
+            | Token::Return
+            | Token::Leave
+            | Token::Continue
+            | Token::Break
+            | Token::Lam
+            | Token::Assembly
+            | Token::Pragma
+    )
+}
+
 fn parse_error_from_rich<'src>(error: Rich<'src, Token<'src>, LexSpan>) -> ParsedError {
-    let base_message = match error.reason() {
-        chumsky::error::RichReason::Custom(msg) => msg.clone(),
+    let context = parser_context(&error);
+    let mut parsed = match error.reason() {
+        chumsky::error::RichReason::Custom(msg) => ParsedError::new(*error.span(), msg.clone()),
         chumsky::error::RichReason::ExpectedFound { expected, found } => {
-            expected_found_message(expected, found.as_deref())
+            let found = found.as_deref();
+            let mut parsed =
+                ParsedError::new(*error.span(), expected_found_message(expected, found))
+                    .with_label("unexpected token");
+            if let Some(note) = expected_note(expected, context.as_deref(), found) {
+                parsed = parsed.with_note(note);
+            }
+            if let Some(note) = keyword_identifier_note(context.as_deref(), found) {
+                parsed = parsed.with_note(note);
+            }
+            parsed
         }
     };
-    let message = match parser_context(&error) {
-        Some(ctx) => format!("{base_message} while parsing {ctx}"),
-        None => base_message,
-    };
-    ParsedError {
-        span: *error.span(),
-        message,
+    if let Some(ctx) = context
+        && matches!(parsed.label.as_deref(), None | Some("unexpected token"))
+    {
+        parsed = parsed.with_note(format!("while parsing {ctx}"));
     }
+    parsed
 }
 
 fn preview_span_source(source: &str, span: LexSpan, max_chars: usize) -> Option<String> {
@@ -2935,6 +3048,122 @@ fn span_contains(outer: LexSpan, inner: LexSpan) -> bool {
     outer.start <= inner.start && inner.end <= outer.end
 }
 
+fn line_index(source: &str, offset: usize) -> usize {
+    source[..offset.min(source.len())]
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+}
+
+fn is_statement_start_token(token: &Token<'_>) -> bool {
+    matches!(
+        token,
+        Token::Let
+            | Token::Return
+            | Token::Match
+            | Token::For
+            | Token::If
+            | Token::Assembly
+            | Token::LBrace
+            | Token::Break
+            | Token::Continue
+    )
+}
+
+fn refine_body_parse_error<'src>(
+    tokens: &[(Token<'src>, LexSpan)],
+    error: ParsedError,
+) -> ParsedError {
+    let Some(idx) = tokens.iter().position(|(_, span)| *span == error.span) else {
+        return error;
+    };
+
+    match &tokens[idx].0 {
+        Token::Let => refine_let_parse_error(tokens, idx).unwrap_or(error),
+        Token::Match => refine_match_parse_error(tokens, idx).unwrap_or(error),
+        _ => error,
+    }
+}
+
+fn refine_let_parse_error<'src>(
+    tokens: &[(Token<'src>, LexSpan)],
+    let_idx: usize,
+) -> Option<ParsedError> {
+    let assignment_idx = tokens[let_idx + 1..]
+        .iter()
+        .position(|(token, _)| matches!(token, Token::Eq | Token::ColonEq))
+        .map(|idx| let_idx + 1 + idx)?;
+
+    if let Some((Token::Semi, semi_span)) = tokens.get(assignment_idx + 1) {
+        return Some(
+            ParsedError::new(*semi_span, "parse error: unexpected `;`")
+                .with_label("unexpected token")
+                .with_note("expecting expression after `=`"),
+        );
+    }
+
+    for (token, span) in &tokens[assignment_idx + 1..] {
+        if matches!(token, Token::Semi | Token::RBrace) {
+            return None;
+        }
+        if is_statement_start_token(token) {
+            return Some(
+                ParsedError::new(
+                    *span,
+                    format!("parse error: unexpected {}", token_found_description(token)),
+                )
+                .with_label("unexpected token")
+                .with_note("expecting `;` after let statement"),
+            );
+        }
+    }
+
+    None
+}
+
+fn refine_match_parse_error<'src>(
+    tokens: &[(Token<'src>, LexSpan)],
+    match_idx: usize,
+) -> Option<ParsedError> {
+    let brace_idx = tokens[match_idx + 1..]
+        .iter()
+        .position(|(token, _)| matches!(token, Token::LBrace))
+        .map(|idx| match_idx + 1 + idx)?;
+    let rbrace_span = match tokens.get(brace_idx + 1) {
+        Some((Token::RBrace, span)) => *span,
+        _ => return None,
+    };
+    let lbrace_span = tokens[brace_idx].1;
+    Some(
+        ParsedError::new(
+            LexSpan::from(lbrace_span.start..rbrace_span.end),
+            "match statement requires at least one arm",
+        )
+        .with_label("empty match arm list")
+        .with_note("add a `| pattern =>` arm"),
+    )
+}
+
+fn suppress_body_cascades(source: &str, mut errors: Vec<ParsedError>) -> Vec<ParsedError> {
+    errors.sort_by_key(|error| (error.span.start, error.span.end));
+
+    let mut filtered: Vec<ParsedError> = Vec::with_capacity(errors.len());
+    for error in errors {
+        let should_suppress = filtered.last().is_some_and(|previous| {
+            if span_contains(previous.span, error.span) {
+                return true;
+            }
+            let previous_line = line_index(source, previous.span.start);
+            let current_line = line_index(source, error.span.start);
+            previous_line == current_line
+        });
+        if !should_suppress {
+            filtered.push(error);
+        }
+    }
+    filtered
+}
+
 /// Parses the top-level items currently supported by the front end.
 ///
 /// Invalid top-level spans are represented as `ParsedTopItem::Error` and also
@@ -2971,20 +3200,26 @@ pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedT
         "parsed top-level items"
     );
 
-    errors.extend(
-        parse_errors
-            .into_iter()
-            .map(parse_error_from_rich)
-            .filter(|err| {
-                !recovery_spans
-                    .iter()
-                    .any(|recovery| span_contains(*recovery, err.span))
-            }),
-    );
-    errors.extend(recovery_spans.into_iter().map(|span| ParsedError {
-        span,
-        message: top_level_recovery_message(src, span),
-    }));
+    let had_token_errors = !errors.is_empty();
+    if !had_token_errors {
+        errors.extend(
+            parse_errors
+                .into_iter()
+                .map(parse_error_from_rich)
+                .filter(|err| {
+                    !recovery_spans
+                        .iter()
+                        .any(|recovery| span_contains(*recovery, err.span))
+                }),
+        );
+    }
+    if !had_token_errors {
+        errors.extend(
+            recovery_spans
+                .into_iter()
+                .map(|span| ParsedError::new(span, top_level_recovery_message(src, span))),
+        );
+    }
 
     ParseOutput { output, errors }
 }
@@ -3003,10 +3238,7 @@ fn tokenize_with_base<'src>(
             Ok(tok) => tokens.push((tok, span)),
             Err(err) => {
                 trace_recovery("invalid_token", span);
-                errors.push(ParsedError {
-                    span,
-                    message: lex_error_message(src, raw_span.start, raw_span.end, err),
-                });
+                errors.push(lex_error(src, raw_span.start, raw_span.end, span, err));
             }
         }
     }
@@ -3045,14 +3277,12 @@ pub(crate) fn parse_body_statements<'src>(
                 span: body_span,
                 kind: ParsedStmtKind::Error,
             }],
-            errors: vec![ParsedError {
-                span: body_span,
-                message: "invalid function body span".to_owned(),
-            }],
+            errors: vec![ParsedError::new(body_span, "invalid function body span")],
         };
     };
 
     let (tokens, mut errors) = tokenize_with_base(inner_source, inner_start);
+    let token_snapshot = tokens.clone();
     let token_count = tokens.len();
     let stream = chumsky::input::Stream::from_iter(tokens)
         .map((inner_start..inner_end).into(), |(tok, span): (_, _)| {
@@ -3073,7 +3303,14 @@ pub(crate) fn parse_body_statements<'src>(
         lex_errors = errors.len(),
         "parsed body statements"
     );
-    errors.extend(parse_errors.into_iter().map(parse_error_from_rich));
+    if errors.is_empty() {
+        let parse_errors = parse_errors
+            .into_iter()
+            .map(parse_error_from_rich)
+            .map(|error| refine_body_parse_error(&token_snapshot, error))
+            .collect::<Vec<_>>();
+        errors.extend(suppress_body_cascades(source, parse_errors));
+    }
 
     ParseOutput {
         output: output.unwrap_or_default(),

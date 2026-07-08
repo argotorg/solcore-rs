@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/public-top-level-function.solc
 ---
-error: 'public' is only allowed on functions declared inside a contract while parsing function signature
+error[SC0001]: 'public' is only allowed on functions declared inside a contract
  --> /public-top-level-function.solc:6:1
   |
 5 | // top-level function (outside any `contract { … }` body) must be rejected.
@@ -11,3 +11,4 @@ error: 'public' is only allowed on functions declared inside a contract while pa
   | ^^^^^^
 7 |     return uint256(42);
   |
+  = note: while parsing function signature

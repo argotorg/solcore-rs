@@ -3,11 +3,14 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_keyword_as_ident/main.solc
 ---
-error: unexpected `match`; expected different token while parsing function signature
+error[SC0001]: parse error: unexpected `match`
  --> /main/main.solc:1:10
   |
 1 | function match(x : word) -> word {
-  |          ^^^^^
+  |          ^^^^^ unexpected token
 2 |     return x;
 3 | }
   |
+  = note: expecting identifier
+  = note: keywords cannot be used as identifiers; choose a different name
+  = note: while parsing function signature

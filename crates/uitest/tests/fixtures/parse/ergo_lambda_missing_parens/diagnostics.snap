@@ -3,21 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_lambda_missing_parens/main.solc
 ---
-error: unexpected identifier `x`; expected `(`
+error[SC0001]: parse error: unexpected identifier `x`
  --> /main/main.solc:2:17
   |
 1 | function f() -> word {
 2 |     let g = lam x { return x; };
-  |                 ^
+  |                 ^ unexpected token
 3 |     return g(1);
   |
----
-
-error: unexpected `}`; expected end of input, or statement
- --> /main/main.solc:2:31
-  |
-1 | function f() -> word {
-2 |     let g = lam x { return x; };
-  |                               ^
-3 |     return g(1);
-  |
+  = note: expecting `(`

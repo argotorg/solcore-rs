@@ -3,8 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/type_alias_missing_equals/main.solc
 ---
-error: unexpected identifier `U`; expected `(`, or `=` while parsing type alias declaration
+error[SC0001]: parse error: unexpected identifier `U`
  --> /main/main.solc:1:13
   |
 1 | type Amount U;
-  |             ^
+  |             ^ unexpected token
+  |
+  = note: expecting `(`, or `=`
+  = note: while parsing type alias declaration

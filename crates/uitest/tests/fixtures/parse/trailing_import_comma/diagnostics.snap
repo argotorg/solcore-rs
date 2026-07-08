@@ -3,8 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/trailing_import_comma/main.solc
 ---
-error: unexpected `}`; expected `*`, or selector name while parsing import declaration
+error[SC0001]: parse error: unexpected `}`
  --> /main/main.solc:1:16
   |
 1 | import m.{a, b,};
-  |                ^
+  |                ^ unexpected token
+  |
+  = note: expecting `*`, or selector name
+  = note: while parsing import declaration

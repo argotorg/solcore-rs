@@ -3,11 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_function_missing_params/main.solc
 ---
-error: unexpected `->`; expected `(` while parsing function signature
+error[SC0001]: parse error: unexpected `->`
  --> /main/main.solc:1:12
   |
 1 | function f -> word {
-  |            ^^
+  |            ^^ unexpected token
 2 |     return 1;
 3 | }
   |
+  = note: expecting `(`
+  = note: while parsing function signature

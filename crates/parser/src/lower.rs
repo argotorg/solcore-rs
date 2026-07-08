@@ -56,11 +56,13 @@ fn lower_parse_errors(
     errors
         .into_iter()
         .map(|error| {
-            AnyDiagnostic::Parse(Diagnostic::error(error.message).with_primary_label(
-                db,
-                root_span_from_lex(db, file, error.span),
-                None::<String>,
-            ))
+            let mut diagnostic = Diagnostic::error(error.message)
+                .with_code("SC0001")
+                .with_primary_label(db, root_span_from_lex(db, file, error.span), error.label);
+            for note in error.notes {
+                diagnostic = diagnostic.with_note(note);
+            }
+            AnyDiagnostic::Parse(diagnostic)
         })
         .collect()
 }

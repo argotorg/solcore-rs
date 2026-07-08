@@ -3,10 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_unterminated_string/main.solc
 ---
-error: invalid token `"hello;
-           return 1;
-       }
-       `
+error[SC0001]: unterminated string literal
  --> /main/main.solc:2:13
   |
 1 |   function f() -> word {
@@ -14,13 +11,6 @@ error: invalid token `"hello;
   |  _____________^
 3 | |     return 1;
 4 | | }
-  | |__^
----
-
-error: unexpected end of input; expected `{`, or `}` while parsing function definition
- --> /main/main.solc:4:3
+  | |__^ string literal starts here
   |
-2 |     let s = "hello;
-3 |     return 1;
-4 | }
-  |  ^
+  = note: add a closing `"` before the end of file

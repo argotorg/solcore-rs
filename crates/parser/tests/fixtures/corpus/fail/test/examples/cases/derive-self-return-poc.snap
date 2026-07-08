@@ -3,21 +3,11 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/derive-self-return-poc.solc
 ---
-error: invalid token `#`
+error[SC0001]: invalid token `#`
   --> /derive-self-return-poc.solc:37:1
    |
 36 |
 37 | #[derive(CloneLike)]
-   | ^
-38 | data Box(a) = Box(a);
-   |
----
-
-error: could not parse top-level item near `[derive(CloneLike)]`; expected a declaration starting with `import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`
-  --> /derive-self-return-poc.solc:37:2
-   |
-36 |
-37 | #[derive(CloneLike)]
-   |  ^^^^^^^^^^^^^^^^^^^
+   | ^ invalid token
 38 | data Box(a) = Box(a);
    |

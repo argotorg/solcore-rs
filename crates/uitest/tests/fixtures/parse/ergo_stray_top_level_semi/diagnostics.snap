@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_stray_top_level_semi/main.solc
 ---
-error: could not parse top-level item near `;`; expected a declaration starting with `import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`
+error[SC0001]: could not parse top-level item near `;`; expected a declaration starting with `import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`
  --> /main/main.solc:3:2
   |
 2 |     return 1;

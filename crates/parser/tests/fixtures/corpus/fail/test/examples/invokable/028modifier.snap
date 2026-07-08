@@ -3,11 +3,13 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/invokable/028modifier.solc
 ---
-error: unexpected `instance`; expected `(`, `;`, or `|` while parsing data declaration
+error[SC0001]: parse error: unexpected `instance`
   --> /028modifier.solc:42:1
    |
 41 |
 42 | instance FooToken:Invokable(Word, Word) {
-   | ^^^^^^^^
+   | ^^^^^^^^ unexpected token
 43 |   function invoke(self:FooToken, arg: Word) -> Word {
    |
+   = note: expecting `(`, `;`, or `|`
+   = note: while parsing data declaration

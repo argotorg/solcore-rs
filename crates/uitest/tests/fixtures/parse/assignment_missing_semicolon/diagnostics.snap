@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/assignment_missing_semicolon/main.solc
 ---
-error: assignment statement requires trailing `;`
+error[SC0001]: assignment statement requires trailing `;`
  --> /main/main.solc:2:3
   |
 1 | function bad() {

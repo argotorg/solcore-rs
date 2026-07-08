@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/fallback-with-args.solc
 ---
-error: fallback function must not declare input parameters while parsing fallback definition
+error[SC0001]: fallback function must not declare input parameters
  --> /fallback-with-args.solc:7:13
   |
 6 |
@@ -11,3 +11,4 @@ error: fallback function must not declare input parameters while parsing fallbac
   |             ^^^^^^^^^^^^
 8 |         revert("fallback-was-called");
   |
+  = note: while parsing fallback definition

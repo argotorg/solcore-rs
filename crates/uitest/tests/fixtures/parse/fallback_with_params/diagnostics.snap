@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/fallback_with_params/main.solc
 ---
-error: fallback function must not declare input parameters while parsing fallback definition
+error[SC0001]: fallback function must not declare input parameters
  --> /main/main.solc:2:11
   |
 1 | contract Bad {
@@ -11,3 +11,4 @@ error: fallback function must not declare input parameters while parsing fallbac
   |           ^^^^^^^^^
 3 |
   |
+  = note: while parsing fallback definition

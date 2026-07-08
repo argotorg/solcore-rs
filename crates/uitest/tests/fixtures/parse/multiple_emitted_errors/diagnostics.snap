@@ -3,18 +3,18 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/multiple_emitted_errors/main.solc
 ---
-error: invalid token `~`
+error[SC0001]: invalid token `~`
  --> /main/main.solc:1:1
   |
 1 | ~
-  | ^
+  | ^ invalid token
 2 | #
   |
 ---
 
-error: invalid token `#`
+error[SC0001]: invalid token `#`
  --> /main/main.solc:2:1
   |
 1 | ~
 2 | #
-  | ^
+  | ^ invalid token

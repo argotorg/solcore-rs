@@ -24,6 +24,31 @@ pub(crate) struct ParsedError {
     pub(crate) span: LexSpan,
     /// Human-readable message.
     pub(crate) message: String,
+    /// Optional primary label message.
+    pub(crate) label: Option<String>,
+    /// Additional explanatory notes.
+    pub(crate) notes: Vec<String>,
+}
+
+impl ParsedError {
+    pub(crate) fn new(span: LexSpan, message: impl Into<String>) -> Self {
+        Self {
+            span,
+            message: message.into(),
+            label: None,
+            notes: Vec::new(),
+        }
+    }
+
+    pub(crate) fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub(crate) fn with_note(mut self, note: impl Into<String>) -> Self {
+        self.notes.push(note.into());
+        self
+    }
 }
 
 /// Parsed output plus recoverable parse errors.

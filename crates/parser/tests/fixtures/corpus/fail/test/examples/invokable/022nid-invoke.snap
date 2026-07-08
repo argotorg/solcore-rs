@@ -3,11 +3,13 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/invokable/022nid-invoke.solc
 ---
-error: unexpected `instance`; expected `(`, `;`, or `|` while parsing data declaration
+error[SC0001]: parse error: unexpected `instance`
   --> /022nid-invoke.solc:12:1
    |
 11 |
 12 | instance IdToken(a) : Invokable(a,a) {
-   | ^^^^^^^^
+   | ^^^^^^^^ unexpected token
 13 |   function invoke(token: IdToken(a), arg:a) -> a {
    |
+   = note: expecting `(`, `;`, or `|`
+   = note: while parsing data declaration

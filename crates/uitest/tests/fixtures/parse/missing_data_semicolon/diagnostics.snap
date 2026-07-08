@@ -3,8 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/missing_data_semicolon/main.solc
 ---
-error: unexpected end of input; expected `(`, `;`, or `|` while parsing data declaration
+error[SC0001]: parse error: unexpected end of input
  --> /main/main.solc:1:12
   |
 1 | data D = C
-  |           ^
+  |           ^ unexpected token
+  |
+  = note: expecting `(`, `;`, or `|`
+  = note: while parsing data declaration
