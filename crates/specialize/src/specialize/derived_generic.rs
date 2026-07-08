@@ -68,7 +68,7 @@ impl<'db> Driver<'db> {
         };
         let param = MonoParam {
             name: "x".to_owned(),
-            comptime: false,
+            mode: ParamMode::Runtime,
             ty: MonoTy::new_unchecked(param_ty),
             span,
         };

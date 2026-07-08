@@ -12,7 +12,7 @@ use crate::{
 };
 
 pub(super) fn param_is_comptime<'db>(db: &'db dyn Db, param: &MonoParam<'db>) -> bool {
-    param.comptime || ty_is_comptime(db, param.ty.ty())
+    param.mode.is_comptime() || ty_is_comptime(db, param.ty.ty())
 }
 
 pub(super) fn ty_is_comptime<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {

@@ -187,11 +187,43 @@ pub enum MonoFunctionOrigin<'db> {
     External,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamMode {
+    Runtime,
+    Comptime,
+}
+
+impl ParamMode {
+    pub fn from_bool(b: bool) -> Self {
+        if b { Self::Comptime } else { Self::Runtime }
+    }
+
+    pub fn is_comptime(self) -> bool {
+        matches!(self, Self::Comptime)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LetMode {
+    Runtime,
+    Comptime,
+}
+
+impl LetMode {
+    pub fn from_bool(b: bool) -> Self {
+        if b { Self::Comptime } else { Self::Runtime }
+    }
+
+    pub fn is_comptime(self) -> bool {
+        matches!(self, Self::Comptime)
+    }
+}
+
 /// Concrete function parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonoParam<'db> {
     pub name: String,
-    pub comptime: bool,
+    pub mode: ParamMode,
     pub ty: MonoTy<'db>,
     pub span: Span<'db>,
 }
@@ -223,7 +255,7 @@ pub struct MonoStmt<'db> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MonoStmtKind<'db> {
     Let {
-        comptime: bool,
+        mode: LetMode,
         id: MonoId<'db>,
         ty: Option<MonoTy<'db>>,
         init: Option<MonoExpr<'db>>,

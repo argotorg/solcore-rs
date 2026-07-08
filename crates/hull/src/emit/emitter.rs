@@ -78,7 +78,7 @@ impl<'db> Emitter<'db> {
                 .params
                 .iter()
                 .filter_map(|param| {
-                    if param.comptime {
+                    if param.mode.is_comptime() {
                         this.push(
                             param.span,
                             EmitDiagnosticKind::UnsupportedMonoConstruct {

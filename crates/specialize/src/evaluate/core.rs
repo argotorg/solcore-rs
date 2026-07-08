@@ -184,12 +184,8 @@ impl<'db> Evaluator<'db> {
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
         let span = stmt.span;
         match stmt.kind {
-            MonoStmtKind::Let {
-                comptime,
-                id,
-                ty,
-                init,
-            } => {
+            MonoStmtKind::Let { mode, id, ty, init } => {
+                let comptime = mode.is_comptime();
                 let (init, init_effects) = match init {
                     Some(expr) if comptime => {
                         let (expr, effects) = self.with_comptime_mode(|this| {
@@ -251,12 +247,7 @@ impl<'db> Evaluator<'db> {
                     comptime_env,
                     vec![MonoStmt {
                         span,
-                        kind: MonoStmtKind::Let {
-                            comptime,
-                            id,
-                            ty,
-                            init,
-                        },
+                        kind: MonoStmtKind::Let { mode, id, ty, init },
                     }],
                 )
             }
@@ -1314,9 +1305,8 @@ impl<'db> Evaluator<'db> {
     ) -> FoldOutcome<'db> {
         for stmt in body {
             match stmt.kind {
-                MonoStmtKind::Let {
-                    id, comptime, init, ..
-                } => {
+                MonoStmtKind::Let { id, mode, init, .. } => {
+                    let comptime = mode.is_comptime();
                     let init = init.map(|expr| self.eval_expr(&env, &comptime_env, expr));
                     let init_is_comptime = init
                         .as_ref()

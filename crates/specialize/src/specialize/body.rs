@@ -60,7 +60,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     || annotation_is_comptime
                     || self.stmt_has_comptime_let_obligation(stmt_id);
                 MonoStmtKind::Let {
-                    comptime,
+                    mode: LetMode::from_bool(comptime),
                     id,
                     ty: match annotation_ty {
                         Some(ty) => {
@@ -411,7 +411,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             locals.insert(name.clone(), param_ty);
             mono_params.push(MonoParam {
                 name,
-                comptime: param_comptime(param) || ty_is_comptime(self.driver.db, param_ty),
+                mode: ParamMode::from_bool(
+                    param_comptime(param) || ty_is_comptime(self.driver.db, param_ty),
+                ),
                 ty: mono_ty,
                 span: param.span(self.driver.db),
             });

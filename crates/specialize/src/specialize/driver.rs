@@ -709,7 +709,7 @@ impl<'db> Driver<'db> {
             }
             out.push(MonoParam {
                 name: param_name(self.db, param).unwrap_or("_").to_owned(),
-                comptime: param_comptime(param) || ty_is_comptime(self.db, ty),
+                mode: ParamMode::from_bool(param_comptime(param) || ty_is_comptime(self.db, ty)),
                 ty: MonoTy::new_unchecked(ty),
                 span: param.span(self.db),
             });

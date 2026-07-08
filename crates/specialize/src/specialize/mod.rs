@@ -40,10 +40,11 @@ use rustc_hash::FxHashMap;
 use crate::{
     evaluate::{EvaluateOptions, evaluate_module},
     ir::{
-        MonoAbiParam, MonoArm, MonoCallOrigin, MonoComptimeObligation, MonoComptimeObligationKind,
-        MonoConstructor, MonoContract, MonoEntry, MonoExpr, MonoExprKind, MonoFallback,
-        MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem, MonoModule, MonoParam,
-        MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+        LetMode, MonoAbiParam, MonoArm, MonoCallOrigin, MonoComptimeObligation,
+        MonoComptimeObligationKind, MonoConstructor, MonoContract, MonoEntry, MonoExpr,
+        MonoExprKind, MonoFallback, MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic,
+        MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+        ParamMode,
     },
 };
 
