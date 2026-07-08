@@ -62,11 +62,11 @@ use diagnostic::{
 use scope::ItemScopeBuilder;
 use type_resolver::TypeResolver;
 use util::{
-    collect_constructor_type_candidates, expr_path, ident_text, param_bindings, param_name,
-    path_span, qualify, record_body_fields, record_module_fields, type_var_bindings,
-    unique_constructor_type_candidate,
+    collect_constructor_type_candidates, expr_path, ident_text_str, param_name, path_span, qualify,
+    record_body_fields, record_module_fields, unique_constructor_type_candidate,
 };
 
 pub use diagnostic::NameresDiagnostic;
 pub use model::*;
 pub use queries::*;
+pub use util::{ident_text, is_direct_call_resolution, param_bindings, type_var_bindings};

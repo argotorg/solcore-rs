@@ -1,5 +1,9 @@
 use super::*;
 
+pub(super) use hir_nameres::{
+    ident_text, is_direct_call_resolution, param_bindings, type_var_bindings,
+};
+
 pub(super) struct FunctionLookup<'db> {
     pub(super) function: FunctionDef<'db>,
     pub(super) type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
@@ -215,20 +219,6 @@ pub(super) fn find_class_info<'db>(
     })
 }
 
-pub(super) fn type_var_bindings<'db>(
-    owner: DefId<'db>,
-    vars: &[SpannedElem<'db, Ident<'db>>],
-) -> Vec<hir_nameres::TypeVarBinding<'db>> {
-    vars.iter()
-        .enumerate()
-        .map(|(index, name)| hir_nameres::TypeVarBinding {
-            owner,
-            name: *name,
-            index: index as u32,
-        })
-        .collect()
-}
-
 pub(super) fn sig_type_vars<'db>(
     owner: DefId<'db>,
     sig: &hir::ast::function::FuncSig<'db>,
@@ -272,20 +262,6 @@ pub(super) fn substitute_infer_alias_args<'db>(
     }
 }
 
-pub(super) fn param_bindings<'db>(
-    params: &[FuncParam<'db>],
-) -> Vec<hir_nameres::ParamBinding<'db>> {
-    params
-        .iter()
-        .filter_map(|param| match param {
-            FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => {
-                Some(hir_nameres::ParamBinding { name: *name })
-            }
-            FuncParam::Error { .. } => None,
-        })
-        .collect()
-}
-
 pub(super) fn param_names<'db>(db: &'db dyn HirDb, params: &[FuncParam<'db>]) -> Vec<String> {
     params
         .iter()
@@ -298,26 +274,6 @@ pub(super) fn partial_data_entries(env: &nameres::ModuleEnv<'_>) -> Vec<(String,
         .iter()
         .map(|(name, ctors)| (name.clone(), ctors.iter().cloned().collect()))
         .collect()
-}
-
-pub(super) fn ident_text<'db>(db: &'db dyn HirDb, ident: &SpannedElem<'db, Ident<'db>>) -> String {
-    (*ident.atom()).text(db).to_owned()
-}
-
-pub(super) fn is_direct_call_resolution(resolution: &hir_nameres::Resolution<'_>) -> bool {
-    matches!(
-        resolution,
-        hir_nameres::Resolution::Def {
-            kind: hir_nameres::DefResolutionKind::Function,
-            ..
-        } | hir_nameres::Resolution::Ctor { .. }
-            | hir_nameres::Resolution::ClassMethod { .. }
-            | hir_nameres::Resolution::Builtin(
-                hir_nameres::BuiltinKind::Constructor(_)
-                    | hir_nameres::BuiltinKind::Function(_)
-                    | hir_nameres::BuiltinKind::ClassMethod(_)
-            )
-    )
 }
 
 pub(super) fn closure_def_id<'db>(db: &'db dyn Db, body: FuncBody<'db>) -> DefId<'db> {

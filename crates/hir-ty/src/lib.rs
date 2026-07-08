@@ -10,6 +10,7 @@ mod coverage;
 pub mod infer;
 pub mod lower;
 pub mod solver;
+mod support;
 
 pub use alias::{
     AliasError, AliasNorm, AliasNormalizer, AliasType, AliasTypeKind, normalize_pred_aliases,

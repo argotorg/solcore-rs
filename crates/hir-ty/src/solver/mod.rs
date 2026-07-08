@@ -51,7 +51,7 @@ use hir::{
     nameres as hir_nameres,
     span::{Spanned, SpannedElem},
 };
-use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path};
+use nameres::ModuleId;
 use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
 

@@ -172,11 +172,7 @@ pub(super) fn module_for_def<'db>(
     entry: ModuleId<'db>,
     def: DefId<'db>,
 ) -> Option<ModuleId<'db>> {
-    let file = def.file(db);
-    nameres::module_graph(db, entry)
-        .modules
-        .into_iter()
-        .find(|module| db.module_file(*module) == Some(file))
+    crate::support::module_for_def_via_graph(db, entry, def)
 }
 
 #[salsa::tracked]

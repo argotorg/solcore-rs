@@ -1,13 +1,13 @@
+use hir::nameres::param_bindings;
+pub(super) use hir::nameres::{ident_text, type_var_bindings};
 use hir::{
     Db as HirDb,
     anchor::DefId,
     ast::{
-        Ident,
         function::FuncParam,
         item::{ContractDef, FunctionDef, Item, Module},
     },
     nameres as hir_nameres,
-    span::SpannedElem,
 };
 use nameres::{LibraryId, module_id_from_key, module_key_for_path};
 
@@ -99,20 +99,6 @@ pub(super) fn function_type_vars<'db>(
     vars
 }
 
-pub(super) fn type_var_bindings<'db>(
-    owner: DefId<'db>,
-    vars: &[SpannedElem<'db, Ident<'db>>],
-) -> Vec<hir_nameres::TypeVarBinding<'db>> {
-    vars.iter()
-        .enumerate()
-        .map(|(index, name)| hir_nameres::TypeVarBinding {
-            owner,
-            name: *name,
-            index: index as u32,
-        })
-        .collect()
-}
-
 pub(super) fn param_names<'db>(db: &'db dyn HirDb, params: &[FuncParam<'db>]) -> Vec<String> {
     params
         .iter()
@@ -123,20 +109,4 @@ pub(super) fn param_names<'db>(db: &'db dyn HirDb, params: &[FuncParam<'db>]) ->
             FuncParam::Error { .. } => None,
         })
         .collect()
-}
-
-fn param_bindings<'db>(params: &[FuncParam<'db>]) -> Vec<hir_nameres::ParamBinding<'db>> {
-    params
-        .iter()
-        .filter_map(|param| match param {
-            FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => {
-                Some(hir_nameres::ParamBinding { name: *name })
-            }
-            FuncParam::Error { .. } => None,
-        })
-        .collect()
-}
-
-pub(super) fn ident_text<'db>(db: &'db dyn HirDb, ident: &SpannedElem<'db, Ident<'db>>) -> String {
-    (*ident.atom()).text(db).to_owned()
 }

@@ -8,7 +8,6 @@ use hir::{
     anchor::{DefId, DefKind, Disambiguator},
     arena::{Arena, Id},
     ast::{
-        Ident,
         function::{
             BinOp, Expr, ExprKind, FuncBody, FuncParam, FuncSig, LitKind, MatchArm, Pat, PatKind,
             Stmt, StmtKind, UnOp, YulCase, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
@@ -21,7 +20,7 @@ use hir::{
     },
     diag::{AnyDiagnostic, Diagnostic, LabelSpan},
     nameres as hir_nameres,
-    span::{Span, Spanned, SpannedElem},
+    span::{Span, Spanned},
 };
 use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path};
 use parser::{parse_diagnostics, parse_file_to_hir};

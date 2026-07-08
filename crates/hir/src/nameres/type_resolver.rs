@@ -158,7 +158,7 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
         for arg in kind.args.atom() {
             self.ty(*arg);
         }
-        let name = ident_text(self.db, &kind.class);
+        let name = ident_text_str(self.db, &kind.class);
         let resolution = self.lookup_class(name).unwrap_or_else(|| {
             self.map
                 .diagnostics
@@ -182,8 +182,8 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                     self.ty(*arg);
                 }
                 let resolution = if let Some(qualifier) = qualifier {
-                    let qualifier_text = ident_text(self.db, qualifier);
-                    let qualified = qualify(qualifier_text, ident_text(self.db, name));
+                    let qualifier_text = ident_text_str(self.db, qualifier);
+                    let qualified = qualify(qualifier_text, ident_text_str(self.db, name));
                     self.lookup_type(&qualified).unwrap_or_else(|| {
                         if self
                             .imports
@@ -197,7 +197,7 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                         Resolution::Err
                     })
                 } else {
-                    let name_text = ident_text(self.db, name);
+                    let name_text = ident_text_str(self.db, name);
                     self.lookup_type(name_text).unwrap_or_else(|| {
                         self.map
                             .diagnostics
@@ -235,8 +235,7 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
         f: impl FnOnce(&mut Self),
     ) {
         let old_len = self.type_vars.len();
-        self.type_vars
-            .extend(type_var_bindings(self.db, owner, vars));
+        self.type_vars.extend(type_var_bindings(owner, vars));
         f(self);
         self.type_vars.truncate(old_len);
     }
@@ -245,7 +244,7 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
         self.type_vars
             .iter()
             .rev()
-            .find(|var| ident_text(self.db, &var.name) == name)
+            .find(|var| ident_text_str(self.db, &var.name) == name)
             .map(|var| {
                 Resolution::Local(LocalBinding::TypeVar(TypeVarId {
                     owner: var.owner,
@@ -300,7 +299,7 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
         names.extend(
             self.type_vars
                 .iter()
-                .map(|var| ident_text(self.db, &var.name).to_owned()),
+                .map(|var| ident_text_str(self.db, &var.name).to_owned()),
         );
         if let Some(contract) = self
             .contract

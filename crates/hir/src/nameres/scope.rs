@@ -74,7 +74,7 @@ impl<'db> ItemScopeBuilder<'db> {
         contract: Option<&mut ContractScopeBuilder<'db>>,
         family: TypeDeclFamily,
     ) {
-        let text = ident_text(self.db, &name).to_owned();
+        let text = ident_text_str(self.db, &name).to_owned();
         if let Some(contract) = contract {
             contract.add_type(text, name.span(self.db), resolution);
             return;
@@ -116,7 +116,7 @@ impl<'db> ItemScopeBuilder<'db> {
     ) {
         let sig = def.sig(self.db);
         self.add_term(
-            ident_text(self.db, &sig.name).to_owned(),
+            ident_text_str(self.db, &sig.name).to_owned(),
             sig.name.span(self.db),
             Resolution::Def {
                 def: def.def_id_value(self.db),
@@ -140,7 +140,7 @@ impl<'db> ItemScopeBuilder<'db> {
     }
 
     fn add_adt(&mut self, def: AdtDef<'db>, mut contract: Option<&mut ContractScopeBuilder<'db>>) {
-        let ty_name = ident_text(self.db, &def.name_elem(self.db)).to_owned();
+        let ty_name = ident_text_str(self.db, &def.name_elem(self.db)).to_owned();
         let ty_def = def.def_id_value(self.db);
         let mut ctor_entries = Vec::new();
         self.add_type(
@@ -153,7 +153,7 @@ impl<'db> ItemScopeBuilder<'db> {
             TypeDeclFamily::Adt,
         );
         for (index, ctor) in def.ctors(self.db).iter().enumerate() {
-            let ctor_name = ident_text(self.db, &ctor.name).to_owned();
+            let ctor_name = ident_text_str(self.db, &ctor.name).to_owned();
             let qualified = qualify(&ty_name, &ctor_name);
             let entry = CtorEntry {
                 name: ctor_name,
@@ -190,7 +190,7 @@ impl<'db> ItemScopeBuilder<'db> {
     fn add_class(&mut self, def: ClassDef<'db>) {
         let head = def.head(self.db);
         let class_name = head.kind(self.db).class;
-        let class_text = ident_text(self.db, &class_name).to_owned();
+        let class_text = ident_text_str(self.db, &class_name).to_owned();
         self.add_type(
             class_name,
             Resolution::Def {
@@ -201,7 +201,7 @@ impl<'db> ItemScopeBuilder<'db> {
             TypeDeclFamily::Class,
         );
         for method in def.methods(self.db) {
-            let method_name = ident_text(self.db, &method.name).to_owned();
+            let method_name = ident_text_str(self.db, &method.name).to_owned();
             self.add_term(
                 qualify(&class_text, &method_name),
                 method.name.span(self.db),
@@ -216,7 +216,7 @@ impl<'db> ItemScopeBuilder<'db> {
     }
 
     fn add_contract(&mut self, def: ContractDef<'db>) {
-        let contract_name = ident_text(self.db, &def.name_elem(self.db)).to_owned();
+        let contract_name = ident_text_str(self.db, &def.name_elem(self.db)).to_owned();
         self.add_type(
             def.name_elem(self.db),
             Resolution::Def {
@@ -253,17 +253,20 @@ impl<'db> ItemScopeBuilder<'db> {
             return;
         }
         if let Some(alias) = alias {
-            self.add_module(ident_text(self.db, &alias).to_owned(), alias.span(self.db));
+            self.add_module(
+                ident_text_str(self.db, &alias).to_owned(),
+                alias.span(self.db),
+            );
             return;
         }
         let full = path
             .iter()
-            .map(|segment| ident_text(self.db, segment))
+            .map(|segment| ident_text_str(self.db, segment))
             .collect::<Vec<_>>()
             .join(".");
         let leaf = path.last().expect("non-empty path");
-        self.add_module(ident_text(self.db, leaf).to_owned(), leaf.span(self.db));
-        if full != ident_text(self.db, leaf) {
+        self.add_module(ident_text_str(self.db, leaf).to_owned(), leaf.span(self.db));
+        if full != ident_text_str(self.db, leaf) {
             self.add_module(full, path_span(self.db, path));
         }
     }
@@ -400,7 +403,7 @@ impl<'db> ContractScopeBuilder<'db> {
 
     fn add_field(&mut self, field: &FieldDef<'db>, index: u32) {
         self.fields.push(FieldEntry {
-            name: ident_text(self.db, field.name()).to_owned(),
+            name: ident_text_str(self.db, field.name()).to_owned(),
             span: field.name().span(self.db),
             field: FieldId {
                 contract: self.contract,

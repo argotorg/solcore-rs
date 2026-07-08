@@ -5,7 +5,7 @@ use hir::{
         function::{Expr, ExprKind, FuncBody, Pat, PatKind, Stmt, StmtKind},
         item::{ContractItem, FunctionDef, Item, Module},
     },
-    nameres as hir_nameres,
+    nameres::{self as hir_nameres, is_direct_call_resolution},
 };
 use rustc_hash::FxHashMap;
 
@@ -589,22 +589,6 @@ fn indirect_arg_shape<'db>(args: &[Id<Expr<'db>>]) -> IndirectArgShape<'db> {
             tail: Box::new(indirect_arg_shape(tail)),
         }
     }
-}
-
-fn is_direct_call_resolution(resolution: &hir_nameres::Resolution<'_>) -> bool {
-    matches!(
-        resolution,
-        hir_nameres::Resolution::Def {
-            kind: hir_nameres::DefResolutionKind::Function,
-            ..
-        } | hir_nameres::Resolution::Ctor { .. }
-            | hir_nameres::Resolution::ClassMethod { .. }
-            | hir_nameres::Resolution::Builtin(
-                hir_nameres::BuiltinKind::Constructor(_)
-                    | hir_nameres::BuiltinKind::Function(_)
-                    | hir_nameres::BuiltinKind::ClassMethod(_)
-            )
-    )
 }
 
 fn body_resolution_for<'a, 'db>(

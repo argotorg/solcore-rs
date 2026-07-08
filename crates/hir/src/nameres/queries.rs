@@ -205,7 +205,6 @@ fn collect_item_body_resolutions<'db>(
         Item::InstanceDef(def) => {
             let mut inherited = inherited_type_vars.to_vec();
             inherited.extend(type_var_bindings(
-                db,
                 def.def_id_value(db),
                 def.type_var_elems(db),
             ));
@@ -224,7 +223,6 @@ fn collect_item_body_resolutions<'db>(
         Item::ContractDef(def) => {
             let mut inherited = inherited_type_vars.to_vec();
             inherited.extend(type_var_bindings(
-                db,
                 def.def_id_value(db),
                 def.ty_param_elems(db),
             ));
@@ -271,11 +269,7 @@ fn collect_function_body_resolution<'db>(
     };
     let sig = function.sig(db);
     let mut type_vars = inherited_type_vars.to_vec();
-    type_vars.extend(type_var_bindings(
-        db,
-        function.def_id_value(db),
-        &sig.type_vars,
-    ));
+    type_vars.extend(type_var_bindings(function.def_id_value(db), &sig.type_vars));
     let context = BodyResolutionContext {
         module,
         enclosing_contract,

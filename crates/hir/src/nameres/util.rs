@@ -40,7 +40,14 @@ fn file_url_tail(db: &dyn Db, file: crate::input::SourceFile) -> String {
         .to_owned()
 }
 
-pub(super) fn ident_text<'db>(db: &'db dyn Db, ident: &SpannedElem<'db, Ident<'db>>) -> &'db str {
+pub fn ident_text<'db>(db: &'db dyn Db, ident: &SpannedElem<'db, Ident<'db>>) -> String {
+    ident_text_str(db, ident).to_owned()
+}
+
+pub(super) fn ident_text_str<'db>(
+    db: &'db dyn Db,
+    ident: &SpannedElem<'db, Ident<'db>>,
+) -> &'db str {
     (*ident.atom()).text(db)
 }
 
@@ -90,10 +97,10 @@ pub(super) fn expr_path<'db>(
     expr: Id<Expr<'db>>,
 ) -> Option<Vec<String>> {
     match &body.exprs(db).get(expr).kind {
-        ExprKind::Ident(name) => Some(vec![ident_text(db, name).to_owned()]),
+        ExprKind::Ident(name) => Some(vec![ident_text_str(db, name).to_owned()]),
         ExprKind::Field { base, field } => {
             let mut path = expr_path(db, body, *base)?;
-            path.push(ident_text(db, field).to_owned());
+            path.push(ident_text_str(db, field).to_owned());
             Some(path)
         }
         _ => None,
@@ -109,7 +116,7 @@ pub(super) fn param_name<'a, 'db>(
     }
 }
 
-pub(super) fn param_bindings<'db>(params: &[FuncParam<'db>]) -> Vec<ParamBinding<'db>> {
+pub fn param_bindings<'db>(params: &[FuncParam<'db>]) -> Vec<ParamBinding<'db>> {
     params
         .iter()
         .filter_map(param_name)
@@ -117,8 +124,7 @@ pub(super) fn param_bindings<'db>(params: &[FuncParam<'db>]) -> Vec<ParamBinding
         .collect()
 }
 
-pub(super) fn type_var_bindings<'db>(
-    _db: &'db dyn Db,
+pub fn type_var_bindings<'db>(
     owner: DefId<'db>,
     vars: &[SpannedElem<'db, Ident<'db>>],
 ) -> Vec<TypeVarBinding<'db>> {
@@ -130,4 +136,20 @@ pub(super) fn type_var_bindings<'db>(
             index: index as u32,
         })
         .collect()
+}
+
+pub fn is_direct_call_resolution(resolution: &Resolution<'_>) -> bool {
+    matches!(
+        resolution,
+        Resolution::Def {
+            kind: DefResolutionKind::Function,
+            ..
+        } | Resolution::Ctor { .. }
+            | Resolution::ClassMethod { .. }
+            | Resolution::Builtin(
+                BuiltinKind::Constructor(_)
+                    | BuiltinKind::Function(_)
+                    | BuiltinKind::ClassMethod(_)
+            )
+    )
 }

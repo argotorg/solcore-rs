@@ -1,5 +1,7 @@
 use super::*;
 
+pub(super) use hir::nameres::{ident_text, type_var_bindings};
+
 /// Reference-style specialization name: `base$word` or
 /// `base$FooLword_boolJ`.
 pub fn specialize_name<'db>(db: &'db dyn HirDb, base: &str, tys: &[Ty<'db>]) -> String {
@@ -15,24 +17,6 @@ pub fn specialize_name<'db>(db: &'db dyn HirDb, base: &str, tys: &[Ty<'db>]) -> 
                 .join("_")
         )
     }
-}
-
-pub(super) fn type_var_bindings<'db>(
-    owner: DefId<'db>,
-    vars: &[SpannedElem<'db, Ident<'db>>],
-) -> Vec<hir_nameres::TypeVarBinding<'db>> {
-    vars.iter()
-        .enumerate()
-        .map(|(index, name)| hir_nameres::TypeVarBinding {
-            owner,
-            name: *name,
-            index: index as u32,
-        })
-        .collect()
-}
-
-pub(super) fn ident_text<'db>(db: &'db dyn HirDb, name: &SpannedElem<'db, Ident<'db>>) -> String {
-    (*name.atom()).text(db).to_owned()
 }
 
 pub(super) fn param_name<'db>(db: &'db dyn HirDb, param: &FuncParam<'db>) -> Option<&'db str> {

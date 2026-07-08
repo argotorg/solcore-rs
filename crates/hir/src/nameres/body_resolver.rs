@@ -51,7 +51,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     body,
                     stmt: stmt_id,
                 });
-                self.add_local(ident_text(self.db, name), resolution.clone());
+                self.add_local(ident_text_str(self.db, name), resolution.clone());
                 self.map.record_stmt(body, stmt_id, resolution);
             }
             StmtKind::Return(expr) => {
@@ -149,7 +149,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 for arg in args {
                     self.expr(body, *arg);
                 }
-                let leaf = ident_text(self.db, name);
+                let leaf = ident_text_str(self.db, name);
                 let resolution = if self.has_constructor_leaf(leaf) {
                     Resolution::DotCtorDeferred
                 } else if self.imports.may_contain_unknown_unqualified(
@@ -241,7 +241,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 self.map.record_pat(body, pat_id, Resolution::Err);
             }
             PatKind::Var(name) => {
-                let leaf = ident_text(self.db, name);
+                let leaf = ident_text_str(self.db, name);
                 let resolution = if let Some(
                     res @ Resolution::Builtin(BuiltinKind::Constructor(
                         BuiltinCtor::True | BuiltinCtor::False,
@@ -283,8 +283,8 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 let resolution = if leading_dot.is_some() {
                     Resolution::DotCtorDeferred
                 } else if let Some(qualifier) = qualifier {
-                    let qualifier_text = ident_text(self.db, qualifier);
-                    let qualified = qualify(qualifier_text, ident_text(self.db, name));
+                    let qualifier_text = ident_text_str(self.db, qualifier);
+                    let qualified = qualify(qualifier_text, ident_text_str(self.db, name));
                     self.lookup_ctor(&qualified).unwrap_or_else(|| {
                         if self
                             .imports
@@ -298,7 +298,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         Resolution::Err
                     })
                 } else {
-                    let leaf = ident_text(self.db, name);
+                    let leaf = ident_text_str(self.db, name);
                     if self
                         .imports
                         .may_contain_unknown_unqualified(self.db, Namespace::Term, leaf)
@@ -359,8 +359,8 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     self.ty(*arg);
                 }
                 let resolution = if let Some(qualifier) = qualifier {
-                    let qualifier_text = ident_text(self.db, qualifier);
-                    let qualified = qualify(qualifier_text, ident_text(self.db, name));
+                    let qualifier_text = ident_text_str(self.db, qualifier);
+                    let qualified = qualify(qualifier_text, ident_text_str(self.db, name));
                     self.lookup_type(&qualified).unwrap_or_else(|| {
                         if self
                             .imports
@@ -374,7 +374,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         Resolution::Err
                     })
                 } else {
-                    let name_text = ident_text(self.db, name);
+                    let name_text = ident_text_str(self.db, name);
                     self.lookup_type(name_text).unwrap_or_else(|| {
                         self.map
                             .diagnostics
@@ -412,7 +412,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     }
 
     fn resolve_ident(&mut self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
-        let text = ident_text(self.db, name);
+        let text = ident_text_str(self.db, name);
         self.lookup_local(text)
             // Contract fields intentionally beat same-name functions in the
             // contract term surface.
@@ -472,7 +472,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     }
 
     fn resolve_call_ident(&mut self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
-        let text = ident_text(self.db, name);
+        let text = ident_text_str(self.db, name);
         self.lookup_local(text)
             .or_else(|| self.lookup_qualified_term(text))
             .or_else(|| self.lookup_field(text))
@@ -485,7 +485,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         let expr = body.exprs(self.db).get(expr_id);
         match &expr.kind {
             ExprKind::Ident(name) => {
-                let text = ident_text(self.db, name);
+                let text = ident_text_str(self.db, name);
                 let resolution = self
                     .lookup_type(text)
                     .or_else(|| self.lookup_module(text))
@@ -523,7 +523,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     ) -> Option<Resolution<'db>> {
         let path = expr_path(self.db, body, base)?;
         let qualifier = path.join(".");
-        let field_text = ident_text(self.db, field);
+        let field_text = ident_text_str(self.db, field);
         let qualified = qualify(&qualifier, field_text);
 
         if let Some(resolution) = self.lookup_qualified_term(&qualified) {
@@ -650,7 +650,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         names.extend(
             self.type_vars
                 .iter()
-                .map(|var| ident_text(self.db, &var.name).to_owned()),
+                .map(|var| ident_text_str(self.db, &var.name).to_owned()),
         );
         if let Some(contract) = self
             .contract
@@ -732,7 +732,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         self.type_vars
             .iter()
             .rev()
-            .find(|var| ident_text(self.db, &var.name) == name)
+            .find(|var| ident_text_str(self.db, &var.name) == name)
             .map(|var| {
                 Resolution::Local(LocalBinding::TypeVar(TypeVarId {
                     owner: var.owner,
@@ -818,7 +818,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         name: &SpannedElem<'db, Ident<'db>>,
     ) {
         self.add_local(
-            ident_text(self.db, name),
+            ident_text_str(self.db, name),
             Resolution::Param(ParamId { body, index }),
         );
     }

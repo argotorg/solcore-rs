@@ -7,7 +7,7 @@ mod known;
 mod value;
 mod yul_const;
 
-use hir::{Db as HirDb, ast::Ident, span::SpannedElem};
+use hir::nameres::ident_text;
 use hir_ty::Db;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -55,7 +55,3 @@ type VEnv<'db> = FxHashMap<String, MonoExpr<'db>>;
 type CEnv = FxHashSet<String>;
 type TypeReg<'db> = FxHashMap<String, MonoId<'db>>;
 type YulState = FxHashMap<String, BigInt>;
-
-fn ident_text<'db>(db: &'db dyn HirDb, name: &SpannedElem<'db, Ident<'db>>) -> String {
-    (*name.atom()).text(db).to_owned()
-}

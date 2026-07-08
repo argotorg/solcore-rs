@@ -3,14 +3,12 @@ use std::{collections::BTreeMap, path::PathBuf};
 use hir::{
     anchor::{DefId, DefLocationTable},
     ast::{
-        Ident,
         function::{ExprKind, FuncParam, FuncSig, StmtKind},
         item::{ContractItem, FunctionDef, Item, Module},
     },
     input::SourceFile,
-    nameres as hir_nameres,
+    nameres::{self as hir_nameres, ident_text, type_var_bindings},
     sema::ty::QualTy,
-    span::SpannedElem,
 };
 use nameres::{
     LibraryId, ModuleId, ModuleKey, ModuleTree, module_id_from_key, module_key_for_path,
@@ -111,24 +109,6 @@ fn lowered_module_typeck_diagnostics(src: &str) -> Vec<Diagnostic> {
 
 fn function_name<'db>(db: &'db TestDb, function: FunctionDef<'db>) -> &'db str {
     (*function.sig(db).name.atom()).text(db)
-}
-
-fn ident_text<'db>(db: &'db TestDb, ident: &SpannedElem<'db, Ident<'db>>) -> String {
-    (*ident.atom()).text(db).to_owned()
-}
-
-fn type_var_bindings<'db>(
-    owner: DefId<'db>,
-    vars: &[SpannedElem<'db, Ident<'db>>],
-) -> Vec<hir_nameres::TypeVarBinding<'db>> {
-    vars.iter()
-        .enumerate()
-        .map(|(index, name)| hir_nameres::TypeVarBinding {
-            owner,
-            name: *name,
-            index: index as u32,
-        })
-        .collect()
 }
 
 fn sig_type_vars<'db>(

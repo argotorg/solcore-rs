@@ -1,8 +1,7 @@
 use super::*;
 
-pub(super) fn ident_text<'db>(db: &'db dyn HirDb, name: &SpannedElem<'db, Ident<'db>>) -> String {
-    (*name.atom()).text(db).to_owned()
-}
+pub(super) use crate::support::module_for_def_via_tree as module_for_def;
+pub(super) use hir_nameres::{ident_text, type_var_bindings};
 
 pub(super) fn visible_class_modules<'db>(
     db: &'db dyn Db,
@@ -20,24 +19,6 @@ pub(super) fn visible_class_modules<'db>(
         .collect()
 }
 
-pub(super) fn module_for_def<'db>(db: &'db dyn Db, def: DefId<'db>) -> Option<ModuleId<'db>> {
-    let path = def.file(db).url(db).to_file_path().ok()?;
-    let tree = db.module_tree();
-    let candidates = std::iter::once((LibraryId::Main, tree.main_root(db).clone()))
-        .chain(std::iter::once((LibraryId::Std, tree.std_root(db).clone())))
-        .chain(
-            tree.external_roots(db)
-                .iter()
-                .map(|(name, root)| (LibraryId::External(name.clone()), root.clone())),
-        );
-    for (library, root) in candidates {
-        if let Some(key) = module_key_for_path(library, &root, &path) {
-            return Some(module_id_from_key(db, &key));
-        }
-    }
-    None
-}
-
 pub(super) fn scope_resolution_for_module_id<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -50,20 +31,6 @@ pub(super) fn scope_resolution_for_module_id<'db>(
     let item_resolutions =
         hir_nameres::resolve_item_types_with_imports(db, scope.module, &scope, &env);
     Some((scope, item_resolutions))
-}
-
-pub(super) fn type_var_bindings<'db>(
-    owner: DefId<'db>,
-    vars: &[SpannedElem<'db, Ident<'db>>],
-) -> Vec<hir_nameres::TypeVarBinding<'db>> {
-    vars.iter()
-        .enumerate()
-        .map(|(index, name)| hir_nameres::TypeVarBinding {
-            owner,
-            name: *name,
-            index: index as u32,
-        })
-        .collect()
 }
 
 pub(super) fn unique_modules<'db>(
