@@ -87,25 +87,33 @@ impl LanguageServer for Backend {
         self.client.publish_diagnostics(uri, vec![], None).await;
     }
 
-    async fn hover(&self, _: HoverParams) -> jsonrpc::Result<Option<Hover>> {
-        // TODO(C3/C4/C5): delegate to core handlers.
-        Ok(None)
+    async fn hover(&self, params: HoverParams) -> jsonrpc::Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let world = self.world.lock().await;
+
+        Ok(crate::hover::handle_hover(&world, &uri, position))
     }
 
     async fn goto_definition(
         &self,
-        _: GotoDefinitionParams,
+        params: GotoDefinitionParams,
     ) -> jsonrpc::Result<Option<GotoDefinitionResponse>> {
-        // TODO(C3/C4/C5): delegate to core handlers.
-        Ok(None)
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let world = self.world.lock().await;
+
+        Ok(crate::definition::handle_definition(&world, &uri, position))
     }
 
     async fn document_symbol(
         &self,
-        _: DocumentSymbolParams,
+        params: DocumentSymbolParams,
     ) -> jsonrpc::Result<Option<DocumentSymbolResponse>> {
-        // TODO(C3/C4/C5): delegate to core handlers.
-        Ok(None)
+        let uri = params.text_document.uri;
+        let world = self.world.lock().await;
+
+        Ok(crate::symbols::handle_document_symbol(&world, &uri))
     }
 }
 
