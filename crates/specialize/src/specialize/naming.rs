@@ -5,18 +5,13 @@ pub(super) use hir::nameres::{ident_text, type_var_bindings};
 /// Reference-style specialization name: `base$word` or
 /// `base$FooLword_boolJ`.
 pub fn specialize_name<'db>(db: &'db dyn HirDb, base: &str, tys: &[Ty<'db>]) -> String {
-    if tys.is_empty() {
-        flatten_name(base)
-    } else {
-        format!(
-            "{}${}",
-            flatten_name(base),
-            tys.iter()
-                .map(|ty| mangle_ty(db, *ty))
-                .collect::<Vec<_>>()
-                .join("_")
-        )
+    let mut mangler = NameMangler::new();
+    mangler.push_flattened_component(base);
+    if !tys.is_empty() {
+        mangler.push_raw("$");
+        mangler.push_ty_list(db, tys);
     }
+    mangler.finish()
 }
 
 pub(super) fn param_name<'db>(db: &'db dyn HirDb, param: &FuncParam<'db>) -> Option<&'db str> {
@@ -212,10 +207,6 @@ pub(super) fn resolve_specialize_module<'db>(
     )
 }
 
-fn flatten_name(name: &str) -> String {
-    name.replace('.', "_")
-}
-
 pub(super) fn mono_abi_params(params: Vec<AbiParam>) -> Vec<MonoAbiParam> {
     params
         .into_iter()
@@ -336,60 +327,134 @@ fn hash_source_file_identity(db: &dyn Db, file: SourceFile, state: &mut DefaultH
     }
 }
 
-pub(super) fn sanitize_name_component(component: &str) -> String {
-    let mut out = String::with_capacity(component.len());
-    for ch in component.chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
-            out.push(ch);
-        } else {
-            out.push('_');
+pub(super) fn join_sanitized_name_components(
+    components: impl IntoIterator<Item = String>,
+) -> String {
+    let mut mangler = NameMangler::new();
+    let mut first = true;
+    for component in components {
+        if component.is_empty() {
+            continue;
         }
+        if !first {
+            mangler.push_raw("_");
+        }
+        let component = sanitize_name_component(&component);
+        mangler.push_raw(&component);
+        first = false;
     }
-    if out.is_empty() { "_".to_owned() } else { out }
+    mangler.finish()
 }
 
-fn mangle_ty<'db>(db: &'db dyn HirDb, ty: Ty<'db>) -> String {
-    match ty.kind(db) {
-        TyKind::Named { ctor, args } => {
-            let name = match ctor {
-                TyCtor::Builtin(ctor) => {
-                    if *ctor == BuiltinTyCtor::Unit && args.is_empty() {
-                        return "unit".to_owned();
-                    }
-                    ctor.name().to_owned()
-                }
-                TyCtor::User(user) => user
-                    .def
-                    .name(db)
-                    .unwrap_or_else(|| format!("{:?}", user.def.kind(db))),
-            };
-            if args.is_empty() {
-                flatten_name(&name)
-            } else {
-                format!(
-                    "{}L{}J",
-                    flatten_name(&name),
-                    args.iter()
-                        .map(|arg| mangle_ty(db, *arg))
-                        .collect::<Vec<_>>()
-                        .join("_")
-                )
-            }
+pub(super) fn sanitize_name_component(component: &str) -> String {
+    let mut mangler = NameMangler::new();
+    mangler.push_component(component);
+    mangler.finish()
+}
+
+struct NameMangler {
+    out: String,
+}
+
+impl NameMangler {
+    fn new() -> Self {
+        Self { out: String::new() }
+    }
+
+    fn push_raw(&mut self, raw: &str) {
+        self.out.push_str(raw);
+    }
+
+    fn push_component(&mut self, component: &str) {
+        self.push_component_with(component, ComponentPolicy::Identifier);
+    }
+
+    fn push_flattened_component(&mut self, component: &str) {
+        self.push_component_with(component, ComponentPolicy::DottedPath);
+    }
+
+    fn push_component_with(&mut self, component: &str, policy: ComponentPolicy) {
+        let start = self.out.len();
+        for ch in component.chars() {
+            self.out.push(policy.sanitize(ch));
         }
-        TyKind::Tuple(elems) if elems.is_empty() => "unit".to_owned(),
-        TyKind::Tuple(elems) => format!(
-            "pairL{}J",
-            elems
-                .iter()
-                .map(|elem| mangle_ty(db, *elem))
-                .collect::<Vec<_>>()
-                .join("_")
-        ),
-        TyKind::BoundVar(var) => format!("t{}", var.index),
-        TyKind::Comptime(inner) => mangle_ty(db, *inner),
-        TyKind::Function { .. } => "fn".to_owned(),
-        TyKind::Error => "error".to_owned(),
-        TyKind::Unknown => "unknown".to_owned(),
+        if policy.empty_component_is_underscore() && self.out.len() == start {
+            self.out.push('_');
+        }
+    }
+
+    fn push_ty_list<'db>(&mut self, db: &'db dyn HirDb, tys: &[Ty<'db>]) {
+        for (index, ty) in tys.iter().enumerate() {
+            if index > 0 {
+                self.out.push('_');
+            }
+            self.push_ty(db, *ty);
+        }
+    }
+
+    fn push_ty<'db>(&mut self, db: &'db dyn HirDb, ty: Ty<'db>) {
+        match ty.kind(db) {
+            TyKind::Named { ctor, args } => {
+                let name = match ctor {
+                    TyCtor::Builtin(ctor) => {
+                        if *ctor == BuiltinTyCtor::Unit && args.is_empty() {
+                            self.out.push_str("unit");
+                            return;
+                        }
+                        ctor.name().to_owned()
+                    }
+                    TyCtor::User(user) => user
+                        .def
+                        .name(db)
+                        .unwrap_or_else(|| format!("{:?}", user.def.kind(db))),
+                };
+                self.push_flattened_component(&name);
+                if !args.is_empty() {
+                    self.out.push('L');
+                    self.push_ty_list(db, args);
+                    self.out.push('J');
+                }
+            }
+            TyKind::Tuple(elems) if elems.is_empty() => self.out.push_str("unit"),
+            TyKind::Tuple(elems) => {
+                self.out.push_str("pairL");
+                self.push_ty_list(db, elems);
+                self.out.push('J');
+            }
+            TyKind::BoundVar(var) => {
+                self.out.push('t');
+                self.out.push_str(&var.index.to_string());
+            }
+            TyKind::Comptime(inner) => self.push_ty(db, *inner),
+            TyKind::Function { .. } => self.out.push_str("fn"),
+            TyKind::Error => self.out.push_str("error"),
+            TyKind::Unknown => self.out.push_str("unknown"),
+        }
+    }
+
+    fn finish(self) -> String {
+        self.out
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ComponentPolicy {
+    DottedPath,
+    Identifier,
+}
+
+impl ComponentPolicy {
+    fn sanitize(self, ch: char) -> char {
+        match self {
+            ComponentPolicy::DottedPath if ch == '.' => '_',
+            ComponentPolicy::DottedPath => ch,
+            ComponentPolicy::Identifier if ch.is_ascii_alphanumeric() || ch == '_' => ch,
+            ComponentPolicy::Identifier => '_',
+        }
+    }
+
+    fn empty_component_is_underscore(self) -> bool {
+        matches!(self, ComponentPolicy::Identifier)
     }
 }
 

@@ -738,12 +738,7 @@ impl<'db> Driver<'db> {
         let mut parts = def_owner_path(self.db, def);
         parts.push(ident_text(self.db, &info.function.sig(self.db).name));
         parts.push(def_hash_suffix(self.db, def));
-        parts
-            .into_iter()
-            .filter(|part| !part.is_empty())
-            .map(|part| sanitize_name_component(&part))
-            .collect::<Vec<_>>()
-            .join("_")
+        join_sanitized_name_components(parts)
     }
 
     pub(super) fn call_origin_for_def(&self, def: DefId<'db>) -> MonoCallOrigin<'db> {

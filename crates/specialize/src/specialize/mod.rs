@@ -69,12 +69,11 @@ pub(crate) use naming::display_backend_ty;
 pub use naming::specialize_name;
 use naming::{
     body_map_contains, class_method_name_parts, collect_body_order, ctor_name, def_hash_suffix,
-    def_owner_path, function_param_ty, function_ret_ty, ident_text,
+    def_owner_path, function_param_ty, function_ret_ty, ident_text, join_sanitized_name_components,
     lowered_function_has_inferred_dispatch_placeholder, module_id_for_source_file, mono_abi_params,
     param_comptime, param_name, param_names, pred_is_closed, reachable_modules,
-    resolve_specialize_module, sanitize_name_component, selector_bytes, specialization_trait_env,
-    strip_comptime_ty, ty_is_builtin, ty_is_closed, ty_is_comptime, ty_node_budget_exceeded,
-    type_var_bindings,
+    resolve_specialize_module, selector_bytes, specialization_trait_env, strip_comptime_ty,
+    ty_is_builtin, ty_is_closed, ty_is_comptime, ty_node_budget_exceeded, type_var_bindings,
 };
 use products::{
     product_expr_from_vars, product_pat_from_vars, product_vars, unwrap_sum_pat, var_expr,
