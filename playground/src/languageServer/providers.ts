@@ -5,6 +5,7 @@ import { registerDefinition } from "./providers/definition";
 import { registerDocumentHighlight } from "./providers/documentHighlight";
 import { registerHover } from "./providers/hover";
 import { registerReferences } from "./providers/references";
+import { registerRename } from "./providers/rename";
 import { registerSignatureHelp } from "./providers/signatureHelp";
 
 export function registerProviders(monaco: typeof Monaco, client: LspClient): () => void {
@@ -15,6 +16,7 @@ export function registerProviders(monaco: typeof Monaco, client: LspClient): () 
     registerDefinition(monaco, client),
     registerReferences(monaco, client),
     registerDocumentHighlight(monaco, client),
+    registerRename(monaco, client),
   ];
 
   return () => {
