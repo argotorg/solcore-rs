@@ -20,6 +20,16 @@ import { useWorkspaceStore, type WorkspaceFile } from "../store/workspace";
  */
 export function startModelHost(monaco: typeof Monaco): () => void {
   const contentSubscriptions = new Map<string, Monaco.IDisposable>();
+  let modelOriginatedStoreUpdateDepth = 0;
+
+  const setStoreContentFromModel = (path: string, content: string): void => {
+    modelOriginatedStoreUpdateDepth += 1;
+    try {
+      useWorkspaceStore.getState().setContent(path, content);
+    } finally {
+      modelOriginatedStoreUpdateDepth -= 1;
+    }
+  };
 
   const ensureModel = (path: string, content: string): void => {
     const uri = monaco.Uri.parse(uriForWorkspacePath(path));
@@ -28,13 +38,13 @@ export function startModelHost(monaco: typeof Monaco): () => void {
     if (!existing) {
       const model = monaco.editor.createModel(content, SOLCORE_LANGUAGE_ID, uri);
       const subscription = model.onDidChangeContent(() => {
-        useWorkspaceStore.getState().setContent(path, model.getValue());
+        setStoreContentFromModel(path, model.getValue());
       });
       contentSubscriptions.set(uri.toString(), subscription);
       return;
     }
 
-    if (existing.getValue() !== content) {
+    if (existing.getValue() !== content && modelOriginatedStoreUpdateDepth === 0) {
       existing.setValue(content);
     }
   };
