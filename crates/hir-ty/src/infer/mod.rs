@@ -29,9 +29,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::field;
 
 use crate::{
-    BinderEnv, BodyDesugarView, BodyPreTypeckDesugarPlan, BuiltinClassId, BuiltinTyCtor, ClassId,
-    Db, LoweredFunction, Pred, PredKind, ProductShape, QualTy, SourceOrigin, Ty, TyCtor, TyKind,
-    TyScheme, TypeLowering, TypeLoweringDiagnostic, UserTyCtorKind,
+    BinderEnv, BodyDesugarView, BodyPreTypeckDesugarPlan, BoolUnitSumView, BuiltinClassId,
+    BuiltinTyCtor, ClassId, Db, LoweredFunction, Pred, PredKind, ProductShape, QualTy,
+    SourceOrigin, Ty, TyCtor, TyKind, TyScheme, TypeLowering, TypeLoweringDiagnostic,
+    UserTyCtorKind,
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
     builtin_scheme, canonical_goal_with_allowed,
     contract::module_contract_diagnostics,

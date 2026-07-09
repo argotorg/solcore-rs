@@ -544,6 +544,11 @@ contract C {
 
   public function f(x : word, y : bool, z : word) -> (word, bool, word) {
     let t : (word, bool, word) = (x, y, z);
+    let b : bool = true;
+    match b {
+    | true => return (x, y, z);
+    | false => return (z, y, x);
+    }
     let w : word = if (y) then x else z;
     if (y) {
       return (w, y, z);
@@ -636,6 +641,28 @@ contract C {
             } if origin.kind == SourceOriginKind::IfStatement
                 && !then_body.is_empty()
                 && !else_body.is_empty()
+        )),
+        "{body_transforms:?}"
+    );
+    assert!(
+        body_transforms.iter().any(|transform| matches!(
+            transform,
+            PreTypeckTransform::BoolToUnitSum {
+                origin,
+                value: true,
+                ..
+            } if origin.kind == SourceOriginKind::BoolConstructor
+        )),
+        "{body_transforms:?}"
+    );
+    assert!(
+        body_transforms.iter().any(|transform| matches!(
+            transform,
+            PreTypeckTransform::BoolToUnitSum {
+                origin,
+                value: false,
+                ..
+            } if origin.kind == SourceOriginKind::BoolConstructor
         )),
         "{body_transforms:?}"
     );

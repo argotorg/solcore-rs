@@ -11,17 +11,27 @@ impl<'db> InferCtx<'db> {
         let mut ty = match &pat.kind {
             PatKind::Wildcard => expected.clone().unwrap_or_else(|| self.engine.fresh_var()),
             PatKind::Var(name) => match self.pat_resolutions.get(&(body, pat_id)).cloned() {
-                // Builtin `true`/`false`, unqualified same-name constructors,
-                // and unqualified-constructor misuse already reported by
-                // nameres all follow nullary constructor-pattern inference
-                // instead of binding a fresh local.
-                Some(
-                    hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(
-                        hir_nameres::BuiltinCtor::True | hir_nameres::BuiltinCtor::False,
-                    ))
-                    | hir_nameres::Resolution::Ctor { .. }
-                    | hir_nameres::Resolution::Err,
-                ) => self.infer_ctor_pat(body, pat_id, &[], expected.clone()),
+                // Bool constructor patterns have an early unit-sum view, while
+                // nameres remains the source of truth for whether the spelling
+                // is actually the builtin constructor.
+                Some(hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(
+                    ctor @ (hir_nameres::BuiltinCtor::True | hir_nameres::BuiltinCtor::False),
+                ))) => {
+                    if let Some(unit_sum) = self.bool_pat_unit_sum(body, pat_id) {
+                        debug_assert_eq!(
+                            unit_sum.value,
+                            matches!(ctor, hir_nameres::BuiltinCtor::True)
+                        );
+                    }
+                    self.infer_ctor_pat(body, pat_id, &[], expected.clone())
+                }
+                // Unqualified same-name constructors and unqualified
+                // constructor misuse already reported by nameres also follow
+                // nullary constructor-pattern inference instead of binding a
+                // fresh local.
+                Some(hir_nameres::Resolution::Ctor { .. } | hir_nameres::Resolution::Err) => {
+                    self.infer_ctor_pat(body, pat_id, &[], expected.clone())
+                }
                 _ => {
                     let ty = expected.clone().unwrap_or_else(|| self.engine.fresh_var());
                     self.pat_tys_for_locals.insert((body, pat_id), ty.clone());
@@ -141,8 +151,29 @@ impl<'db> InferCtx<'db> {
                 self.pattern_local_ty(body, pat)
             }
             hir_nameres::Resolution::Builtin(kind) => match kind {
-                hir_nameres::BuiltinKind::Constructor(_)
-                | hir_nameres::BuiltinKind::Function(_)
+                hir_nameres::BuiltinKind::Constructor(ctor) => {
+                    if matches!(
+                        ctor,
+                        hir_nameres::BuiltinCtor::True | hir_nameres::BuiltinCtor::False
+                    ) && let Some(unit_sum) = self.bool_expr_unit_sum(body, expr)
+                    {
+                        debug_assert_eq!(
+                            unit_sum.value,
+                            matches!(ctor, hir_nameres::BuiltinCtor::True)
+                        );
+                    }
+                    let kind = hir_nameres::BuiltinKind::Constructor(ctor);
+                    if let Some(scheme) = builtin_scheme(self.db, kind) {
+                        let instantiated = self.engine.instantiate_scheme_with_source(
+                            scheme,
+                            source.unwrap_or(ObligationSource::Scheme),
+                        );
+                        self.accept_instantiated(instantiated)
+                    } else {
+                        InferTy::Error
+                    }
+                }
+                hir_nameres::BuiltinKind::Function(_)
                 | hir_nameres::BuiltinKind::ClassMethod(_) => {
                     if let Some(scheme) = builtin_scheme(self.db, kind) {
                         let source = source.unwrap_or(match kind {

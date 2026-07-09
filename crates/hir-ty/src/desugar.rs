@@ -181,6 +181,27 @@ pub struct IfExprMatchView<'db> {
     pub else_expr: Id<Expr<'db>>,
 }
 
+/// Unit-sum view of a bool constructor or pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoolUnitSumView<'db> {
+    /// User syntax that produced this view.
+    pub origin: SourceOrigin<'db>,
+    /// Boolean constructor value.
+    pub value: bool,
+}
+
+impl BoolUnitSumView<'_> {
+    /// Source constructor spelling.
+    pub const fn source(self) -> &'static str {
+        if self.value { "true" } else { "false" }
+    }
+
+    /// Unit-sum replacement spelling.
+    pub const fn replacement(self) -> &'static str {
+        if self.value { "inr(())" } else { "inl(())" }
+    }
+}
+
 impl<'a, 'db> BodyDesugarView<'a, 'db> {
     /// Creates a view over pre-typecheck body desugar plans.
     pub fn new(plans: &'a [BodyPreTypeckDesugarPlan<'db>]) -> Self {
@@ -252,6 +273,11 @@ impl<'a, 'db> BodyDesugarView<'a, 'db> {
                 } if *candidate == expr => Some(*origin),
                 PreTypeckTransform::IfExprToMatch {
                     expr: candidate,
+                    origin,
+                    ..
+                } if *candidate == expr => Some(*origin),
+                PreTypeckTransform::BoolToUnitSum {
+                    node: BoolUnitSumNode::Expr(candidate),
                     origin,
                     ..
                 } if *candidate == expr => Some(*origin),
@@ -341,6 +367,55 @@ impl<'a, 'db> BodyDesugarView<'a, 'db> {
                     origin,
                     ..
                 } if *candidate == pat => Some(*origin),
+                PreTypeckTransform::BoolToUnitSum {
+                    node: BoolUnitSumNode::Pat(candidate),
+                    origin,
+                    ..
+                } if *candidate == pat => Some(*origin),
+                _ => None,
+            })
+    }
+
+    /// Returns the planned unit-sum view for a bool expression constructor.
+    pub fn bool_expr_unit_sum(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<BoolUnitSumView<'db>> {
+        self.body_plan(body)?
+            .transforms
+            .iter()
+            .find_map(|transform| match transform {
+                PreTypeckTransform::BoolToUnitSum {
+                    node: BoolUnitSumNode::Expr(candidate),
+                    origin,
+                    value,
+                } if *candidate == expr => Some(BoolUnitSumView {
+                    origin: *origin,
+                    value: *value,
+                }),
+                _ => None,
+            })
+    }
+
+    /// Returns the planned unit-sum view for a bool pattern constructor.
+    pub fn bool_pat_unit_sum(
+        &self,
+        body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
+    ) -> Option<BoolUnitSumView<'db>> {
+        self.body_plan(body)?
+            .transforms
+            .iter()
+            .find_map(|transform| match transform {
+                PreTypeckTransform::BoolToUnitSum {
+                    node: BoolUnitSumNode::Pat(candidate),
+                    origin,
+                    value,
+                } if *candidate == pat => Some(BoolUnitSumView {
+                    origin: *origin,
+                    value: *value,
+                }),
                 _ => None,
             })
     }
@@ -449,6 +524,24 @@ pub enum PreTypeckTransform<'db> {
         /// Expression in the false branch.
         else_expr: Id<Expr<'db>>,
     },
+    /// Bool constructor or pattern viewed as a unit-sum constructor.
+    BoolToUnitSum {
+        /// Source node.
+        node: BoolUnitSumNode<'db>,
+        /// Diagnostic origin for generated unit-sum nodes.
+        origin: SourceOrigin<'db>,
+        /// Source boolean value.
+        value: bool,
+    },
+}
+
+/// Bool source node category for unit-sum views.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum BoolUnitSumNode<'db> {
+    /// Expression constructor.
+    Expr(Id<Expr<'db>>),
+    /// Pattern constructor.
+    Pat(Id<Pat<'db>>),
 }
 
 /// Planned pre-typecheck desugars for a contract field initializer.
@@ -530,6 +623,14 @@ pub fn pre_typeck_desugar_body_tree<'db>(
     }
     bodies.extend(collector.nested_bodies);
     bodies
+}
+
+fn bool_source_value(text: &str) -> Option<bool> {
+    match text {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 struct ModuleCollector<'db> {
@@ -779,7 +880,23 @@ impl<'db> BodyCollector<'db> {
     fn expr(&mut self, expr_id: Id<Expr<'db>>) {
         let expr = self.body.exprs(self.db).get(expr_id);
         match &expr.kind {
-            ExprKind::DotCtor { args, .. } => {
+            ExprKind::Ident(name) => {
+                if let Some(value) = bool_source_value((*name.atom()).text(self.db)) {
+                    self.transforms.push(PreTypeckTransform::BoolToUnitSum {
+                        node: BoolUnitSumNode::Expr(expr_id),
+                        origin: SourceOrigin::new(expr.span, SourceOriginKind::BoolConstructor),
+                        value,
+                    });
+                }
+            }
+            ExprKind::DotCtor { name, args, .. } => {
+                if let Some(value) = bool_source_value((*name.atom()).text(self.db)) {
+                    self.transforms.push(PreTypeckTransform::BoolToUnitSum {
+                        node: BoolUnitSumNode::Expr(expr_id),
+                        origin: SourceOrigin::new(expr.span, SourceOriginKind::BoolConstructor),
+                        value,
+                    });
+                }
                 for arg in args {
                     self.expr(*arg);
                 }
@@ -842,14 +959,21 @@ impl<'db> BodyCollector<'db> {
                 }
             }
             ExprKind::Proxy { ty, .. } => self.type_ref(*ty),
-            ExprKind::Lit(_) | ExprKind::Ident(_) | ExprKind::Error => {}
+            ExprKind::Lit(_) | ExprKind::Error => {}
         }
     }
 
     fn pat(&mut self, pat_id: Id<Pat<'db>>) {
         let pat = self.body.pats(self.db).get(pat_id);
         match &pat.kind {
-            PatKind::Ctor { args, .. } => {
+            PatKind::Ctor { head, args } => {
+                if let Some(value) = bool_source_value((*head.name().atom()).text(self.db)) {
+                    self.transforms.push(PreTypeckTransform::BoolToUnitSum {
+                        node: BoolUnitSumNode::Pat(pat_id),
+                        origin: SourceOrigin::new(pat.span, SourceOriginKind::BoolConstructor),
+                        value,
+                    });
+                }
                 for arg in args {
                     self.pat(*arg);
                 }
@@ -865,7 +989,16 @@ impl<'db> BodyCollector<'db> {
                     self.pat(*elem);
                 }
             }
-            PatKind::Wildcard | PatKind::Var(_) | PatKind::Lit(_) | PatKind::Error => {}
+            PatKind::Var(name) => {
+                if let Some(value) = bool_source_value((*name.atom()).text(self.db)) {
+                    self.transforms.push(PreTypeckTransform::BoolToUnitSum {
+                        node: BoolUnitSumNode::Pat(pat_id),
+                        origin: SourceOrigin::new(pat.span, SourceOriginKind::BoolConstructor),
+                        value,
+                    });
+                }
+            }
+            PatKind::Wildcard | PatKind::Lit(_) | PatKind::Error => {}
         }
     }
 

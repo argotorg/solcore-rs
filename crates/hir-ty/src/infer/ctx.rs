@@ -365,6 +365,22 @@ impl<'db> InferCtx<'db> {
         if_expr_match_input(self.desugar_view(), body, expr, cond, then_expr, else_expr)
     }
 
+    pub(super) fn bool_expr_unit_sum(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<BoolUnitSumView<'db>> {
+        self.desugar_view().bool_expr_unit_sum(body, expr)
+    }
+
+    pub(super) fn bool_pat_unit_sum(
+        &self,
+        body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
+    ) -> Option<BoolUnitSumView<'db>> {
+        self.desugar_view().bool_pat_unit_sum(body, pat)
+    }
+
     pub(super) fn label_span(&self, span: Span<'db>) -> LabelSpan {
         self.diagnostic_sources().label_span(span)
     }
