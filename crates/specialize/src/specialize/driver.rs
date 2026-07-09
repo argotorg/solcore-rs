@@ -650,6 +650,7 @@ impl<'db> Driver<'db> {
         let Some(result) = self.try_infer_result(&info, body, &body_map, &lowered) else {
             return;
         };
+        let shadowed_top_level = self.shadowed_top_level_function(&info);
         let mut ctx = BodyCtx {
             driver: self,
             info: &info,
@@ -678,6 +679,7 @@ impl<'db> Driver<'db> {
         let fun = MonoFunction {
             origin: pending.key.origin.clone(),
             source: Some(pending.key.def),
+            shadowed_top_level,
             name: pending.key.base_name.clone(),
             span: info.function.span(ctx.driver.db),
             params,
@@ -686,6 +688,19 @@ impl<'db> Driver<'db> {
             body,
         };
         ctx.driver.mono_funs.insert(pending.key, fun);
+    }
+
+    fn shadowed_top_level_function(&self, info: &FunctionInfo<'db>) -> Option<String> {
+        if !matches!(info.kind, FunctionInfoKind::Contract) {
+            return None;
+        }
+        let name = ident_text(self.db, &info.function.sig(self.db).name);
+        let has_top_level_function = self.functions.values().any(|candidate| {
+            matches!(candidate.kind, FunctionInfoKind::Source)
+                && candidate.module.def_id_value(self.db) == info.module.def_id_value(self.db)
+                && ident_text(self.db, &candidate.function.sig(self.db).name) == name
+        });
+        has_top_level_function.then_some(name)
     }
 
     fn function_params(

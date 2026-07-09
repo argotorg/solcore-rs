@@ -9,19 +9,61 @@ pub struct SpecializeDiagnostic<'db> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecializeDiagnosticKind<'db> {
-    FreeTypeVariable { context: String, ty: String },
-    InstantiationFuelExhausted { limit: usize },
-    InstantiationDepthExceeded { limit: usize },
-    TypeSizeExceeded { limit: usize },
-    MissingBody { function: DefId<'db> },
-    MissingResolution { context: String },
-    MissingEvidence { context: String },
-    UnsupportedEvidence { context: String },
-    UnresolvedExternal { function: DefId<'db>, name: String },
-    ComptimeEvaluationFailed { context: String },
-    ComptimeFuelExhausted { function: String, limit: usize },
-    IntegerErasure { context: String, ty: String },
-    PublicComptimeParam { function: String, param: String },
+    FreeTypeVariable {
+        context: String,
+        ty: String,
+    },
+    InstantiationFuelExhausted {
+        limit: usize,
+    },
+    InstantiationDepthExceeded {
+        limit: usize,
+    },
+    TypeSizeExceeded {
+        limit: usize,
+    },
+    MissingBody {
+        function: DefId<'db>,
+    },
+    MissingResolution {
+        context: String,
+    },
+    MissingEvidence {
+        context: String,
+    },
+    UnsupportedEvidence {
+        context: String,
+    },
+    UnresolvedExternal {
+        function: DefId<'db>,
+        name: String,
+    },
+    ComptimeEvaluationFailed {
+        context: String,
+    },
+    ComptimeFuelExhausted {
+        function: String,
+        limit: usize,
+    },
+    ComptimeRecursion {
+        function: String,
+    },
+    ReductionRecursion {
+        function: String,
+        shadowed_top_level: Option<String>,
+    },
+    ReductionFuelExhausted {
+        function: String,
+        limit: usize,
+    },
+    IntegerErasure {
+        context: String,
+        ty: String,
+    },
+    PublicComptimeParam {
+        function: String,
+        param: String,
+    },
 }
 
 impl<'db> SpecializeDiagnostic<'db> {
@@ -61,6 +103,11 @@ impl SpecializeDiagnosticKind<'_> {
             Self::ComptimeFuelExhausted { .. } => {
                 DiagnosticCode::SPECIALIZE_COMPTIME_FUEL_EXHAUSTED
             }
+            Self::ComptimeRecursion { .. } => DiagnosticCode::SPECIALIZE_COMPTIME_FUEL_EXHAUSTED,
+            Self::ReductionRecursion { .. } => DiagnosticCode::SPECIALIZE_REDUCTION_RECURSION,
+            Self::ReductionFuelExhausted { .. } => {
+                DiagnosticCode::SPECIALIZE_REDUCTION_FUEL_EXHAUSTED
+            }
             Self::IntegerErasure { .. } => DiagnosticCode::SPECIALIZE_INTEGER_ERASURE,
             Self::PublicComptimeParam { .. } => DiagnosticCode::SPECIALIZE_PUBLIC_COMPTIME_PARAM,
         }
@@ -79,6 +126,11 @@ impl SpecializeDiagnosticKind<'_> {
             Self::UnresolvedExternal { .. } => "external function required here",
             Self::ComptimeEvaluationFailed { .. } => "comptime evaluation failed here",
             Self::ComptimeFuelExhausted { .. } => "comptime fuel limit reached here",
+            Self::ComptimeRecursion { .. } => "recursive comptime call cannot be reduced here",
+            Self::ReductionRecursion { .. } => "recursive call cannot be reduced here",
+            Self::ReductionFuelExhausted { .. } => {
+                "compile-time reduction depth limit reached here"
+            }
             Self::IntegerErasure { .. } => "not representable at runtime",
             Self::PublicComptimeParam { .. } => "public entry parameter is runtime",
         }
@@ -100,6 +152,32 @@ impl SpecializeDiagnosticKind<'_> {
             Self::ComptimeFuelExhausted { .. } => vec![
                 "comptime evaluation did not finish before the fuel limit was reached".to_owned(),
                 "help: make the comptime recursion reach a base case or reduce the compile-time work"
+                    .to_owned(),
+            ],
+            Self::ComptimeRecursion { .. } => vec![
+                "comptime evaluation did not terminate because recursive calls form a cycle"
+                    .to_owned(),
+                "help: make the comptime recursion reach a base case or reduce the compile-time work"
+                    .to_owned(),
+            ],
+            Self::ReductionRecursion {
+                shadowed_top_level,
+                ..
+            } => {
+                let mut notes = vec![
+                    "help: add a base case, or guard the recursive call behind a runtime condition so it compiles to a runtime call"
+                        .to_owned(),
+                ];
+                if let Some(name) = shadowed_top_level {
+                    notes.push(format!(
+                        "a top-level function `{name}` is shadowed here; qualify the call to reach it"
+                    ));
+                }
+                notes
+            }
+            Self::ReductionFuelExhausted { .. } => vec![
+                "pure-call reduction did not finish before the depth limit was reached".to_owned(),
+                "help: add a base case, guard recursion behind a runtime condition, or reduce the compile-time work"
                     .to_owned(),
             ],
             Self::IntegerErasure { .. } => vec![
@@ -156,6 +234,18 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
             Self::ComptimeFuelExhausted { function, limit } => write!(
                 f,
                 "comptime evaluation fuel exhausted in {function} at {limit} unfold steps"
+            ),
+            Self::ComptimeRecursion { function } => write!(
+                f,
+                "comptime evaluation did not terminate in {function}: recursive calls form a cycle"
+            ),
+            Self::ReductionRecursion { function, .. } => write!(
+                f,
+                "`{function}` cannot be reduced at compile time: recursive calls form a cycle with no base case (infinite recursion)"
+            ),
+            Self::ReductionFuelExhausted { function, limit } => write!(
+                f,
+                "compile-time reduction fuel exhausted in {function} at {limit} unfold steps"
             ),
             Self::IntegerErasure { context, ty } => {
                 write!(f, "runtime lowering cannot represent `{ty}` in {context}")

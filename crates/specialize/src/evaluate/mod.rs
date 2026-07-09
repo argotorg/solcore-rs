@@ -44,6 +44,9 @@ pub(crate) fn evaluate_module<'db>(
             diagnostic.kind,
             SpecializeDiagnosticKind::ComptimeEvaluationFailed { .. }
                 | SpecializeDiagnosticKind::ComptimeFuelExhausted { .. }
+                | SpecializeDiagnosticKind::ComptimeRecursion { .. }
+                | SpecializeDiagnosticKind::ReductionRecursion { .. }
+                | SpecializeDiagnosticKind::ReductionFuelExhausted { .. }
         )
     }) {
         evaluator.check_integer_erasure(&module);

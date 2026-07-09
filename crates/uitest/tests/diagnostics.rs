@@ -185,13 +185,16 @@ fn assert_failure_snapshot(db: &TestDb, case_dir: &Path, diagnostics: Vec<Diagno
 }
 
 fn allows_success_fixture(case_dir: &Path) -> bool {
-    let Some("typeck") = case_dir
+    let Some(parent) = case_dir
         .parent()
         .and_then(Path::file_name)
         .and_then(|name| name.to_str())
     else {
         return false;
     };
+    if !matches!(parent, "typeck" | "specialize" | "hull") {
+        return false;
+    }
     case_dir
         .file_name()
         .and_then(|name| name.to_str())

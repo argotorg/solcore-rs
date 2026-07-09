@@ -46,12 +46,19 @@ enum FoldOutcome<'db> {
     FellThroughContinue(VEnv<'db>, CEnv),
 }
 
+struct InlineFrame<'db> {
+    name: String,
+    args: Vec<MonoExpr<'db>>,
+    comptime: bool,
+}
+
 pub(super) struct Evaluator<'db> {
     pub(super) db: &'db dyn Db,
     functions: FxHashMap<String, MonoFunction<'db>>,
     pure_funs: FxHashSet<String>,
     write_effects: FxHashMap<String, AssignedNames>,
     pub(super) diagnostics: Vec<SpecializeDiagnostic<'db>>,
+    inline_stack: Vec<InlineFrame<'db>>,
     fuel_limit: usize,
     fuel: usize,
     memory: BTreeMap<BigInt, u8>,
@@ -111,6 +118,7 @@ impl<'db> Evaluator<'db> {
             pure_funs,
             write_effects,
             diagnostics: Vec::new(),
+            inline_stack: Vec::new(),
             fuel_limit: fuel,
             fuel,
             memory: BTreeMap::new(),
@@ -956,18 +964,35 @@ impl<'db> Evaluator<'db> {
                     })
                 })
             }
-            MonoExprKind::Lambda { params, body, .. } if params.len() == args.len() => {
+            MonoExprKind::Lambda { name, params, body } if params.len() == args.len() => {
+                let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
+                let frame_comptime = self.comptime_mode
+                    || ret_comptime
+                    || params.iter().any(|param| param_is_comptime(self.db, param));
+                let frame_name = format!(
+                    "lambda:{}:{}:{}",
+                    name,
+                    span.begin().as_u32(),
+                    span.end().as_u32()
+                );
+                if self.has_recursive_inline_frame(&frame_name, args) {
+                    self.push_recursion_diagnostic(name.clone(), frame_comptime, None, span);
+                    return None;
+                }
                 if self.fuel == 0 {
-                    self.diagnostics.push(SpecializeDiagnostic {
-                        kind: SpecializeDiagnosticKind::ComptimeFuelExhausted {
-                            function: "lambda".to_owned(),
-                            limit: self.fuel_limit,
-                        },
-                        span: Some(span),
-                    });
+                    self.push_fuel_diagnostic(
+                        name.clone(),
+                        self.inline_chain_is_comptime(frame_comptime),
+                        span,
+                    );
                     return None;
                 }
                 self.fuel -= 1;
+                self.inline_stack.push(InlineFrame {
+                    name: frame_name,
+                    args: args.to_vec(),
+                    comptime: frame_comptime,
+                });
                 let mut env = VEnv::default();
                 let mut comptime_env = CEnv::default();
                 for (param, arg) in params.iter().zip(args) {
@@ -980,6 +1005,8 @@ impl<'db> Evaluator<'db> {
                 }
                 let type_reg = build_type_reg(params, body);
                 let result = self.eval_fun_body(&type_reg, env, comptime_env, body.clone());
+                let frame = self.inline_stack.pop();
+                debug_assert!(frame.is_some_and(|frame| frame.name.starts_with("lambda:")));
                 self.fuel += 1;
                 match result {
                     FoldOutcome::ReturnedKnown(expr) => Some(expr),
@@ -1265,20 +1292,37 @@ impl<'db> Evaluator<'db> {
         if function.params.len() != args.len() {
             return None;
         }
+        let ret_comptime = ty_is_comptime(self.db, function.ret.ty());
+        let frame_comptime = self.comptime_mode
+            || ret_comptime
+            || function
+                .params
+                .iter()
+                .any(|param| param_is_comptime(self.db, param));
+        let function_display = display_mono_function_name(self.db, &function);
+        if self.has_recursive_inline_frame(name, args) {
+            let shadowed = (!frame_comptime)
+                .then(|| function.shadowed_top_level.clone())
+                .flatten();
+            self.push_recursion_diagnostic(function_display, frame_comptime, shadowed, span);
+            return None;
+        }
         if self.fuel == 0 {
-            self.diagnostics.push(SpecializeDiagnostic {
-                kind: SpecializeDiagnosticKind::ComptimeFuelExhausted {
-                    function: display_mono_function_name(self.db, &function),
-                    limit: self.fuel_limit,
-                },
-                span: Some(span),
-            });
+            self.push_fuel_diagnostic(
+                function_display,
+                self.inline_chain_is_comptime(frame_comptime),
+                span,
+            );
             return None;
         }
         self.fuel -= 1;
+        self.inline_stack.push(InlineFrame {
+            name: name.to_owned(),
+            args: args.to_vec(),
+            comptime: frame_comptime,
+        });
         let mut env = VEnv::default();
         let mut comptime_env = CEnv::default();
-        let ret_comptime = ty_is_comptime(self.db, function.ret.ty());
         for (param, arg) in function.params.iter().zip(args) {
             if self.expr_is_known_value(arg) {
                 env.insert(param.name.clone(), arg.clone());
@@ -1289,11 +1333,80 @@ impl<'db> Evaluator<'db> {
         }
         let type_reg = build_type_reg(&function.params, &function.body);
         let result = self.eval_fun_body(&type_reg, env, comptime_env, function.body);
+        let frame = self.inline_stack.pop();
+        debug_assert!(frame.is_some_and(|frame| frame.name == name));
         self.fuel += 1;
         match result {
             FoldOutcome::ReturnedKnown(expr) => Some(expr),
             FoldOutcome::ReturnedUnknownAbort | FoldOutcome::FellThroughContinue(_, _) => None,
         }
+    }
+
+    fn has_recursive_inline_frame(&self, name: &str, args: &[MonoExpr<'db>]) -> bool {
+        self.inline_stack
+            .iter()
+            .any(|frame| frame.name == name && frame.args == args)
+    }
+
+    fn inline_chain_is_comptime(&self, current_frame_comptime: bool) -> bool {
+        current_frame_comptime || self.inline_stack.iter().any(|frame| frame.comptime)
+    }
+
+    fn has_inline_failure_diagnostic(&self) -> bool {
+        self.diagnostics.iter().any(|diagnostic| {
+            matches!(
+                diagnostic.kind,
+                SpecializeDiagnosticKind::ComptimeFuelExhausted { .. }
+                    | SpecializeDiagnosticKind::ComptimeRecursion { .. }
+                    | SpecializeDiagnosticKind::ReductionRecursion { .. }
+                    | SpecializeDiagnosticKind::ReductionFuelExhausted { .. }
+            )
+        })
+    }
+
+    fn push_recursion_diagnostic(
+        &mut self,
+        function: String,
+        comptime: bool,
+        shadowed_top_level: Option<String>,
+        span: Span<'db>,
+    ) {
+        if self.has_inline_failure_diagnostic() {
+            return;
+        }
+        let kind = if self.inline_chain_is_comptime(comptime) {
+            SpecializeDiagnosticKind::ComptimeRecursion { function }
+        } else {
+            SpecializeDiagnosticKind::ReductionRecursion {
+                function,
+                shadowed_top_level,
+            }
+        };
+        self.diagnostics.push(SpecializeDiagnostic {
+            kind,
+            span: Some(span),
+        });
+    }
+
+    fn push_fuel_diagnostic(&mut self, function: String, comptime: bool, span: Span<'db>) {
+        if self.has_inline_failure_diagnostic() {
+            return;
+        }
+        let kind = if comptime {
+            SpecializeDiagnosticKind::ComptimeFuelExhausted {
+                function,
+                limit: self.fuel_limit,
+            }
+        } else {
+            SpecializeDiagnosticKind::ReductionFuelExhausted {
+                function,
+                limit: self.fuel_limit,
+            }
+        };
+        self.diagnostics.push(SpecializeDiagnostic {
+            kind,
+            span: Some(span),
+        });
     }
 
     fn eval_fun_body(

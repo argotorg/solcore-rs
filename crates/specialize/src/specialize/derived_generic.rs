@@ -166,6 +166,7 @@ impl<'db> Driver<'db> {
                 method: method.to_owned(),
             },
             source: None,
+            shadowed_top_level: None,
             name: name.to_owned(),
             span,
             params: vec![param],

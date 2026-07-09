@@ -167,6 +167,7 @@ pub struct MonoAbiParam {
 pub struct MonoFunction<'db> {
     pub origin: MonoFunctionOrigin<'db>,
     pub source: Option<DefId<'db>>,
+    pub shadowed_top_level: Option<String>,
     pub name: String,
     pub span: Span<'db>,
     pub params: Vec<MonoParam<'db>>,

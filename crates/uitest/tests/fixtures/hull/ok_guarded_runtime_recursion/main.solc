@@ -1,0 +1,15 @@
+import std.{*};
+
+function countdown(n: word) -> word {
+  if (n == 0) {
+    return 0;
+  } else {
+    return countdown(n - 1);
+  }
+}
+
+contract Counter {
+  public function main(n: word) -> word {
+    return countdown(n);
+  }
+}
