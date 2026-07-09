@@ -19,3 +19,11 @@ vfs = { path = "crates/vfs", package = "solcore-vfs" }
 
 [workspace.package]
 edition = "2024"
+
+# Release profile is size-tuned primarily for the `solcore-wasm` browser bundle
+# (`wasm-pack build`). Only affects explicit `--release` builds; dev/test/clippy are unaffected.
+[profile.release]
+opt-level = "z"   # optimize for size
+lto = true        # fat LTO across the dependency tree
+codegen-units = 1 # smaller code at the cost of build parallelism
+strip = true      # strip symbols + DWARF debug info (the dominant wasm-size win)

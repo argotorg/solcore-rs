@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:wasm": "wasm-pack build ../crates/wasm --target web --out-dir pkg && (command -v wasm-opt >/dev/null 2>&1 && wasm-opt -Oz --enable-reference-types --enable-bulk-memory ../crates/wasm/pkg/solcore_wasm_bg.wasm -o ../crates/wasm/pkg/solcore_wasm_bg.wasm && echo '[build:wasm] wasm-opt -Oz applied' || echo '[build:wasm] wasm-opt not found; skipping extra size pass (brew install binaryen for a smaller bundle)')",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

@@ -33,13 +33,23 @@ VITE_BASE=/solcore-rs/ npm run build
 
 ## WASM compiler
 
-The sibling wasm crate is built from the repository root when the compiler changes:
+Rebuild the sibling wasm crate whenever the compiler changes. Preferred (size-optimized):
 
 ```sh
-wasm-pack build --target web crates/wasm
+npm run build:wasm     # from playground/: wasm-pack build + optional `wasm-opt -Oz`
 ```
 
-That produces `crates/wasm/pkg/`. The Playground imports `init`, `compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The shared API shape lives in `src/compiler/types.ts` and should stay the single source of truth for the Playground compile protocol.
+Or directly from the repository root:
+
+```sh
+wasm-pack build --target web crates/wasm --out-dir pkg
+```
+
+That produces `crates/wasm/pkg/`. The workspace `[profile.release]` is size-tuned
+(`strip` + `opt-level = "z"` + `lto`), so `wasm-pack build` alone yields ~3.9&nbsp;MB (down from ~8.6&nbsp;MB
+unstripped). A final `wasm-opt -Oz` pass (requires `brew install binaryen`; wasm-pack's bundled wasm-opt is
+too old for reference-types) brings it to ~3.3&nbsp;MB (~1.06&nbsp;MB gzipped). `npm run build:wasm` applies it
+automatically when `wasm-opt` is on `PATH` and skips it gracefully otherwise. The Playground imports `init`, `compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The shared API shape lives in `src/compiler/types.ts` and should stay the single source of truth for the Playground compile protocol.
 
 The compile worker protocol is intentionally Playground-specific batch compile messaging:
 

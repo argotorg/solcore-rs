@@ -21,5 +21,8 @@ hull = { path = "../hull", package = "solcore-hull" }
 specialize = { path = "../specialize", package = "solcore-specialize" }
 yul = { path = "../yul", package = "solcore-yul" }
 
+# wasm-pack's bundled wasm-opt is too old for reference-types (multiple tables).
+# Size is handled by the workspace `[profile.release]` (strip + opt-level=z + lto);
+# for a final size pass run a modern `wasm-opt -Oz --enable-reference-types` (see playground/README).
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
