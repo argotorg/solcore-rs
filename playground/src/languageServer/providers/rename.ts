@@ -43,6 +43,34 @@ function rejectRenameLocation(
   };
 }
 
+function applyWorkspaceEdit(
+  monaco: typeof Monaco,
+  changes: Record<string, LspTextEdit[]>,
+): boolean {
+  let appliedAny = false;
+
+  for (const [uri, textEdits] of Object.entries(changes)) {
+    const resource = monaco.Uri.parse(uri);
+    const targetModel = monaco.editor.getModel(resource);
+    if (!targetModel || textEdits.length === 0) {
+      continue;
+    }
+
+    targetModel.pushEditOperations(
+      [],
+      textEdits.map((textEdit) => ({
+        range: fromLspRange(monaco, textEdit.range),
+        text: textEdit.newText,
+        forceMoveMarkers: true,
+      })),
+      () => null,
+    );
+    appliedAny = true;
+  }
+
+  return appliedAny;
+}
+
 export function registerRename(
   monaco: typeof Monaco,
   client: LspClient,
@@ -65,24 +93,7 @@ export function registerRename(
           return null;
         }
 
-        const edits: Monaco.languages.IWorkspaceTextEdit[] = [];
-        for (const [uri, textEdits] of Object.entries(result.changes)) {
-          const resource = monaco.Uri.parse(uri);
-          for (const textEdit of textEdits) {
-            edits.push({
-              resource,
-              versionId: undefined,
-              textEdit: {
-                range: fromLspRange(monaco, textEdit.range),
-                text: textEdit.newText,
-              },
-            });
-          }
-        }
-
-        return {
-          edits,
-        };
+        return applyWorkspaceEdit(monaco, result.changes) ? { edits: [] } : null;
       } catch {
         return null;
       }

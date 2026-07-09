@@ -31,22 +31,35 @@ export function startModelHost(monaco: typeof Monaco): () => void {
     }
   };
 
+  const ensureContentSubscription = (
+    path: string,
+    model: Monaco.editor.ITextModel,
+  ): void => {
+    const uriString = model.uri.toString();
+    if (contentSubscriptions.has(uriString)) {
+      return;
+    }
+
+    const subscription = model.onDidChangeContent(() => {
+      setStoreContentFromModel(path, model.getValue());
+    });
+    contentSubscriptions.set(uriString, subscription);
+  };
+
   const ensureModel = (path: string, content: string): void => {
     const uri = monaco.Uri.parse(uriForWorkspacePath(path));
     const existing = monaco.editor.getModel(uri);
 
     if (!existing) {
       const model = monaco.editor.createModel(content, SOLCORE_LANGUAGE_ID, uri);
-      const subscription = model.onDidChangeContent(() => {
-        setStoreContentFromModel(path, model.getValue());
-      });
-      contentSubscriptions.set(uri.toString(), subscription);
+      ensureContentSubscription(path, model);
       return;
     }
 
     if (existing.getValue() !== content && modelOriginatedStoreUpdateDepth === 0) {
       existing.setValue(content);
     }
+    ensureContentSubscription(path, existing);
   };
 
   const disposeModel = (uriString: string): void => {
