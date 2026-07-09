@@ -24,6 +24,7 @@ pub fn server_capabilities() -> ServerCapabilities {
         }),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
@@ -85,6 +86,10 @@ mod tests {
         );
         assert_eq!(capabilities.definition_provider, Some(OneOf::Left(true)));
         assert_eq!(capabilities.references_provider, Some(OneOf::Left(true)));
+        assert_eq!(
+            capabilities.document_highlight_provider,
+            Some(OneOf::Left(true))
+        );
         assert_eq!(
             capabilities.document_symbol_provider,
             Some(OneOf::Left(true))

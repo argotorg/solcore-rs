@@ -4,11 +4,11 @@
 
 use lsp_types::{
     CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
-    GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, InlayHint, InlayHintParams, Location, MessageType, ReferenceParams,
-    SemanticTokensParams, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
-    SymbolInformation, WorkspaceSymbolParams,
+    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
+    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
+    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
+    MessageType, ReferenceParams, SemanticTokensParams, SemanticTokensResult, SignatureHelp,
+    SignatureHelpParams, SymbolInformation, WorkspaceSymbolParams,
 };
 use tokio::sync::Mutex;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc};
@@ -141,6 +141,19 @@ impl LanguageServer for Backend {
             &uri,
             position,
             include_declaration,
+        ))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> jsonrpc::Result<Option<Vec<DocumentHighlight>>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let world = self.world.lock().await;
+
+        Ok(crate::document_highlight::handle_document_highlight(
+            &world, &uri, position,
         ))
     }
 

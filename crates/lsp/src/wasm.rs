@@ -5,8 +5,8 @@
 
 use lsp_types::{
     CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
-    InlayHintParams, ReferenceParams, SemanticTokensParams, SignatureHelpParams,
+    DidOpenTextDocumentParams, DocumentHighlightParams, DocumentSymbolParams, GotoDefinitionParams,
+    HoverParams, InlayHintParams, ReferenceParams, SemanticTokensParams, SignatureHelpParams,
     WorkspaceSymbolParams,
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -93,6 +93,7 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         "textDocument/signatureHelp" => handle_signature_help_request(world, id, params),
         "textDocument/definition" => handle_definition_request(world, id, params),
         "textDocument/references" => handle_references_request(world, id, params),
+        "textDocument/documentHighlight" => handle_document_highlight_request(world, id, params),
         "textDocument/documentSymbol" => handle_document_symbol_request(world, id, params),
         "textDocument/semanticTokens/full" => {
             handle_semantic_tokens_full_request(world, id, params)
@@ -249,6 +250,27 @@ fn handle_references_request(world: &WorldState, id: Option<Value>, params: Valu
     vec![result_response(
         id,
         crate::references::handle_references(world, &uri, position, include_declaration),
+    )]
+}
+
+fn handle_document_highlight_request(
+    world: &WorldState,
+    id: Option<Value>,
+    params: Value,
+) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<DocumentHighlightParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    let uri = params.text_document_position_params.text_document.uri;
+    let position = params.text_document_position_params.position;
+    vec![result_response(
+        id,
+        crate::document_highlight::handle_document_highlight(world, &uri, position),
     )]
 }
 
@@ -672,6 +694,44 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["name"], "target");
         assert_eq!(result[0]["location"]["uri"], URI);
+    }
+
+    #[test]
+    fn document_highlight_request_returns_highlights() {
+        let mut world = WorldState::new();
+        let source = "function id(x: word) -> word {\n  return x;\n}\n";
+        let outgoing = dispatch(&mut world, &did_open_message(source));
+        assert_eq!(outgoing.len(), 1);
+
+        let highlights = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "highlights-1",
+                "method": "textDocument/documentHighlight",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 1, "character": 9 }
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(highlights.len(), 1);
+        let response = parse_message(&highlights[0]);
+        assert_eq!(response["id"], "highlights-1");
+        let result = response["result"]
+            .as_array()
+            .expect("document highlight result array");
+        assert_eq!(
+            result.len(),
+            2,
+            "expected declaration and use highlights, got {response:#?}"
+        );
+        assert!(
+            result.iter().all(|highlight| highlight["kind"] == 1),
+            "expected text highlight kinds, got {response:#?}"
+        );
     }
 
     fn did_open_message(source: &str) -> String {
