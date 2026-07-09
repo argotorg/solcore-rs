@@ -109,6 +109,13 @@ impl WorldState {
         self.open_documents.get(uri).map(DocumentState::text)
     }
 
+    /// Returns the URIs for currently open documents in deterministic order.
+    pub fn open_document_uris(&self) -> Vec<Url> {
+        let mut uris = self.open_documents.keys().cloned().collect::<Vec<_>>();
+        uris.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        uris
+    }
+
     /// Returns the current line index for an open document.
     pub fn line_index(&self, uri: &Url) -> Option<&LineIndexExt> {
         self.open_documents.get(uri).map(DocumentState::line_index)

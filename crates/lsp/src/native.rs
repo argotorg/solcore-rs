@@ -8,6 +8,7 @@ use lsp_types::{
     GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult,
     InitializedParams, InlayHint, InlayHintParams, Location, MessageType, ReferenceParams,
     SemanticTokensParams, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
+    SymbolInformation, WorkspaceSymbolParams,
 };
 use tokio::sync::Mutex;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc};
@@ -174,6 +175,18 @@ impl LanguageServer for Backend {
         let world = self.world.lock().await;
 
         Ok(crate::inlay_hints::handle_inlay_hints(&world, &uri, range))
+    }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> jsonrpc::Result<Option<Vec<SymbolInformation>>> {
+        let world = self.world.lock().await;
+
+        Ok(crate::workspace_symbols::handle_workspace_symbol(
+            &world,
+            &params.query,
+        ))
     }
 }
 

@@ -7,6 +7,7 @@ use lsp_types::{
     CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
     InlayHintParams, ReferenceParams, SemanticTokensParams, SignatureHelpParams,
+    WorkspaceSymbolParams,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -97,6 +98,7 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
             handle_semantic_tokens_full_request(world, id, params)
         }
         "textDocument/inlayHint" => handle_inlay_hints_request(world, id, params),
+        "workspace/symbol" => handle_workspace_symbol_request(world, id, params),
         _ => error_or_empty(id, METHOD_NOT_FOUND, "Method not found"),
     }
 }
@@ -303,6 +305,25 @@ fn handle_inlay_hints_request(world: &WorldState, id: Option<Value>, params: Val
     vec![result_response(
         id,
         crate::inlay_hints::handle_inlay_hints(world, &uri, params.range),
+    )]
+}
+
+fn handle_workspace_symbol_request(
+    world: &WorldState,
+    id: Option<Value>,
+    params: Value,
+) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<WorkspaceSymbolParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    vec![result_response(
+        id,
+        crate::workspace_symbols::handle_workspace_symbol(world, &params.query),
     )]
 }
 
@@ -621,6 +642,36 @@ mod tests {
         let hints = response["result"].as_array().expect("hint result array");
         assert_eq!(hints.len(), 1, "expected one hint, got {response:#?}");
         assert_eq!(hints[0]["label"], ": word");
+    }
+
+    #[test]
+    fn workspace_symbol_request_returns_matching_symbols() {
+        let mut world = WorldState::new();
+        let source = "function target() -> word {\n  return 42;\n}\n";
+        let outgoing = dispatch(&mut world, &did_open_message(source));
+        assert_eq!(outgoing.len(), 1);
+
+        let symbols = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "symbols-1",
+                "method": "workspace/symbol",
+                "params": {
+                    "query": "target"
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(symbols.len(), 1);
+        let response = parse_message(&symbols[0]);
+        assert_eq!(response["id"], "symbols-1");
+        let result = response["result"]
+            .as_array()
+            .expect("workspace symbol result array");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["name"], "target");
+        assert_eq!(result[0]["location"]["uri"], URI);
     }
 
     fn did_open_message(source: &str) -> String {

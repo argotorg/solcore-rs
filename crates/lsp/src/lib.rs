@@ -23,6 +23,7 @@ pub mod symbols;
 pub mod wasm;
 #[cfg(all(test, not(feature = "wasm")))]
 mod wasm;
+pub mod workspace_symbols;
 
 pub use capabilities::{initialize_result, server_capabilities};
 pub use completion::handle_completion;
@@ -36,3 +37,4 @@ pub use semantic_tokens::handle_semantic_tokens_full;
 pub use signature_help::handle_signature_help;
 pub use state::{DocumentState, WorldState, uri_to_vfs_path, vfs_url_to_client_uri};
 pub use symbols::handle_document_symbol;
+pub use workspace_symbols::handle_workspace_symbol;
