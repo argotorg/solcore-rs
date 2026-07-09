@@ -42,6 +42,18 @@ pub fn compute_diagnostics(world: &WorldState, uri: &Url) -> Vec<LspDiagnostic> 
         .collect()
 }
 
+/// Computes diagnostics for every open document in deterministic URI order.
+pub fn compute_open_document_diagnostics(world: &WorldState) -> Vec<(Url, Vec<LspDiagnostic>)> {
+    world
+        .open_document_uris()
+        .into_iter()
+        .map(|uri| {
+            let diagnostics = compute_diagnostics(world, &uri);
+            (uri, diagnostics)
+        })
+        .collect()
+}
+
 fn is_reachable_from_workspace_entry(world: &WorldState, path: &str) -> bool {
     let db = world.db();
     let Some(file) = db.source_file(path) else {
@@ -162,6 +174,30 @@ mod tests {
         );
     }
 
+    fn assert_no_unknown_import_item(diagnostics: &[LspDiagnostic]) {
+        assert!(
+            !has_unknown_import_item(diagnostics),
+            "expected no unknown-import-item diagnostics, got {diagnostics:#?}"
+        );
+    }
+
+    fn assert_valid_sibling_import(diagnostics: &[LspDiagnostic]) {
+        assert_no_module_not_found(diagnostics);
+        assert_no_unknown_import_item(diagnostics);
+    }
+
+    fn diagnostics_for_uri<'a>(
+        diagnostics: &'a [(Url, Vec<LspDiagnostic>)],
+        uri: &Url,
+    ) -> &'a [LspDiagnostic] {
+        diagnostics
+            .iter()
+            .find_map(|(diagnostic_uri, diagnostics)| {
+                (diagnostic_uri == uri).then_some(&**diagnostics)
+            })
+            .unwrap_or_else(|| panic!("expected diagnostics for {uri}, got {diagnostics:#?}"))
+    }
+
     #[test]
     fn clean_program_has_no_diagnostics() {
         let (world, uri) = world_with_main("function main() -> word {\n  return 1;\n}\n");
@@ -200,7 +236,7 @@ mod tests {
         assert!(world.open_document(math_uri, math.to_owned()));
 
         let diagnostics = compute_diagnostics(&world, &main_uri);
-        assert_no_module_not_found(&diagnostics);
+        assert_valid_sibling_import(&diagnostics);
     }
 
     #[test]
@@ -215,7 +251,7 @@ mod tests {
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
 
         let diagnostics = compute_diagnostics(&world, &main_uri);
-        assert_no_module_not_found(&diagnostics);
+        assert_valid_sibling_import(&diagnostics);
     }
 
     #[test]
@@ -243,6 +279,101 @@ mod tests {
 
         assert!(world.open_document(math_uri, math.to_owned()));
         let diagnostics = compute_diagnostics(&world, &main_uri);
-        assert_no_module_not_found(&diagnostics);
+        assert_valid_sibling_import(&diagnostics);
+    }
+
+    #[test]
+    fn open_document_diagnostics_refresh_importer_when_sibling_changes() {
+        let mut world = WorldState::new();
+        let entry_uri = Url::parse("file:///main/entry.solc").expect("entry uri");
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        let entry = "function entry() -> word { return 0; }\n";
+        let main = "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n";
+        let math_no_export = "function double(x: word) -> word { return x; }\n";
+        let math_with_export =
+            "function double(x: word) -> word { return x; }\n\nexport { double };\n";
+
+        assert!(world.open_document(entry_uri, entry.to_owned()));
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(math_uri.clone(), math_no_export.to_owned()));
+        let stale = compute_open_document_diagnostics(&world);
+        assert!(
+            has_unknown_import_item(diagnostics_for_uri(&stale, &main_uri)),
+            "expected UnknownImportItem while `double` is unexported, got {stale:#?}"
+        );
+
+        assert!(world.change_document(&math_uri, math_with_export.to_owned()));
+        let refreshed = compute_open_document_diagnostics(&world);
+        assert_valid_sibling_import(diagnostics_for_uri(&refreshed, &main_uri));
+    }
+
+    fn has_unknown_import_item(diagnostics: &[LspDiagnostic]) -> bool {
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code
+                == Some(NumberOrString::String(
+                    hir::diag::DiagnosticCode::MODULE_UNKNOWN_IMPORT_ITEM.to_owned(),
+                ))
+        })
+    }
+
+    // REPRO A: math is opened WITHOUT the export (cold: `double` is genuinely
+    // unexported, causing UnknownImportItem), then the export is added via a content
+    // change. main's import resolution must re-run and clear the diagnostic.
+    #[test]
+    fn adding_export_via_change_clears_unknown_import_item() {
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        let main = "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n";
+        let math_no_export = "function double(x: word) -> word { return x; }\n";
+        let math_with_export =
+            "function double(x: word) -> word { return x; }\n\nexport { double };\n";
+
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(math_uri.clone(), math_no_export.to_owned()));
+        let cold = compute_diagnostics(&world, &main_uri);
+        assert!(
+            has_unknown_import_item(&cold),
+            "expected UnknownImportItem while `double` is unexported, got {cold:#?}"
+        );
+
+        assert!(world.change_document(&math_uri, math_with_export.to_owned()));
+        let warm = compute_diagnostics(&world, &main_uri);
+        assert!(
+            !has_unknown_import_item(&warm),
+            "export added: UnknownImportItem must clear, got {warm:#?}"
+        );
+        assert_no_module_not_found(&warm);
+        assert_no_unknown_import_item(&warm);
+    }
+
+    // REPRO B: same, but the entry drifts off the importer (a third file is the
+    // LSP entry) so diagnostics take the clone+set_entry fallback path.
+    #[test]
+    fn adding_export_via_change_clears_unknown_import_item_entry_drift() {
+        let mut world = WorldState::new();
+        let entry_uri = Url::parse("file:///main/entry.solc").expect("entry uri");
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        let entry = "function entry() -> word { return 0; }\n";
+        let main = "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n";
+        let math_no_export = "function double(x: word) -> word { return x; }\n";
+        let math_with_export =
+            "function double(x: word) -> word { return x; }\n\nexport { double };\n";
+
+        assert!(world.open_document(entry_uri, entry.to_owned()));
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(math_uri.clone(), math_no_export.to_owned()));
+        let _cold = compute_diagnostics(&world, &main_uri);
+
+        assert!(world.change_document(&math_uri, math_with_export.to_owned()));
+        let warm = compute_diagnostics(&world, &main_uri);
+        assert!(
+            !has_unknown_import_item(&warm),
+            "export added (entry drift): UnknownImportItem must clear, got {warm:#?}"
+        );
+        assert_no_module_not_found(&warm);
+        assert_no_unknown_import_item(&warm);
     }
 }

@@ -122,10 +122,7 @@ fn handle_did_open(world: &mut WorldState, id: Option<Value>, params: Value) -> 
     world.open_document(uri.clone(), params.text_document.text);
 
     let mut outgoing = null_response_or_empty(id);
-    outgoing.push(publish_diagnostics(
-        uri.clone(),
-        crate::diagnostics::compute_diagnostics(world, &uri),
-    ));
+    outgoing.extend(publish_open_document_diagnostics(world));
     outgoing
 }
 
@@ -143,10 +140,7 @@ fn handle_did_change(world: &mut WorldState, id: Option<Value>, params: Value) -
     world.change_document(&uri, change.text);
 
     let mut outgoing = null_response_or_empty(id);
-    outgoing.push(publish_diagnostics(
-        uri.clone(),
-        crate::diagnostics::compute_diagnostics(world, &uri),
-    ));
+    outgoing.extend(publish_open_document_diagnostics(world));
     outgoing
 }
 
@@ -161,6 +155,7 @@ fn handle_did_close(world: &mut WorldState, id: Option<Value>, params: Value) ->
 
     let mut outgoing = null_response_or_empty(id);
     outgoing.push(publish_diagnostics(uri, Vec::new()));
+    outgoing.extend(publish_open_document_diagnostics(world));
     outgoing
 }
 
@@ -432,6 +427,13 @@ fn publish_diagnostics(uri: lsp_types::Url, diagnostics: Vec<lsp_types::Diagnost
     }))
 }
 
+fn publish_open_document_diagnostics(world: &WorldState) -> Vec<String> {
+    crate::diagnostics::compute_open_document_diagnostics(world)
+        .into_iter()
+        .map(|(uri, diagnostics)| publish_diagnostics(uri, diagnostics))
+        .collect()
+}
+
 fn json_string(value: Value) -> String {
     serde_json::to_string(&value).unwrap_or_else(|_| {
         r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error"}}"#
@@ -444,6 +446,7 @@ mod tests {
     use super::*;
 
     const URI: &str = "file:///main/main.solc";
+    const MATH_URI: &str = "file:///main/math.solc";
 
     #[test]
     fn initialize_returns_capabilities_response() {
@@ -480,6 +483,46 @@ mod tests {
         assert!(
             !diagnostics.is_empty(),
             "expected at least one diagnostic, got {notification:#?}"
+        );
+    }
+
+    #[test]
+    fn did_change_republishes_importer_diagnostics_when_sibling_exports_change() {
+        let mut world = WorldState::new();
+        let main = "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n";
+        let math_no_export = "function double(x: word) -> word { return x; }\n";
+        let math_with_export =
+            "function double(x: word) -> word { return x; }\n\nexport { double };\n";
+
+        let _ = dispatch(&mut world, &did_open_uri_message(URI, main));
+        let opened_math = dispatch(&mut world, &did_open_uri_message(MATH_URI, math_no_export));
+        let main_after_math_open = diagnostic_notification_for_uri(&opened_math, URI);
+        assert!(
+            diagnostics_contain_code(
+                &main_after_math_open,
+                hir::diag::DiagnosticCode::MODULE_UNKNOWN_IMPORT_ITEM,
+            ),
+            "expected main diagnostics to report the genuinely missing export, got {main_after_math_open:#?}"
+        );
+
+        let changed_math = dispatch(
+            &mut world,
+            &did_change_uri_message(MATH_URI, math_with_export),
+        );
+        let main_after_export = diagnostic_notification_for_uri(&changed_math, URI);
+        assert!(
+            !diagnostics_contain_code(
+                &main_after_export,
+                hir::diag::DiagnosticCode::MODULE_UNKNOWN_IMPORT_ITEM,
+            ),
+            "expected main diagnostics to clear unknown import item, got {main_after_export:#?}"
+        );
+        assert!(
+            !diagnostics_contain_code(
+                &main_after_export,
+                hir::diag::DiagnosticCode::MODULE_NOT_FOUND,
+            ),
+            "expected main diagnostics to keep the sibling module resolved, got {main_after_export:#?}"
         );
     }
 
@@ -833,12 +876,16 @@ mod tests {
     }
 
     fn did_open_message(source: &str) -> String {
+        did_open_uri_message(URI, source)
+    }
+
+    fn did_open_uri_message(uri: &str, source: &str) -> String {
         serde_json::json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didOpen",
             "params": {
                 "textDocument": {
-                    "uri": URI,
+                    "uri": uri,
                     "languageId": "solcore",
                     "version": 1,
                     "text": source
@@ -846,6 +893,44 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    fn did_change_uri_message(uri: &str, source: &str) -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": {
+                    "uri": uri,
+                    "version": 2,
+                },
+                "contentChanges": [
+                    {
+                        "text": source
+                    }
+                ]
+            }
+        })
+        .to_string()
+    }
+
+    fn diagnostic_notification_for_uri(outgoing: &[String], uri: &str) -> Value {
+        outgoing
+            .iter()
+            .map(|message| parse_message(message))
+            .find(|message| {
+                message["method"] == "textDocument/publishDiagnostics"
+                    && message["params"]["uri"] == uri
+            })
+            .unwrap_or_else(|| panic!("expected diagnostics for {uri}, got {outgoing:#?}"))
+    }
+
+    fn diagnostics_contain_code(notification: &Value, code: &str) -> bool {
+        notification["params"]["diagnostics"]
+            .as_array()
+            .expect("diagnostics array")
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == code)
     }
 
     fn parse_message(message: &str) -> Value {

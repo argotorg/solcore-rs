@@ -3,13 +3,14 @@
 //! Native stdio transport for the Solcore language server.
 
 use lsp_types::{
-    CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
-    InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
-    MessageType, PrepareRenameResponse, ReferenceParams, RenameParams, SemanticTokensParams,
-    SemanticTokensResult, SignatureHelp, SignatureHelpParams, SymbolInformation,
-    TextDocumentPositionParams, WorkspaceEdit, WorkspaceSymbolParams,
+    CompletionParams, CompletionResponse, Diagnostic, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentHighlight,
+    DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult,
+    InitializedParams, InlayHint, InlayHintParams, Location, MessageType, PrepareRenameResponse,
+    ReferenceParams, RenameParams, SemanticTokensParams, SemanticTokensResult, SignatureHelp,
+    SignatureHelpParams, SymbolInformation, TextDocumentPositionParams, Url, WorkspaceEdit,
+    WorkspaceSymbolParams,
 };
 use tokio::sync::Mutex;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc};
@@ -54,12 +55,10 @@ impl LanguageServer for Backend {
         let diagnostics = {
             let mut world = self.world.lock().await;
             world.open_document(uri.clone(), text);
-            crate::diagnostics::compute_diagnostics(&world, &uri)
+            diagnostics_with_versions(&world, Some((&uri, version)))
         };
 
-        self.client
-            .publish_diagnostics(uri, diagnostics, Some(version))
-            .await;
+        publish_diagnostics(&self.client, diagnostics).await;
     }
 
     async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
@@ -72,23 +71,23 @@ impl LanguageServer for Backend {
         let diagnostics = {
             let mut world = self.world.lock().await;
             world.change_document(&uri, change.text);
-            crate::diagnostics::compute_diagnostics(&world, &uri)
+            diagnostics_with_versions(&world, Some((&uri, version)))
         };
 
-        self.client
-            .publish_diagnostics(uri, diagnostics, Some(version))
-            .await;
+        publish_diagnostics(&self.client, diagnostics).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
 
-        {
+        let diagnostics = {
             let mut world = self.world.lock().await;
             world.close_document(&uri);
-        }
+            diagnostics_with_versions(&world, None)
+        };
 
         self.client.publish_diagnostics(uri, vec![], None).await;
+        publish_diagnostics(&self.client, diagnostics).await;
     }
 
     async fn completion(
@@ -225,6 +224,28 @@ impl LanguageServer for Backend {
             &world,
             &params.query,
         ))
+    }
+}
+
+type DiagnosticsBatch = Vec<(Url, Vec<Diagnostic>, Option<i32>)>;
+
+fn diagnostics_with_versions(
+    world: &crate::state::WorldState,
+    versioned_uri: Option<(&Url, i32)>,
+) -> DiagnosticsBatch {
+    crate::diagnostics::compute_open_document_diagnostics(world)
+        .into_iter()
+        .map(|(uri, diagnostics)| {
+            let version = versioned_uri
+                .and_then(|(versioned_uri, version)| (versioned_uri == &uri).then_some(version));
+            (uri, diagnostics, version)
+        })
+        .collect()
+}
+
+async fn publish_diagnostics(client: &Client, diagnostics: DiagnosticsBatch) {
+    for (uri, diagnostics, version) in diagnostics {
+        client.publish_diagnostics(uri, diagnostics, version).await;
     }
 }
 
