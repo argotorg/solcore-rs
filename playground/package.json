@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "build:wasm": "wasm-pack build ../crates/wasm --target web --out-dir pkg && (command -v wasm-opt >/dev/null 2>&1 && wasm-opt -Oz --enable-reference-types --enable-bulk-memory ../crates/wasm/pkg/solcore_wasm_bg.wasm -o ../crates/wasm/pkg/solcore_wasm_bg.wasm && echo '[build:wasm] wasm-opt -Oz applied' || echo '[build:wasm] wasm-opt not found; skipping extra size pass (brew install binaryen for a smaller bundle)')",
+    "build:lsp-wasm": "wasm-pack build ../crates/lsp --target web --out-dir pkg -- --features wasm && (command -v wasm-opt >/dev/null 2>&1 && wasm-opt -Oz --enable-reference-types --enable-bulk-memory ../crates/lsp/pkg/solcore_lsp_bg.wasm -o ../crates/lsp/pkg/solcore_lsp_bg.wasm && echo '[build:lsp-wasm] wasm-opt -Oz applied' || echo '[build:lsp-wasm] wasm-opt not found; skipping extra size pass (brew install binaryen for a smaller bundle)')",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },
@@ -17,6 +18,7 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-resizable-panels": "^2.1.7",
+    "solcore-lsp": "file:../crates/lsp/pkg",
     "solcore-wasm": "file:../crates/wasm/pkg",
     "zustand": "^5.0.2"
   },

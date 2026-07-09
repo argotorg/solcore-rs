@@ -36,3 +36,9 @@ serde-wasm-bindgen = { version = "0.6", optional = true }
 name = "solcore-lsp"
 path = "src/bin/server.rs"
 required-features = ["native"]
+
+# wasm-pack's bundled wasm-opt is too old for the bulk-memory ops rustc now emits.
+# Size is handled by the workspace `[profile.release]` (strip + opt-level=z + lto);
+# the playground `build:lsp-wasm` script runs a modern `wasm-opt` pass separately.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
