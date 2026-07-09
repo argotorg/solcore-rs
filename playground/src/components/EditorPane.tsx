@@ -122,7 +122,9 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
   const order = useWorkspaceStore((state) => state.order);
   const activePath = useWorkspaceStore((state) => state.activePath);
   const entry = useWorkspaceStore((state) => state.entry);
-  const result = useWorkspaceStore((state) => state.result);
+  const rawResult = useWorkspaceStore((state) => state.result);
+  const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
+  const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
   const theme = useWorkspaceStore((state) => state.theme);
   const setActive = useWorkspaceStore((state) => state.setActive);
   const setContent = useWorkspaceStore((state) => state.setContent);
@@ -132,6 +134,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
 
   const activeFile = files[activePath];
   const editorUri = uriForWorkspacePath(activePath);
+  const result = lastCompiledVersion === workspaceVersion ? rawResult : null;
   const problemsByFile = useMemo(() => fileProblemSummaries(result), [result]);
 
   const editorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(

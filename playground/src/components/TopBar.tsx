@@ -11,8 +11,10 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { version } from "../compiler/runtime";
+import { formatCompileDuration } from "../compiler/timing";
 import { examples } from "../store/workspace";
 import { useWorkspaceStore } from "../store/workspace";
+import { useCompileElapsed } from "./useCompileElapsed";
 
 interface TopBarProps {
   sidebarOpen: boolean;
@@ -23,6 +25,9 @@ export function TopBar({ sidebarOpen, onToggleSidebar }: TopBarProps): JSX.Eleme
   const order = useWorkspaceStore((state) => state.order);
   const entry = useWorkspaceStore((state) => state.entry);
   const compiling = useWorkspaceStore((state) => state.compiling);
+  const lastCompileDurationMs = useWorkspaceStore((state) => state.lastCompileDurationMs);
+  const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
+  const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
   const theme = useWorkspaceStore((state) => state.theme);
   const setEntry = useWorkspaceStore((state) => state.setEntry);
   const compileNow = useWorkspaceStore((state) => state.compileNow);
@@ -32,6 +37,15 @@ export function TopBar({ sidebarOpen, onToggleSidebar }: TopBarProps): JSX.Eleme
   const [selectedExample, setSelectedExample] = useState(examples[0]?.id ?? "hello");
   const [compilerVersion, setCompilerVersion] = useState<string | null>(null);
   const solcFiles = order.filter((path) => path.endsWith(".solc"));
+  const compileElapsedMs = useCompileElapsed();
+  const compileIsOutdated =
+    lastCompiledVersion !== null && lastCompiledVersion !== workspaceVersion;
+  const compileTimeLabel =
+    compileElapsedMs !== null
+      ? formatCompileDuration(compileElapsedMs)
+      : lastCompileDurationMs !== null
+        ? formatCompileDuration(lastCompileDurationMs)
+        : null;
 
   useEffect(() => {
     let isMounted = true;
@@ -118,8 +132,21 @@ export function TopBar({ sidebarOpen, onToggleSidebar }: TopBarProps): JSX.Eleme
           }}
         >
           {compiling ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-          <span>Compile</span>
+          <span>{compiling ? "Compiling" : "Compile"}</span>
         </button>
+
+        {compileTimeLabel ? (
+          <span
+            className={`compile-timing ${compileIsOutdated && !compiling ? "is-outdated" : ""}`}
+            title={
+              compileIsOutdated && !compiling
+                ? "Workspace changed since the last compile"
+                : "Last compile duration"
+            }
+          >
+            {compiling ? compileTimeLabel : `Last ${compileTimeLabel}`}
+          </span>
+        ) : null}
 
         <button
           type="button"

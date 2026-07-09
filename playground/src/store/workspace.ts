@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { compileClient } from "../compiler/compileClient";
+import { nowMs } from "../compiler/timing";
 import type { CompileInput, CompileResult, Diag } from "../compiler/types";
 import { defaultExample, examples, getExample, type PlaygroundExample } from "../examples";
 
@@ -23,6 +24,10 @@ export interface WorkspaceState {
   entry: string;
   activePath: string;
   compiling: boolean;
+  compileStartedAt: number | null;
+  lastCompileDurationMs: number | null;
+  workspaceVersion: number;
+  lastCompiledVersion: number | null;
   result: CompileResult | null;
   outputTab: OutputTab;
   theme: ThemeMode;
@@ -43,7 +48,6 @@ export interface WorkspaceState {
 const WORKSPACE_STORAGE_KEY = "solcore-playground.workspace.v1";
 const THEME_STORAGE_KEY = "solcore-playground.theme.v1";
 
-let compileTimer: number | null = null;
 let compileRun = 0;
 
 function isBrowser(): boolean {
@@ -216,28 +220,6 @@ function persistWorkspace(state: WorkspaceState): void {
   window.localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(payload));
 }
 
-function scheduleCompile(): void {
-  if (!isBrowser()) {
-    return;
-  }
-
-  if (compileTimer) {
-    window.clearTimeout(compileTimer);
-  }
-
-  compileTimer = window.setTimeout(() => {
-    compileTimer = null;
-    void useWorkspaceStore.getState().compileNow();
-  }, 350);
-}
-
-function clearScheduledCompile(): void {
-  if (compileTimer && isBrowser()) {
-    window.clearTimeout(compileTimer);
-  }
-  compileTimer = null;
-}
-
 function diagnosticResult(message: string): CompileResult {
   const diagnostic: Diag = {
     severity: "error",
@@ -274,6 +256,10 @@ applyTheme(initialTheme);
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   ...initialWorkspace,
   compiling: false,
+  compileStartedAt: null,
+  lastCompileDurationMs: null,
+  workspaceVersion: 0,
+  lastCompiledVersion: null,
   result: null,
   outputTab: "hull",
   theme: initialTheme,
@@ -300,11 +286,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
             content,
           },
         },
+        workspaceVersion: state.workspaceVersion + 1,
       };
     });
 
     persistWorkspace(get());
-    scheduleCompile();
   },
 
   createFile(path) {
@@ -320,10 +306,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       },
       order: [...state.order, filePath],
       activePath: filePath,
+      workspaceVersion: state.workspaceVersion + 1,
     }));
 
     persistWorkspace(get());
-    scheduleCompile();
     return filePath;
   },
 
@@ -353,11 +339,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
         order: currentState.order.map((path) => (path === fromPath ? toPath : path)),
         entry: currentState.entry === fromPath ? toPath : currentState.entry,
         activePath: currentState.activePath === fromPath ? toPath : currentState.activePath,
+        workspaceVersion: currentState.workspaceVersion + 1,
       };
     });
 
     persistWorkspace(get());
-    scheduleCompile();
     return toPath;
   },
 
@@ -384,25 +370,27 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       order: nextOrder,
       entry: nextEntry,
       activePath: nextActive,
+      workspaceVersion: state.workspaceVersion + 1,
     });
 
     persistWorkspace(get());
-    scheduleCompile();
   },
 
   setEntry(path) {
     const normalizedPath = normalizePath(path);
-    if (!get().files[normalizedPath]) {
+    const state = get();
+    if (!state.files[normalizedPath]) {
       return;
     }
 
     set({
       entry: normalizedPath,
       activePath: normalizedPath,
+      workspaceVersion:
+        state.entry === normalizedPath ? state.workspaceVersion : state.workspaceVersion + 1,
     });
 
     persistWorkspace(get());
-    scheduleCompile();
   },
 
   setActive(path) {
@@ -431,34 +419,39 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
 
   loadExample(id) {
     const nextWorkspace = workspaceFromExample(getExample(id));
-    set({
+    set((state) => ({
       ...nextWorkspace,
       result: null,
+      lastCompileDurationMs: null,
+      lastCompiledVersion: null,
       outputTab: "hull",
-    });
+      workspaceVersion: state.workspaceVersion + 1,
+    }));
 
     persistWorkspace(get());
-    scheduleCompile();
   },
 
   resetWorkspace() {
     const nextWorkspace = workspaceFromExample(defaultExample);
-    set({
+    set((state) => ({
       ...nextWorkspace,
       result: null,
+      lastCompileDurationMs: null,
+      lastCompiledVersion: null,
       outputTab: "hull",
-    });
+      workspaceVersion: state.workspaceVersion + 1,
+    }));
 
     persistWorkspace(get());
-    scheduleCompile();
   },
 
   async compileNow() {
-    clearScheduledCompile();
     const runId = compileRun + 1;
     compileRun = runId;
 
     const state = get();
+    const compileVersion = state.workspaceVersion;
+    const startedAt = nowMs();
     const input: CompileInput = {
       files: state.order
         .map((path) => state.files[path])
@@ -471,14 +464,18 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       options: state.options,
     };
 
-    set({ compiling: true });
+    set({ compiling: true, compileStartedAt: startedAt });
 
     try {
       const result = await compileClient.compile(input);
+      const durationMs = nowMs() - startedAt;
       if (runId === compileRun) {
         set({
           result,
           compiling: false,
+          compileStartedAt: null,
+          lastCompileDurationMs: durationMs,
+          lastCompiledVersion: compileVersion,
           outputTab: result.success ? get().outputTab : "problems",
         });
       }
@@ -488,9 +485,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       }
 
       if (runId === compileRun) {
+        const durationMs = nowMs() - startedAt;
         set({
           result: diagnosticResult(error instanceof Error ? error.message : "Compile failed"),
           compiling: false,
+          compileStartedAt: null,
+          lastCompileDurationMs: durationMs,
+          lastCompiledVersion: compileVersion,
           outputTab: "problems",
         });
       }

@@ -28,6 +28,7 @@
 .select-control__shell,
 .button,
 .icon-button,
+.compile-timing,
 .version-pill {
   display: inline-flex;
   align-items: center;
@@ -72,6 +73,7 @@
 .button,
 .icon-button,
 .select-control__shell,
+.compile-timing,
 .version-pill {
   min-height: 34px;
   border: 1px solid var(--border-subtle);
@@ -185,6 +187,21 @@
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+.compile-timing {
+  justify-content: center;
+  min-width: 86px;
+  padding: 0 var(--space-3);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.compile-timing.is-outdated {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 34%, var(--border-subtle));
+  background: var(--warning-soft);
 }
 
 .workspace-shell {
@@ -590,6 +607,10 @@
 
 .statusbar__error {
   color: var(--error);
+}
+
+.statusbar__warning {
+  color: var(--warning);
 }
 
 @media (max-width: 1080px) {

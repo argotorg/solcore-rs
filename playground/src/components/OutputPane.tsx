@@ -45,12 +45,15 @@ function outputText(tab: OutputTab, hull: string | null, yul: string | null): st
 }
 
 export function OutputPane(): JSX.Element {
-  const result = useWorkspaceStore((state) => state.result);
+  const rawResult = useWorkspaceStore((state) => state.result);
+  const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
+  const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
   const outputTab = useWorkspaceStore((state) => state.outputTab);
   const theme = useWorkspaceStore((state) => state.theme);
   const files = useWorkspaceStore((state) => state.files);
   const setOutputTab = useWorkspaceStore((state) => state.setOutputTab);
   const setActive = useWorkspaceStore((state) => state.setActive);
+  const result = lastCompiledVersion === workspaceVersion ? rawResult : null;
 
   const diagnostics = result?.diagnostics ?? [];
   const problemCount = diagnostics.filter(

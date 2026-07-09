@@ -6,7 +6,6 @@ import { OutputPane } from "./components/OutputPane";
 import { ResizeHandle } from "./components/ResizeHandle";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
-import { useWorkspaceStore } from "./store/workspace";
 
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() =>
@@ -26,15 +25,10 @@ function useMediaQuery(query: string): boolean {
 }
 
 export function App(): JSX.Element {
-  const compileNow = useWorkspaceStore((state) => state.compileNow);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const isNarrow = useMediaQuery("(max-width: 900px)");
   const [cursor, setCursor] = useState<CursorPosition>({ line: 1, column: 1 });
   const mainDirection = isNarrow ? "vertical" : "horizontal";
-
-  useEffect(() => {
-    void compileNow();
-  }, [compileNow]);
 
   useEffect(() => {
     if (isNarrow) {
