@@ -149,6 +149,19 @@ mod tests {
         (world, uri)
     }
 
+    fn assert_no_module_not_found(diagnostics: &[LspDiagnostic]) {
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                !diagnostic.message.contains("file not found")
+                    && diagnostic.code
+                        != Some(NumberOrString::String(
+                            hir::diag::DiagnosticCode::MODULE_NOT_FOUND.to_owned(),
+                        ))
+            }),
+            "expected no module-not-found diagnostics, got {diagnostics:#?}"
+        );
+    }
+
     #[test]
     fn clean_program_has_no_diagnostics() {
         let (world, uri) = world_with_main("function main() -> word {\n  return 1;\n}\n");
@@ -187,15 +200,49 @@ mod tests {
         assert!(world.open_document(math_uri, math.to_owned()));
 
         let diagnostics = compute_diagnostics(&world, &main_uri);
+        assert_no_module_not_found(&diagnostics);
+    }
+
+    #[test]
+    fn sibling_import_opened_before_importer_has_no_module_not_found_diagnostic() {
+        let mut world = WorldState::new();
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math = "function double(x: word) -> word { return x; }\n\nexport { double };\n";
+        let main = "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n";
+
+        assert!(world.open_document(math_uri, math.to_owned()));
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+
+        let diagnostics = compute_diagnostics(&world, &main_uri);
+        assert_no_module_not_found(&diagnostics);
+    }
+
+    #[test]
+    fn fallback_diagnostics_for_unreachable_importer_update_after_sibling_opens() {
+        let mut world = WorldState::new();
+        let entry_uri = Url::parse("file:///main/entry.solc").expect("entry uri");
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        let entry = "function entry() -> word { return 0; }\n";
+        let main = "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n";
+        let math = "function double(x: word) -> word { return x; }\n\nexport { double };\n";
+
+        assert!(world.open_document(entry_uri, entry.to_owned()));
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        let diagnostics = compute_diagnostics(&world, &main_uri);
         assert!(
-            diagnostics.iter().all(|diagnostic| {
-                !diagnostic.message.contains("file not found")
-                    && diagnostic.code
-                        != Some(NumberOrString::String(
-                            hir::diag::DiagnosticCode::MODULE_NOT_FOUND.to_owned(),
-                        ))
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code
+                    == Some(NumberOrString::String(
+                        hir::diag::DiagnosticCode::MODULE_NOT_FOUND.to_owned(),
+                    ))
             }),
-            "expected no module-not-found diagnostics, got {diagnostics:#?}"
+            "expected module-not-found before math opens, got {diagnostics:#?}"
         );
+
+        assert!(world.open_document(math_uri, math.to_owned()));
+        let diagnostics = compute_diagnostics(&world, &main_uri);
+        assert_no_module_not_found(&diagnostics);
     }
 }

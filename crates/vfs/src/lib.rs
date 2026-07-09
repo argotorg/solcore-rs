@@ -21,7 +21,7 @@ use nameres::{
     resolve_reachable_full,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use salsa::Setter;
+use salsa::{Database as _, Setter};
 use url::Url;
 
 /// Virtual root for user sources.
@@ -116,7 +116,7 @@ impl AnalysisHost {
             file.set_content(self).to(None);
         }
         if let Some(key) = self.module_key_for_virtual_path(&path) {
-            self.module_files.remove(&key);
+            self.remove_module_file(&key);
         }
         self.rebuild_module_fs_snapshot();
     }
@@ -154,7 +154,23 @@ impl AnalysisHost {
 
     fn register_module_file(&mut self, path: &Path, file: SourceFile) {
         if let Some(key) = self.module_key_for_virtual_path(path) {
-            self.module_files.insert(key, file);
+            self.set_module_file(key, file);
+        }
+    }
+
+    fn set_module_file(&mut self, key: ModuleKey, file: SourceFile) {
+        if self.module_files.insert(key, file) != Some(file) {
+            // NOTE(codex): `module_files` is untracked Salsa state read by
+            // tracked name-resolution queries through `Db::module_file`.
+            // Advance the revision whenever loading changes so cached
+            // "not loaded" import results cannot survive graph expansion.
+            self.synthetic_write(salsa::Durability::LOW);
+        }
+    }
+
+    fn remove_module_file(&mut self, key: &ModuleKey) {
+        if self.module_files.remove(key).is_some() {
+            self.synthetic_write(salsa::Durability::LOW);
         }
     }
 
@@ -218,6 +234,7 @@ impl nameres::Db for AnalysisHost {
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
+        self.report_untracked_read();
         self.module_files.get(&module.key(self)).copied()
     }
 }
@@ -506,7 +523,7 @@ pub fn load_reachable_modules(host: &mut AnalysisHost, entry: ModuleKey) {
             if !host.module_files.contains_key(&target_key)
                 && let Some(file) = host.files.get(&file_path).copied()
             {
-                host.module_files.insert(target_key.clone(), file);
+                host.set_module_file(target_key.clone(), file);
             }
             if host.module_files.contains_key(&target_key) {
                 queue.push_back(target_key);
@@ -695,6 +712,46 @@ mod tests {
         assert!(workspace.diagnostics().is_empty());
         assert!(workspace.entry_module().is_some());
         assert_eq!(messages(&workspace), raw_messages(&workspace));
+    }
+
+    #[test]
+    fn loading_reachable_module_invalidates_cached_not_loaded_import() {
+        let mut workspace = Workspace::new();
+        workspace.set_file(
+            "main.solc",
+            "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n"
+                .to_owned(),
+        );
+        workspace.set_file(
+            "math.solc",
+            "function double(x: word) -> word { return x; }\n\nexport { double };\n".to_owned(),
+        );
+        workspace.set_entry("main.solc");
+
+        let math_key = workspace
+            .host
+            .module_key_for_virtual_path(&main_path("math.solc"))
+            .expect("math module key");
+        assert!(workspace.host.module_files.remove(&math_key).is_some());
+        let diagnostics = workspace.diagnostics();
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.code.as_deref() == Some(hir::diag::DiagnosticCode::MODULE_NOT_FOUND)
+            }),
+            "expected a module-not-found diagnostic before loading math, got {diagnostics:#?}"
+        );
+
+        let entry_key = workspace.entry_key().expect("entry key");
+        load_reachable_modules(&mut workspace.host, entry_key);
+
+        let diagnostics = workspace.diagnostics();
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                diagnostic.code.as_deref() != Some(hir::diag::DiagnosticCode::MODULE_NOT_FOUND)
+                    && !diagnostic.message.contains("file not found")
+            }),
+            "expected no module-not-found diagnostic after loading math, got {diagnostics:#?}"
+        );
     }
 
     #[test]
