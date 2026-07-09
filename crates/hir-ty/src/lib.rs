@@ -7,6 +7,7 @@
 pub mod alias;
 pub mod contract;
 mod coverage;
+pub mod desugar;
 mod display;
 pub mod infer;
 pub mod lower;
@@ -22,6 +23,11 @@ pub use contract::{
     DispatchFallback, DispatchMethod, DispatchSurface, FrontendDesugarPlan, FrontendTransform,
     IndirectArgShape, abi_selector, contract_abi_json, contract_dispatch_surface,
     contract_dispatch_surface_for_module, frontend_desugar_plan, module_contract_diagnostics,
+};
+pub use desugar::{
+    BodyPreTypeckDesugarPlan, FieldInitPreTypeckDesugarPlan, FieldInitPreTypeckTransform,
+    PreTypeckDesugarPlan, PreTypeckTransform, ProductShape, SourceOrigin, SourceOriginKind,
+    TypeProductDesugar, pre_typeck_desugar_body_tree, pre_typeck_desugar_plan,
 };
 pub use hir::sema::ty::{
     BoundTyVar, BuiltinClassId, BuiltinTyCtor, ClassId, Pred, PredKind, QualTy, Ty, TyCtor, TyKind,

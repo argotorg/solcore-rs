@@ -14,6 +14,7 @@ use super::helpers::{
 };
 use crate::{
     AliasNormalizer, BinderEnv, BodyTyContext, CallSiteCallee, CallSiteEvidence, Db, TypeLowering,
+    desugar::{ProductShape, SourceOrigin, SourceOriginKind},
     infer_body, trait_env_from_module_resolution, trait_env_with_givens,
 };
 
@@ -44,6 +45,8 @@ pub enum FrontendTransform<'db> {
         body: FuncBody<'db>,
         /// Statement being rewritten.
         stmt: Id<Stmt<'db>>,
+        /// User syntax that should receive diagnostics for generated nodes.
+        origin: SourceOrigin<'db>,
     },
     /// `if ... then ... else ...` expression rewritten through the same
     /// true/false match scheme.
@@ -52,6 +55,8 @@ pub enum FrontendTransform<'db> {
         body: FuncBody<'db>,
         /// Expression being rewritten.
         expr: Id<Expr<'db>>,
+        /// User syntax that should receive diagnostics for generated nodes.
+        origin: SourceOrigin<'db>,
     },
     /// Bool constructor or pattern rewritten to `inr(())` or `inl(())`.
     BoolToUnitSum {
@@ -59,6 +64,8 @@ pub enum FrontendTransform<'db> {
         body: FuncBody<'db>,
         /// Node category.
         node: BoolNode<'db>,
+        /// User syntax that should receive diagnostics for generated nodes.
+        origin: SourceOrigin<'db>,
         /// Source constructor/pattern name.
         source: String,
         /// Replacement constructor.
@@ -70,6 +77,8 @@ pub enum FrontendTransform<'db> {
         body: FuncBody<'db>,
         /// Expression being rewritten.
         expr: Id<Expr<'db>>,
+        /// User syntax that should receive diagnostics for generated nodes.
+        origin: SourceOrigin<'db>,
         /// Field identity.
         field: hir_nameres::FieldId<'db>,
         /// Generated selector type/value name.
@@ -83,6 +92,8 @@ pub enum FrontendTransform<'db> {
         body: FuncBody<'db>,
         /// Assignment statement being rewritten.
         stmt: Id<Stmt<'db>>,
+        /// User syntax that should receive diagnostics for generated nodes.
+        origin: SourceOrigin<'db>,
         /// Field identity.
         field: hir_nameres::FieldId<'db>,
         /// Generated selector type/value name.
@@ -99,6 +110,8 @@ pub enum FrontendTransform<'db> {
         call_expr: Id<Expr<'db>>,
         /// Expression used as the callee.
         callee_expr: Id<Expr<'db>>,
+        /// User syntax that should receive diagnostics for generated nodes.
+        origin: SourceOrigin<'db>,
         /// Callee identity used for evidence replay.
         callee: CallSiteCallee<'db>,
         /// Unit, single-argument, or right-nested pair payload shape.
@@ -118,20 +131,7 @@ pub enum BoolNode<'db> {
 }
 
 /// Payload shape for an indirect-call argument tuple.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
-pub enum IndirectArgShape<'db> {
-    /// No arguments, represented as unit.
-    Unit,
-    /// One argument, represented without a pair wrapper.
-    Single(Id<Expr<'db>>),
-    /// Two or more arguments, represented as a right-nested `pair`.
-    Pair {
-        /// First argument at this level.
-        head: Id<Expr<'db>>,
-        /// Remaining argument payload.
-        tail: Box<IndirectArgShape<'db>>,
-    },
-}
+pub type IndirectArgShape<'db> = ProductShape<Id<Expr<'db>>>;
 
 /// Returns a tracked frontend-desugar plan for if/bool and contract field
 /// access rewrites in `module`.
@@ -325,7 +325,8 @@ struct DesugarCollector<'db> {
 
 impl<'db> DesugarCollector<'db> {
     fn stmt(&mut self, stmt_id: Id<Stmt<'db>>) {
-        match &self.body.stmts(self.db).get(stmt_id).kind {
+        let stmt = self.body.stmts(self.db).get(stmt_id);
+        match &stmt.kind {
             StmtKind::Let { init, .. } => {
                 if let Some(init) = init {
                     self.expr(*init);
@@ -379,6 +380,7 @@ impl<'db> DesugarCollector<'db> {
                 self.transforms.push(FrontendTransform::IfStmtToMatch {
                     body: self.body,
                     stmt: stmt_id,
+                    origin: SourceOrigin::new(stmt.span, SourceOriginKind::IfStatement),
                 });
                 self.expr(*cond);
                 for stmt in then_body {
@@ -400,6 +402,7 @@ impl<'db> DesugarCollector<'db> {
     }
 
     fn expr(&mut self, expr_id: Id<Expr<'db>>) {
+        let expr = self.body.exprs(self.db).get(expr_id);
         if let Some(hir_nameres::Resolution::Field(field)) =
             self.expr_resolutions.get(&(self.body, expr_id))
         {
@@ -407,18 +410,20 @@ impl<'db> DesugarCollector<'db> {
             self.transforms.push(FrontendTransform::FieldRead {
                 body: self.body,
                 expr: expr_id,
+                origin: SourceOrigin::new(expr.span, SourceOriginKind::FieldRead),
                 field: *field,
                 selector: selector.clone(),
                 hook: format!("RVA.acc(MemberAccessProxy(ContractStorage(_), {selector}))"),
             });
         }
-        match &self.body.exprs(self.db).get(expr_id).kind {
+        match &expr.kind {
             ExprKind::Ident(name) => {
                 let text = ident_text(self.db, name);
                 if matches!(text.as_str(), "true" | "false") {
                     self.transforms.push(FrontendTransform::BoolToUnitSum {
                         body: self.body,
                         node: BoolNode::Expr(expr_id),
+                        origin: SourceOrigin::new(expr.span, SourceOriginKind::BoolConstructor),
                         source: text.clone(),
                         replacement: if text == "true" { "inr(())" } else { "inl(())" }.to_owned(),
                     });
@@ -430,6 +435,7 @@ impl<'db> DesugarCollector<'db> {
                     self.transforms.push(FrontendTransform::BoolToUnitSum {
                         body: self.body,
                         node: BoolNode::Expr(expr_id),
+                        origin: SourceOrigin::new(expr.span, SourceOriginKind::BoolConstructor),
                         source: text.clone(),
                         replacement: if text == "true" { "inr(())" } else { "inl(())" }.to_owned(),
                     });
@@ -474,6 +480,7 @@ impl<'db> DesugarCollector<'db> {
                         body: self.body,
                         call_expr: expr_id,
                         callee_expr: *callee,
+                        origin: SourceOrigin::new(expr.span, SourceOriginKind::IndirectCall),
                         callee: callee_identity,
                         args: indirect_arg_shape(args),
                         evidence,
@@ -496,6 +503,7 @@ impl<'db> DesugarCollector<'db> {
                 self.transforms.push(FrontendTransform::IfExprToMatch {
                     body: self.body,
                     expr: expr_id,
+                    origin: SourceOrigin::new(expr.span, SourceOriginKind::IfExpression),
                 });
                 self.expr(*cond);
                 self.expr(*then_expr);
@@ -511,6 +519,7 @@ impl<'db> DesugarCollector<'db> {
     }
 
     fn pat(&mut self, pat_id: Id<Pat<'db>>) {
+        let pat = self.body.pats(self.db).get(pat_id);
         if let Some(hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(
             hir_nameres::BuiltinCtor::True,
         ))) = self.pat_resolutions.get(&(self.body, pat_id))
@@ -518,6 +527,7 @@ impl<'db> DesugarCollector<'db> {
             self.transforms.push(FrontendTransform::BoolToUnitSum {
                 body: self.body,
                 node: BoolNode::Pat(pat_id),
+                origin: SourceOrigin::new(pat.span, SourceOriginKind::BoolConstructor),
                 source: "true".to_owned(),
                 replacement: "inr(())".to_owned(),
             });
@@ -529,11 +539,12 @@ impl<'db> DesugarCollector<'db> {
             self.transforms.push(FrontendTransform::BoolToUnitSum {
                 body: self.body,
                 node: BoolNode::Pat(pat_id),
+                origin: SourceOrigin::new(pat.span, SourceOriginKind::BoolConstructor),
                 source: "false".to_owned(),
                 replacement: "inl(())".to_owned(),
             });
         }
-        match &self.body.pats(self.db).get(pat_id).kind {
+        match &pat.kind {
             PatKind::Ctor { args, .. } | PatKind::Tuple { elems: args } => {
                 for arg in args {
                     self.pat(*arg);
@@ -549,9 +560,11 @@ impl<'db> DesugarCollector<'db> {
             self.expr_resolutions.get(&(self.body, lhs))
         {
             let selector = selector_name(self.db, field);
+            let lhs_span = self.body.exprs(self.db).get(lhs).span;
             self.transforms.push(FrontendTransform::FieldWrite {
                 body: self.body,
                 stmt: stmt_id,
+                origin: SourceOrigin::new(lhs_span, SourceOriginKind::FieldWrite),
                 field: *field,
                 selector: selector.clone(),
                 hook: format!(
@@ -571,17 +584,7 @@ impl<'db> DesugarCollector<'db> {
 }
 
 fn indirect_arg_shape<'db>(args: &[Id<Expr<'db>>]) -> IndirectArgShape<'db> {
-    let Some((head, tail)) = args.split_first() else {
-        return IndirectArgShape::Unit;
-    };
-    if tail.is_empty() {
-        IndirectArgShape::Single(*head)
-    } else {
-        IndirectArgShape::Pair {
-            head: *head,
-            tail: Box::new(indirect_arg_shape(tail)),
-        }
-    }
+    ProductShape::from_slice(args)
 }
 
 fn body_resolution_for<'a, 'db>(

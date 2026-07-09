@@ -13,9 +13,11 @@ use nameres::{LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, modu
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use solcore_hir_ty::{
-    BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback, FrontendTransform,
-    IndirectArgShape, Ty, TyCtor, TyKind, contract_abi_json, contract_dispatch_surface,
-    derived_generic_plan, frontend_desugar_plan, infer::module_typeck_diagnostics,
+    BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback,
+    FieldInitPreTypeckTransform, FrontendTransform, IndirectArgShape, PreTypeckTransform,
+    ProductShape, SourceOriginKind, Ty, TyCtor, TyKind, contract_abi_json,
+    contract_dispatch_surface, derived_generic_plan, frontend_desugar_plan,
+    infer::module_typeck_diagnostics, pre_typeck_desugar_plan,
 };
 
 #[salsa::db]
@@ -117,6 +119,22 @@ fn pair_args<'db>(db: &'db TestDb, ty: Ty<'db>) -> Option<&'db Vec<Ty<'db>>> {
         } if args.len() == 2 => Some(args),
         _ => None,
     }
+}
+
+fn product_is_pair<T>(shape: &ProductShape<T>) -> bool {
+    matches!(shape, ProductShape::Pair { tail, .. } if matches!(tail.as_ref(), ProductShape::Single(_)))
+}
+
+fn product_is_triple<T>(shape: &ProductShape<T>) -> bool {
+    matches!(
+        shape,
+        ProductShape::Pair { tail, .. }
+            if matches!(
+                tail.as_ref(),
+                ProductShape::Pair { tail, .. }
+                    if matches!(tail.as_ref(), ProductShape::Single(_))
+            )
+    )
 }
 
 fn diagnostics(src: &str) -> Vec<Diagnostic> {
@@ -497,6 +515,101 @@ contract C {
             .iter()
             .any(|transform| matches!(transform, FrontendTransform::FieldRead { hook, .. } if hook.contains("RVA.acc"))),
         "{transforms:?}"
+    );
+}
+
+#[test]
+fn pre_typeck_desugar_plan_records_tuple_product_shapes_and_origins() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+contract C {
+  seed: (word, bool) = (1, true);
+
+  public function f(x : word, y : bool, z : word) -> (word, bool, word) {
+    let t : (word, bool, word) = (x, y, z);
+    match t {
+    | (a, b, c) => return (a, b, c);
+    }
+  }
+}
+"#,
+    );
+    let plan = pre_typeck_desugar_plan(&db, module);
+
+    assert!(
+        plan.types.iter().any(|transform| {
+            transform.origin.kind == SourceOriginKind::TupleType
+                && product_is_pair(&transform.product)
+        }),
+        "{:?}",
+        plan.types
+    );
+    assert!(
+        plan.types.iter().any(|transform| {
+            transform.origin.kind == SourceOriginKind::TupleType
+                && product_is_triple(&transform.product)
+        }),
+        "{:?}",
+        plan.types
+    );
+
+    let body_transforms = plan
+        .bodies
+        .iter()
+        .flat_map(|body| body.transforms.iter())
+        .collect::<Vec<_>>();
+    let body_types = plan
+        .bodies
+        .iter()
+        .flat_map(|body| body.types.iter())
+        .collect::<Vec<_>>();
+    assert!(
+        body_types.iter().any(|transform| {
+            transform.origin.kind == SourceOriginKind::TupleType
+                && product_is_triple(&transform.product)
+        }),
+        "{body_types:?}"
+    );
+    assert!(
+        body_transforms.iter().any(|transform| matches!(
+            transform,
+            PreTypeckTransform::TupleExprToProduct {
+                origin,
+                product,
+                ..
+            } if origin.kind == SourceOriginKind::TupleExpr && product_is_triple(product)
+        )),
+        "{body_transforms:?}"
+    );
+    assert!(
+        body_transforms.iter().any(|transform| matches!(
+            transform,
+            PreTypeckTransform::TuplePatToProduct {
+                origin,
+                product,
+                ..
+            } if origin.kind == SourceOriginKind::TuplePat && product_is_triple(product)
+        )),
+        "{body_transforms:?}"
+    );
+
+    let field_init_transforms = plan
+        .field_inits
+        .iter()
+        .flat_map(|init| init.transforms.iter())
+        .collect::<Vec<_>>();
+    assert!(
+        field_init_transforms.iter().any(|transform| matches!(
+            transform,
+            FieldInitPreTypeckTransform::TupleExprToProduct {
+                origin,
+                product,
+                ..
+            } if origin.kind == SourceOriginKind::TupleExpr && product_is_pair(product)
+        )),
+        "{field_init_transforms:?}"
     );
 }
 
