@@ -8,6 +8,7 @@ use lsp_types::{
     Diagnostic as LspDiagnostic, DiagnosticRelatedInformation,
     DiagnosticSeverity as LspDiagnosticSeverity, Location, NumberOrString, Url,
 };
+use nameres::Db as _;
 use vfs::{
     DiagLabel, DiagRange, Diagnostic as VfsDiagnostic, DiagnosticSeverity as VfsDiagnosticSeverity,
 };
@@ -26,15 +27,33 @@ pub fn compute_diagnostics(world: &WorldState, uri: &Url) -> Vec<LspDiagnostic> 
         return Vec::new();
     };
 
-    let mut workspace = world.workspace().clone();
-    workspace.set_entry(&path);
+    let diagnostics = if is_reachable_from_workspace_entry(world, &path) {
+        world.workspace().diagnostics()
+    } else {
+        let mut workspace = world.workspace().clone();
+        workspace.set_entry(&path);
+        workspace.diagnostics()
+    };
 
-    workspace
-        .diagnostics()
+    diagnostics
         .into_iter()
         .filter(|diagnostic| diagnostic_belongs_to_uri(diagnostic, uri))
         .map(|diagnostic| to_lsp_diagnostic(world, line_index, diagnostic))
         .collect()
+}
+
+fn is_reachable_from_workspace_entry(world: &WorldState, path: &str) -> bool {
+    let db = world.db();
+    let Some(file) = db.source_file(path) else {
+        return false;
+    };
+    let Some(entry) = world.workspace().entry_module() else {
+        return false;
+    };
+
+    nameres::reachable_modules(db, entry)
+        .into_iter()
+        .any(|module| db.module_file(module) == Some(file))
 }
 
 fn diagnostic_belongs_to_uri(diagnostic: &VfsDiagnostic, uri: &Url) -> bool {
@@ -153,5 +172,30 @@ mod tests {
             diagnostic.range.start.line <= diagnostic.range.end.line
                 && diagnostic.range.start != diagnostic.range.end
         }));
+    }
+
+    #[test]
+    fn sibling_import_open_in_workspace_has_no_module_not_found_diagnostic() {
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        let main = "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n";
+        let math = "function double(x: word) -> word {\n  let res: word;\n  assembly {\n    res := add(x, x)\n  }\n  return res;\n}\n\nexport { double };\n";
+
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        let _ = compute_diagnostics(&world, &main_uri);
+        assert!(world.open_document(math_uri, math.to_owned()));
+
+        let diagnostics = compute_diagnostics(&world, &main_uri);
+        assert!(
+            diagnostics.iter().all(|diagnostic| {
+                !diagnostic.message.contains("file not found")
+                    && diagnostic.code
+                        != Some(NumberOrString::String(
+                            hir::diag::DiagnosticCode::MODULE_NOT_FOUND.to_owned(),
+                        ))
+            }),
+            "expected no module-not-found diagnostics, got {diagnostics:#?}"
+        );
     }
 }
