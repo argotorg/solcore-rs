@@ -5,6 +5,7 @@
 //! bindings are layered on top in later crates/tasks.
 
 pub mod capabilities;
+pub mod completion;
 pub mod definition;
 pub mod diagnostics;
 pub mod hover;
@@ -20,6 +21,7 @@ pub mod wasm;
 mod wasm;
 
 pub use capabilities::{initialize_result, server_capabilities};
+pub use completion::handle_completion;
 pub use definition::handle_definition;
 pub use diagnostics::compute_diagnostics;
 pub use hover::handle_hover;

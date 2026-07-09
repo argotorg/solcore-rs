@@ -1,14 +1,19 @@
 //! Static LSP capability advertisement.
 
 use lsp_types::{
-    HoverProviderCapability, InitializeResult, OneOf, ServerCapabilities, ServerInfo,
-    TextDocumentSyncCapability, TextDocumentSyncKind,
+    CompletionOptions, HoverProviderCapability, InitializeResult, OneOf, ServerCapabilities,
+    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
 };
 
 /// Returns the server capabilities for the transport layer's initialize reply.
 pub fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        completion_provider: Some(CompletionOptions {
+            resolve_provider: Some(false),
+            trigger_characters: Some(vec![".".to_owned()]),
+            ..CompletionOptions::default()
+        }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -39,6 +44,12 @@ mod tests {
             capabilities.text_document_sync,
             Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL))
         );
+        let completion = capabilities
+            .completion_provider
+            .as_ref()
+            .expect("completion provider");
+        assert_eq!(completion.resolve_provider, Some(false));
+        assert_eq!(completion.trigger_characters, Some(vec![".".to_owned()]));
         assert_eq!(
             capabilities.hover_provider,
             Some(HoverProviderCapability::Simple(true))

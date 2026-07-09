@@ -4,8 +4,8 @@
 //! this module intentionally does not implement `Content-Length` framing.
 
 use lsp_types::{
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentSymbolParams, GotoDefinitionParams, HoverParams,
+    CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -86,6 +86,7 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         "textDocument/didOpen" => handle_did_open(world, id, params),
         "textDocument/didChange" => handle_did_change(world, id, params),
         "textDocument/didClose" => handle_did_close(world, id, params),
+        "textDocument/completion" => handle_completion_request(world, id, params),
         "textDocument/hover" => handle_hover_request(world, id, params),
         "textDocument/definition" => handle_definition_request(world, id, params),
         "textDocument/documentSymbol" => handle_document_symbol_request(world, id, params),
@@ -150,6 +151,23 @@ fn handle_did_close(world: &mut WorldState, id: Option<Value>, params: Value) ->
     let mut outgoing = null_response_or_empty(id);
     outgoing.push(publish_diagnostics(uri, Vec::new()));
     outgoing
+}
+
+fn handle_completion_request(world: &WorldState, id: Option<Value>, params: Value) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<CompletionParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    let uri = params.text_document_position.text_document.uri;
+    let position = params.text_document_position.position;
+    vec![result_response(
+        id,
+        crate::completion::handle_completion(world, &uri, position),
+    )]
 }
 
 fn handle_hover_request(world: &WorldState, id: Option<Value>, params: Value) -> Vec<String> {
@@ -347,6 +365,45 @@ mod tests {
         assert!(
             !symbol_response["result"].is_null(),
             "expected document symbol result, got {symbol_response:#?}"
+        );
+    }
+
+    #[test]
+    fn completion_request_returns_items() {
+        let mut world = WorldState::new();
+        let source = "function helper() -> word { return 1; }\nfunction main(x: word) -> word { return x; }\n";
+        let outgoing = dispatch(&mut world, &did_open_message(source));
+        assert_eq!(outgoing.len(), 1);
+        let character = source
+            .lines()
+            .nth(1)
+            .expect("main line")
+            .find("return x")
+            .expect("return x")
+            + "return ".len();
+
+        let completion = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "completion-1",
+                "method": "textDocument/completion",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 1, "character": character }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(completion.len(), 1);
+        let completion_response = parse_message(&completion[0]);
+        assert_eq!(completion_response["id"], "completion-1");
+        let items = completion_response["result"]
+            .as_array()
+            .expect("completion result array");
+        assert!(
+            items.iter().any(|item| item["label"] == "helper"),
+            "expected helper completion, got {completion_response:#?}"
         );
     }
 
