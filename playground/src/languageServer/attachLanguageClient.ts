@@ -4,6 +4,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import { registerDiagnostics } from "./diagnostics";
 import { registerEditorOpener } from "./editorOpener";
 import { LspClient } from "./lspClient";
+import { startModelHost } from "./modelHost";
 import { registerProviders } from "./providers";
 import { startWorkspaceSync } from "./workspaceSync";
 
@@ -69,6 +70,7 @@ export function attachLanguageClient(monaco: typeof Monaco): DetachLanguageClien
         return;
       }
 
+      disposers.push(startModelHost(monaco));
       openCurrentWorkspace(client);
       disposers.push(startWorkspaceSync(client));
       disposers.push(registerDiagnostics(monaco, client));

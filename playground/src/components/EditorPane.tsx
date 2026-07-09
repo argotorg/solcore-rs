@@ -255,6 +255,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
         <Editor
           beforeMount={beforeMount}
           defaultLanguage={SOLCORE_LANGUAGE_ID}
+          keepCurrentModel
           language={SOLCORE_LANGUAGE_ID}
           onChange={(value) => setContent(activePath, value ?? "")}
           onMount={onMount}
