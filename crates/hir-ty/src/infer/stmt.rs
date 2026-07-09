@@ -216,11 +216,14 @@ impl<'db> InferCtx<'db> {
                 then_body,
                 else_body,
             } => {
-                let cond_ty = self.infer_expr(body, *cond);
+                let input =
+                    self.if_stmt_match_input(body, stmt_id, *cond, then_body, else_body.as_deref());
+                let cond_ty = self.infer_expr(body, input.cond);
                 let bool_ty = self.bool();
-                self.unify_expr(body, *cond, cond_ty, bool_ty);
-                let then_ty = self.infer_stmt_sequence(body, then_body);
-                let else_ty = else_body
+                self.unify_expr(body, input.cond, cond_ty, bool_ty);
+                let then_ty = self.infer_stmt_sequence(body, &input.then_body);
+                let else_ty = input
+                    .else_body
                     .as_ref()
                     .map(|else_body| self.infer_stmt_sequence(body, else_body))
                     .unwrap_or_else(|| then_ty.clone());

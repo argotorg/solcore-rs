@@ -137,20 +137,21 @@ impl<'db> InferCtx<'db> {
                 then_expr,
                 else_expr,
             } => {
-                let cond_ty = self.infer_expr(body, *cond);
+                let input = self.if_expr_match_input(body, expr_id, *cond, *then_expr, *else_expr);
+                let cond_ty = self.infer_expr(body, input.cond);
                 let bool_ty = self.bool();
-                self.unify_expr(body, *cond, cond_ty, bool_ty);
-                let then_ty = self.infer_expr_expected(body, *then_expr, expected.clone());
-                let else_ty = self.infer_expr_expected(body, *else_expr, expected.clone());
+                self.unify_expr(body, input.cond, cond_ty, bool_ty);
+                let then_ty = self.infer_expr_expected(body, input.then_expr, expected.clone());
+                let else_ty = self.infer_expr_expected(body, input.else_expr, expected.clone());
                 if !self.report_numeric_if_branch_mismatch(
                     body,
                     expr_id,
-                    *then_expr,
+                    input.then_expr,
                     then_ty.clone(),
-                    *else_expr,
+                    input.else_expr,
                     else_ty.clone(),
                 ) {
-                    self.unify_expr(body, *else_expr, then_ty.clone(), else_ty);
+                    self.unify_expr(body, input.else_expr, then_ty.clone(), else_ty);
                 }
                 then_ty
             }

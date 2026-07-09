@@ -1,5 +1,59 @@
 use super::*;
 
+pub(super) struct IfStmtMatchInput<'db> {
+    pub(super) cond: Id<Expr<'db>>,
+    pub(super) then_body: Vec<Id<Stmt<'db>>>,
+    pub(super) else_body: Option<Vec<Id<Stmt<'db>>>>,
+}
+
+pub(super) struct IfExprMatchInput<'db> {
+    pub(super) cond: Id<Expr<'db>>,
+    pub(super) then_expr: Id<Expr<'db>>,
+    pub(super) else_expr: Id<Expr<'db>>,
+}
+
+pub(super) fn if_stmt_match_input<'db>(
+    view: BodyDesugarView<'_, 'db>,
+    body: FuncBody<'db>,
+    stmt: Id<Stmt<'db>>,
+    cond: Id<Expr<'db>>,
+    then_body: &[Id<Stmt<'db>>],
+    else_body: Option<&[Id<Stmt<'db>>]>,
+) -> IfStmtMatchInput<'db> {
+    view.if_stmt_match(body, stmt)
+        .map(|view| IfStmtMatchInput {
+            cond: view.cond,
+            then_body: view.then_body.to_vec(),
+            else_body: view.else_body.map(|body| body.to_vec()),
+        })
+        .unwrap_or_else(|| IfStmtMatchInput {
+            cond,
+            then_body: then_body.to_vec(),
+            else_body: else_body.map(|body| body.to_vec()),
+        })
+}
+
+pub(super) fn if_expr_match_input<'db>(
+    view: BodyDesugarView<'_, 'db>,
+    body: FuncBody<'db>,
+    expr: Id<Expr<'db>>,
+    cond: Id<Expr<'db>>,
+    then_expr: Id<Expr<'db>>,
+    else_expr: Id<Expr<'db>>,
+) -> IfExprMatchInput<'db> {
+    view.if_expr_match(body, expr)
+        .map(|view| IfExprMatchInput {
+            cond: view.cond,
+            then_expr: view.then_expr,
+            else_expr: view.else_expr,
+        })
+        .unwrap_or(IfExprMatchInput {
+            cond,
+            then_expr,
+            else_expr,
+        })
+}
+
 pub(super) fn product_infer_ty_from_shape<'db>(shape: &ProductShape<InferTy<'db>>) -> InferTy<'db> {
     match shape {
         ProductShape::Unit => unit_infer_ty(),

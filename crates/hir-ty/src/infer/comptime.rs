@@ -141,6 +141,10 @@ impl<'db> ComptimeChecker<'db> {
         DiagnosticSourceMap::new(self.db, &self.pre_typeck_desugar)
     }
 
+    fn desugar_view(&self) -> BodyDesugarView<'_, 'db> {
+        BodyDesugarView::new(&self.pre_typeck_desugar)
+    }
+
     fn stmt_label_span(&self, body: FuncBody<'db>, stmt: Id<Stmt<'db>>) -> LabelSpan {
         self.diagnostic_sources().stmt_label_span(body, stmt)
     }
@@ -324,13 +328,21 @@ impl<'db> ComptimeChecker<'db> {
                 then_body,
                 else_body,
             } => {
-                let cond_value = self.classify_expr(body, *cond);
+                let input = if_stmt_match_input(
+                    self.desugar_view(),
+                    body,
+                    stmt_id,
+                    *cond,
+                    then_body,
+                    else_body.as_deref(),
+                );
+                let cond_value = self.classify_expr(body, input.cond);
                 self.push_scope();
-                let then_value = self.check_stmt_sequence(body, then_body);
+                let then_value = self.check_stmt_sequence(body, &input.then_body);
                 self.pop_scope();
-                let else_value = if let Some(else_body) = else_body {
+                let else_value = if let Some(else_body) = input.else_body {
                     self.push_scope();
-                    let value = self.check_stmt_sequence(body, else_body);
+                    let value = self.check_stmt_sequence(body, &else_body);
                     self.pop_scope();
                     value
                 } else {
@@ -390,11 +402,21 @@ impl<'db> ComptimeChecker<'db> {
                 cond,
                 then_expr,
                 else_expr,
-            } => ComptimeValue::from_all([
-                self.classify_expr(body, *cond),
-                self.classify_expr(body, *then_expr),
-                self.classify_expr(body, *else_expr),
-            ]),
+            } => {
+                let input = if_expr_match_input(
+                    self.desugar_view(),
+                    body,
+                    expr_id,
+                    *cond,
+                    *then_expr,
+                    *else_expr,
+                );
+                ComptimeValue::from_all([
+                    self.classify_expr(body, input.cond),
+                    self.classify_expr(body, input.then_expr),
+                    self.classify_expr(body, input.else_expr),
+                ])
+            }
             ExprKind::Error => ComptimeValue::Deferred,
         }
     }

@@ -18,7 +18,8 @@ impl<'a, 'db> DiagnosticSourceMap<'a, 'db> {
     }
 
     pub(super) fn stmt_label_span(&self, body: FuncBody<'db>, stmt: Id<Stmt<'db>>) -> LabelSpan {
-        self.label_span(body.stmts(self.db).get(stmt).span(self.db))
+        let fallback = body.stmts(self.db).get(stmt).span(self.db);
+        label_span_for_origin(self.db, self.view.stmt_origin(body, stmt), fallback)
     }
 
     pub(super) fn expr_label_span(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> LabelSpan {

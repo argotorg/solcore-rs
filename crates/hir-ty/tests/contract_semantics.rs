@@ -544,6 +544,12 @@ contract C {
 
   public function f(x : word, y : bool, z : word) -> (word, bool, word) {
     let t : (word, bool, word) = (x, y, z);
+    let w : word = if (y) then x else z;
+    if (y) {
+      return (w, y, z);
+    } else {
+      return (z, y, w);
+    }
     match t {
     | (a, b, c) => return (a, b, c);
     }
@@ -606,6 +612,30 @@ contract C {
                 product,
                 ..
             } if origin.kind == SourceOriginKind::TuplePat && product_is_triple(product)
+        )),
+        "{body_transforms:?}"
+    );
+    assert!(
+        body_transforms.iter().any(|transform| matches!(
+            transform,
+            PreTypeckTransform::IfExprToMatch {
+                origin,
+                ..
+            } if origin.kind == SourceOriginKind::IfExpression
+        )),
+        "{body_transforms:?}"
+    );
+    assert!(
+        body_transforms.iter().any(|transform| matches!(
+            transform,
+            PreTypeckTransform::IfStmtToMatch {
+                origin,
+                then_body,
+                else_body: Some(else_body),
+                ..
+            } if origin.kind == SourceOriginKind::IfStatement
+                && !then_body.is_empty()
+                && !else_body.is_empty()
         )),
         "{body_transforms:?}"
     );

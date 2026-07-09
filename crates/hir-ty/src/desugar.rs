@@ -157,6 +157,30 @@ pub struct BodyDesugarView<'a, 'db> {
     plans: &'a [BodyPreTypeckDesugarPlan<'db>],
 }
 
+/// Match-shaped view of an if statement.
+pub struct IfStmtMatchView<'a, 'db> {
+    /// User syntax that produced this view.
+    pub origin: SourceOrigin<'db>,
+    /// Boolean scrutinee.
+    pub cond: Id<Expr<'db>>,
+    /// Statements in the true branch.
+    pub then_body: &'a [Id<Stmt<'db>>],
+    /// Statements in the false branch, when present.
+    pub else_body: Option<&'a [Id<Stmt<'db>>]>,
+}
+
+/// Match-shaped view of an if expression.
+pub struct IfExprMatchView<'db> {
+    /// User syntax that produced this view.
+    pub origin: SourceOrigin<'db>,
+    /// Boolean scrutinee.
+    pub cond: Id<Expr<'db>>,
+    /// Expression in the true branch.
+    pub then_expr: Id<Expr<'db>>,
+    /// Expression in the false branch.
+    pub else_expr: Id<Expr<'db>>,
+}
+
 impl<'a, 'db> BodyDesugarView<'a, 'db> {
     /// Creates a view over pre-typecheck body desugar plans.
     pub fn new(plans: &'a [BodyPreTypeckDesugarPlan<'db>]) -> Self {
@@ -226,8 +250,74 @@ impl<'a, 'db> BodyDesugarView<'a, 'db> {
                     origin,
                     ..
                 } if *candidate == expr => Some(*origin),
+                PreTypeckTransform::IfExprToMatch {
+                    expr: candidate,
+                    origin,
+                    ..
+                } if *candidate == expr => Some(*origin),
                 _ => None,
             })
+    }
+
+    /// Returns the planned match-shaped view for an if statement.
+    pub fn if_stmt_match(
+        &self,
+        body: FuncBody<'db>,
+        stmt: Id<Stmt<'db>>,
+    ) -> Option<IfStmtMatchView<'a, 'db>> {
+        self.body_plan(body)?
+            .transforms
+            .iter()
+            .find_map(|transform| match transform {
+                PreTypeckTransform::IfStmtToMatch {
+                    stmt: candidate,
+                    origin,
+                    cond,
+                    then_body,
+                    else_body,
+                } if *candidate == stmt => Some(IfStmtMatchView {
+                    origin: *origin,
+                    cond: *cond,
+                    then_body,
+                    else_body: else_body.as_deref(),
+                }),
+                _ => None,
+            })
+    }
+
+    /// Returns the planned match-shaped view for an if expression.
+    pub fn if_expr_match(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<IfExprMatchView<'db>> {
+        self.body_plan(body)?
+            .transforms
+            .iter()
+            .find_map(|transform| match transform {
+                PreTypeckTransform::IfExprToMatch {
+                    expr: candidate,
+                    origin,
+                    cond,
+                    then_expr,
+                    else_expr,
+                } if *candidate == expr => Some(IfExprMatchView {
+                    origin: *origin,
+                    cond: *cond,
+                    then_expr: *then_expr,
+                    else_expr: *else_expr,
+                }),
+                _ => None,
+            })
+    }
+
+    /// Returns the user origin for a statement transform.
+    pub fn stmt_origin(
+        &self,
+        body: FuncBody<'db>,
+        stmt: Id<Stmt<'db>>,
+    ) -> Option<SourceOrigin<'db>> {
+        self.if_stmt_match(body, stmt).map(|view| view.origin)
     }
 
     /// Returns the user origin for a tuple pattern transform.
@@ -332,6 +422,32 @@ pub enum PreTypeckTransform<'db> {
         origin: SourceOrigin<'db>,
         /// Unit/single/right-nested-pair payload shape.
         product: ProductShape<Id<Pat<'db>>>,
+    },
+    /// If statement viewed as a match over the boolean condition.
+    IfStmtToMatch {
+        /// Source statement.
+        stmt: Id<Stmt<'db>>,
+        /// Diagnostic origin for generated match nodes.
+        origin: SourceOrigin<'db>,
+        /// Boolean condition expression.
+        cond: Id<Expr<'db>>,
+        /// Statements in the true branch.
+        then_body: Vec<Id<Stmt<'db>>>,
+        /// Statements in the false branch, when present.
+        else_body: Option<Vec<Id<Stmt<'db>>>>,
+    },
+    /// If expression viewed as a match over the boolean condition.
+    IfExprToMatch {
+        /// Source expression.
+        expr: Id<Expr<'db>>,
+        /// Diagnostic origin for generated match nodes.
+        origin: SourceOrigin<'db>,
+        /// Boolean condition expression.
+        cond: Id<Expr<'db>>,
+        /// Expression in the true branch.
+        then_expr: Id<Expr<'db>>,
+        /// Expression in the false branch.
+        else_expr: Id<Expr<'db>>,
     },
 }
 
@@ -633,6 +749,14 @@ impl<'db> BodyCollector<'db> {
                 then_body,
                 else_body,
             } => {
+                let stmt = self.body.stmts(self.db).get(stmt_id);
+                self.transforms.push(PreTypeckTransform::IfStmtToMatch {
+                    stmt: stmt_id,
+                    origin: SourceOrigin::new(stmt.span, SourceOriginKind::IfStatement),
+                    cond: *cond,
+                    then_body: then_body.clone(),
+                    else_body: else_body.clone(),
+                });
                 self.expr(*cond);
                 for stmt in then_body {
                     self.stmt(*stmt);
@@ -695,6 +819,13 @@ impl<'db> BodyCollector<'db> {
                 then_expr,
                 else_expr,
             } => {
+                self.transforms.push(PreTypeckTransform::IfExprToMatch {
+                    expr: expr_id,
+                    origin: SourceOrigin::new(expr.span, SourceOriginKind::IfExpression),
+                    cond: *cond,
+                    then_expr: *then_expr,
+                    else_expr: *else_expr,
+                });
                 self.expr(*cond);
                 self.expr(*then_expr);
                 self.expr(*else_expr);

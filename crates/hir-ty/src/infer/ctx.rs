@@ -343,6 +343,28 @@ impl<'db> InferCtx<'db> {
             .unwrap_or_else(|| ProductShape::from_slice(elems))
     }
 
+    pub(super) fn if_stmt_match_input(
+        &self,
+        body: FuncBody<'db>,
+        stmt: Id<Stmt<'db>>,
+        cond: Id<Expr<'db>>,
+        then_body: &[Id<Stmt<'db>>],
+        else_body: Option<&[Id<Stmt<'db>>]>,
+    ) -> IfStmtMatchInput<'db> {
+        if_stmt_match_input(self.desugar_view(), body, stmt, cond, then_body, else_body)
+    }
+
+    pub(super) fn if_expr_match_input(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        cond: Id<Expr<'db>>,
+        then_expr: Id<Expr<'db>>,
+        else_expr: Id<Expr<'db>>,
+    ) -> IfExprMatchInput<'db> {
+        if_expr_match_input(self.desugar_view(), body, expr, cond, then_expr, else_expr)
+    }
+
     pub(super) fn label_span(&self, span: Span<'db>) -> LabelSpan {
         self.diagnostic_sources().label_span(span)
     }
