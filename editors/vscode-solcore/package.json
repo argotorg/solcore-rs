@@ -5,10 +5,13 @@
   "version": "0.0.0",
   "publisher": "solcore",
   "license": "MIT",
+  "main": "./extension.js",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:solcore"],
+  "extensionKind": ["workspace"],
   "contributes": {
     "languages": [
       {
@@ -24,6 +27,19 @@
         "scopeName": "source.solcore",
         "path": "./syntaxes/solcore.tmLanguage.json"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Solcore",
+      "properties": {
+        "solcore.lsp.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the solcore-lsp executable. Falls back to SOLCORE_LSP_SERVER, then solcore-lsp on PATH."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   }
 }

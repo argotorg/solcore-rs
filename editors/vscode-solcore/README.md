@@ -1,18 +1,34 @@
 # Solcore editor grammar
 
-This directory contains the reusable editor definition for Solcore `.solc`
-files. The playground imports the TextMate grammar directly from
-`syntaxes/solcore.tmLanguage.json`, so local editor support and browser syntax
-highlighting share the same source definition.
+This directory contains a VS Code extension for Solcore `.solc` files. It ships
+the reusable TextMate grammar used by the playground and starts the native
+`solcore-lsp` stdio server when a Solcore file opens.
 
 The package is shaped like a small VS Code extension:
 
 - `syntaxes/solcore.tmLanguage.json` provides TextMate scopes.
 - `language-configuration.json` provides comments, brackets, auto-close pairs,
   indentation, folding markers, and the Solcore word pattern.
-- `package.json` wires the `.solc` extension to the grammar and configuration.
+- `extension.js` starts `solcore-lsp` through `vscode-languageclient`.
+- `package.json` wires the `.solc` extension to the grammar, configuration, and
+  language client.
 
-For local VS Code development, open this directory as an extension development
-host or symlink/copy it into your VS Code extensions directory. Other editors
-that consume TextMate grammars can use `syntaxes/solcore.tmLanguage.json`
-directly.
+## Language server
+
+Build or install the native server first:
+
+```sh
+cargo install --path ../../crates/lsp --features native --locked
+```
+
+The extension resolves the server command in this order:
+
+1. `solcore.lsp.serverPath` VS Code setting.
+2. `SOLCORE_LSP_SERVER` environment variable.
+3. `solcore-lsp` on `PATH`.
+
+## Development
+
+Run `npm install` in this directory before launching an Extension Development
+Host. Other editors that consume TextMate grammars can use
+`syntaxes/solcore.tmLanguage.json` directly.
