@@ -79,6 +79,29 @@ jobs:
       - name: Lint workspace
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
+  wasm-build:
+    name: Wasm build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build solcore-wasm
+        run: cargo build --target wasm32-unknown-unknown -p solcore-wasm --locked
+
+      - name: Build solcore-lsp
+        run: cargo build --target wasm32-unknown-unknown -p solcore-lsp --features wasm --locked
+
   test:
     name: Test
     runs-on: ubuntu-latest
