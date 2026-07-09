@@ -6,6 +6,7 @@ pub(super) struct BodyCtx<'a, 'db> {
     pub(super) body: FuncBody<'db>,
     pub(super) result: InferenceResult<'db>,
     pub(super) body_map: hir_nameres::BodyResolutionMap<'db>,
+    pub(super) pre_typeck_desugar: Vec<BodyPreTypeckDesugarPlan<'db>>,
     pub(super) subst: TySubst<'db>,
     pub(super) depth: usize,
     pub(super) lowered_exprs: FxHashMap<Id<Expr<'db>>, MonoExpr<'db>>,
@@ -204,12 +205,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         let kind = match &expr.kind {
             ExprKind::Lit(lit) => MonoExprKind::Lit(lit.clone()),
             ExprKind::Ident(name) => self.ident_expr(expr_id, name, mono_ty, expr.span),
-            ExprKind::Tuple(elems) => MonoExprKind::Tuple(
-                elems
-                    .iter()
-                    .map(|expr| self.expr(*expr))
-                    .collect::<Option<Vec<_>>>()?,
-            ),
+            ExprKind::Tuple(elems) => self.tuple_expr(expr_id, elems, ty, expr.span)?.kind,
             ExprKind::Call { callee, args } => {
                 self.call_expr(expr_id, *callee, args, ty, expr.span)?
             }
@@ -456,6 +452,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             body,
             result,
             body_map,
+            pre_typeck_desugar: self.pre_typeck_desugar.clone(),
             subst,
             depth,
             lowered_exprs: FxHashMap::default(),
@@ -540,12 +537,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     .map(|arg| self.pat(*arg))
                     .collect::<Option<Vec<_>>>()?,
             },
-            PatKind::Tuple { elems } => MonoPatKind::Tuple(
-                elems
-                    .iter()
-                    .map(|pat| self.pat(*pat))
-                    .collect::<Option<Vec<_>>>()?,
-            ),
+            PatKind::Tuple { elems } => self.tuple_pat(pat_id, elems, ty, pat.span)?.kind,
             PatKind::ComptimeLabel { expr, .. } => MonoPatKind::ComptimeLabel(self.expr(*expr)?),
             PatKind::Error => MonoPatKind::Error,
         };
@@ -610,6 +602,64 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             .iter()
             .find(|entry| entry.body == self.body && entry.pat == pat)
             .map(|entry| entry.resolution.clone())
+    }
+
+    fn desugar_view(&self) -> BodyDesugarView<'_, 'db> {
+        BodyDesugarView::new(&self.pre_typeck_desugar)
+    }
+
+    fn tuple_expr_product_shape(
+        &self,
+        expr: Id<Expr<'db>>,
+        elems: &[Id<Expr<'db>>],
+    ) -> ProductShape<Id<Expr<'db>>> {
+        self.desugar_view()
+            .tuple_expr_product(self.body, expr)
+            .cloned()
+            .unwrap_or_else(|| ProductShape::from_slice(elems))
+    }
+
+    fn tuple_pat_product_shape(
+        &self,
+        pat: Id<Pat<'db>>,
+        elems: &[Id<Pat<'db>>],
+    ) -> ProductShape<Id<Pat<'db>>> {
+        self.desugar_view()
+            .tuple_pat_product(self.body, pat)
+            .cloned()
+            .unwrap_or_else(|| ProductShape::from_slice(elems))
+    }
+
+    fn tuple_expr(
+        &mut self,
+        expr: Id<Expr<'db>>,
+        elems: &[Id<Expr<'db>>],
+        ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let product = self.tuple_expr_product_shape(expr, elems);
+        let elems = product
+            .to_vec()
+            .iter()
+            .map(|elem| self.expr(*elem))
+            .collect::<Option<Vec<_>>>()?;
+        Some(product_expr_from_elems(self.driver.db, &elems, ty, span))
+    }
+
+    fn tuple_pat(
+        &mut self,
+        pat: Id<Pat<'db>>,
+        elems: &[Id<Pat<'db>>],
+        ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoPat<'db>> {
+        let product = self.tuple_pat_product_shape(pat, elems);
+        let elems = product
+            .to_vec()
+            .iter()
+            .map(|elem| self.pat(*elem))
+            .collect::<Option<Vec<_>>>()?;
+        Some(product_pat_from_elems(self.driver.db, &elems, ty, span))
     }
 
     fn is_storage_index_expr(&self, expr: Id<Expr<'db>>) -> bool {

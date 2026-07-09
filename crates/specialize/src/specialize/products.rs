@@ -95,6 +95,49 @@ pub(super) fn product_expr_from_vars<'db>(
     }
 }
 
+pub(super) fn product_expr_from_elems<'db>(
+    db: &'db dyn Db,
+    elems: &[MonoExpr<'db>],
+    ty: Ty<'db>,
+    span: Span<'db>,
+) -> MonoExpr<'db> {
+    match elems {
+        [] => MonoExpr {
+            span,
+            ty: MonoTy::new_unchecked(Ty::unit(db)),
+            kind: MonoExprKind::Con {
+                ctor: MonoId {
+                    name: "()".to_owned(),
+                    ty: MonoTy::new_unchecked(Ty::unit(db)),
+                    span,
+                },
+                args: Vec::new(),
+            },
+        },
+        [one] => {
+            let mut expr = one.clone();
+            expr.span = span;
+            expr.ty = MonoTy::new_unchecked(ty);
+            expr
+        }
+        [head, tail @ ..] => MonoExpr {
+            span,
+            ty: MonoTy::new_unchecked(ty),
+            kind: MonoExprKind::Con {
+                ctor: MonoId {
+                    name: "pair".to_owned(),
+                    ty: MonoTy::new_unchecked(ty),
+                    span,
+                },
+                args: vec![
+                    head.clone(),
+                    product_expr_from_elems(db, tail, pair_tail_ty(db, ty), span),
+                ],
+            },
+        },
+    }
+}
+
 pub(super) fn product_pat_from_vars<'db>(
     db: &'db dyn Db,
     vars: &[ProductVar<'db>],
@@ -127,6 +170,49 @@ pub(super) fn product_pat_from_vars<'db>(
                 args: vec![
                     var_pattern(head, span),
                     product_pat_from_vars(db, tail, pair_tail_ty(db, ty), span),
+                ],
+            },
+        },
+    }
+}
+
+pub(super) fn product_pat_from_elems<'db>(
+    db: &'db dyn Db,
+    elems: &[MonoPat<'db>],
+    ty: Ty<'db>,
+    span: Span<'db>,
+) -> MonoPat<'db> {
+    match elems {
+        [] => MonoPat {
+            span,
+            ty: MonoTy::new_unchecked(Ty::unit(db)),
+            kind: MonoPatKind::Con {
+                ctor: MonoId {
+                    name: "()".to_owned(),
+                    ty: MonoTy::new_unchecked(Ty::unit(db)),
+                    span,
+                },
+                args: Vec::new(),
+            },
+        },
+        [one] => {
+            let mut pat = one.clone();
+            pat.span = span;
+            pat.ty = MonoTy::new_unchecked(ty);
+            pat
+        }
+        [head, tail @ ..] => MonoPat {
+            span,
+            ty: MonoTy::new_unchecked(ty),
+            kind: MonoPatKind::Con {
+                ctor: MonoId {
+                    name: "pair".to_owned(),
+                    ty: MonoTy::new_unchecked(ty),
+                    span,
+                },
+                args: vec![
+                    head.clone(),
+                    product_pat_from_elems(db, tail, pair_tail_ty(db, ty), span),
                 ],
             },
         },

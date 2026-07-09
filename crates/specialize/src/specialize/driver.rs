@@ -653,7 +653,10 @@ impl<'db> Driver<'db> {
             });
             return;
         };
-        let Some(result) = self.try_infer_result(&info, body, &body_map, &lowered) else {
+        let pre_typeck_desugar = hir_ty::pre_typeck_desugar_body_tree(self.db, body);
+        let Some(result) =
+            self.try_infer_result(&info, body, &body_map, &lowered, pre_typeck_desugar.clone())
+        else {
             return;
         };
         let shadowed_top_level = self.shadowed_top_level_function(&info);
@@ -663,6 +666,7 @@ impl<'db> Driver<'db> {
             body,
             result,
             body_map,
+            pre_typeck_desugar,
             subst,
             depth: pending.depth,
             lowered_exprs: FxHashMap::default(),
@@ -919,6 +923,7 @@ impl<'db> Driver<'db> {
         body: FuncBody<'db>,
         body_map: &hir_nameres::BodyResolutionMap<'db>,
         lowered: &LoweredFunction<'db>,
+        pre_typeck_desugar: Vec<BodyPreTypeckDesugarPlan<'db>>,
     ) -> Option<InferenceResult<'db>> {
         let Some(module_trait_env) = self.try_module_trait_env(info.module) else {
             self.push_missing_module_trait_env(Some(info.function.span(self.db)));
@@ -929,7 +934,6 @@ impl<'db> Driver<'db> {
             module_trait_env,
             lowered.scheme.body(self.db).preds(self.db).clone(),
         );
-        let pre_typeck_desugar = hir_ty::pre_typeck_desugar_body_tree(self.db, body);
         let ctx = BodyTyContext::new(
             info.module,
             body_map.clone(),

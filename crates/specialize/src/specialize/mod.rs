@@ -23,11 +23,12 @@ use hir::{
     span::{Span, Spanned, SpannedElem},
 };
 use hir_ty::{
-    AbiParam, AliasNormalizer, BinderEnv, BodyTyContext, BuiltinClassId, BuiltinTyCtor,
-    CallSiteCallee, CallSiteEvidence, ClassId, ComptimeObligationKind, Db, DispatchConstructor,
-    DispatchFallback, Evidence, InferResultExt, InferenceResult, LoweredFunction, Pred, PredKind,
-    Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal,
-    contract_dispatch_surface_for_module, derived_generic_plan, frontend_desugar_plan, infer_body,
+    AbiParam, AliasNormalizer, BinderEnv, BodyDesugarView, BodyPreTypeckDesugarPlan, BodyTyContext,
+    BuiltinClassId, BuiltinTyCtor, CallSiteCallee, CallSiteEvidence, ClassId,
+    ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback, Evidence, InferResultExt,
+    InferenceResult, LoweredFunction, Pred, PredKind, ProductShape, Solution, Ty, TyCtor, TyKind,
+    TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal, contract_dispatch_surface_for_module,
+    derived_generic_plan, frontend_desugar_plan, infer_body,
     lower_normalized_function_with_inferred_signature, solve, solver::DerivedClauseKind,
     trait_env_for_module, trait_env_from_module_resolution,
     trait_env_from_module_resolution_and_imports, trait_env_with_givens,
@@ -79,8 +80,8 @@ use naming::{
     ty_is_closed, ty_is_comptime, ty_node_budget_exceeded, type_var_bindings,
 };
 use products::{
-    product_expr_from_vars, product_pat_from_vars, product_vars, unwrap_sum_pat, var_expr,
-    var_pattern, wrap_sum_expr,
+    product_expr_from_elems, product_expr_from_vars, product_pat_from_elems, product_pat_from_vars,
+    product_vars, unwrap_sum_pat, var_expr, var_pattern, wrap_sum_expr,
 };
 use ty_subst::TySubst;
 

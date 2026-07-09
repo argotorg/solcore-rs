@@ -712,6 +712,52 @@ contract C {
 }
 
 #[test]
+fn tuple_syntax_specializes_through_product_constructors() {
+    let (_db, output) = specialize_src(
+        r#"
+contract C {
+  public function main(x:word, y:word, z:word) -> pair(word, pair(word, word)) {
+    let t = (x, y, z);
+    match t {
+      | (a, b, c) => return (a, b, c);
+    }
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let main = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| {
+            let MonoItem::Function(function) = item else {
+                return None;
+            };
+            function.name.contains("main").then_some(function)
+        })
+        .expect("specialized main");
+    let MonoStmtKind::Let {
+        init: Some(init), ..
+    } = &main.body[0].kind
+    else {
+        panic!("expected tuple let init: {:#?}", main.body);
+    };
+    assert!(matches!(&init.kind, MonoExprKind::Con { ctor, .. } if ctor.name == "pair"));
+
+    let MonoStmtKind::Match { arms, .. } = &main.body[1].kind else {
+        panic!("expected match over tuple binding: {:#?}", main.body);
+    };
+    assert!(matches!(&arms[0].pats[0].kind, MonoPatKind::Con { ctor, .. } if ctor.name == "pair"));
+
+    let MonoStmtKind::Return(Some(ret)) = &arms[0].body[0].kind else {
+        panic!("expected tuple return: {:#?}", arms[0].body);
+    };
+    assert!(matches!(&ret.kind, MonoExprKind::Con { ctor, .. } if ctor.name == "pair"));
+}
+
+#[test]
 fn specializes_p7_cited_regression_corpus() {
     let repo = repo_root();
     let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples");
