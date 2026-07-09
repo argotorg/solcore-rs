@@ -16,6 +16,7 @@ pub fn server_capabilities() -> ServerCapabilities {
         }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         ..ServerCapabilities::default()
     }
@@ -55,6 +56,7 @@ mod tests {
             Some(HoverProviderCapability::Simple(true))
         );
         assert_eq!(capabilities.definition_provider, Some(OneOf::Left(true)));
+        assert_eq!(capabilities.references_provider, Some(OneOf::Left(true)));
         assert_eq!(
             capabilities.document_symbol_provider,
             Some(OneOf::Left(true))

@@ -6,7 +6,7 @@ use lsp_types::{
     CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, MessageType,
+    InitializedParams, Location, MessageType, ReferenceParams,
 };
 use tokio::sync::Mutex;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc};
@@ -126,6 +126,20 @@ impl LanguageServer for Backend {
         let world = self.world.lock().await;
 
         Ok(crate::symbols::handle_document_symbol(&world, &uri))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> jsonrpc::Result<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let include_declaration = params.context.include_declaration;
+        let world = self.world.lock().await;
+
+        Ok(crate::references::handle_references(
+            &world,
+            &uri,
+            position,
+            include_declaration,
+        ))
     }
 }
 

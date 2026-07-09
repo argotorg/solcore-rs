@@ -12,6 +12,7 @@ pub mod hover;
 pub mod line_index;
 #[cfg(feature = "native")]
 pub mod native;
+pub mod references;
 mod resolve;
 pub mod state;
 pub mod symbols;
@@ -26,5 +27,6 @@ pub use definition::handle_definition;
 pub use diagnostics::compute_diagnostics;
 pub use hover::handle_hover;
 pub use line_index::LineIndexExt;
+pub use references::handle_references;
 pub use state::{DocumentState, WorldState, uri_to_vfs_path, vfs_url_to_client_uri};
 pub use symbols::handle_document_symbol;

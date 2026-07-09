@@ -6,6 +6,7 @@
 use lsp_types::{
     CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
+    ReferenceParams,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -89,6 +90,7 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         "textDocument/completion" => handle_completion_request(world, id, params),
         "textDocument/hover" => handle_hover_request(world, id, params),
         "textDocument/definition" => handle_definition_request(world, id, params),
+        "textDocument/references" => handle_references_request(world, id, params),
         "textDocument/documentSymbol" => handle_document_symbol_request(world, id, params),
         _ => error_or_empty(id, METHOD_NOT_FOUND, "Method not found"),
     }
@@ -201,6 +203,24 @@ fn handle_definition_request(world: &WorldState, id: Option<Value>, params: Valu
     vec![result_response(
         id,
         crate::definition::handle_definition(world, &uri, position),
+    )]
+}
+
+fn handle_references_request(world: &WorldState, id: Option<Value>, params: Value) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<ReferenceParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    let uri = params.text_document_position.text_document.uri;
+    let position = params.text_document_position.position;
+    let include_declaration = params.context.include_declaration;
+    vec![result_response(
+        id,
+        crate::references::handle_references(world, &uri, position, include_declaration),
     )]
 }
 
@@ -404,6 +424,41 @@ mod tests {
         assert!(
             items.iter().any(|item| item["label"] == "helper"),
             "expected helper completion, got {completion_response:#?}"
+        );
+    }
+
+    #[test]
+    fn references_request_returns_locations() {
+        let mut world = WorldState::new();
+        let source = "function id(x: word) -> word {\n  return x;\n}\n";
+        let outgoing = dispatch(&mut world, &did_open_message(source));
+        assert_eq!(outgoing.len(), 1);
+
+        let references = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "refs-1",
+                "method": "textDocument/references",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 1, "character": 9 },
+                    "context": { "includeDeclaration": true }
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(references.len(), 1);
+        let response = parse_message(&references[0]);
+        assert_eq!(response["id"], "refs-1");
+        let result = response["result"]
+            .as_array()
+            .expect("references result array");
+        assert_eq!(
+            result.len(),
+            2,
+            "expected declaration and use references, got {response:#?}"
         );
     }
 
