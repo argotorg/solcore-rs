@@ -710,7 +710,7 @@ mod tests {
             .as_array()
             .expect("semantic token data array");
         assert!(
-            data.len() >= 5 && data.len() % 5 == 0,
+            data.len() >= 5 && data.len().is_multiple_of(5),
             "expected packed semantic token data, got {response:#?}"
         );
         assert_eq!(data[0], 0);
