@@ -701,6 +701,14 @@ fn matrix_pat<'db>(pat: &MonoPat<'db>) -> MatrixPat {
         MonoPatKind::Lit(lit) => MatrixPat::Lit {
             lit: wrap_word_lit_kind(lit),
         },
+        MonoPatKind::Con { ctor, args } if ctor.name == "()" && args.is_empty() => {
+            MatrixPat::Tuple { elems: Vec::new() }
+        }
+        MonoPatKind::Con { ctor, args } if ctor.name == "pair" && args.len() == 2 => {
+            MatrixPat::Tuple {
+                elems: matrix_pair_pat_elems(args),
+            }
+        }
         MonoPatKind::Con { ctor, args } => MatrixPat::Con {
             ctor: ctor.name.clone(),
             args: args.iter().map(matrix_pat).collect(),
@@ -710,6 +718,24 @@ fn matrix_pat<'db>(pat: &MonoPat<'db>) -> MatrixPat {
         },
         MonoPatKind::ComptimeLabel(_) => MatrixPat::ComptimeLabel,
         MonoPatKind::Error => MatrixPat::Error,
+    }
+}
+
+fn matrix_pair_pat_elems<'db>(args: &[MonoPat<'db>]) -> Vec<MatrixPat> {
+    let mut elems = vec![matrix_pat(&args[0])];
+    push_matrix_pair_tail(&args[1], &mut elems);
+    elems
+}
+
+fn push_matrix_pair_tail<'db>(pat: &MonoPat<'db>, out: &mut Vec<MatrixPat>) {
+    match &pat.kind {
+        MonoPatKind::Con { ctor, args } if ctor.name == "()" && args.is_empty() => {}
+        MonoPatKind::Con { ctor, args } if ctor.name == "pair" && args.len() == 2 => {
+            out.push(matrix_pat(&args[0]));
+            push_matrix_pair_tail(&args[1], out);
+        }
+        MonoPatKind::Tuple(elems) => out.extend(elems.iter().map(matrix_pat)),
+        _ => out.push(matrix_pat(pat)),
     }
 }
 
