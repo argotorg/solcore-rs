@@ -15,7 +15,9 @@ export {
   Selector,
   SigString,
   do_exec,
+  dispatch_has_selector,
   fallback_default_implementation,
+  selector_matches_const,
   selector_matches,
   sigStr
 };
@@ -48,6 +50,7 @@ forall t. t: SigString =>
 function sigStr(p:Proxy(t)) -> string { SigString.sigStr(p) }
 
 instance uint256 : SigString { function sigStr(x:Proxy(uint256)) -> string { "uint256" }}
+instance bool : SigString { function sigStr(x:Proxy(bool)) -> string { "bool" }}
 instance bytes32 : SigString { function sigStr(x:Proxy(bytes32)) -> string { "bytes32" }}
 instance address : SigString { function sigStr(x:Proxy(address)) -> string { "address" }}
 instance memory(string) : SigString { function sigStr(x:Proxy(memory(string))) -> string { "string" }}
@@ -141,7 +144,7 @@ forall payability fn
     match fb {
       | Fallback(ppayability, pargs, prets, fn) =>
         MethodLevelCallvalueCheck.checkCallvalue(Proxy : Proxy(payability));
-        fn(());
+        let ignored : () = invokable.invoke(fn, ());
         assembly {
           stop()
         }
@@ -169,7 +172,7 @@ forall args rets fn
 
     // call fn with args
     // TODO: why are type annotations needed here?
-    let rets : rets = fn(args);
+    let rets : rets = invokable.invoke(fn, args);
 
     // abi encode rets to memory
     let ptr = abi_encode(rets);
@@ -229,6 +232,16 @@ forall ty . ty:Selector => function selector_matches(prx : Proxy(ty)) -> bool {
   let candidate = Typedef.rep(Selector.compute(prx));
   let selector = shr(224, calldataload(0));
   return selector == candidate;
+}
+
+function selector_matches_const(candidate : bytes4) -> bool {
+  let candidate_word = Typedef.rep(candidate);
+  let selector = shr(224, calldataload(0));
+  return selector == candidate_word;
+}
+
+function dispatch_has_selector() -> bool {
+  return calldatasize() >= 4;
 }
 
 // --- Callvalue Checks ---

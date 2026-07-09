@@ -525,6 +525,38 @@ contract C {
 }
 
 #[test]
+fn generated_contract_dispatch_does_not_auto_import_std_dispatch() {
+    let without_dispatch_import = specialize_src_with_std(
+        r#"
+import std.{*};
+
+contract C {
+  public function answer() -> uint256 {
+    return uint256(1);
+  }
+}
+"#,
+    );
+
+    assert!(!without_dispatch_import.diagnostics.is_empty());
+
+    let with_dispatch_import = specialize_src_with_std(
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+contract C {
+  public function answer() -> uint256 {
+    return uint256(1);
+  }
+}
+"#,
+    );
+
+    assert_eq!(with_dispatch_import.diagnostics, Vec::new());
+}
+
+#[test]
 fn source_names_are_qualified_across_contracts() {
     let (_db, output) = specialize_src(
         r#"
@@ -709,11 +741,10 @@ fn specializes_p7_cited_regression_corpus() {
         basic_contract.entries.iter().any(|entry| {
             matches!(
                 entry,
-                MonoEntry::SelectorMethod {
-                    name,
-                    signature,
+                MonoEntry::SyntheticMain {
+                    specialized,
                     ..
-                } if name == "something" && signature == "something()"
+                } if specialized.contains("_C_main_")
             )
         }),
         "{:?}",
@@ -733,11 +764,10 @@ fn specializes_p7_cited_regression_corpus() {
         payable_contract.entries.iter().any(|entry| {
             matches!(
                 entry,
-                MonoEntry::SelectorMethod {
-                    name,
-                    payable: true,
+                MonoEntry::SyntheticMain {
+                    specialized,
                     ..
-                } if name == "deposit"
+                } if specialized.contains("_main_")
             )
         }),
         "{:?}",

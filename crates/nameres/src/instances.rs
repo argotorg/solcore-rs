@@ -35,6 +35,25 @@ pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Instance
     InstanceImports { local, imported }
 }
 
+/// Collects import-chain instance origins using imports parsed from `file`.
+///
+/// This is useful for synthetic HIR modules that share a logical `ModuleId`
+/// with a file-backed module but have generated imports in their source text.
+pub fn instance_imports_for_file<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    file: SourceFile,
+) -> InstanceImports<'db> {
+    let mut imported = Vec::new();
+    let mut seen = FxHashSet::default();
+    seen.insert(module);
+    collect_imported_instances_from_file(db, module, file, &mut seen, &mut imported);
+    InstanceImports {
+        local: Vec::new(),
+        imported: unique_origins(imported),
+    }
+}
+
 fn collect_imported_instances<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -44,6 +63,16 @@ fn collect_imported_instances<'db>(
     let Some(file) = db.module_file(module) else {
         return;
     };
+    collect_imported_instances_from_file(db, module, file, seen, out);
+}
+
+fn collect_imported_instances_from_file<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    file: SourceFile,
+    seen: &mut FxHashSet<ModuleId<'db>>,
+    out: &mut Vec<Origin<'db>>,
+) {
     let refs = module_imports(db, file);
     for path in refs.import_refs {
         let Ok(target) = resolve_module_path(db, module, path) else {

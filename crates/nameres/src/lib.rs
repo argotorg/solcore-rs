@@ -68,9 +68,9 @@ use diagnostics::{
     unknown_reexport_diag,
 };
 use env::module_has_parse_errors;
-pub use env::{module_env, module_import_surface, resolve_module_full};
+pub use env::{module_env, module_env_for_hir_module, module_import_surface, resolve_module_full};
 pub use graph::{module_graph, module_imports, reachable_modules, resolve_reachable_full};
-pub use instances::{instance_imports, module_instances};
+pub use instances::{instance_imports, instance_imports_for_file, module_instances};
 pub use interface::public_interface;
 use interface::{
     RawInterface, RawItemRef, RawModuleAlias, expand_module_exports, namespace_sort_key,

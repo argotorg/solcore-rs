@@ -342,7 +342,7 @@ impl<'db> Driver<'db> {
                 continue;
             };
             has_contract = true;
-            let surface = contract_dispatch_surface(self.db, self.module, *contract);
+            let surface = contract_dispatch_surface_for_module(self.db, self.module, *contract);
             let constructor_surface = surface.constructor.clone();
             let fallback_surface = surface.fallback.clone();
             let mut entries = Vec::new();
@@ -382,38 +382,48 @@ impl<'db> Driver<'db> {
                 },
                 span: contract.span(self.db),
             };
-            for method in surface.methods {
-                if let Some(info) = self.functions.get(&method.def).cloned()
-                    && self.reject_public_comptime_params(&info)
-                {
-                    blocked_dispatch_entry = true;
-                    continue;
-                }
-                if let Some(info) = self.functions.get(&method.def).cloned() {
-                    let Some(lowered) = self.try_lower_normalized_function(&info) else {
-                        continue;
-                    };
-                    if lowered_function_has_inferred_dispatch_placeholder(self.db, &lowered) {
+            let synthetic_main = contract.items(self.db).iter().find_map(|item| {
+                let ContractItem::FunctionDef(function) = *item else {
+                    return None;
+                };
+                (ident_text(self.db, &function.sig(self.db).name) == "main"
+                    && function.sig(self.db).public.is_none())
+                .then_some(function)
+            });
+            if synthetic_main.is_none() {
+                for method in surface.methods {
+                    if let Some(info) = self.functions.get(&method.def).cloned()
+                        && self.reject_public_comptime_params(&info)
+                    {
+                        blocked_dispatch_entry = true;
                         continue;
                     }
-                }
-                if let Some(key) = self.root_for_def(method.def) {
-                    entries.push(MonoEntry::SelectorMethod {
-                        source: method.def,
-                        name: method.name,
-                        specialized: key.base_name.clone(),
-                        span: self
-                            .functions
-                            .get(&method.def)
-                            .map(|info| info.function.span(self.db))
-                            .unwrap_or_else(|| contract.span(self.db)),
-                        selector: method.selector.0,
-                        signature: method.signature,
-                        payable: method.payable,
-                        inputs: mono_abi_params(method.inputs),
-                        outputs: mono_abi_params(method.outputs),
-                    });
-                    roots.push(key);
+                    if let Some(info) = self.functions.get(&method.def).cloned() {
+                        let Some(lowered) = self.try_lower_normalized_function(&info) else {
+                            continue;
+                        };
+                        if lowered_function_has_inferred_dispatch_placeholder(self.db, &lowered) {
+                            continue;
+                        }
+                    }
+                    if let Some(key) = self.root_for_def(method.def) {
+                        entries.push(MonoEntry::SelectorMethod {
+                            source: method.def,
+                            name: method.name,
+                            specialized: key.base_name.clone(),
+                            span: self
+                                .functions
+                                .get(&method.def)
+                                .map(|info| info.function.span(self.db))
+                                .unwrap_or_else(|| contract.span(self.db)),
+                            selector: method.selector.0,
+                            signature: method.signature,
+                            payable: method.payable,
+                            inputs: mono_abi_params(method.inputs),
+                            outputs: mono_abi_params(method.outputs),
+                        });
+                        roots.push(key);
+                    }
                 }
             }
             if let DispatchConstructor::Explicit {
@@ -466,20 +476,16 @@ impl<'db> Driver<'db> {
                 });
                 roots.push(key);
             }
-            if entries.is_empty() && !blocked_dispatch_entry {
-                for item in contract.items(self.db) {
-                    if let ContractItem::FunctionDef(function) = *item
-                        && ident_text(self.db, &function.sig(self.db).name) == "main"
-                        && let Some(key) = self.root_for_def(function.def_id_value(self.db))
-                    {
-                        entries.push(MonoEntry::SyntheticMain {
-                            source: function.def_id_value(self.db),
-                            specialized: key.base_name.clone(),
-                            span: function.span(self.db),
-                        });
-                        roots.push(key);
-                    }
-                }
+            if !blocked_dispatch_entry
+                && let Some(function) = synthetic_main
+                && let Some(key) = self.root_for_def(function.def_id_value(self.db))
+            {
+                entries.push(MonoEntry::SyntheticMain {
+                    source: function.def_id_value(self.db),
+                    specialized: key.base_name.clone(),
+                    span: function.span(self.db),
+                });
+                roots.push(key);
             }
             contracts.push(MonoContract {
                 def: contract.def_id_value(self.db),
@@ -529,7 +535,7 @@ impl<'db> Driver<'db> {
     }
 
     fn root_for_def(&mut self, def: DefId<'db>) -> Option<SpecKey<'db>> {
-        let info = self.functions.get(&def)?.clone();
+        let info = self.functions.get(&def).cloned()?;
         let lowered = self.try_lower_normalized_function(&info)?;
         let ty = lowered.scheme.body(self.db).ty(self.db);
         let span = info.function.span(self.db);

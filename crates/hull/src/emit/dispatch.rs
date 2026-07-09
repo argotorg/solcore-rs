@@ -227,26 +227,25 @@ impl<'db> Emitter<'db> {
         }
         let input_word_count = input_layouts
             .iter()
-            .map(|layout| layout.slots)
+            .map(StaticAbiLayout::abi_head_slots)
             .sum::<usize>();
         if input_word_count > 0 {
             body.push(self.abi_input_truncated_check(span, input_word_count));
         }
 
         let mut args = Vec::new();
-        let mut word_offset = 0;
+        let mut head_offset = 0;
         for (arg_index, arg) in function.args.iter().enumerate() {
             let layout = &input_layouts[arg_index];
             let arg_name = format!("dispatch_arg{index}_{arg_index}");
-            let word_names = self.decode_dispatch_abi_words(
+            let rhs = self.decode_dispatch_arg_expr(
                 span,
                 &format!("{arg_name}_word"),
-                word_offset,
+                head_offset,
                 layout,
                 &mut body,
             );
-            word_offset += layout.slots;
-            let rhs = abi_words_to_expr(span, layout, &word_names);
+            head_offset += layout.abi_head_slots();
             body.push(Stmt {
                 span,
                 kind: StmtKind::Let {
@@ -305,10 +304,73 @@ impl<'db> Emitter<'db> {
                     return_layout,
                     &mut body,
                 );
-                body.push(self.return_abi_words(span, &names, entry.outputs));
+                if return_layout.has_dynamic_abi() {
+                    body.push(self.return_abi_layout(
+                        span,
+                        &format!("dispatch_ret{index}_abi"),
+                        &names,
+                        return_layout,
+                    ));
+                } else {
+                    body.push(self.return_abi_words(span, &names, entry.outputs));
+                }
             }
         }
         body
+    }
+
+    fn decode_dispatch_arg_expr(
+        &self,
+        span: Span<'db>,
+        prefix: &str,
+        head_offset: usize,
+        layout: &StaticAbiLayout<'db>,
+        body: &mut Vec<Stmt<'db>>,
+    ) -> Expr<'db> {
+        if !layout.has_dynamic_abi() {
+            let word_names =
+                self.decode_dispatch_abi_words(span, prefix, head_offset, layout, body);
+            return abi_words_to_expr(span, layout, &word_names);
+        }
+
+        match &layout.kind {
+            StaticAbiLayoutKind::BytesLike => {
+                let name = numbered_name(prefix, 0, 1);
+                body.push(Stmt {
+                    span,
+                    kind: StmtKind::Let {
+                        name: name.clone().into(),
+                        ty: Ty::word(span),
+                    },
+                });
+                body.push(self.decode_calldata_bytes_like_arg(span, &name, head_offset));
+                let mut expr = Expr::var(span, name, Ty::word(span));
+                expr.ty = layout.ty.clone();
+                expr
+            }
+            StaticAbiLayoutKind::Product(layouts) => {
+                let mut offset = head_offset;
+                let mut elems = Vec::new();
+                for (index, component) in layouts.iter().enumerate() {
+                    elems.push(self.decode_dispatch_arg_expr(
+                        span,
+                        &format!("{prefix}_{index}"),
+                        offset,
+                        component,
+                        body,
+                    ));
+                    offset += component.abi_head_slots();
+                }
+                product_expr(span, layout.ty.clone(), elems)
+            }
+            StaticAbiLayoutKind::Unit
+            | StaticAbiLayoutKind::Word(_)
+            | StaticAbiLayoutKind::Sum { .. } => {
+                let word_names =
+                    self.decode_dispatch_abi_words(span, prefix, head_offset, layout, body);
+                abi_words_to_expr(span, layout, &word_names)
+            }
+        }
     }
 
     fn decode_dispatch_abi_words(
@@ -493,6 +555,105 @@ impl<'db> Emitter<'db> {
         self.assembly_stmt(span, stmts)
     }
 
+    fn decode_calldata_bytes_like_arg(
+        &self,
+        span: Span<'db>,
+        name: &str,
+        head_index: usize,
+    ) -> Stmt<'db> {
+        let head = format!("{name}_head");
+        let src = format!("{name}_src");
+        let length = format!("{name}_len");
+        let total = format!("{name}_total");
+        let rounded = format!("{name}_rounded");
+        let ptr = format!("{name}_ptr");
+        self.assembly_stmt(
+            span,
+            vec![
+                self.yul_let(
+                    span,
+                    &head,
+                    Some(self.yul_call(
+                        span,
+                        "calldataload",
+                        vec![self.yul_number(span, (4 + head_index * 32).to_string())],
+                    )),
+                ),
+                self.yul_let(
+                    span,
+                    &src,
+                    Some(self.yul_call(
+                        span,
+                        "add",
+                        vec![self.yul_number(span, "4"), self.yul_ident_expr(span, &head)],
+                    )),
+                ),
+                self.yul_let(
+                    span,
+                    &length,
+                    Some(self.yul_call(
+                        span,
+                        "calldataload",
+                        vec![self.yul_ident_expr(span, &src)],
+                    )),
+                ),
+                self.yul_let(
+                    span,
+                    &total,
+                    Some(self.yul_call(
+                        span,
+                        "add",
+                        vec![
+                            self.yul_ident_expr(span, &length),
+                            self.yul_number(span, "32"),
+                        ],
+                    )),
+                ),
+                self.yul_let(
+                    span,
+                    &rounded,
+                    Some(self.yul_round_up_to_word(span, self.yul_ident_expr(span, &total))),
+                ),
+                self.yul_let(
+                    span,
+                    &ptr,
+                    Some(self.yul_call(span, "mload", vec![self.yul_number(span, "0x40")])),
+                ),
+                self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "mstore",
+                        vec![
+                            self.yul_number(span, "0x40"),
+                            self.yul_call(
+                                span,
+                                "add",
+                                vec![
+                                    self.yul_ident_expr(span, &ptr),
+                                    self.yul_ident_expr(span, &rounded),
+                                ],
+                            ),
+                        ],
+                    ),
+                ),
+                self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "calldatacopy",
+                        vec![
+                            self.yul_ident_expr(span, &ptr),
+                            self.yul_ident_expr(span, &src),
+                            self.yul_ident_expr(span, &total),
+                        ],
+                    ),
+                ),
+                self.yul_assign(span, name, self.yul_ident_expr(span, &ptr)),
+            ],
+        )
+    }
+
     pub(super) fn push_abi_word_cleaning(
         &self,
         span: Span<'db>,
@@ -654,22 +815,8 @@ impl<'db> Emitter<'db> {
     ) -> Stmt<'db> {
         let mut stmts = Vec::new();
         for (index, name) in names.iter().enumerate() {
-            let value = match outputs.get(index).map(abi_word_kind) {
-                Some(AbiWordKind::Address) => self.yul_call(
-                    span,
-                    "and",
-                    vec![
-                        self.yul_ident_expr(span, name),
-                        self.yul_number(span, ADDRESS_MASK),
-                    ],
-                ),
-                Some(AbiWordKind::Bool) => self.yul_call(
-                    span,
-                    "iszero",
-                    vec![self.yul_call(span, "iszero", vec![self.yul_ident_expr(span, name)])],
-                ),
-                Some(AbiWordKind::Plain) | None => self.yul_ident_expr(span, name),
-            };
+            let kind = outputs.get(index).map(abi_word_kind);
+            let value = self.return_abi_word_value(span, name, kind);
             stmts.push(self.yul_expr_stmt(
                 span,
                 self.yul_call(
@@ -691,5 +838,350 @@ impl<'db> Emitter<'db> {
             ),
         ));
         self.assembly_stmt(span, stmts)
+    }
+
+    fn return_abi_layout(
+        &self,
+        span: Span<'db>,
+        prefix: &str,
+        names: &[String],
+        layout: &StaticAbiLayout<'db>,
+    ) -> Stmt<'db> {
+        let base = format!("{prefix}_base");
+        let tail = format!("{prefix}_tail");
+        let mut stmts = vec![
+            self.yul_let(
+                span,
+                &base,
+                Some(self.yul_call(span, "mload", vec![self.yul_number(span, "0x40")])),
+            ),
+            self.yul_let(
+                span,
+                &tail,
+                Some(self.yul_call(
+                    span,
+                    "add",
+                    vec![
+                        self.yul_ident_expr(span, &base),
+                        self.yul_number(span, (layout.abi_head_slots() * 32).to_string()),
+                    ],
+                )),
+            ),
+        ];
+        self.push_return_abi_layout(span, prefix, names, layout, &base, &tail, 0, &mut stmts);
+        stmts.push(self.yul_expr_stmt(
+            span,
+            self.yul_call(
+                span,
+                "mstore",
+                vec![
+                    self.yul_number(span, "0x40"),
+                    self.yul_ident_expr(span, &tail),
+                ],
+            ),
+        ));
+        stmts.push(self.yul_expr_stmt(
+            span,
+            self.yul_call(
+                span,
+                "return",
+                vec![
+                    self.yul_ident_expr(span, &base),
+                    self.yul_call(
+                        span,
+                        "sub",
+                        vec![
+                            self.yul_ident_expr(span, &tail),
+                            self.yul_ident_expr(span, &base),
+                        ],
+                    ),
+                ],
+            ),
+        ));
+        self.assembly_stmt(span, stmts)
+    }
+
+    fn push_return_abi_layout(
+        &self,
+        span: Span<'db>,
+        prefix: &str,
+        names: &[String],
+        layout: &StaticAbiLayout<'db>,
+        base: &str,
+        tail: &str,
+        head_offset: usize,
+        stmts: &mut Vec<YulStmt<'db>>,
+    ) {
+        match &layout.kind {
+            StaticAbiLayoutKind::Unit => {}
+            StaticAbiLayoutKind::Word(kind) => {
+                stmts.push(self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "mstore",
+                        vec![
+                            self.yul_head_ptr(span, base, head_offset),
+                            self.return_abi_word_value(span, &names[0], Some(*kind)),
+                        ],
+                    ),
+                ));
+            }
+            StaticAbiLayoutKind::BytesLike => {
+                self.push_return_bytes_like_layout(
+                    span,
+                    &format!("{prefix}_head{head_offset}"),
+                    &names[0],
+                    base,
+                    tail,
+                    head_offset,
+                    stmts,
+                );
+            }
+            StaticAbiLayoutKind::Product(layouts) => {
+                let mut name_offset = 0;
+                let mut head = head_offset;
+                for (index, component) in layouts.iter().enumerate() {
+                    let end = name_offset + component.slots;
+                    self.push_return_abi_layout(
+                        span,
+                        &format!("{prefix}_{index}"),
+                        &names[name_offset..end],
+                        component,
+                        base,
+                        tail,
+                        head,
+                        stmts,
+                    );
+                    name_offset = end;
+                    head += component.abi_head_slots();
+                }
+            }
+            StaticAbiLayoutKind::Sum { .. } => {
+                for (slot, name) in names.iter().enumerate() {
+                    stmts.push(self.yul_expr_stmt(
+                        span,
+                        self.yul_call(
+                            span,
+                            "mstore",
+                            vec![
+                                self.yul_head_ptr(span, base, head_offset + slot),
+                                self.yul_ident_expr(span, name),
+                            ],
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn push_return_bytes_like_layout(
+        &self,
+        span: Span<'db>,
+        prefix: &str,
+        name: &str,
+        base: &str,
+        tail: &str,
+        head_offset: usize,
+        stmts: &mut Vec<YulStmt<'db>>,
+    ) {
+        let length = format!("{prefix}_len");
+        let total = format!("{prefix}_total");
+        let rounded = format!("{prefix}_rounded");
+        let padding = format!("{prefix}_padding");
+        let offset = format!("{prefix}_offset");
+        stmts.push(self.yul_expr_stmt(
+            span,
+            self.yul_call(
+                span,
+                "mstore",
+                vec![
+                    self.yul_head_ptr(span, base, head_offset),
+                    self.yul_call(
+                        span,
+                        "sub",
+                        vec![
+                            self.yul_ident_expr(span, tail),
+                            self.yul_ident_expr(span, base),
+                        ],
+                    ),
+                ],
+            ),
+        ));
+        stmts.push(self.yul_let(
+            span,
+            &length,
+            Some(self.yul_call(span, "mload", vec![self.yul_ident_expr(span, name)])),
+        ));
+        stmts.push(self.yul_let(
+            span,
+            &total,
+            Some(self.yul_call(
+                span,
+                "add",
+                vec![
+                    self.yul_ident_expr(span, &length),
+                    self.yul_number(span, "32"),
+                ],
+            )),
+        ));
+        stmts.push(YulStmt {
+            span,
+            kind: YulStmtKind::For {
+                init: vec![self.yul_let(span, &offset, Some(self.yul_number(span, "0")))],
+                cond: self.yul_call(
+                    span,
+                    "lt",
+                    vec![
+                        self.yul_ident_expr(span, &offset),
+                        self.yul_ident_expr(span, &total),
+                    ],
+                ),
+                post: vec![self.yul_assign(
+                    span,
+                    &offset,
+                    self.yul_call(
+                        span,
+                        "add",
+                        vec![
+                            self.yul_ident_expr(span, &offset),
+                            self.yul_number(span, "32"),
+                        ],
+                    ),
+                )],
+                body: vec![self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "mstore",
+                        vec![
+                            self.yul_call(
+                                span,
+                                "add",
+                                vec![
+                                    self.yul_ident_expr(span, tail),
+                                    self.yul_ident_expr(span, &offset),
+                                ],
+                            ),
+                            self.yul_call(
+                                span,
+                                "mload",
+                                vec![self.yul_call(
+                                    span,
+                                    "add",
+                                    vec![
+                                        self.yul_ident_expr(span, name),
+                                        self.yul_ident_expr(span, &offset),
+                                    ],
+                                )],
+                            ),
+                        ],
+                    ),
+                )],
+            },
+        });
+        stmts.push(self.yul_let(
+            span,
+            &rounded,
+            Some(self.yul_round_up_to_word(span, self.yul_ident_expr(span, &total))),
+        ));
+        stmts.push(self.yul_let(
+            span,
+            &padding,
+            Some(self.yul_call(
+                span,
+                "sub",
+                vec![
+                    self.yul_ident_expr(span, &rounded),
+                    self.yul_ident_expr(span, &total),
+                ],
+            )),
+        ));
+        stmts.push(YulStmt {
+            span,
+            kind: YulStmtKind::If {
+                cond: self.yul_ident_expr(span, &padding),
+                body: vec![self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "mstore",
+                        vec![
+                            self.yul_call(
+                                span,
+                                "add",
+                                vec![
+                                    self.yul_ident_expr(span, tail),
+                                    self.yul_ident_expr(span, &total),
+                                ],
+                            ),
+                            self.yul_number(span, "0"),
+                        ],
+                    ),
+                )],
+            },
+        });
+        stmts.push(self.yul_assign(
+            span,
+            tail,
+            self.yul_call(
+                span,
+                "add",
+                vec![
+                    self.yul_ident_expr(span, tail),
+                    self.yul_ident_expr(span, &rounded),
+                ],
+            ),
+        ));
+    }
+
+    fn return_abi_word_value(
+        &self,
+        span: Span<'db>,
+        name: &str,
+        kind: Option<AbiWordKind>,
+    ) -> YulExpr<'db> {
+        match kind {
+            Some(AbiWordKind::Address) => self.yul_call(
+                span,
+                "and",
+                vec![
+                    self.yul_ident_expr(span, name),
+                    self.yul_number(span, ADDRESS_MASK),
+                ],
+            ),
+            Some(AbiWordKind::Bool) => self.yul_call(
+                span,
+                "iszero",
+                vec![self.yul_call(span, "iszero", vec![self.yul_ident_expr(span, name)])],
+            ),
+            Some(AbiWordKind::Plain) | None => self.yul_ident_expr(span, name),
+        }
+    }
+
+    fn yul_head_ptr(&self, span: Span<'db>, base: &str, head_offset: usize) -> YulExpr<'db> {
+        if head_offset == 0 {
+            self.yul_ident_expr(span, base)
+        } else {
+            self.yul_call(
+                span,
+                "add",
+                vec![
+                    self.yul_ident_expr(span, base),
+                    self.yul_number(span, (head_offset * 32).to_string()),
+                ],
+            )
+        }
+    }
+
+    fn yul_round_up_to_word(&self, span: Span<'db>, value: YulExpr<'db>) -> YulExpr<'db> {
+        self.yul_call(
+            span,
+            "and",
+            vec![
+                self.yul_call(span, "add", vec![value, self.yul_number(span, "31")]),
+                self.yul_call(span, "not", vec![self.yul_number(span, "31")]),
+            ],
+        )
     }
 }

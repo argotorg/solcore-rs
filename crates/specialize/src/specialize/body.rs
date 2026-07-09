@@ -178,6 +178,28 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         {
             ty = ctor_ty;
         }
+        if !ty_is_closed(self.driver.db, ty)
+            && let ExprKind::Ident(_) = &expr.kind
+            && let Some(hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Function,
+            }) = self.expr_resolution(expr_id)
+            && let Some(fn_ty) = self.function_value_ty(def)
+        {
+            ty = fn_ty;
+        }
+        if !ty_is_closed(self.driver.db, ty)
+            && let ExprKind::Call { callee, .. } = &expr.kind
+            && let Some(ret_ty) = self.invokable_call_result_ty(expr_id, *callee)
+        {
+            ty = ret_ty;
+        }
+        if !ty_is_closed(self.driver.db, ty)
+            && let ExprKind::Call { callee, args } = &expr.kind
+            && let Some(closed) = self.close_method_constructor_ty(ty, *callee, args)
+        {
+            ty = closed;
+        }
         let mono_ty = self.driver.mono_ty(ty, "expression", expr.span)?;
         let kind = match &expr.kind {
             ExprKind::Lit(lit) => MonoExprKind::Lit(lit.clone()),
@@ -538,6 +560,50 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         self.result.expr_ty(self.body, expr)
     }
 
+    fn function_value_ty(&mut self, def: DefId<'db>) -> Option<Ty<'db>> {
+        let info = self.driver.functions.get(&def).cloned()?;
+        let lowered = self.driver.try_lower_normalized_function(&info)?;
+        Some(Ty::function(
+            self.driver.db,
+            lowered.params.clone(),
+            lowered.ret,
+        ))
+    }
+
+    fn close_method_constructor_ty(
+        &mut self,
+        ty: Ty<'db>,
+        callee: Id<Expr<'db>>,
+        args: &[Id<Expr<'db>>],
+    ) -> Option<Ty<'db>> {
+        let Some(hir_nameres::Resolution::Ctor { ty: adt, .. }) = self.expr_resolution(callee)
+        else {
+            return None;
+        };
+        if adt.name(self.driver.db).as_deref() != Some("Method") {
+            return None;
+        }
+        let function_arg = args.get(4).copied()?;
+        let Some(hir_nameres::Resolution::Def {
+            def,
+            kind: hir_nameres::DefResolutionKind::Function,
+        }) = self.expr_resolution(function_arg)
+        else {
+            return None;
+        };
+        let fn_ty = self.function_value_ty(def)?;
+        let TyKind::Named { ctor, args } = ty.kind(self.driver.db) else {
+            return None;
+        };
+        let mut ty_args = args.clone();
+        let fn_slot = ty_args.get_mut(4)?;
+        if ty_is_closed(self.driver.db, *fn_slot) {
+            return None;
+        }
+        *fn_slot = fn_ty;
+        Some(Ty::named(self.driver.db, *ctor, ty_args))
+    }
+
     fn pat_resolution(&self, pat: Id<Pat<'db>>) -> Option<hir_nameres::Resolution<'db>> {
         self.body_map
             .pats
@@ -643,6 +709,43 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     && evidence.callee_expr == callee_expr
             })
             .cloned()
+    }
+
+    pub(super) fn invokable_call_main_ty(
+        &self,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+    ) -> Option<Ty<'db>> {
+        let evidence = self.call_evidence(call_expr, callee_expr)?;
+        let obligation = self.result.obligations.get(evidence.obligation)?;
+        let PredKind::InClass {
+            class: ClassId::Builtin(BuiltinClassId::Invokable),
+            main,
+            ..
+        } = obligation.pred.kind(self.driver.db)
+        else {
+            return None;
+        };
+        Some(self.subst.apply_ty(self.driver.db, *main))
+    }
+
+    fn invokable_call_result_ty(
+        &self,
+        call_expr: Id<Expr<'db>>,
+        callee_expr: Id<Expr<'db>>,
+    ) -> Option<Ty<'db>> {
+        let evidence = self.call_evidence(call_expr, callee_expr)?;
+        let obligation = self.result.obligations.get(evidence.obligation)?;
+        let PredKind::InClass {
+            class: ClassId::Builtin(BuiltinClassId::Invokable),
+            args,
+            ..
+        } = obligation.pred.kind(self.driver.db)
+        else {
+            return None;
+        };
+        let ret = args.get(1).copied()?;
+        Some(self.subst.apply_ty(self.driver.db, ret))
     }
 
     pub(super) fn call_evidence_for_builtin_int(

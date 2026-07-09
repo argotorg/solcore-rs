@@ -221,7 +221,10 @@ pub(super) fn bool_expr<'db>(span: Span<'db>, target: Ty<'db>, value: bool) -> E
 
 pub(super) fn sem_product_fields<'db>(db: &'db dyn hir_ty::Db, ty: SemTy<'db>) -> Vec<SemTy<'db>> {
     match ty.kind(db) {
-        SemTyKind::Tuple(elems) => elems.clone(),
+        SemTyKind::Tuple(elems) => elems
+            .iter()
+            .flat_map(|elem| sem_product_fields(db, *elem))
+            .collect(),
         SemTyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
             args,

@@ -20,5 +20,5 @@ pub use desugar::{
 };
 pub use dispatch::{
     DispatchConstructor, DispatchFallback, DispatchMethod, DispatchSurface,
-    contract_dispatch_surface, module_contract_diagnostics,
+    contract_dispatch_surface, contract_dispatch_surface_for_module, module_contract_diagnostics,
 };

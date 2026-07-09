@@ -49,9 +49,10 @@ mod storage;
 mod yul_build;
 
 use abi::{
-    AbiWordKind, StaticAbiLayout, abi_layout_slot_kinds, abi_word_kind, abi_word_to_bool_expr,
-    abi_words_to_expr, constructor_inputs_are_static_word, dispatcher_input_layouts,
-    dispatcher_return_layout, numbered_name, selector_hex, write_expr_to_abi_slots,
+    AbiWordKind, StaticAbiLayout, StaticAbiLayoutKind, abi_layout_slot_kinds, abi_word_kind,
+    abi_word_to_bool_expr, abi_words_to_expr, constructor_inputs_are_static_word,
+    dispatcher_input_layouts, dispatcher_return_layout, numbered_name, selector_hex,
+    write_expr_to_abi_slots,
 };
 use diagnostics::prune_emit_diagnostics;
 pub use diagnostics::{EmitDiagnostic, EmitDiagnosticKind, EmitOptions, EmitOutput};

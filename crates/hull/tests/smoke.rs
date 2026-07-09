@@ -180,6 +180,23 @@ contract C {
 }
 
 #[test]
+fn dispatch_basic_fixture_uses_std_dispatch_main() {
+    let fixture = repo_root()
+        .join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/basic.solc");
+    let (db, output) = specialize_fixture(&fixture);
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(hull.contains("basic_C_main_"), "{hull}");
+    assert!(hull.contains("dispatch_selector_matches_const"), "{hull}");
+    assert!(hull.contains("std_abi_decode_debc005b9$calldataLbytesJ_CalldataWordReader_memoryLstringJ_memoryLstringJ"), "{hull}");
+    assert!(hull.contains("opcodes_mcopy"), "{hull}");
+    assert!(!hull.contains("dispatch_ret12_abi_head0_offset"), "{hull}");
+}
+
+#[test]
 fn deployment_objects_copy_runtime_and_guard_constructor_value() {
     let repo = repo_root();
     let fixture = repo.join(

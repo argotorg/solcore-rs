@@ -193,6 +193,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             .expr_ty(callee)
             .map(|ty| self.subst.apply_ty(self.driver.db, ty))
             .unwrap_or_else(|| Ty::unknown(self.driver.db));
+        if !ty_is_closed(self.driver.db, callee_ty)
+            && let Some(invokable_ty) = self.invokable_call_main_ty(call_expr, callee)
+        {
+            callee_ty = invokable_ty;
+        }
         if !matches!(callee_ty.kind(self.driver.db), TyKind::Function { .. }) {
             callee_ty = Ty::function(
                 self.driver.db,

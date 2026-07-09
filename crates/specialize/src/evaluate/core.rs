@@ -6,7 +6,7 @@ use hir::{
     },
     span::Span,
 };
-use hir_ty::{BuiltinTyCtor, Db};
+use hir_ty::{BuiltinTyCtor, Db, TyKind};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
@@ -22,8 +22,8 @@ use super::{
     },
     ident_text,
     known::{
-        bool_expr, build_type_reg, int_expr, is_known_value, known_bool, known_int, known_string,
-        literal_from_known_expr, lvalue_root_name, match_arms, remove_assigned,
+        bool_expr, build_type_reg, int_expr, known_bool, known_int, known_string,
+        literal_from_known_expr, lvalue_root_name, match_arms_with, remove_assigned,
         remove_comptime_assigned, string_expr,
     },
     value::{BigInt, bitand_word, bitor_word, bitxor_word, word_div, word_low_byte, word_mod},
@@ -209,7 +209,7 @@ impl<'db> Evaluator<'db> {
                 };
                 let mut env = env;
                 let mut comptime_env = comptime_env;
-                invalidate_assigned(&init_effects, &mut env, &mut comptime_env);
+                self.invalidate_assigned_effects(&init_effects, &mut env, &mut comptime_env);
                 if let Some(expr) = init.as_ref().filter(|expr| self.expr_is_known_value(expr)) {
                     env.insert(id.name.clone(), expr.clone());
                 } else {
@@ -261,6 +261,24 @@ impl<'db> Evaluator<'db> {
             }
             MonoStmtKind::Return(expr) => {
                 let expr = expr.map(|expr| self.eval_expr_stable(&env, &comptime_env, expr).0);
+                if let Some(MonoExpr {
+                    kind: MonoExprKind::Call { callee, args, .. },
+                    ty,
+                    ..
+                }) = &expr
+                    && self.ty_is_unit(ty.ty())
+                    && let Some(mut body) = self.try_inline_stmt_call(callee, args, span)
+                {
+                    body.push(MonoStmt {
+                        span,
+                        kind: MonoStmtKind::Return(Some(MonoExpr {
+                            span,
+                            ty: *ty,
+                            kind: MonoExprKind::Tuple(Vec::new()),
+                        })),
+                    });
+                    return (env, comptime_env, body);
+                }
                 if self.enforce_comptime
                     && ret_comptime
                     && let Some(expr) = &expr
@@ -284,7 +302,14 @@ impl<'db> Evaluator<'db> {
                 let (expr, effects) = self.eval_expr_stable(&env, &comptime_env, expr);
                 let mut env = env;
                 let mut comptime_env = comptime_env;
-                invalidate_assigned(&effects, &mut env, &mut comptime_env);
+                if let MonoExprKind::Call { callee, args, .. } = &expr.kind
+                    && let Some(body) = self.try_inline_stmt_call(callee, args, span)
+                {
+                    let effects = self.stmts_write_effects(&body);
+                    self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
+                    return (env, comptime_env, body);
+                }
+                self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
                 if self.expr_is_known_value(&expr) {
                     (env, comptime_env, Vec::new())
                 } else {
@@ -312,7 +337,7 @@ impl<'db> Evaluator<'db> {
                 let mut comptime_env = comptime_env;
                 let mut effects = lhs_effects;
                 effects.merge(rhs_effects);
-                invalidate_assigned(&effects, &mut env, &mut comptime_env);
+                self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
                 if let Some(id) = target {
                     let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
                     if self.expr_is_known_value(&rhs) {
@@ -370,7 +395,7 @@ impl<'db> Evaluator<'db> {
                 let (cond, cond_effects) = self.eval_expr_stable(&env, &comptime_env, cond);
                 let mut env = env;
                 let mut comptime_env = comptime_env;
-                invalidate_assigned(&cond_effects, &mut env, &mut comptime_env);
+                self.invalidate_assigned_effects(&cond_effects, &mut env, &mut comptime_env);
                 if let Some(value) = known_bool(&cond) {
                     let selected = if value {
                         then_body
@@ -383,8 +408,8 @@ impl<'db> Evaluator<'db> {
                 if let Some(else_body) = else_body.as_deref() {
                     assigned.merge(self.stmts_write_effects(else_body));
                 }
-                let branch_env = remove_assigned(env.clone(), &assigned);
-                let branch_comptime_env = remove_comptime_assigned(comptime_env.clone(), &assigned);
+                let (branch_env, branch_comptime_env) =
+                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &assigned);
                 let (_, _, then_body) = self.eval_stmts(
                     type_reg,
                     branch_env.clone(),
@@ -402,8 +427,7 @@ impl<'db> Evaluator<'db> {
                     );
                     body
                 });
-                let env = remove_assigned(env, &assigned);
-                let comptime_env = remove_comptime_assigned(comptime_env, &assigned);
+                let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
                 (
                     env,
                     comptime_env,
@@ -425,23 +449,28 @@ impl<'db> Evaluator<'db> {
                 for scrutinee in raw_scrutinees {
                     let (scrutinee, effects) =
                         self.eval_expr_stable(&env, &comptime_env, scrutinee);
-                    invalidate_assigned(&effects, &mut env, &mut comptime_env);
+                    self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
                     scrutinees.push(scrutinee);
                 }
                 let arms = arms
                     .into_iter()
                     .map(|arm| self.eval_arm_labels(&env, &comptime_env, arm))
                     .collect::<Vec<_>>();
-                if scrutinees.iter().all(is_known_value)
-                    && let Some((matched_env, body)) = match_arms(&env, &scrutinees, &arms)
-                {
-                    return self.eval_stmts(
-                        type_reg,
-                        matched_env,
-                        comptime_env,
-                        body,
-                        ret_comptime,
-                    );
+                if scrutinees.iter().all(|expr| self.expr_is_known_value(expr)) {
+                    let matched = match_arms_with(&env, &scrutinees, &arms, |expr| {
+                        self.expr_is_known_value(expr)
+                    });
+                    if let Some((matched_env, body)) = matched {
+                        let matched_comptime_env =
+                            self.with_known_env_bindings_comptime(&matched_env, comptime_env);
+                        return self.eval_stmts(
+                            type_reg,
+                            matched_env,
+                            matched_comptime_env,
+                            body,
+                            ret_comptime,
+                        );
+                    }
                 }
                 let mut assigned = AssignedNames::empty();
                 for arm in &arms {
@@ -452,18 +481,19 @@ impl<'db> Evaluator<'db> {
                     .map(|arm| {
                         let mut masked = self.stmts_write_effects(&arm.body);
                         masked.insert_pat_binders(&arm.pats);
+                        let (arm_env, arm_comptime_env) =
+                            self.mask_assigned_env(env.clone(), comptime_env.clone(), &masked);
                         let (_, _, body) = self.eval_stmts(
                             type_reg,
-                            remove_assigned(env.clone(), &masked),
-                            remove_comptime_assigned(comptime_env.clone(), &masked),
+                            arm_env,
+                            arm_comptime_env,
                             arm.body,
                             ret_comptime,
                         );
                         MonoArm { body, ..arm }
                     })
                     .collect::<Vec<_>>();
-                let env = remove_assigned(env, &assigned);
-                let comptime_env = remove_comptime_assigned(comptime_env, &assigned);
+                let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
                 (
                     env,
                     comptime_env,
@@ -482,8 +512,7 @@ impl<'db> Evaluator<'db> {
                     body,
                     ret_comptime,
                 );
-                let env = remove_assigned(env, &assigned);
-                let comptime_env = remove_comptime_assigned(comptime_env, &assigned);
+                let (env, comptime_env) = self.mask_assigned_env(env, comptime_env, &assigned);
                 (
                     env,
                     comptime_env,
@@ -505,8 +534,8 @@ impl<'db> Evaluator<'db> {
                 assigned.merge(self.stmts_write_effects(&init));
                 assigned.merge(self.expr_write_effects(&cond));
                 assigned.merge(self.stmts_write_effects(&post));
-                let loop_env = remove_assigned(env.clone(), &assigned);
-                let loop_comptime_env = remove_comptime_assigned(comptime_env, &assigned);
+                let (loop_env, loop_comptime_env) =
+                    self.mask_assigned_env(env.clone(), comptime_env.clone(), &assigned);
                 let (_, _, init) = self.eval_stmts(
                     type_reg,
                     loop_env.clone(),
@@ -552,9 +581,10 @@ impl<'db> Evaluator<'db> {
                         }],
                     )
                 } else {
+                    let (env, comptime_env) = self.preserve_comptime_known_env(env, comptime_env);
                     (
-                        VEnv::default(),
-                        CEnv::default(),
+                        env,
+                        comptime_env,
                         vec![MonoStmt {
                             span,
                             kind: MonoStmtKind::Assembly(body),
@@ -607,7 +637,7 @@ impl<'db> Evaluator<'db> {
         let mut comptime_env = comptime_env;
         let mut effects = lhs_effects;
         effects.merge(rhs_effects);
-        invalidate_assigned(&effects, &mut env, &mut comptime_env);
+        self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
         if let Some(id) = target {
             env.remove(&id.name);
             comptime_env.remove(&id.name);
@@ -620,6 +650,75 @@ impl<'db> Evaluator<'db> {
                 kind: make_kind(lhs, rhs),
             }],
         )
+    }
+
+    fn with_known_env_bindings_comptime(&self, env: &VEnv<'db>, mut comptime_env: CEnv) -> CEnv {
+        for (name, expr) in env {
+            if self.expr_is_known_value(expr) {
+                comptime_env.insert(name.clone());
+            }
+        }
+        comptime_env
+    }
+
+    fn preserve_comptime_known_env(&self, env: VEnv<'db>, comptime_env: CEnv) -> (VEnv<'db>, CEnv) {
+        let mut kept_env = VEnv::default();
+        let mut kept_comptime_env = CEnv::default();
+        for (name, expr) in env {
+            if comptime_env.contains(&name) && self.expr_survives_unknown_write(&expr) {
+                kept_comptime_env.insert(name.clone());
+                kept_env.insert(name, expr);
+            }
+        }
+        (kept_env, kept_comptime_env)
+    }
+
+    fn expr_survives_unknown_write(&self, expr: &MonoExpr<'db>) -> bool {
+        match &expr.kind {
+            MonoExprKind::Proxy(_) | MonoExprKind::Lambda { .. } => true,
+            MonoExprKind::Var(id) => self.functions.contains_key(&id.name),
+            MonoExprKind::Tuple(elems) => elems
+                .iter()
+                .all(|expr| self.expr_survives_unknown_write(expr)),
+            MonoExprKind::Con { args, .. } => args
+                .iter()
+                .all(|expr| self.expr_survives_unknown_write(expr)),
+            MonoExprKind::TypeAnnot { expr, .. } => self.expr_survives_unknown_write(expr),
+            _ => false,
+        }
+    }
+
+    fn mask_assigned_env(
+        &self,
+        env: VEnv<'db>,
+        comptime_env: CEnv,
+        assigned: &AssignedNames,
+    ) -> (VEnv<'db>, CEnv) {
+        match assigned {
+            AssignedNames::All => self.preserve_comptime_known_env(env, comptime_env),
+            AssignedNames::Names(_) => (
+                remove_assigned(env, assigned),
+                remove_comptime_assigned(comptime_env, assigned),
+            ),
+        }
+    }
+
+    fn invalidate_assigned_effects(
+        &self,
+        assigned: &AssignedNames,
+        env: &mut VEnv<'db>,
+        comptime_env: &mut CEnv,
+    ) {
+        if matches!(assigned, AssignedNames::All) {
+            let old_env = std::mem::take(env);
+            let old_comptime_env = std::mem::take(comptime_env);
+            let (kept_env, kept_comptime_env) =
+                self.preserve_comptime_known_env(old_env, old_comptime_env);
+            *env = kept_env;
+            *comptime_env = kept_comptime_env;
+        } else {
+            invalidate_assigned(assigned, env, comptime_env);
+        }
     }
 
     fn eval_lvalue(
@@ -851,14 +950,23 @@ impl<'db> Evaluator<'db> {
                     index: Box::new(self.eval_expr(env, comptime_env, *index)),
                 },
             },
-            MonoExprKind::Field { base, field } => MonoExpr {
-                span,
-                ty,
-                kind: MonoExprKind::Field {
-                    base: Box::new(self.eval_expr(env, comptime_env, *base)),
-                    field,
-                },
-            },
+            MonoExprKind::Field { base, field } => {
+                let base = self.eval_expr(env, comptime_env, *base);
+                if let Ok(index) = field.parse::<usize>()
+                    && let MonoExprKind::Tuple(elems) = &base.kind
+                    && let Some(elem) = elems.get(index)
+                {
+                    return elem.clone();
+                }
+                MonoExpr {
+                    span,
+                    ty,
+                    kind: MonoExprKind::Field {
+                        base: Box::new(base),
+                        field,
+                    },
+                }
+            }
             MonoExprKind::Proxy(proxy_ty) => MonoExpr {
                 span,
                 ty,
@@ -920,8 +1028,8 @@ impl<'db> Evaluator<'db> {
         if effects.is_empty() {
             return (evaluated, effects);
         }
-        let masked_env = remove_assigned(env.clone(), &effects);
-        let masked_comptime_env = remove_comptime_assigned(comptime_env.clone(), &effects);
+        let (masked_env, masked_comptime_env) =
+            self.mask_assigned_env(env.clone(), comptime_env.clone(), &effects);
         let evaluated = self.eval_expr(&masked_env, &masked_comptime_env, expr);
         let effects = self.expr_write_effects(&evaluated);
         (evaluated, effects)
@@ -951,14 +1059,16 @@ impl<'db> Evaluator<'db> {
     ) -> Option<MonoExpr<'db>> {
         match &callee.kind {
             MonoExprKind::Var(id) if self.functions.contains_key(&id.name) => {
-                self.check_comptime_params(&id.name, args, &CEnv::default(), span);
-                self.try_inline(&id.name, args, span).or_else(|| {
+                let function = self.functions.get(&id.name)?;
+                let args = self.closure_call_args(function, args);
+                self.check_comptime_params(&id.name, &args, &CEnv::default(), span);
+                self.try_inline(&id.name, &args, span).or_else(|| {
                     Some(MonoExpr {
                         span,
                         ty,
                         kind: MonoExprKind::Call {
                             callee: id.clone(),
-                            args: args.to_vec(),
+                            args,
                             origin: MonoCallOrigin::ByName,
                         },
                     })
@@ -1020,6 +1130,39 @@ impl<'db> Evaluator<'db> {
             }
             _ => None,
         }
+    }
+
+    fn closure_call_args(
+        &self,
+        function: &MonoFunction<'db>,
+        args: &[MonoExpr<'db>],
+    ) -> Vec<MonoExpr<'db>> {
+        if args.len() == 1 && function.params.is_empty() && self.ty_is_unit(args[0].ty.ty()) {
+            return Vec::new();
+        }
+        if args.len() == 1
+            && function.params.len() != 1
+            && let MonoExprKind::Tuple(elems) = &args[0].kind
+            && elems.len() == function.params.len()
+        {
+            return elems.clone();
+        }
+        if args.len() == 1 && function.params.len() != 1 {
+            return function
+                .params
+                .iter()
+                .enumerate()
+                .map(|(index, param)| MonoExpr {
+                    span: args[0].span,
+                    ty: param.ty,
+                    kind: MonoExprKind::Field {
+                        base: Box::new(args[0].clone()),
+                        field: index.to_string(),
+                    },
+                })
+                .collect();
+        }
+        args.to_vec()
     }
 
     fn eval_arm_labels(
@@ -1285,10 +1428,10 @@ impl<'db> Evaluator<'db> {
         args: &[MonoExpr<'db>],
         span: Span<'db>,
     ) -> Option<MonoExpr<'db>> {
-        if !self.pure_funs.contains(name) {
+        let function = self.functions.get(name)?.clone();
+        if !self.function_can_inline(name, &function) {
             return None;
         }
-        let function = self.functions.get(name)?.clone();
         if function.params.len() != args.len() {
             return None;
         }
@@ -1340,6 +1483,77 @@ impl<'db> Evaluator<'db> {
             FoldOutcome::ReturnedKnown(expr) => Some(expr),
             FoldOutcome::ReturnedUnknownAbort | FoldOutcome::FellThroughContinue(_, _) => None,
         }
+    }
+
+    fn try_inline_stmt_call(
+        &mut self,
+        callee: &MonoId<'db>,
+        args: &[MonoExpr<'db>],
+        span: Span<'db>,
+    ) -> Option<Vec<MonoStmt<'db>>> {
+        let function = self.functions.get(&callee.name)?.clone();
+        if !self.function_is_std_dispatch(&function) || function.params.len() != args.len() {
+            return None;
+        }
+        if !args.iter().all(|arg| self.expr_is_known_value(arg)) {
+            return None;
+        }
+        let ret_comptime = ty_is_comptime(self.db, function.ret.ty());
+        let frame_comptime = self.comptime_mode
+            || ret_comptime
+            || function
+                .params
+                .iter()
+                .any(|param| param_is_comptime(self.db, param));
+        let function_display = display_mono_function_name(self.db, &function);
+        if self.has_recursive_inline_frame(&callee.name, args) {
+            self.push_recursion_diagnostic(function_display, frame_comptime, None, span);
+            return None;
+        }
+        if self.fuel == 0 {
+            self.push_fuel_diagnostic(
+                function_display,
+                self.inline_chain_is_comptime(frame_comptime),
+                span,
+            );
+            return None;
+        }
+        self.fuel -= 1;
+        self.inline_stack.push(InlineFrame {
+            name: callee.name.clone(),
+            args: args.to_vec(),
+            comptime: frame_comptime,
+        });
+        let mut env = VEnv::default();
+        let mut comptime_env = CEnv::default();
+        for (param, arg) in function.params.iter().zip(args) {
+            env.insert(param.name.clone(), arg.clone());
+            comptime_env.insert(param.name.clone());
+        }
+        let type_reg = build_type_reg(&function.params, &function.body);
+        let (_, _, body) = self.eval_stmts(&type_reg, env, comptime_env, function.body, false);
+        let frame = self.inline_stack.pop();
+        debug_assert!(frame.is_some_and(|frame| frame.name == callee.name));
+        self.fuel += 1;
+        Some(body)
+    }
+
+    fn function_can_inline(&self, name: &str, function: &MonoFunction<'db>) -> bool {
+        self.pure_funs.contains(name) || self.function_is_std_dispatch(function)
+    }
+
+    fn function_is_std_dispatch(&self, function: &MonoFunction<'db>) -> bool {
+        function.source.is_some_and(|def| {
+            def.file(self.db)
+                .url(self.db)
+                .path()
+                .ends_with("std/dispatch.solc")
+        })
+    }
+
+    fn ty_is_unit(&self, ty: hir_ty::Ty<'db>) -> bool {
+        ty_is_builtin(self.db, ty, BuiltinTyCtor::Unit)
+            || matches!(ty.kind(self.db), TyKind::Tuple(elems) if elems.is_empty())
     }
 
     fn has_recursive_inline_frame(&self, name: &str, args: &[MonoExpr<'db>]) -> bool {
@@ -1487,20 +1701,27 @@ impl<'db> Evaluator<'db> {
                         .into_iter()
                         .map(|arm| self.eval_arm_labels(&env, &comptime_env, arm))
                         .collect::<Vec<_>>();
-                    if scrutinees.iter().all(is_known_value)
-                        && let Some((matched_env, body)) = match_arms(&env, &scrutinees, &arms)
-                    {
-                        match self.eval_fun_body(type_reg, matched_env, comptime_env.clone(), body)
-                        {
-                            FoldOutcome::ReturnedKnown(expr) => {
-                                return FoldOutcome::ReturnedKnown(expr);
-                            }
-                            FoldOutcome::ReturnedUnknownAbort => {
-                                return FoldOutcome::ReturnedUnknownAbort;
-                            }
-                            FoldOutcome::FellThroughContinue(next_env, next_comptime_env) => {
-                                env = next_env;
-                                comptime_env = next_comptime_env;
+                    if scrutinees.iter().all(|expr| self.expr_is_known_value(expr)) {
+                        let matched = match_arms_with(&env, &scrutinees, &arms, |expr| {
+                            self.expr_is_known_value(expr)
+                        });
+                        if let Some((matched_env, body)) = matched {
+                            match self.eval_fun_body(
+                                type_reg,
+                                matched_env,
+                                comptime_env.clone(),
+                                body,
+                            ) {
+                                FoldOutcome::ReturnedKnown(expr) => {
+                                    return FoldOutcome::ReturnedKnown(expr);
+                                }
+                                FoldOutcome::ReturnedUnknownAbort => {
+                                    return FoldOutcome::ReturnedUnknownAbort;
+                                }
+                                FoldOutcome::FellThroughContinue(next_env, next_comptime_env) => {
+                                    env = next_env;
+                                    comptime_env = next_comptime_env;
+                                }
                             }
                         }
                     } else {

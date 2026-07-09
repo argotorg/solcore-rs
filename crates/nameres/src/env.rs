@@ -27,6 +27,26 @@ pub fn module_env<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ModuleEnv<'db>
     builder.finish()
 }
 
+/// Builds an imported-name environment for an already parsed HIR module.
+///
+/// The logical `module` is still used to resolve relative import paths, but
+/// imports and local item scope come from `hir_module`'s source file/content.
+pub fn module_env_for_hir_module<'db>(
+    db: &'db dyn Db,
+    module: ModuleId<'db>,
+    hir_module: Module<'db>,
+) -> ModuleEnv<'db> {
+    let file = hir_module.def_id_value(db).file(db);
+    let item_scope = hir_nameres::item_scope(db, hir_module);
+    let imports = module_imports(db, file);
+    let instances = instance_imports_for_file(db, module, file);
+    let mut builder = ModuleEnvBuilder::new(db, module, item_scope, instances);
+    for import in imports.imports {
+        builder.add_import(import);
+    }
+    builder.finish()
+}
+
 /// Returns imported-name facts for a module without diagnostics.
 #[salsa::tracked]
 #[tracing::instrument(

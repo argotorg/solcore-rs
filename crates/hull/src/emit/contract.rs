@@ -73,7 +73,29 @@ impl<'db> Emitter<'db> {
         );
 
         let mut runtime_stmts = Vec::new();
-        if self.options.emit_dispatcher_comments {
+        let synthetic_main = contract.entries.iter().find_map(|entry| {
+            if let MonoEntry::SyntheticMain {
+                specialized, span, ..
+            } = entry
+            {
+                Some((specialized, *span))
+            } else {
+                None
+            }
+        });
+        if let Some((main, span)) = synthetic_main {
+            runtime_stmts.push(Stmt {
+                span,
+                kind: StmtKind::Expr(Expr {
+                    span,
+                    ty: Ty::unit(span),
+                    kind: ExprKind::Call {
+                        callee: main.clone().into(),
+                        args: Vec::new(),
+                    },
+                }),
+            });
+        } else if self.options.emit_dispatcher_comments {
             for entry in &contract.entries {
                 if let MonoEntry::SelectorMethod {
                     selector,
@@ -92,7 +114,9 @@ impl<'db> Emitter<'db> {
                 }
             }
         }
-        runtime_stmts.extend(self.emit_dispatcher(contract, &runtime_functions));
+        if synthetic_main.is_none() {
+            runtime_stmts.extend(self.emit_dispatcher(contract, &runtime_functions));
+        }
 
         Object {
             span: contract.span,

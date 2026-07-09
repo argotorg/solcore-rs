@@ -1121,9 +1121,21 @@ instance address:ABIAttribs {
     function headSize(ty : Proxy(address)) -> word { return 32; }
     function isStatic(ty : Proxy(address)) -> bool { return true; }
 }
+instance bytes32:ABIAttribs {
+    function headSize(ty : Proxy(bytes32)) -> word { return 32; }
+    function isStatic(ty : Proxy(bytes32)) -> bool { return true; }
+}
+instance bool:ABIAttribs {
+    function headSize(ty : Proxy(bool)) -> word { return 32; }
+    function isStatic(ty : Proxy(bool)) -> bool { return true; }
+}
 forall t . instance DynArray(t):ABIAttribs {
     function headSize(ty : Proxy(DynArray(t))) -> word { return 32; }
     function isStatic(ty : Proxy(DynArray(t))) -> bool { return false; }
+}
+instance bytes:ABIAttribs {
+    function headSize(ty: Proxy(bytes)) -> word { return 32; }
+    function isStatic(ty : Proxy(bytes)) -> bool { return false; }
 }
 instance string:ABIAttribs {
     function headSize(ty: Proxy(string)) -> word { return 32; }
@@ -1358,6 +1370,13 @@ forall reader . reader:WordReader => instance ABIDecoder(uint256, reader):ABIDec
 forall reader . reader:WordReader => instance ABIDecoder(bytes32, reader):ABIDecode(bytes32) {
     function decode(ptr:ABIDecoder(bytes32, reader), currentHeadOffset:word) -> bytes32 {
         return Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset))) : bytes32;
+    }
+}
+
+// ABI Decoding for bool
+forall reader . reader:WordReader => instance ABIDecoder(bool, reader):ABIDecode(bool) {
+    function decode(ptr:ABIDecoder(bool, reader), currentHeadOffset:word) -> bool {
+        return tobool(WordReader.read(WordReader.advance(ptr, currentHeadOffset)));
     }
 }
 

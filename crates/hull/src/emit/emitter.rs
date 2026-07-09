@@ -406,6 +406,31 @@ impl<'db> Emitter<'db> {
                     }
                 }
             }
+            MonoExprKind::Field { base, field } if let Ok(index) = field.parse::<usize>() => {
+                let fields = sem_product_fields(self.db, base.ty.ty())
+                    .into_iter()
+                    .map(|field_ty| self.hull_ty(field_ty, base.span))
+                    .collect::<Vec<_>>();
+                let base = self.emit_expr(base);
+                if let Some(field_expr) = product_field_exprs(base, &fields).get(index).cloned() {
+                    field_expr
+                } else {
+                    self.push(
+                        expr.span,
+                        EmitDiagnosticKind::UnsupportedMonoConstruct {
+                            construct: mono_expr_name(&expr.kind).to_owned(),
+                        },
+                    );
+                    Expr {
+                        span: expr.span,
+                        ty,
+                        kind: ExprKind::Call {
+                            callee: "unsupported".into(),
+                            args: Vec::new(),
+                        },
+                    }
+                }
+            }
             MonoExprKind::Field { .. }
             | MonoExprKind::Index { .. }
             | MonoExprKind::Proxy(_)

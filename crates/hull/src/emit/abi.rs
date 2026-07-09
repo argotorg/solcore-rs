@@ -11,20 +11,46 @@ pub(super) enum AbiWordKind {
 
 #[derive(Debug, Clone)]
 pub(super) struct StaticAbiLayout<'db> {
-    ty: Ty<'db>,
+    pub(super) ty: Ty<'db>,
     pub(super) slots: usize,
-    kind: StaticAbiLayoutKind<'db>,
+    pub(super) kind: StaticAbiLayoutKind<'db>,
 }
 
 #[derive(Debug, Clone)]
-enum StaticAbiLayoutKind<'db> {
+pub(super) enum StaticAbiLayoutKind<'db> {
     Unit,
     Word(AbiWordKind),
+    BytesLike,
     Product(Vec<StaticAbiLayout<'db>>),
     Sum {
         lhs: Box<StaticAbiLayout<'db>>,
         rhs: Box<StaticAbiLayout<'db>>,
     },
+}
+
+impl StaticAbiLayout<'_> {
+    pub(super) fn abi_head_slots(&self) -> usize {
+        match &self.kind {
+            StaticAbiLayoutKind::Unit => 0,
+            StaticAbiLayoutKind::Word(_) | StaticAbiLayoutKind::BytesLike => 1,
+            StaticAbiLayoutKind::Product(layouts) => {
+                layouts.iter().map(StaticAbiLayout::abi_head_slots).sum()
+            }
+            StaticAbiLayoutKind::Sum { .. } => self.slots,
+        }
+    }
+
+    pub(super) fn has_dynamic_abi(&self) -> bool {
+        match &self.kind {
+            StaticAbiLayoutKind::BytesLike => true,
+            StaticAbiLayoutKind::Product(layouts) => {
+                layouts.iter().any(StaticAbiLayout::has_dynamic_abi)
+            }
+            StaticAbiLayoutKind::Unit
+            | StaticAbiLayoutKind::Word(_)
+            | StaticAbiLayoutKind::Sum { .. } => false,
+        }
+    }
 }
 
 pub(super) fn constructor_inputs_are_static_word(contract: &MonoContract<'_>) -> bool {
@@ -75,6 +101,16 @@ fn static_abi_layout_for_param<'db>(
     ty: &Ty<'db>,
     param: &MonoAbiParam,
 ) -> Option<StaticAbiLayout<'db>> {
+    if abi_param_is_dynamic_bytes_like(param) {
+        if hull_ty_word_slots(ty) == Some(1) && !hull_ty_is_bool_word(ty) {
+            return Some(StaticAbiLayout {
+                ty: ty.clone(),
+                slots: 1,
+                kind: StaticAbiLayoutKind::BytesLike,
+            });
+        }
+        return None;
+    }
     if abi_param_is_dynamic(param) {
         return None;
     }
@@ -188,9 +224,13 @@ fn static_abi_product_layout<'db>(
 }
 
 fn abi_param_is_dynamic(param: &MonoAbiParam) -> bool {
-    matches!(&param.ty, AbiType::String)
-        || matches!(&param.ty, AbiType::Named(name) if matches!(name.as_str(), "string" | "bytes"))
-        || param.components.iter().any(abi_param_is_dynamic)
+    abi_param_is_dynamic_bytes_like(param) || param.components.iter().any(abi_param_is_dynamic)
+}
+
+fn abi_param_is_dynamic_bytes_like(param: &MonoAbiParam) -> bool {
+    param.components.is_empty()
+        && (matches!(&param.ty, AbiType::String)
+            || matches!(&param.ty, AbiType::Named(name) if matches!(name.as_str(), "string" | "bytes")))
 }
 
 fn abi_param_is_static_word(param: &specialize::MonoAbiParam) -> bool {
@@ -254,6 +294,11 @@ pub(super) fn abi_words_to_expr<'db>(
                     expr
                 }
             }
+        }
+        StaticAbiLayoutKind::BytesLike => {
+            let mut expr = Expr::var(span, names[0].clone(), Ty::word(span));
+            expr.ty = layout.ty.clone();
+            expr
         }
         StaticAbiLayoutKind::Product(layouts) => {
             let mut offset = 0;
@@ -326,6 +371,11 @@ pub(super) fn write_expr_to_abi_slots<'db>(
                 }
             };
             body.push(assign_abi_word_slot(span, &names[0], rhs));
+        }
+        StaticAbiLayoutKind::BytesLike => {
+            let mut value = value;
+            value.ty = Ty::word(span);
+            body.push(assign_abi_word_slot(span, &names[0], value));
         }
         StaticAbiLayoutKind::Product(layouts) => {
             let fields = layouts
@@ -409,6 +459,7 @@ pub(super) fn abi_layout_slot_kinds(layout: &StaticAbiLayout<'_>) -> Vec<AbiWord
     match &layout.kind {
         StaticAbiLayoutKind::Unit => Vec::new(),
         StaticAbiLayoutKind::Word(kind) => vec![*kind],
+        StaticAbiLayoutKind::BytesLike => vec![AbiWordKind::Plain],
         StaticAbiLayoutKind::Product(layouts) => {
             layouts.iter().flat_map(abi_layout_slot_kinds).collect()
         }

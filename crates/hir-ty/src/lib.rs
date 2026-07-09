@@ -21,7 +21,7 @@ pub use contract::{
     AbiParam, AbiSelector, AbiSignature, AbiType, BodyDesugarPlan, BoolNode, DispatchConstructor,
     DispatchFallback, DispatchMethod, DispatchSurface, FrontendDesugarPlan, FrontendTransform,
     IndirectArgShape, abi_selector, contract_abi_json, contract_dispatch_surface,
-    frontend_desugar_plan, module_contract_diagnostics,
+    contract_dispatch_surface_for_module, frontend_desugar_plan, module_contract_diagnostics,
 };
 pub use hir::sema::ty::{
     BoundTyVar, BuiltinClassId, BuiltinTyCtor, ClassId, Pred, PredKind, QualTy, Ty, TyCtor, TyKind,
@@ -44,7 +44,8 @@ pub use solver::{
     Evidence, LocalGivensId, ModuleTraitEnvSource, ProgramClause, Solution, SolverReport,
     Substitution, TraitClauseSetId, TraitEnvId, canonical_goal, canonical_goal_with_allowed,
     derived_generic_plan, instance_soundness_diagnostics, solve, solve_report,
-    trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens,
+    trait_env_for_module, trait_env_from_module_resolution,
+    trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
 
 /// Database contract required by HIR type queries.

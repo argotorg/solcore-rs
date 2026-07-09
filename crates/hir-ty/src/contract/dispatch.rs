@@ -105,6 +105,18 @@ pub fn contract_dispatch_surface<'db>(
     contract_dispatch_surface_by_def(db, contract.def_id_value(db))
 }
 
+/// Returns the typed dispatch surface for `contract` using the supplied HIR
+/// module directly. This is useful for backend-generated HIR overlays whose
+/// source file URL may intentionally mirror a user file.
+pub fn contract_dispatch_surface_for_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    contract: ContractDef<'db>,
+) -> DispatchSurface<'db> {
+    let item_resolutions = resolve_contract_item_types(db, module);
+    contract_dispatch_surface_with_resolutions(db, module, &item_resolutions, contract)
+}
+
 #[salsa::tracked]
 fn contract_dispatch_surface_by_def<'db>(
     db: &'db dyn Db,

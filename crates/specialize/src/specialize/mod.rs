@@ -23,13 +23,14 @@ use hir::{
     span::{Span, Spanned, SpannedElem},
 };
 use hir_ty::{
-    AbiParam, AliasNormalizer, BinderEnv, BodyTyContext, BuiltinTyCtor, CallSiteCallee,
-    CallSiteEvidence, ClassId, ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback,
-    Evidence, InferResultExt, InferenceResult, LoweredFunction, Pred, PredKind, Solution, Ty,
-    TyCtor, TyKind, TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal,
-    contract_dispatch_surface, derived_generic_plan, frontend_desugar_plan, infer_body,
+    AbiParam, AliasNormalizer, BinderEnv, BodyTyContext, BuiltinClassId, BuiltinTyCtor,
+    CallSiteCallee, CallSiteEvidence, ClassId, ComptimeObligationKind, Db, DispatchConstructor,
+    DispatchFallback, Evidence, InferResultExt, InferenceResult, LoweredFunction, Pred, PredKind,
+    Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal,
+    contract_dispatch_surface_for_module, derived_generic_plan, frontend_desugar_plan, infer_body,
     lower_normalized_function_with_inferred_signature, solve, solver::DerivedClauseKind,
-    trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens,
+    trait_env_for_module, trait_env_from_module_resolution,
+    trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
 use nameres::{
     LibraryId, ModuleId, module_id_from_key, module_key_for_path, resolve_reachable_full,
@@ -52,6 +53,7 @@ mod body;
 mod call_resolver;
 mod derived_generic;
 mod diagnostics;
+mod dispatch_desugar;
 mod driver;
 mod evidence;
 mod intrinsics;
@@ -115,6 +117,7 @@ pub fn specialize_module<'db>(
     module: Module<'db>,
     options: SpecializeOptions,
 ) -> SpecializeOutput<'db> {
+    let module = dispatch_desugar::module_with_std_dispatch_main(db, module).unwrap_or(module);
     let mut driver = Driver::new(db, module, options);
     driver.run()
 }

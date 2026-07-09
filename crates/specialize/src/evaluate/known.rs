@@ -51,16 +51,6 @@ impl<'reg, 'db> Visitor<'db> for TypeRegCollector<'reg, 'db> {
     fn visit_pat(&mut self, _pat: &MonoPat<'db>) {}
 }
 
-pub(super) fn is_known_value(expr: &MonoExpr<'_>) -> bool {
-    match &expr.kind {
-        MonoExprKind::Lit(_) | MonoExprKind::Proxy(_) => true,
-        MonoExprKind::Tuple(elems) => elems.iter().all(is_known_value),
-        MonoExprKind::Con { args, .. } => args.iter().all(is_known_value),
-        MonoExprKind::TypeAnnot { expr, .. } => is_known_value(expr),
-        _ => false,
-    }
-}
-
 pub(super) fn known_int(expr: &MonoExpr<'_>) -> Option<BigInt> {
     match &expr.kind {
         MonoExprKind::Lit(LitKind::Number(text)) => BigInt::from_decimal_str(text),
@@ -123,32 +113,40 @@ pub(super) fn bool_expr<'db>(value: bool, ty: MonoTy<'db>, span: Span<'db>) -> M
     }
 }
 
-pub(super) fn match_arms<'db>(
+pub(super) fn match_arms_with<'db, F>(
     env: &VEnv<'db>,
     scrutinees: &[MonoExpr<'db>],
     arms: &[MonoArm<'db>],
-) -> Option<(VEnv<'db>, Vec<MonoStmt<'db>>)> {
+    is_known: F,
+) -> Option<(VEnv<'db>, Vec<MonoStmt<'db>>)>
+where
+    F: Fn(&MonoExpr<'db>) -> bool + Copy,
+{
     arms.iter().find_map(|arm| {
         if arm.pats.len() != scrutinees.len() {
             return None;
         }
         let mut env = env.clone();
         for (pat, value) in arm.pats.iter().zip(scrutinees) {
-            env = match_pat(env, pat, value)?;
+            env = match_pat(env, pat, value, is_known)?;
         }
         Some((env, arm.body.clone()))
     })
 }
 
-fn match_pat<'db>(
+fn match_pat<'db, F>(
     mut env: VEnv<'db>,
     pat: &MonoPat<'db>,
     value: &MonoExpr<'db>,
-) -> Option<VEnv<'db>> {
+    is_known: F,
+) -> Option<VEnv<'db>>
+where
+    F: Fn(&MonoExpr<'db>) -> bool + Copy,
+{
     match &pat.kind {
         MonoPatKind::Wildcard => Some(env),
         MonoPatKind::Var(id) => {
-            if is_known_value(value) {
+            if is_known(value) {
                 env.insert(id.name.clone(), value.clone());
             } else {
                 env.remove(&id.name);
@@ -164,7 +162,7 @@ fn match_pat<'db>(
                 && args.len() == value_args.len() =>
             {
                 for (pat, value) in args.iter().zip(value_args) {
-                    env = match_pat(env, pat, value)?;
+                    env = match_pat(env, pat, value, is_known)?;
                 }
                 Some(env)
             }
@@ -173,7 +171,7 @@ fn match_pat<'db>(
         MonoPatKind::Tuple(pats) => match &value.kind {
             MonoExprKind::Tuple(values) if pats.len() == values.len() => {
                 for (pat, value) in pats.iter().zip(values) {
-                    env = match_pat(env, pat, value)?;
+                    env = match_pat(env, pat, value, is_known)?;
                 }
                 Some(env)
             }
@@ -187,12 +185,12 @@ fn match_pat<'db>(
 }
 
 fn constructor_matches(
-    pat_ty: MonoTy<'_>,
+    _pat_ty: MonoTy<'_>,
     pat_ctor: &str,
-    value_ty: MonoTy<'_>,
+    _value_ty: MonoTy<'_>,
     value_ctor: &str,
 ) -> bool {
-    pat_ty == value_ty && constructor_names_match(pat_ctor, value_ctor)
+    constructor_names_match(pat_ctor, value_ctor)
 }
 
 fn constructor_names_match(lhs: &str, rhs: &str) -> bool {

@@ -63,6 +63,54 @@ pub fn trait_env_from_module_resolution<'db>(
     )
 }
 
+/// Builds a trait environment for an already resolved HIR module with an
+/// explicit imported-name surface.
+pub fn trait_env_from_module_resolution_and_imports<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
+    imports: &nameres::ModuleImportSurface<'db>,
+) -> TraitEnvId<'db> {
+    let mut clause_sets = Vec::new();
+    clause_sets.push(builtin_trait_clause_set(db));
+
+    let mut superclass_builder = TraitClauseBuilder::new(db);
+    superclass_builder.add_module_superclasses(module, &module_resolution.item_resolutions);
+    clause_sets.push(superclass_builder.finish());
+    for module in visible_class_modules(db, imports) {
+        clause_sets.push(module_superclass_clause_set(db, module));
+    }
+
+    for item in module.items(db) {
+        if let Item::InstanceDef(instance) = item {
+            let mut instance_builder = TraitClauseBuilder::new(db);
+            instance_builder.add_instance(module, *instance, &module_resolution.item_resolutions);
+            clause_sets.push(instance_builder.finish());
+        }
+    }
+    for origin in &imports.instances {
+        clause_sets.push(instance_origin_clause_set(db, origin.module, origin.def_id));
+    }
+
+    if let Some(generic) = local_generic_class(db, module)
+        .or_else(|| imported_generic_class(db, &module_resolution.item_resolutions))
+        .or_else(|| visible_generic_class(db, imports))
+    {
+        let mut derived_builder = TraitClauseBuilder::new(db);
+        derived_builder.add_derived_generic_instances(
+            module,
+            &module_resolution.item_resolutions,
+            generic,
+        );
+        clause_sets.push(derived_builder.finish());
+    }
+    TraitEnvId::new(
+        db,
+        BaseTraitEnvId::new(db, BaseTraitEnvSource::Resolved { clause_sets }),
+        LocalGivensId::new(db, Vec::new()),
+    )
+}
+
 /// Extends an existing trait environment with local given predicates.
 pub fn trait_env_with_givens<'db>(
     db: &'db dyn Db,
@@ -220,11 +268,37 @@ impl<'db> TraitClauseBuilder<'db> {
                     self.db,
                     invokable,
                     main,
-                    vec![invokable_arg_ty(self.db, params), ret],
+                    vec![invokable_arg_ty(self.db, params.clone()), ret],
                 ),
                 conditions: Vec::new(),
                 origin: ClauseOrigin::Builtin,
             });
+            if arity > 1 {
+                self.clauses.push(ProgramClause {
+                    binder_count: arity + 1,
+                    head: Pred::in_class(
+                        self.db,
+                        invokable,
+                        main,
+                        vec![Ty::tuple(self.db, params.clone()), ret],
+                    ),
+                    conditions: Vec::new(),
+                    origin: ClauseOrigin::Builtin,
+                });
+                if arity > 2 {
+                    self.clauses.push(ProgramClause {
+                        binder_count: arity + 1,
+                        head: Pred::in_class(
+                            self.db,
+                            invokable,
+                            main,
+                            vec![nested_tuple_arg_ty(self.db, params), ret],
+                        ),
+                        conditions: Vec::new(),
+                        origin: ClauseOrigin::Builtin,
+                    });
+                }
+            }
         }
     }
 
@@ -372,5 +446,18 @@ fn invokable_arg_ty<'db>(db: &'db dyn Db, params: Vec<Ty<'db>>) -> Ty<'db> {
             TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
             vec![first, invokable_arg_ty(db, rest)],
         )
+    }
+}
+
+fn nested_tuple_arg_ty<'db>(db: &'db dyn Db, params: Vec<Ty<'db>>) -> Ty<'db> {
+    let mut params = params.into_iter();
+    let Some(first) = params.next() else {
+        return Ty::unit(db);
+    };
+    let rest = params.collect::<Vec<_>>();
+    if rest.is_empty() {
+        first
+    } else {
+        Ty::tuple(db, vec![first, nested_tuple_arg_ty(db, rest)])
     }
 }

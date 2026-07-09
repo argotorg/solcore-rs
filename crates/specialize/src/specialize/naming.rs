@@ -132,17 +132,11 @@ pub(super) fn reachable_modules<'db>(db: &'db dyn Db, entry: Module<'db>) -> Vec
         return vec![entry];
     };
     let graph = resolve_reachable_full(db, entry_id);
-    let mut modules = graph
-        .modules
-        .into_iter()
-        .filter_map(|module| {
-            db.module_file(module)
-                .map(|file| parse_file_to_hir(db, file).module(db))
-        })
-        .collect::<Vec<_>>();
-    if modules.is_empty() {
-        modules.push(entry);
-    }
+    let mut modules = vec![entry];
+    modules.extend(graph.modules.into_iter().filter_map(|module| {
+        db.module_file(module)
+            .map(|file| parse_file_to_hir(db, file).module(db))
+    }));
     modules
 }
 
@@ -157,7 +151,17 @@ pub(super) fn specialization_trait_env<'db>(
         .any(|item| matches!(item, Item::Import(_)))
         && let Some(module_id) = module_id_for_source_file(db, module.def_id_value(db).file(db))
     {
-        return trait_env_for_module(db, module_id);
+        let file = module.def_id_value(db).file(db);
+        if db.module_file(module_id) == Some(file) {
+            return trait_env_for_module(db, module_id);
+        }
+        let env = nameres::module_env_for_hir_module(db, module_id, module);
+        return trait_env_from_module_resolution_and_imports(
+            db,
+            module,
+            resolution,
+            &env.import_surface(),
+        );
     }
     trait_env_from_module_resolution(db, module, resolution)
 }
@@ -194,7 +198,12 @@ pub(super) fn resolve_specialize_module<'db>(
     let Some(module_id) = module_id_for_source_file(db, module.def_id_value(db).file(db)) else {
         return hir_nameres::resolve_module(db, module);
     };
-    let env = nameres::module_env(db, module_id);
+    let file = module.def_id_value(db).file(db);
+    let env = if db.module_file(module_id) == Some(file) {
+        nameres::module_env(db, module_id)
+    } else {
+        nameres::module_env_for_hir_module(db, module_id, module)
+    };
     let Some(item_scope) = env.item_scope.clone() else {
         return hir_nameres::resolve_module(db, module);
     };
