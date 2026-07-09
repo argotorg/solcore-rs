@@ -808,14 +808,24 @@ impl<'db> InferCtx<'db> {
             BinOp::Sub => self.infer_operator_call_expected(
                 body, expr, lhs_expr, rhs_expr, "Sub", "sub", expected,
             ),
-            BinOp::Mul | BinOp::Div | BinOp::Mod | BinOp::BitAnd | BinOp::BitXor | BinOp::BitOr => {
-                let lhs = self.infer_expr(body, lhs_expr);
-                let rhs = self.infer_expr(body, rhs_expr);
-                let word = self.word();
-                self.unify_expr(body, lhs_expr, lhs, word.clone());
-                self.unify_expr(body, rhs_expr, rhs, word.clone());
-                word
-            }
+            BinOp::Mul => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Mul", "mul", expected,
+            ),
+            BinOp::Div => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Div", "div", expected,
+            ),
+            BinOp::Mod => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Mod", "mod", expected,
+            ),
+            BinOp::BitAnd => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "BitAnd", "band", expected,
+            ),
+            BinOp::BitXor => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "BitXor", "bxor", expected,
+            ),
+            BinOp::BitOr => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "BitOr", "bor", expected,
+            ),
             BinOp::Eq | BinOp::NotEq => {
                 let lhs = self.infer_expr(body, lhs_expr);
                 let rhs = self.infer_expr(body, rhs_expr);

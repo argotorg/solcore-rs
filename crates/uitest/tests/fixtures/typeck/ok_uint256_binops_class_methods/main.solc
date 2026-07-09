@@ -1,0 +1,27 @@
+import std.{*};
+
+contract Uint256Binops {
+  public function mul_u256(x : uint256, y : uint256) -> uint256 {
+    return x * y;
+  }
+
+  public function div_u256(x : uint256, y : uint256) -> uint256 {
+    return x / y;
+  }
+
+  public function mod_u256(x : uint256, y : uint256) -> uint256 {
+    return x % y;
+  }
+
+  public function band_u256(x : uint256, y : uint256) -> uint256 {
+    return x & y;
+  }
+
+  public function bxor_u256(x : uint256, y : uint256) -> uint256 {
+    return x ^ y;
+  }
+
+  public function bor_u256(x : uint256, y : uint256) -> uint256 {
+    return x | y;
+  }
+}

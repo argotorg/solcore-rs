@@ -1,0 +1,6 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ok_uint256_binops_class_methods/main.solc
+---
+no diagnostics
