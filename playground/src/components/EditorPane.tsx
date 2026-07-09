@@ -2,6 +2,7 @@ import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { CompileResult, Diag, Pos, Severity } from "../compiler/types";
+import { attachLanguageClient, type DetachLanguageClient } from "../languageClient";
 import {
   monacoThemeFor,
   registerSolcoreLanguage,
@@ -25,6 +26,16 @@ interface EditorPaneProps {
 }
 
 const COMPILE_MARKER_OWNER = "solcore-compile";
+let languageClientAttached = false;
+let detachLanguageClient: DetachLanguageClient | null = null;
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    detachLanguageClient?.();
+    detachLanguageClient = null;
+    languageClientAttached = false;
+  });
+}
 
 function markerSeverity(monaco: typeof Monaco, severity: Severity): Monaco.MarkerSeverity {
   switch (severity) {
@@ -135,6 +146,10 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
 
   const beforeMount = useCallback<BeforeMount>((monaco) => {
     registerSolcoreLanguage(monaco);
+    if (!languageClientAttached) {
+      languageClientAttached = true;
+      detachLanguageClient = attachLanguageClient(monaco);
+    }
   }, []);
 
   const revealRange = useCallback((range: Pos): void => {
