@@ -1,6 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import type { LspClient } from "./lspClient";
 import { registerCompletion } from "./providers/completion";
+import { registerDefinition } from "./providers/definition";
 import { registerHover } from "./providers/hover";
 import { registerSignatureHelp } from "./providers/signatureHelp";
 
@@ -9,6 +10,7 @@ export function registerProviders(monaco: typeof Monaco, client: LspClient): () 
     registerHover(monaco, client),
     registerCompletion(monaco, client),
     registerSignatureHelp(monaco, client),
+    registerDefinition(monaco, client),
   ];
 
   return () => {
