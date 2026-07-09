@@ -15,6 +15,7 @@ pub mod line_index;
 #[cfg(feature = "native")]
 pub mod native;
 pub mod references;
+pub mod rename;
 mod resolve;
 pub mod semantic_tokens;
 pub mod signature_help;
@@ -35,6 +36,7 @@ pub use hover::handle_hover;
 pub use inlay_hints::handle_inlay_hints;
 pub use line_index::LineIndexExt;
 pub use references::handle_references;
+pub use rename::{handle_prepare_rename, handle_rename};
 pub use semantic_tokens::handle_semantic_tokens_full;
 pub use signature_help::handle_signature_help;
 pub use state::{DocumentState, WorldState, uri_to_vfs_path, vfs_url_to_client_uri};

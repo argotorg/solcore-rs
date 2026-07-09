@@ -7,8 +7,9 @@ use lsp_types::{
     DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams,
     DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams,
     InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location,
-    MessageType, ReferenceParams, SemanticTokensParams, SemanticTokensResult, SignatureHelp,
-    SignatureHelpParams, SymbolInformation, WorkspaceSymbolParams,
+    MessageType, PrepareRenameResponse, ReferenceParams, RenameParams, SemanticTokensParams,
+    SemanticTokensResult, SignatureHelp, SignatureHelpParams, SymbolInformation,
+    TextDocumentPositionParams, WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tokio::sync::Mutex;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc};
@@ -155,6 +156,30 @@ impl LanguageServer for Backend {
         Ok(crate::document_highlight::handle_document_highlight(
             &world, &uri, position,
         ))
+    }
+
+    async fn rename(&self, params: RenameParams) -> jsonrpc::Result<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let world = self.world.lock().await;
+
+        Ok(crate::rename::handle_rename(
+            &world,
+            &uri,
+            position,
+            &params.new_name,
+        ))
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> jsonrpc::Result<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri;
+        let position = params.position;
+        let world = self.world.lock().await;
+
+        Ok(crate::rename::handle_prepare_rename(&world, &uri, position))
     }
 
     async fn signature_help(

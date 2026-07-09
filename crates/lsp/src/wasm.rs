@@ -6,8 +6,8 @@
 use lsp_types::{
     CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentHighlightParams, DocumentSymbolParams, GotoDefinitionParams,
-    HoverParams, InlayHintParams, ReferenceParams, SemanticTokensParams, SignatureHelpParams,
-    WorkspaceSymbolParams,
+    HoverParams, InlayHintParams, ReferenceParams, RenameParams, SemanticTokensParams,
+    SignatureHelpParams, TextDocumentPositionParams, WorkspaceSymbolParams,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -93,6 +93,8 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         "textDocument/signatureHelp" => handle_signature_help_request(world, id, params),
         "textDocument/definition" => handle_definition_request(world, id, params),
         "textDocument/references" => handle_references_request(world, id, params),
+        "textDocument/rename" => handle_rename_request(world, id, params),
+        "textDocument/prepareRename" => handle_prepare_rename_request(world, id, params),
         "textDocument/documentHighlight" => handle_document_highlight_request(world, id, params),
         "textDocument/documentSymbol" => handle_document_symbol_request(world, id, params),
         "textDocument/semanticTokens/full" => {
@@ -250,6 +252,44 @@ fn handle_references_request(world: &WorldState, id: Option<Value>, params: Valu
     vec![result_response(
         id,
         crate::references::handle_references(world, &uri, position, include_declaration),
+    )]
+}
+
+fn handle_rename_request(world: &WorldState, id: Option<Value>, params: Value) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<RenameParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    let uri = params.text_document_position.text_document.uri;
+    let position = params.text_document_position.position;
+    vec![result_response(
+        id,
+        crate::rename::handle_rename(world, &uri, position, &params.new_name),
+    )]
+}
+
+fn handle_prepare_rename_request(
+    world: &WorldState,
+    id: Option<Value>,
+    params: Value,
+) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<TextDocumentPositionParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    let uri = params.text_document.uri;
+    let position = params.position;
+    vec![result_response(
+        id,
+        crate::rename::handle_prepare_rename(world, &uri, position),
     )]
 }
 
@@ -732,6 +772,65 @@ mod tests {
             result.iter().all(|highlight| highlight["kind"] == 1),
             "expected text highlight kinds, got {response:#?}"
         );
+    }
+
+    #[test]
+    fn rename_requests_return_workspace_edit_and_prepare_range() {
+        let mut world = WorldState::new();
+        let source = "function id(x: word) -> word {\n  let y = x;\n  return x;\n}\n";
+        let outgoing = dispatch(&mut world, &did_open_message(source));
+        assert_eq!(outgoing.len(), 1);
+
+        let prepare = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "prepare-rename-1",
+                "method": "textDocument/prepareRename",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 1, "character": 10 }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(prepare.len(), 1);
+        let prepare_response = parse_message(&prepare[0]);
+        assert_eq!(prepare_response["id"], "prepare-rename-1");
+        assert_eq!(prepare_response["result"]["start"]["line"], 1);
+        assert_eq!(prepare_response["result"]["start"]["character"], 10);
+        assert_eq!(prepare_response["result"]["end"]["line"], 1);
+        assert_eq!(prepare_response["result"]["end"]["character"], 11);
+
+        let rename = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "rename-1",
+                "method": "textDocument/rename",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 1, "character": 10 },
+                    "newName": "renamed"
+                }
+            })
+            .to_string(),
+        );
+
+        assert_eq!(rename.len(), 1);
+        let response = parse_message(&rename[0]);
+        assert_eq!(response["id"], "rename-1");
+        let edits = response["result"]["changes"][URI]
+            .as_array()
+            .expect("rename edits array");
+        assert_eq!(edits.len(), 3, "expected declaration and two uses");
+        assert!(edits.iter().all(|edit| edit["newText"] == "renamed"));
+        assert_eq!(edits[0]["range"]["start"]["line"], 0);
+        assert_eq!(edits[0]["range"]["start"]["character"], 12);
+        assert_eq!(edits[1]["range"]["start"]["line"], 1);
+        assert_eq!(edits[1]["range"]["start"]["character"], 10);
+        assert_eq!(edits[2]["range"]["start"]["line"], 2);
+        assert_eq!(edits[2]["range"]["start"]["character"], 9);
     }
 
     fn did_open_message(source: &str) -> String {

@@ -1,10 +1,10 @@
 //! Static LSP capability advertisement.
 
 use lsp_types::{
-    CompletionOptions, HoverProviderCapability, InitializeResult, OneOf, SemanticTokensFullOptions,
-    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensServerCapabilities,
-    ServerCapabilities, ServerInfo, SignatureHelpOptions, TextDocumentSyncCapability,
-    TextDocumentSyncKind,
+    CompletionOptions, HoverProviderCapability, InitializeResult, OneOf, RenameOptions,
+    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
+    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelpOptions,
+    TextDocumentSyncCapability, TextDocumentSyncKind,
 };
 
 /// Returns the server capabilities for the transport layer's initialize reply.
@@ -25,6 +25,10 @@ pub fn server_capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
+        rename_provider: Some(OneOf::Right(RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
@@ -89,6 +93,13 @@ mod tests {
         assert_eq!(
             capabilities.document_highlight_provider,
             Some(OneOf::Left(true))
+        );
+        assert_eq!(
+            capabilities.rename_provider,
+            Some(OneOf::Right(RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: Default::default(),
+            }))
         );
         assert_eq!(
             capabilities.document_symbol_provider,
