@@ -78,6 +78,15 @@ function normalizeMarkerRange(range: Pos): Monaco.IRange {
   };
 }
 
+function selectionAtRangeStart(range: Monaco.IRange): Monaco.ISelection {
+  return {
+    selectionStartLineNumber: range.endLineNumber,
+    selectionStartColumn: range.endColumn,
+    positionLineNumber: range.startLineNumber,
+    positionColumn: range.startColumn,
+  };
+}
+
 function diagnosticsToMarkers(
   monaco: typeof Monaco,
   result: CompileResult | null,
@@ -159,7 +168,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
     }
 
     const monacoRange = normalizeMarkerRange(range);
-    editor.setSelection(monacoRange);
+    editor.setSelection(selectionAtRangeStart(monacoRange));
     editor.revealRangeInCenter(monacoRange, 0);
     editor.focus();
   }, []);
