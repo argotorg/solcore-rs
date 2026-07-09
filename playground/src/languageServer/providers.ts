@@ -7,6 +7,7 @@ import { registerDocumentSymbol } from "./providers/documentSymbol";
 import { registerHover } from "./providers/hover";
 import { registerReferences } from "./providers/references";
 import { registerRename } from "./providers/rename";
+import { registerSemanticTokens } from "./providers/semanticTokens";
 import { registerSignatureHelp } from "./providers/signatureHelp";
 
 export function registerProviders(monaco: typeof Monaco, client: LspClient): () => void {
@@ -19,6 +20,7 @@ export function registerProviders(monaco: typeof Monaco, client: LspClient): () 
     registerDocumentHighlight(monaco, client),
     registerRename(monaco, client),
     registerDocumentSymbol(monaco, client),
+    registerSemanticTokens(monaco, client),
   ];
 
   return () => {
