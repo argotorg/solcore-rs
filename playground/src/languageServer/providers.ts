@@ -1,17 +1,15 @@
 import type * as Monaco from "monaco-editor";
 import type { LspClient } from "./lspClient";
+import { registerHover } from "./providers/hover";
 
 export function registerProviders(monaco: typeof Monaco, client: LspClient): () => void {
-  void monaco;
-  void client;
-
-  // NOTE(codex): Feature-specific LSP provider registrations are intentionally
-  // deferred; this foundation commit only wires lifecycle, sync, and diagnostics.
-  const disposers: Array<() => void> = [];
+  const disposables: Monaco.IDisposable[] = [
+    registerHover(monaco, client),
+  ];
 
   return () => {
-    for (let index = disposers.length - 1; index >= 0; index -= 1) {
-      disposers[index]();
+    for (let index = disposables.length - 1; index >= 0; index -= 1) {
+      disposables[index].dispose();
     }
   };
 }
