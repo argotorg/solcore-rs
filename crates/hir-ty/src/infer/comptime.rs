@@ -1024,6 +1024,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         if !body_map.diagnostics.is_empty() {
             return;
         }
+        let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(self.db, body);
         let body_arity_diagnostics =
             body_type_constructor_arity_diagnostics(self.db, self.module, body, &body_map);
         if !body_arity_diagnostics.is_empty() {
@@ -1059,9 +1060,14 @@ impl<'db> TypeckDiagnosticCollector<'db> {
             Some(lowered.ret),
         )
         .with_param_names(param_names(self.db, sig.params.atom()))
+        .with_ret_display(
+            sig.ret
+                .map(|ret| crate::display::display_type_ref_source(self.db, ret)),
+        )
         .with_entry_module(self.module)
         .with_trait_env(trait_env)
-        .with_partial_data(partial_data_entries(&self.env));
+        .with_partial_data(partial_data_entries(&self.env))
+        .with_pre_typeck_desugar(pre_typeck_desugar);
         let result = infer_body(self.db, body, ctx);
         self.latent_comptime_call_diagnostics(body, &body_map, &result);
         self.diagnostics.extend(
@@ -1230,6 +1236,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 );
                 continue;
             }
+            let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(self.db, body);
             let trait_env = crate::solver::trait_env_for_module(self.db, self.module);
             let ctx = BodyTyContext::new(
                 self.hir_module,
@@ -1239,8 +1246,13 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 Some(field_ty),
             )
             .with_entry_module(self.module)
+            .with_ret_display(Some(crate::display::display_type_ref_source(
+                self.db,
+                field.ty(),
+            )))
             .with_trait_env(trait_env)
-            .with_partial_data(partial_data_entries(&self.env));
+            .with_partial_data(partial_data_entries(&self.env))
+            .with_pre_typeck_desugar(pre_typeck_desugar);
             self.diagnostics.extend(
                 body_ty_diagnostics(self.db, body, ctx)
                     .iter()

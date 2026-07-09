@@ -29,8 +29,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::field;
 
 use crate::{
-    BinderEnv, BuiltinClassId, BuiltinTyCtor, ClassId, Db, LoweredFunction, Pred, PredKind, QualTy,
-    Ty, TyCtor, TyKind, TyScheme, TypeLowering, TypeLoweringDiagnostic, UserTyCtorKind,
+    BinderEnv, BodyPreTypeckDesugarPlan, BuiltinClassId, BuiltinTyCtor, ClassId, Db,
+    LoweredFunction, Pred, PredKind, QualTy, Ty, TyCtor, TyKind, TyScheme, TypeLowering,
+    TypeLoweringDiagnostic, UserTyCtorKind,
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
     builtin_scheme, canonical_goal_with_allowed,
     contract::module_contract_diagnostics,
@@ -93,10 +94,14 @@ pub struct BodyTyContext<'db> {
     pub params: Vec<Ty<'db>>,
     /// Expected return type for the root body, when known from a signature.
     pub ret: Option<Ty<'db>>,
+    /// Source spelling for the expected return type, when it comes from user syntax.
+    pub ret_display: Option<String>,
     /// Trait environment used to solve deferred class obligations.
     pub trait_env: Option<TraitEnvId<'db>>,
     /// Imported data types whose constructors are only partially visible.
     pub partial_data: Vec<(String, Vec<String>)>,
+    /// Pre-typecheck desugar facts for the root body and nested lambda bodies.
+    pub pre_typeck_desugar: Vec<BodyPreTypeckDesugarPlan<'db>>,
 }
 
 /// Scheme for a resolved ADT constructor.
@@ -427,14 +432,22 @@ impl<'db> BodyTyContext<'db> {
             param_names: Vec::new(),
             params,
             ret,
+            ret_display: None,
             trait_env: None,
             partial_data: Vec::new(),
+            pre_typeck_desugar: Vec::new(),
         }
     }
 
     /// Adds root parameter names to the context.
     pub fn with_param_names(mut self, param_names: Vec<String>) -> Self {
         self.param_names = param_names;
+        self
+    }
+
+    /// Adds source spelling for the expected root return type.
+    pub fn with_ret_display(mut self, ret_display: Option<String>) -> Self {
+        self.ret_display = ret_display;
         self
     }
 
@@ -453,6 +466,15 @@ impl<'db> BodyTyContext<'db> {
     /// Adds the partial imported data surface visible to this body.
     pub fn with_partial_data(mut self, partial_data: Vec<(String, Vec<String>)>) -> Self {
         self.partial_data = partial_data;
+        self
+    }
+
+    /// Adds the pre-typecheck desugar facts used for this body inference.
+    pub fn with_pre_typeck_desugar(
+        mut self,
+        pre_typeck_desugar: Vec<BodyPreTypeckDesugarPlan<'db>>,
+    ) -> Self {
+        self.pre_typeck_desugar = pre_typeck_desugar;
         self
     }
 }

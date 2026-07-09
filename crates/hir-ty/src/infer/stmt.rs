@@ -113,6 +113,9 @@ impl<'db> InferCtx<'db> {
                         });
                     }
                     if let Some(expr) = expr {
+                        if let Some(display) = self.return_display_stack.last().cloned().flatten() {
+                            self.expected_expr_displays.insert((body, *expr), display);
+                        }
                         let actual = self.infer_expr_expected(body, *expr, Some(expected.clone()));
                         self.unify_expr(body, *expr, expected, actual.clone());
                         actual

@@ -176,7 +176,8 @@ fn infer_function_body<'db>(
         Some(lowered.ret),
     )
     .with_param_names(param_names)
-    .with_entry_module(entry);
+    .with_entry_module(entry)
+    .with_pre_typeck_desugar(hir_ty::pre_typeck_desugar_body_tree(db, owner.root_body));
 
     hir_ty::infer_body(db, owner.root_body, ty_context)
 }

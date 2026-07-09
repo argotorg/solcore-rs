@@ -208,13 +208,9 @@ impl<'db> TypeLowering<'db> {
                 self.lower_type(*ret),
             ),
             TypeRefKind::Comptime { inner, .. } => Ty::comptime(self.db, self.lower_type(*inner)),
-            TypeRefKind::Tuple { elems } => Ty::tuple(
+            TypeRefKind::Tuple { elems } => product_ty(
                 self.db,
-                elems
-                    .atom()
-                    .iter()
-                    .map(|elem| self.lower_type(*elem))
-                    .collect(),
+                elems.atom().iter().map(|elem| self.lower_type(*elem)),
             ),
             TypeRefKind::Error { .. } => Ty::error(self.db),
         }
@@ -648,6 +644,45 @@ fn tuple_params<'db>(db: &'db dyn HirDb, ty: Ty<'db>) -> Vec<Ty<'db>> {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
             args,
         } if args.is_empty() => Vec::new(),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } if args.len() == 2 => {
+            let mut params = Vec::new();
+            params.push(args[0]);
+            push_product_tail_params(db, args[1], &mut params);
+            params
+        }
         _ => vec![ty],
+    }
+}
+
+fn product_ty<'db>(db: &'db dyn HirDb, elems: impl IntoIterator<Item = Ty<'db>>) -> Ty<'db> {
+    let mut elems = elems.into_iter();
+    let Some(head) = elems.next() else {
+        return Ty::unit(db);
+    };
+    let tail = elems.collect::<Vec<_>>();
+    if tail.is_empty() {
+        head
+    } else {
+        Ty::named(
+            db,
+            TyCtor::Builtin(BuiltinTyCtor::Pair),
+            vec![head, product_ty(db, tail)],
+        )
+    }
+}
+
+fn push_product_tail_params<'db>(db: &'db dyn HirDb, ty: Ty<'db>, out: &mut Vec<Ty<'db>>) {
+    match ty.kind(db) {
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } if args.len() == 2 => {
+            out.push(args[0]);
+            push_product_tail_params(db, args[1], out);
+        }
+        _ => out.push(ty),
     }
 }

@@ -165,6 +165,11 @@ impl<'db> InferCtx<'db> {
             PatKind::ComptimeLabel { .. } => Some(CoveragePat::Opaque),
             PatKind::Tuple { elems } => {
                 let expected = self.coverage_ty(expected);
+                if let Some(field_tys) = self.product_field_tys(expected.clone())
+                    && field_tys.len() == elems.len()
+                {
+                    return self.coverage_product_pat(body, &elems, &field_tys);
+                }
                 let field_tys = match expected {
                     InferTy::Tuple(field_tys) if field_tys.len() == elems.len() => field_tys,
                     InferTy::Named {
@@ -369,6 +374,9 @@ impl<'db> InferCtx<'db> {
             (BuiltinCoverageCtor::Tuple(len), InferTy::Tuple(fields)) if fields.len() == len => {
                 Some(fields)
             }
+            (BuiltinCoverageCtor::Tuple(len), ty) => self
+                .product_field_tys(ty)
+                .filter(|fields| fields.len() == len),
             (
                 BuiltinCoverageCtor::Pair,
                 InferTy::Named {
@@ -513,6 +521,61 @@ impl<'db> InferCtx<'db> {
             name.to_owned()
         } else {
             format!("{name}({})", fields.join(", "))
+        }
+    }
+
+    fn product_field_tys(&mut self, ty: InferTy<'db>) -> Option<Vec<InferTy<'db>>> {
+        match self.coverage_ty(ty) {
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                args,
+            } if args.is_empty() => Some(Vec::new()),
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+                args,
+            } if args.len() == 2 => {
+                let mut fields = Vec::new();
+                fields.push(args[0].clone());
+                self.push_product_tail_ty(args[1].clone(), &mut fields);
+                Some(fields)
+            }
+            _ => None,
+        }
+    }
+
+    fn push_product_tail_ty(&mut self, ty: InferTy<'db>, out: &mut Vec<InferTy<'db>>) {
+        match self.coverage_ty(ty.clone()) {
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+                args,
+            } if args.len() == 2 => {
+                out.push(args[0].clone());
+                self.push_product_tail_ty(args[1].clone(), out);
+            }
+            _ => out.push(ty),
+        }
+    }
+
+    fn coverage_product_pat(
+        &mut self,
+        body: FuncBody<'db>,
+        elems: &[Id<Pat<'db>>],
+        field_tys: &[InferTy<'db>],
+    ) -> Option<CoveragePat<'db>> {
+        match elems {
+            [] => Some(CoveragePat::Ctor(
+                CoverageCtor::Builtin(BuiltinCoverageCtor::Unit),
+                Vec::new(),
+            )),
+            [elem] => self.coverage_pat(body, *elem, field_tys[0].clone()),
+            [head, tail @ ..] => {
+                let head = self.coverage_pat(body, *head, field_tys[0].clone())?;
+                let tail = self.coverage_product_pat(body, tail, &field_tys[1..])?;
+                Some(CoveragePat::Ctor(
+                    CoverageCtor::Builtin(BuiltinCoverageCtor::Pair),
+                    vec![head, tail],
+                ))
+            }
         }
     }
 

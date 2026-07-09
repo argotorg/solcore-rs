@@ -5,7 +5,7 @@ use std::{
 
 use hir::{
     anchor::DefLocationTable,
-    ast::item::{AdtDef, ContractDef, Item, Module},
+    ast::item::{AdtDef, ContractDef, FunctionDef, Item, Module},
     diag::Diagnostic,
     input::SourceFile,
 };
@@ -16,7 +16,7 @@ use solcore_hir_ty::{
     BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback,
     FieldInitPreTypeckTransform, FrontendTransform, IndirectArgShape, PreTypeckTransform,
     ProductShape, SourceOriginKind, Ty, TyCtor, TyKind, contract_abi_json,
-    contract_dispatch_surface, derived_generic_plan, frontend_desugar_plan,
+    contract_dispatch_surface, derived_generic_plan, frontend_desugar_plan, function_scheme,
     infer::module_typeck_diagnostics, pre_typeck_desugar_plan,
 };
 
@@ -109,6 +109,21 @@ fn adt_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> AdtDef<'d
             _ => None,
         })
         .expect("adt")
+}
+
+fn function_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> FunctionDef<'db> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::FunctionDef(function)
+                if function.def_id_value(db).name(db).as_deref() == Some(name) =>
+            {
+                Some(*function)
+            }
+            _ => None,
+        })
+        .expect("function")
 }
 
 fn pair_args<'db>(db: &'db TestDb, ty: Ty<'db>) -> Option<&'db Vec<Ty<'db>>> {
@@ -611,6 +626,49 @@ contract C {
         )),
         "{field_init_transforms:?}"
     );
+}
+
+#[test]
+fn typeck_lowers_tuple_return_type_to_right_nested_product() {
+    let (db, key) = db_with_main(
+        r#"
+function triple(x : word, y : bool, z : word) -> (word, bool, word) {
+  return (x, y, z);
+}
+"#,
+    );
+    let module_id = module_id_from_key(&db, &key);
+    let file = db.module_files.get(&key).copied().expect("main file");
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let function = function_named(&db, module, "triple");
+    let scheme = function_scheme(&db, module_id, function.def_id_value(&db)).expect("scheme");
+    let TyKind::Function { ret, .. } = scheme.body(&db).ty(&db).kind(&db) else {
+        panic!("expected function type");
+    };
+
+    let outer = pair_args(&db, *ret).expect("return type is outer pair");
+    assert!(matches!(
+        outer[0].kind(&db),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
+            ..
+        }
+    ));
+    let inner = pair_args(&db, outer[1]).expect("return tail is nested pair");
+    assert!(matches!(
+        inner[0].kind(&db),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Bool),
+            ..
+        }
+    ));
+    assert!(matches!(
+        inner[1].kind(&db),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
+            ..
+        }
+    ));
 }
 
 #[test]

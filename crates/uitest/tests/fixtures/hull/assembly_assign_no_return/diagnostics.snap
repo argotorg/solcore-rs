@@ -3,19 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/assembly_assign_no_return/main.solc
 ---
-error[SC0401]: entry point must have a concrete, non-polymorphic type before specialization
-  --> /main/main.solc:3:3
-   |
- 2 |   contract Test {
- 3 | /   public function main() {
- 4 | |     let x : word;
- 5 | |     assembly {
- 6 | |       x := mstore(1, 1)
- 7 | |     }
- 8 | |     return x;
- 9 | |   }
-   | |___^ type must be concrete here
-10 |   }
-   |
-   = note: entry points are specialization roots and must have a single concrete type
-   = note: help: give the entry point a monomorphic signature or call a polymorphic helper from a monomorphic wrapper
+error[SC0445]: inline assembly assignment returns 0 values, expected 1
+ --> /main/main.solc:6:12
+  |
+5 |     assembly {
+6 |       x := mstore(1, 1)
+  |            ^^^^^^^^^^^^ assembly return count mismatch
+7 |     }
+  |

@@ -397,6 +397,7 @@ pub fn lower_normalized_function_with_inferred_signature<'db>(
     if !body_map.diagnostics.is_empty() {
         return lowered;
     }
+    let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(db, body);
     let mut ctx = BodyTyContext::new(
         module,
         body_map.clone(),
@@ -404,7 +405,14 @@ pub fn lower_normalized_function_with_inferred_signature<'db>(
         lowered.params.clone(),
         Some(lowered.ret),
     )
-    .with_param_names(param_names(db, function.sig(db).params.atom()));
+    .with_param_names(param_names(db, function.sig(db).params.atom()))
+    .with_ret_display(
+        function
+            .sig(db)
+            .ret
+            .map(|ret| crate::display::display_type_ref_source(db, ret)),
+    )
+    .with_pre_typeck_desugar(pre_typeck_desugar);
     if let Some(entry_module) = entry_module {
         ctx = ctx.with_entry_module(entry_module);
     }

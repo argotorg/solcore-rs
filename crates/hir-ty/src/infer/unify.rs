@@ -7,6 +7,16 @@ impl<'db> InferCtx<'db> {
         expected: InferTy<'db>,
         actual: InferTy<'db>,
     ) -> bool {
+        self.unify_at_with_expected_display(span, expected, actual, None)
+    }
+
+    fn unify_at_with_expected_display(
+        &mut self,
+        span: LabelSpan,
+        expected: InferTy<'db>,
+        actual: InferTy<'db>,
+        expected_display: Option<String>,
+    ) -> bool {
         if matches!(expected, InferTy::Error) || matches!(actual, InferTy::Error) {
             return true;
         }
@@ -16,8 +26,22 @@ impl<'db> InferCtx<'db> {
             return true;
         }
         if let Err(err) = self.engine.unify(expected, actual) {
-            self.diagnostics
-                .push(err.diagnostic(&mut self.engine, span, &self.type_var_names));
+            let diagnostic = match err {
+                UnifyError::Mismatch { expected, actual } => {
+                    let expected = expected_display.unwrap_or_else(|| {
+                        self.engine
+                            .display_with_names(expected, &self.type_var_names)
+                    });
+                    let actual = self.engine.display_with_names(actual, &self.type_var_names);
+                    TypeckDiagnostic::Mismatch {
+                        span,
+                        expected,
+                        actual,
+                    }
+                }
+                err => err.diagnostic(&mut self.engine, span, &self.type_var_names),
+            };
+            self.diagnostics.push(diagnostic);
             false
         } else {
             true
@@ -59,7 +83,13 @@ impl<'db> InferCtx<'db> {
         expected: InferTy<'db>,
         actual: InferTy<'db>,
     ) -> bool {
-        let ok = self.unify_at(self.expr_label_span(body, expr), expected, actual);
+        let expected_display = self.expected_expr_displays.get(&(body, expr)).cloned();
+        let ok = self.unify_at_with_expected_display(
+            self.expr_label_span(body, expr),
+            expected,
+            actual,
+            expected_display,
+        );
         if !ok {
             self.poison_expr(body, expr);
         }
@@ -86,7 +116,11 @@ impl<'db> InferCtx<'db> {
         let ok = match self.engine.unify(expected, actual) {
             Ok(()) => true,
             Err(UnifyError::Mismatch { expected, actual }) => {
-                let expected = self.display_infer_ty(expected);
+                let expected = context
+                    .param
+                    .ty
+                    .clone()
+                    .unwrap_or_else(|| self.display_infer_ty(expected));
                 let actual = self.display_infer_ty(actual);
                 self.diagnostics.push(TypeckDiagnostic::ArgMismatch {
                     span,

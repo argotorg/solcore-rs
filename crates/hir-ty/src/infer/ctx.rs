@@ -1,5 +1,5 @@
 use super::*;
-use crate::display::display_pred_source;
+use crate::display::{display_pred_source, display_type_ref_source};
 
 pub(super) enum PoisonTarget<'db> {
     Expr(FuncBody<'db>, Id<Expr<'db>>),
@@ -26,6 +26,8 @@ pub(super) struct InferCtx<'db> {
     pub(super) pat_tys_for_locals: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), InferTy<'db>>,
     pub(super) sail_scopes: Vec<FxHashMap<String, InferTy<'db>>>,
     pub(super) return_stack: Vec<InferTy<'db>>,
+    pub(super) return_display_stack: Vec<Option<String>>,
+    pub(super) expected_expr_displays: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), String>,
     pub(super) expr_tys: Vec<(FuncBody<'db>, Id<Expr<'db>>, InferTy<'db>)>,
     pub(super) pat_tys: Vec<(FuncBody<'db>, Id<Pat<'db>>, InferTy<'db>)>,
     pub(super) pending: Vec<PendingObligation<'db>>,
@@ -98,6 +100,8 @@ impl<'db> InferCtx<'db> {
             pat_tys_for_locals: FxHashMap::default(),
             sail_scopes: vec![root_scope],
             return_stack: vec![ret_ty],
+            return_display_stack: vec![ctx.ret_display],
+            expected_expr_displays: FxHashMap::default(),
             expr_tys: Vec::new(),
             pat_tys: Vec::new(),
             pending: Vec::new(),
@@ -303,6 +307,10 @@ impl<'db> InferCtx<'db> {
 
     pub(super) fn display_pred(&self, pred: Pred<'db>) -> String {
         display_pred_source(self.db, pred, &self.type_var_names)
+    }
+
+    pub(super) fn display_type_ref(&self, ty: TypeRef<'db>) -> String {
+        display_type_ref_source(self.db, ty)
     }
 
     pub(super) fn label_span(&self, span: Span<'db>) -> LabelSpan {

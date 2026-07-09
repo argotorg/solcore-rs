@@ -1,5 +1,5 @@
 use super::*;
-use crate::display::display_ty_source;
+use crate::display::{display_ty_source, display_type_ref_source};
 
 /// User-facing information about a callable definition.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -19,6 +19,8 @@ pub struct ParameterDiagnostic {
     pub index: usize,
     /// Parameter name, when the source declaration has one.
     pub name: Option<String>,
+    /// Source spelling for the parameter type, when available.
+    pub ty: Option<String>,
     /// Parameter definition span, when available.
     pub definition: Option<LabelSpan>,
 }
@@ -432,6 +434,7 @@ impl TypeckDiagnostic {
                 param,
             } => {
                 let param_name = parameter_display(param);
+                let expected_display = param.ty.as_deref().unwrap_or(expected.as_str());
                 let mut diagnostic = if let Some(callee) = callee {
                     Diagnostic::error(format!(
                         "argument type mismatch in call to `{}`",
@@ -440,7 +443,7 @@ impl TypeckDiagnostic {
                     .with_code(DiagnosticCode::TYPECK_MISMATCH)
                     .with_primary_label_span(span.clone(), Some("argument has mismatched type"))
                     .with_note(format!(
-                        "expected `{expected}` because {param_name} of `{}` has type `{expected}`",
+                        "expected `{expected_display}` because {param_name} of `{}` has type `{expected_display}`",
                         callee.name
                     ))
                     .with_note(format!("found type: {actual}"))
@@ -898,9 +901,13 @@ pub(super) fn callee_diagnostic_info<'db>(
             let names = function_param_names(db, info.function.sig(db));
             let type_var_names = type_var_names(db, &info.type_vars);
             let scheme = function_callee_scheme(db, entry, module, *def)?;
+            let signature = source_signature_from_func_sig(db, &name, info.function.sig(db))
+                .unwrap_or_else(|| {
+                    signature_from_scheme(db, &name, &names, &type_var_names, scheme)
+                });
             Some(CalleeDiagnostic {
                 name: name.clone(),
-                signature: signature_from_scheme(db, &name, &names, &type_var_names, scheme),
+                signature,
                 definition: def_name_label_span(db, *def),
             })
         }
@@ -928,9 +935,12 @@ pub(super) fn callee_diagnostic_info<'db>(
             let param_names = function_param_names(db, method);
             let type_var_names = type_var_names(db, &info.type_vars);
             let scheme = class_method_callee_scheme(db, entry, module, *class, name.clone())?;
+            let signature = source_signature_from_func_sig(db, name, method).unwrap_or_else(|| {
+                signature_from_scheme(db, name, &param_names, &type_var_names, scheme)
+            });
             Some(CalleeDiagnostic {
                 name: name.clone(),
-                signature: signature_from_scheme(db, name, &param_names, &type_var_names, scheme),
+                signature,
                 definition: Some(LabelSpan::from_span(db, method.name.span(db))),
             })
         }
@@ -956,6 +966,7 @@ pub(super) fn call_param_diagnostic_info<'db>(
         return ParameterDiagnostic {
             index,
             name: None,
+            ty: None,
             definition: None,
         };
     };
@@ -985,6 +996,7 @@ pub(super) fn call_param_diagnostic_info<'db>(
             ParameterDiagnostic {
                 index,
                 name: None,
+                ty: None,
                 definition,
             }
         }
@@ -994,6 +1006,7 @@ pub(super) fn call_param_diagnostic_info<'db>(
         | CallSiteCallee::Field(_) => ParameterDiagnostic {
             index,
             name: None,
+            ty: None,
             definition: None,
         },
     }
@@ -1069,6 +1082,33 @@ fn signature_from_scheme<'db>(
     )
 }
 
+fn source_signature_from_func_sig<'db>(
+    db: &'db dyn HirDb,
+    name: &str,
+    sig: &FuncSig<'db>,
+) -> Option<String> {
+    let mut params = Vec::new();
+    for param in sig.params.atom() {
+        match param {
+            FuncParam::Typed { comptime, name, ty } => {
+                let prefix = if comptime.is_some() { "comptime " } else { "" };
+                params.push(format!(
+                    "{prefix}{}: {}",
+                    ident_text(db, name),
+                    display_type_ref_source(db, *ty)
+                ));
+            }
+            FuncParam::Untyped { .. } | FuncParam::Error { .. } => return None,
+        }
+    }
+    let ret = sig.ret?;
+    Some(format!(
+        "{name}({}) -> {}",
+        params.join(", "),
+        display_type_ref_source(db, ret)
+    ))
+}
+
 fn def_hir_module<'db>(db: &'db dyn Db, def: DefId<'db>) -> Module<'db> {
     parse_file_to_hir(db, def.file(db)).module(db)
 }
@@ -1107,21 +1147,28 @@ fn parameter_from_func_param<'db>(
     param: Option<&FuncParam<'db>>,
 ) -> ParameterDiagnostic {
     match param {
-        Some(FuncParam::Typed { name, .. }) | Some(FuncParam::Untyped { name, .. }) => {
-            ParameterDiagnostic {
-                index,
-                name: Some(ident_text(db, name)),
-                definition: Some(LabelSpan::from_span(db, name.span(db))),
-            }
-        }
+        Some(FuncParam::Typed { name, ty, .. }) => ParameterDiagnostic {
+            index,
+            name: Some(ident_text(db, name)),
+            ty: Some(display_type_ref_source(db, *ty)),
+            definition: Some(LabelSpan::from_span(db, name.span(db))),
+        },
+        Some(FuncParam::Untyped { name, .. }) => ParameterDiagnostic {
+            index,
+            name: Some(ident_text(db, name)),
+            ty: None,
+            definition: Some(LabelSpan::from_span(db, name.span(db))),
+        },
         Some(FuncParam::Error { span }) => ParameterDiagnostic {
             index,
             name: None,
+            ty: None,
             definition: Some(LabelSpan::from_span(db, *span)),
         },
         None => ParameterDiagnostic {
             index,
             name: None,
+            ty: None,
             definition: None,
         },
     }
@@ -2230,56 +2277,5 @@ fn format_pred_ref<'db>(db: &'db dyn HirDb, pred: hir::ast::ty::PredRef<'db>) ->
 }
 
 fn format_type_ref<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>) -> String {
-    match ty.kind(db) {
-        TypeRefKind::Named {
-            qualifier,
-            name,
-            args,
-        } => {
-            let mut out = String::new();
-            if let Some(qualifier) = qualifier {
-                out.push_str(&ident_text(db, qualifier));
-                out.push('.');
-            }
-            out.push_str(&ident_text(db, name));
-            if !args.atom().is_empty() {
-                out.push('(');
-                out.push_str(
-                    &args
-                        .atom()
-                        .iter()
-                        .map(|arg| format_type_ref(db, *arg))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
-                out.push(')');
-            }
-            out
-        }
-        TypeRefKind::Fn { params, ret } => format!(
-            "({}) -> {}",
-            params
-                .atom()
-                .iter()
-                .map(|param| format_type_ref(db, *param))
-                .collect::<Vec<_>>()
-                .join(", "),
-            format_type_ref(db, *ret)
-        ),
-        TypeRefKind::Comptime { inner, .. } => {
-            format!("comptime {}", format_type_ref(db, *inner))
-        }
-        TypeRefKind::Tuple { elems } => {
-            format!(
-                "({})",
-                elems
-                    .atom()
-                    .iter()
-                    .map(|elem| format_type_ref(db, *elem))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }
-        TypeRefKind::Error { .. } => "<error type>".to_owned(),
-    }
+    display_type_ref_source(db, ty)
 }

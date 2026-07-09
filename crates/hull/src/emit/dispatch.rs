@@ -6,6 +6,13 @@ struct SelectorDispatchEntry<'a, 'db> {
     outputs: &'a [MonoAbiParam],
 }
 
+struct ReturnAbiWriter<'a, 'db> {
+    span: Span<'db>,
+    base: &'a str,
+    tail: &'a str,
+    stmts: &'a mut Vec<YulStmt<'db>>,
+}
+
 impl<'db> Emitter<'db> {
     pub(super) fn emit_dispatcher(
         &mut self,
@@ -868,7 +875,15 @@ impl<'db> Emitter<'db> {
                 )),
             ),
         ];
-        self.push_return_abi_layout(span, prefix, names, layout, &base, &tail, 0, &mut stmts);
+        {
+            let mut writer = ReturnAbiWriter {
+                span,
+                base: &base,
+                tail: &tail,
+                stmts: &mut stmts,
+            };
+            self.push_return_abi_layout(&mut writer, prefix, names, layout, 0);
+        }
         stmts.push(self.yul_expr_stmt(
             span,
             self.yul_call(
@@ -903,39 +918,33 @@ impl<'db> Emitter<'db> {
 
     fn push_return_abi_layout(
         &self,
-        span: Span<'db>,
+        writer: &mut ReturnAbiWriter<'_, 'db>,
         prefix: &str,
         names: &[String],
         layout: &StaticAbiLayout<'db>,
-        base: &str,
-        tail: &str,
         head_offset: usize,
-        stmts: &mut Vec<YulStmt<'db>>,
     ) {
         match &layout.kind {
             StaticAbiLayoutKind::Unit => {}
             StaticAbiLayoutKind::Word(kind) => {
-                stmts.push(self.yul_expr_stmt(
-                    span,
+                writer.stmts.push(self.yul_expr_stmt(
+                    writer.span,
                     self.yul_call(
-                        span,
+                        writer.span,
                         "mstore",
                         vec![
-                            self.yul_head_ptr(span, base, head_offset),
-                            self.return_abi_word_value(span, &names[0], Some(*kind)),
+                            self.yul_head_ptr(writer.span, writer.base, head_offset),
+                            self.return_abi_word_value(writer.span, &names[0], Some(*kind)),
                         ],
                     ),
                 ));
             }
             StaticAbiLayoutKind::BytesLike => {
                 self.push_return_bytes_like_layout(
-                    span,
+                    writer,
                     &format!("{prefix}_head{head_offset}"),
                     &names[0],
-                    base,
-                    tail,
                     head_offset,
-                    stmts,
                 );
             }
             StaticAbiLayoutKind::Product(layouts) => {
@@ -944,14 +953,11 @@ impl<'db> Emitter<'db> {
                 for (index, component) in layouts.iter().enumerate() {
                     let end = name_offset + component.slots;
                     self.push_return_abi_layout(
-                        span,
+                        writer,
                         &format!("{prefix}_{index}"),
                         &names[name_offset..end],
                         component,
-                        base,
-                        tail,
                         head,
-                        stmts,
                     );
                     name_offset = end;
                     head += component.abi_head_slots();
@@ -959,14 +965,14 @@ impl<'db> Emitter<'db> {
             }
             StaticAbiLayoutKind::Sum { .. } => {
                 for (slot, name) in names.iter().enumerate() {
-                    stmts.push(self.yul_expr_stmt(
-                        span,
+                    writer.stmts.push(self.yul_expr_stmt(
+                        writer.span,
                         self.yul_call(
-                            span,
+                            writer.span,
                             "mstore",
                             vec![
-                                self.yul_head_ptr(span, base, head_offset + slot),
-                                self.yul_ident_expr(span, name),
+                                self.yul_head_ptr(writer.span, writer.base, head_offset + slot),
+                                self.yul_ident_expr(writer.span, name),
                             ],
                         ),
                     ));
@@ -977,43 +983,41 @@ impl<'db> Emitter<'db> {
 
     fn push_return_bytes_like_layout(
         &self,
-        span: Span<'db>,
+        writer: &mut ReturnAbiWriter<'_, 'db>,
         prefix: &str,
         name: &str,
-        base: &str,
-        tail: &str,
         head_offset: usize,
-        stmts: &mut Vec<YulStmt<'db>>,
     ) {
+        let span = writer.span;
         let length = format!("{prefix}_len");
         let total = format!("{prefix}_total");
         let rounded = format!("{prefix}_rounded");
         let padding = format!("{prefix}_padding");
         let offset = format!("{prefix}_offset");
-        stmts.push(self.yul_expr_stmt(
+        writer.stmts.push(self.yul_expr_stmt(
             span,
             self.yul_call(
                 span,
                 "mstore",
                 vec![
-                    self.yul_head_ptr(span, base, head_offset),
+                    self.yul_head_ptr(span, writer.base, head_offset),
                     self.yul_call(
                         span,
                         "sub",
                         vec![
-                            self.yul_ident_expr(span, tail),
-                            self.yul_ident_expr(span, base),
+                            self.yul_ident_expr(span, writer.tail),
+                            self.yul_ident_expr(span, writer.base),
                         ],
                     ),
                 ],
             ),
         ));
-        stmts.push(self.yul_let(
+        writer.stmts.push(self.yul_let(
             span,
             &length,
             Some(self.yul_call(span, "mload", vec![self.yul_ident_expr(span, name)])),
         ));
-        stmts.push(self.yul_let(
+        writer.stmts.push(self.yul_let(
             span,
             &total,
             Some(self.yul_call(
@@ -1025,7 +1029,7 @@ impl<'db> Emitter<'db> {
                 ],
             )),
         ));
-        stmts.push(YulStmt {
+        writer.stmts.push(YulStmt {
             span,
             kind: YulStmtKind::For {
                 init: vec![self.yul_let(span, &offset, Some(self.yul_number(span, "0")))],
@@ -1059,7 +1063,7 @@ impl<'db> Emitter<'db> {
                                 span,
                                 "add",
                                 vec![
-                                    self.yul_ident_expr(span, tail),
+                                    self.yul_ident_expr(span, writer.tail),
                                     self.yul_ident_expr(span, &offset),
                                 ],
                             ),
@@ -1080,12 +1084,12 @@ impl<'db> Emitter<'db> {
                 )],
             },
         });
-        stmts.push(self.yul_let(
+        writer.stmts.push(self.yul_let(
             span,
             &rounded,
             Some(self.yul_round_up_to_word(span, self.yul_ident_expr(span, &total))),
         ));
-        stmts.push(self.yul_let(
+        writer.stmts.push(self.yul_let(
             span,
             &padding,
             Some(self.yul_call(
@@ -1097,7 +1101,7 @@ impl<'db> Emitter<'db> {
                 ],
             )),
         ));
-        stmts.push(YulStmt {
+        writer.stmts.push(YulStmt {
             span,
             kind: YulStmtKind::If {
                 cond: self.yul_ident_expr(span, &padding),
@@ -1111,7 +1115,7 @@ impl<'db> Emitter<'db> {
                                 span,
                                 "add",
                                 vec![
-                                    self.yul_ident_expr(span, tail),
+                                    self.yul_ident_expr(span, writer.tail),
                                     self.yul_ident_expr(span, &total),
                                 ],
                             ),
@@ -1121,14 +1125,14 @@ impl<'db> Emitter<'db> {
                 )],
             },
         });
-        stmts.push(self.yul_assign(
+        writer.stmts.push(self.yul_assign(
             span,
-            tail,
+            writer.tail,
             self.yul_call(
                 span,
                 "add",
                 vec![
-                    self.yul_ident_expr(span, tail),
+                    self.yul_ident_expr(span, writer.tail),
                     self.yul_ident_expr(span, &rounded),
                 ],
             ),

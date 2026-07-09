@@ -450,6 +450,14 @@ impl<'db> InferTable<'db> {
                 },
                 InferTy::Tuple(elems),
             ) if elems.is_empty() && args.is_empty() => Ok(()),
+            (InferTy::Tuple(elems), rhs) => {
+                let lhs = product_infer_ty(elems);
+                self.unify_inner(lhs, rhs)
+            }
+            (lhs, InferTy::Tuple(elems)) => {
+                let rhs = product_infer_ty(elems);
+                self.unify_inner(lhs, rhs)
+            }
             (
                 InferTy::Named {
                     ctor: lhs_ctor,
@@ -479,12 +487,6 @@ impl<'db> InferTable<'db> {
                     self.unify_inner(lhs, rhs)?;
                 }
                 self.unify_inner(*lhs_ret, *rhs_ret)
-            }
-            (InferTy::Tuple(lhs), InferTy::Tuple(rhs)) if lhs.len() == rhs.len() => {
-                for (lhs, rhs) in lhs.into_iter().zip(rhs) {
-                    self.unify_inner(lhs, rhs)?;
-                }
-                Ok(())
             }
             (InferTy::Comptime(lhs), InferTy::Comptime(rhs)) => self.unify_inner(*lhs, *rhs),
             (InferTy::Comptime(lhs), rhs) => self.unify_inner(*lhs, rhs),
@@ -528,6 +530,25 @@ impl<'db> InferTable<'db> {
             }
             InferTy::Comptime(inner) => self.occurs(var, *inner),
             InferTy::Error | InferTy::Unknown | InferTy::BoundVar(_) => false,
+        }
+    }
+}
+
+fn product_infer_ty<'db>(elems: Vec<InferTy<'db>>) -> InferTy<'db> {
+    let mut elems = elems.into_iter();
+    let Some(head) = elems.next() else {
+        return InferTy::Named {
+            ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+            args: Vec::new(),
+        };
+    };
+    let tail = elems.collect::<Vec<_>>();
+    if tail.is_empty() {
+        head
+    } else {
+        InferTy::Named {
+            ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+            args: vec![head, product_infer_ty(tail)],
         }
     }
 }

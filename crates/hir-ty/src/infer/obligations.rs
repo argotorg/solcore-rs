@@ -511,6 +511,11 @@ impl<'db> InferCtx<'db> {
             return match pending.source {
                 ObligationSource::IntegerLiteral { body, expr } => {
                     self.poison_expr(body, expr);
+                    let actual = self
+                        .expected_expr_displays
+                        .get(&(body, expr))
+                        .cloned()
+                        .unwrap_or_else(|| actual.clone());
                     Some(TypeckDiagnostic::Mismatch {
                         span: self.expr_label_span(body, expr),
                         expected: "numeric".to_owned(),

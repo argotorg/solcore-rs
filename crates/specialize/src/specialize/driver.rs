@@ -929,6 +929,7 @@ impl<'db> Driver<'db> {
             module_trait_env,
             lowered.scheme.body(self.db).preds(self.db).clone(),
         );
+        let pre_typeck_desugar = hir_ty::pre_typeck_desugar_body_tree(self.db, body);
         let ctx = BodyTyContext::new(
             info.module,
             body_map.clone(),
@@ -940,7 +941,8 @@ impl<'db> Driver<'db> {
             self.db,
             info.function.sig(self.db).params.atom(),
         ))
-        .with_trait_env(trait_env);
+        .with_trait_env(trait_env)
+        .with_pre_typeck_desugar(pre_typeck_desugar);
         if let Some(entry_module) = self.entry_module {
             let ctx = ctx.with_entry_module(entry_module);
             return Some(infer_body(self.db, body, ctx));

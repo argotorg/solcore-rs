@@ -71,7 +71,8 @@ pub fn handle_hover(world: &WorldState, uri: &Url, position: Position) -> Option
         Some(lowered.ret),
     )
     .with_param_names(param_names)
-    .with_entry_module(entry);
+    .with_entry_module(entry)
+    .with_pre_typeck_desugar(hir_ty::pre_typeck_desugar_body_tree(db, owner.root_body));
     let inference = hir_ty::infer_body(db, owner.root_body, ty_context);
 
     let (owning_body, expr_id) = innermost_expr(db, owner.root_body, file, offset)?;

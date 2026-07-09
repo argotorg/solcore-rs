@@ -742,6 +742,7 @@ impl<'db> InferCtx<'db> {
         let has_expected = expected.is_some();
         let (expected_params, expected_ret) =
             self.expected_lambda_parts(span.clone(), expected, params.len());
+        let ret_display = ret.map(|ret| self.display_type_ref(ret));
         let param_tys = params
             .iter()
             .enumerate()
@@ -788,7 +789,9 @@ impl<'db> InferCtx<'db> {
             }
         }
         self.return_stack.push(ret.clone());
+        self.return_display_stack.push(ret_display);
         self.infer_body(body);
+        self.return_display_stack.pop();
         self.return_stack.pop();
         self.pop_sail_scope();
         let fn_ty = InferTy::Function {

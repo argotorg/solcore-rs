@@ -301,6 +301,7 @@ fn desugar_inference_result<'db>(
         base_trait_env,
         lowered.scheme.body(db).preds(db).clone(),
     );
+    let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(db, body);
     let ctx = BodyTyContext::new(
         module,
         body_map.clone(),
@@ -309,7 +310,12 @@ fn desugar_inference_result<'db>(
         Some(lowered.ret),
     )
     .with_param_names(param_names(db, sig.params.atom()))
-    .with_trait_env(trait_env);
+    .with_ret_display(
+        sig.ret
+            .map(|ret| crate::display::display_type_ref_source(db, ret)),
+    )
+    .with_trait_env(trait_env)
+    .with_pre_typeck_desugar(pre_typeck_desugar);
     Some(infer_body(db, body, ctx))
 }
 
