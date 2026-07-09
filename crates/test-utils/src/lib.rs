@@ -150,6 +150,31 @@ pub fn load_fixture_case<Db>(
 where
     Db: FrontendTestDb,
 {
+    load_fixture_case_with_url_style(db, root, repo_root, external_roots, SourceUrlStyle::Memory)
+}
+
+pub fn load_fixture_case_with_file_urls<Db>(
+    db: &mut Db,
+    root: &Path,
+    repo_root: &Path,
+    external_roots: BTreeMap<String, PathBuf>,
+) -> ModuleKey
+where
+    Db: FrontendTestDb,
+{
+    load_fixture_case_with_url_style(db, root, repo_root, external_roots, SourceUrlStyle::File)
+}
+
+fn load_fixture_case_with_url_style<Db>(
+    db: &mut Db,
+    root: &Path,
+    repo_root: &Path,
+    external_roots: BTreeMap<String, PathBuf>,
+    url_style: SourceUrlStyle,
+) -> ModuleKey
+where
+    Db: FrontendTestDb,
+{
     let std_root = repo_root.join("std");
     db.set_module_tree(ModuleTree::new(
         db,
@@ -163,13 +188,14 @@ where
             .chain(std::iter::once(std_root.as_path()))
             .chain(external_roots.values().map(|path| path.as_path())),
     ));
-    load_library_files(db, LibraryId::Main, root, root);
+    load_library_files(db, LibraryId::Main, root, root, url_style);
     for (name, external_root) in external_roots {
         load_library_files(
             db,
             LibraryId::External(name),
             &external_root,
             &external_root,
+            url_style,
         );
     }
 
@@ -201,6 +227,23 @@ pub fn load_reachable_modules<Db>(db: &mut Db, entry: ModuleKey)
 where
     Db: FrontendTestDb,
 {
+    load_reachable_modules_with_url_style(db, entry, SourceUrlStyle::Memory);
+}
+
+pub fn load_reachable_modules_with_file_urls<Db>(db: &mut Db, entry: ModuleKey)
+where
+    Db: FrontendTestDb,
+{
+    load_reachable_modules_with_url_style(db, entry, SourceUrlStyle::File);
+}
+
+fn load_reachable_modules_with_url_style<Db>(
+    db: &mut Db,
+    entry: ModuleKey,
+    url_style: SourceUrlStyle,
+) where
+    Db: FrontendTestDb,
+{
     let mut queue = vec![entry];
     let mut visited = FxHashSet::default();
 
@@ -226,7 +269,7 @@ where
 
         for (target_key, file_path) in targets {
             if !db.contains_module_file(&target_key) && file_path.exists() {
-                let file = source_file_for_path(db, &target_key, &file_path);
+                let file = source_file_for_path(db, &target_key, &file_path, url_style);
                 db.insert_module_file(target_key.clone(), file);
             }
             if db.contains_module_file(&target_key) {
@@ -359,28 +402,48 @@ fn collect_module_fs_snapshot(
     }
 }
 
-fn load_library_files<Db>(db: &mut Db, library: LibraryId, root: &Path, dir: &Path)
-where
+fn load_library_files<Db>(
+    db: &mut Db,
+    library: LibraryId,
+    root: &Path,
+    dir: &Path,
+    url_style: SourceUrlStyle,
+) where
     Db: FrontendTestDb,
 {
     for entry in fs::read_dir(dir).expect("read fixture directory") {
         let path = entry.expect("fixture entry").path();
         if path.is_dir() {
-            load_library_files(db, library.clone(), root, &path);
+            load_library_files(db, library.clone(), root, &path, url_style);
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("solc") {
             let key = module_key_for_path(library.clone(), root, &path).expect("module key");
-            let file = source_file_for_path(db, &key, &path);
+            let file = source_file_for_path(db, &key, &path, url_style);
             db.insert_module_file(key, file);
         }
     }
 }
 
-fn source_file_for_path<Db>(db: &Db, key: &ModuleKey, path: &Path) -> SourceFile
+#[derive(Clone, Copy)]
+enum SourceUrlStyle {
+    Memory,
+    File,
+}
+
+fn source_file_for_path<Db>(
+    db: &Db,
+    key: &ModuleKey,
+    path: &Path,
+    url_style: SourceUrlStyle,
+) -> SourceFile
 where
     Db: hir::Db,
 {
     let source = fs::read_to_string(path).expect("source file");
-    SourceFile::new(db, fixture_url(key), Some(source))
+    let url = match url_style {
+        SourceUrlStyle::Memory => fixture_url(key),
+        SourceUrlStyle::File => Url::from_file_path(path).expect("fixture file URL"),
+    };
+    SourceFile::new(db, url, Some(source))
 }
 
 fn fixture_url(key: &ModuleKey) -> Url {

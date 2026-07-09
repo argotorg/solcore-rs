@@ -7,7 +7,8 @@ use dir_test::{Fixture, dir_test};
 use hir::diag::Diagnostic;
 use nameres::{Db as _, ModuleKey, module_id_from_key};
 use solcore_test_utils::{
-    assert_diagnostics_snapshot, define_frontend_test_db, load_fixture_case, lower_any_diagnostics,
+    assert_diagnostics_snapshot, define_frontend_test_db, load_fixture_case,
+    load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls, lower_any_diagnostics,
     nameres_diagnostics, parse_diagnostics_for_source, render_diagnostics, repo_root_from_manifest,
     run_in_large_stack, sort_dedup_diagnostics,
 };
@@ -91,7 +92,17 @@ fn run_fixture_case(
     run_in_large_stack(move || {
         let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
         let mut db = TestDb::default();
-        let entry = load_fixture_case(&mut db, &case_dir, &repo_root, BTreeMap::new());
+        let allows_success = allows_success_fixture(&case_dir);
+        let entry = if allows_success {
+            load_fixture_case_with_file_urls(&mut db, &case_dir, &repo_root, BTreeMap::new())
+        } else {
+            load_fixture_case(&mut db, &case_dir, &repo_root, BTreeMap::new())
+        };
+        if allows_success {
+            load_reachable_modules_with_file_urls(&mut db, entry.clone());
+            let entry_id = module_id_from_key(&db, &entry);
+            let _ = nameres::resolve_reachable_full(&db, entry_id);
+        }
         let diagnostics = diagnostics(&db, entry);
         assert_failure_snapshot(&db, &case_dir, diagnostics);
     });
@@ -162,11 +173,27 @@ fn hull_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
 }
 
 fn assert_failure_snapshot(db: &TestDb, case_dir: &Path, diagnostics: Vec<Diagnostic>) {
-    assert!(
-        !diagnostics.is_empty(),
-        "expected diagnostics for failure fixture `{}`",
-        case_dir.display()
-    );
+    if diagnostics.is_empty() {
+        assert!(
+            allows_success_fixture(case_dir),
+            "expected diagnostics for failure fixture `{}`",
+            case_dir.display()
+        );
+    }
     let rendered = render_diagnostics(db, &diagnostics);
     assert_diagnostics_snapshot(case_dir, &rendered);
+}
+
+fn allows_success_fixture(case_dir: &Path) -> bool {
+    let Some("typeck") = case_dir
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+    case_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("ok_"))
 }
