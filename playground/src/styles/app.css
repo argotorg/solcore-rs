@@ -312,6 +312,25 @@
   box-shadow: none;
 }
 
+.file-problem-badge {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+}
+
+.file-problem-badge--error {
+  color: var(--error);
+  background: var(--error-soft);
+}
+
+.file-problem-badge--warning {
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+
 .file-row__actions {
   display: inline-flex;
   align-items: center;

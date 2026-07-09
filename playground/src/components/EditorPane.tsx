@@ -10,6 +10,7 @@ import {
 } from "../monaco/solc-language";
 import { uriForWorkspacePath } from "../monaco/paths";
 import { useWorkspaceStore } from "../store/workspace";
+import { FileProblemBadge, fileProblemSummaries } from "./FileProblemBadge";
 import {
   consumePendingNavigation,
   subscribeEditorNavigation,
@@ -131,6 +132,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
 
   const activeFile = files[activePath];
   const editorUri = uriForWorkspacePath(activePath);
+  const problemsByFile = useMemo(() => fileProblemSummaries(result), [result]);
 
   const editorOptions = useMemo<Monaco.editor.IStandaloneEditorConstructionOptions>(
     () => ({
@@ -244,20 +246,25 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
   return (
     <section className="editor-pane" aria-label="Source editor">
       <div className="tab-strip" role="tablist" aria-label="Open files">
-        {order.map((path) => (
-          <button
-            key={path}
-            type="button"
-            role="tab"
-            aria-selected={path === activePath}
-            className={`source-tab ${path === activePath ? "is-active" : ""}`}
-            onClick={() => setActive(path)}
-            title={path}
-          >
-            <span className="source-tab__name">{path}</span>
-            {path === entry ? <span className="source-tab__entry">entry</span> : null}
-          </button>
-        ))}
+        {order.map((path) => {
+          const problemSummary = problemsByFile.get(path);
+
+          return (
+            <button
+              key={path}
+              type="button"
+              role="tab"
+              aria-selected={path === activePath}
+              className={`source-tab ${path === activePath ? "is-active" : ""}`}
+              onClick={() => setActive(path)}
+              title={path}
+            >
+              <span className="source-tab__name">{path}</span>
+              {problemSummary ? <FileProblemBadge summary={problemSummary} /> : null}
+              {path === entry ? <span className="source-tab__entry">entry</span> : null}
+            </button>
+          );
+        })}
       </div>
 
       <div className="editor-surface">

@@ -1,15 +1,19 @@
 import { FileCode2, Pencil, Plus, Trash2 } from "lucide-react";
+import { useMemo } from "react";
 import { useWorkspaceStore } from "../store/workspace";
+import { FileProblemBadge, fileProblemSummaries } from "./FileProblemBadge";
 
 export function FileExplorer(): JSX.Element {
   const order = useWorkspaceStore((state) => state.order);
   const entry = useWorkspaceStore((state) => state.entry);
   const activePath = useWorkspaceStore((state) => state.activePath);
+  const result = useWorkspaceStore((state) => state.result);
   const createFile = useWorkspaceStore((state) => state.createFile);
   const renameFile = useWorkspaceStore((state) => state.renameFile);
   const deleteFile = useWorkspaceStore((state) => state.deleteFile);
   const setActive = useWorkspaceStore((state) => state.setActive);
   const setEntry = useWorkspaceStore((state) => state.setEntry);
+  const problemsByFile = useMemo(() => fileProblemSummaries(result), [result]);
 
   const handleAdd = (): void => {
     const path = window.prompt("New file path", "untitled.solc");
@@ -52,6 +56,7 @@ export function FileExplorer(): JSX.Element {
         {order.map((path) => {
           const isEntry = path === entry;
           const isActive = path === activePath;
+          const problemSummary = problemsByFile.get(path);
 
           return (
             <div key={path} className={`file-row ${isActive ? "is-active" : ""}`}>
@@ -64,6 +69,7 @@ export function FileExplorer(): JSX.Element {
               >
                 <FileCode2 size={16} aria-hidden="true" />
                 <span className="file-row__name">{path}</span>
+                {problemSummary ? <FileProblemBadge summary={problemSummary} /> : null}
                 {isEntry ? <span className="entry-dot" title="Entry file" /> : null}
               </button>
 
