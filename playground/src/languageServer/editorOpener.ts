@@ -4,24 +4,7 @@ import { requestEditorNavigation } from "../components/editorNavigation";
 import { workspacePathFromUri } from "../monaco/paths";
 import { useWorkspaceStore } from "../store/workspace";
 
-function targetPos(
-  path: string,
-  selectionOrPosition: Monaco.IRange | Monaco.IPosition,
-): Pos {
-  if ("startLineNumber" in selectionOrPosition) {
-    const range = selectionOrPosition;
-    return {
-      file: path,
-      startByte: 0,
-      endByte: 0,
-      startLine: range.startLineNumber,
-      startCol: range.startColumn,
-      endLine: range.endLineNumber,
-      endCol: range.endColumn,
-    };
-  }
-
-  const { lineNumber, column } = selectionOrPosition;
+function posAtPosition(path: string, { lineNumber, column }: Monaco.IPosition): Pos {
   return {
     file: path,
     startByte: 0,
@@ -31,6 +14,66 @@ function targetPos(
     endLine: lineNumber,
     endCol: column,
   };
+}
+
+function posFromRange(path: string, range: Monaco.IRange): Pos {
+  return {
+    file: path,
+    startByte: 0,
+    endByte: 0,
+    startLine: range.startLineNumber,
+    startCol: range.startColumn,
+    endLine: range.endLineNumber,
+    endCol: range.endColumn,
+  };
+}
+
+function isZeroWidthRange(range: Monaco.IRange): boolean {
+  return (
+    range.startLineNumber === range.endLineNumber &&
+    range.startColumn === range.endColumn
+  );
+}
+
+function posAtWordOrPosition(
+  path: string,
+  model: Monaco.editor.ITextModel | null,
+  position: Monaco.IPosition,
+): Pos {
+  const word = model?.getWordAtPosition(position);
+  if (!word) {
+    return posAtPosition(path, position);
+  }
+
+  return {
+    file: path,
+    startByte: 0,
+    endByte: 0,
+    startLine: position.lineNumber,
+    startCol: word.startColumn,
+    endLine: position.lineNumber,
+    endCol: word.endColumn,
+  };
+}
+
+function targetPos(
+  path: string,
+  model: Monaco.editor.ITextModel | null,
+  selectionOrPosition: Monaco.IRange | Monaco.IPosition,
+): Pos {
+  if ("startLineNumber" in selectionOrPosition) {
+    const range = selectionOrPosition;
+    if (!isZeroWidthRange(range)) {
+      return posFromRange(path, range);
+    }
+
+    return posAtWordOrPosition(path, model, {
+      lineNumber: range.startLineNumber,
+      column: range.startColumn,
+    });
+  }
+
+  return posAtWordOrPosition(path, model, selectionOrPosition);
 }
 
 /**
@@ -52,9 +95,10 @@ export function registerEditorOpener(monaco: typeof Monaco): Monaco.IDisposable 
       }
 
       if (selectionOrPosition) {
+        const model = monaco.editor.getModel(resource);
         requestEditorNavigation({
           path,
-          range: targetPos(path, selectionOrPosition),
+          range: targetPos(path, model, selectionOrPosition),
         });
       }
       if (store.activePath !== path) {
