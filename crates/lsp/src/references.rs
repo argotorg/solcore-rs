@@ -1,5 +1,7 @@
 //! Find-references support over the wasm-clean LSP core.
 
+use std::path::Path;
+
 use hir::{
     anchor::{DefId, resolve_def_location},
     ast::{
@@ -89,9 +91,9 @@ pub fn reference_target_at<'db>(
     let file = db.source_file(&path)?;
     let line_index = world.line_index(uri)?;
     let offset = line_index.position_to_byte(position)?;
-    let entry = world.workspace().entry_module()?;
+    let module_id = module_id_for_uri(db, uri)?;
     let module = parser::parse_file_to_hir(db, file).module(db);
-    let env = nameres::module_env(db, entry);
+    let env = nameres::module_env(db, module_id);
 
     if let Some(target) = body_expr_target_at(db, module, file, offset, &env) {
         return Some(target);
@@ -139,14 +141,13 @@ pub fn import_export_target_at<'db>(
     let file = db.source_file(&path)?;
     let line_index = world.line_index(uri)?;
     let offset = line_index.position_to_byte(position)?;
-    let entry = world.workspace().entry_module()?;
-    let module_id = module_id_for_file(db, entry, file)?;
+    let module_id = module_id_for_uri(db, uri)?;
     let module = parser::parse_file_to_hir(db, file).module(db);
 
     import_export_target_in_module(db, module, module_id, file, offset)
 }
 
-/// Collects all known references to `target` in the current reachable graph.
+/// Collects all known references to `target` in reachable and open modules.
 pub fn collect_reference_locations<'db>(
     world: &'db WorldState,
     target: &ReferenceTarget<'db>,
@@ -155,44 +156,39 @@ pub fn collect_reference_locations<'db>(
     let db = world.db();
     let mut locations = Vec::new();
 
-    // NOTE(codex): Cross-file search is bounded to the current entry module's
-    // reachable graph; this LSP core does not yet maintain a workspace-wide
-    // reverse index for unopened or unreachable files.
-    if let Some(entry) = world.workspace().entry_module() {
-        for module_id in nameres::reachable_modules(db, entry) {
-            let Some(file) = db.module_file(module_id) else {
-                continue;
-            };
-            let module = parser::parse_file_to_hir(db, file).module(db);
-            let env = nameres::module_env(db, module_id);
-            let scope = hir_nameres::item_scope(db, module);
-            let module_map = hir_nameres::resolve_module_with_imports_and_policy(
-                db,
-                module,
-                scope,
-                &env,
-                hir_nameres::NameresDiagnosticPolicy::Emit,
-            );
+    for module_id in reference_search_modules(world, db) {
+        let Some(file) = db.module_file(module_id) else {
+            continue;
+        };
+        let module = parser::parse_file_to_hir(db, file).module(db);
+        let env = nameres::module_env(db, module_id);
+        let scope = hir_nameres::item_scope(db, module);
+        let module_map = hir_nameres::resolve_module_with_imports_and_policy(
+            db,
+            module,
+            scope,
+            &env,
+            hir_nameres::NameresDiagnosticPolicy::Emit,
+        );
 
-            collect_item_resolution_locations(
-                world,
-                db,
-                &module_map.item_resolutions.facts,
-                target,
-                &mut locations,
-            );
-            collect_import_export_reference_locations(
-                world,
-                db,
-                module,
-                module_id,
-                &module_map.item_scope.facts,
-                target,
-                &mut locations,
-            );
-            for body_map in &module_map.bodies {
-                collect_body_reference_locations(world, db, body_map, target, &mut locations);
-            }
+        collect_item_resolution_locations(
+            world,
+            db,
+            &module_map.item_resolutions.facts,
+            target,
+            &mut locations,
+        );
+        collect_import_export_reference_locations(
+            world,
+            db,
+            module,
+            module_id,
+            &module_map.item_scope.facts,
+            target,
+            &mut locations,
+        );
+        for body_map in &module_map.bodies {
+            collect_body_reference_locations(world, db, body_map, target, &mut locations);
         }
     }
 
@@ -207,14 +203,47 @@ pub fn collect_reference_locations<'db>(
     locations
 }
 
-fn module_id_for_file<'db>(
+fn reference_search_modules<'db>(
+    world: &'db WorldState,
     db: &'db vfs::AnalysisHost,
-    entry: nameres::ModuleId<'db>,
-    file: SourceFile,
-) -> Option<nameres::ModuleId<'db>> {
-    nameres::reachable_modules(db, entry)
-        .into_iter()
-        .find(|module_id| db.module_file(*module_id) == Some(file))
+) -> Vec<nameres::ModuleId<'db>> {
+    let mut modules = Vec::new();
+
+    if let Some(entry) = world.workspace().entry_module() {
+        for module in nameres::reachable_modules(db, entry) {
+            push_unique_module(&mut modules, module);
+        }
+    }
+
+    for uri in world.open_document_uris() {
+        if let Some(module) = module_id_for_uri(db, &uri) {
+            push_unique_module(&mut modules, module);
+        }
+    }
+
+    modules
+}
+
+fn push_unique_module<'db>(
+    modules: &mut Vec<nameres::ModuleId<'db>>,
+    module: nameres::ModuleId<'db>,
+) {
+    if !modules.contains(&module) {
+        modules.push(module);
+    }
+}
+
+fn module_id_for_uri<'db>(db: &'db vfs::AnalysisHost, uri: &Url) -> Option<nameres::ModuleId<'db>> {
+    let path = uri_to_vfs_path(uri)?;
+    let tree = db.module_tree();
+    let key = nameres::module_key_for_path(
+        nameres::LibraryId::Main,
+        tree.main_root(db),
+        Path::new(&path),
+    )?;
+    let module = nameres::module_id_from_key(db, &key);
+    db.module_file(module)?;
+    Some(module)
 }
 
 fn import_export_target_in_module<'db>(

@@ -1,17 +1,23 @@
 # solcore playground
 
-A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The compile path runs in a Web Worker and calls the generated `solcore-wasm` package from `../crates/wasm/pkg`.
+A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The compile path runs in a Web Worker and calls the generated `solcore-wasm` package from `../crates/wasm/pkg`. Editor language features run in a separate LSP Worker backed by `solcore-lsp` from `../crates/lsp/pkg`.
 
 ## Development
 
-The local wasm package and `node_modules` must already exist:
+On a fresh checkout, generate the local wasm packages once before installing JavaScript dependencies:
 
 ```sh
+npm run build:wasm
 npm install
 npm run dev
 ```
 
-`package.json` depends on `solcore-wasm` through `file:../crates/wasm/pkg`, so a normal install links the generated wasm-pack output into Vite without publishing it.
+After dependencies are installed, `npm run dev` rebuilds both local wasm packages before starting Vite:
+
+- `../crates/wasm/pkg` for compiler/runtime calls
+- `../crates/lsp/pkg` for Monaco language features
+
+`package.json` depends on `solcore-wasm` and `solcore-lsp` through `file:` dependencies, so a normal install links the generated wasm-pack output into Vite without publishing it. If a dev server was already running while rebuilding wasm, restart with `npm run dev:force` once to clear Vite's dependency cache.
 
 ## Build
 
@@ -19,11 +25,11 @@ npm run dev
 npm run build
 ```
 
-The build script runs `tsc --noEmit` first, then `vite build`.
+The build script rebuilds both wasm packages, runs `tsc --noEmit`, then runs `vite build`.
 
 ## Deploy
 
-Deploy the generated `dist/` directory with static hosting that serves `.wasm` files. Vite emits the compiler wasm as an asset and rewrites the worker import to that built asset.
+Deploy the generated `dist/` directory with static hosting that serves `.wasm` files. Vite emits the compiler and LSP wasm files as assets and rewrites the worker imports to those built assets.
 
 For static hosting under a subpath, set `VITE_BASE`:
 
@@ -31,25 +37,32 @@ For static hosting under a subpath, set `VITE_BASE`:
 VITE_BASE=/solcore-rs/ npm run build
 ```
 
-## WASM compiler
+## WASM packages
 
-Rebuild the sibling wasm crate whenever the compiler changes. Preferred (size-optimized):
+Rebuild the sibling wasm crates whenever the compiler or LSP changes. Preferred (size-optimized):
 
 ```sh
-npm run build:wasm     # from playground/: wasm-pack build + optional `wasm-opt -Oz`
+npm run build:wasm     # from playground/: compiler wasm + LSP wasm + optional `wasm-opt -Oz`
+```
+
+To rebuild only one package:
+
+```sh
+npm run build:compiler-wasm
+npm run build:lsp-wasm
 ```
 
 Or directly from the repository root:
 
 ```sh
 wasm-pack build --target web crates/wasm --out-dir pkg
+wasm-pack build --target web crates/lsp --out-dir pkg -- --features wasm
 ```
 
-That produces `crates/wasm/pkg/`. The workspace `[profile.release]` is size-tuned
+That produces `crates/wasm/pkg/` and `crates/lsp/pkg/`. The workspace `[profile.release]` is size-tuned
 (`strip` + `opt-level = "z"` + `lto`), so `wasm-pack build` alone yields ~3.9&nbsp;MB (down from ~8.6&nbsp;MB
 unstripped). A final `wasm-opt -Oz` pass (requires `brew install binaryen`; wasm-pack's bundled wasm-opt is
-too old for reference-types) brings it to ~3.3&nbsp;MB (~1.06&nbsp;MB gzipped). `npm run build:wasm` applies it
-automatically when `wasm-opt` is on `PATH` and skips it gracefully otherwise. The Playground imports `init`, `compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The shared API shape lives in `src/compiler/types.ts` and should stay the single source of truth for the Playground compile protocol.
+too old for reference-types) brings the compiler wasm to ~3.3&nbsp;MB (~1.06&nbsp;MB gzipped). `npm run build:wasm` applies it automatically when `wasm-opt` is on `PATH` and skips it gracefully otherwise. The Playground imports `init`, `compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The LSP worker imports `SolcoreLsp` from `solcore-lsp`; `src/languageServer/lsp.worker.ts` passes Vite's emitted `solcore_lsp_bg.wasm?url` asset to `init()`. The shared compiler API shape lives in `src/compiler/types.ts` and should stay the single source of truth for the Playground compile protocol.
 
 The compile worker protocol is intentionally Playground-specific batch compile messaging:
 
@@ -75,11 +88,9 @@ Use that exact key everywhere:
 
 Do not use `file://` URIs or leading slashes as store keys. Monaco model URIs may use `file:///main/<relpath>` internally, but must map back to the same relative key.
 
-## Future LSP integration
+## Language Server
 
-`src/languageClient/` contains a documented no-op `attachLanguageClient()` seam.
-
-The future LSP must be a separate Worker from the compile worker and should speak standard LSP JSON-RPC 2.0 over `postMessage`. It should be consumed via `monaco-languageclient` when that dependency is added later. LSP positions are standard 0-based line/character values with UTF-16 character offsets.
+`src/languageClient/` re-exports the active browser LSP integration from `src/languageServer/`. The LSP runs in `src/languageServer/lsp.worker.ts`, separate from the compile worker, and speaks standard LSP JSON-RPC 2.0 over `postMessage`. LSP positions are standard 0-based line/character values with UTF-16 character offsets.
 
 The URI/key mapping for LSP documents is:
 
@@ -93,4 +104,4 @@ Compile diagnostics reserve Monaco marker owner `"solcore-compile"`:
 monaco.editor.setModelMarkers(model, "solcore-compile", markers);
 ```
 
-A future LSP diagnostics owner should use a separate owner so compile diagnostics and LSP diagnostics can coexist or be migrated cleanly.
+LSP diagnostics use Monaco marker owner `"solcore-lsp"` so compile diagnostics and LSP diagnostics can coexist.
