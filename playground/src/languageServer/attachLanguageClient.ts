@@ -2,6 +2,7 @@ import type * as Monaco from "monaco-editor";
 import { uriForWorkspacePath } from "../monaco/paths";
 import { useWorkspaceStore } from "../store/workspace";
 import { registerDiagnostics } from "./diagnostics";
+import { registerEditorOpener } from "./editorOpener";
 import { LspClient } from "./lspClient";
 import { registerProviders } from "./providers";
 import { startWorkspaceSync } from "./workspaceSync";
@@ -72,6 +73,8 @@ export function attachLanguageClient(monaco: typeof Monaco): DetachLanguageClien
       disposers.push(startWorkspaceSync(client));
       disposers.push(registerDiagnostics(monaco, client));
       disposers.push(registerProviders(monaco, client));
+      const opener = registerEditorOpener(monaco);
+      disposers.push(() => opener.dispose());
     })
     .catch((error: unknown) => {
       console.error("Failed to initialize Solcore language server", error);
