@@ -1,6 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import { uriForWorkspacePath } from "../monaco/paths";
 import { useWorkspaceStore } from "../store/workspace";
+import { registerDiagnostics } from "./diagnostics";
 import { LspClient } from "./lspClient";
 import { registerProviders } from "./providers";
 import { startWorkspaceSync } from "./workspaceSync";
@@ -69,6 +70,7 @@ export function attachLanguageClient(monaco: typeof Monaco): DetachLanguageClien
 
       openCurrentWorkspace(client);
       disposers.push(startWorkspaceSync(client));
+      disposers.push(registerDiagnostics(monaco, client));
       disposers.push(registerProviders(monaco, client));
     })
     .catch((error: unknown) => {
