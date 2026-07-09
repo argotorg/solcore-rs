@@ -1,0 +1,29 @@
+{
+  "name": "solcore-language",
+  "displayName": "Solcore Language",
+  "description": "Syntax highlighting and editor configuration for Solcore .solc files.",
+  "version": "0.0.0",
+  "publisher": "solcore",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "solcore",
+        "aliases": ["Solcore", "solc"],
+        "extensions": [".solc"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "solcore",
+        "scopeName": "source.solcore",
+        "path": "./syntaxes/solcore.tmLanguage.json"
+      }
+    ]
+  }
+}

@@ -1,9 +1,35 @@
 import type * as Monaco from "monaco-editor";
+import languageConfigurationSource from "../../../editors/vscode-solcore/language-configuration.json?raw";
 import type { ThemeMode } from "../store/workspace";
+import { createSolcoreTextMateTokensProvider } from "./textmate";
 
 export const SOLCORE_LANGUAGE_ID = "solcore";
 export const SOLCORE_LIGHT_THEME = "solcore-light";
 export const SOLCORE_DARK_THEME = "solcore-dark";
+
+interface Pair {
+  open: string;
+  close: string;
+}
+
+interface VscodeLanguageConfiguration {
+  comments: {
+    lineComment: string;
+    blockComment: [string, string];
+  };
+  brackets: [string, string][];
+  autoClosingPairs: Array<Pair & { notIn?: string[] }>;
+  surroundingPairs: Pair[];
+  indentationRules: {
+    increaseIndentPattern: string;
+    decreaseIndentPattern: string;
+  };
+  wordPattern: string;
+}
+
+const languageConfiguration = JSON.parse(
+  languageConfigurationSource,
+) as VscodeLanguageConfiguration;
 
 let registered = false;
 
@@ -11,19 +37,10 @@ export function monacoThemeFor(theme: ThemeMode): string {
   return theme === "dark" ? SOLCORE_DARK_THEME : SOLCORE_LIGHT_THEME;
 }
 
-export function registerSolcoreLanguage(monaco: typeof Monaco): void {
-  if (registered) {
-    return;
-  }
+function solcoreMonarchFallback(): Monaco.languages.IMonarchLanguage {
+  const identifier = /\p{L}[\p{L}\p{N}_]*(?:-\p{L}[\p{L}\p{N}_]*)*/u;
 
-  monaco.languages.register({
-    id: SOLCORE_LANGUAGE_ID,
-    extensions: [".solc"],
-    aliases: ["Solcore", "solc"],
-    mimetypes: ["text/x-solcore"],
-  });
-
-  monaco.languages.setMonarchTokensProvider(SOLCORE_LANGUAGE_ID, {
+  return {
     defaultToken: "",
     tokenPostfix: ".solc",
     keywords: [
@@ -59,135 +76,170 @@ export function registerSolcoreLanguage(monaco: typeof Monaco): void {
     ],
     booleans: ["true", "false"],
     builtinTypes: ["word", "bool", "unit"],
-    operators: [
-      ":=",
-      "->",
-      "=>",
-      "==",
-      "!=",
-      ">=",
-      "<=",
-      "&&",
-      "||",
-      "+=",
-      "-=",
-      "^=",
-      "&=",
-      "|=",
-      "%=",
-      "+",
-      "-",
-      "*",
-      "/",
-      "%",
-      "!",
-      "<",
-      ">",
-      "=",
-      "|",
-      "&",
-      "^",
-      "@",
-      "?",
-      ".",
-      ":",
-      ";",
-      ",",
-      "_",
-    ],
     tokenizer: {
       root: [
         [/[{}()[\]]/, "@brackets"],
-        [/\/\/.*$/, "comment"],
-        [/\/\*/, "comment", "@comment"],
-        [/0x[0-9a-fA-F]+/, "number.hex"],
-        [/[0-9]+/, "number"],
-        [/"([^"\\]|\\.)*$/, "string.invalid"],
-        [/"/, "string", "@string"],
+        [/\/\/.*$/, "comment.line.double-slash.solcore"],
+        [/\/\*/, "comment.block.solcore", "@comment"],
+        [/0x[0-9a-fA-F]+/, "constant.numeric.hex.solcore"],
+        [/[0-9]+/, "constant.numeric.decimal.solcore"],
+        [/"([^"\\]|\\.)*$/, "invalid.illegal.string.solcore"],
+        [/"/, "string.quoted.double.solcore", "@string"],
         [
-          /\p{L}[\p{L}\p{N}_]*(?=\s*\()/u,
+          new RegExp(`${identifier.source}(?=\\s*\\()`, "u"),
           {
             cases: {
-              "@keywords": "keyword",
-              "@booleans": "constant.language",
-              "@builtinTypes": "type.identifier",
-              "@default": "entity.name.function",
+              "@keywords": "keyword.declaration.solcore",
+              "@booleans": "constant.language.boolean.solcore",
+              "@builtinTypes": "support.type.primitive.solcore",
+              "@default": "entity.name.function.call.solcore",
             },
           },
         ],
-        [/\p{Lu}[\p{L}\p{N}_]*/u, "type.identifier"],
         [
-          /\p{L}[\p{L}\p{N}_]*/u,
+          /\p{Lu}[\p{L}\p{N}_]*(?:-\p{L}[\p{L}\p{N}_]*)*/u,
+          "entity.name.type.identifier.solcore",
+        ],
+        [
+          identifier,
           {
             cases: {
-              "@keywords": "keyword",
-              "@booleans": "constant.language",
-              "@builtinTypes": "type.identifier",
-              "@default": "identifier",
+              "@keywords": "keyword.declaration.solcore",
+              "@booleans": "constant.language.boolean.solcore",
+              "@builtinTypes": "support.type.primitive.solcore",
+              "@default": "variable.other.identifier.solcore",
             },
           },
         ],
-        [/:=|->|=>|==|!=|>=|<=|&&|\|\||\+=|-=|\^=|&=|\|=|%=|[+\-*/%!<>=|&^@?.:;,_]/, "operator"],
+        [/:=|\+=|-=|\^=|&=|\|=|%=|=/, "keyword.operator.assignment.solcore"],
+        [/->|=>/, "keyword.operator.arrow.solcore"],
+        [/==|!=|>=|<=|<|>/, "keyword.operator.comparison.solcore"],
+        [/&&|\|\||!/, "keyword.operator.logical.solcore"],
+        [/[+\-*/%]/, "keyword.operator.arithmetic.solcore"],
+        [/[|&^]/, "keyword.operator.bitwise.solcore"],
+        [/[@?_]/, "keyword.operator.other.solcore"],
+        [/[.:;,]/, "punctuation.separator.solcore"],
         [/[ \t\r\n]+/, "white"],
       ],
       comment: [
-        [/[^/*]+/, "comment"],
-        [/\*\//, "comment", "@pop"],
-        [/[/*]/, "comment"],
+        [/\/\*/, "comment.block.solcore", "@push"],
+        [/\*\//, "comment.block.solcore", "@pop"],
+        [/[^/*]+/, "comment.block.solcore"],
+        [/[/*]/, "comment.block.solcore"],
       ],
       string: [
-        [/[^\\"]+/, "string"],
-        [/\\./, "string.escape"],
-        [/"/, "string", "@pop"],
+        [/\\[nt"\\]/, "constant.character.escape.solcore"],
+        [/\\./, "invalid.illegal.escape.solcore"],
+        [/[^\\"]+/, "string.quoted.double.solcore"],
+        [/"/, "string.quoted.double.solcore", "@pop"],
       ],
+    },
+  };
+}
+
+function toMonacoLanguageConfiguration(): Monaco.languages.LanguageConfiguration {
+  return {
+    comments: languageConfiguration.comments,
+    brackets: languageConfiguration.brackets.map(
+      ([open, close]) => [open, close] as Monaco.languages.CharacterPair,
+    ),
+    autoClosingPairs: languageConfiguration.autoClosingPairs,
+    surroundingPairs: languageConfiguration.surroundingPairs,
+    wordPattern: new RegExp(languageConfiguration.wordPattern, "gu"),
+    indentationRules: {
+      increaseIndentPattern: new RegExp(
+        languageConfiguration.indentationRules.increaseIndentPattern,
+      ),
+      decreaseIndentPattern: new RegExp(
+        languageConfiguration.indentationRules.decreaseIndentPattern,
+      ),
+    },
+  };
+}
+
+function tokenRules(
+  palette: "light" | "dark",
+): Monaco.editor.ITokenThemeRule[] {
+  const light = palette === "light";
+
+  return [
+    {
+      token: "keyword",
+      foreground: light ? "b45309" : "fb923c",
+      fontStyle: "bold",
+    },
+    {
+      token: "keyword.control",
+      foreground: light ? "b45309" : "fb923c",
+      fontStyle: "bold",
+    },
+    {
+      token: "keyword.declaration",
+      foreground: light ? "b45309" : "fb923c",
+      fontStyle: "bold",
+    },
+    {
+      token: "keyword.directive",
+      foreground: light ? "b45309" : "fb923c",
+      fontStyle: "bold",
+    },
+    { token: "storage.modifier", foreground: light ? "9a3412" : "fdba74" },
+    { token: "constant.language", foreground: light ? "7c3aed" : "c4b5fd" },
+    { token: "support.type", foreground: light ? "4f46e5" : "a5b4fc" },
+    { token: "entity.name.type", foreground: light ? "4f46e5" : "a5b4fc" },
+    { token: "entity.name.function", foreground: light ? "0f766e" : "5eead4" },
+    { token: "entity.name.directive", foreground: light ? "7c2d12" : "fed7aa" },
+    { token: "variable.other.declaration", foreground: light ? "0369a1" : "7dd3fc" },
+    { token: "constant.numeric", foreground: light ? "6d28d9" : "c4b5fd" },
+    { token: "string", foreground: light ? "047857" : "86efac" },
+    { token: "constant.character.escape", foreground: light ? "dc2626" : "fca5a5" },
+    {
+      token: "invalid.illegal",
+      foreground: light ? "dc2626" : "fca5a5",
+      fontStyle: "underline",
+    },
+    {
+      token: "comment",
+      foreground: light ? "64748b" : "94a3b8",
+      fontStyle: "italic",
+    },
+    { token: "keyword.operator", foreground: light ? "475569" : "cbd5e1" },
+    { token: "punctuation", foreground: light ? "475569" : "cbd5e1" },
+  ];
+}
+
+export function registerSolcoreLanguage(monaco: typeof Monaco): void {
+  if (registered) {
+    return;
+  }
+
+  monaco.languages.register({
+    id: SOLCORE_LANGUAGE_ID,
+    extensions: [".solc"],
+    aliases: ["Solcore", "solc"],
+    mimetypes: ["text/x-solcore"],
+  });
+
+  monaco.languages.registerTokensProviderFactory(SOLCORE_LANGUAGE_ID, {
+    async create() {
+      try {
+        return await createSolcoreTextMateTokensProvider();
+      } catch (error) {
+        console.warn("Falling back to Monarch tokenization for Solcore", error);
+        return solcoreMonarchFallback();
+      }
     },
   });
 
-  monaco.languages.setLanguageConfiguration(SOLCORE_LANGUAGE_ID, {
-    comments: {
-      lineComment: "//",
-      blockComment: ["/*", "*/"],
-    },
-    brackets: [
-      ["{", "}"],
-      ["[", "]"],
-      ["(", ")"],
-    ],
-    autoClosingPairs: [
-      { open: "{", close: "}" },
-      { open: "[", close: "]" },
-      { open: "(", close: ")" },
-      { open: '"', close: '"', notIn: ["string", "comment"] },
-    ],
-    surroundingPairs: [
-      { open: "{", close: "}" },
-      { open: "[", close: "]" },
-      { open: "(", close: ")" },
-      { open: '"', close: '"' },
-    ],
-    wordPattern: /[\p{L}][\p{L}\p{N}_]*/gu,
-    indentationRules: {
-      increaseIndentPattern: /^.*\{[^}"']*$/,
-      decreaseIndentPattern: /^\s*\}/,
-    },
-  });
+  monaco.languages.setLanguageConfiguration(
+    SOLCORE_LANGUAGE_ID,
+    toMonacoLanguageConfiguration(),
+  );
 
   monaco.editor.defineTheme(SOLCORE_LIGHT_THEME, {
     base: "vs",
     inherit: true,
-    rules: [
-      { token: "keyword", foreground: "b45309", fontStyle: "bold" },
-      { token: "constant.language", foreground: "7c3aed" },
-      { token: "type.identifier", foreground: "4f46e5" },
-      { token: "entity.name.function", foreground: "0f766e" },
-      { token: "number", foreground: "6d28d9" },
-      { token: "number.hex", foreground: "6d28d9" },
-      { token: "string", foreground: "047857" },
-      { token: "string.escape", foreground: "dc2626" },
-      { token: "string.invalid", foreground: "dc2626", fontStyle: "underline" },
-      { token: "comment", foreground: "64748b", fontStyle: "italic" },
-      { token: "operator", foreground: "475569" },
-    ],
+    rules: tokenRules("light"),
     colors: {
       "editor.background": "#ffffff",
       "editor.foreground": "#1f2937",
@@ -207,19 +259,7 @@ export function registerSolcoreLanguage(monaco: typeof Monaco): void {
   monaco.editor.defineTheme(SOLCORE_DARK_THEME, {
     base: "vs-dark",
     inherit: true,
-    rules: [
-      { token: "keyword", foreground: "fb923c", fontStyle: "bold" },
-      { token: "constant.language", foreground: "c4b5fd" },
-      { token: "type.identifier", foreground: "a5b4fc" },
-      { token: "entity.name.function", foreground: "5eead4" },
-      { token: "number", foreground: "c4b5fd" },
-      { token: "number.hex", foreground: "c4b5fd" },
-      { token: "string", foreground: "86efac" },
-      { token: "string.escape", foreground: "fca5a5" },
-      { token: "string.invalid", foreground: "fca5a5", fontStyle: "underline" },
-      { token: "comment", foreground: "94a3b8", fontStyle: "italic" },
-      { token: "operator", foreground: "cbd5e1" },
-    ],
+    rules: tokenRules("dark"),
     colors: {
       "editor.background": "#111318",
       "editor.foreground": "#e5e7eb",

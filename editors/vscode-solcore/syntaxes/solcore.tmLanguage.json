@@ -1,0 +1,243 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Solcore",
+  "scopeName": "source.solcore",
+  "fileTypes": ["solc"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#constants" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#punctuation" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.solcore",
+          "match": "//.*$"
+        },
+        { "include": "#block-comment" }
+      ]
+    },
+    "block-comment": {
+      "name": "comment.block.solcore",
+      "begin": "/\\*",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.comment.begin.solcore" }
+      },
+      "end": "\\*/",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.comment.end.solcore" }
+      },
+      "patterns": [{ "include": "#block-comment" }]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.solcore",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.solcore" }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.solcore" }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.solcore",
+              "match": "\\\\[nt\"\\\\]"
+            },
+            {
+              "name": "invalid.illegal.escape.solcore",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "meta.declaration.contract.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(contract)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.contract.solcore" },
+            "3": { "name": "entity.name.type.contract.solcore" }
+          }
+        },
+        {
+          "name": "meta.declaration.function.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(function)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.solcore" },
+            "3": { "name": "entity.name.function.declaration.solcore" }
+          }
+        },
+        {
+          "name": "meta.declaration.type.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(data|class|type)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.solcore" },
+            "3": { "name": "entity.name.type.declaration.solcore" }
+          }
+        },
+        {
+          "name": "meta.declaration.variable.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(let)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.variable.solcore" },
+            "3": { "name": "variable.other.declaration.solcore" }
+          }
+        },
+        {
+          "name": "meta.directive.pragma.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(pragma)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
+          "captures": {
+            "1": { "name": "keyword.directive.pragma.solcore" },
+            "3": { "name": "entity.name.directive.pragma.solcore" }
+          }
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(?:true|false)(?![\\p{L}\\p{N}_-])"
+        },
+        {
+          "name": "constant.language.wildcard.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])_(?![\\p{L}\\p{N}_-])"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(?:if|else|for|switch|case|default|match|return|leave|continue|break)(?![\\p{L}\\p{N}_-])"
+        },
+        {
+          "name": "keyword.declaration.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(?:contract|import|export|as|let|data|class|forall|instance|type|function|constructor|fallback|assembly|pragma|lam)(?![\\p{L}\\p{N}_-])"
+        },
+        {
+          "name": "storage.modifier.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(?:public|payable)(?![\\p{L}\\p{N}_-])"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.solcore",
+          "match": "(?<![\\p{L}\\p{N}_-])(?:word|bool|unit)(?![\\p{L}\\p{N}_-])"
+        },
+        {
+          "name": "entity.name.type.identifier.solcore",
+          "match": "\\p{Lu}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.solcore",
+          "match": "(?<![\\p{L}\\p{N}_])0x[0-9a-fA-F]+(?![\\p{L}\\p{N}_])"
+        },
+        {
+          "name": "constant.numeric.decimal.solcore",
+          "match": "(?<![\\p{L}\\p{N}_])[0-9]+(?![\\p{L}\\p{N}_])"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.call.solcore",
+          "match": "\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.solcore",
+          "match": ":=|\\+=|-=|\\^=|&=|\\|=|%="
+        },
+        {
+          "name": "keyword.operator.arrow.solcore",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.comparison.solcore",
+          "match": "==|!=|>=|<=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.solcore",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.solcore",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.bitwise.solcore",
+          "match": "[|&^]"
+        },
+        {
+          "name": "keyword.operator.other.solcore",
+          "match": "[@?=]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.section.block.begin.solcore",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.section.block.end.solcore",
+          "match": "\\}"
+        },
+        {
+          "name": "punctuation.section.parens.begin.solcore",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.section.parens.end.solcore",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.section.brackets.begin.solcore",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.section.brackets.end.solcore",
+          "match": "\\]"
+        },
+        {
+          "name": "punctuation.separator.solcore",
+          "match": "[.,:;]"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.identifier.solcore",
+          "match": "\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*"
+        }
+      ]
+    }
+  }
+}
