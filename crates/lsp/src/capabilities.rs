@@ -1,8 +1,10 @@
 //! Static LSP capability advertisement.
 
 use lsp_types::{
-    CompletionOptions, HoverProviderCapability, InitializeResult, OneOf, ServerCapabilities,
-    ServerInfo, SignatureHelpOptions, TextDocumentSyncCapability, TextDocumentSyncKind,
+    CompletionOptions, HoverProviderCapability, InitializeResult, OneOf, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SignatureHelpOptions, TextDocumentSyncCapability,
+    TextDocumentSyncKind,
 };
 
 /// Returns the server capabilities for the transport layer's initialize reply.
@@ -23,6 +25,17 @@ pub fn server_capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
+                work_done_progress_options: Default::default(),
+                legend: SemanticTokensLegend {
+                    token_types: crate::semantic_tokens::TOKEN_TYPES.to_vec(),
+                    token_modifiers: crate::semantic_tokens::TOKEN_MODIFIERS.to_vec(),
+                },
+                range: Some(false),
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+            },
+        )),
         ..ServerCapabilities::default()
     }
 }
@@ -73,6 +86,20 @@ mod tests {
         assert_eq!(
             capabilities.document_symbol_provider,
             Some(OneOf::Left(true))
+        );
+        assert_eq!(
+            capabilities.semantic_tokens_provider,
+            Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+                SemanticTokensOptions {
+                    work_done_progress_options: Default::default(),
+                    legend: SemanticTokensLegend {
+                        token_types: crate::semantic_tokens::TOKEN_TYPES.to_vec(),
+                        token_modifiers: crate::semantic_tokens::TOKEN_MODIFIERS.to_vec(),
+                    },
+                    range: Some(false),
+                    full: Some(SemanticTokensFullOptions::Bool(true)),
+                }
+            ))
         );
     }
 }

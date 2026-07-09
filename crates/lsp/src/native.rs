@@ -6,8 +6,8 @@ use lsp_types::{
     CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, Location, MessageType, ReferenceParams, SignatureHelp,
-    SignatureHelpParams,
+    InitializedParams, Location, MessageType, ReferenceParams, SemanticTokensParams,
+    SemanticTokensResult, SignatureHelp, SignatureHelpParams,
 };
 use tokio::sync::Mutex;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc};
@@ -153,6 +153,18 @@ impl LanguageServer for Backend {
 
         Ok(crate::signature_help::handle_signature_help(
             &world, &uri, position,
+        ))
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> jsonrpc::Result<Option<SemanticTokensResult>> {
+        let uri = params.text_document.uri;
+        let world = self.world.lock().await;
+
+        Ok(crate::semantic_tokens::handle_semantic_tokens_full(
+            &world, &uri,
         ))
     }
 }

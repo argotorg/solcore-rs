@@ -6,7 +6,7 @@
 use lsp_types::{
     CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
-    ReferenceParams, SignatureHelpParams,
+    ReferenceParams, SemanticTokensParams, SignatureHelpParams,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -93,6 +93,9 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         "textDocument/definition" => handle_definition_request(world, id, params),
         "textDocument/references" => handle_references_request(world, id, params),
         "textDocument/documentSymbol" => handle_document_symbol_request(world, id, params),
+        "textDocument/semanticTokens/full" => {
+            handle_semantic_tokens_full_request(world, id, params)
+        }
         _ => error_or_empty(id, METHOD_NOT_FOUND, "Method not found"),
     }
 }
@@ -263,6 +266,26 @@ fn handle_document_symbol_request(
     vec![result_response(
         id,
         crate::symbols::handle_document_symbol(world, &uri),
+    )]
+}
+
+fn handle_semantic_tokens_full_request(
+    world: &WorldState,
+    id: Option<Value>,
+    params: Value,
+) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<SemanticTokensParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    let uri = params.text_document.uri;
+    vec![result_response(
+        id,
+        crate::semantic_tokens::handle_semantic_tokens_full(world, &uri),
     )]
 }
 
@@ -517,6 +540,39 @@ mod tests {
             label.contains("f(") && label.contains("a: word") && label.contains("b: word"),
             "expected rendered signature label, got {label}"
         );
+    }
+
+    #[test]
+    fn semantic_tokens_full_request_returns_tokens() {
+        let mut world = WorldState::new();
+        let source = "function main(x: word) -> word {\n  return x;\n}\n";
+        let outgoing = dispatch(&mut world, &did_open_message(source));
+        assert_eq!(outgoing.len(), 1);
+
+        let semantic_tokens = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "tokens-1",
+                "method": "textDocument/semanticTokens/full",
+                "params": {
+                    "textDocument": { "uri": URI }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(semantic_tokens.len(), 1);
+        let response = parse_message(&semantic_tokens[0]);
+        assert_eq!(response["id"], "tokens-1");
+        let data = response["result"]["data"]
+            .as_array()
+            .expect("semantic token data array");
+        assert!(
+            data.len() >= 5 && data.len() % 5 == 0,
+            "expected packed semantic token data, got {response:#?}"
+        );
+        assert_eq!(data[0], 0);
+        assert_eq!(data[1], source.find("main").expect("main") as u32);
     }
 
     fn did_open_message(source: &str) -> String {
