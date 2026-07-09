@@ -3,6 +3,7 @@ import type { LspClient } from "./lspClient";
 import { registerCompletion } from "./providers/completion";
 import { registerDefinition } from "./providers/definition";
 import { registerDocumentHighlight } from "./providers/documentHighlight";
+import { registerDocumentSymbol } from "./providers/documentSymbol";
 import { registerHover } from "./providers/hover";
 import { registerReferences } from "./providers/references";
 import { registerRename } from "./providers/rename";
@@ -17,6 +18,7 @@ export function registerProviders(monaco: typeof Monaco, client: LspClient): () 
     registerReferences(monaco, client),
     registerDocumentHighlight(monaco, client),
     registerRename(monaco, client),
+    registerDocumentSymbol(monaco, client),
   ];
 
   return () => {
