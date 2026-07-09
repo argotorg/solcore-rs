@@ -4,7 +4,10 @@ use hir::{
     anchor::{DefId, resolve_def_location},
     ast::{
         function::{Expr, ExprKind, FuncBody, FuncParam, Pat, PatKind, StmtKind},
-        item::{AdtDef, ClassDef, ContractDef, ContractItem, FunctionDef, Item, Module},
+        item::{
+            AdtDef, ClassDef, ContractDef, ContractItem, ExportKind, ExportedName, FunctionDef,
+            ImportSelector, Item, Module, SelectedName,
+        },
         ty::{PredRef, TypeRef, TypeRefKind},
     },
     diag::AbsoluteSpan,
@@ -121,6 +124,26 @@ pub fn reference_target_at<'db>(
     let item_facts = hir_nameres::resolve_item_type_facts_with_imports(db, module, &scope, &env);
     item_resolution_target_at(db, file, offset, &item_facts)
         .or_else(|| item_scope_target_at(db, file, offset, &scope))
+        .or_else(|| import_export_target_at(world, uri, position))
+}
+
+/// Resolves an import selector or explicit export-list occurrence under
+/// `position`.
+pub fn import_export_target_at<'db>(
+    world: &'db WorldState,
+    uri: &Url,
+    position: Position,
+) -> Option<ReferenceTarget<'db>> {
+    let db = world.db();
+    let path = uri_to_vfs_path(uri)?;
+    let file = db.source_file(&path)?;
+    let line_index = world.line_index(uri)?;
+    let offset = line_index.position_to_byte(position)?;
+    let entry = world.workspace().entry_module()?;
+    let module_id = module_id_for_file(db, entry, file)?;
+    let module = parser::parse_file_to_hir(db, file).module(db);
+
+    import_export_target_in_module(db, module, module_id, file, offset)
 }
 
 /// Collects all known references to `target` in the current reachable graph.
@@ -158,6 +181,15 @@ pub fn collect_reference_locations<'db>(
                 target,
                 &mut locations,
             );
+            collect_import_export_reference_locations(
+                world,
+                db,
+                module,
+                module_id,
+                &module_map.item_scope.facts,
+                target,
+                &mut locations,
+            );
             for body_map in &module_map.bodies {
                 collect_body_reference_locations(world, db, body_map, target, &mut locations);
             }
@@ -173,6 +205,64 @@ pub fn collect_reference_locations<'db>(
 
     sort_dedup_locations(&mut locations);
     locations
+}
+
+fn module_id_for_file<'db>(
+    db: &'db vfs::AnalysisHost,
+    entry: nameres::ModuleId<'db>,
+    file: SourceFile,
+) -> Option<nameres::ModuleId<'db>> {
+    nameres::reachable_modules(db, entry)
+        .into_iter()
+        .find(|module_id| db.module_file(*module_id) == Some(file))
+}
+
+fn import_export_target_in_module<'db>(
+    db: &'db vfs::AnalysisHost,
+    module: Module<'db>,
+    module_id: nameres::ModuleId<'db>,
+    file: SourceFile,
+    offset: u32,
+) -> Option<ReferenceTarget<'db>> {
+    let env = nameres::module_env(db, module_id);
+    let scope = hir_nameres::item_scope_facts(db, module);
+
+    for item in module.items(db) {
+        match *item {
+            Item::Import(import) => {
+                let Some(ImportSelector::Names(names)) = import.selector(db) else {
+                    continue;
+                };
+                for selected in names {
+                    if span_contains_offset(db, selected.name.span(db), file, offset) {
+                        return import_selected_name_resolution(db, &env, selected)
+                            .and_then(|resolution| target_from_resolution(&resolution));
+                    }
+                }
+            }
+            Item::Export(export) => {
+                let ExportKind::List(names) = export.kind(db) else {
+                    continue;
+                };
+                for exported in names {
+                    if span_contains_offset(db, exported.name.span(db), file, offset) {
+                        return export_name_resolution(db, &scope, exported)
+                            .and_then(|resolution| target_from_resolution(&resolution));
+                    }
+                }
+            }
+            Item::FunctionDef(_)
+            | Item::TypeAlias(_)
+            | Item::AdtDef(_)
+            | Item::ClassDef(_)
+            | Item::InstanceDef(_)
+            | Item::ContractDef(_)
+            | Item::Pragma(_)
+            | Item::Error { .. } => {}
+        }
+    }
+
+    None
 }
 
 fn body_expr_target_at<'db>(
@@ -704,6 +794,88 @@ fn collect_body_reference_locations<'db>(
     }
 }
 
+fn collect_import_export_reference_locations<'db>(
+    world: &WorldState,
+    db: &'db vfs::AnalysisHost,
+    module: Module<'db>,
+    module_id: nameres::ModuleId<'db>,
+    scope: &hir_nameres::ItemScopeFacts<'db>,
+    target: &ReferenceTarget<'db>,
+    locations: &mut Vec<Location>,
+) {
+    let env = nameres::module_env(db, module_id);
+
+    // NOTE(codex): Constructor selector sub-names, module path segments, and
+    // re-export forms are deferred; this pass covers the primary names in
+    // `import m.{name}` and `export { name }`.
+    for item in module.items(db) {
+        match *item {
+            Item::Import(import) => {
+                let Some(ImportSelector::Names(names)) = import.selector(db) else {
+                    continue;
+                };
+                for selected in names {
+                    if import_selected_name_resolution(db, &env, selected)
+                        .and_then(|resolution| target_from_resolution(&resolution))
+                        .as_ref()
+                        == Some(target)
+                    {
+                        push_span_location(world, db, selected.name.span(db), locations);
+                    }
+                }
+            }
+            Item::Export(export) => {
+                let ExportKind::List(names) = export.kind(db) else {
+                    continue;
+                };
+                for exported in names {
+                    if export_name_resolution(db, scope, exported)
+                        .and_then(|resolution| target_from_resolution(&resolution))
+                        .as_ref()
+                        == Some(target)
+                    {
+                        push_span_location(world, db, exported.name.span(db), locations);
+                    }
+                }
+            }
+            Item::FunctionDef(_)
+            | Item::TypeAlias(_)
+            | Item::AdtDef(_)
+            | Item::ClassDef(_)
+            | Item::InstanceDef(_)
+            | Item::ContractDef(_)
+            | Item::Pragma(_)
+            | Item::Error { .. } => {}
+        }
+    }
+}
+
+fn import_selected_name_resolution<'db>(
+    db: &'db dyn hir_ty::Db,
+    env: &dyn hir_nameres::ImportedNames<'db>,
+    selected: &SelectedName<'db>,
+) -> Option<Resolution<'db>> {
+    let local_name = selected
+        .alias
+        .as_ref()
+        .unwrap_or(&selected.name)
+        .atom()
+        .text(db);
+    env.imported(db, hir_nameres::Namespace::Term, local_name)
+        .or_else(|| env.imported(db, hir_nameres::Namespace::Type, local_name))
+}
+
+fn export_name_resolution<'db>(
+    db: &'db dyn hir_ty::Db,
+    scope: &hir_nameres::ItemScopeFacts<'db>,
+    exported: &ExportedName<'db>,
+) -> Option<Resolution<'db>> {
+    let name = exported.name.atom().text(db);
+    scope
+        .term_resolution(name)
+        .or_else(|| scope.type_resolution(name))
+}
+
 fn target_from_resolution<'db>(resolution: &Resolution<'db>) -> Option<ReferenceTarget<'db>> {
     match resolution {
         Resolution::Def { def, .. } => Some(ReferenceTarget::Def(*def)),
@@ -725,7 +897,8 @@ fn target_from_resolution<'db>(resolution: &Resolution<'db>) -> Option<Reference
     }
 }
 
-fn target_declaration_span<'db>(
+/// Returns the declaration span for a semantic reference target.
+pub fn target_declaration_span<'db>(
     db: &'db dyn hir_ty::Db,
     target: &ReferenceTarget<'db>,
 ) -> Option<AbsoluteSpan> {
@@ -1251,6 +1424,15 @@ mod tests {
         (world, uri)
     }
 
+    fn world_with_main_and_math(main: &str, math: &str) -> (WorldState, Url, Url) {
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(math_uri.clone(), math.to_owned()));
+        (world, main_uri, math_uri)
+    }
+
     #[test]
     fn parameter_references_include_uses_and_optional_declaration() {
         let source = "function id(x: word) -> word {\n  let y = x;\n  return x;\n}\n";
@@ -1306,11 +1488,51 @@ function caller() -> word {
         );
     }
 
+    #[test]
+    fn import_and_export_names_are_references_to_exported_item() {
+        let main = "import math.{double};\nfunction main() -> word { return double(21); }\n";
+        let math = "function double(x: word) -> word { return x + x; }\nexport { double };\n";
+        let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
+        let main_index = world.line_index(&main_uri).expect("main line index");
+        let math_index = world.line_index(&math_uri).expect("math line index");
+        let import = main.find("double").expect("import") as u32;
+        let call = main.rfind("double").expect("call") as u32;
+        let declaration = math.find("double").expect("declaration") as u32;
+        let export = math.rfind("double").expect("export") as u32;
+
+        let references =
+            handle_references(&world, &main_uri, main_index.byte_to_position(call), true)
+                .expect("references");
+
+        assert_eq!(
+            ranges_for_uri_filtered(&references, &main_uri),
+            vec![
+                main_index.range(import, import + "double".len() as u32),
+                main_index.range(call, call + "double".len() as u32),
+            ]
+        );
+        assert_eq!(
+            ranges_for_uri_filtered(&references, &math_uri),
+            vec![
+                math_index.range(declaration, declaration + "double".len() as u32),
+                math_index.range(export, export + "double".len() as u32),
+            ]
+        );
+    }
+
     fn ranges_for_uri(locations: &[Location], uri: &Url) -> Vec<Range> {
         assert!(
             locations.iter().all(|location| location.uri == *uri),
             "expected all locations in {uri}, got {locations:#?}"
         );
         locations.iter().map(|location| location.range).collect()
+    }
+
+    fn ranges_for_uri_filtered(locations: &[Location], uri: &Url) -> Vec<Range> {
+        locations
+            .iter()
+            .filter(|location| location.uri == *uri)
+            .map(|location| location.range)
+            .collect()
     }
 }

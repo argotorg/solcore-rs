@@ -14,6 +14,7 @@ use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
 
 use crate::{
     LineIndexExt,
+    references::{import_export_target_at, target_declaration_span},
     resolve::{function_owning_offset, innermost_expr},
     state::{WorldState, uri_to_vfs_path},
 };
@@ -33,25 +34,33 @@ pub fn handle_definition(
     let module = parser::parse_file_to_hir(db, file).module(db);
     let env = nameres::module_env(db, entry);
 
-    let owner = function_owning_offset(db, module, file, offset)?;
-    let body_map = body_resolution_map(
-        db,
-        module,
-        owner.function,
-        owner.root_body,
-        owner.enclosing_contract,
-        owner.inherited_type_vars,
-        &env,
-    );
-    let (owning_body, expr_id) = innermost_expr(db, owner.root_body, file, offset)?;
-    let resolution = body_map
-        .exprs
-        .iter()
-        .find(|entry| entry.body == owning_body && entry.expr == expr_id)?
-        .resolution
-        .clone();
-    let target = resolution_target_span(db, module, resolution)?;
-    let location = location_for_span(world, db, target)?;
+    if let Some(location) = (|| {
+        let owner = function_owning_offset(db, module, file, offset)?;
+        let body_map = body_resolution_map(
+            db,
+            module,
+            owner.function,
+            owner.root_body,
+            owner.enclosing_contract,
+            owner.inherited_type_vars,
+            &env,
+        );
+        let (owning_body, expr_id) = innermost_expr(db, owner.root_body, file, offset)?;
+        let resolution = body_map
+            .exprs
+            .iter()
+            .find(|entry| entry.body == owning_body && entry.expr == expr_id)?
+            .resolution
+            .clone();
+        let target = resolution_target_span(db, module, resolution)?;
+        location_for_span(world, db, target)
+    })() {
+        return Some(GotoDefinitionResponse::Scalar(location));
+    }
+
+    let target = import_export_target_at(world, uri, position)?;
+    let span = target_declaration_span(db, &target)?;
+    let location = location_for_span(world, db, span)?;
 
     Some(GotoDefinitionResponse::Scalar(location))
 }
@@ -415,6 +424,15 @@ mod tests {
         (world, uri)
     }
 
+    fn world_with_main_and_math(main: &str, math: &str) -> (WorldState, Url, Url) {
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(math_uri.clone(), math.to_owned()));
+        (world, main_uri, math_uri)
+    }
+
     #[test]
     fn definition_of_parameter_use_points_to_parameter_name() {
         let source = "function id(x: word) -> word {\n  return x;\n}\n";
@@ -433,6 +451,29 @@ mod tests {
         assert_eq!(
             location.range,
             line_index.range(param_offset, param_offset + 1)
+        );
+    }
+
+    #[test]
+    fn definition_of_import_selector_name_points_to_imported_declaration() {
+        let main = "import math.{double};\nfunction main() -> word { return double(21); }\n";
+        let math = "function double(x: word) -> word { return x + x; }\nexport { double };\n";
+        let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
+        let main_index = world.line_index(&main_uri).expect("main line index");
+        let math_index = world.line_index(&math_uri).expect("math line index");
+        let import = main.find("double").expect("import") as u32;
+        let declaration = math.find("double").expect("declaration") as u32;
+
+        let response = handle_definition(&world, &main_uri, main_index.byte_to_position(import))
+            .expect("definition");
+        let GotoDefinitionResponse::Scalar(location) = response else {
+            panic!("expected scalar definition response");
+        };
+
+        assert_eq!(location.uri, math_uri);
+        assert_eq!(
+            location.range,
+            math_index.range(declaration, declaration + "double".len() as u32)
         );
     }
 }

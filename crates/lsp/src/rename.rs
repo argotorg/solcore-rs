@@ -139,6 +139,15 @@ mod tests {
         (world, uri)
     }
 
+    fn world_with_main_and_math(main: &str, math: &str) -> (WorldState, Url, Url) {
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(math_uri.clone(), math.to_owned()));
+        (world, main_uri, math_uri)
+    }
+
     #[test]
     fn renaming_parameter_edits_declaration_and_uses() {
         let source = "function id(x: word) -> word {\n  let y = x;\n  return x;\n}\n";
@@ -205,5 +214,47 @@ mod tests {
 
         assert!(handle_rename(&world, &uri, position, "1bad").is_none());
         assert!(handle_rename(&world, &uri, position, "").is_none());
+    }
+
+    #[test]
+    fn renaming_exported_function_edits_import_and_export_names() {
+        let main = "import math.{double};\nfunction main() -> word { return double(21); }\n";
+        let math = "function double(x: word) -> word { return x + x; }\nexport { double };\n";
+        let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
+        let main_index = world.line_index(&main_uri).expect("main line index");
+        let math_index = world.line_index(&math_uri).expect("math line index");
+        let import = main.find("double").expect("import") as u32;
+        let call = main.rfind("double").expect("call") as u32;
+        let declaration = math.find("double").expect("declaration") as u32;
+        let export = math.rfind("double").expect("export") as u32;
+
+        let edit = handle_rename(
+            &world,
+            &main_uri,
+            main_index.byte_to_position(call),
+            "twice",
+        )
+        .expect("rename edit");
+        let changes = edit.changes.expect("changes");
+
+        let main_edits = changes.get(&main_uri).expect("main edits");
+        assert!(main_edits.iter().all(|edit| edit.new_text == "twice"));
+        assert_eq!(
+            main_edits.iter().map(|edit| edit.range).collect::<Vec<_>>(),
+            vec![
+                main_index.range(import, import + "double".len() as u32),
+                main_index.range(call, call + "double".len() as u32),
+            ]
+        );
+
+        let math_edits = changes.get(&math_uri).expect("math edits");
+        assert!(math_edits.iter().all(|edit| edit.new_text == "twice"));
+        assert_eq!(
+            math_edits.iter().map(|edit| edit.range).collect::<Vec<_>>(),
+            vec![
+                math_index.range(declaration, declaration + "double".len() as u32),
+                math_index.range(export, export + "double".len() as u32),
+            ]
+        );
     }
 }
