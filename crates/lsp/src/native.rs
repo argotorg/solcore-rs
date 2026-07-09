@@ -6,8 +6,8 @@ use lsp_types::{
     CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, Location, MessageType, ReferenceParams, SemanticTokensParams,
-    SemanticTokensResult, SignatureHelp, SignatureHelpParams,
+    InitializedParams, InlayHint, InlayHintParams, Location, MessageType, ReferenceParams,
+    SemanticTokensParams, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
 };
 use tokio::sync::Mutex;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc};
@@ -166,6 +166,14 @@ impl LanguageServer for Backend {
         Ok(crate::semantic_tokens::handle_semantic_tokens_full(
             &world, &uri,
         ))
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> jsonrpc::Result<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri;
+        let range = params.range;
+        let world = self.world.lock().await;
+
+        Ok(crate::inlay_hints::handle_inlay_hints(&world, &uri, range))
     }
 }
 

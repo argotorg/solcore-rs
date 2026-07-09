@@ -36,6 +36,7 @@ pub fn server_capabilities() -> ServerCapabilities {
                 full: Some(SemanticTokensFullOptions::Bool(true)),
             },
         )),
+        inlay_hint_provider: Some(OneOf::Left(true)),
         ..ServerCapabilities::default()
     }
 }
@@ -101,5 +102,6 @@ mod tests {
                 }
             ))
         );
+        assert_eq!(capabilities.inlay_hint_provider, Some(OneOf::Left(true)));
     }
 }

@@ -9,6 +9,7 @@ pub mod completion;
 pub mod definition;
 pub mod diagnostics;
 pub mod hover;
+pub mod inlay_hints;
 pub mod line_index;
 #[cfg(feature = "native")]
 pub mod native;
@@ -28,6 +29,7 @@ pub use completion::handle_completion;
 pub use definition::handle_definition;
 pub use diagnostics::compute_diagnostics;
 pub use hover::handle_hover;
+pub use inlay_hints::handle_inlay_hints;
 pub use line_index::LineIndexExt;
 pub use references::handle_references;
 pub use semantic_tokens::handle_semantic_tokens_full;

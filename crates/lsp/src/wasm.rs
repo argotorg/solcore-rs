@@ -6,7 +6,7 @@
 use lsp_types::{
     CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
-    ReferenceParams, SemanticTokensParams, SignatureHelpParams,
+    InlayHintParams, ReferenceParams, SemanticTokensParams, SignatureHelpParams,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -96,6 +96,7 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         "textDocument/semanticTokens/full" => {
             handle_semantic_tokens_full_request(world, id, params)
         }
+        "textDocument/inlayHint" => handle_inlay_hints_request(world, id, params),
         _ => error_or_empty(id, METHOD_NOT_FOUND, "Method not found"),
     }
 }
@@ -286,6 +287,22 @@ fn handle_semantic_tokens_full_request(
     vec![result_response(
         id,
         crate::semantic_tokens::handle_semantic_tokens_full(world, &uri),
+    )]
+}
+
+fn handle_inlay_hints_request(world: &WorldState, id: Option<Value>, params: Value) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<InlayHintParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    let uri = params.text_document.uri;
+    vec![result_response(
+        id,
+        crate::inlay_hints::handle_inlay_hints(world, &uri, params.range),
     )]
 }
 
@@ -573,6 +590,37 @@ mod tests {
         );
         assert_eq!(data[0], 0);
         assert_eq!(data[1], source.find("main").expect("main") as u32);
+    }
+
+    #[test]
+    fn inlay_hint_request_returns_results() {
+        let mut world = WorldState::new();
+        let source = "function main() -> word {\n  let x = 42;\n  return x;\n}\n";
+        let outgoing = dispatch(&mut world, &did_open_message(source));
+        assert_eq!(outgoing.len(), 1);
+
+        let inlay_hints = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "inlay-1",
+                "method": "textDocument/inlayHint",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "range": {
+                        "start": { "line": 0, "character": 0 },
+                        "end": { "line": 4, "character": 0 }
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(inlay_hints.len(), 1);
+        let response = parse_message(&inlay_hints[0]);
+        assert_eq!(response["id"], "inlay-1");
+        let hints = response["result"].as_array().expect("hint result array");
+        assert_eq!(hints.len(), 1, "expected one hint, got {response:#?}");
+        assert_eq!(hints[0]["label"], ": word");
     }
 
     fn did_open_message(source: &str) -> String {
