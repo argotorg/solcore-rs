@@ -525,35 +525,7 @@ impl<'db> InferCtx<'db> {
     }
 
     fn product_field_tys(&mut self, ty: InferTy<'db>) -> Option<Vec<InferTy<'db>>> {
-        match self.coverage_ty(ty) {
-            InferTy::Named {
-                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
-                args,
-            } if args.is_empty() => Some(Vec::new()),
-            InferTy::Named {
-                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
-                args,
-            } if args.len() == 2 => {
-                let mut fields = Vec::new();
-                fields.push(args[0].clone());
-                self.push_product_tail_ty(args[1].clone(), &mut fields);
-                Some(fields)
-            }
-            _ => None,
-        }
-    }
-
-    fn push_product_tail_ty(&mut self, ty: InferTy<'db>, out: &mut Vec<InferTy<'db>>) {
-        match self.coverage_ty(ty.clone()) {
-            InferTy::Named {
-                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
-                args,
-            } if args.len() == 2 => {
-                out.push(args[0].clone());
-                self.push_product_tail_ty(args[1].clone(), out);
-            }
-            _ => out.push(ty),
-        }
+        product_elems_by(ty, |ty| self.coverage_ty(ty))
     }
 
     fn coverage_product_pat(

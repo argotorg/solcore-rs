@@ -25,9 +25,10 @@ pub use contract::{
     contract_dispatch_surface_for_module, frontend_desugar_plan, module_contract_diagnostics,
 };
 pub use desugar::{
-    BodyPreTypeckDesugarPlan, FieldInitPreTypeckDesugarPlan, FieldInitPreTypeckTransform,
-    PreTypeckDesugarPlan, PreTypeckTransform, ProductShape, SourceOrigin, SourceOriginKind,
-    TypeProductDesugar, pre_typeck_desugar_body_tree, pre_typeck_desugar_plan,
+    BodyDesugarView, BodyPreTypeckDesugarPlan, FieldInitPreTypeckDesugarPlan,
+    FieldInitPreTypeckTransform, PreTypeckDesugarPlan, PreTypeckTransform, ProductShape,
+    SourceOrigin, SourceOriginKind, TypeProductDesugar, pre_typeck_desugar_body_tree,
+    pre_typeck_desugar_plan,
 };
 pub use hir::sema::ty::{
     BoundTyVar, BuiltinClassId, BuiltinTyCtor, ClassId, Pred, PredKind, QualTy, Ty, TyCtor, TyKind,

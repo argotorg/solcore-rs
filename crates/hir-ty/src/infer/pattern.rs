@@ -714,13 +714,15 @@ impl<'db> InferCtx<'db> {
         elems: &[Id<Expr<'db>>],
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
+        let product = self.tuple_expr_product_shape(body, expr, elems);
+        let elems = product.to_vec();
         let expected_elems = expected.as_ref().and_then(|expected| {
             let expected = self.normalize_aliases(expected.clone());
             let expected = self.engine.resolve(expected);
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
-            match self.product_elems(expected) {
+            match product_elems(&mut self.engine, expected) {
                 Some(expected_elems) if expected_elems.len() == elems.len() => Some(expected_elems),
                 Some(expected_elems) => {
                     self.emit_expr_error(
@@ -755,7 +757,7 @@ impl<'db> InferCtx<'db> {
         if self.expr_is_poisoned(body, expr) {
             InferTy::Error
         } else {
-            invokable_arg_infer(inferred)
+            product_infer_ty(inferred)
         }
     }
 
@@ -766,13 +768,15 @@ impl<'db> InferCtx<'db> {
         elems: &[Id<Pat<'db>>],
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
+        let product = self.tuple_pat_product_shape(body, pat, elems);
+        let elems = product.to_vec();
         let expected_elems = expected.as_ref().and_then(|expected| {
             let expected = self.normalize_aliases(expected.clone());
             let expected = self.engine.resolve(expected);
             if elems.len() == 1 {
                 return Some(vec![expected]);
             }
-            if let Some(expected_elems) = self.product_elems(expected.clone()) {
+            if let Some(expected_elems) = product_elems(&mut self.engine, expected.clone()) {
                 if expected_elems.len() != elems.len() {
                     self.emit_pat_error(
                         body,
@@ -821,46 +825,12 @@ impl<'db> InferCtx<'db> {
         let ty = if self.pat_is_poisoned(body, pat) {
             InferTy::Error
         } else {
-            invokable_arg_infer(inferred)
+            product_infer_ty(inferred)
         };
         if let Some(expected) = expected {
             self.unify_pat(body, pat, expected, ty.clone());
         }
         ty
-    }
-
-    fn product_elems(&mut self, ty: InferTy<'db>) -> Option<Vec<InferTy<'db>>> {
-        match self.engine.resolve(ty) {
-            InferTy::Tuple(elems) => Some(elems),
-            InferTy::Named {
-                ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
-                args,
-            } if args.is_empty() => Some(Vec::new()),
-            InferTy::Named {
-                ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
-                args,
-            } if args.len() == 2 => {
-                let mut elems = Vec::new();
-                elems.push(args[0].clone());
-                self.push_product_tail(args[1].clone(), &mut elems);
-                Some(elems)
-            }
-            _ => None,
-        }
-    }
-
-    fn push_product_tail(&mut self, ty: InferTy<'db>, out: &mut Vec<InferTy<'db>>) {
-        match self.engine.resolve(ty.clone()) {
-            InferTy::Tuple(elems) => out.extend(elems),
-            InferTy::Named {
-                ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
-                args,
-            } if args.len() == 2 => {
-                out.push(args[0].clone());
-                self.push_product_tail(args[1].clone(), out);
-            }
-            _ => out.push(ty),
-        }
     }
 
     fn infer_ctor_pat(

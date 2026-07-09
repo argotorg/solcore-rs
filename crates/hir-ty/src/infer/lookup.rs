@@ -292,22 +292,7 @@ pub(super) fn closure_def_id<'db>(db: &'db dyn Db, body: FuncBody<'db>) -> DefId
 }
 
 pub(super) fn invokable_arg_infer<'db>(args: Vec<InferTy<'db>>) -> InferTy<'db> {
-    let mut args = args.into_iter();
-    let Some(first) = args.next() else {
-        return InferTy::Named {
-            ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
-            args: Vec::new(),
-        };
-    };
-    let rest = args.collect::<Vec<_>>();
-    if rest.is_empty() {
-        first
-    } else {
-        InferTy::Named {
-            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
-            args: vec![first, invokable_arg_infer(rest)],
-        }
-    }
+    product_infer_ty(args)
 }
 
 pub(super) fn file_url_tail(db: &dyn HirDb, file: hir::input::SourceFile) -> String {

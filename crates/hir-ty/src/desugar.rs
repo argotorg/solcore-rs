@@ -99,6 +99,157 @@ impl<T: Clone> ProductShape<T> {
             }
         }
     }
+
+    /// Returns the number of source-order elements represented by this shape.
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Unit => 0,
+            Self::Single(_) => 1,
+            Self::Pair { tail, .. } => 1 + tail.len(),
+        }
+    }
+
+    /// Returns whether this shape has no elements.
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Unit)
+    }
+
+    /// Flattens the product shape back into source-order elements.
+    pub fn to_vec(&self) -> Vec<T> {
+        let mut out = Vec::new();
+        self.extend_vec(&mut out);
+        out
+    }
+
+    fn extend_vec(&self, out: &mut Vec<T>) {
+        match self {
+            Self::Unit => {}
+            Self::Single(elem) => out.push(elem.clone()),
+            Self::Pair { head, tail } => {
+                out.push(head.clone());
+                tail.extend_vec(out);
+            }
+        }
+    }
+
+    /// Maps every element while preserving the product shape.
+    pub fn map<U, F>(&self, f: &mut F) -> ProductShape<U>
+    where
+        F: FnMut(&T) -> U,
+    {
+        match self {
+            Self::Unit => ProductShape::Unit,
+            Self::Single(elem) => ProductShape::Single(f(elem)),
+            Self::Pair { head, tail } => ProductShape::Pair {
+                head: f(head),
+                tail: Box::new(tail.map(f)),
+            },
+        }
+    }
+}
+
+/// Read-only desugar view for a root body and nested lambda bodies.
+///
+/// This is intentionally a view over tracked plan data rather than rewritten
+/// HIR. Consumers can opt into normalized source shapes while diagnostics and
+/// LSP-facing spans continue to point at user-written syntax.
+pub struct BodyDesugarView<'a, 'db> {
+    plans: &'a [BodyPreTypeckDesugarPlan<'db>],
+}
+
+impl<'a, 'db> BodyDesugarView<'a, 'db> {
+    /// Creates a view over pre-typecheck body desugar plans.
+    pub fn new(plans: &'a [BodyPreTypeckDesugarPlan<'db>]) -> Self {
+        Self { plans }
+    }
+
+    /// Returns the planned product shape for a tuple expression, if present.
+    pub fn tuple_expr_product(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<&'a ProductShape<Id<Expr<'db>>>> {
+        self.body_plan(body)?
+            .transforms
+            .iter()
+            .find_map(|transform| match transform {
+                PreTypeckTransform::TupleExprToProduct {
+                    expr: candidate,
+                    product,
+                    ..
+                } if *candidate == expr => Some(product),
+                _ => None,
+            })
+    }
+
+    /// Returns the planned product shape for a tuple pattern, if present.
+    pub fn tuple_pat_product(
+        &self,
+        body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
+    ) -> Option<&'a ProductShape<Id<Pat<'db>>>> {
+        self.body_plan(body)?
+            .transforms
+            .iter()
+            .find_map(|transform| match transform {
+                PreTypeckTransform::TuplePatToProduct {
+                    pat: candidate,
+                    product,
+                    ..
+                } if *candidate == pat => Some(product),
+                _ => None,
+            })
+    }
+
+    /// Returns the user origin for a tuple expression transform.
+    pub fn tuple_expr_origin(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<SourceOrigin<'db>> {
+        self.body_plan(body)?
+            .transforms
+            .iter()
+            .find_map(|transform| match transform {
+                PreTypeckTransform::TupleExprToProduct {
+                    expr: candidate,
+                    origin,
+                    ..
+                } if *candidate == expr => Some(*origin),
+                _ => None,
+            })
+    }
+
+    /// Returns the user origin for a tuple pattern transform.
+    pub fn tuple_pat_origin(
+        &self,
+        body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
+    ) -> Option<SourceOrigin<'db>> {
+        self.body_plan(body)?
+            .transforms
+            .iter()
+            .find_map(|transform| match transform {
+                PreTypeckTransform::TuplePatToProduct {
+                    pat: candidate,
+                    origin,
+                    ..
+                } if *candidate == pat => Some(*origin),
+                _ => None,
+            })
+    }
+
+    /// Returns the planned product shape for a tuple type reference.
+    pub fn tuple_type_product(&self, ty: TypeRef<'db>) -> Option<&'a ProductShape<TypeRef<'db>>> {
+        self.plans
+            .iter()
+            .flat_map(|plan| &plan.types)
+            .find_map(|desugar| (desugar.ty == ty).then_some(&desugar.product))
+    }
+
+    fn body_plan(&self, body: FuncBody<'db>) -> Option<&'a BodyPreTypeckDesugarPlan<'db>> {
+        self.plans.iter().find(|plan| plan.body == body)
+    }
 }
 
 /// Planned pre-typecheck desugars for one module.

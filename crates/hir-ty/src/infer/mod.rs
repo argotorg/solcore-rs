@@ -29,9 +29,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::field;
 
 use crate::{
-    BinderEnv, BodyPreTypeckDesugarPlan, BuiltinClassId, BuiltinTyCtor, ClassId, Db,
-    LoweredFunction, Pred, PredKind, QualTy, Ty, TyCtor, TyKind, TyScheme, TypeLowering,
-    TypeLoweringDiagnostic, UserTyCtorKind,
+    BinderEnv, BodyDesugarView, BodyPreTypeckDesugarPlan, BuiltinClassId, BuiltinTyCtor, ClassId,
+    Db, LoweredFunction, Pred, PredKind, ProductShape, QualTy, Ty, TyCtor, TyKind, TyScheme,
+    TypeLowering, TypeLoweringDiagnostic, UserTyCtorKind,
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
     builtin_scheme, canonical_goal_with_allowed,
     contract::module_contract_diagnostics,
@@ -48,6 +48,7 @@ use crate::{
 mod comptime;
 mod coverage_adapter;
 mod ctx;
+mod desugar_view;
 mod diagnostics;
 mod expr;
 mod lookup;
@@ -63,7 +64,9 @@ mod yul;
 #[cfg(test)]
 mod tests;
 
-use self::{comptime::*, ctx::*, diagnostics::*, lookup::*, obligations::*, schemes::*};
+use self::{
+    comptime::*, ctx::*, desugar_view::*, diagnostics::*, lookup::*, obligations::*, schemes::*,
+};
 pub use self::{
     ctx::{body_ty_diagnostics, infer_body},
     diagnostics::{

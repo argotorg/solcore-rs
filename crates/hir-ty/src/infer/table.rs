@@ -534,25 +534,6 @@ impl<'db> InferTable<'db> {
     }
 }
 
-fn product_infer_ty<'db>(elems: Vec<InferTy<'db>>) -> InferTy<'db> {
-    let mut elems = elems.into_iter();
-    let Some(head) = elems.next() else {
-        return InferTy::Named {
-            ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
-            args: Vec::new(),
-        };
-    };
-    let tail = elems.collect::<Vec<_>>();
-    if tail.is_empty() {
-        head
-    } else {
-        InferTy::Named {
-            ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
-            args: vec![head, product_infer_ty(tail)],
-        }
-    }
-}
-
 impl<'db> UnifyError<'db> {
     pub(super) fn diagnostic(
         self,

@@ -35,6 +35,7 @@ pub(super) struct InferCtx<'db> {
     pub(super) pending_comptime_lets: Vec<PendingComptimeLet<'db>>,
     pub(super) trait_env: Option<TraitEnvId<'db>>,
     pub(super) partial_data: Vec<(String, Vec<String>)>,
+    pub(super) pre_typeck_desugar: Vec<BodyPreTypeckDesugarPlan<'db>>,
     pub(super) closure_sigs: FxHashMap<DefId<'db>, ClosureSig<'db>>,
     pub(super) integer_literal_pattern_vars: Vec<TyVid<'db>>,
     pub(super) reported_ambiguous_constraint: bool,
@@ -109,6 +110,7 @@ impl<'db> InferCtx<'db> {
             pending_comptime_lets: Vec::new(),
             trait_env: ctx.trait_env,
             partial_data: ctx.partial_data,
+            pre_typeck_desugar: ctx.pre_typeck_desugar,
             closure_sigs: FxHashMap::default(),
             integer_literal_pattern_vars: Vec::new(),
             reported_ambiguous_constraint: false,
@@ -311,6 +313,34 @@ impl<'db> InferCtx<'db> {
 
     pub(super) fn display_type_ref(&self, ty: TypeRef<'db>) -> String {
         display_type_ref_source(self.db, ty)
+    }
+
+    pub(super) fn desugar_view(&self) -> BodyDesugarView<'_, 'db> {
+        BodyDesugarView::new(&self.pre_typeck_desugar)
+    }
+
+    pub(super) fn tuple_expr_product_shape(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        elems: &[Id<Expr<'db>>],
+    ) -> ProductShape<Id<Expr<'db>>> {
+        self.desugar_view()
+            .tuple_expr_product(body, expr)
+            .cloned()
+            .unwrap_or_else(|| ProductShape::from_slice(elems))
+    }
+
+    pub(super) fn tuple_pat_product_shape(
+        &self,
+        body: FuncBody<'db>,
+        pat: Id<Pat<'db>>,
+        elems: &[Id<Pat<'db>>],
+    ) -> ProductShape<Id<Pat<'db>>> {
+        self.desugar_view()
+            .tuple_pat_product(body, pat)
+            .cloned()
+            .unwrap_or_else(|| ProductShape::from_slice(elems))
     }
 
     pub(super) fn label_span(&self, span: Span<'db>) -> LabelSpan {
