@@ -98,6 +98,7 @@ struct ComptimeChecker<'db> {
     entry_module: ModuleId<'db>,
     hir_module: Module<'db>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
+    pre_typeck_desugar: Vec<BodyPreTypeckDesugarPlan<'db>>,
     scopes: Vec<FxHashMap<String, ComptimeBindingKey<'db>>>,
     bindings: FxHashMap<ComptimeBindingKey<'db>, ComptimeValue>,
     diagnostics: Vec<TypeckDiagnostic>,
@@ -112,6 +113,7 @@ impl<'db> ComptimeChecker<'db> {
         entry_module: ModuleId<'db>,
         hir_module: Module<'db>,
         body_map: &hir_nameres::BodyResolutionMap<'db>,
+        pre_typeck_desugar: Vec<BodyPreTypeckDesugarPlan<'db>>,
         function: FunctionDef<'db>,
     ) -> Self {
         let sig = function.sig(db);
@@ -125,6 +127,7 @@ impl<'db> ComptimeChecker<'db> {
             entry_module,
             hir_module,
             expr_resolutions,
+            pre_typeck_desugar,
             scopes: vec![FxHashMap::default()],
             bindings: FxHashMap::default(),
             diagnostics: Vec::new(),
@@ -134,16 +137,16 @@ impl<'db> ComptimeChecker<'db> {
         }
     }
 
-    fn label_span(&self, span: Span<'db>) -> LabelSpan {
-        LabelSpan::from_span(self.db, span)
+    fn diagnostic_sources(&self) -> DiagnosticSourceMap<'_, 'db> {
+        DiagnosticSourceMap::new(self.db, &self.pre_typeck_desugar)
     }
 
     fn stmt_label_span(&self, body: FuncBody<'db>, stmt: Id<Stmt<'db>>) -> LabelSpan {
-        self.label_span(body.stmts(self.db).get(stmt).span(self.db))
+        self.diagnostic_sources().stmt_label_span(body, stmt)
     }
 
     fn expr_label_span(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> LabelSpan {
-        self.label_span(body.exprs(self.db).get(expr).span(self.db))
+        self.diagnostic_sources().expr_label_span(body, expr)
     }
 
     fn check_function(
@@ -1025,8 +1028,13 @@ impl<'db> TypeckDiagnosticCollector<'db> {
             return;
         }
         let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(self.db, body);
-        let body_arity_diagnostics =
-            body_type_constructor_arity_diagnostics(self.db, self.module, body, &body_map);
+        let body_arity_diagnostics = body_type_constructor_arity_diagnostics(
+            self.db,
+            self.module,
+            body,
+            &body_map,
+            &pre_typeck_desugar,
+        );
         if !body_arity_diagnostics.is_empty() {
             self.diagnostics.extend(
                 body_arity_diagnostics
@@ -1038,8 +1046,15 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         let ComptimeCheckResult {
             diagnostics,
             obligations: _obligations,
-        } = ComptimeChecker::new(self.db, self.module, self.hir_module, &body_map, function)
-            .check_function(function, body);
+        } = ComptimeChecker::new(
+            self.db,
+            self.module,
+            self.hir_module,
+            &body_map,
+            pre_typeck_desugar.clone(),
+            function,
+        )
+        .check_function(function, body);
         self.diagnostics.extend(
             diagnostics
                 .into_iter()
@@ -1146,11 +1161,19 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         if !body_map.diagnostics.is_empty() {
             return Vec::new();
         }
+        let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(self.db, body);
         let ComptimeCheckResult {
             diagnostics: _,
             obligations,
-        } = ComptimeChecker::new(self.db, self.module, module, &body_map, info.function)
-            .check_function(info.function, body);
+        } = ComptimeChecker::new(
+            self.db,
+            self.module,
+            module,
+            &body_map,
+            pre_typeck_desugar,
+            info.function,
+        )
+        .check_function(info.function, body);
         let param_names = param_names(self.db, info.function.sig(self.db).params.atom());
         let mut out = Vec::new();
         for obligation in obligations {

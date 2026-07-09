@@ -344,7 +344,11 @@ impl<'db> InferCtx<'db> {
     }
 
     pub(super) fn label_span(&self, span: Span<'db>) -> LabelSpan {
-        LabelSpan::from_span(self.db, span)
+        self.diagnostic_sources().label_span(span)
+    }
+
+    pub(super) fn diagnostic_sources(&self) -> DiagnosticSourceMap<'_, 'db> {
+        DiagnosticSourceMap::new(self.db, &self.pre_typeck_desugar)
     }
 
     pub(super) fn unit(&mut self) -> InferTy<'db> {
@@ -471,11 +475,11 @@ impl<'db> InferCtx<'db> {
     }
 
     pub(super) fn stmt_label_span(&self, body: FuncBody<'db>, stmt: Id<Stmt<'db>>) -> LabelSpan {
-        self.label_span(body.stmts(self.db).get(stmt).span(self.db))
+        self.diagnostic_sources().stmt_label_span(body, stmt)
     }
 
     pub(super) fn expr_label_span(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> LabelSpan {
-        self.label_span(body.exprs(self.db).get(expr).span(self.db))
+        self.diagnostic_sources().expr_label_span(body, expr)
     }
 
     pub(super) fn field_label_span(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> LabelSpan {
@@ -486,7 +490,7 @@ impl<'db> InferCtx<'db> {
     }
 
     pub(super) fn pat_label_span(&self, body: FuncBody<'db>, pat: Id<Pat<'db>>) -> LabelSpan {
-        self.label_span(body.pats(self.db).get(pat).span(self.db))
+        self.diagnostic_sources().pat_label_span(body, pat)
     }
 
     pub(super) fn yul_stmt_label_span(&self, stmt: &YulStmt<'db>) -> LabelSpan {

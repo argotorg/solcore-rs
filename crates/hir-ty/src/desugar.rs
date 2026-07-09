@@ -207,6 +207,16 @@ impl<'a, 'db> BodyDesugarView<'a, 'db> {
         body: FuncBody<'db>,
         expr: Id<Expr<'db>>,
     ) -> Option<SourceOrigin<'db>> {
+        self.expr_origin(body, expr)
+            .filter(|origin| origin.kind == SourceOriginKind::TupleExpr)
+    }
+
+    /// Returns the user origin for an expression transform.
+    pub fn expr_origin(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<SourceOrigin<'db>> {
         self.body_plan(body)?
             .transforms
             .iter()
@@ -226,6 +236,12 @@ impl<'a, 'db> BodyDesugarView<'a, 'db> {
         body: FuncBody<'db>,
         pat: Id<Pat<'db>>,
     ) -> Option<SourceOrigin<'db>> {
+        self.pat_origin(body, pat)
+            .filter(|origin| origin.kind == SourceOriginKind::TuplePat)
+    }
+
+    /// Returns the user origin for a pattern transform.
+    pub fn pat_origin(&self, body: FuncBody<'db>, pat: Id<Pat<'db>>) -> Option<SourceOrigin<'db>> {
         self.body_plan(body)?
             .transforms
             .iter()
@@ -245,6 +261,14 @@ impl<'a, 'db> BodyDesugarView<'a, 'db> {
             .iter()
             .flat_map(|plan| &plan.types)
             .find_map(|desugar| (desugar.ty == ty).then_some(&desugar.product))
+    }
+
+    /// Returns the user origin for a type transform.
+    pub fn type_origin(&self, ty: TypeRef<'db>) -> Option<SourceOrigin<'db>> {
+        self.plans
+            .iter()
+            .flat_map(|plan| &plan.types)
+            .find_map(|desugar| (desugar.ty == ty).then_some(desugar.origin))
     }
 
     fn body_plan(&self, body: FuncBody<'db>) -> Option<&'a BodyPreTypeckDesugarPlan<'db>> {

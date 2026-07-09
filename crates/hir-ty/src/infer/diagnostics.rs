@@ -1319,7 +1319,13 @@ pub(super) fn item_type_constructor_arity_diagnostics<'db>(
         .types
         .iter()
         .filter_map(|resolution| {
-            type_constructor_arity_diagnostic(db, entry, resolution.ty, &resolution.resolution)
+            type_constructor_arity_diagnostic(
+                db,
+                entry,
+                resolution.ty,
+                &resolution.resolution,
+                None,
+            )
         })
         .collect()
 }
@@ -1329,15 +1335,23 @@ pub(super) fn body_type_constructor_arity_diagnostics<'db>(
     entry: ModuleId<'db>,
     body: FuncBody<'db>,
     resolutions: &hir_nameres::BodyResolutionMap<'db>,
+    pre_typeck_desugar: &[BodyPreTypeckDesugarPlan<'db>],
 ) -> Vec<TypeckDiagnostic> {
     let mut skip = FxHashSet::default();
     collect_uninitialized_let_type_refs(db, body, &mut skip);
+    let sources = DiagnosticSourceMap::new(db, pre_typeck_desugar);
     resolutions
         .types
         .iter()
         .filter(|resolution| !skip.contains(&resolution.ty))
         .filter_map(|resolution| {
-            type_constructor_arity_diagnostic(db, entry, resolution.ty, &resolution.resolution)
+            type_constructor_arity_diagnostic(
+                db,
+                entry,
+                resolution.ty,
+                &resolution.resolution,
+                Some(sources.type_label_span(resolution.ty)),
+            )
         })
         .collect()
 }
@@ -1521,6 +1535,7 @@ fn type_constructor_arity_diagnostic<'db>(
     entry: ModuleId<'db>,
     ty: TypeRef<'db>,
     resolution: &hir_nameres::Resolution<'db>,
+    span: Option<LabelSpan>,
 ) -> Option<TypeckDiagnostic> {
     let TypeRefKind::Named { args, .. } = ty.kind(db) else {
         return None;
@@ -1531,7 +1546,7 @@ fn type_constructor_arity_diagnostic<'db>(
         return None;
     }
     Some(TypeckDiagnostic::TypeConstructorArity {
-        span: LabelSpan::from_span(db, ty.span(db)),
+        span: span.unwrap_or_else(|| LabelSpan::from_span(db, ty.span(db))),
         constructor: type_ref_constructor_name(db, ty),
         ty: format_type_ref(db, ty),
         expected,

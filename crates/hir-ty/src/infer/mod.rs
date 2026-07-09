@@ -30,8 +30,8 @@ use tracing::field;
 
 use crate::{
     BinderEnv, BodyDesugarView, BodyPreTypeckDesugarPlan, BuiltinClassId, BuiltinTyCtor, ClassId,
-    Db, LoweredFunction, Pred, PredKind, ProductShape, QualTy, Ty, TyCtor, TyKind, TyScheme,
-    TypeLowering, TypeLoweringDiagnostic, UserTyCtorKind,
+    Db, LoweredFunction, Pred, PredKind, ProductShape, QualTy, SourceOrigin, Ty, TyCtor, TyKind,
+    TyScheme, TypeLowering, TypeLoweringDiagnostic, UserTyCtorKind,
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
     builtin_scheme, canonical_goal_with_allowed,
     contract::module_contract_diagnostics,
@@ -53,6 +53,7 @@ mod diagnostics;
 mod expr;
 mod lookup;
 mod obligations;
+mod origin;
 mod pattern;
 mod schemes;
 mod stmt;
@@ -65,7 +66,8 @@ mod yul;
 mod tests;
 
 use self::{
-    comptime::*, ctx::*, desugar_view::*, diagnostics::*, lookup::*, obligations::*, schemes::*,
+    comptime::*, ctx::*, desugar_view::*, diagnostics::*, lookup::*, obligations::*, origin::*,
+    schemes::*,
 };
 pub use self::{
     ctx::{body_ty_diagnostics, infer_body},
