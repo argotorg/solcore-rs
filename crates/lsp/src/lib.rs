@@ -14,6 +14,7 @@ pub mod line_index;
 pub mod native;
 pub mod references;
 mod resolve;
+pub mod signature_help;
 pub mod state;
 pub mod symbols;
 #[cfg(feature = "wasm")]
@@ -28,5 +29,6 @@ pub use diagnostics::compute_diagnostics;
 pub use hover::handle_hover;
 pub use line_index::LineIndexExt;
 pub use references::handle_references;
+pub use signature_help::handle_signature_help;
 pub use state::{DocumentState, WorldState, uri_to_vfs_path, vfs_url_to_client_uri};
 pub use symbols::handle_document_symbol;

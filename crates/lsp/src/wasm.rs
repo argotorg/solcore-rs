@@ -6,7 +6,7 @@
 use lsp_types::{
     CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
-    ReferenceParams,
+    ReferenceParams, SignatureHelpParams,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -89,6 +89,7 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         "textDocument/didClose" => handle_did_close(world, id, params),
         "textDocument/completion" => handle_completion_request(world, id, params),
         "textDocument/hover" => handle_hover_request(world, id, params),
+        "textDocument/signatureHelp" => handle_signature_help_request(world, id, params),
         "textDocument/definition" => handle_definition_request(world, id, params),
         "textDocument/references" => handle_references_request(world, id, params),
         "textDocument/documentSymbol" => handle_document_symbol_request(world, id, params),
@@ -203,6 +204,27 @@ fn handle_definition_request(world: &WorldState, id: Option<Value>, params: Valu
     vec![result_response(
         id,
         crate::definition::handle_definition(world, &uri, position),
+    )]
+}
+
+fn handle_signature_help_request(
+    world: &WorldState,
+    id: Option<Value>,
+    params: Value,
+) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<SignatureHelpParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    let uri = params.text_document_position_params.text_document.uri;
+    let position = params.text_document_position_params.position;
+    vec![result_response(
+        id,
+        crate::signature_help::handle_signature_help(world, &uri, position),
     )]
 }
 
@@ -459,6 +481,41 @@ mod tests {
             result.len(),
             2,
             "expected declaration and use references, got {response:#?}"
+        );
+    }
+
+    #[test]
+    fn signature_help_request_returns_active_parameter() {
+        let mut world = WorldState::new();
+        let source = "function f(a: word, b: word) -> word {\n  return a;\n}\n\nfunction main() -> word {\n  return f(1, 2);\n}\n";
+        let outgoing = dispatch(&mut world, &did_open_message(source));
+        assert_eq!(outgoing.len(), 1);
+
+        let help = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "signature-1",
+                "method": "textDocument/signatureHelp",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "position": { "line": 5, "character": 13 }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(help.len(), 1);
+        let response = parse_message(&help[0]);
+
+        assert_eq!(response["id"], "signature-1");
+        assert_eq!(response["result"]["activeSignature"], 0);
+        assert_eq!(response["result"]["activeParameter"], 1);
+        let label = response["result"]["signatures"][0]["label"]
+            .as_str()
+            .expect("signature label");
+        assert!(
+            label.contains("f(") && label.contains("a: word") && label.contains("b: word"),
+            "expected rendered signature label, got {label}"
         );
     }
 

@@ -2,7 +2,7 @@
 
 use lsp_types::{
     CompletionOptions, HoverProviderCapability, InitializeResult, OneOf, ServerCapabilities,
-    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
+    ServerInfo, SignatureHelpOptions, TextDocumentSyncCapability, TextDocumentSyncKind,
 };
 
 /// Returns the server capabilities for the transport layer's initialize reply.
@@ -15,6 +15,11 @@ pub fn server_capabilities() -> ServerCapabilities {
             ..CompletionOptions::default()
         }),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".to_owned(), ",".to_owned()]),
+            retrigger_characters: None,
+            work_done_progress_options: Default::default(),
+        }),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -54,6 +59,14 @@ mod tests {
         assert_eq!(
             capabilities.hover_provider,
             Some(HoverProviderCapability::Simple(true))
+        );
+        assert_eq!(
+            capabilities.signature_help_provider,
+            Some(SignatureHelpOptions {
+                trigger_characters: Some(vec!["(".to_owned(), ",".to_owned()]),
+                retrigger_characters: None,
+                work_done_progress_options: Default::default(),
+            })
         );
         assert_eq!(capabilities.definition_provider, Some(OneOf::Left(true)));
         assert_eq!(capabilities.references_provider, Some(OneOf::Left(true)));

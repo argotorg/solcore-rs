@@ -6,7 +6,8 @@ use lsp_types::{
     CompletionParams, CompletionResponse, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams,
     GotoDefinitionResponse, Hover, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, Location, MessageType, ReferenceParams,
+    InitializedParams, Location, MessageType, ReferenceParams, SignatureHelp,
+    SignatureHelpParams,
 };
 use tokio::sync::Mutex;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc};
@@ -139,6 +140,19 @@ impl LanguageServer for Backend {
             &uri,
             position,
             include_declaration,
+        ))
+    }
+
+    async fn signature_help(
+        &self,
+        params: SignatureHelpParams,
+    ) -> jsonrpc::Result<Option<SignatureHelp>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+        let world = self.world.lock().await;
+
+        Ok(crate::signature_help::handle_signature_help(
+            &world, &uri, position,
         ))
     }
 }
