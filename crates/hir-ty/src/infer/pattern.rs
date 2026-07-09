@@ -384,8 +384,8 @@ impl<'db> InferCtx<'db> {
             return InferTy::Error;
         };
         match self.ctor_for_expected(name, expected.clone()) {
-            DotCtorLookup::Match(ctor_ty) => {
-                self.apply_ctor_expr_scheme(body, expr, ctor_ty, args, expected)
+            DotCtorLookup::Match { ty, callee } => {
+                self.apply_ctor_expr_scheme(body, expr, ty, args, expected, Some(callee))
             }
             DotCtorLookup::NoExpected => {
                 for arg in args {
@@ -430,6 +430,7 @@ impl<'db> InferCtx<'db> {
         ctor_ty: InferTy<'db>,
         args: &[Id<Expr<'db>>],
         expected: InferTy<'db>,
+        callee: Option<CallSiteCallee<'db>>,
     ) -> InferTy<'db> {
         match self.engine.resolve(ctor_ty.clone()) {
             InferTy::Function { params, ret } => {
@@ -442,6 +443,9 @@ impl<'db> InferCtx<'db> {
                             context: "constructor".to_owned(),
                             expected: params.len(),
                             actual: args.len(),
+                            callee: callee.as_ref().and_then(|callee| {
+                                callee_diagnostic_info(self.db, self.entry_module, callee)
+                            }),
                         },
                     );
                     for (index, arg) in args.iter().enumerate() {
@@ -471,7 +475,13 @@ impl<'db> InferCtx<'db> {
                     .iter()
                     .enumerate()
                     .map(|(index, arg)| {
-                        self.infer_expr_expected(body, *arg, expected_params.get(index).cloned())
+                        self.infer_call_arg_expected(
+                            body,
+                            *arg,
+                            expected_params.get(index).cloned(),
+                            callee.as_ref(),
+                            index,
+                        )
                     })
                     .collect::<Vec<_>>();
                 self.unify_expr(
@@ -547,7 +557,13 @@ impl<'db> InferCtx<'db> {
             [entry] => {
                 let instantiated = self.engine.instantiate_scheme(entry.scheme);
                 let ctor_ty = self.accept_instantiated(instantiated);
-                DotCtorLookup::Match(ctor_ty)
+                DotCtorLookup::Match {
+                    ty: ctor_ty,
+                    callee: CallSiteCallee::AdtCtor {
+                        ty: entry.ty,
+                        index: entry.index,
+                    },
+                }
             }
             entries => DotCtorLookup::Ambiguous(
                 entries
@@ -661,7 +677,10 @@ impl<'db> InferCtx<'db> {
         let result = ctor_result_ty(&instantiated.ty);
         if self.can_unify(expected, result) {
             let ctor_ty = self.accept_instantiated(instantiated);
-            DotCtorLookup::Match(ctor_ty)
+            DotCtorLookup::Match {
+                ty: ctor_ty,
+                callee: CallSiteCallee::Builtin(kind),
+            }
         } else {
             DotCtorLookup::NoMatch
         }
@@ -711,6 +730,7 @@ impl<'db> InferCtx<'db> {
                             context: "tuple".to_owned(),
                             expected: expected_elems.len(),
                             actual: elems.len(),
+                            callee: None,
                         },
                     );
                     Some(expected_elems)
@@ -759,6 +779,7 @@ impl<'db> InferCtx<'db> {
                                 context: "tuple pattern".to_owned(),
                                 expected: expected_elems.len(),
                                 actual: elems.len(),
+                                callee: None,
                             },
                         );
                     }
@@ -845,8 +866,8 @@ impl<'db> InferCtx<'db> {
                     return InferTy::Error;
                 };
                 match self.ctor_for_expected(name, expected.clone()) {
-                    DotCtorLookup::Match(ctor_ty) => {
-                        self.apply_ctor_pat_scheme(body, pat, args, ctor_ty, expected)
+                    DotCtorLookup::Match { ty, .. } => {
+                        self.apply_ctor_pat_scheme(body, pat, args, ty, expected)
                     }
                     DotCtorLookup::NoExpected => {
                         for arg in args {
@@ -934,6 +955,7 @@ impl<'db> InferCtx<'db> {
                             context: "constructor pattern".to_owned(),
                             expected: params.len(),
                             actual: args.len(),
+                            callee: None,
                         },
                     );
                     for (index, arg) in args.iter().enumerate() {

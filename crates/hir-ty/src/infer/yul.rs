@@ -189,6 +189,7 @@ impl<'db> InferCtx<'db> {
                         context: format!("Yul call `{text}`"),
                         expected: sig.params.len(),
                         actual: arg_tys.len(),
+                        callee: None,
                     });
                 }
                 for ((expected, actual), arg) in sig.params.iter().cloned().zip(arg_tys).zip(args) {
@@ -296,6 +297,7 @@ impl<'db> InferCtx<'db> {
                 context: context.to_owned(),
                 expected,
                 actual,
+                callee: None,
             });
         }
     }

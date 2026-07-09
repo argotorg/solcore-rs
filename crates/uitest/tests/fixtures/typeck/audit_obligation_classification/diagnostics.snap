@@ -25,16 +25,17 @@ error[SC0206]: non-callable value of type word
   |
 ---
 
-error[SC0201]: type mismatch: expected integer, found bool
+error[SC0201]: argument type mismatch in call to `fromInteger`
   --> /main/main.solc:11:26
    |
 10 | function from_integer_bad_arg() -> word {
 11 |   return Int.fromInteger(true);
-   |                          ^^^^ expression has mismatched type
+   |                          ^^^^ argument has mismatched type
 12 | }
    |
-   = note: expected type: integer
+   = note: expected `integer` because parameter 1 of `fromInteger` has type `integer`
    = note: found type: bool
+   = note: `fromInteger` has signature `fromInteger(integer) -> _`
 ---
 
 error[SC0207]: cannot satisfy class constraint: a : invokable((), word)

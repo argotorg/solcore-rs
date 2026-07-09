@@ -255,6 +255,7 @@ impl<'db> InferCtx<'db> {
                 context: "match arm".to_owned(),
                 expected: scrutinees.len(),
                 actual: arm.pats.len(),
+                callee: None,
             });
         }
         self.push_sail_scope();

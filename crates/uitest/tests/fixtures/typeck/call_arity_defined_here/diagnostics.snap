@@ -1,0 +1,23 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/call_arity_defined_here/main.solc
+---
+error[SC0203]: call expects 1 argument, but 0 were provided
+ --> /main/main.solc:4:10
+  |
+3 | function go() -> word {
+4 |   return L.id();
+  |          ^^^^^^ wrong number of arguments
+5 | }
+  |
+ ::: /main/lib.solc:2
+  |
+2 |
+3 | function id(x: word) -> word {
+  |          -- `id` defined here
+4 |   return x;
+  |
+  = note: expected 1 argument
+  = note: found 0 arguments
+  = note: `id` has signature `id(x: word) -> word`

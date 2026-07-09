@@ -66,6 +66,49 @@ impl<'db> InferCtx<'db> {
         ok
     }
 
+    pub(super) fn unify_call_arg(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        expected: InferTy<'db>,
+        actual: InferTy<'db>,
+        context: CallArgDiagnostic,
+    ) -> bool {
+        if matches!(expected, InferTy::Error) || matches!(actual, InferTy::Error) {
+            return true;
+        }
+        let expected = self.normalize_aliases(expected);
+        let actual = self.normalize_aliases(actual);
+        if matches!(expected, InferTy::Error) || matches!(actual, InferTy::Error) {
+            return true;
+        }
+        let span = self.expr_label_span(body, expr);
+        let ok = match self.engine.unify(expected, actual) {
+            Ok(()) => true,
+            Err(UnifyError::Mismatch { expected, actual }) => {
+                let expected = self.display_infer_ty(expected);
+                let actual = self.display_infer_ty(actual);
+                self.diagnostics.push(TypeckDiagnostic::ArgMismatch {
+                    span,
+                    expected,
+                    actual,
+                    callee: context.callee,
+                    param: context.param,
+                });
+                false
+            }
+            Err(err) => {
+                self.diagnostics
+                    .push(err.diagnostic(&mut self.engine, span, &self.type_var_names));
+                false
+            }
+        };
+        if !ok {
+            self.poison_expr(body, expr);
+        }
+        ok
+    }
+
     pub(super) fn unify_pat(
         &mut self,
         body: FuncBody<'db>,

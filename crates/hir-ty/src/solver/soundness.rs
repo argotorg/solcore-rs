@@ -446,6 +446,10 @@ fn check_instance_methods<'db>(
             diagnostics.push(TypeckDiagnostic::UnknownInstanceMethod {
                 span: LabelSpan::from_span(db, method.sig(db).name.span(db)),
                 name: format!("{class_name}.{extra}"),
+                class_span: Some(LabelSpan::from_span(
+                    db,
+                    class_info.class.head(db).kind(db).class.span(db),
+                )),
             });
         }
     }

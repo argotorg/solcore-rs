@@ -14,8 +14,8 @@ use hir::{
             YulStmtKind,
         },
         item::{
-            AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FuncKind, FunctionDef, Item,
-            Module, TypeAlias,
+            AdtCtor, AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FuncKind, FunctionDef,
+            Item, Module, TypeAlias,
         },
         ty::{TypeRef, TypeRefKind},
     },
@@ -65,7 +65,9 @@ mod tests;
 use self::{comptime::*, ctx::*, diagnostics::*, lookup::*, obligations::*, schemes::*};
 pub use self::{
     ctx::{body_ty_diagnostics, infer_body},
-    diagnostics::{TypeckDiagnostic, ValueNamespace, ValuePosition},
+    diagnostics::{
+        CalleeDiagnostic, ParameterDiagnostic, TypeckDiagnostic, ValueNamespace, ValuePosition,
+    },
     schemes::{
         adt_ctor_scheme, class_method_scheme, field_scheme, function_scheme,
         lower_normalized_function_with_inferred_signature, module_typeck_diagnostics,
@@ -379,10 +381,17 @@ struct PendingComptimeLet<'db> {
     ty: InferTy<'db>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct DirectCallSite<'db> {
     call_expr: Id<Expr<'db>>,
     callee_expr: Id<Expr<'db>>,
+    callee: Option<CallSiteCallee<'db>>,
+}
+
+#[derive(Debug, Clone)]
+struct CallArgDiagnostic {
+    callee: Option<CalleeDiagnostic>,
+    param: ParameterDiagnostic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -392,7 +401,10 @@ struct ClosureSig<'db> {
 }
 
 enum DotCtorLookup<'db> {
-    Match(InferTy<'db>),
+    Match {
+        ty: InferTy<'db>,
+        callee: CallSiteCallee<'db>,
+    },
     NoExpected,
     NoMatch,
     Ambiguous(Vec<String>),

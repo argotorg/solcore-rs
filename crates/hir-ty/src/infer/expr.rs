@@ -15,6 +15,25 @@ impl<'db> InferCtx<'db> {
         expr_id: Id<Expr<'db>>,
         expected: Option<InferTy<'db>>,
     ) -> InferTy<'db> {
+        self.infer_expr_expected_impl(body, expr_id, expected, true)
+    }
+
+    fn infer_expr_expected_without_final_check(
+        &mut self,
+        body: FuncBody<'db>,
+        expr_id: Id<Expr<'db>>,
+        expected: Option<InferTy<'db>>,
+    ) -> InferTy<'db> {
+        self.infer_expr_expected_impl(body, expr_id, expected, false)
+    }
+
+    fn infer_expr_expected_impl(
+        &mut self,
+        body: FuncBody<'db>,
+        expr_id: Id<Expr<'db>>,
+        expected: Option<InferTy<'db>>,
+        check_expected: bool,
+    ) -> InferTy<'db> {
         let expr = body.exprs(self.db).get(expr_id);
         let mut ty = match &expr.kind {
             ExprKind::Lit(lit) => self.infer_lit(body, expr_id, lit, expected.clone()),
@@ -138,7 +157,8 @@ impl<'db> InferCtx<'db> {
             ExprKind::Tuple(elems) => self.infer_tuple_expr(body, expr_id, elems, expected.clone()),
             ExprKind::Error => InferTy::Error,
         };
-        if let Some(expected) = expected
+        if check_expected
+            && let Some(expected) = expected
             && !self.unify_expr(body, expr_id, expected, ty.clone())
         {
             ty = InferTy::Error;
@@ -237,7 +257,14 @@ impl<'db> InferCtx<'db> {
                     source.unwrap_or(ObligationSource::Scheme),
                 );
                 let expected = expected.unwrap_or_else(|| self.engine.fresh_var());
-                Some(self.apply_ctor_expr_scheme(body, call_expr, ctor_ty, args, expected))
+                Some(self.apply_ctor_expr_scheme(
+                    body,
+                    call_expr,
+                    ctor_ty,
+                    args,
+                    expected,
+                    Some(CallSiteCallee::AdtCtor { ty, index }),
+                ))
             }
             hir_nameres::Resolution::Builtin(kind @ hir_nameres::BuiltinKind::Constructor(_)) => {
                 let source = self.call_site_source(
@@ -255,7 +282,14 @@ impl<'db> InferCtx<'db> {
                 );
                 let ctor_ty = self.accept_instantiated(instantiated);
                 let expected = expected.unwrap_or_else(|| self.engine.fresh_var());
-                Some(self.apply_ctor_expr_scheme(body, call_expr, ctor_ty, args, expected))
+                Some(self.apply_ctor_expr_scheme(
+                    body,
+                    call_expr,
+                    ctor_ty,
+                    args,
+                    expected,
+                    Some(CallSiteCallee::Builtin(kind)),
+                ))
             }
             hir_nameres::Resolution::DotCtorDeferred => {
                 let name = self.expr_constructor_name(body, callee_expr)?;
@@ -279,6 +313,10 @@ impl<'db> InferCtx<'db> {
         let site = DirectCallSite {
             call_expr,
             callee_expr,
+            callee: self
+                .expr_resolutions
+                .get(&(body, callee_expr))
+                .and_then(|resolution| self.call_site_callee(resolution)),
         };
         if matches!(resolved, InferTy::Error) {
             for arg in args {
@@ -323,6 +361,9 @@ impl<'db> InferCtx<'db> {
                     context: "call".to_owned(),
                     expected: params.len(),
                     actual: args.len(),
+                    callee: site.callee.as_ref().and_then(|callee| {
+                        callee_diagnostic_info(self.db, self.entry_module, callee)
+                    }),
                 },
             );
             for (index, arg) in args.iter().enumerate() {
@@ -349,12 +390,14 @@ impl<'db> InferCtx<'db> {
                         },
                     });
                 }
-                self.infer_expr_expected(
+                self.infer_call_arg_expected(
                     body,
                     *arg,
                     params
                         .as_ref()
                         .and_then(|params| params.get(index).cloned()),
+                    site.callee.as_ref(),
+                    index,
                 )
             })
             .collect::<Vec<_>>();
@@ -369,6 +412,31 @@ impl<'db> InferCtx<'db> {
             },
         );
         ret
+    }
+
+    pub(super) fn infer_call_arg_expected(
+        &mut self,
+        body: FuncBody<'db>,
+        arg: Id<Expr<'db>>,
+        expected: Option<InferTy<'db>>,
+        callee: Option<&CallSiteCallee<'db>>,
+        index: usize,
+    ) -> InferTy<'db> {
+        let Some(expected) = expected else {
+            return self.infer_expr(body, arg);
+        };
+        let actual =
+            self.infer_expr_expected_without_final_check(body, arg, Some(expected.clone()));
+        let context = CallArgDiagnostic {
+            callee: callee
+                .and_then(|callee| callee_diagnostic_info(self.db, self.entry_module, callee)),
+            param: call_param_diagnostic_info(self.db, callee, index),
+        };
+        if self.unify_call_arg(body, arg, expected, actual.clone(), context) {
+            actual
+        } else {
+            InferTy::Error
+        }
     }
 
     fn infer_indirect_call(
@@ -392,6 +460,7 @@ impl<'db> InferCtx<'db> {
                     context: "call".to_owned(),
                     expected: sig.params.len(),
                     actual: args.len(),
+                    callee: None,
                 },
             );
             for (index, arg) in args.iter().enumerate() {
@@ -495,7 +564,20 @@ impl<'db> InferCtx<'db> {
         callee_expr: Id<Expr<'db>>,
         resolution: &hir_nameres::Resolution<'db>,
     ) -> Option<ObligationSource<'db>> {
-        let callee = match resolution {
+        let callee = self.call_site_callee(resolution)?;
+        Some(ObligationSource::CallSite {
+            body,
+            call_expr,
+            callee_expr,
+            callee,
+        })
+    }
+
+    fn call_site_callee(
+        &self,
+        resolution: &hir_nameres::Resolution<'db>,
+    ) -> Option<CallSiteCallee<'db>> {
+        Some(match resolution {
             hir_nameres::Resolution::Def {
                 def,
                 kind: hir_nameres::DefResolutionKind::Function,
@@ -515,12 +597,6 @@ impl<'db> InferCtx<'db> {
                 | hir_nameres::BuiltinKind::ClassMethod(_)),
             ) => CallSiteCallee::Builtin(*kind),
             _ => return None,
-        };
-        Some(ObligationSource::CallSite {
-            body,
-            call_expr,
-            callee_expr,
-            callee,
         })
     }
 
@@ -758,6 +834,7 @@ impl<'db> InferCtx<'db> {
                         context: "lambda".to_owned(),
                         expected: params.len(),
                         actual: param_count,
+                        callee: None,
                     });
                 }
                 (Some(params), Some(*ret))
@@ -949,6 +1026,7 @@ impl<'db> InferCtx<'db> {
             DirectCallSite {
                 call_expr: expr,
                 callee_expr: expr,
+                callee: Some(CallSiteCallee::ClassMethod { class, name }),
             },
             callee_ty,
             params,
@@ -981,6 +1059,7 @@ impl<'db> InferCtx<'db> {
             return InferTy::Error;
         };
 
+        let callee = self.call_site_callee(&resolution);
         let source = self.call_site_source(body, expr, expr, &resolution);
         let callee_ty = self.infer_resolution_with_source(
             body,
@@ -1000,6 +1079,7 @@ impl<'db> InferCtx<'db> {
             DirectCallSite {
                 call_expr: expr,
                 callee_expr: expr,
+                callee,
             },
             callee_ty,
             params,

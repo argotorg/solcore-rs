@@ -3,13 +3,19 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_deep_nested_mismatch/main.solc
 ---
-error[SC0201]: type mismatch: expected word, found bool
+error[SC0201]: argument type mismatch in call to `add3`
  --> /main/main.solc:7:34
   |
+1 | function add3(a: word, b: word, c: word) -> word {
+  |                        - parameter `b` defined here
+2 |   return a;
+3 | }
+...
 6 |   return add3(add3(x, x, add3(x, add3(x, x, x), x)),
 7 |               add3(x, x, add3(x, true, x)),
-  |                                  ^^^^ expression has mismatched type
+  |                                  ^^^^ argument has mismatched type
 8 |               x);
   |
-  = note: expected type: word
+  = note: expected `word` because parameter `b` of `add3` has type `word`
   = note: found type: bool
+  = note: `add3` has signature `add3(a: word, b: word, c: word) -> word`

@@ -10,7 +10,8 @@ error[SC0229]: duplicate type definition: DispatchNameTy_C_ping
   |      ^^^^^^^^^^^^^^^^^^^^^ duplicate type
 2 |
 3 | contract C {
+4 |   public function ping() -> word {
+  |                   ---- existing definition
+5 |     return 0;
   |
-  = note: new definition: data DispatchNameTy_C_ping
-  = note: existing definition: data DispatchNameTy_C_ping
   = note: rename or remove the duplicate type definition

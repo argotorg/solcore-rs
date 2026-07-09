@@ -1,4 +1,27 @@
 use super::*;
+use crate::display::display_ty_source;
+
+/// User-facing information about a callable definition.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct CalleeDiagnostic {
+    /// Callable display name.
+    pub name: String,
+    /// Source-style signature.
+    pub signature: String,
+    /// Definition span, when the callable has a source definition.
+    pub definition: Option<LabelSpan>,
+}
+
+/// User-facing information about a callable parameter.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct ParameterDiagnostic {
+    /// Zero-based parameter index.
+    pub index: usize,
+    /// Parameter name, when the source declaration has one.
+    pub name: Option<String>,
+    /// Parameter definition span, when available.
+    pub definition: Option<LabelSpan>,
+}
 
 /// Typed type-checking diagnostic.
 ///
@@ -14,6 +37,19 @@ pub enum TypeckDiagnostic {
         expected: String,
         /// Actual or right-hand type snapshot.
         actual: String,
+    },
+    /// `SC0201`: an argument does not match the resolved callee parameter.
+    ArgMismatch {
+        /// Source span for the argument whose type mismatched.
+        span: LabelSpan,
+        /// Expected parameter type snapshot.
+        expected: String,
+        /// Actual argument type snapshot.
+        actual: String,
+        /// Callee information, when the call resolved to a known callable.
+        callee: Option<CalleeDiagnostic>,
+        /// Parameter information for the mismatched argument.
+        param: ParameterDiagnostic,
     },
     /// `SC0202`: unification would create an infinite type.
     OccursCheck {
@@ -63,6 +99,8 @@ pub enum TypeckDiagnostic {
         expected: usize,
         /// Actual number of arguments/patterns.
         actual: usize,
+        /// Callee information for call-like arity errors.
+        callee: Option<CalleeDiagnostic>,
     },
     /// `SC0203`: mutually recursive data declarations are rejected by the
     /// reference frontend.
@@ -119,6 +157,8 @@ pub enum TypeckDiagnostic {
         span: LabelSpan,
         /// Type name.
         name: String,
+        /// Span of the prior/generated definition source, when available.
+        previous: Option<LabelSpan>,
     },
     /// `SC0207`: a class constraint could not be solved.
     UnsatisfiedConstraint {
@@ -253,6 +293,8 @@ pub enum TypeckDiagnostic {
         span: LabelSpan,
         /// Qualified method name as the reference reports it.
         name: String,
+        /// Span of the class definition that declares the valid methods.
+        class_span: Option<LabelSpan>,
     },
     /// `SC0220`: a top-level or contract function has an incomplete signature.
     IncompleteSignature {
@@ -382,6 +424,51 @@ impl TypeckDiagnostic {
                     .with_note(format!("expected type: {expected}"))
                     .with_note(format!("found type: {actual}"))
             }
+            TypeckDiagnostic::ArgMismatch {
+                span,
+                expected,
+                actual,
+                callee,
+                param,
+            } => {
+                let param_name = parameter_display(param);
+                let mut diagnostic = if let Some(callee) = callee {
+                    Diagnostic::error(format!(
+                        "argument type mismatch in call to `{}`",
+                        callee.name
+                    ))
+                    .with_code(DiagnosticCode::TYPECK_MISMATCH)
+                    .with_primary_label_span(span.clone(), Some("argument has mismatched type"))
+                    .with_note(format!(
+                        "expected `{expected}` because {param_name} of `{}` has type `{expected}`",
+                        callee.name
+                    ))
+                    .with_note(format!("found type: {actual}"))
+                    .with_note(format!(
+                        "`{}` has signature `{}`",
+                        callee.name, callee.signature
+                    ))
+                } else {
+                    Diagnostic::error(format!(
+                        "argument type mismatch: expected {expected}, found {actual}"
+                    ))
+                    .with_code(DiagnosticCode::TYPECK_MISMATCH)
+                    .with_primary_label_span(span.clone(), Some("argument has mismatched type"))
+                    .with_note(format!("expected type: {expected}"))
+                    .with_note(format!("found type: {actual}"))
+                };
+                if let Some(label) = param.definition.clone().or_else(|| {
+                    callee
+                        .as_ref()
+                        .and_then(|callee| callee.definition.clone())
+                }) {
+                    diagnostic = diagnostic.with_secondary_label_span(
+                        label,
+                        Some(parameter_definition_label(param, callee.as_ref())),
+                    );
+                }
+                diagnostic
+            }
             TypeckDiagnostic::OccursCheck { span, var, ty } => {
                 Diagnostic::error("recursive type would be required")
                     .with_code(DiagnosticCode::TYPECK_RECURSIVE_TYPE_OR_UNKNOWN_INSTANCE_METHOD)
@@ -430,17 +517,31 @@ impl TypeckDiagnostic {
                 context,
                 expected,
                 actual,
+                callee,
             } => {
                 let expected_noun = plural(*expected, "argument", "arguments");
                 let actual_noun = plural(*actual, "argument", "arguments");
                 let actual_verb = if *actual == 1 { "was" } else { "were" };
-                Diagnostic::error(format!(
+                let mut diagnostic = Diagnostic::error(format!(
                     "{context} expects {expected} {expected_noun}, but {actual} {actual_verb} provided"
                 ))
                 .with_code(DiagnosticCode::TYPECK_WRONG_ARITY)
                 .with_primary_label_span(span.clone(), Some("wrong number of arguments"))
                 .with_note(format!("expected {expected} {expected_noun}"))
-                .with_note(format!("found {actual} {actual_noun}"))
+                .with_note(format!("found {actual} {actual_noun}"));
+                if let Some(callee) = callee {
+                    if let Some(definition) = &callee.definition {
+                        diagnostic = diagnostic.with_secondary_label_span(
+                            definition.clone(),
+                            Some(format!("`{}` defined here", callee.name)),
+                        );
+                    }
+                    diagnostic = diagnostic.with_note(format!(
+                        "`{}` has signature `{}`",
+                        callee.name, callee.signature
+                    ));
+                }
+                diagnostic
             }
             TypeckDiagnostic::MutualRecursiveData { span, ty } => {
                 Diagnostic::error(format!("undefined type: {ty}"))
@@ -489,13 +590,23 @@ impl TypeckDiagnostic {
                     .with_code(DiagnosticCode::TYPECK_CLASS_AS_TYPE)
                     .with_primary_label_span(span.clone(), Some("class is not a type"))
             }
-            TypeckDiagnostic::DuplicateType { span, name } => {
-                Diagnostic::error(format!("duplicate type definition: {name}"))
+            TypeckDiagnostic::DuplicateType {
+                span,
+                name,
+                previous,
+            } => {
+                let diagnostic = Diagnostic::error(format!("duplicate type definition: {name}"))
                     .with_code(DiagnosticCode::TYPECK_DUPLICATE_TYPE)
-                    .with_primary_label_span(span.clone(), Some("duplicate type"))
-                    .with_note(format!("new definition: data {name}"))
-                    .with_note(format!("existing definition: data {name}"))
-                    .with_note("rename or remove the duplicate type definition")
+                    .with_primary_label_span(span.clone(), Some("duplicate type"));
+                let diagnostic = if let Some(previous) = previous {
+                    diagnostic.with_secondary_label_span(
+                        previous.clone(),
+                        Some("existing definition"),
+                    )
+                } else {
+                    diagnostic.with_note(format!("existing definition: data {name}"))
+                };
+                diagnostic.with_note("rename or remove the duplicate type definition")
             }
             TypeckDiagnostic::UnsatisfiedConstraint { span, pred } => {
                 Diagnostic::error(format!("cannot satisfy class constraint: {pred}"))
@@ -625,10 +736,22 @@ impl TypeckDiagnostic {
             ))
             .with_code(DiagnosticCode::TYPECK_INCOMPLETE_INSTANCE)
             .with_primary_label_span(span.clone(), Some("incomplete instance")),
-            TypeckDiagnostic::UnknownInstanceMethod { span, name } => {
-                Diagnostic::error(format!("undefined name: {name}"))
+            TypeckDiagnostic::UnknownInstanceMethod {
+                span,
+                name,
+                class_span,
+            } => {
+                let diagnostic = Diagnostic::error(format!("undefined name: {name}"))
                     .with_code(DiagnosticCode::TYPECK_RECURSIVE_TYPE_OR_UNKNOWN_INSTANCE_METHOD)
-                    .with_primary_label_span(span.clone(), Some("unknown name"))
+                    .with_primary_label_span(span.clone(), Some("unknown name"));
+                if let Some(class_span) = class_span {
+                    diagnostic.with_secondary_label_span(
+                        class_span.clone(),
+                        Some("class defined here"),
+                    )
+                } else {
+                    diagnostic
+                }
             }
             TypeckDiagnostic::IncompleteSignature { span, signature } => Diagnostic::error(
                 "top-level function must have complete type annotations",
@@ -736,6 +859,398 @@ pub(super) fn alias_error_to_diagnostic(error: AliasError) -> TypeckDiagnostic {
 
 fn plural<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 { singular } else { plural }
+}
+
+fn parameter_display(param: &ParameterDiagnostic) -> String {
+    param
+        .name
+        .as_ref()
+        .map(|name| format!("parameter `{name}`"))
+        .unwrap_or_else(|| format!("parameter {}", param.index + 1))
+}
+
+fn parameter_definition_label(
+    param: &ParameterDiagnostic,
+    callee: Option<&CalleeDiagnostic>,
+) -> String {
+    if param.definition.is_some() {
+        return param
+            .name
+            .as_ref()
+            .map(|name| format!("parameter `{name}` defined here"))
+            .unwrap_or_else(|| format!("parameter {} defined here", param.index + 1));
+    }
+    callee
+        .map(|callee| format!("`{}` defined here", callee.name))
+        .unwrap_or_else(|| "parameter defined here".to_owned())
+}
+
+pub(super) fn callee_diagnostic_info<'db>(
+    db: &'db dyn Db,
+    entry: Option<ModuleId<'db>>,
+    callee: &CallSiteCallee<'db>,
+) -> Option<CalleeDiagnostic> {
+    match callee {
+        CallSiteCallee::Function(def) => {
+            let module = def_hir_module(db, *def);
+            let info = find_function_info(db, module, *def)?;
+            let name = ident_text(db, &info.function.sig(db).name);
+            let names = function_param_names(db, info.function.sig(db));
+            let type_var_names = type_var_names(db, &info.type_vars);
+            let scheme = function_callee_scheme(db, entry, module, *def)?;
+            Some(CalleeDiagnostic {
+                name: name.clone(),
+                signature: signature_from_scheme(db, &name, &names, &type_var_names, scheme),
+                definition: def_name_label_span(db, *def),
+            })
+        }
+        CallSiteCallee::AdtCtor { ty, index } => {
+            let module = def_hir_module(db, *ty);
+            let info = find_adt_info(db, module, *ty)?;
+            let ctor = info.adt.ctors(db).get(index.as_usize())?;
+            let name = ident_text(db, &ctor.name);
+            let type_var_names = type_var_names(db, &info.type_vars);
+            let scheme = adt_ctor_callee_scheme(db, entry, module, *ty, *index)?;
+            Some(CalleeDiagnostic {
+                name: name.clone(),
+                signature: signature_from_scheme(db, &name, &[], &type_var_names, scheme),
+                definition: Some(LabelSpan::from_span(db, ctor.name.span(db))),
+            })
+        }
+        CallSiteCallee::ClassMethod { class, name } => {
+            let module = def_hir_module(db, *class);
+            let info = find_class_info(db, module, *class)?;
+            let method = info
+                .class
+                .methods(db)
+                .iter()
+                .find(|method| ident_text(db, &method.name) == name.as_str())?;
+            let param_names = function_param_names(db, method);
+            let type_var_names = type_var_names(db, &info.type_vars);
+            let scheme = class_method_callee_scheme(db, entry, module, *class, name.clone())?;
+            Some(CalleeDiagnostic {
+                name: name.clone(),
+                signature: signature_from_scheme(db, name, &param_names, &type_var_names, scheme),
+                definition: Some(LabelSpan::from_span(db, method.name.span(db))),
+            })
+        }
+        CallSiteCallee::Builtin(kind) => {
+            let name = builtin_name(*kind)?.to_owned();
+            let scheme = builtin_scheme(db, *kind)?;
+            Some(CalleeDiagnostic {
+                signature: signature_from_scheme(db, &name, &[], &[], scheme),
+                name,
+                definition: None,
+            })
+        }
+        CallSiteCallee::Closure(_) | CallSiteCallee::Invokable | CallSiteCallee::Field(_) => None,
+    }
+}
+
+pub(super) fn call_param_diagnostic_info<'db>(
+    db: &'db dyn Db,
+    callee: Option<&CallSiteCallee<'db>>,
+    index: usize,
+) -> ParameterDiagnostic {
+    let Some(callee) = callee else {
+        return ParameterDiagnostic {
+            index,
+            name: None,
+            definition: None,
+        };
+    };
+    match callee {
+        CallSiteCallee::Function(def) => {
+            let module = def_hir_module(db, *def);
+            let param = find_function_info(db, module, *def)
+                .and_then(|info| info.function.sig(db).params.atom().get(index).cloned());
+            parameter_from_func_param(db, index, param.as_ref())
+        }
+        CallSiteCallee::ClassMethod { class, name } => {
+            let module = def_hir_module(db, *class);
+            let param = find_class_info(db, module, *class).and_then(|info| {
+                info.class
+                    .methods(db)
+                    .iter()
+                    .find(|method| ident_text(db, &method.name) == name.as_str())
+                    .and_then(|method| method.params.atom().get(index).cloned())
+            });
+            parameter_from_func_param(db, index, param.as_ref())
+        }
+        CallSiteCallee::AdtCtor { ty, index: ctor } => {
+            let module = def_hir_module(db, *ty);
+            let definition = find_adt_info(db, module, *ty)
+                .and_then(|info| info.adt.ctors(db).get(ctor.as_usize()).cloned())
+                .and_then(|ctor| ctor_param_label_span(db, &ctor, index));
+            ParameterDiagnostic {
+                index,
+                name: None,
+                definition,
+            }
+        }
+        CallSiteCallee::Builtin(_)
+        | CallSiteCallee::Closure(_)
+        | CallSiteCallee::Invokable
+        | CallSiteCallee::Field(_) => ParameterDiagnostic {
+            index,
+            name: None,
+            definition: None,
+        },
+    }
+}
+
+pub(super) fn def_name_label_span<'db>(db: &'db dyn Db, def: DefId<'db>) -> Option<LabelSpan> {
+    let module = def_hir_module(db, def);
+    find_def_name_span_in_module(db, module, def).map(|span| LabelSpan::from_span(db, span))
+}
+
+fn function_callee_scheme<'db>(
+    db: &'db dyn Db,
+    entry: Option<ModuleId<'db>>,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<TyScheme<'db>> {
+    entry
+        .and_then(|entry| function_scheme_for_entry(db, entry, def))
+        .or_else(|| function_scheme_in_hir_module(db, module, def))
+}
+
+fn adt_ctor_callee_scheme<'db>(
+    db: &'db dyn Db,
+    entry: Option<ModuleId<'db>>,
+    module: Module<'db>,
+    ty: DefId<'db>,
+    index: hir_nameres::CtorIndex,
+) -> Option<TyScheme<'db>> {
+    entry
+        .and_then(|entry| adt_ctor_scheme_for_entry(db, entry, ty, index))
+        .or_else(|| adt_ctor_scheme_in_hir_module(db, module, ty, index))
+}
+
+fn class_method_callee_scheme<'db>(
+    db: &'db dyn Db,
+    entry: Option<ModuleId<'db>>,
+    module: Module<'db>,
+    class: DefId<'db>,
+    name: String,
+) -> Option<TyScheme<'db>> {
+    entry
+        .and_then(|entry| class_method_scheme_for_entry(db, entry, class, name.clone()))
+        .or_else(|| class_method_scheme_in_hir_module(db, module, class, name))
+}
+
+fn signature_from_scheme<'db>(
+    db: &'db dyn Db,
+    name: &str,
+    param_names: &[String],
+    type_var_names: &[String],
+    scheme: TyScheme<'db>,
+) -> String {
+    let ty = scheme.body(db).ty(db);
+    let (params, ret) = match ty.kind(db) {
+        TyKind::Function { params, ret } => (params.clone(), *ret),
+        _ => (Vec::new(), ty),
+    };
+    let parameters = params
+        .iter()
+        .enumerate()
+        .map(|(index, param)| {
+            let ty = display_ty_source(db, *param, type_var_names);
+            param_names
+                .get(index)
+                .map(|name| format!("{name}: {ty}"))
+                .unwrap_or(ty)
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "{name}({}) -> {}",
+        parameters.join(", "),
+        display_ty_source(db, ret, type_var_names)
+    )
+}
+
+fn def_hir_module<'db>(db: &'db dyn Db, def: DefId<'db>) -> Module<'db> {
+    parse_file_to_hir(db, def.file(db)).module(db)
+}
+
+fn function_param_names<'db>(db: &'db dyn HirDb, sig: &FuncSig<'db>) -> Vec<String> {
+    sig.params
+        .atom()
+        .iter()
+        .filter_map(|param| match param {
+            FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => {
+                Some(ident_text(db, name))
+            }
+            FuncParam::Error { .. } => None,
+        })
+        .collect()
+}
+
+fn type_var_names<'db>(
+    db: &'db dyn HirDb,
+    type_vars: &[hir_nameres::TypeVarBinding<'db>],
+) -> Vec<String> {
+    let mut names = Vec::new();
+    for var in type_vars {
+        let index = var.index as usize;
+        if names.len() <= index {
+            names.resize(index + 1, "_".to_owned());
+        }
+        names[index] = ident_text(db, &var.name);
+    }
+    names
+}
+
+fn parameter_from_func_param<'db>(
+    db: &'db dyn HirDb,
+    index: usize,
+    param: Option<&FuncParam<'db>>,
+) -> ParameterDiagnostic {
+    match param {
+        Some(FuncParam::Typed { name, .. }) | Some(FuncParam::Untyped { name, .. }) => {
+            ParameterDiagnostic {
+                index,
+                name: Some(ident_text(db, name)),
+                definition: Some(LabelSpan::from_span(db, name.span(db))),
+            }
+        }
+        Some(FuncParam::Error { span }) => ParameterDiagnostic {
+            index,
+            name: None,
+            definition: Some(LabelSpan::from_span(db, *span)),
+        },
+        None => ParameterDiagnostic {
+            index,
+            name: None,
+            definition: None,
+        },
+    }
+}
+
+fn ctor_param_label_span<'db>(
+    db: &'db dyn HirDb,
+    ctor: &AdtCtor<'db>,
+    index: usize,
+) -> Option<LabelSpan> {
+    match ctor.fields.atom().kind(db) {
+        TypeRefKind::Tuple { elems } => elems
+            .atom()
+            .get(index)
+            .map(|ty| LabelSpan::from_span(db, ty.span(db))),
+        _ if index == 0 => Some(LabelSpan::from_span(db, ctor.fields.atom().span(db))),
+        _ => None,
+    }
+}
+
+fn find_def_name_span_in_module<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<Span<'db>> {
+    for item in module.items(db) {
+        match *item {
+            Item::FunctionDef(function) if function.def_id_value(db) == def => {
+                return Some(function.sig(db).name.span(db));
+            }
+            Item::TypeAlias(alias) if alias.def_id_value(db) == def => {
+                return Some(alias.name_elem(db).span(db));
+            }
+            Item::AdtDef(adt) if adt.def_id_value(db) == def => {
+                return Some(adt.name_elem(db).span(db));
+            }
+            Item::ClassDef(class) if class.def_id_value(db) == def => {
+                return Some(class.head(db).kind(db).class.span(db));
+            }
+            Item::InstanceDef(instance) if instance.def_id_value(db) == def => {
+                return Some(instance.head(db).span(db));
+            }
+            Item::ContractDef(contract) => {
+                if contract.def_id_value(db) == def {
+                    return Some(contract.name_elem(db).span(db));
+                }
+                if let Some(span) = find_def_name_span_in_contract(db, contract, def) {
+                    return Some(span);
+                }
+            }
+            Item::FunctionDef(_)
+            | Item::TypeAlias(_)
+            | Item::AdtDef(_)
+            | Item::ClassDef(_)
+            | Item::InstanceDef(_)
+            | Item::Import(_)
+            | Item::Export(_)
+            | Item::Pragma(_)
+            | Item::Error { .. } => {}
+        }
+    }
+    None
+}
+
+fn find_def_name_span_in_contract<'db>(
+    db: &'db dyn HirDb,
+    contract: ContractDef<'db>,
+    def: DefId<'db>,
+) -> Option<Span<'db>> {
+    for item in contract.items(db) {
+        match *item {
+            ContractItem::FunctionDef(function) if function.def_id_value(db) == def => {
+                return Some(function.sig(db).name.span(db));
+            }
+            ContractItem::TypeAlias(alias) if alias.def_id_value(db) == def => {
+                return Some(alias.name_elem(db).span(db));
+            }
+            ContractItem::AdtDef(adt) if adt.def_id_value(db) == def => {
+                return Some(adt.name_elem(db).span(db));
+            }
+            ContractItem::FunctionDef(_)
+            | ContractItem::TypeAlias(_)
+            | ContractItem::AdtDef(_)
+            | ContractItem::Error { .. } => {}
+        }
+    }
+    None
+}
+
+fn builtin_name(kind: hir_nameres::BuiltinKind) -> Option<&'static str> {
+    Some(match kind {
+        hir_nameres::BuiltinKind::Constructor(hir_nameres::BuiltinCtor::True) => "true",
+        hir_nameres::BuiltinKind::Constructor(hir_nameres::BuiltinCtor::False) => "false",
+        hir_nameres::BuiltinKind::Constructor(hir_nameres::BuiltinCtor::Unit) => "()",
+        hir_nameres::BuiltinKind::Constructor(hir_nameres::BuiltinCtor::Pair) => "pair",
+        hir_nameres::BuiltinKind::Constructor(hir_nameres::BuiltinCtor::Inl) => "inl",
+        hir_nameres::BuiltinKind::Constructor(hir_nameres::BuiltinCtor::Inr) => "inr",
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::Invoke) => "invoke",
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::PrimAddWord) => {
+            "primAddWord"
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::PrimEqWord) => {
+            "primEqWord"
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::WordToInteger) => {
+            "wordToInteger"
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::WordFromInteger) => {
+            "wordFromInteger"
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerAdd) => {
+            "integerAdd"
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerSub) => {
+            "integerSub"
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerMul) => {
+            "integerMul"
+        }
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerLt) => "integerLt",
+        hir_nameres::BuiltinKind::Function(hir_nameres::BuiltinFunction::IntegerEq) => "integerEq",
+        hir_nameres::BuiltinKind::ClassMethod(hir_nameres::BuiltinClassMethod::InvokableInvoke) => {
+            "invoke"
+        }
+        hir_nameres::BuiltinKind::ClassMethod(hir_nameres::BuiltinClassMethod::IntFromInteger) => {
+            "fromInteger"
+        }
+        hir_nameres::BuiltinKind::Type(_) | hir_nameres::BuiltinKind::Class(_) => return None,
+    })
 }
 
 pub(super) fn lowering_diagnostic_to_typeck(
@@ -1201,8 +1716,11 @@ pub(super) fn dispatch_name_collision_diagnostics<'db>(
     diagnostics
 }
 
-fn dispatch_reserved_type_names<'db>(db: &'db dyn HirDb, module: Module<'db>) -> FxHashSet<String> {
-    let mut reserved = FxHashSet::default();
+fn dispatch_reserved_type_names<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+) -> FxHashMap<String, LabelSpan> {
+    let mut reserved = FxHashMap::default();
     for item in module.items(db) {
         let Item::ContractDef(contract) = item else {
             continue;
@@ -1232,7 +1750,9 @@ fn dispatch_reserved_type_names<'db>(db: &'db dyn HirDb, module: Module<'db>) ->
             if method_name == "fallback" {
                 continue;
             }
-            reserved.insert(dispatch_name_type_name(&contract_name, &method_name));
+            reserved
+                .entry(dispatch_name_type_name(&contract_name, &method_name))
+                .or_insert_with(|| LabelSpan::from_span(db, sig.name.span(db)));
         }
     }
     reserved
@@ -1242,25 +1762,29 @@ fn collect_dispatch_name_collisions<'db>(
     db: &'db dyn HirDb,
     item: Item<'db>,
     top_level: bool,
-    reserved: &FxHashSet<String>,
+    reserved: &FxHashMap<String, LabelSpan>,
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) {
     match item {
         Item::AdtDef(adt) => {
             let name = ident_text(db, &adt.name_elem(db));
-            if reserved.contains(&name) && !(top_level && is_empty_dispatch_data_decl(db, adt)) {
+            if let Some(previous) = reserved.get(&name)
+                && !(top_level && is_empty_dispatch_data_decl(db, adt))
+            {
                 diagnostics.push(TypeckDiagnostic::DuplicateType {
                     span: LabelSpan::from_span(db, adt.name_elem(db).span(db)),
                     name,
+                    previous: Some(previous.clone()),
                 });
             }
         }
         Item::TypeAlias(alias) => {
             let name = ident_text(db, &alias.name_elem(db));
-            if reserved.contains(&name) {
+            if let Some(previous) = reserved.get(&name) {
                 diagnostics.push(TypeckDiagnostic::DuplicateType {
                     span: LabelSpan::from_span(db, alias.name_elem(db).span(db)),
                     name,
+                    previous: Some(previous.clone()),
                 });
             }
         }

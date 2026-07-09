@@ -3,16 +3,22 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_recovery_no_cascade/main.solc
 ---
-error[SC0201]: type mismatch: expected (word, word), found bool
+error[SC0201]: argument type mismatch in call to `first`
  --> /main/main.solc:8:17
   |
+1 | function first(p: (word, word)) -> word {
+  |                - parameter `p` defined here
+2 |   match p {
+3 |   | (a, b) => return a;
+...
 7 | function f() -> word {
 8 |   let x = first(true);
-  |                 ^^^^ expression has mismatched type
+  |                 ^^^^ argument has mismatched type
 9 |   return x;
   |
-  = note: expected type: (word, word)
+  = note: expected `(word, word)` because parameter `p` of `first` has type `(word, word)`
   = note: found type: bool
+  = note: `first` has signature `first(p: (word, word)) -> word`
 ---
 
 error[SC0201]: type mismatch: expected numeric, found bool

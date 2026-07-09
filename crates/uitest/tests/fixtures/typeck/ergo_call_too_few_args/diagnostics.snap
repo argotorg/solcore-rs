@@ -6,6 +6,11 @@ input_file: crates/uitest/tests/fixtures/typeck/ergo_call_too_few_args/main.solc
 error[SC0203]: call expects 3 arguments, but 1 was provided
  --> /main/main.solc:6:10
   |
+1 | function clamp(lo: word, hi: word, v: word) -> word {
+  |          ----- `clamp` defined here
+2 |   return v;
+3 | }
+4 |
 5 | function g() -> word {
 6 |   return clamp(1);
   |          ^^^^^^^^ wrong number of arguments
@@ -13,3 +18,4 @@ error[SC0203]: call expects 3 arguments, but 1 was provided
   |
   = note: expected 3 arguments
   = note: found 1 argument
+  = note: `clamp` has signature `clamp(lo: word, hi: word, v: word) -> word`

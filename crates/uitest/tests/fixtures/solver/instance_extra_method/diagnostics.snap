@@ -6,6 +6,11 @@ input_file: crates/uitest/tests/fixtures/solver/instance_extra_method/main.solc
 error[SC0202]: undefined name: C.g
  --> /main/main.solc:7:12
   |
+1 | forall a . class a : C {
+  |                      - class defined here
+2 |   function f(x: a) -> word;
+3 | }
+...
 6 |   function f(x: word) -> word { return x; }
 7 |   function g(x: word) -> word { return x; }
   |            ^ unknown name
