@@ -11,11 +11,10 @@ use lsp_types::{
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
-
-use crate::state::WorldState;
-
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
+
+use crate::state::WorldState;
 
 const PARSE_ERROR: i64 = -32700;
 const INVALID_REQUEST: i64 = -32600;

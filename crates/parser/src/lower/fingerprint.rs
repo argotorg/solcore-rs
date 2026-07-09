@@ -1,6 +1,5 @@
-use crate::types::*;
-
 use super::span::path_text;
+use crate::types::*;
 
 pub(super) fn import_fingerprint(
     external: Option<LexSpan>,

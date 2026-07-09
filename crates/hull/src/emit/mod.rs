@@ -54,6 +54,8 @@ use abi::{
     dispatcher_return_layout, numbered_name, selector_hex, write_expr_to_abi_slots,
 };
 use diagnostics::prune_emit_diagnostics;
+pub use diagnostics::{EmitDiagnostic, EmitDiagnosticKind, EmitOptions, EmitOutput};
+pub use emitter::emit_module;
 use layout::{
     bool_expr, bool_sum_ty, hull_ty_is_bool_word, hull_ty_word_slots, product_expr,
     product_field_exprs, sem_product_fields, sem_ty_needs_untyped_word_default, sum_right_ty,
@@ -63,9 +65,6 @@ use match_compile::{
 };
 use reachability::deployment_closure;
 use storage::StorageFieldKind;
-
-pub use diagnostics::{EmitDiagnostic, EmitDiagnosticKind, EmitOptions, EmitOutput};
-pub use emitter::emit_module;
 
 const ADDRESS_MASK: &str = "0xffffffffffffffffffffffffffffffffffffffff";
 const STORAGE_INDEX_READ: &str = "__solcore_storage_index_read";

@@ -1,6 +1,5 @@
-use crate::{lexer::Token, types::*};
-
 use super::errors::token_found_description;
+use crate::{lexer::Token, types::*};
 
 #[inline]
 pub(super) fn trace_recovery(kind: &'static str, span: LexSpan) {

@@ -7,8 +7,6 @@ use hull::{
     Ty as HullTy, TyKind,
 };
 
-use crate::ast::{Case, Code, Expr, Inner, Literal, Object, Program, Stmt};
-
 use super::{
     TranslationError, Translator,
     asm::AsmScopes,
@@ -20,6 +18,7 @@ use super::{
     names::{LoweredCallee, canonical_word_lit, lower_callee, yul_fun_name},
     validate::render_strict_assembly_program,
 };
+use crate::ast::{Case, Code, Expr, Inner, Literal, Object, Program, Stmt};
 
 pub fn translate_hull_program<'db>(
     db: &'db dyn HirDb,

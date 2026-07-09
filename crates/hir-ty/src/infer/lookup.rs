@@ -1,8 +1,8 @@
-use super::*;
-
 pub(super) use hir_nameres::{
     ident_text, is_direct_call_resolution, param_bindings, type_var_bindings,
 };
+
+use super::*;
 
 pub(super) struct FunctionLookup<'db> {
     pub(super) function: FunctionDef<'db>,

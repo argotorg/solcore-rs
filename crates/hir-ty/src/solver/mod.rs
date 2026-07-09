@@ -73,11 +73,6 @@ mod r#match;
 mod module_lookup;
 mod soundness;
 
-pub use derived_generic::{derived_generic_plan, generic_derivation_diagnostics};
-pub use env::{trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens};
-pub use soundness::instance_soundness_diagnostics;
-
-use crate::display::{display_class_source, display_pred_source, display_ty_source};
 use canonical::{
     GoalRenaming, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
 };
@@ -86,8 +81,10 @@ use derived_generic::{
     local_generic_class, manual_generic_instance_types, no_generic_instance_for,
     visible_generic_class,
 };
+pub use derived_generic::{derived_generic_plan, generic_derivation_diagnostics};
 use display::{display_scheme_source, display_vars};
 use engine::{Answer, TabledEngine};
+pub use env::{trait_env_for_module, trait_env_from_module_resolution, trait_env_with_givens};
 use evidence::{apply_evidence, clause_evidence, solution_from_answers};
 use r#match::{
     InstantiatedClause, MatchSubst, collect_evidence_vars, collect_pred_vars, collect_ty_vars,
@@ -98,6 +95,9 @@ use module_lookup::{
     ident_text, module_for_def, scope_resolution_for_module_id, type_var_bindings, unique_modules,
     unique_preds, visible_class_modules,
 };
+pub use soundness::instance_soundness_diagnostics;
+
+use crate::display::{display_class_source, display_pred_source, display_ty_source};
 
 #[salsa::interned(debug)]
 pub struct CanonicalGoal<'db> {

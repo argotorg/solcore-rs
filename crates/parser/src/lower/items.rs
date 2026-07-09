@@ -6,8 +6,6 @@ use hir::{
     span::{AnchorId, SpannedElem},
 };
 
-use crate::{Db, types::*};
-
 use super::{
     body::BodyArenas,
     context::LoweringCtx,
@@ -17,6 +15,7 @@ use super::{
         root_span_from_lex, span_from_absolute,
     },
 };
+use crate::{Db, types::*};
 
 pub(super) fn lower_parse_errors(
     db: &dyn Db,

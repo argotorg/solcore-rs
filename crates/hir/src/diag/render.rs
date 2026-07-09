@@ -1,11 +1,10 @@
 use annotate_snippets::{Annotation, AnnotationKind, Group, Level, Renderer, Snippet};
 
-use crate::input::SourceFile;
-
 use super::{
     span::AbsoluteSpan,
     value::{Diagnostic, DiagnosticLabel, DiagnosticLevel, LabelStyle},
 };
+use crate::input::SourceFile;
 
 impl Diagnostic {
     /// Converts this diagnostic into `annotate_snippets` groups.

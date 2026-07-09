@@ -2,12 +2,11 @@ use std::fmt::Write as _;
 
 use hir::ast::item::{ContractDef, Module};
 
-use crate::Db;
-
 use super::{
     abi::{AbiParam, AbiType},
     dispatch::{DispatchConstructor, DispatchFallback, contract_dispatch_surface},
 };
+use crate::Db;
 
 /// Renders an ABI JSON document mirroring the reference `contractAbiJson`
 /// behavior: explicit constructors and user-defined fallbacks are included,

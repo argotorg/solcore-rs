@@ -27,7 +27,8 @@ use crate::{
 /// Semantic identity used by references, highlights, and future rename support.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ReferenceTarget<'db> {
-    /// A named user definition such as a function, type, contract, class, or instance.
+    /// A named user definition such as a function, type, contract, class, or
+    /// instance.
     Def(DefId<'db>),
     /// A data constructor identified by its owning type and constructor index.
     Ctor {
@@ -73,7 +74,8 @@ pub fn handle_references(
     ))
 }
 
-/// Resolves the symbol under `position` to a reusable semantic reference target.
+/// Resolves the symbol under `position` to a reusable semantic reference
+/// target.
 pub fn reference_target_at<'db>(
     world: &'db WorldState,
     uri: &Url,

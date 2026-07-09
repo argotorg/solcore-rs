@@ -62,6 +62,7 @@ mod yul;
 #[cfg(test)]
 mod tests;
 
+use self::{comptime::*, ctx::*, diagnostics::*, lookup::*, obligations::*, schemes::*};
 pub use self::{
     ctx::{body_ty_diagnostics, infer_body},
     diagnostics::{TypeckDiagnostic, ValueNamespace, ValuePosition},
@@ -72,8 +73,6 @@ pub use self::{
     },
     table::{InferTable, InferTy, Instantiated, TyVid, UnifyError, VarValue},
 };
-
-use self::{comptime::*, ctx::*, diagnostics::*, lookup::*, obligations::*, schemes::*};
 
 /// Type-checking context for one body inference query.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]

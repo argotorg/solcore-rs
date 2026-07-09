@@ -1,8 +1,7 @@
 use logos::Logos;
 
-use crate::{lexer::Token, types::*};
-
 use super::{errors::lex_error, recovery::trace_recovery};
+use crate::{lexer::Token, types::*};
 
 pub(super) fn tokenize<'src>(src: &'src str) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedError>) {
     let mut tokens = Vec::new();

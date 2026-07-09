@@ -20,8 +20,6 @@ use hir::{
     span::{AnchorId, Span},
 };
 
-use crate::{Db, ParseHirOutput, parse::parse_supported_items, types::*};
-
 use self::{
     context::LoweringCtx,
     items::{
@@ -30,6 +28,7 @@ use self::{
     },
     span::{offset_from_usize, root_span_from_lex},
 };
+use crate::{Db, ParseHirOutput, parse::parse_supported_items, types::*};
 
 /// Parses and lowers one source file into HIR.
 ///

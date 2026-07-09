@@ -1,8 +1,7 @@
 use chumsky::{input::ValueInput, prelude::*};
 
-use crate::{lexer::Token, types::*};
-
 use super::common::*;
+use crate::{lexer::Token, types::*};
 
 fn import_name_parser<'src, I>() -> impl Parser<'src, I, ParsedImportName, ParserErr<'src>>
 where

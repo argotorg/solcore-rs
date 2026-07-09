@@ -1,4 +1,3 @@
-use hir::nameres::param_bindings;
 pub(super) use hir::nameres::{ident_text, type_var_bindings};
 use hir::{
     Db as HirDb,
@@ -8,6 +7,7 @@ use hir::{
         item::{ContractDef, FunctionDef, Item, Module},
     },
     nameres as hir_nameres,
+    nameres::param_bindings,
 };
 use nameres::{LibraryId, module_id_from_key, module_key_for_path};
 

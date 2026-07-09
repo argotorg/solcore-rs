@@ -1,8 +1,7 @@
 use chumsky::{input::ValueInput, prelude::*};
 
-use crate::{lexer::Token, types::*};
-
 use super::{common::*, recovery::trace_recovery};
+use crate::{lexer::Token, types::*};
 
 fn parsed_yul_lit_parser<'src, I>() -> impl Parser<'src, I, ParsedYulLitKind<'src>, ParserErr<'src>>
 where

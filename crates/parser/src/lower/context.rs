@@ -3,9 +3,8 @@ use hir::{
     input::SourceFile,
 };
 
-use crate::{Db, types::ParsedError};
-
 use super::span::offset_from_usize;
+use crate::{Db, types::ParsedError};
 
 pub(super) struct LoweringCtx<'db, 'a> {
     pub(super) db: &'db dyn Db,

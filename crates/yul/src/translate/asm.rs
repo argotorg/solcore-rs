@@ -4,13 +4,12 @@ use hir::ast::function::{
     YulCase as HirYulCase, YulExpr as HirYulExpr, YulExprKind, YulStmt as HirYulStmt, YulStmtKind,
 };
 
-use crate::ast::{Case, Expr, FunctionName, Stmt, VarName};
-
 use super::{
     TranslationError, Translator,
     location::{flatten_lhs, flatten_rhs},
     names::{convert_yul_lit, yul_name},
 };
+use crate::ast::{Case, Expr, FunctionName, Stmt, VarName};
 
 #[derive(Debug, Clone)]
 pub(super) struct AsmScopes {

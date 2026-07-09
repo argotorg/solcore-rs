@@ -1,14 +1,13 @@
-use crate::{
-    ast::{Code, Expr, Inner, Literal, Object, Program, Stmt},
-    pretty::pretty_object,
-};
-
 use super::{
     TranslationError,
     names::{
         canonical_hex_lit, canonical_numeric_lit, is_forbidden_yul_identifier,
         is_valid_yul_identifier,
     },
+};
+use crate::{
+    ast::{Code, Expr, Inner, Literal, Object, Program, Stmt},
+    pretty::pretty_object,
 };
 
 pub(super) fn render_strict_assembly_program(

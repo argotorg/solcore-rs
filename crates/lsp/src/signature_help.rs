@@ -20,7 +20,8 @@ use crate::{
     state::{WorldState, uri_to_vfs_path},
 };
 
-/// Computes signature help for the nearest call argument list at a source position.
+/// Computes signature help for the nearest call argument list at a source
+/// position.
 pub fn handle_signature_help(
     world: &WorldState,
     uri: &Url,

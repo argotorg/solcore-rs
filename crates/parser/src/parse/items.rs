@@ -1,8 +1,6 @@
 use chumsky::{input::ValueInput, prelude::*};
 use hir::ast::item::FuncKind;
 
-use crate::{lexer::Token, types::*};
-
 use super::{
     common::*,
     expr_pat::parsed_expr_parser,
@@ -10,6 +8,7 @@ use super::{
     recovery::trace_recovery,
     types::{forall_clause_parser, pred_list_parser, pred_parser, type_parser},
 };
+use crate::{lexer::Token, types::*};
 
 pub(super) fn param_parser<'src, I>() -> impl Parser<'src, I, ParsedFuncParam<'src>, ParserErr<'src>>
 where

@@ -7,8 +7,6 @@ use hir::{
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 
-use crate::Db;
-
 use super::{
     abi::{
         AbiParam, AbiSelector, AbiSignature, AbiType, abi_outputs, abi_params, abi_selector,
@@ -19,6 +17,7 @@ use super::{
         param_names, resolve_contract_item_types, type_var_bindings,
     },
 };
+use crate::Db;
 
 /// Typed dispatch/ABI surface for one contract.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]

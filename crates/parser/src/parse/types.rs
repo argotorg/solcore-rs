@@ -1,8 +1,7 @@
 use chumsky::{input::ValueInput, prelude::*};
 
-use crate::{lexer::Token, types::*};
-
 use super::common::*;
+use crate::{lexer::Token, types::*};
 
 pub(super) fn type_parser<'src, I>() -> impl Parser<'src, I, ParsedTy<'src>, ParserErr<'src>>
 where

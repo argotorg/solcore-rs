@@ -1,6 +1,6 @@
-use super::*;
-
 pub(super) use hir::nameres::{ident_text, type_var_bindings};
+
+use super::*;
 
 /// Reference-style specialization name: `base$word` or
 /// `base$FooLword_boolJ`.

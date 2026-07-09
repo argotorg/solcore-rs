@@ -13,7 +13,6 @@ mod names;
 mod validate;
 
 use location::Location;
-
 pub use lower::{render_hull_program, render_hull_program_object, translate_hull_program};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

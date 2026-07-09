@@ -1,5 +1,6 @@
-use super::*;
 use hir_ty::AbiType;
+
+use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AbiWordKind {

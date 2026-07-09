@@ -233,7 +233,8 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// Creates a workspace with the embedded standard library mounted at `/std`.
+    /// Creates a workspace with the embedded standard library mounted at
+    /// `/std`.
     pub fn new() -> Self {
         let mut host = AnalysisHost::new();
         host.seed_std();

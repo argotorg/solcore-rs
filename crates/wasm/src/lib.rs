@@ -313,9 +313,9 @@ fn render_abi_outputs(
                         "failed to parse ABI JSON for contract `{name}`: {err}"
                     )),
                 },
-                Err(err) => errors.push(format!(
-                    "failed to render ABI for contract `{name}`: {err}"
-                )),
+                Err(err) => {
+                    errors.push(format!("failed to render ABI for contract `{name}`: {err}"))
+                }
             }
         }
     }
@@ -518,7 +518,8 @@ fn percent_decode(raw: &str) -> String {
     while index < bytes.len() {
         if bytes[index] == b'%'
             && index + 2 < bytes.len()
-            && let (Some(high), Some(low)) = (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
+            && let (Some(high), Some(low)) =
+                (hex_value(bytes[index + 1]), hex_value(bytes[index + 2]))
         {
             decoded.push(high << 4 | low);
             index += 3;

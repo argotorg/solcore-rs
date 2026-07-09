@@ -1,9 +1,8 @@
-use crate::{anchor::DefKey, input::SourceFile};
-
 use super::{
     span::{LabelAnchor, LabelSpan, Offset},
     value::{AnyDiagnostic, Applicability, Diagnostic, DiagnosticLevel, LabelStyle, Suggestion},
 };
+use crate::{anchor::DefKey, input::SourceFile};
 
 /// Stable identity used to deduplicate diagnostics.
 ///

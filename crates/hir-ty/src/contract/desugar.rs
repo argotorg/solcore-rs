@@ -9,13 +9,12 @@ use hir::{
 };
 use rustc_hash::FxHashMap;
 
+use super::helpers::{
+    function_type_vars, ident_text, param_names, selector_name, type_var_bindings,
+};
 use crate::{
     AliasNormalizer, BinderEnv, BodyTyContext, CallSiteCallee, CallSiteEvidence, Db, TypeLowering,
     infer_body, trait_env_from_module_resolution, trait_env_with_givens,
-};
-
-use super::helpers::{
-    function_type_vars, ident_text, param_names, selector_name, type_var_bindings,
 };
 
 /// Tracked frontend-desugar plan for one module.

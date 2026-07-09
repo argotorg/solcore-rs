@@ -60,9 +60,10 @@ pub enum MonoIntrinsic {
 pub enum MonoCallOrigin<'db> {
     Source(DefId<'db>),
     Builtin(MonoIntrinsic),
-    /// Call resolved to a backend name only (no source DefId or builtin intrinsic): resolved
-    /// operator overloads, evidence-resolved class methods/invokables, int fromInteger,
-    /// builtins without an intrinsic, and closure-dispatch to a known function.
+    /// Call resolved to a backend name only (no source DefId or builtin
+    /// intrinsic): resolved operator overloads, evidence-resolved class
+    /// methods/invokables, int fromInteger, builtins without an intrinsic,
+    /// and closure-dispatch to a known function.
     ByName,
 }
 

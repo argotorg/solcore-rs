@@ -1,13 +1,12 @@
 use chumsky::{input::ValueInput, prelude::*};
 
-use crate::{lexer::Token, types::*};
-
 use super::{
     common::*,
     expr_pat::{parsed_expr_parser, parsed_pat_parser},
     types::{parsed_ty_comptime_span, type_parser},
     yul::parsed_yul_stmt_parser,
 };
+use crate::{lexer::Token, types::*};
 
 fn assign_op_parser<'src, I>() -> impl Parser<'src, I, ParsedAssignOp, ParserErr<'src>>
 where

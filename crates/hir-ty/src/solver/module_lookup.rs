@@ -1,7 +1,7 @@
-use super::*;
-
-pub(super) use crate::support::module_for_def_via_tree as module_for_def;
 pub(super) use hir_nameres::{ident_text, type_var_bindings};
+
+use super::*;
+pub(super) use crate::support::module_for_def_via_tree as module_for_def;
 
 pub(super) fn visible_class_modules<'db>(
     db: &'db dyn Db,

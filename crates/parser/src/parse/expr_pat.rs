@@ -1,14 +1,13 @@
 use chumsky::{input::ValueInput, prelude::*};
 use hir::ast::function;
 
-use crate::{lexer::Token, types::*};
-
 use super::{
     common::*,
     items::{body_span_parser, param_parser},
     recovery::trace_recovery,
     types::type_parser,
 };
+use crate::{lexer::Token, types::*};
 
 #[derive(Debug, Clone)]
 enum ParsedPostfixOp<'src> {

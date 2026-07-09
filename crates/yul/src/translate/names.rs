@@ -3,9 +3,8 @@ use std::collections::BTreeSet;
 use hir::{Db as HirDb, ast::function::YulLitKind};
 use hull::wrap_word_literal;
 
-use crate::ast::{FunctionName, Literal, VarName};
-
 use super::{TranslationError, Translator};
+use crate::ast::{FunctionName, Literal, VarName};
 
 pub(super) enum LoweredCallee {
     Call(FunctionName),

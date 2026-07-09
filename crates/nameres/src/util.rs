@@ -64,7 +64,8 @@ impl PartialEq<String> for ModuleDisplay<'_> {
     }
 }
 
-/// Borrowed display adapter for module paths as written in import/export syntax.
+/// Borrowed display adapter for module paths as written in import/export
+/// syntax.
 #[derive(Clone, Copy)]
 pub struct ModulePathDisplay<'a, 'db> {
     db: &'db dyn Db,

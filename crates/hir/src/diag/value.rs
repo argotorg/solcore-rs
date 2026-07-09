@@ -1,6 +1,5 @@
-use crate::{input::SourceFile, span::Span};
-
 use super::span::LabelSpan;
+use crate::{input::SourceFile, span::Span};
 
 /// A diagnostic emitted during compilation.
 ///

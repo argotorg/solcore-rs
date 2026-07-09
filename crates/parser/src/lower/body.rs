@@ -5,8 +5,6 @@ use hir::{
     span::{AnchorId, SpannedElem},
 };
 
-use crate::{parse::parse_body_statements, types::*};
-
 use super::{
     context::LoweringCtx,
     fingerprint::lambda_fingerprint,
@@ -14,6 +12,7 @@ use super::{
     span::{lower_qualifier_path, lower_spanned_ident, span_from_absolute},
     yul::lower_parsed_yul_stmt,
 };
+use crate::{parse::parse_body_statements, types::*};
 
 fn apply_implicit_return(stmts: &mut Vec<ParsedStmt<'_>>) {
     let [stmt] = stmts.as_mut_slice() else {

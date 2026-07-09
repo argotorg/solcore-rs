@@ -60,24 +60,6 @@ mod validation;
 pub use diagnostics::{
     ModuleDiagnostic, body_diagnostics, module_diagnostics, reachable_diagnostics,
 };
-pub use env::{module_env, module_import_surface, resolve_module_full};
-pub use graph::{module_graph, module_imports, reachable_modules, resolve_reachable_full};
-pub use instances::{instance_imports, module_instances};
-pub use interface::public_interface;
-pub use model::{
-    ConstructorVisibility, Db, FullResolutionSummary, InstanceImports, Interface, ItemRef,
-    LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleFsSnapshot, ModuleGraph, ModuleId,
-    ModuleImportSurface, ModuleImports, ModuleKey, ModulePathRef, ModuleTree, Namespace, Origin,
-    ResolvedModulePath, ValidationSummary, VisibleConstructors,
-};
-pub use paths::{resolve_module_path, resolve_module_path_candidate};
-pub use scc::strongly_connected_components;
-pub use util::{
-    ModuleDisplay, ModulePathDisplay, module_file_path, module_id_display, module_id_from_key,
-    module_key_for_path, module_path_display,
-};
-pub use validation::{validate_module, validate_reachable};
-
 use diagnostics::{
     ambiguous_import_diag, conflicting_unqualified_name_diag, duplicate_export_item_diag,
     duplicate_export_module_diag, duplicate_qualifier_diag, duplicate_selector_diag,
@@ -86,6 +68,10 @@ use diagnostics::{
     unknown_reexport_diag,
 };
 use env::module_has_parse_errors;
+pub use env::{module_env, module_import_surface, resolve_module_full};
+pub use graph::{module_graph, module_imports, reachable_modules, resolve_reachable_full};
+pub use instances::{instance_imports, module_instances};
+pub use interface::public_interface;
 use interface::{
     RawInterface, RawItemRef, RawModuleAlias, expand_module_exports, namespace_sort_key,
     resolve_for_export,
@@ -98,8 +84,20 @@ use item_refs::{
     qualify, resolution_for_item_ref, select_import_refs, selected_imported_refs,
     strip_constructor_visibility, visible_data_ref_with_constructors,
 };
+pub use model::{
+    ConstructorVisibility, Db, FullResolutionSummary, InstanceImports, Interface, ItemRef,
+    LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleFsSnapshot, ModuleGraph, ModuleId,
+    ModuleImportSurface, ModuleImports, ModuleKey, ModulePathRef, ModuleTree, Namespace, Origin,
+    ResolvedModulePath, ValidationSummary, VisibleConstructors,
+};
 use modes::{BodyDiagnosticPolicy, CtorInclusion, ExportResolutionMode};
 use paths::{module_path_span, path_segments};
+pub use paths::{resolve_module_path, resolve_module_path_candidate};
+pub use scc::strongly_connected_components;
+pub use util::{
+    ModuleDisplay, ModulePathDisplay, module_file_path, module_id_display, module_id_from_key,
+    module_key_for_path, module_path_display,
+};
 use util::{
     best_name_suggestion, ident_text, namespace_context, private_surface_key, record_body_field,
     record_module_field, record_source_file_field, selector_kind, sorted_namespaces,
@@ -108,3 +106,4 @@ use util::{
 use validation::{
     default_module_binding_name, interface_names, validate_duplicate_exports, validate_imports,
 };
+pub use validation::{validate_module, validate_reachable};

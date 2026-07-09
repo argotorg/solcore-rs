@@ -2,8 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use annotate_snippets::Renderer;
 
-use super::span::LabelAnchor;
-use super::*;
+use super::{span::LabelAnchor, *};
 use crate::{
     anchor::{DefId, DefKind, DefLocationTable, Disambiguator},
     input::SourceFile,

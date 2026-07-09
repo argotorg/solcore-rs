@@ -18,9 +18,6 @@ mod types;
 mod yul;
 
 use chumsky::prelude::*;
-
-use crate::types::*;
-
 use errors::parse_error_from_rich;
 use items::top_item_parser;
 use recovery::{
@@ -29,6 +26,8 @@ use recovery::{
 };
 use stmt::parsed_stmt_parser;
 use tokenize::{tokenize, tokenize_with_base};
+
+use crate::types::*;
 
 /// Parses the top-level items currently supported by the front end.
 ///

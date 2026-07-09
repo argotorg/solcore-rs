@@ -56,18 +56,17 @@ mod util;
 
 use body_resolver::BodyResolver;
 use builtins::{best_name_suggestion, builtin_term, builtin_type_or_class};
+pub use diagnostic::NameresDiagnostic;
 use diagnostic::{
     duplicate_diagnostic, invalid_pattern, undefined_class, undefined_name, undefined_type_ctor,
     unqualified_constructor,
 };
+pub use model::*;
+pub use queries::*;
 use scope::ItemScopeBuilder;
 use type_resolver::TypeResolver;
 use util::{
     collect_constructor_type_candidates, expr_path, ident_text_str, param_name, path_span, qualify,
     record_body_fields, record_module_fields, unique_constructor_type_candidate,
 };
-
-pub use diagnostic::NameresDiagnostic;
-pub use model::*;
-pub use queries::*;
 pub use util::{ident_text, is_direct_call_resolution, param_bindings, type_var_bindings};

@@ -1,11 +1,10 @@
 use hull::{Con, Ty as HullTy, TyKind};
 
-use crate::ast::{Expr, Literal, Stmt, VarName};
-
 use super::{
     TranslationError,
     names::{stack_name, yul_var_name},
 };
+use crate::ast::{Expr, Literal, Stmt, VarName};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Location {

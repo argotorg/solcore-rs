@@ -1,8 +1,7 @@
 use hir::{ast::function, span::AnchorId};
 
-use crate::{Db, types::*};
-
 use super::span::{lower_spanned_ident, span_from_absolute};
+use crate::{Db, types::*};
 
 fn lower_parsed_yul_lit(lit: ParsedYulLitKind<'_>) -> function::YulLitKind {
     match lit {
