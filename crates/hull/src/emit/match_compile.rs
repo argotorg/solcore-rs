@@ -223,7 +223,11 @@ impl<'db> Emitter<'db> {
                     return None;
                 }
                 Some(MatchRow {
-                    pats: arm.pats.iter().map(matrix_pat).collect(),
+                    pats: arm
+                        .pats
+                        .iter()
+                        .map(|pat| matrix_pat(self.db, pat))
+                        .collect(),
                     bindings: Vec::new(),
                     body: arm.body.clone(),
                 })
@@ -692,7 +696,7 @@ impl MatrixPat {
     }
 }
 
-fn matrix_pat<'db>(pat: &MonoPat<'db>) -> MatrixPat {
+fn matrix_pat<'db>(db: &'db dyn hir_ty::Db, pat: &MonoPat<'db>) -> MatrixPat {
     match &pat.kind {
         MonoPatKind::Wildcard => MatrixPat::Wildcard,
         MonoPatKind::Var(id) => MatrixPat::Var {
@@ -701,41 +705,52 @@ fn matrix_pat<'db>(pat: &MonoPat<'db>) -> MatrixPat {
         MonoPatKind::Lit(lit) => MatrixPat::Lit {
             lit: wrap_word_lit_kind(lit),
         },
-        MonoPatKind::Con { ctor, args } if ctor.name == "()" && args.is_empty() => {
+        MonoPatKind::Con { ctor, args }
+            if ctor.is_builtin_ctor(db, MonoBuiltinCtor::Unit) && args.is_empty() =>
+        {
             MatrixPat::Tuple { elems: Vec::new() }
         }
-        MonoPatKind::Con { ctor, args } if ctor.name == "pair" && args.len() == 2 => {
+        MonoPatKind::Con { ctor, args }
+            if ctor.is_builtin_ctor(db, MonoBuiltinCtor::Pair) && args.len() == 2 =>
+        {
             MatrixPat::Tuple {
-                elems: matrix_pair_pat_elems(args),
+                elems: matrix_pair_pat_elems(db, args),
             }
         }
         MonoPatKind::Con { ctor, args } => MatrixPat::Con {
             ctor: ctor.name.clone(),
-            args: args.iter().map(matrix_pat).collect(),
+            args: args.iter().map(|pat| matrix_pat(db, pat)).collect(),
         },
         MonoPatKind::Tuple(elems) => MatrixPat::Tuple {
-            elems: elems.iter().map(matrix_pat).collect(),
+            elems: elems.iter().map(|pat| matrix_pat(db, pat)).collect(),
         },
         MonoPatKind::ComptimeLabel(_) => MatrixPat::ComptimeLabel,
         MonoPatKind::Error => MatrixPat::Error,
     }
 }
 
-fn matrix_pair_pat_elems<'db>(args: &[MonoPat<'db>]) -> Vec<MatrixPat> {
-    let mut elems = vec![matrix_pat(&args[0])];
-    push_matrix_pair_tail(&args[1], &mut elems);
+fn matrix_pair_pat_elems<'db>(db: &'db dyn hir_ty::Db, args: &[MonoPat<'db>]) -> Vec<MatrixPat> {
+    let mut elems = vec![matrix_pat(db, &args[0])];
+    push_matrix_pair_tail(db, &args[1], &mut elems);
     elems
 }
 
-fn push_matrix_pair_tail<'db>(pat: &MonoPat<'db>, out: &mut Vec<MatrixPat>) {
+fn push_matrix_pair_tail<'db>(
+    db: &'db dyn hir_ty::Db,
+    pat: &MonoPat<'db>,
+    out: &mut Vec<MatrixPat>,
+) {
     match &pat.kind {
-        MonoPatKind::Con { ctor, args } if ctor.name == "()" && args.is_empty() => {}
-        MonoPatKind::Con { ctor, args } if ctor.name == "pair" && args.len() == 2 => {
-            out.push(matrix_pat(&args[0]));
-            push_matrix_pair_tail(&args[1], out);
+        MonoPatKind::Con { ctor, args }
+            if ctor.is_builtin_ctor(db, MonoBuiltinCtor::Unit) && args.is_empty() => {}
+        MonoPatKind::Con { ctor, args }
+            if ctor.is_builtin_ctor(db, MonoBuiltinCtor::Pair) && args.len() == 2 =>
+        {
+            out.push(matrix_pat(db, &args[0]));
+            push_matrix_pair_tail(db, &args[1], out);
         }
-        MonoPatKind::Tuple(elems) => out.extend(elems.iter().map(matrix_pat)),
-        _ => out.push(matrix_pat(pat)),
+        MonoPatKind::Tuple(elems) => out.extend(elems.iter().map(|pat| matrix_pat(db, pat))),
+        _ => out.push(matrix_pat(db, pat)),
     }
 }
 

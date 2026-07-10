@@ -69,7 +69,7 @@ pub(super) fn product_expr_from_vars<'db>(
             ty: MonoTy::new_unchecked(Ty::unit(db)),
             kind: MonoExprKind::Con {
                 ctor: MonoId {
-                    name: "()".to_owned(),
+                    name: MonoBuiltinCtor::Unit.name().to_owned(),
                     ty: MonoTy::new_unchecked(Ty::unit(db)),
                     span,
                 },
@@ -82,7 +82,7 @@ pub(super) fn product_expr_from_vars<'db>(
             ty: MonoTy::new_unchecked(ty),
             kind: MonoExprKind::Con {
                 ctor: MonoId {
-                    name: "pair".to_owned(),
+                    name: MonoBuiltinCtor::Pair.name().to_owned(),
                     ty: MonoTy::new_unchecked(ty),
                     span,
                 },
@@ -107,7 +107,7 @@ pub(super) fn product_expr_from_elems<'db>(
             ty: MonoTy::new_unchecked(Ty::unit(db)),
             kind: MonoExprKind::Con {
                 ctor: MonoId {
-                    name: "()".to_owned(),
+                    name: MonoBuiltinCtor::Unit.name().to_owned(),
                     ty: MonoTy::new_unchecked(Ty::unit(db)),
                     span,
                 },
@@ -125,7 +125,7 @@ pub(super) fn product_expr_from_elems<'db>(
             ty: MonoTy::new_unchecked(ty),
             kind: MonoExprKind::Con {
                 ctor: MonoId {
-                    name: "pair".to_owned(),
+                    name: MonoBuiltinCtor::Pair.name().to_owned(),
                     ty: MonoTy::new_unchecked(ty),
                     span,
                 },
@@ -150,7 +150,7 @@ pub(super) fn product_pat_from_vars<'db>(
             ty: MonoTy::new_unchecked(Ty::unit(db)),
             kind: MonoPatKind::Con {
                 ctor: MonoId {
-                    name: "()".to_owned(),
+                    name: MonoBuiltinCtor::Unit.name().to_owned(),
                     ty: MonoTy::new_unchecked(Ty::unit(db)),
                     span,
                 },
@@ -163,7 +163,7 @@ pub(super) fn product_pat_from_vars<'db>(
             ty: MonoTy::new_unchecked(ty),
             kind: MonoPatKind::Con {
                 ctor: MonoId {
-                    name: "pair".to_owned(),
+                    name: MonoBuiltinCtor::Pair.name().to_owned(),
                     ty: MonoTy::new_unchecked(ty),
                     span,
                 },
@@ -188,7 +188,7 @@ pub(super) fn product_pat_from_elems<'db>(
             ty: MonoTy::new_unchecked(Ty::unit(db)),
             kind: MonoPatKind::Con {
                 ctor: MonoId {
-                    name: "()".to_owned(),
+                    name: MonoBuiltinCtor::Unit.name().to_owned(),
                     ty: MonoTy::new_unchecked(Ty::unit(db)),
                     span,
                 },
@@ -206,7 +206,7 @@ pub(super) fn product_pat_from_elems<'db>(
             ty: MonoTy::new_unchecked(ty),
             kind: MonoPatKind::Con {
                 ctor: MonoId {
-                    name: "pair".to_owned(),
+                    name: MonoBuiltinCtor::Pair.name().to_owned(),
                     ty: MonoTy::new_unchecked(ty),
                     span,
                 },
@@ -243,7 +243,7 @@ pub(super) fn wrap_sum_expr<'db>(
             ty: MonoTy::new_unchecked(rep),
             kind: MonoExprKind::Con {
                 ctor: MonoId {
-                    name: "inl".to_owned(),
+                    name: MonoBuiltinCtor::Inl.name().to_owned(),
                     ty: MonoTy::new_unchecked(rep),
                     span,
                 },
@@ -257,7 +257,7 @@ pub(super) fn wrap_sum_expr<'db>(
             ty: MonoTy::new_unchecked(rep),
             kind: MonoExprKind::Con {
                 ctor: MonoId {
-                    name: "inr".to_owned(),
+                    name: MonoBuiltinCtor::Inr.name().to_owned(),
                     ty: MonoTy::new_unchecked(rep),
                     span,
                 },
@@ -286,7 +286,7 @@ pub(super) fn unwrap_sum_pat<'db>(
             ty: MonoTy::new_unchecked(rep),
             kind: MonoPatKind::Con {
                 ctor: MonoId {
-                    name: "inl".to_owned(),
+                    name: MonoBuiltinCtor::Inl.name().to_owned(),
                     ty: MonoTy::new_unchecked(rep),
                     span,
                 },
@@ -300,7 +300,7 @@ pub(super) fn unwrap_sum_pat<'db>(
             ty: MonoTy::new_unchecked(rep),
             kind: MonoPatKind::Con {
                 ctor: MonoId {
-                    name: "inr".to_owned(),
+                    name: MonoBuiltinCtor::Inr.name().to_owned(),
                     ty: MonoTy::new_unchecked(rep),
                     span,
                 },

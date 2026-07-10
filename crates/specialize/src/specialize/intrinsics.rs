@@ -2,12 +2,12 @@ use super::*;
 
 pub(super) fn builtin_ctor_name(ctor: hir_nameres::BuiltinCtor) -> &'static str {
     match ctor {
-        hir_nameres::BuiltinCtor::True => "true",
-        hir_nameres::BuiltinCtor::False => "false",
-        hir_nameres::BuiltinCtor::Unit => "()",
-        hir_nameres::BuiltinCtor::Pair => "pair",
-        hir_nameres::BuiltinCtor::Inl => "inl",
-        hir_nameres::BuiltinCtor::Inr => "inr",
+        hir_nameres::BuiltinCtor::True => MonoBuiltinCtor::True.name(),
+        hir_nameres::BuiltinCtor::False => MonoBuiltinCtor::False.name(),
+        hir_nameres::BuiltinCtor::Unit => MonoBuiltinCtor::Unit.name(),
+        hir_nameres::BuiltinCtor::Pair => MonoBuiltinCtor::Pair.name(),
+        hir_nameres::BuiltinCtor::Inl => MonoBuiltinCtor::Inl.name(),
+        hir_nameres::BuiltinCtor::Inr => MonoBuiltinCtor::Inr.name(),
     }
 }
 

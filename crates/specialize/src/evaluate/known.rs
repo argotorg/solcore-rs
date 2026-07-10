@@ -3,8 +3,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{CEnv, TypeReg, VEnv, assigned::AssignedNames, value::BigInt};
 use crate::ir::{
-    MonoArm, MonoExpr, MonoExprKind, MonoId, MonoParam, MonoPat, MonoPatKind, MonoStmt,
-    MonoStmtKind, MonoTy,
+    MonoArm, MonoBuiltinCtor, MonoExpr, MonoExprKind, MonoId, MonoParam, MonoPat, MonoPatKind,
+    MonoStmt, MonoStmtKind, MonoTy,
     visit::{Visitor, walk_pat, walk_stmt},
 };
 
@@ -68,11 +68,14 @@ pub(super) fn known_string(expr: &MonoExpr<'_>) -> Option<String> {
     }
 }
 
-pub(super) fn known_bool(expr: &MonoExpr<'_>) -> Option<bool> {
+pub(super) fn known_bool<'db>(db: &'db dyn hir_ty::Db, expr: &MonoExpr<'db>) -> Option<bool> {
     match &expr.kind {
-        MonoExprKind::Con { ctor, .. } if ctor.name == "true" || ctor.name == "inr" => Some(true),
-        MonoExprKind::Con { ctor, .. } if ctor.name == "false" || ctor.name == "inl" => Some(false),
-        MonoExprKind::TypeAnnot { expr, .. } => known_bool(expr),
+        MonoExprKind::Con { ctor, .. } => match ctor.builtin_ctor(db) {
+            Some(MonoBuiltinCtor::True | MonoBuiltinCtor::Inr) => Some(true),
+            Some(MonoBuiltinCtor::False | MonoBuiltinCtor::Inl) => Some(false),
+            _ => None,
+        },
+        MonoExprKind::TypeAnnot { expr, .. } => known_bool(db, expr),
         _ => None,
     }
 }
@@ -102,7 +105,12 @@ pub(super) fn string_expr<'db>(value: String, ty: MonoTy<'db>, span: Span<'db>) 
 }
 
 pub(super) fn bool_expr<'db>(value: bool, ty: MonoTy<'db>, span: Span<'db>) -> MonoExpr<'db> {
-    let name = if value { "true" } else { "false" }.to_owned();
+    let name = if value {
+        MonoBuiltinCtor::True.name()
+    } else {
+        MonoBuiltinCtor::False.name()
+    }
+    .to_owned();
     MonoExpr {
         span,
         ty,

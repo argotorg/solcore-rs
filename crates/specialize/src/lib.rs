@@ -19,7 +19,7 @@ mod ir;
 mod specialize;
 
 pub use ir::{
-    LetMode, MonoAbiParam, MonoArm, MonoCallOrigin, MonoComptimeObligation,
+    LetMode, MonoAbiParam, MonoArm, MonoBuiltinCtor, MonoCallOrigin, MonoComptimeObligation,
     MonoComptimeObligationKind, MonoConstructor, MonoContract, MonoEntry, MonoExpr, MonoExprArm,
     MonoExprKind, MonoFallback, MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem,
     MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy, ParamMode,

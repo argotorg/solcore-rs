@@ -351,7 +351,7 @@ impl<'db> Emitter<'db> {
                     args: args.iter().map(|arg| self.emit_expr(arg)).collect(),
                 },
             },
-            MonoExprKind::Con { ctor, args } => self.emit_constructor(expr, &ctor.name, args),
+            MonoExprKind::Con { ctor, args } => self.emit_constructor(expr, ctor, args),
             MonoExprKind::BinOp { lhs, op, rhs } => self.emit_bin_op(expr.span, ty, lhs, *op, rhs),
             MonoExprKind::UnaryOp { op, expr: inner } => {
                 self.emit_unary_op(expr.span, ty, *op, inner)
@@ -464,7 +464,7 @@ impl<'db> Emitter<'db> {
         scrutinee: &MonoExpr<'db>,
         arms: &[MonoExprArm<'db>],
     ) -> Expr<'db> {
-        let Some((then_expr, else_expr)) = bool_match_expr_arms(arms) else {
+        let Some((then_expr, else_expr)) = bool_match_expr_arms(self.db, arms) else {
             self.push(
                 expr.span,
                 EmitDiagnosticKind::UnsupportedMonoConstruct {
@@ -536,7 +536,7 @@ impl<'db> Emitter<'db> {
     fn emit_constructor(
         &mut self,
         expr: &MonoExpr<'db>,
-        ctor_name: &str,
+        ctor: &MonoId<'db>,
         args: &[MonoExpr<'db>],
     ) -> Expr<'db> {
         let target = if sem_ty_needs_untyped_word_default(self.db, expr.ty.ty()) {
@@ -544,13 +544,14 @@ impl<'db> Emitter<'db> {
         } else {
             self.hull_ty(expr.ty.ty(), expr.span)
         };
-        match ctor_name {
-            "()" => return Expr::unit(expr.span),
-            "pair" => {
+        let ctor_name = ctor.name.as_str();
+        match ctor.builtin_ctor(self.db) {
+            Some(MonoBuiltinCtor::Unit) => return Expr::unit(expr.span),
+            Some(MonoBuiltinCtor::Pair) => {
                 let args = args.iter().map(|arg| self.emit_expr(arg)).collect();
                 return product_expr(expr.span, target, args);
             }
-            "true" => {
+            Some(MonoBuiltinCtor::True) => {
                 let payload = Expr::unit(expr.span);
                 return Expr {
                     span: expr.span,
@@ -561,7 +562,7 @@ impl<'db> Emitter<'db> {
                     },
                 };
             }
-            "false" => {
+            Some(MonoBuiltinCtor::False) => {
                 let payload = Expr::unit(expr.span);
                 return Expr {
                     span: expr.span,
@@ -572,12 +573,12 @@ impl<'db> Emitter<'db> {
                     },
                 };
             }
-            "inl" | "inr" if args.len() == 1 => {
+            Some(MonoBuiltinCtor::Inl | MonoBuiltinCtor::Inr) if args.len() == 1 => {
                 let value = self.emit_expr(&args[0]);
                 return Expr {
                     span: expr.span,
                     ty: target.clone(),
-                    kind: if ctor_name == "inl" {
+                    kind: if ctor.is_builtin_ctor(self.db, MonoBuiltinCtor::Inl) {
                         ExprKind::Inl {
                             target,
                             value: Box::new(value),
@@ -590,6 +591,9 @@ impl<'db> Emitter<'db> {
                     },
                 };
             }
+            _ => {}
+        }
+        match ctor_name {
             "uint256" | "uint" | "bytes32" | "address" if args.len() == 1 => {
                 let mut value = self.emit_expr(&args[0]);
                 value.ty = if sem_ty_needs_untyped_word_default(self.db, expr.ty.ty()) {
@@ -895,12 +899,13 @@ fn mono_expr_name(kind: &MonoExprKind<'_>) -> &'static str {
 }
 
 fn bool_match_expr_arms<'a, 'db>(
+    db: &'db dyn hir_ty::Db,
     arms: &'a [MonoExprArm<'db>],
 ) -> Option<(&'a MonoExpr<'db>, &'a MonoExpr<'db>)> {
     let mut then_expr = None;
     let mut else_expr = None;
     for arm in arms {
-        match bool_constructor_pat_value(&arm.pat)? {
+        match bool_constructor_pat_value(db, &arm.pat)? {
             true if then_expr.is_none() => then_expr = Some(&arm.expr),
             false if else_expr.is_none() => else_expr = Some(&arm.expr),
             _ => return None,
@@ -909,10 +914,18 @@ fn bool_match_expr_arms<'a, 'db>(
     Some((then_expr?, else_expr?))
 }
 
-fn bool_constructor_pat_value(pat: &MonoPat<'_>) -> Option<bool> {
+fn bool_constructor_pat_value<'db>(db: &'db dyn hir_ty::Db, pat: &MonoPat<'db>) -> Option<bool> {
     match &pat.kind {
-        MonoPatKind::Con { ctor, args } if args.is_empty() && ctor.name == "true" => Some(true),
-        MonoPatKind::Con { ctor, args } if args.is_empty() && ctor.name == "false" => Some(false),
+        MonoPatKind::Con { ctor, args }
+            if args.is_empty() && ctor.is_builtin_ctor(db, MonoBuiltinCtor::True) =>
+        {
+            Some(true)
+        }
+        MonoPatKind::Con { ctor, args }
+            if args.is_empty() && ctor.is_builtin_ctor(db, MonoBuiltinCtor::False) =>
+        {
+            Some(false)
+        }
         _ => None,
     }
 }

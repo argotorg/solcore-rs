@@ -396,7 +396,7 @@ impl<'db> Evaluator<'db> {
                 let mut env = env;
                 let mut comptime_env = comptime_env;
                 self.invalidate_assigned_effects(&cond_effects, &mut env, &mut comptime_env);
-                if let Some(value) = known_bool(&cond) {
+                if let Some(value) = known_bool(self.db, &cond) {
                     let selected = if value {
                         then_body
                     } else {
@@ -1028,7 +1028,7 @@ impl<'db> Evaluator<'db> {
                 else_expr,
             } => {
                 let cond = self.eval_expr(env, comptime_env, *cond);
-                if let Some(value) = known_bool(&cond) {
+                if let Some(value) = known_bool(self.db, &cond) {
                     return if value {
                         self.eval_expr(env, comptime_env, *then_expr)
                     } else {
@@ -1438,7 +1438,7 @@ impl<'db> Evaluator<'db> {
         span: Span<'db>,
     ) -> Option<MonoExpr<'db>> {
         match op {
-            UnOp::Not => known_bool(expr).map(|value| bool_expr(!value, ty, span)),
+            UnOp::Not => known_bool(self.db, expr).map(|value| bool_expr(!value, ty, span)),
             UnOp::Error => None,
         }
     }
@@ -1775,7 +1775,7 @@ impl<'db> Evaluator<'db> {
                     else_body,
                 } => {
                     let cond = self.eval_expr(&env, &comptime_env, cond);
-                    let Some(cond) = known_bool(&cond) else {
+                    let Some(cond) = known_bool(self.db, &cond) else {
                         return FoldOutcome::ReturnedUnknownAbort;
                     };
                     let body = if cond {

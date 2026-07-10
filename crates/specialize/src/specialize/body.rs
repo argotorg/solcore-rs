@@ -1044,5 +1044,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
 }
 
 fn bool_ctor_name(value: bool) -> &'static str {
-    if value { "true" } else { "false" }
+    if value {
+        MonoBuiltinCtor::True.name()
+    } else {
+        MonoBuiltinCtor::False.name()
+    }
 }

@@ -3,7 +3,7 @@ use hir::{
     ast::function::{AssignOp, BinOp, LitKind, UnOp, YulStmt},
     span::Span,
 };
-use hir_ty::{AbiType, FrontendDesugarPlan, Ty};
+use hir_ty::{AbiType, BuiltinTyCtor, FrontendDesugarPlan, Ty, TyCtor, TyKind};
 
 pub(crate) mod visit;
 
@@ -31,6 +31,75 @@ pub struct MonoId<'db> {
     pub name: String,
     pub ty: MonoTy<'db>,
     pub span: Span<'db>,
+}
+
+impl<'db> MonoId<'db> {
+    /// Returns the builtin constructor identity represented by this id, when
+    /// both the backend name and the semantic result type agree.
+    pub fn builtin_ctor(&self, db: &'db dyn hir_ty::Db) -> Option<MonoBuiltinCtor> {
+        MonoBuiltinCtor::from_name(&self.name).filter(|ctor| ctor.matches_result_ty(db, self.ty.ty))
+    }
+
+    /// Checks whether this id is the given builtin constructor.
+    pub fn is_builtin_ctor(&self, db: &'db dyn hir_ty::Db, ctor: MonoBuiltinCtor) -> bool {
+        self.builtin_ctor(db) == Some(ctor)
+    }
+}
+
+/// Builtin constructor identities carried in mono IR by name plus semantic type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MonoBuiltinCtor {
+    Unit,
+    Pair,
+    True,
+    False,
+    Inl,
+    Inr,
+}
+
+impl MonoBuiltinCtor {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Unit => "()",
+            Self::Pair => "pair",
+            Self::True => "true",
+            Self::False => "false",
+            Self::Inl => "inl",
+            Self::Inr => "inr",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "()" => Some(Self::Unit),
+            "pair" => Some(Self::Pair),
+            "true" => Some(Self::True),
+            "false" => Some(Self::False),
+            "inl" => Some(Self::Inl),
+            "inr" => Some(Self::Inr),
+            _ => None,
+        }
+    }
+
+    fn matches_result_ty<'db>(self, db: &'db dyn hir_ty::Db, ty: Ty<'db>) -> bool {
+        let expected = self.result_ty_ctor();
+        matches!(
+            ty.kind(db),
+            TyKind::Named {
+                ctor: TyCtor::Builtin(actual),
+                ..
+            } if *actual == expected
+        )
+    }
+
+    fn result_ty_ctor(self) -> BuiltinTyCtor {
+        match self {
+            Self::Unit => BuiltinTyCtor::Unit,
+            Self::Pair => BuiltinTyCtor::Pair,
+            Self::True | Self::False => BuiltinTyCtor::Bool,
+            Self::Inl | Self::Inr => BuiltinTyCtor::Sum,
+        }
+    }
 }
 
 /// Intrinsic call that may be folded by the evaluator.
