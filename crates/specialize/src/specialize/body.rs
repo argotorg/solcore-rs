@@ -296,11 +296,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 cond,
                 then_expr,
                 else_expr,
-            } => MonoExprKind::If {
-                cond: Box::new(self.expr(*cond)?),
-                then_expr: Box::new(self.expr(*then_expr)?),
-                else_expr: Box::new(self.expr(*else_expr)?),
-            },
+            } => self.if_expr(expr_id, *cond, *then_expr, *else_expr)?,
             ExprKind::Lambda { params, body, .. } => {
                 self.lambda_expr(params.atom(), *body, ty, expr.span)?
             }
@@ -708,6 +704,26 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     body: else_body,
                 },
             ],
+        })
+    }
+
+    fn if_expr(
+        &mut self,
+        expr_id: Id<Expr<'db>>,
+        fallback_cond: Id<Expr<'db>>,
+        fallback_then_expr: Id<Expr<'db>>,
+        fallback_else_expr: Id<Expr<'db>>,
+    ) -> Option<MonoExprKind<'db>> {
+        let planned = self
+            .desugar_view()
+            .if_expr_match(self.body, expr_id)
+            .map(|view| (view.cond, view.then_expr, view.else_expr));
+        let (cond, then_expr, else_expr) =
+            planned.unwrap_or((fallback_cond, fallback_then_expr, fallback_else_expr));
+        Some(MonoExprKind::If {
+            cond: Box::new(self.expr(cond)?),
+            then_expr: Box::new(self.expr(then_expr)?),
+            else_expr: Box::new(self.expr(else_expr)?),
         })
     }
 

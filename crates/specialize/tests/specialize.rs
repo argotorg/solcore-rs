@@ -1294,6 +1294,40 @@ contract C {
 }
 
 #[test]
+fn if_expression_specializes_through_pre_typeck_match_view() {
+    let (_db, output) = specialize_src(
+        r#"
+contract C {
+  public function main(c: bool) -> word {
+    let x : word = if (c) then 2 else 3;
+    return x;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let main = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| {
+            let MonoItem::Function(function) = item else {
+                return None;
+            };
+            function.name.contains("main").then_some(function)
+        })
+        .expect("specialized main");
+    let MonoStmtKind::Let {
+        init: Some(init), ..
+    } = &main.body[0].kind
+    else {
+        panic!("expected if expression let init: {:#?}", main.body);
+    };
+    assert!(matches!(&init.kind, MonoExprKind::If { .. }));
+}
+
+#[test]
 fn bool_constructors_specialize_through_pre_typeck_unit_sum_view() {
     let (_db, output) = specialize_src(
         r#"
