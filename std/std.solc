@@ -1225,6 +1225,13 @@ instance uint256:ABIEncode {
     }
 }
 
+instance word:ABIEncode {
+    function encodeInto(x:word, basePtr:word, offset:word, tail:word) -> word {
+        mstore(basePtr + offset, x);
+        return tail;
+    }
+}
+
 instance address:ABIEncode {
     // an address is written directly into the head (into a full 32-byte slot)
     function encodeInto(x:address, basePtr:word, offset:word, tail:word) -> word {
@@ -1363,6 +1370,13 @@ forall ty reader . reader:WordReader => instance ABIDecoder(ty, reader):WordRead
 forall reader . reader:WordReader => instance ABIDecoder(uint256, reader):ABIDecode(uint256) {
     function decode(ptr:ABIDecoder(uint256, reader), currentHeadOffset:word) -> uint256 {
         return Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset))) : uint256;
+    }
+}
+
+// `word` has the same ABI representation as uint256, without a typedef wrapper.
+forall reader . reader:WordReader => instance ABIDecoder(word, reader):ABIDecode(word) {
+    function decode(ptr:ABIDecoder(word, reader), currentHeadOffset:word) -> word {
+        return WordReader.read(WordReader.advance(ptr, currentHeadOffset));
     }
 }
 

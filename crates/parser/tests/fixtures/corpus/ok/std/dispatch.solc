@@ -50,6 +50,8 @@ forall t. t: SigString =>
 function sigStr(p:Proxy(t)) -> string { SigString.sigStr(p) }
 
 instance uint256 : SigString { function sigStr(x:Proxy(uint256)) -> string { "uint256" }}
+// `word` is Solcore Rust's primitive spelling for the EVM uint256 ABI type.
+instance word : SigString { function sigStr(x:Proxy(word)) -> string { "uint256" }}
 instance bool : SigString { function sigStr(x:Proxy(bool)) -> string { "bool" }}
 instance bytes32 : SigString { function sigStr(x:Proxy(bytes32)) -> string { "bytes32" }}
 instance address : SigString { function sigStr(x:Proxy(address)) -> string { "address" }}
