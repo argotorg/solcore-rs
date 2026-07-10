@@ -14,7 +14,7 @@ impl<'db> Emitter<'db> {
         Self {
             db,
             module: hir_module,
-            options,
+            _options: options,
             diagnostics: Vec::new(),
             scopes: ScopeStack::new_root(BTreeMap::new()),
             function_names: BTreeSet::new(),

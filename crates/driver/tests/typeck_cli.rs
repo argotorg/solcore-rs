@@ -452,9 +452,10 @@ contract C {
     let yul_stdout = String::from_utf8_lossy(&yul.stdout);
     assert!(yul_stdout.contains("object \"CDeploy\""), "{yul_stdout}");
     assert!(
-        yul_stdout.contains("switch src$C_dispatch_selector_"),
+        yul_stdout.contains("function usr$main_C_main_"),
         "{yul_stdout}"
     );
+    assert!(!yul_stdout.contains("dispatch_selector"), "{yul_stdout}");
 
     let hull = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
         .arg("--output-dir")
@@ -471,7 +472,8 @@ contract C {
     );
     let hull_text = fs::read_to_string(&hull_output).expect("read hull output");
     assert!(hull_text.contains("object \"CDeploy\""), "{hull_text}");
-    assert!(hull_text.contains("match<word>"), "{hull_text}");
+    assert!(hull_text.contains("function main_C_main_"), "{hull_text}");
+    assert!(!hull_text.contains("dispatch_selector"), "{hull_text}");
 
     let _ = fs::remove_dir_all(&dir);
 }

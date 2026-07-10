@@ -18,53 +18,12 @@ object "OptionDocDeploy" {
   }
   object "OptionDoc" {
     code {
-      function usr$doc_option_maybe_OptionDoc_main_dd6304f4c() -> gen$result_1 {
+      function usr$doc_option_maybe_OptionDoc_main_d5564561b() -> gen$result_1 {
         gen$result_1 := 42
         leave
       }
-      /* selector 0xdffeadd0 -> doc_option_maybe_OptionDoc_main_dd6304f4c */
-      mstore(0x40, memoryguard(128))
       let _v0
-      _v0 := calldatasize()
-      let _v1
-      _v1 := lt(_v0, 4)
-      switch _v1
-        case true {
-          if callvalue() {
-            mstore(0, 0xb5988ea3)
-            revert(28, 4)
-          }
-          mstore(0, 0x4924aef0)
-          revert(28, 4)
-        }
-        case false {
-          let src$OptionDoc_dispatch_selector_2
-          src$OptionDoc_dispatch_selector_2 := shr(224, calldataload(0))
-          switch src$OptionDoc_dispatch_selector_2
-            case 0xdffeadd0 {
-              if callvalue() {
-                mstore(0, 0xb5988ea3)
-                revert(28, 4)
-              }
-              let src$dispatch_ret0_3
-              let _v2
-              _v2 := usr$doc_option_maybe_OptionDoc_main_dd6304f4c()
-              src$dispatch_ret0_3 := _v2
-              let src$dispatch_ret0_word_4
-              src$dispatch_ret0_word_4 := 0
-              src$dispatch_ret0_word_4 := src$dispatch_ret0_3
-              mstore(0, src$dispatch_ret0_word_4)
-              return(0, 32)
-            }
-            default {
-              if callvalue() {
-                mstore(0, 0xb5988ea3)
-                revert(28, 4)
-              }
-              mstore(0, 0x4924aef0)
-              revert(28, 4)
-            }
-        }
+      _v0 := usr$doc_option_maybe_OptionDoc_main_d5564561b()
     }
   }
 }

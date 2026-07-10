@@ -14,7 +14,9 @@ function onlyA(b : B) -> word {
 }
 
 contract C {
-  public function main(x : word) -> word {
+  public function main() -> word {
+    let x: word;
+    assembly { x := calldataload(0) }
     return onlyA(choose(x));
   }
 }

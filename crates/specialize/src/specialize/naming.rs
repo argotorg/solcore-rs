@@ -133,10 +133,18 @@ pub(super) fn reachable_modules<'db>(db: &'db dyn Db, entry: Module<'db>) -> Vec
     };
     let graph = resolve_reachable_full(db, entry_id);
     let mut modules = vec![entry];
-    modules.extend(graph.modules.into_iter().filter_map(|module| {
-        db.module_file(module)
-            .map(|file| parse_file_to_hir(db, file).module(db))
-    }));
+    modules.extend(
+        graph
+            .modules
+            .into_iter()
+            .filter(|module| *module != entry_id)
+            .filter_map(|module| {
+                db.module_file(module).map(|file| {
+                    let source = parse_file_to_hir(db, file).module(db);
+                    prepare_module(db, source).module(db)
+                })
+            }),
+    );
     modules
 }
 
@@ -145,16 +153,7 @@ pub(super) fn specialization_trait_env<'db>(
     module: Module<'db>,
     resolution: &hir_nameres::ModuleResolutionMap<'db>,
 ) -> hir_ty::TraitEnvId<'db> {
-    if module
-        .items(db)
-        .iter()
-        .any(|item| matches!(item, Item::Import(_)))
-        && let Some(module_id) = module_id_for_source_file(db, module.def_id_value(db).file(db))
-    {
-        let file = module.def_id_value(db).file(db);
-        if db.module_file(module_id) == Some(file) {
-            return trait_env_for_module(db, module_id);
-        }
+    if let Some(module_id) = module_id_for_source_file(db, module.def_id_value(db).file(db)) {
         let env = nameres::module_env_for_hir_module(db, module_id, module);
         return trait_env_from_module_resolution_and_imports(
             db,
@@ -170,25 +169,7 @@ pub(super) fn module_id_for_source_file<'db>(
     db: &'db dyn Db,
     file: SourceFile,
 ) -> Option<ModuleId<'db>> {
-    let path = hir::url_to_file_path(file.url(db))?;
-    let tree = db.module_tree();
-    let mut candidates = Vec::new();
-    if let Some(key) = module_key_for_path(LibraryId::Main, tree.main_root(db), &path) {
-        candidates.push(module_id_from_key(db, &key));
-    }
-    if let Some(key) = module_key_for_path(LibraryId::Std, tree.std_root(db), &path) {
-        candidates.push(module_id_from_key(db, &key));
-    }
-    for (name, root) in tree.external_roots(db) {
-        if let Some(key) = module_key_for_path(LibraryId::External(name.clone()), root, &path) {
-            candidates.push(module_id_from_key(db, &key));
-        }
-    }
-    candidates
-        .iter()
-        .copied()
-        .find(|candidate| db.module_file(*candidate) == Some(file))
-        .or_else(|| candidates.into_iter().next())
+    nameres::module_id_for_source_file(db, file)
 }
 
 pub(super) fn resolve_specialize_module<'db>(
@@ -198,12 +179,7 @@ pub(super) fn resolve_specialize_module<'db>(
     let Some(module_id) = module_id_for_source_file(db, module.def_id_value(db).file(db)) else {
         return hir_nameres::resolve_module(db, module);
     };
-    let file = module.def_id_value(db).file(db);
-    let env = if db.module_file(module_id) == Some(file) {
-        nameres::module_env(db, module_id)
-    } else {
-        nameres::module_env_for_hir_module(db, module_id, module)
-    };
+    let env = nameres::module_env_for_hir_module(db, module_id, module);
     let Some(item_scope) = env.item_scope.clone() else {
         return hir_nameres::resolve_module(db, module);
     };
@@ -225,31 +201,6 @@ pub(super) fn mono_abi_params(params: Vec<AbiParam>) -> Vec<MonoAbiParam> {
             components: mono_abi_params(param.components),
         })
         .collect()
-}
-
-pub(super) fn lowered_function_has_inferred_dispatch_placeholder<'db>(
-    db: &'db dyn Db,
-    lowered: &LoweredFunction<'db>,
-) -> bool {
-    lowered
-        .params
-        .iter()
-        .chain(std::iter::once(&lowered.ret))
-        .any(|ty| ty_has_inferred_dispatch_placeholder(db, *ty))
-}
-
-fn ty_has_inferred_dispatch_placeholder<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
-    match ty.kind(db) {
-        TyKind::Unknown | TyKind::BoundVar(_) | TyKind::Function { .. } => true,
-        TyKind::Named { args, .. } => args
-            .iter()
-            .any(|arg| ty_has_inferred_dispatch_placeholder(db, *arg)),
-        TyKind::Tuple(elems) => elems
-            .iter()
-            .any(|elem| ty_has_inferred_dispatch_placeholder(db, *elem)),
-        TyKind::Comptime(inner) => ty_has_inferred_dispatch_placeholder(db, *inner),
-        TyKind::Error => false,
-    }
 }
 
 pub(super) fn function_param_ty<'db>(

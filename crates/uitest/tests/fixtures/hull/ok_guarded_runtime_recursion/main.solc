@@ -9,7 +9,7 @@ function countdown(n: word) -> word {
 }
 
 contract Counter {
-  public function main(n: word) -> word {
-    return countdown(n);
+  public function main() -> word {
+    return countdown(3);
   }
 }

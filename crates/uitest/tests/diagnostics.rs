@@ -78,12 +78,27 @@ fn specialize_fail_diagnostics(fixture: Fixture<&str>) {
     glob: "**/main.solc"
 )]
 fn hull_fail_diagnostics(fixture: Fixture<&str>) {
-    run_fixture_case(fixture, hull_diagnostics);
+    run_fixture_case_with_dependencies(fixture, hull_diagnostics);
 }
 
 fn run_fixture_case(
     fixture: Fixture<&str>,
     diagnostics: fn(&TestDb, ModuleKey) -> Vec<Diagnostic>,
+) {
+    run_fixture_case_with_options(fixture, diagnostics, false);
+}
+
+fn run_fixture_case_with_dependencies(
+    fixture: Fixture<&str>,
+    diagnostics: fn(&TestDb, ModuleKey) -> Vec<Diagnostic>,
+) {
+    run_fixture_case_with_options(fixture, diagnostics, true);
+}
+
+fn run_fixture_case_with_options(
+    fixture: Fixture<&str>,
+    diagnostics: fn(&TestDb, ModuleKey) -> Vec<Diagnostic>,
+    load_dependencies: bool,
 ) {
     let case_dir = PathBuf::from(fixture.path())
         .parent()
@@ -98,7 +113,10 @@ fn run_fixture_case(
         } else {
             load_fixture_case(&mut db, &case_dir, &repo_root, BTreeMap::new())
         };
-        if allows_success {
+        if allows_success || load_dependencies {
+            // Keep the entry's stable virtual URL for snapshots, but give
+            // imported dependencies their real file URLs so backend queries
+            // can recover canonical module identities from configured roots.
             load_reachable_modules_with_file_urls(&mut db, entry.clone());
             let entry_id = module_id_from_key(&db, &entry);
             let _ = nameres::resolve_reachable_full(&db, entry_id);
@@ -142,6 +160,15 @@ fn hull_diagnostics(db: &TestDb, entry: ModuleKey) -> Vec<Diagnostic> {
         return Vec::new();
     };
     let module = parser::parse_file_to_hir(db, file).module(db);
+    // Hull failure fixtures deliberately exercise backend validation even for
+    // programs that the full frontend would reject first. Contract-surface
+    // errors are different: they make the generated std.dispatch wrapper
+    // invalid, so diagnose those source declarations before specialization.
+    let mut contract_diagnostics = hir_ty::module_contract_diagnostics(db, module);
+    sort_dedup_diagnostics(db, &mut contract_diagnostics);
+    if !contract_diagnostics.is_empty() {
+        return contract_diagnostics;
+    }
     let output =
         specialize::specialize_module(db, module, specialize::SpecializeOptions::default());
     let mut diagnostics = output

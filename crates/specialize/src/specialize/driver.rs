@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) struct Driver<'db> {
     pub(super) db: &'db dyn Db,
+    pub(super) prepared: PreparedModule<'db>,
     pub(super) module: Module<'db>,
     pub(super) entry_module: Option<ModuleId<'db>>,
     pub(super) modules: Vec<Module<'db>>,
@@ -81,7 +82,12 @@ pub(super) struct PendingSpec<'db> {
 }
 
 impl<'db> Driver<'db> {
-    pub(super) fn new(db: &'db dyn Db, module: Module<'db>, options: SpecializeOptions) -> Self {
+    pub(super) fn new(
+        db: &'db dyn Db,
+        prepared: PreparedModule<'db>,
+        options: SpecializeOptions,
+    ) -> Self {
+        let module = prepared.module(db);
         let entry_module = module_id_for_source_file(db, module.def_id_value(db).file(db));
         let modules = reachable_modules(db, module);
         let mut module_resolutions = FxHashMap::default();
@@ -94,6 +100,7 @@ impl<'db> Driver<'db> {
         }
         let mut driver = Self {
             db,
+            prepared,
             module,
             entry_module,
             modules,
@@ -346,7 +353,14 @@ impl<'db> Driver<'db> {
             let constructor_surface = surface.constructor.clone();
             let fallback_surface = surface.fallback.clone();
             let mut entries = Vec::new();
-            let mut blocked_dispatch_entry = false;
+            let mut blocked_runtime_entry = false;
+            for method in &surface.methods {
+                if let Some(info) = self.functions.get(&method.def).cloned()
+                    && self.reject_public_comptime_params(&info)
+                {
+                    blocked_runtime_entry = true;
+                }
+            }
             let mut constructor_meta = MonoConstructor {
                 source: None,
                 explicit: matches!(constructor_surface, DispatchConstructor::Explicit { .. }),
@@ -382,50 +396,14 @@ impl<'db> Driver<'db> {
                 },
                 span: contract.span(self.db),
             };
-            let synthetic_main = contract.items(self.db).iter().find_map(|item| {
+            let runtime_main = contract.items(self.db).iter().find_map(|item| {
                 let ContractItem::FunctionDef(function) = *item else {
                     return None;
                 };
-                (ident_text(self.db, &function.sig(self.db).name) == "main"
-                    && function.sig(self.db).public.is_none())
-                .then_some(function)
+                let def = function.def_id_value(self.db);
+                self.runtime_main_origin(function, def)
+                    .map(|origin| (function, origin))
             });
-            if synthetic_main.is_none() {
-                for method in surface.methods {
-                    if let Some(info) = self.functions.get(&method.def).cloned()
-                        && self.reject_public_comptime_params(&info)
-                    {
-                        blocked_dispatch_entry = true;
-                        continue;
-                    }
-                    if let Some(info) = self.functions.get(&method.def).cloned() {
-                        let Some(lowered) = self.try_lower_normalized_function(&info) else {
-                            continue;
-                        };
-                        if lowered_function_has_inferred_dispatch_placeholder(self.db, &lowered) {
-                            continue;
-                        }
-                    }
-                    if let Some(key) = self.root_for_def(method.def) {
-                        entries.push(MonoEntry::SelectorMethod {
-                            source: method.def,
-                            name: method.name,
-                            specialized: key.base_name.clone(),
-                            span: self
-                                .functions
-                                .get(&method.def)
-                                .map(|info| info.function.span(self.db))
-                                .unwrap_or_else(|| contract.span(self.db)),
-                            selector: method.selector.0,
-                            signature: method.signature,
-                            payable: method.payable,
-                            inputs: mono_abi_params(method.inputs),
-                            outputs: mono_abi_params(method.outputs),
-                        });
-                        roots.push(key);
-                    }
-                }
-            }
             if let DispatchConstructor::Explicit {
                 source_index,
                 payable,
@@ -476,14 +454,15 @@ impl<'db> Driver<'db> {
                 });
                 roots.push(key);
             }
-            if !blocked_dispatch_entry
-                && let Some(function) = synthetic_main
+            if !blocked_runtime_entry
+                && let Some((function, origin)) = runtime_main
                 && let Some(key) = self.root_for_def(function.def_id_value(self.db))
             {
-                entries.push(MonoEntry::SyntheticMain {
+                entries.push(MonoEntry::RuntimeMain {
                     source: function.def_id_value(self.db),
                     specialized: key.base_name.clone(),
                     span: function.span(self.db),
+                    origin,
                 });
                 roots.push(key);
             }
@@ -532,6 +511,24 @@ impl<'db> Driver<'db> {
             rejected = true;
         }
         rejected
+    }
+
+    fn runtime_main_origin(
+        &self,
+        function: FunctionDef<'db>,
+        def: DefId<'db>,
+    ) -> Option<MonoRuntimeMainOrigin> {
+        if self
+            .prepared
+            .origin_for_def(self.db, def)
+            .is_some_and(|origin| origin.kind == GeneratedOriginKind::ContractDispatchMain)
+            || is_contract_dispatch_main_def(self.db, def)
+        {
+            return Some(MonoRuntimeMainOrigin::StdDispatch);
+        }
+        (function.kind(self.db) == FuncKind::Function
+            && ident_text(self.db, &function.sig(self.db).name) == "main")
+            .then_some(MonoRuntimeMainOrigin::User)
     }
 
     fn root_for_def(&mut self, def: DefId<'db>) -> Option<SpecKey<'db>> {
@@ -947,10 +944,11 @@ impl<'db> Driver<'db> {
         ))
         .with_trait_env(trait_env)
         .with_pre_typeck_desugar(pre_typeck_desugar);
-        if let Some(entry_module) = self.entry_module {
-            let ctx = ctx.with_entry_module(entry_module);
-            return Some(infer_body(self.db, body, ctx));
-        }
+        let ctx = if let Some(entry_module) = self.entry_module {
+            ctx.with_entry_module(entry_module)
+        } else {
+            ctx
+        };
         Some(infer_body(self.db, body, ctx))
     }
 

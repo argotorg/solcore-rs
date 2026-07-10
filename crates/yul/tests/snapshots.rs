@@ -7,7 +7,6 @@ use std::{
 
 use hir::{
     anchor::DefLocationTable,
-    ast::item::Module,
     diag::Offset,
     input::SourceFile,
     span::{AnchorId, Span},
@@ -82,6 +81,9 @@ fn doc_id_yul_snapshot() {
         render_source(
             "doc_id",
             r#"
+import std.{*};
+import std.dispatch.{*};
+
 contract IdDoc {
   public function id(x : word) -> word {
     return x;
@@ -139,6 +141,9 @@ fn dispatch_basic_shape_yul_snapshot() {
         render_source(
             "dispatch_basic_shape",
             r#"
+import std.{*};
+import std.dispatch.{*};
+
 contract DispatchBasicShape {
   public function id(x : word) -> word {
     return x;
@@ -846,15 +851,28 @@ fn render_output_with_object(
 
 fn specialize_src(name: &str, src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {
     let db = Box::leak(Box::new(TestDb::default()));
-    let module = parse_module(db, name, src);
-    let output = specialize_module(db, module, SpecializeOptions::default());
-    (db, output)
-}
+    let main_root = PathBuf::from("/main");
+    let std_root = repo_root().join("std");
+    let tree = ModuleTree::new(&*db, main_root.clone(), std_root.clone(), BTreeMap::new());
+    let fs_snapshot = module_fs_snapshot_for_roots(&*db, [std_root.as_path()]);
+    db.module_tree = Some(tree);
+    db.module_fs_snapshot = Some(fs_snapshot);
 
-fn parse_module<'db>(db: &'db TestDb, name: &str, src: &str) -> Module<'db> {
-    let url = format!("memory:///{name}.solc").parse().expect("valid URL");
-    let file = SourceFile::new(db, url, Some(src.to_owned()));
-    parse_file_to_hir(db, file).module(db)
+    let path = main_root.join(format!("{name}.solc"));
+    let key = module_key_for_path(LibraryId::Main, &main_root, &path)
+        .expect("inline source under virtual main root");
+    let file = SourceFile::new(
+        &*db,
+        url::Url::from_file_path(&path).expect("file URL"),
+        Some(src.to_owned()),
+    );
+    db.module_files.insert(key.clone(), file);
+    let unresolved = load_reachable_modules(db, key);
+    assert!(unresolved.is_empty(), "{unresolved:?}");
+
+    let module = parse_file_to_hir(&*db, file).module(&*db);
+    let output = specialize_module(&*db, module, SpecializeOptions::default());
+    (&*db, output)
 }
 
 fn yul_function<'a>(yul: &'a str, name: &str) -> &'a str {
@@ -1067,6 +1085,9 @@ fn snapshot_yul_cases() -> Vec<(String, String)> {
             render_source(
                 "doc_id",
                 r#"
+import std.{*};
+import std.dispatch.{*};
+
 contract IdDoc {
   public function id(x : word) -> word {
     return x;
@@ -1114,6 +1135,9 @@ contract OptionDoc {
             render_source(
                 "dispatch_basic_shape",
                 r#"
+import std.{*};
+import std.dispatch.{*};
+
 contract DispatchBasicShape {
   public function id(x : word) -> word {
     return x;

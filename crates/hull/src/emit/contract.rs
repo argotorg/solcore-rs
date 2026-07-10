@@ -73,8 +73,8 @@ impl<'db> Emitter<'db> {
         );
 
         let mut runtime_stmts = Vec::new();
-        let synthetic_main = contract.entries.iter().find_map(|entry| {
-            if let MonoEntry::SyntheticMain {
+        let runtime_main = contract.entries.iter().find_map(|entry| {
+            if let MonoEntry::RuntimeMain {
                 specialized, span, ..
             } = entry
             {
@@ -83,39 +83,33 @@ impl<'db> Emitter<'db> {
                 None
             }
         });
-        if let Some((main, span)) = synthetic_main {
+        if let Some((main, span)) = runtime_main {
+            let ret = runtime_functions
+                .iter()
+                .find(|function| function.name.as_str() == main)
+                .map(|function| function.ret.clone())
+                .unwrap_or_else(|| Ty::unit(span));
             runtime_stmts.push(Stmt {
                 span,
                 kind: StmtKind::Expr(Expr {
                     span,
-                    ty: Ty::unit(span),
+                    // A source `main` may return a value even though the EVM
+                    // runtime entry ignores it. Preserve the callee's actual
+                    // Hull type so the entry call remains well-typed.
+                    ty: ret,
                     kind: ExprKind::Call {
                         callee: main.clone().into(),
                         args: Vec::new(),
                     },
                 }),
             });
-        } else if self.options.emit_dispatcher_comments {
-            for entry in &contract.entries {
-                if let MonoEntry::SelectorMethod {
-                    selector,
-                    specialized,
-                    span,
-                    ..
-                } = entry
-                {
-                    runtime_stmts.push(Stmt {
-                        span: *span,
-                        kind: StmtKind::Comment(format!(
-                            "selector 0x{:02x}{:02x}{:02x}{:02x} -> {}",
-                            selector[0], selector[1], selector[2], selector[3], specialized
-                        )),
-                    });
-                }
-            }
-        }
-        if synthetic_main.is_none() {
-            runtime_stmts.extend(self.emit_dispatcher(contract, &runtime_functions));
+        } else {
+            self.push(
+                contract.span,
+                EmitDiagnosticKind::DispatcherDeferred {
+                    contract: contract.name.clone(),
+                },
+            );
         }
 
         Object {
@@ -402,6 +396,123 @@ impl<'db> Emitter<'db> {
         ];
         self.push_abi_word_cleaning(span, name, kind, &mut stmts);
         self.assembly_stmt(span, stmts)
+    }
+
+    fn push_abi_word_cleaning(
+        &self,
+        span: Span<'db>,
+        name: &str,
+        kind: AbiWordKind,
+        stmts: &mut Vec<YulStmt<'db>>,
+    ) {
+        match kind {
+            AbiWordKind::Plain => {}
+            AbiWordKind::Address => self.push_address_cleaning(span, name, stmts),
+            AbiWordKind::Bool => self.push_bool_cleaning(span, name, stmts),
+        }
+    }
+
+    fn push_address_cleaning(&self, span: Span<'db>, name: &str, stmts: &mut Vec<YulStmt<'db>>) {
+        stmts.push(YulStmt {
+            span,
+            kind: YulStmtKind::If {
+                cond: self.yul_call(
+                    span,
+                    "shr",
+                    vec![
+                        self.yul_number(span, "160"),
+                        self.yul_ident_expr(span, name),
+                    ],
+                ),
+                body: vec![
+                    self.yul_expr_stmt(
+                        span,
+                        self.yul_call(
+                            span,
+                            "mstore",
+                            vec![
+                                self.yul_number(span, "0"),
+                                self.yul_number(span, "0x7cc04fa7"),
+                            ],
+                        ),
+                    ),
+                    self.yul_expr_stmt(
+                        span,
+                        self.yul_call(
+                            span,
+                            "revert",
+                            vec![self.yul_number(span, "28"), self.yul_number(span, "4")],
+                        ),
+                    ),
+                ],
+            },
+        });
+        stmts.push(self.yul_assign(
+            span,
+            name,
+            self.yul_call(
+                span,
+                "and",
+                vec![
+                    self.yul_ident_expr(span, name),
+                    self.yul_number(span, ADDRESS_MASK),
+                ],
+            ),
+        ));
+    }
+
+    fn push_bool_cleaning(&self, span: Span<'db>, name: &str, stmts: &mut Vec<YulStmt<'db>>) {
+        stmts.push(YulStmt {
+            span,
+            kind: YulStmtKind::If {
+                cond: self.yul_call(
+                    span,
+                    "gt",
+                    vec![self.yul_ident_expr(span, name), self.yul_number(span, "1")],
+                ),
+                body: vec![self.yul_expr_stmt(
+                    span,
+                    self.yul_call(
+                        span,
+                        "revert",
+                        vec![self.yul_number(span, "0"), self.yul_number(span, "0")],
+                    ),
+                )],
+            },
+        });
+    }
+
+    fn nonpayable_check(&self, span: Span<'db>) -> Stmt<'db> {
+        self.assembly_stmt(
+            span,
+            vec![YulStmt {
+                span,
+                kind: YulStmtKind::If {
+                    cond: self.yul_call(span, "callvalue", Vec::new()),
+                    body: vec![
+                        self.yul_expr_stmt(
+                            span,
+                            self.yul_call(
+                                span,
+                                "mstore",
+                                vec![
+                                    self.yul_number(span, "0"),
+                                    self.yul_number(span, "0xb5988ea3"),
+                                ],
+                            ),
+                        ),
+                        self.yul_expr_stmt(
+                            span,
+                            self.yul_call(
+                                span,
+                                "revert",
+                                vec![self.yul_number(span, "28"), self.yul_number(span, "4")],
+                            ),
+                        ),
+                    ],
+                },
+            }],
+        )
     }
 }
 

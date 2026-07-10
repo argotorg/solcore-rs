@@ -179,16 +179,6 @@ pub(super) fn sem_ty_needs_untyped_word_default<'db>(
     matches!(ty.kind(db), SemTyKind::Error | SemTyKind::Unknown)
 }
 
-pub(super) fn hull_ty_is_bool_word(ty: &Ty<'_>) -> bool {
-    match &ty.strip_named().kind {
-        TyKind::Sum(lhs, rhs) => {
-            matches!(lhs.strip_named().kind, TyKind::Unit)
-                && matches!(rhs.strip_named().kind, TyKind::Unit)
-        }
-        _ => false,
-    }
-}
-
 pub(super) fn hull_ty_word_slots(ty: &Ty<'_>) -> Option<usize> {
     match &ty.strip_named().kind {
         TyKind::Word | TyKind::Bool | TyKind::NamedRef { .. } | TyKind::Function { .. } => Some(1),

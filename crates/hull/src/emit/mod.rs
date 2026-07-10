@@ -40,7 +40,6 @@ use crate::{
 mod abi;
 mod contract;
 mod diagnostics;
-mod dispatch;
 mod emitter;
 mod layout;
 mod match_compile;
@@ -48,18 +47,13 @@ mod reachability;
 mod storage;
 mod yul_build;
 
-use abi::{
-    AbiWordKind, StaticAbiLayout, StaticAbiLayoutKind, abi_layout_slot_kinds, abi_word_kind,
-    abi_word_to_bool_expr, abi_words_to_expr, constructor_inputs_are_static_word,
-    dispatcher_input_layouts, dispatcher_return_layout, numbered_name, selector_hex,
-    write_expr_to_abi_slots,
-};
+use abi::{AbiWordKind, abi_word_kind, abi_word_to_bool_expr, constructor_inputs_are_static_word};
 use diagnostics::prune_emit_diagnostics;
 pub use diagnostics::{EmitDiagnostic, EmitDiagnosticKind, EmitOptions, EmitOutput};
 pub use emitter::emit_module;
 use layout::{
-    bool_expr, bool_sum_ty, hull_ty_is_bool_word, hull_ty_word_slots, product_expr,
-    product_field_exprs, sem_product_fields, sem_ty_needs_untyped_word_default, sum_right_ty,
+    bool_expr, bool_sum_ty, hull_ty_word_slots, product_expr, product_field_exprs,
+    sem_product_fields, sem_ty_needs_untyped_word_default, sum_right_ty,
 };
 use match_compile::{
     AdtLayout, CtorLayout, constructor_name_matches, encode_constructor, wrap_lit_text,
@@ -79,7 +73,7 @@ const UNIMPLEMENTED_SELECTOR: &str = "0x6e128399";
 struct Emitter<'db> {
     db: &'db dyn hir_ty::Db,
     module: Module<'db>,
-    options: EmitOptions,
+    _options: EmitOptions,
     diagnostics: Vec<EmitDiagnostic<'db>>,
     scopes: ScopeStack<BTreeMap<String, Expr<'db>>>,
     function_names: BTreeSet<String>,

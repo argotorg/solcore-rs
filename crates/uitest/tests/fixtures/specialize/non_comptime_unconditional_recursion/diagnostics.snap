@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/specialize/non_comptime_unconditional_r
 error[SC0414]: `id` cannot be reduced at compile time: recursive calls form a cycle with no base case (infinite recursion)
  --> /main/main.solc:4:48
   |
-3 | contract Answer {
+3 | contract Answer { function main() -> word { return id(0); }
 4 |   public function id(x: word) -> word { return id(x); }
   |                                                ^^^^^ recursive call cannot be reduced here
 5 | }

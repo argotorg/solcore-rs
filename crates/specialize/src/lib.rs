@@ -22,7 +22,8 @@ pub use ir::{
     LetMode, MonoAbiParam, MonoArm, MonoBuiltinCtor, MonoCallOrigin, MonoComptimeObligation,
     MonoComptimeObligationKind, MonoConstructor, MonoContract, MonoEntry, MonoExpr, MonoExprArm,
     MonoExprKind, MonoFallback, MonoFunction, MonoFunctionOrigin, MonoId, MonoIntrinsic, MonoItem,
-    MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy, ParamMode,
+    MonoModule, MonoParam, MonoPat, MonoPatKind, MonoRuntimeMainOrigin, MonoStmt, MonoStmtKind,
+    MonoTy, ParamMode,
 };
 pub use specialize::{
     SpecializeDiagnostic, SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput,

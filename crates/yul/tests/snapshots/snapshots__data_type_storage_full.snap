@@ -26,49 +26,8 @@ object "DataTypeStorageFullDeploy" {
         gen$result_1 := src$inner_2
         leave
       }
-      /* selector 0xdffeadd0 -> main_DataTypeStorageFull_main_dd6d1ea2d */
-      mstore(0x40, memoryguard(128))
       let _v1
-      _v1 := calldatasize()
-      let _v2
-      _v2 := lt(_v1, 4)
-      switch _v2
-        case true {
-          if callvalue() {
-            mstore(0, 0xb5988ea3)
-            revert(28, 4)
-          }
-          mstore(0, 0x4924aef0)
-          revert(28, 4)
-        }
-        case false {
-          let src$DataTypeStorageFull_dispatch_selector_3
-          src$DataTypeStorageFull_dispatch_selector_3 := shr(224, calldataload(0))
-          switch src$DataTypeStorageFull_dispatch_selector_3
-            case 0xdffeadd0 {
-              if callvalue() {
-                mstore(0, 0xb5988ea3)
-                revert(28, 4)
-              }
-              let src$dispatch_ret0_4
-              let _v3
-              _v3 := usr$main_DataTypeStorageFull_main_dd6d1ea2d()
-              src$dispatch_ret0_4 := _v3
-              let src$dispatch_ret0_word_5
-              src$dispatch_ret0_word_5 := 0
-              src$dispatch_ret0_word_5 := src$dispatch_ret0_4
-              mstore(0, src$dispatch_ret0_word_5)
-              return(0, 32)
-            }
-            default {
-              if callvalue() {
-                mstore(0, 0xb5988ea3)
-                revert(28, 4)
-              }
-              mstore(0, 0x4924aef0)
-              revert(28, 4)
-            }
-        }
+      _v1 := usr$main_DataTypeStorageFull_main_dd6d1ea2d()
     }
   }
 }

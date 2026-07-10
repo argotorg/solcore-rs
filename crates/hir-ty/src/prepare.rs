@@ -1,6 +1,6 @@
 //! Compiler-owned HIR overlays built before type checking.
 //!
-//! Preparation never changes or reparses the user's [`SourceFile`].  It keeps
+//! Preparation never changes or reparses the user's [`hir::input::SourceFile`].  It keeps
 //! the parsed module as the source-of-record and constructs a second tracked
 //! [`Module`] containing unresolved generated declarations.  Name resolution,
 //! type checking, and specialization can therefore process generated code by

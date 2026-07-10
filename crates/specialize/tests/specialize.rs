@@ -5,7 +5,7 @@ use std::{
 };
 
 use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
-use hir_ty::{BuiltinTyCtor, Ty};
+use hir_ty::{BuiltinTyCtor, Ty, prepare_module};
 use nameres::{
     LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
     module_key_for_path, module_path_display, resolve_module_path_candidate,
@@ -13,9 +13,9 @@ use nameres::{
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_specialize::{
-    MonoComptimeObligationKind, MonoEntry, MonoExpr, MonoExprKind, MonoItem, MonoPatKind, MonoStmt,
-    MonoStmtKind, SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput, specialize_module,
-    specialize_name,
+    MonoComptimeObligationKind, MonoEntry, MonoExpr, MonoExprKind, MonoItem, MonoPatKind,
+    MonoRuntimeMainOrigin, MonoStmt, MonoStmtKind, SpecializeDiagnosticKind, SpecializeOptions,
+    SpecializeOutput, specialize_module, specialize_name,
 };
 
 #[salsa::db]
@@ -91,6 +91,12 @@ fn specialize_src(src: &str) -> (&'static TestDb, SpecializeOutput<'static>) {
 }
 
 fn specialize_src_with_std(src: &str) -> SpecializeOutput<'static> {
+    specialize_src_with_std_and_db(src).2
+}
+
+fn specialize_src_with_std_and_db(
+    src: &str,
+) -> (&'static TestDb, SourceFile, SpecializeOutput<'static>) {
     let db = Box::leak(Box::new(TestDb::default()));
     let main_root = PathBuf::from("/main");
     let repo = repo_root();
@@ -113,7 +119,8 @@ fn specialize_src_with_std(src: &str) -> SpecializeOutput<'static> {
     let unresolved = load_reachable_modules(db, key);
     assert!(unresolved.is_empty(), "{unresolved:?}");
     let module = parse_file_to_hir(db, file).module(db);
-    specialize_module(db, module, SpecializeOptions::default())
+    let output = specialize_module(db, module, SpecializeOptions::default());
+    (db, file, output)
 }
 
 fn function_names(output: &SpecializeOutput<'_>) -> Vec<String> {
@@ -538,7 +545,34 @@ contract C {
 "#,
     );
 
-    assert!(!without_dispatch_import.diagnostics.is_empty());
+    assert!(
+        without_dispatch_import
+            .diagnostics
+            .iter()
+            .any(|diagnostic| {
+                matches!(
+                    diagnostic.kind,
+                    SpecializeDiagnosticKind::MissingStdDispatchImport { .. }
+                )
+            })
+    );
+    let blocked_contract = without_dispatch_import
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Contract(contract) => Some(contract),
+            _ => None,
+        })
+        .expect("blocked contract metadata");
+    assert!(
+        blocked_contract.entries.iter().all(|entry| !matches!(
+            entry,
+            MonoEntry::SelectorMethod { .. } | MonoEntry::RuntimeMain { .. }
+        )),
+        "{:?}",
+        blocked_contract.entries
+    );
 
     let with_dispatch_import = specialize_src_with_std(
         r#"
@@ -554,14 +588,183 @@ contract C {
     );
 
     assert_eq!(with_dispatch_import.diagnostics, Vec::new());
+    let generated_contract = with_dispatch_import
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Contract(contract) => Some(contract),
+            _ => None,
+        })
+        .expect("generated contract metadata");
+    assert!(generated_contract.entries.iter().any(|entry| matches!(
+        entry,
+        MonoEntry::RuntimeMain {
+            origin: MonoRuntimeMainOrigin::StdDispatch,
+            ..
+        }
+    )));
+    assert!(
+        generated_contract
+            .entries
+            .iter()
+            .all(|entry| !matches!(entry, MonoEntry::SelectorMethod { .. }))
+    );
+}
+
+#[test]
+fn generated_contract_dispatch_rejects_public_comptime_params_before_runtime_rooting() {
+    let output = specialize_src_with_std(
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+contract C {
+  public function answer(comptime x: word) -> word {
+    return x;
+  }
+}
+"#,
+    );
+
+    assert_eq!(
+        output
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(
+                diagnostic.kind,
+                SpecializeDiagnosticKind::PublicComptimeParam { .. }
+            ))
+            .count(),
+        1,
+        "{:?}",
+        output.diagnostics
+    );
+    let contract = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Contract(contract) => Some(contract),
+            _ => None,
+        })
+        .expect("contract metadata");
+    assert!(
+        contract
+            .entries
+            .iter()
+            .all(|entry| !matches!(entry, MonoEntry::RuntimeMain { .. })),
+        "{:?}",
+        contract.entries
+    );
+}
+
+#[test]
+fn generated_contract_dispatch_keeps_the_original_source_file() {
+    let src = r#"
+import std.{*};
+import std.dispatch.{*};
+
+contract C {
+  public function answer() -> uint256 {
+    return uint256(1);
+  }
+}
+"#;
+    let (db, file, output) = specialize_src_with_std_and_db(src);
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(file.content(db).as_deref(), Some(src));
+
+    let (source, specialized) = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| {
+            let MonoItem::Contract(contract) = item else {
+                return None;
+            };
+            contract.entries.iter().find_map(|entry| match entry {
+                MonoEntry::RuntimeMain {
+                    source,
+                    specialized,
+                    origin: MonoRuntimeMainOrigin::StdDispatch,
+                    ..
+                } => Some((*source, specialized.clone())),
+                _ => None,
+            })
+        })
+        .expect("compiler-owned dispatch main");
+    assert_eq!(source.file(db), file);
+    assert_eq!(
+        source.fingerprint(db).as_deref(),
+        Some("solcore.generated.std_dispatch.main")
+    );
+    let main = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Function(function) if function.name == specialized => Some(function),
+            _ => None,
+        })
+        .expect("specialized compiler-owned dispatch main");
+    assert_eq!(main.source, Some(source));
+    assert_eq!(main.span.source_file(db), file);
+
+    let names = function_names(&output);
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("dispatch_selector_matches")),
+        "{names:?}"
+    );
+    assert!(
+        !output.module.items.iter().any(|item| match item {
+            MonoItem::Function(function) => function.body.iter().any(stmt_has_closure_dispatch),
+            _ => false,
+        }),
+        "{:?}",
+        output.module
+    );
+}
+
+#[test]
+fn already_prepared_input_keeps_std_dispatch_origin() {
+    let src = r#"
+import std.{*};
+import std.dispatch.{*};
+
+contract C {
+  public function answer() -> uint256 { return uint256(1); }
+}
+"#;
+    let (db, file, _) = specialize_src_with_std_and_db(src);
+    let source = parse_file_to_hir(db, file).module(db);
+    let effective = prepare_module(db, source).module(db);
+    let output = specialize_module(db, effective, SpecializeOptions::default());
+    assert_eq!(output.diagnostics, Vec::new());
+    assert!(output.module.items.iter().any(|item| {
+        let MonoItem::Contract(contract) = item else {
+            return false;
+        };
+        contract.entries.iter().any(|entry| {
+            matches!(
+                entry,
+                MonoEntry::RuntimeMain {
+                    origin: MonoRuntimeMainOrigin::StdDispatch,
+                    ..
+                }
+            )
+        })
+    }));
 }
 
 #[test]
 fn source_names_are_qualified_across_contracts() {
     let (_db, output) = specialize_src(
         r#"
-contract A { public function get() -> word { return 1; } }
-contract B { public function get() -> word { return 2; } }
+contract A { public function main() -> word { return 1; } }
+contract B { public function main() -> word { return 2; } }
 "#,
     );
 
@@ -577,26 +780,30 @@ contract B { public function get() -> word { return 2; } }
         .flatten()
         .collect::<Vec<_>>();
     assert_eq!(entries.len(), 2, "{entries:?}");
-    let entry_summaries = entries
+    let specialized = entries
         .iter()
         .map(|entry| match entry {
-            MonoEntry::SelectorMethod {
-                name, specialized, ..
-            } => (name.as_str(), specialized.as_str()),
-            _ => panic!("expected selector method entry: {entry:?}"),
+            MonoEntry::RuntimeMain {
+                specialized,
+                origin: MonoRuntimeMainOrigin::User,
+                ..
+            } => specialized.as_str(),
+            _ => panic!("expected user runtime main entry: {entry:?}"),
         })
         .collect::<Vec<_>>();
-    assert_ne!(entry_summaries[0].1, entry_summaries[1].1);
-    assert!(entry_summaries.iter().all(|(name, _)| *name == "get"));
+    assert_ne!(specialized[0], specialized[1]);
 }
 
 #[test]
-fn dispatch_abi_metadata_is_preserved_in_mono_ir() {
-    let (_db, output) = specialize_src(
+fn dispatch_abi_shape_is_preserved_in_std_dispatch_mono_ir() {
+    let output = specialize_src_with_std(
         r#"
+import std.{*};
+import std.dispatch.{*};
+
 contract PayableTest {
   constructor() {}
-  public payable function deposit() -> word { return 1; }
+  public payable function deposit() -> uint256 { return uint256(1); }
   payable fallback() -> () {}
 }
 "#,
@@ -612,32 +819,29 @@ contract PayableTest {
             _ => None,
         })
         .expect("contract");
-    let deposit = contract
-        .entries
-        .iter()
-        .find(|entry| {
-            matches!(
-                entry,
-                MonoEntry::SelectorMethod { name, .. } if name == "deposit"
-            )
-        })
-        .expect("deposit entry");
-    let MonoEntry::SelectorMethod {
-        signature,
-        selector,
-        payable,
-        inputs,
-        outputs,
-        ..
-    } = deposit
-    else {
-        panic!("expected selector method entry: {deposit:?}");
-    };
-    assert_eq!(signature, "deposit()");
-    assert_eq!(*selector, [0xd0, 0xe3, 0x0d, 0xb0]);
-    assert!(*payable);
-    assert!(inputs.is_empty());
-    assert_eq!(outputs.len(), 1);
+    assert!(contract.entries.iter().any(|entry| matches!(
+        entry,
+        MonoEntry::RuntimeMain {
+            origin: MonoRuntimeMainOrigin::StdDispatch,
+            ..
+        }
+    )));
+    let names = function_names(&output);
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("dispatch_selector_matches")),
+        "{names:?}"
+    );
+    assert!(
+        output.module.items.iter().any(|item| match item {
+            MonoItem::Function(function) => {
+                stmts_have_number_literal(&function.body, "3504541104")
+            }
+            _ => false,
+        }),
+        "deposit selector was not preserved in generated Mono IR"
+    );
     assert!(contract.constructor.explicit);
     assert!(!contract.constructor.payable);
     assert!(contract.fallback.explicit);
@@ -774,6 +978,14 @@ fn specializes_p7_cited_regression_corpus() {
         assert_eq!(output.diagnostics, Vec::new(), "{fixture}");
     }
     let basic = specialize_fixture(&corpus.join("dispatch/basic.solc"));
+    assert_eq!(basic.diagnostics, Vec::new(), "dispatch/basic.solc");
+    assert!(
+        !basic.module.items.iter().any(|item| match item {
+            MonoItem::Function(function) => function.body.iter().any(stmt_has_closure_dispatch),
+            _ => false,
+        }),
+        "dispatch/basic.solc retained closure dispatch"
+    );
     let basic_contract = basic
         .module
         .items
@@ -787,8 +999,9 @@ fn specializes_p7_cited_regression_corpus() {
         basic_contract.entries.iter().any(|entry| {
             matches!(
                 entry,
-                MonoEntry::SyntheticMain {
+                MonoEntry::RuntimeMain {
                     specialized,
+                    origin: MonoRuntimeMainOrigin::StdDispatch,
                     ..
                 } if specialized.contains("_C_main_")
             )
@@ -810,8 +1023,9 @@ fn specializes_p7_cited_regression_corpus() {
         payable_contract.entries.iter().any(|entry| {
             matches!(
                 entry,
-                MonoEntry::SyntheticMain {
+                MonoEntry::RuntimeMain {
                     specialized,
+                    origin: MonoRuntimeMainOrigin::StdDispatch,
                     ..
                 } if specialized.contains("_main_")
             )
@@ -1335,27 +1549,33 @@ contract C {
 
 #[test]
 fn bool_constructors_specialize_through_pre_typeck_unit_sum_view() {
-    let (_db, output) = specialize_src(
+    let (_true_db, true_output) = specialize_src(
         r#"
 contract C {
-  public function make_true() -> bool {
+  public function main() -> bool {
     return true;
   }
-
-  public function make_false() -> bool {
+}
+"#,
+    );
+    let (_false_db, false_output) = specialize_src(
+        r#"
+contract C {
+  public function main() -> bool {
     return false;
   }
 }
 "#,
     );
 
-    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(true_output.diagnostics, Vec::new());
+    assert_eq!(false_output.diagnostics, Vec::new());
     assert_eq!(
-        function_return_ctor(&output, "make_true"),
+        function_return_ctor(&true_output, "main"),
         Some("true".to_owned())
     );
     assert_eq!(
-        function_return_ctor(&output, "make_false"),
+        function_return_ctor(&false_output, "main"),
         Some("false".to_owned())
     );
 }
@@ -1404,10 +1624,10 @@ fn std_not_lowercase_bool_patterns_specialize_to_constructor_match() {
         &main_path,
         r#"
 import std.{*};
+import std.dispatch.{*};
 
 contract NotProbe {
   public function flip(x : bool) -> bool { return not(x); }
-  public function main() -> word { return 42; }
 }
 "#,
     );
@@ -1468,7 +1688,7 @@ fn main_return_number(output: &SpecializeOutput<'_>) -> Option<String> {
                         MonoEntry::SelectorMethod {
                             name, specialized, ..
                         } if name == "main" => Some(specialized.clone()),
-                        MonoEntry::SyntheticMain { specialized, .. } => Some(specialized.clone()),
+                        MonoEntry::RuntimeMain { specialized, .. } => Some(specialized.clone()),
                         _ => None,
                     })
                     .collect::<Vec<_>>(),
@@ -1516,6 +1736,104 @@ fn function_return_ctor(output: &SpecializeOutput<'_>, name: &str) -> Option<Str
             })
         })?
     })
+}
+
+fn stmts_have_number_literal(stmts: &[MonoStmt<'_>], expected: &str) -> bool {
+    stmts.iter().any(|stmt| match &stmt.kind {
+        MonoStmtKind::Let { init, .. } => init
+            .as_ref()
+            .is_some_and(|expr| expr_has_number_literal(expr, expected)),
+        MonoStmtKind::Return(expr) => expr
+            .as_ref()
+            .is_some_and(|expr| expr_has_number_literal(expr, expected)),
+        MonoStmtKind::Expr(expr) => expr_has_number_literal(expr, expected),
+        MonoStmtKind::Assign { lhs, rhs, .. } => {
+            expr_has_number_literal(lhs, expected) || expr_has_number_literal(rhs, expected)
+        }
+        MonoStmtKind::Match { scrutinees, arms } => {
+            scrutinees
+                .iter()
+                .any(|expr| expr_has_number_literal(expr, expected))
+                || arms
+                    .iter()
+                    .any(|arm| stmts_have_number_literal(&arm.body, expected))
+        }
+        MonoStmtKind::For {
+            init,
+            cond,
+            post,
+            body,
+        } => {
+            stmts_have_number_literal(init, expected)
+                || expr_has_number_literal(cond, expected)
+                || stmts_have_number_literal(post, expected)
+                || stmts_have_number_literal(body, expected)
+        }
+        MonoStmtKind::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            expr_has_number_literal(cond, expected)
+                || stmts_have_number_literal(then_body, expected)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|body| stmts_have_number_literal(body, expected))
+        }
+        MonoStmtKind::Block(body) => stmts_have_number_literal(body, expected),
+        MonoStmtKind::Assembly(_)
+        | MonoStmtKind::Break
+        | MonoStmtKind::Continue
+        | MonoStmtKind::Error => false,
+    })
+}
+
+fn expr_has_number_literal(expr: &MonoExpr<'_>, expected: &str) -> bool {
+    match &expr.kind {
+        MonoExprKind::Lit(hir::ast::function::LitKind::Number(value)) => value == expected,
+        MonoExprKind::Tuple(elems) => elems
+            .iter()
+            .any(|expr| expr_has_number_literal(expr, expected)),
+        MonoExprKind::Call { args, .. } | MonoExprKind::Con { args, .. } => args
+            .iter()
+            .any(|expr| expr_has_number_literal(expr, expected)),
+        MonoExprKind::ClosureDispatch { callee, args } => {
+            expr_has_number_literal(callee, expected)
+                || args
+                    .iter()
+                    .any(|expr| expr_has_number_literal(expr, expected))
+        }
+        MonoExprKind::BinOp { lhs, rhs, .. } => {
+            expr_has_number_literal(lhs, expected) || expr_has_number_literal(rhs, expected)
+        }
+        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
+            expr_has_number_literal(expr, expected)
+        }
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index } => {
+            expr_has_number_literal(base, expected) || expr_has_number_literal(index, expected)
+        }
+        MonoExprKind::Field { base, .. } => expr_has_number_literal(base, expected),
+        MonoExprKind::Match { scrutinee, arms } => {
+            expr_has_number_literal(scrutinee, expected)
+                || arms
+                    .iter()
+                    .any(|arm| expr_has_number_literal(&arm.expr, expected))
+        }
+        MonoExprKind::If {
+            cond,
+            then_expr,
+            else_expr,
+        } => {
+            expr_has_number_literal(cond, expected)
+                || expr_has_number_literal(then_expr, expected)
+                || expr_has_number_literal(else_expr, expected)
+        }
+        MonoExprKind::Var(_)
+        | MonoExprKind::Lit(_)
+        | MonoExprKind::Proxy(_)
+        | MonoExprKind::Lambda { .. }
+        | MonoExprKind::Error => false,
+    }
 }
 
 fn stmt_has_closure_dispatch(stmt: &MonoStmt<'_>) -> bool {

@@ -193,11 +193,21 @@ pub enum MonoEntry<'db> {
         inputs: Vec<MonoAbiParam>,
         outputs: Vec<MonoAbiParam>,
     },
-    SyntheticMain {
+    RuntimeMain {
         source: DefId<'db>,
         specialized: String,
         span: Span<'db>,
+        origin: MonoRuntimeMainOrigin,
     },
+}
+
+/// Provenance of the contract runtime entry selected by specialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MonoRuntimeMainOrigin {
+    /// An ordinary `main` written by the user, irrespective of visibility.
+    User,
+    /// A compiler-owned wrapper whose semantics come from `std.dispatch`.
+    StdDispatch,
 }
 
 /// Constructor dispatch/ABI metadata.

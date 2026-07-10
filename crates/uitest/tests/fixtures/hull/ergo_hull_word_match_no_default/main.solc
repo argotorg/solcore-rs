@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 contract Digits {
   public function name(d : word) -> word {
     match d {

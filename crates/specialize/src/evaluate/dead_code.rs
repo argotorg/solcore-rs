@@ -14,7 +14,7 @@ pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> Mono
                     MonoEntry::SelectorMethod { specialized, .. }
                     | MonoEntry::Constructor { specialized, .. }
                     | MonoEntry::Fallback { specialized, .. }
-                    | MonoEntry::SyntheticMain { specialized, .. } => specialized,
+                    | MonoEntry::RuntimeMain { specialized, .. } => specialized,
                 };
                 roots.insert(specialized.clone());
             }

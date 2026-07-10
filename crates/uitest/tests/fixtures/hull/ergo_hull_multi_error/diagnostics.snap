@@ -4,20 +4,20 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/ergo_hull_multi_error/main.solc
 ---
 error[SC0421]: cannot lower literal `"oops"` to Hull
- --> /main/main.solc:5:22
+ --> /main/main.solc:5:12
   |
-4 |   public function first() -> word {
-5 |     let s : string = "oops";
-  |                      ^^^^^^ unsupported literal
-6 |     return 1;
+4 |   public function main() -> string {
+5 |     return "oops";
+  |            ^^^^^^ unsupported literal
+6 |   }
   |
 ---
 
 error[SC0421]: cannot lower literal `"also bad"` to Hull
-  --> /main/main.solc:10:22
+  --> /main/main.solc:11:12
    |
- 9 |   public function second() -> word {
-10 |     let t : string = "also bad";
-   |                      ^^^^^^^^^^ unsupported literal
-11 |     return 2;
+10 |   public function main() -> string {
+11 |     return "also bad";
+   |            ^^^^^^^^^^ unsupported literal
+12 |   }
    |

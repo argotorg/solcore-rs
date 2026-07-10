@@ -147,36 +147,36 @@ fn specialization_corpus_subset_emits_and_checks() {
 }
 
 #[test]
-fn dispatch_basic_emits_runtime_selector_dispatcher() {
+fn contract_without_runtime_main_defers_dispatch_to_specialization() {
     let (db, output) = specialize_src(
         "dispatch_word",
         r#"
 contract C {
-  public function id(x : word) -> word {
-    return x;
-  }
+  function main() -> () {}
 }
 "#,
     );
     assert_eq!(output.diagnostics, Vec::new());
-    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    let mut module = output.module;
+    for item in &mut module.items {
+        if let specialize::MonoItem::Contract(contract) = item {
+            contract
+                .entries
+                .retain(|entry| !matches!(entry, specialize::MonoEntry::RuntimeMain { .. }));
+        }
+    }
+    let emitted = emit_module(db, &module, EmitOptions::default());
     assert!(
-        !emitted.diagnostics.iter().any(|diagnostic| matches!(
-            diagnostic.kind,
-            EmitDiagnosticKind::DispatcherDeferred { .. }
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::DispatcherDeferred { contract } if contract == "C"
         )),
         "{:?}",
         emitted.diagnostics
     );
     let hull = pretty_program(db, &emitted.program);
-    assert!(hull.contains("match<word>"), "{hull}");
-    assert!(
-        hull.contains("match<(unit + unit)> lt(calldatasize(), 4)"),
-        "{hull}"
-    );
-    assert!(hull.contains("if lt(calldatasize(), 36)"), "{hull}");
-    assert!(hull.contains("calldataload(4)"), "{hull}");
-    assert!(hull.contains("return(0, 32)"), "{hull}");
+    assert!(!hull.contains("calldataload(0)"), "{hull}");
+    assert!(!hull.contains("dispatch_selector"), "{hull}");
 }
 
 #[test]
@@ -190,7 +190,7 @@ fn dispatch_basic_fixture_uses_std_dispatch_main() {
     assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
     assert!(hull.contains("basic_C_main_"), "{hull}");
-    assert!(hull.contains("dispatch_selector_matches_const"), "{hull}");
+    assert!(hull.contains("dispatch_selector_matches"), "{hull}");
     assert!(hull.contains("std_abi_decode_debc005b9$calldataLbytesJ_CalldataWordReader_memoryLstringJ_memoryLstringJ"), "{hull}");
     assert!(hull.contains("opcodes_mcopy"), "{hull}");
     assert!(!hull.contains("dispatch_ret12_abi_head0_offset"), "{hull}");
@@ -263,8 +263,8 @@ fn deployment_decodes_static_constructor_args_from_appended_code() {
 contract C {
   constructor(x : word, y : word) {}
 
-  public function main() -> word {
-    return 1;
+  function main() -> () {
+    return ();
   }
 }
 "#,
@@ -289,14 +289,15 @@ contract C {
 }
 
 #[test]
-fn bool_dispatch_accepts_static_abi_word_and_canonicalizes_io() {
-    let (db, output) = specialize_src(
-        "bool_dispatch",
+fn std_dispatch_bool_uses_std_abi_decode_and_encode() {
+    let (db, output) = specialize_src_with_std(
+        "std_bool_dispatch",
         r#"
+import std.{*};
+import std.dispatch.{*};
+
 contract C {
-  public function echo(x : bool) -> bool {
-    return x;
-  }
+  public function echo(x : bool) -> bool { return x; }
 }
 "#,
     );
@@ -305,41 +306,23 @@ contract C {
     assert_eq!(emitted.diagnostics, Vec::new());
     assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
-    assert!(hull.contains("if gt(dispatch_arg0_0_word, 1)"), "{hull}");
     assert!(
-        hull.contains("mstore(0, iszero(iszero(dispatch_ret0_word)))"),
+        hull.contains("ABIDecode_decode$ABIDecoderLbool_CalldataWordReaderJ"),
         "{hull}"
     );
+    assert!(hull.contains("ABIEncode_encodeInto$bool"), "{hull}");
 }
 
 #[test]
-fn ltimp_bool_return_fixture_is_dispatchable() {
-    let fixture =
-        repo_root().join("crates/parser/tests/fixtures/corpus/ok/test/examples/cases/ltimp.solc");
-    let (db, output) = specialize_fixture(&fixture);
-    assert_eq!(output.diagnostics, Vec::new());
-    let emitted = emit_module(db, &output.module, EmitOptions::default());
-    assert_eq!(emitted.diagnostics, Vec::new());
-    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
-    let hull = pretty_program(db, &emitted.program);
-    assert!(hull.contains("selector 0xdffeadd0"), "{hull}");
-    assert!(
-        hull.contains("mstore(0, iszero(iszero(dispatch_ret0_word)))"),
-        "{hull}"
-    );
-}
-
-#[test]
-fn address_dispatch_decode_rejects_dirty_high_bits_and_masks_encoding() {
-    let (db, output) = specialize_src(
-        "address_dispatch",
+fn std_dispatch_address_decode_rejects_dirty_high_bits() {
+    let (db, output) = specialize_src_with_std(
+        "std_address_dispatch",
         r#"
-data address = address(word);
+import std.{*};
+import std.dispatch.{*};
 
 contract C {
-  public function id_address(a : address) -> address {
-    return a;
-  }
+  public function id_address(a : address) -> address { return a; }
 }
 "#,
     );
@@ -348,32 +331,24 @@ contract C {
     assert_eq!(emitted.diagnostics, Vec::new());
     assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
-    assert!(hull.contains("shr(160, dispatch_arg0_0_word)"), "{hull}");
+    assert!(
+        hull.contains("ABIDecode_decode$ABIDecoderLaddress_CalldataWordReaderJ"),
+        "{hull}"
+    );
+    assert!(hull.contains("(160, raw)"), "{hull}");
     assert!(hull.contains("0x7cc04fa7"), "{hull}");
-    assert!(
-        hull.contains(
-            "dispatch_arg0_0_word := and(dispatch_arg0_0_word, 0xffffffffffffffffffffffffffffffffffffffff)"
-        ),
-        "{hull}"
-    );
-    assert!(
-        hull.contains(
-            "mstore(0, and(dispatch_ret0_word, 0xffffffffffffffffffffffffffffffffffffffff))"
-        ),
-        "{hull}"
-    );
 }
 
 #[test]
-fn fallback_stops_and_unsupported_public_selectors_are_diagnostics() {
-    let (db, output) = specialize_src(
-        "fallback_shape",
+fn std_dispatch_explicit_fallback_stops_after_execution() {
+    let (db, output) = specialize_src_with_std(
+        "std_fallback_dispatch",
         r#"
-contract C {
-  public function answer() -> word {
-    return 42;
-  }
+import std.{*};
+import std.dispatch.{*};
 
+contract C {
+  public function answer() -> uint256 { return uint256(42); }
   fallback() -> () {}
 }
 "#,
@@ -381,11 +356,8 @@ contract C {
     assert_eq!(output.diagnostics, Vec::new());
     let emitted = emit_module(db, &output.module, EmitOptions::default());
     assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
-    assert!(
-        hull.contains("match<(unit + unit)> lt(calldatasize(), 4)"),
-        "{hull}"
-    );
     assert!(hull.contains("stop()"), "{hull}");
 }
 
@@ -468,7 +440,28 @@ fn decision_tree_match_lowering_preserves_priority_nested_and_multi_scrutinee_ca
 
 #[test]
 fn decision_tree_shape_preserves_specific_constructors_before_wildcard_defaults() {
-    let dwarves = pretty_fixture_hull("spec/037dwarves.solc");
+    let dwarves = pretty_src_hull(
+        "dwarves_runtime_shape",
+        r#"
+contract Dwarves {
+  data Dwarf = Doc | Grumpy | Sleepy | Bashful | Happy | Sneezy | Dopey;
+
+  public function fromEnum(c : Dwarf) -> word {
+    assembly { mstore(0, 0) }
+    match c {
+      | Dwarf.Doc => return 1;
+      | Dwarf.Grumpy => return 2;
+      | Dwarf.Sleepy => return 3;
+      | Dwarf.Bashful => return 4;
+      | Dwarf.Happy => return 5;
+      | _ => return 0;
+    }
+  }
+
+  function main() -> word { return fromEnum(Dwarf.Happy); }
+}
+"#,
+    );
     assert_contains_in_order(
         "037dwarves",
         &dwarves,
@@ -501,6 +494,7 @@ data Food = Curry | Beans | Other;
 data CFood = Red(Food) | Green(Food) | Nocolor;
 
 function fromEnum(x : CFood) -> word {
+  assembly { mstore(0, 0) }
   match x {
     | CFood.Red(Food.Curry) => return 1;
     | CFood.Green(Food.Beans) => return 42;
@@ -509,9 +503,7 @@ function fromEnum(x : CFood) -> word {
 }
 
 contract FoodContract {
-  public function main(x : CFood) -> word {
-    return fromEnum(x);
-  }
+  function main() -> word { return fromEnum(CFood.Green(Food.Beans)); }
 }
 "#,
     );
@@ -529,16 +521,9 @@ contract FoodContract {
     );
 
     let food = pretty_fixture_hull("spec/039food.solc");
-    assert_contains_in_order(
-        "039food",
-        &food,
-        &[
-            "/* Green */",
-            "let f : Food",
-            "return f",
-            "function 039food_FoodContract_main",
-            "return 42",
-        ],
+    assert!(
+        food.contains("function 039food_FoodContract_main") && food.contains("return 42"),
+        "{food}"
     );
 
     let wildcard_after_ctor = pretty_src_hull(
@@ -548,11 +533,14 @@ data Tiny = A | B | C;
 
 contract C {
   public function pick(t : Tiny) -> word {
+    assembly { mstore(0, 0) }
     match t {
       | Tiny.B => return 2;
       | _ => return 9;
     }
   }
+
+  function main() -> word { return pick(Tiny.B); }
 }
 "#,
     );
@@ -589,15 +577,18 @@ fn recursive_adt_layouts_are_cycle_safe() {
 
 #[test]
 fn logical_not_lowers_as_bool_sum_branch_swap() {
-    let (db, output) = specialize_src(
+    let (db, output) = specialize_src_with_std(
         "logical_not",
         r#"
+import std.{*};
+import std.dispatch.{*};
+
 function neq(x : word, y : word) -> bool {
   return !(x == y);
 }
 
 contract C {
-  public function main(x : word, y : word) -> bool {
+  public function neqEntry(x : word, y : word) -> bool {
     return neq(x, y);
   }
 }
@@ -633,10 +624,13 @@ fn out_of_range_word_literals_wrap_in_hull_exprs_and_patterns() {
     const TWO_256_PLUS_ONE: &str =
         "115792089237316195423570985008687907853269984665640564039457584007913129639937";
 
-    let hull = pretty_src_hull(
+    let hull = pretty_src_hull_with_std(
         "word_literal_wrap",
         &format!(
             r#"
+import std.{{*}};
+import std.dispatch.{{*}};
+
 contract C {{
   public function exact() -> word {{
     return {TWO_256};
@@ -653,6 +647,7 @@ contract C {{
       | _ => return 12;
     }}
   }}
+
 }}
 "#
         ),
@@ -660,16 +655,10 @@ contract C {{
 
     assert!(!hull.contains(TWO_256), "{hull}");
     assert!(!hull.contains(TWO_256_PLUS_ONE), "{hull}");
-    assert!(
-        hull_function(&hull, "_exact_").contains("return 0"),
-        "{hull}"
-    );
-    assert!(
-        hull_function(&hull, "_plus_").contains("return 1"),
-        "{hull}"
-    );
+    assert!(hull.contains("rets := 0"), "{hull}");
+    assert!(hull.contains("rets := 1"), "{hull}");
 
-    let pick = hull_function(&hull, "_pick_");
+    let pick = hull_function(&hull, "main_C_pick_");
     assert_contains_in_order(
         "wrapped word pattern literals",
         pick,
@@ -686,9 +675,12 @@ contract C {{
 
 #[test]
 fn evaluator_does_not_fold_past_unknown_return() {
-    let hull = pretty_src_hull(
+    let hull = pretty_src_hull_with_std(
         "eval_return_unknown_abort",
         r#"
+import std.{*};
+import std.dispatch.{*};
+
 contract RetUnknown {
   function pick(flag: bool, y: word) -> word {
     match flag {
@@ -701,10 +693,11 @@ contract RetUnknown {
   public function get(x: word) -> word {
     return pick(true, x);
   }
+
 }
 "#,
     );
-    let get = hull_function(&hull, "_get_");
+    let get = hull_function(&hull, "main_RetUnknown_get_");
     assert!(get.contains("_pick_"), "{get}\n{hull}");
     assert!(!get.contains("return 0"), "{get}\n{hull}");
 }
@@ -896,9 +889,12 @@ contract StaleCall {
 
 #[test]
 fn evaluator_invalidates_residual_assembly_branch_assignments() {
-    let if_hull = pretty_src_hull(
+    let if_hull = pretty_src_hull_with_std(
         "eval_if_asm_assignment",
         r#"
+import std.{*};
+import std.dispatch.{*};
+
 contract IfAsm {
   public function f(b: bool) -> word {
     let x : word = 1;
@@ -907,17 +903,21 @@ contract IfAsm {
     }
     return x;
   }
+
 }
 "#,
     );
-    let f = hull_function(&if_hull, "_f_");
+    let f = hull_function(&if_hull, "main_IfAsm_f_");
     assert!(f.contains("x := 5"), "{f}\n{if_hull}");
     assert!(f.contains("return x"), "{f}\n{if_hull}");
     assert!(!f.contains("return 1"), "{f}\n{if_hull}");
 
-    let match_hull = pretty_src_hull(
+    let match_hull = pretty_src_hull_with_std(
         "eval_match_asm_assignment",
         r#"
+import std.{*};
+import std.dispatch.{*};
+
 contract MatchAsm {
   public function g(b: bool) -> word {
     let x : word = 1;
@@ -927,10 +927,11 @@ contract MatchAsm {
     }
     return x;
   }
+
 }
 "#,
     );
-    let g = hull_function(&match_hull, "_g_");
+    let g = hull_function(&match_hull, "main_MatchAsm_g_");
     assert!(g.contains("x := 5"), "{g}\n{match_hull}");
     assert!(g.contains("return x"), "{g}\n{match_hull}");
     assert!(!g.contains("return 1"), "{g}\n{match_hull}");

@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/ergo_hull_word_match_no_default/main.solc
 ---
 error[SC0302]: non-exhaustive pattern match
- --> /main/main.solc:3:11
+ --> /main/main.solc:6:11
   |
-2 |   public function name(d : word) -> word {
-3 |     match d {
+5 |   public function name(d : word) -> word {
+6 |     match d {
   |           ^ match is not exhaustive
-4 |     | 0 => return 100;
+7 |     | 0 => return 100;
   |
   = note: missing case: _
   = note: help: add a default or catch-all arm that covers the remaining values

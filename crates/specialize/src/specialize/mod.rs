@@ -14,7 +14,8 @@ use hir::{
             BinOp, Expr, ExprKind, FuncBody, FuncParam, MatchArm, Pat, PatKind, Stmt, StmtKind,
         },
         item::{
-            AdtDef, ContractItem, FunctionDef, Import, ImportSelector, InstanceDef, Item, Module,
+            AdtDef, ContractItem, FuncKind, FunctionDef, Import, ImportSelector, InstanceDef, Item,
+            Module,
         },
     },
     diag::{Diagnostic, DiagnosticCode},
@@ -25,17 +26,17 @@ use hir::{
 use hir_ty::{
     AbiParam, AliasNormalizer, BinderEnv, BodyDesugarView, BodyPreTypeckDesugarPlan, BodyTyContext,
     BuiltinClassId, BuiltinTyCtor, CallSiteCallee, CallSiteEvidence, ClassId,
-    ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback, Evidence, InferResultExt,
-    InferenceResult, LoweredFunction, Pred, PredKind, ProductShape, Solution, Ty, TyCtor, TyKind,
-    TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal, contract_dispatch_surface_for_module,
-    derived_generic_plan, frontend_desugar_plan, infer_body,
-    lower_normalized_function_with_inferred_signature, solve, solver::DerivedClauseKind,
-    trait_env_for_module, trait_env_from_module_resolution,
-    trait_env_from_module_resolution_and_imports, trait_env_with_givens,
+    ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback, Evidence,
+    GeneratedOriginKind, InferResultExt, InferenceResult, LoweredFunction, Pred, PredKind,
+    PreparedModule, ProductShape, Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor,
+    UserTyCtorKind, canonical_goal, contract_dispatch_surface_for_module,
+    contract_needs_generated_dispatch, derived_generic_plan, frontend_desugar_plan, infer_body,
+    is_contract_dispatch_main_def, lower_normalized_function_with_inferred_signature,
+    module_has_canonical_std_dispatch_import, prepare_module, solve, solver::DerivedClauseKind,
+    trait_env_from_module_resolution, trait_env_from_module_resolution_and_imports,
+    trait_env_with_givens,
 };
-use nameres::{
-    LibraryId, ModuleId, module_id_from_key, module_key_for_path, resolve_reachable_full,
-};
+use nameres::{LibraryId, ModuleId, module_key_for_path, resolve_reachable_full};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 
@@ -45,8 +46,8 @@ use crate::{
         LetMode, MonoAbiParam, MonoArm, MonoBuiltinCtor, MonoCallOrigin, MonoComptimeObligation,
         MonoComptimeObligationKind, MonoConstructor, MonoContract, MonoEntry, MonoExpr,
         MonoExprArm, MonoExprKind, MonoFallback, MonoFunction, MonoFunctionOrigin, MonoId,
-        MonoIntrinsic, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind, MonoStmt,
-        MonoStmtKind, MonoTy, ParamMode,
+        MonoIntrinsic, MonoItem, MonoModule, MonoParam, MonoPat, MonoPatKind,
+        MonoRuntimeMainOrigin, MonoStmt, MonoStmtKind, MonoTy, ParamMode,
     },
 };
 
@@ -54,7 +55,6 @@ mod body;
 mod call_resolver;
 mod derived_generic;
 mod diagnostics;
-mod dispatch_desugar;
 mod driver;
 mod evidence;
 mod intrinsics;
@@ -74,10 +74,10 @@ pub use naming::specialize_name;
 use naming::{
     body_map_contains, class_method_name_parts, collect_body_order, ctor_name, def_hash_suffix,
     def_owner_path, function_param_ty, function_ret_ty, ident_text, join_sanitized_name_components,
-    lowered_function_has_inferred_dispatch_placeholder, module_id_for_source_file, mono_abi_params,
-    param_comptime, param_name, param_names, pred_is_closed, reachable_modules,
-    resolve_specialize_module, specialization_trait_env, strip_comptime_ty, ty_is_builtin,
-    ty_is_closed, ty_is_comptime, ty_node_budget_exceeded, type_var_bindings,
+    module_id_for_source_file, mono_abi_params, param_comptime, param_name, param_names,
+    pred_is_closed, reachable_modules, resolve_specialize_module, specialization_trait_env,
+    strip_comptime_ty, ty_is_builtin, ty_is_closed, ty_is_comptime, ty_node_budget_exceeded,
+    type_var_bindings,
 };
 use products::{
     product_expr_from_elems, product_expr_from_vars, product_pat_from_elems, product_pat_from_vars,
@@ -118,7 +118,34 @@ pub fn specialize_module<'db>(
     module: Module<'db>,
     options: SpecializeOptions,
 ) -> SpecializeOutput<'db> {
-    let module = dispatch_desugar::module_with_std_dispatch_main(db, module).unwrap_or(module);
-    let mut driver = Driver::new(db, module, options);
-    driver.run()
+    let mut preflight = missing_std_dispatch_import_diagnostics(db, module);
+    let prepared = prepare_module(db, module);
+    let mut output = Driver::new(db, prepared, options).run();
+    preflight.append(&mut output.diagnostics);
+    output.diagnostics = preflight;
+    output
+}
+
+fn missing_std_dispatch_import_diagnostics<'db>(
+    db: &'db dyn Db,
+    source: Module<'db>,
+) -> Vec<SpecializeDiagnostic<'db>> {
+    if module_has_canonical_std_dispatch_import(db, source) {
+        return Vec::new();
+    }
+    source
+        .items(db)
+        .iter()
+        .filter_map(|item| {
+            let Item::ContractDef(contract) = *item else {
+                return None;
+            };
+            contract_needs_generated_dispatch(db, contract).then(|| SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::MissingStdDispatchImport {
+                    contract: ident_text(db, &contract.name_elem(db)),
+                },
+                span: Some(contract.name_elem(db).span(db)),
+            })
+        })
+        .collect()
 }
