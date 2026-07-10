@@ -124,6 +124,13 @@ compiler-private `CanonicalABI` evidence class could encode this policy more
 precisely and reduce the amount of provisional Generic evidence in the public
 prelude.
 
+Compiler-synthesized `Generic` evidence is limited to user and external-library
+modules. ADTs owned by the canonical `std` library do not derive it merely
+because `Generic` is exported from the prelude; internal representation wrappers
+must use deliberate handwritten evidence. Besides keeping the public evidence
+surface explicit, this avoids populating every compilation's trait environment
+with unused derived clauses for std-internal ADTs.
+
 ## Updating this fork
 
 Do not replace this directory wholesale from the Haskell repository without

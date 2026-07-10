@@ -12,6 +12,7 @@ use hir::{
 use nameres::{LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
+use solcore_hir_ty::solver::generic_derivation_diagnostics;
 use solcore_hir_ty::{
     BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback,
     FieldInitPreTypeckTransform, FrontendTransform, IndirectArgShape, PreTypeckTransform,
@@ -1888,5 +1889,53 @@ instance Manual:Generic(word) {}
     assert!(
         derived_generic_instance_plan(&db, module, adt_named(&db, module, "Manual"), generic)
             .is_none()
+    );
+}
+
+#[test]
+fn derived_generic_instance_plan_skips_canonical_std_adts() {
+    let mut db = TestDb::default();
+    let key = ModuleKey {
+        library: LibraryId::Std,
+        logical_path: vec!["internal".to_owned()],
+    };
+    insert_module_source(
+        &mut db,
+        key.clone(),
+        "/std/internal.solc",
+        r#"
+forall a rep . class a:Generic(rep) {}
+data Internal = Internal(word);
+instance Internal:Generic(word) {}
+"#,
+    );
+
+    let module_id = module_id_from_key(&db, &key);
+    let file = db.module_files.get(&key).copied().expect("std module file");
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let generic = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ClassDef(class) => Some(class.def_id_value(&db)),
+            _ => None,
+        })
+        .expect("Generic class");
+    let internal = adt_named(&db, module, "Internal");
+
+    assert!(
+        derived_generic_plan(&db, module, internal).is_some(),
+        "representation plans remain available for compiler-internal uses"
+    );
+    assert!(
+        derived_generic_instance_plan(&db, module, internal, generic).is_none(),
+        "std class visibility must not auto-derive public Generic evidence"
+    );
+    let imports = nameres::module_env_for_hir_module(&db, module_id, module);
+    let resolution = hir::nameres::resolve_module(&db, module);
+    assert!(
+        generic_derivation_diagnostics(&db, module, &resolution.item_resolutions, &imports,)
+            .is_empty(),
+        "std manual Generic instances must not conflict with disabled auto-derivation"
     );
 }

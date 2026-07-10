@@ -400,6 +400,16 @@ impl<'db> TraitClauseBuilder<'db> {
         item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
         generic: DefId<'db>,
     ) {
+        // The canonical standard library defines representation and ABI
+        // wrapper types, not user data models. Since `Generic` moved into the
+        // std prelude, treating that visibility as an auto-derive request
+        // would synthesize clauses for every std ADT whenever std is an
+        // implicit compiler dependency. Besides being unnecessary, deriving
+        // those clauses repeatedly dominates even small contract builds.
+        if !generic_derivation_enabled_for_module(self.db, module) {
+            return;
+        }
+
         let mut seen = FxHashSet::default();
         for info in local_adt_infos(self.db, module) {
             seen.insert(info.adt.def_id_value(self.db));
