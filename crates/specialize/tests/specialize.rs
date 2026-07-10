@@ -1294,6 +1294,33 @@ contract C {
 }
 
 #[test]
+fn bool_constructors_specialize_through_pre_typeck_unit_sum_view() {
+    let (_db, output) = specialize_src(
+        r#"
+contract C {
+  public function make_true() -> bool {
+    return true;
+  }
+
+  public function make_false() -> bool {
+    return false;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(
+        function_return_ctor(&output, "make_true"),
+        Some("true".to_owned())
+    );
+    assert_eq!(
+        function_return_ctor(&output, "make_false"),
+        Some("false".to_owned())
+    );
+}
+
+#[test]
 fn unknown_match_pattern_binders_shadow_outer_constants() {
     let (_db, output) = specialize_src(
         r#"
@@ -1426,6 +1453,23 @@ fn main_return_number(output: &SpecializeOutput<'_>) -> Option<String> {
                     MonoExprKind::Lit(hir::ast::function::LitKind::Number(value)) => {
                         Some(value.clone())
                     }
+                    _ => None,
+                },
+                _ => None,
+            })
+        })?
+    })
+}
+
+fn function_return_ctor(output: &SpecializeOutput<'_>, name: &str) -> Option<String> {
+    output.module.items.iter().find_map(|item| {
+        let MonoItem::Function(function) = item else {
+            return None;
+        };
+        function.name.contains(name).then(|| {
+            function.body.iter().find_map(|stmt| match &stmt.kind {
+                MonoStmtKind::Return(Some(expr)) => match &expr.kind {
+                    MonoExprKind::Con { ctor, .. } => Some(ctor.name.clone()),
                     _ => None,
                 },
                 _ => None,

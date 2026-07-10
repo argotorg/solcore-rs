@@ -188,6 +188,15 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             ty = closed;
         }
         let mono_ty = self.driver.mono_ty(ty, "expression", expr.span)?;
+        if let Some(kind) = self.bool_expr_kind(expr_id, mono_ty, expr.span) {
+            let mono_expr = MonoExpr {
+                span: expr.span,
+                ty: mono_ty,
+                kind,
+            };
+            self.lowered_exprs.insert(expr_id, mono_expr.clone());
+            return Some(mono_expr);
+        }
         let kind = match &expr.kind {
             ExprKind::Lit(lit) => MonoExprKind::Lit(lit.clone()),
             ExprKind::Ident(name) => self.ident_expr(expr_id, name, mono_ty, expr.span),
@@ -464,6 +473,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             .map(|ty| self.subst.apply_ty(self.driver.db, ty))
             .unwrap_or_else(|| Ty::unknown(self.driver.db));
         let mono_ty = self.driver.mono_ty(ty, "pattern", pat.span)?;
+        if let Some(kind) = self.bool_pat_kind(pat_id, mono_ty, pat.span) {
+            return Some(MonoPat {
+                span: pat.span,
+                ty: mono_ty,
+                kind,
+            });
+        }
         let kind = match &pat.kind {
             PatKind::Wildcard => MonoPatKind::Wildcard,
             PatKind::Var(name) => match self.pat_resolution(pat_id) {
@@ -592,6 +608,53 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
 
     fn desugar_view(&self) -> BodyDesugarView<'_, 'db> {
         BodyDesugarView::new(&self.pre_typeck_desugar)
+    }
+
+    fn bool_expr_kind(
+        &self,
+        expr: Id<Expr<'db>>,
+        ty: MonoTy<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExprKind<'db>> {
+        let view = self.desugar_view().bool_expr_unit_sum(self.body, expr)?;
+        let resolved_value = match self.expr_resolution(expr) {
+            Some(hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(
+                hir_nameres::BuiltinCtor::True,
+            ))) => true,
+            Some(hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(
+                hir_nameres::BuiltinCtor::False,
+            ))) => false,
+            _ => return None,
+        };
+        debug_assert_eq!(view.value, resolved_value);
+        Some(MonoExprKind::Con {
+            ctor: MonoId {
+                name: bool_ctor_name(resolved_value).to_owned(),
+                ty,
+                span,
+            },
+            args: Vec::new(),
+        })
+    }
+
+    fn bool_pat_kind(
+        &self,
+        pat: Id<Pat<'db>>,
+        ty: MonoTy<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoPatKind<'db>> {
+        let view = self.desugar_view().bool_pat_unit_sum(self.body, pat)?;
+        let resolved_value = match self.pat_resolution(pat) {
+            Some(hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(
+                hir_nameres::BuiltinCtor::True,
+            ))) => true,
+            Some(hir_nameres::Resolution::Builtin(hir_nameres::BuiltinKind::Constructor(
+                hir_nameres::BuiltinCtor::False,
+            ))) => false,
+            _ => return None,
+        };
+        debug_assert_eq!(view.value, resolved_value);
+        Some(self.bool_ctor_pat(resolved_value, ty, span).kind)
     }
 
     fn if_stmt(
