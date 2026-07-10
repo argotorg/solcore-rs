@@ -464,6 +464,10 @@ impl<'db> Emitter<'db> {
         scrutinee: &MonoExpr<'db>,
         arms: &[MonoExprArm<'db>],
     ) -> Expr<'db> {
+        // Mono expression matches currently reach Hull as the pre-typecheck
+        // lowering for `if` expressions. General expression-match lowering
+        // needs a language-spec decision about branch result sequencing and
+        // exhaustiveness before this backend should grow a broader lowering.
         let Some((then_expr, else_expr)) = bool_match_expr_arms(self.db, arms) else {
             self.push(
                 expr.span,
