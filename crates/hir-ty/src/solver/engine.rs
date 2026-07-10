@@ -1,10 +1,15 @@
 use super::*;
 
+// Tabled resolution can otherwise spend the entire work-item fuel budget on a
+// strictly type-growing chain (`C(a) => C(Box(a))`), retaining and repeatedly
+// canonicalizing increasingly large goals. Real programs share subgoals and
+// stay far below this bound; the separate cap keeps pathological growth cheap
+// without charging rigid-head-prefiltered clauses against useful solver fuel.
+const MAX_TABLE_ENTRIES: usize = 1_024;
+
 pub(super) struct TabledEngine<'db> {
     db: &'db dyn Db,
     env: TraitEnvId<'db>,
-    /// Whether default instances may be used when no other clause applies.
-    include_defaults: bool,
     /// Variables fixed by the surrounding checked body; never solved by the
     /// engine and preserved verbatim across canonicalization.
     local_context_vars: FxHashSet<u32>,
@@ -19,12 +24,7 @@ pub(super) struct TabledEngine<'db> {
 }
 
 impl<'db> TabledEngine<'db> {
-    pub(super) fn new(
-        db: &'db dyn Db,
-        env: TraitEnvId<'db>,
-        include_defaults: bool,
-        fuel: usize,
-    ) -> Self {
+    pub(super) fn new(db: &'db dyn Db, env: TraitEnvId<'db>, fuel: usize) -> Self {
         let mut local_context_vars = FxHashSet::default();
         for pred in env.local_givens(db) {
             collect_pred_vars(db, *pred, &mut local_context_vars);
@@ -32,7 +32,6 @@ impl<'db> TabledEngine<'db> {
         Self {
             db,
             env,
-            include_defaults,
             local_context_vars,
             table: FxHashMap::default(),
             worklist: VecDeque::new(),
@@ -53,7 +52,7 @@ impl<'db> TabledEngine<'db> {
             canonicalize_goal(self.db, goal, allowed_goal_vars, &self.local_context_vars);
         self.ensure_entry(top_key.clone());
         while let Some(item) = self.worklist.pop_front() {
-            if self.fuel == 0 {
+            if self.exhausted || self.fuel == 0 {
                 self.exhausted = true;
                 break;
             }
@@ -93,6 +92,10 @@ impl<'db> TabledEngine<'db> {
         if self.table.contains_key(&key) {
             return;
         }
+        if self.table.len() >= MAX_TABLE_ENTRIES {
+            self.exhausted = true;
+            return;
+        }
         let clauses = self.applicable_clauses(&key);
         self.table.insert(key.clone(), TableEntry::default());
         self.worklist.push_back(WorkItem::Generator(GeneratorNode {
@@ -106,6 +109,15 @@ impl<'db> TabledEngine<'db> {
     /// then non-default instances, then superclass projections, and — only when
     /// no non-default clause head can unify with the goal — default instances.
     fn applicable_clauses(&self, key: &TableKey<'db>) -> Vec<ProgramClause<'db>> {
+        // Base clauses are prefiltered by rigid head shape. Bound variables
+        // and their correlations are deliberately ignored, while comptime is
+        // transparent, so this may retain impossible heads but never discards
+        // one that directed matching could accept. The same one-way shape
+        // check is safe for local givens that share fixed variables with the
+        // goal because variables are treated as wildcards rather than bound.
+        let head_can_apply = |clause: &ProgramClause<'db>| {
+            pred_head_shapes_may_match(self.db, clause.head, key.pred)
+        };
         let mut clauses = Vec::new();
         clauses.extend(
             self.env
@@ -117,24 +129,36 @@ impl<'db> TabledEngine<'db> {
                     head: canonicalize_local_given(self.db, given, key),
                     conditions: Vec::new(),
                     origin: ClauseOrigin::Given,
-                }),
+                })
+                .filter(&head_can_apply),
         );
         let base_clauses = self.env.clauses(self.db);
         clauses.extend(base_clauses.iter().filter_map(|clause| {
-            (!clause.origin.is_default() && !matches!(clause.origin, ClauseOrigin::Superclass(_)))
-                .then_some(clause.clone())
+            (!clause.origin.is_default()
+                && !matches!(clause.origin, ClauseOrigin::Superclass(_))
+                && head_can_apply(clause))
+            .then_some(clause.clone())
         }));
         clauses.extend(base_clauses.iter().filter_map(|clause| {
-            (!clause.origin.is_default() && matches!(clause.origin, ClauseOrigin::Superclass(_)))
-                .then_some(clause.clone())
+            (!clause.origin.is_default()
+                && matches!(clause.origin, ClauseOrigin::Superclass(_))
+                && head_can_apply(clause))
+            .then_some(clause.clone())
         }));
-        if self.include_defaults && !self.has_non_default_unifying_head(key) {
-            clauses.extend(
-                base_clauses
-                    .iter()
-                    .filter(|clause| clause.origin.is_default())
-                    .cloned(),
-            );
+        // Default selection is local to each tabled subgoal. A non-default
+        // instance may itself depend on a constraint that is discharged by a
+        // default instance, so suppressing defaults for the whole engine run
+        // would incorrectly reject such clauses. Check for a matching default
+        // first: `has_non_default_unifying_head` traverses the complete goal,
+        // which is prohibitively expensive for fuel-bounded, type-growing
+        // chains that have no default candidate at all.
+        let default_clauses = base_clauses
+            .iter()
+            .filter(|clause| clause.origin.is_default() && head_can_apply(clause))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !default_clauses.is_empty() && !self.has_non_default_unifying_head(key) {
+            clauses.extend(default_clauses);
         }
         clauses
     }
@@ -214,6 +238,9 @@ impl<'db> TabledEngine<'db> {
         );
         consumer.waiting_renaming = renaming;
         self.ensure_entry(key.clone());
+        if self.exhausted {
+            return;
+        }
         let answers = {
             let entry = self
                 .table
@@ -377,4 +404,108 @@ pub(super) struct Answer<'db> {
 
 fn same_table_answer<'db>(lhs: &Answer<'db>, rhs: &Answer<'db>) -> bool {
     lhs.candidate.subst == rhs.candidate.subst && lhs.origin == rhs.origin
+}
+
+fn pred_head_shapes_may_match<'db>(db: &'db dyn Db, lhs: Pred<'db>, rhs: Pred<'db>) -> bool {
+    match (lhs.kind(db), rhs.kind(db)) {
+        (
+            PredKind::InClass {
+                class: lhs_class,
+                main: lhs_main,
+                args: lhs_args,
+            },
+            PredKind::InClass {
+                class: rhs_class,
+                main: rhs_main,
+                args: rhs_args,
+            },
+        ) if lhs_class == rhs_class && lhs_args.len() == rhs_args.len() => {
+            ty_shapes_may_match(db, *lhs_main, *rhs_main)
+                && lhs_args
+                    .iter()
+                    .zip(rhs_args)
+                    .all(|(lhs_arg, rhs_arg)| ty_shapes_may_match(db, *lhs_arg, *rhs_arg))
+        }
+        (
+            PredKind::Eq {
+                lhs: lhs_l,
+                rhs: lhs_r,
+            },
+            PredKind::Eq {
+                lhs: rhs_l,
+                rhs: rhs_r,
+            },
+        ) => ty_shapes_may_match(db, *lhs_l, *rhs_l) && ty_shapes_may_match(db, *lhs_r, *rhs_r),
+        (PredKind::Error, PredKind::Error) => true,
+        _ => false,
+    }
+}
+
+fn ty_shapes_may_match<'db>(db: &'db dyn Db, lhs: Ty<'db>, rhs: Ty<'db>) -> bool {
+    if let TyKind::Comptime(inner) = lhs.kind(db) {
+        return ty_shapes_may_match(db, *inner, rhs);
+    }
+    if let TyKind::Comptime(inner) = rhs.kind(db) {
+        return ty_shapes_may_match(db, lhs, *inner);
+    }
+
+    match (lhs.kind(db), rhs.kind(db)) {
+        // Correlations between variables are intentionally ignored. This is a
+        // one-way prefilter: false positives cost fuel, while false negatives
+        // would make resolution incomplete.
+        (TyKind::BoundVar(_), _) | (_, TyKind::BoundVar(_)) => true,
+        (TyKind::Error | TyKind::Unknown, _) | (_, TyKind::Error | TyKind::Unknown) => true,
+        (
+            TyKind::Named {
+                ctor: lhs_ctor,
+                args: lhs_args,
+            },
+            TyKind::Named {
+                ctor: rhs_ctor,
+                args: rhs_args,
+            },
+        ) if lhs_ctor == rhs_ctor && lhs_args.len() == rhs_args.len() => lhs_args
+            .iter()
+            .zip(rhs_args)
+            .all(|(lhs_arg, rhs_arg)| ty_shapes_may_match(db, *lhs_arg, *rhs_arg)),
+        (
+            TyKind::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                args,
+            },
+            TyKind::Tuple(elems),
+        )
+        | (
+            TyKind::Tuple(elems),
+            TyKind::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Unit),
+                args,
+            },
+        ) if args.is_empty() && elems.is_empty() => true,
+        (
+            TyKind::Function {
+                params: lhs_params,
+                ret: lhs_ret,
+            },
+            TyKind::Function {
+                params: rhs_params,
+                ret: rhs_ret,
+            },
+        ) if lhs_params.len() == rhs_params.len() => {
+            lhs_params
+                .iter()
+                .zip(rhs_params)
+                .all(|(lhs_param, rhs_param)| ty_shapes_may_match(db, *lhs_param, *rhs_param))
+                && ty_shapes_may_match(db, *lhs_ret, *rhs_ret)
+        }
+        (TyKind::Tuple(lhs_elems), TyKind::Tuple(rhs_elems))
+            if lhs_elems.len() == rhs_elems.len() =>
+        {
+            lhs_elems
+                .iter()
+                .zip(rhs_elems)
+                .all(|(lhs_elem, rhs_elem)| ty_shapes_may_match(db, *lhs_elem, *rhs_elem))
+        }
+        _ => false,
+    }
 }

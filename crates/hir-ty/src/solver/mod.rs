@@ -454,31 +454,19 @@ impl<'db> Solver<'db> {
         }
     }
 
-    /// Solve `goal` in two phases: first without default instances, then — only
-    /// if that found no answer, did not run out of fuel, and no non-default
-    /// clause head could even unify with the goal — a second run that admits
-    /// default instances. This keeps defaults from masking a real instance.
+    /// Solve `goal`, selecting defaults independently for each tabled subgoal.
+    /// The engine admits a default only when no non-default clause head can
+    /// unify with that particular subgoal, so defaults do not mask specific
+    /// instances but can still discharge conditions of a non-default parent.
     fn solve_pred_with_allowed(
         &mut self,
         goal: Pred<'db>,
         allowed_goal_vars: &FxHashSet<u32>,
     ) -> SolverReport<'db> {
-        let mut non_default = TabledEngine::new(self.db, self.env, false, self.fuel);
-        let mut result = non_default.run(goal, allowed_goal_vars);
+        let mut engine = TabledEngine::new(self.db, self.env, self.fuel);
+        let result = engine.run(goal, allowed_goal_vars);
         self.fuel = result.fuel_remaining;
         self.stats.add(result.stats);
-
-        if result.answers.is_empty()
-            && !result.exhausted
-            && !self.has_non_default_unifying_head(goal, allowed_goal_vars)
-        {
-            let mut with_defaults = TabledEngine::new(self.db, self.env, true, self.fuel);
-            let default_result = with_defaults.run(goal, allowed_goal_vars);
-            self.fuel = default_result.fuel_remaining;
-            self.stats.add(default_result.stats);
-            result.exhausted |= default_result.exhausted;
-            result.answers = default_result.answers;
-        }
 
         let mut report = SolverReport::new(
             solution_from_answers(self.db, self.env, result.answers),
@@ -487,21 +475,6 @@ impl<'db> Solver<'db> {
         report.fuel_remaining = self.fuel;
         report.stats = self.stats;
         report
-    }
-
-    fn has_non_default_unifying_head(
-        &self,
-        goal: Pred<'db>,
-        allowed_goal_vars: &FxHashSet<u32>,
-    ) -> bool {
-        let mut goal_vars = allowed_goal_vars.clone();
-        collect_pred_vars(self.db, goal, &mut goal_vars);
-        let base_clauses = self.env.clauses(self.db);
-        base_clauses.iter().any(|clause| {
-            !clause.origin.is_default()
-                && !matches!(clause.origin, ClauseOrigin::Superclass(_))
-                && head_can_unify(self.db, clause, goal, &goal_vars)
-        })
     }
 }
 

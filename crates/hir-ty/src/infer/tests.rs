@@ -1123,6 +1123,179 @@ forall a b . a:StorageSize, b:StorageSize => instance Pair(a, b):StorageSize {}
 }
 
 #[test]
+fn trait_solver_prefilters_only_heads_that_cannot_unify() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+forall a . class a:Target {}
+forall a . class a:Noise {}
+forall a . class a:DefaultTarget {}
+forall a . class a:GenericTarget {}
+forall a . class a:GivenTarget {}
+forall a . class a:Parent {}
+forall a . a:Parent => class a:Child {}
+forall a . class a:AmbiguousTarget {}
+
+instance word:Target {}
+instance bool:Noise {}
+forall a . default instance a:Noise {}
+forall a . default instance a:DefaultTarget {}
+forall a . instance a:GenericTarget {}
+instance word:AmbiguousTarget {}
+instance word:AmbiguousTarget {}
+"#,
+    );
+    let module_resolution = hir_nameres::resolve_module(&db, module);
+    let base_env = trait_env(&db, module, &module_resolution);
+    let word = Ty::word(&db);
+    let env = trait_env_with_givens(
+        &db,
+        base_env,
+        vec![
+            Pred::in_class(&db, class_id(&db, module, "Noise"), word, Vec::new()),
+            Pred::in_class(&db, class_id(&db, module, "Child"), word, Vec::new()),
+            Pred::in_class(&db, class_id(&db, module, "GivenTarget"), word, Vec::new()),
+        ],
+    );
+
+    let target = solve_class_report(&db, env, class_id(&db, module, "Target"), word, Vec::new());
+    assert!(
+        matches!(target.solution, Solution::Unique { .. }),
+        "{target:?}"
+    );
+    assert_eq!(target.stats.generator_steps, 1, "{target:?}");
+
+    let generic = solve_class_report(
+        &db,
+        env,
+        class_id(&db, module, "GenericTarget"),
+        word,
+        Vec::new(),
+    );
+    assert!(
+        matches!(generic.solution, Solution::Unique { .. }),
+        "{generic:?}"
+    );
+    assert_eq!(generic.stats.generator_steps, 1, "{generic:?}");
+
+    let given = solve_class_report(
+        &db,
+        env,
+        class_id(&db, module, "GivenTarget"),
+        word,
+        Vec::new(),
+    );
+    assert!(
+        matches!(given.solution, Solution::Unique { .. }),
+        "{given:?}"
+    );
+    assert_eq!(given.stats.generator_steps, 1, "{given:?}");
+
+    let superclass =
+        solve_class_report(&db, env, class_id(&db, module, "Parent"), word, Vec::new());
+    assert!(
+        matches!(superclass.solution, Solution::Unique { .. }),
+        "{superclass:?}"
+    );
+    assert_eq!(superclass.stats.generator_steps, 2, "{superclass:?}");
+
+    let default = solve_class_report(
+        &db,
+        env,
+        class_id(&db, module, "DefaultTarget"),
+        Ty::string(&db),
+        Vec::new(),
+    );
+    assert!(
+        matches!(default.solution, Solution::Unique { .. }),
+        "{default:?}"
+    );
+    assert_eq!(default.stats.generator_steps, 1, "{default:?}");
+
+    let ambiguous = solve_class_report(
+        &db,
+        env,
+        class_id(&db, module, "AmbiguousTarget"),
+        word,
+        Vec::new(),
+    );
+    assert!(
+        matches!(ambiguous.solution, Solution::Ambiguous { .. }),
+        "{ambiguous:?}"
+    );
+    assert_eq!(ambiguous.stats.generator_steps, 2, "{ambiguous:?}");
+}
+
+#[test]
+fn trait_solver_preserves_comptime_transparent_fixed_local_given() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+forall abs rep . class abs:Typedef(rep) {}
+"#,
+    );
+    let module_resolution = hir_nameres::resolve_module(&db, module);
+    let base_env = trait_env(&db, module, &module_resolution);
+    let class = class_id(&db, module, "Typedef");
+    let context_ty = Ty::bound(&db, 0);
+    let env = trait_env_with_givens(
+        &db,
+        base_env,
+        vec![Pred::in_class(&db, class, context_ty, vec![Ty::word(&db)])],
+    );
+    let goal = Pred::in_class(
+        &db,
+        class,
+        Ty::comptime(&db, context_ty),
+        vec![Ty::word(&db)],
+    );
+
+    let report = solve_report(&db, env, canonical_goal(&db, goal));
+
+    assert!(
+        matches!(report.solution, Solution::Unique { .. }),
+        "{report:?}"
+    );
+    assert_eq!(report.stats.generator_steps, 1, "{report:?}");
+}
+
+#[test]
+fn trait_solver_prefilter_preserves_comptime_correlated_instance_head() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+forall a . class a:Correlated {}
+forall x . instance (comptime x, x):Correlated {}
+"#,
+    );
+    let module_resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &module_resolution);
+    let context_ty = Ty::bound(&db, 0);
+    let pair = Ty::named(
+        &db,
+        TyCtor::Builtin(crate::BuiltinTyCtor::Pair),
+        vec![context_ty, context_ty],
+    );
+
+    let report = solve_class_report(
+        &db,
+        env,
+        class_id(&db, module, "Correlated"),
+        pair,
+        Vec::new(),
+    );
+
+    assert!(
+        matches!(report.solution, Solution::Unique { .. }),
+        "{report:?}"
+    );
+    assert_eq!(report.stats.generator_steps, 1, "{report:?}");
+}
+
+#[test]
 fn trait_solver_prefers_specific_instance_over_default() {
     let db = TestDb::default();
     let module = parse_module(
@@ -1159,6 +1332,58 @@ instance word:Test {}
 
     let default_solution = solve_class_goal(&db, env, class, Ty::string(&db), Vec::new());
     assert!(matches!(default_solution, Solution::Unique { .. }));
+}
+
+#[test]
+fn trait_solver_uses_default_instance_for_non_default_clause_condition() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+data Wrap(a) = Wrap(a);
+
+forall a . class a:DefaultDependency {}
+forall a . default instance a:DefaultDependency {}
+
+forall a . class a:Outer {}
+forall a . a:DefaultDependency => instance Wrap(a):Outer {}
+"#,
+    );
+    let module_resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &module_resolution);
+    let wrapped_word = adt_ty(&db, module, "Wrap", vec![Ty::word(&db)]);
+    let default_dependency = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::InstanceDef(instance) if instance.default_kw(&db).is_some() => {
+                Some(instance.def_id_value(&db))
+            }
+            _ => None,
+        })
+        .expect("default dependency instance");
+
+    let report = solve_class_report(
+        &db,
+        env,
+        class_id(&db, module, "Outer"),
+        wrapped_word,
+        Vec::new(),
+    );
+
+    let Solution::Unique { ref evidence, .. } = report.solution else {
+        panic!("expected default-backed solution, got {report:?}");
+    };
+    let Evidence::Instance { sub_evidence, .. } = evidence else {
+        panic!("expected outer instance evidence");
+    };
+    assert_eq!(sub_evidence.len(), 1);
+    assert!(matches!(
+        &sub_evidence[0],
+        Evidence::Instance { instance, .. } if *instance == default_dependency
+    ));
+    assert!(!report.exhausted, "{report:?}");
+    assert_eq!(report.stats.generator_steps, 2, "{report:?}");
 }
 
 #[test]
