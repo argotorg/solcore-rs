@@ -80,8 +80,8 @@ pub use derived_generic::{
     derived_generic_instance_plan, derived_generic_plan, generic_derivation_diagnostics,
 };
 use derived_generic::{
-    derived_generic_instance_plan_with_resolutions, imported_generic_class, local_adt_infos,
-    local_generic_class, visible_generic_class,
+    derived_generic_instance_plan_with_resolutions, generic_derivation_enabled_for_module,
+    imported_generic_class, local_adt_infos, local_generic_class, visible_generic_class,
 };
 use display::{display_scheme_source, display_vars};
 use engine::{Answer, TabledEngine};
@@ -433,7 +433,21 @@ impl<'db> SolverReport<'db> {
 impl<'db> TraitEnvId<'db> {
     /// Returns the base program clauses visible to this environment.
     pub fn clauses(self, db: &'db dyn Db) -> Vec<ProgramClause<'db>> {
+        self.clauses_ref(db).clone()
+    }
+
+    fn clauses_ref(self, db: &'db dyn Db) -> &'db Vec<ProgramClause<'db>> {
         env::base_trait_env_clauses(db, self.base(db))
+    }
+
+    /// Returns the base clauses relevant to the goal's class family.
+    fn clauses_for_pred(self, db: &'db dyn Db, pred: Pred<'db>) -> &'db Vec<ProgramClause<'db>> {
+        match pred.kind(db) {
+            PredKind::InClass { class, .. } => {
+                env::base_trait_env_class_clauses(db, self.base(db), *class)
+            }
+            PredKind::Eq { .. } | PredKind::Error => self.clauses_ref(db),
+        }
     }
 
     /// Returns local given predicates layered over the base environment.

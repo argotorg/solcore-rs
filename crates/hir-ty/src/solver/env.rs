@@ -145,6 +145,7 @@ pub fn trait_env_with_givens<'db>(
     )
 }
 
+#[salsa::tracked(returns(ref))]
 pub(super) fn base_trait_env_clauses<'db>(
     db: &'db dyn Db,
     base: BaseTraitEnvId<'db>,
@@ -180,6 +181,33 @@ pub(super) fn base_trait_env_clauses<'db>(
             clauses
         }
     }
+}
+
+/// Returns only the base clauses whose head belongs to `class`.
+///
+/// Most solver goals are class predicates. Memoizing this projection keeps the
+/// enlarged implicit-std environment from being scanned for every subgoal and
+/// shares the result across solves that layer different local givens over the
+/// same base environment.
+#[salsa::tracked(returns(ref))]
+pub(super) fn base_trait_env_class_clauses<'db>(
+    db: &'db dyn Db,
+    base: BaseTraitEnvId<'db>,
+    class: ClassId<'db>,
+) -> Vec<ProgramClause<'db>> {
+    base_trait_env_clauses(db, base)
+        .iter()
+        .filter(|clause| {
+            matches!(
+                clause.head.kind(db),
+                PredKind::InClass {
+                    class: clause_class,
+                    ..
+                } if *clause_class == class
+            )
+        })
+        .cloned()
+        .collect()
 }
 
 fn extend_clause_set<'db>(
