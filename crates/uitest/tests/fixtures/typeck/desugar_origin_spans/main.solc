@@ -1,0 +1,17 @@
+contract C {
+  seed: word = if true then false else 1;
+}
+
+function pat_source(p: (word, word)) -> word {
+  match p {
+  | (a, b, c) => return a;
+  }
+}
+
+function if_source(b: bool) -> word {
+  return if b then 1 else false;
+}
+
+function bool_source() -> word {
+  return true;
+}

@@ -1,0 +1,51 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/desugar_origin_spans/main.solc
+---
+error[SC0201]: type mismatch: expected word, found bool
+ --> /main/main.solc:2:29
+  |
+1 | contract C {
+2 |   seed: word = if true then false else 1;
+  |                             ^^^^^ expression has mismatched type
+3 | }
+  |
+  = note: expected type: word
+  = note: found type: bool
+---
+
+error[SC0203]: tuple pattern expects 2 arguments, but 3 were provided
+ --> /main/main.solc:7:5
+  |
+6 |   match p {
+7 |   | (a, b, c) => return a;
+  |     ^^^^^^^^^ wrong number of arguments
+8 |   }
+  |
+  = note: expected 2 arguments
+  = note: found 3 arguments
+---
+
+error[SC0201]: type mismatch: expected word, found bool
+  --> /main/main.solc:12:27
+   |
+11 | function if_source(b: bool) -> word {
+12 |   return if b then 1 else false;
+   |                           ^^^^^ expression has mismatched type
+13 | }
+   |
+   = note: expected type: word
+   = note: found type: bool
+---
+
+error[SC0201]: type mismatch: expected word, found bool
+  --> /main/main.solc:16:10
+   |
+15 | function bool_source() -> word {
+16 |   return true;
+   |          ^^^^ expression has mismatched type
+17 | }
+   |
+   = note: expected type: word
+   = note: found type: bool
