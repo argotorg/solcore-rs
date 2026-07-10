@@ -319,6 +319,70 @@ function main() -> word { return f(); }
     }
 }
 
+#[test]
+fn desugar_body_edit_does_not_rerun_unrelated_body_inference() {
+    let before = r#"
+function choose(b: bool, x: word, y: word) -> word {
+  let p: (word, bool) = (x, true);
+  let selected: word = if b then x else y;
+  match p {
+  | (head, flag) => return selected;
+  }
+}
+
+function stable(x: word) -> word { return x; }
+function main() -> word { return stable(choose(false, 1, 2)); }
+"#;
+    let after = r#"
+function choose(b: bool, x: word, y: word) -> word {
+  let p: (word, bool) = (x, false);
+  let selected: word = if b then x else y;
+  match p {
+  | (head, flag) => return selected;
+  }
+}
+
+function stable(x: word) -> word { return x; }
+function main() -> word { return stable(choose(false, 1, 2)); }
+"#;
+    let (mut db, file, key) = db_with_main(before);
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        assert!(module_typeck_diagnostics(&db, module).is_empty());
+        let executed = db.take_executed();
+        assert!(
+            query_executions(&executed, "pre_typeck_desugar_body_tree") > 0,
+            "{executed:#?}"
+        );
+        assert_eq!(
+            query_executions(&executed, "infer_body"),
+            3,
+            "{executed:#?}"
+        );
+    }
+
+    file.set_content(&mut db).to(Some(after.to_owned()));
+
+    {
+        let module = module_id_from_key(&db, &key);
+        let _ = db.take_executed();
+        assert!(module_typeck_diagnostics(&db, module).is_empty());
+        let executed = db.take_executed();
+        assert_eq!(
+            query_executions(&executed, "pre_typeck_desugar_body_tree"),
+            1,
+            "{executed:#?}"
+        );
+        assert_eq!(
+            query_executions(&executed, "infer_body"),
+            1,
+            "{executed:#?}"
+        );
+    }
+}
+
 fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
