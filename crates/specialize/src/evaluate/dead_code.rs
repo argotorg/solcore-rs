@@ -12,7 +12,7 @@ pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> Mono
             for entry in &contract.entries {
                 let specialized = match entry {
                     MonoEntry::SelectorMethod { specialized, .. }
-                    | MonoEntry::Constructor { specialized, .. }
+                    | MonoEntry::DeploymentMain { specialized, .. }
                     | MonoEntry::Fallback { specialized, .. }
                     | MonoEntry::RuntimeMain { specialized, .. } => specialized,
                 };

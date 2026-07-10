@@ -6,15 +6,26 @@ impl<'db> Emitter<'db> {
         contract: &MonoContract<'db>,
         functions: &[Function<'db>],
     ) -> Object<'db> {
-        let mut constructor_names = BTreeSet::new();
-        if let Some(name) = &contract.constructor.specialized {
-            constructor_names.insert(name.clone());
-        }
-        for entry in &contract.entries {
-            if let MonoEntry::Constructor { specialized, .. } = entry {
-                constructor_names.insert(specialized.clone());
+        let deployment_main = contract.entries.iter().find_map(|entry| {
+            if let MonoEntry::DeploymentMain {
+                specialized, span, ..
+            } = entry
+            {
+                Some((specialized, *span))
+            } else {
+                None
             }
-        }
+        });
+        let runtime_main = contract.entries.iter().find_map(|entry| {
+            if let MonoEntry::RuntimeMain {
+                specialized, span, ..
+            } = entry
+            {
+                Some((specialized, *span))
+            } else {
+                None
+            }
+        });
 
         let storage_fields = self.contract_storage_fields(contract.def);
         let storage_hash_helper = storage_fields
@@ -22,7 +33,13 @@ impl<'db> Emitter<'db> {
             .any(|field| field.kind == StorageFieldKind::Mapping)
             .then_some(STORAGE_HASH2_HELPER.to_owned());
 
-        let deployment_names = deployment_closure(self.db, functions, &constructor_names);
+        let deployment_roots =
+            deployment_main.map_or_else(BTreeSet::new, |(name, _)| BTreeSet::from([name.clone()]));
+        let runtime_roots =
+            runtime_main.map_or_else(BTreeSet::new, |(name, _)| BTreeSet::from([name.clone()]));
+        let deployment_names = deployment_closure(self.db, functions, &deployment_roots);
+        let runtime_names = deployment_closure(self.db, functions, &runtime_roots);
+
         let mut mapping_value_helper_used = false;
         let mut deployment_functions = functions
             .iter()
@@ -36,11 +53,10 @@ impl<'db> Emitter<'db> {
                     &mut mapping_value_helper_used,
                 )
             })
-            .map(ensure_unit_function_returns)
             .collect::<Vec<_>>();
         let mut runtime_functions = functions
             .iter()
-            .filter(|function| !constructor_names.contains(function.name.as_str()))
+            .filter(|function| runtime_names.contains(function.name.as_str()))
             .cloned()
             .map(|function| {
                 self.lower_storage_fields_in_function(
@@ -65,44 +81,41 @@ impl<'db> Emitter<'db> {
 
         let deployer_name = format!("{}Deploy", contract.name);
         let runtime_name = contract.name.clone();
-        let deploy_stmts = self.emit_deployer(
-            contract,
-            &deployment_functions,
-            &deployer_name,
-            &runtime_name,
-        );
+        let mut deploy_stmts = Vec::new();
+        if let Some((main, span)) = deployment_main {
+            if let Some(call) = entry_call(&deployment_functions, main, span) {
+                deploy_stmts.push(call);
+            } else {
+                self.push(
+                    span,
+                    EmitDiagnosticKind::UnsupportedDispatchEntry {
+                        signature: "constructor".to_owned(),
+                        reason: "specialized deployment entry function is missing".to_owned(),
+                    },
+                );
+            }
+        } else {
+            self.push(
+                contract.span,
+                EmitDiagnosticKind::UnsupportedDispatchEntry {
+                    signature: "constructor".to_owned(),
+                    reason: "missing compiler-generated deployment entry".to_owned(),
+                },
+            );
+        }
 
         let mut runtime_stmts = Vec::new();
-        let runtime_main = contract.entries.iter().find_map(|entry| {
-            if let MonoEntry::RuntimeMain {
-                specialized, span, ..
-            } = entry
-            {
-                Some((specialized, *span))
-            } else {
-                None
-            }
-        });
         if let Some((main, span)) = runtime_main {
-            let ret = runtime_functions
-                .iter()
-                .find(|function| function.name.as_str() == main)
-                .map(|function| function.ret.clone())
-                .unwrap_or_else(|| Ty::unit(span));
-            runtime_stmts.push(Stmt {
-                span,
-                kind: StmtKind::Expr(Expr {
+            if let Some(call) = entry_call(&runtime_functions, main, span) {
+                runtime_stmts.push(call);
+            } else {
+                self.push(
                     span,
-                    // A source `main` may return a value even though the EVM
-                    // runtime entry ignores it. Preserve the callee's actual
-                    // Hull type so the entry call remains well-typed.
-                    ty: ret,
-                    kind: ExprKind::Call {
-                        callee: main.clone().into(),
-                        args: Vec::new(),
+                    EmitDiagnosticKind::DispatcherDeferred {
+                        contract: contract.name.clone(),
                     },
-                }),
-            });
+                );
+            }
         } else {
             self.push(
                 contract.span,
@@ -132,396 +145,24 @@ impl<'db> Emitter<'db> {
             }],
         }
     }
-
-    fn emit_deployer(
-        &mut self,
-        contract: &MonoContract<'db>,
-        deployment_functions: &[Function<'db>],
-        deployer_name: &str,
-        runtime_name: &str,
-    ) -> Vec<Stmt<'db>> {
-        let span = contract.span;
-        let mut body =
-            vec![self.deployer_setup(span, deployer_name, contract.constructor.inputs.len())];
-        if !contract.constructor.payable {
-            body.push(self.nonpayable_check(span));
-        }
-
-        if let Some(constructor_name) = contract.constructor.specialized.as_deref() {
-            let Some(function) = deployment_functions
-                .iter()
-                .find(|function| function.name.as_str() == constructor_name)
-            else {
-                self.push(
-                    contract.constructor.span,
-                    EmitDiagnosticKind::UnsupportedDispatchEntry {
-                        signature: "constructor".to_owned(),
-                        reason: "missing specialized constructor function".to_owned(),
-                    },
-                );
-                body.push(self.return_runtime_object(span, runtime_name));
-                return body;
-            };
-
-            if !constructor_inputs_are_static_word(contract)
-                || function.args.len() != contract.constructor.inputs.len()
-            {
-                self.push(
-                    contract.constructor.span,
-                    EmitDiagnosticKind::UnsupportedDispatchEntry {
-                        signature: "constructor".to_owned(),
-                        reason: "unsupported constructor ABI shape".to_owned(),
-                    },
-                );
-                body.push(self.return_runtime_object(span, runtime_name));
-                return body;
-            }
-
-            let mut args = Vec::new();
-            for (index, arg) in function.args.iter().enumerate() {
-                let arg_name = format!("constructor_arg{index}");
-                let abi_kind = abi_word_kind(&contract.constructor.inputs[index]);
-                if matches!(abi_kind, AbiWordKind::Bool) {
-                    let raw_name = format!("{arg_name}_word");
-                    body.push(Stmt {
-                        span,
-                        kind: StmtKind::Let {
-                            name: raw_name.clone().into(),
-                            ty: Ty::word(span),
-                        },
-                    });
-                    body.push(self.decode_constructor_arg(
-                        span,
-                        deployer_name,
-                        &raw_name,
-                        index,
-                        abi_kind,
-                    ));
-                    body.push(Stmt {
-                        span,
-                        kind: StmtKind::Let {
-                            name: arg_name.clone().into(),
-                            ty: arg.ty.clone(),
-                        },
-                    });
-                    body.push(Stmt {
-                        span,
-                        kind: StmtKind::Assign {
-                            lhs: Expr::var(span, arg_name.clone(), arg.ty.clone()),
-                            rhs: abi_word_to_bool_expr(
-                                span,
-                                Expr::var(span, raw_name, Ty::word(span)),
-                                arg.ty.clone(),
-                            ),
-                        },
-                    });
-                } else {
-                    body.push(Stmt {
-                        span,
-                        kind: StmtKind::Let {
-                            name: arg_name.clone().into(),
-                            ty: arg.ty.clone(),
-                        },
-                    });
-                    body.push(self.decode_constructor_arg(
-                        span,
-                        deployer_name,
-                        &arg_name,
-                        index,
-                        abi_kind,
-                    ));
-                }
-                args.push(Expr::var(span, arg_name, arg.ty.clone()));
-            }
-
-            body.push(Stmt {
-                span,
-                kind: StmtKind::Expr(Expr {
-                    span,
-                    ty: function.ret.clone(),
-                    kind: ExprKind::Call {
-                        callee: function.name.clone(),
-                        args,
-                    },
-                }),
-            });
-        }
-
-        body.push(self.return_runtime_object(span, runtime_name));
-        body
-    }
-
-    fn deployer_setup(
-        &self,
-        span: Span<'db>,
-        deployer_name: &str,
-        constructor_arg_count: usize,
-    ) -> Stmt<'db> {
-        let deployer_size =
-            self.yul_call(span, "datasize", vec![self.yul_string(span, deployer_name)]);
-        let minimum_size = if constructor_arg_count == 0 {
-            deployer_size
-        } else {
-            self.yul_call(
-                span,
-                "add",
-                vec![
-                    deployer_size,
-                    self.yul_number(span, (constructor_arg_count * 32).to_string()),
-                ],
-            )
-        };
-        self.assembly_stmt(
-            span,
-            vec![
-                self.yul_expr_stmt(
-                    span,
-                    self.yul_call(
-                        span,
-                        "mstore",
-                        vec![
-                            self.yul_number(span, "64"),
-                            self.yul_call(span, "memoryguard", vec![self.yul_number(span, "128")]),
-                        ],
-                    ),
-                ),
-                YulStmt {
-                    span,
-                    kind: YulStmtKind::If {
-                        cond: self.yul_call(
-                            span,
-                            "lt",
-                            vec![self.yul_call(span, "codesize", Vec::new()), minimum_size],
-                        ),
-                        body: vec![self.yul_expr_stmt(
-                            span,
-                            self.yul_call(
-                                span,
-                                "revert",
-                                vec![self.yul_number(span, "0"), self.yul_number(span, "0")],
-                            ),
-                        )],
-                    },
-                },
-            ],
-        )
-    }
-
-    fn return_runtime_object(&self, span: Span<'db>, runtime_name: &str) -> Stmt<'db> {
-        self.assembly_stmt(
-            span,
-            vec![
-                self.yul_let(
-                    span,
-                    "size",
-                    Some(self.yul_call(
-                        span,
-                        "datasize",
-                        vec![self.yul_string(span, runtime_name)],
-                    )),
-                ),
-                self.yul_expr_stmt(
-                    span,
-                    self.yul_call(
-                        span,
-                        "codecopy",
-                        vec![
-                            self.yul_number(span, "0"),
-                            self.yul_call(
-                                span,
-                                "dataoffset",
-                                vec![self.yul_string(span, runtime_name)],
-                            ),
-                            self.yul_call(
-                                span,
-                                "datasize",
-                                vec![self.yul_string(span, runtime_name)],
-                            ),
-                        ],
-                    ),
-                ),
-                self.yul_expr_stmt(
-                    span,
-                    self.yul_call(
-                        span,
-                        "return",
-                        vec![
-                            self.yul_number(span, "0"),
-                            self.yul_ident_expr(span, "size"),
-                        ],
-                    ),
-                ),
-            ],
-        )
-    }
-
-    fn decode_constructor_arg(
-        &self,
-        span: Span<'db>,
-        deployer_name: &str,
-        name: &str,
-        index: usize,
-        kind: AbiWordKind,
-    ) -> Stmt<'db> {
-        let offset = if index == 0 {
-            self.yul_call(span, "datasize", vec![self.yul_string(span, deployer_name)])
-        } else {
-            self.yul_call(
-                span,
-                "add",
-                vec![
-                    self.yul_call(span, "datasize", vec![self.yul_string(span, deployer_name)]),
-                    self.yul_number(span, (index * 32).to_string()),
-                ],
-            )
-        };
-        let mut stmts = vec![
-            self.yul_expr_stmt(
-                span,
-                self.yul_call(
-                    span,
-                    "codecopy",
-                    vec![
-                        self.yul_number(span, "0"),
-                        offset,
-                        self.yul_number(span, "32"),
-                    ],
-                ),
-            ),
-            self.yul_assign(
-                span,
-                name,
-                self.yul_call(span, "mload", vec![self.yul_number(span, "0")]),
-            ),
-        ];
-        self.push_abi_word_cleaning(span, name, kind, &mut stmts);
-        self.assembly_stmt(span, stmts)
-    }
-
-    fn push_abi_word_cleaning(
-        &self,
-        span: Span<'db>,
-        name: &str,
-        kind: AbiWordKind,
-        stmts: &mut Vec<YulStmt<'db>>,
-    ) {
-        match kind {
-            AbiWordKind::Plain => {}
-            AbiWordKind::Address => self.push_address_cleaning(span, name, stmts),
-            AbiWordKind::Bool => self.push_bool_cleaning(span, name, stmts),
-        }
-    }
-
-    fn push_address_cleaning(&self, span: Span<'db>, name: &str, stmts: &mut Vec<YulStmt<'db>>) {
-        stmts.push(YulStmt {
-            span,
-            kind: YulStmtKind::If {
-                cond: self.yul_call(
-                    span,
-                    "shr",
-                    vec![
-                        self.yul_number(span, "160"),
-                        self.yul_ident_expr(span, name),
-                    ],
-                ),
-                body: vec![
-                    self.yul_expr_stmt(
-                        span,
-                        self.yul_call(
-                            span,
-                            "mstore",
-                            vec![
-                                self.yul_number(span, "0"),
-                                self.yul_number(span, "0x7cc04fa7"),
-                            ],
-                        ),
-                    ),
-                    self.yul_expr_stmt(
-                        span,
-                        self.yul_call(
-                            span,
-                            "revert",
-                            vec![self.yul_number(span, "28"), self.yul_number(span, "4")],
-                        ),
-                    ),
-                ],
-            },
-        });
-        stmts.push(self.yul_assign(
-            span,
-            name,
-            self.yul_call(
-                span,
-                "and",
-                vec![
-                    self.yul_ident_expr(span, name),
-                    self.yul_number(span, ADDRESS_MASK),
-                ],
-            ),
-        ));
-    }
-
-    fn push_bool_cleaning(&self, span: Span<'db>, name: &str, stmts: &mut Vec<YulStmt<'db>>) {
-        stmts.push(YulStmt {
-            span,
-            kind: YulStmtKind::If {
-                cond: self.yul_call(
-                    span,
-                    "gt",
-                    vec![self.yul_ident_expr(span, name), self.yul_number(span, "1")],
-                ),
-                body: vec![self.yul_expr_stmt(
-                    span,
-                    self.yul_call(
-                        span,
-                        "revert",
-                        vec![self.yul_number(span, "0"), self.yul_number(span, "0")],
-                    ),
-                )],
-            },
-        });
-    }
-
-    fn nonpayable_check(&self, span: Span<'db>) -> Stmt<'db> {
-        self.assembly_stmt(
-            span,
-            vec![YulStmt {
-                span,
-                kind: YulStmtKind::If {
-                    cond: self.yul_call(span, "callvalue", Vec::new()),
-                    body: vec![
-                        self.yul_expr_stmt(
-                            span,
-                            self.yul_call(
-                                span,
-                                "mstore",
-                                vec![
-                                    self.yul_number(span, "0"),
-                                    self.yul_number(span, "0xb5988ea3"),
-                                ],
-                            ),
-                        ),
-                        self.yul_expr_stmt(
-                            span,
-                            self.yul_call(
-                                span,
-                                "revert",
-                                vec![self.yul_number(span, "28"), self.yul_number(span, "4")],
-                            ),
-                        ),
-                    ],
-                },
-            }],
-        )
-    }
 }
 
-fn ensure_unit_function_returns<'db>(mut function: Function<'db>) -> Function<'db> {
-    if matches!(function.ret.strip_named().kind, TyKind::Unit) {
-        function.body.push(Stmt {
-            span: function.span,
-            kind: StmtKind::Return(Expr::unit(function.span)),
-        });
-    }
-    function
+fn entry_call<'db>(functions: &[Function<'db>], name: &str, span: Span<'db>) -> Option<Stmt<'db>> {
+    let ret = functions
+        .iter()
+        .find(|function| function.name.as_str() == name)
+        .map(|function| function.ret.clone())?;
+    Some(Stmt {
+        span,
+        kind: StmtKind::Expr(Expr {
+            span,
+            // Entry return values are ignored by the EVM object code, but the
+            // call expression must retain the callee's Hull type.
+            ty: ret,
+            kind: ExprKind::Call {
+                callee: name.into(),
+                args: Vec::new(),
+            },
+        }),
+    })
 }

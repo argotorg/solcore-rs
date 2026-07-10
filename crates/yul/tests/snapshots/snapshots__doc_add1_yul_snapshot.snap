@@ -4,17 +4,20 @@ expression: render_fixture(&fixture)
 ---
 object "Add1Deploy" {
   code {
-    mstore(64, memoryguard(128))
-    if lt(codesize(), datasize("Add1Deploy")) {
-      revert(0, 0)
+    function usr$Add1_Add1__start_d2d7f074c() {
+      mstore(64, memoryguard(128))
+      if lt(codesize(), datasize("Add1Deploy")) {
+        revert(0, 0)
+      }
+      if callvalue() {
+        mstore(0, 0xb5988ea3)
+        revert(28, 4)
+      }
+      let asm$size_0 := datasize("Add1")
+      codecopy(0, dataoffset("Add1"), datasize("Add1"))
+      return(0, asm$size_0)
     }
-    if callvalue() {
-      mstore(0, 0xb5988ea3)
-      revert(28, 4)
-    }
-    let asm$size_0 := datasize("Add1")
-    codecopy(0, dataoffset("Add1"), datasize("Add1"))
-    return(0, asm$size_0)
+    usr$Add1_Add1__start_d2d7f074c()
   }
   object "Add1" {
     code {

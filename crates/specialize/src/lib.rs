@@ -27,5 +27,5 @@ pub use ir::{
 };
 pub use specialize::{
     SpecializeDiagnostic, SpecializeDiagnosticKind, SpecializeOptions, SpecializeOutput,
-    specialize_module, specialize_name,
+    specialize_module, specialize_name, specialize_prepared_module,
 };

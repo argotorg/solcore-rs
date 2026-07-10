@@ -223,7 +223,7 @@ pub fn derived_generic_plan<'db>(
     module: Module<'db>,
     adt: AdtDef<'db>,
 ) -> Option<DerivedGenericPlan<'db>> {
-    let item_resolutions = hir_nameres::resolve_item_type_facts(db, module);
+    let item_resolutions = resolve_derived_generic_item_types(db, module);
     let info = local_adt_infos(db, module)
         .into_iter()
         .find(|info| info.adt.def_id_value(db) == adt.def_id_value(db))?;
@@ -235,6 +235,63 @@ pub fn derived_generic_plan<'db>(
         module,
         &item_resolutions,
         &info,
+    ))
+}
+
+/// Returns the synthesized `Generic` plan only when solver instance derivation
+/// is eligible for `adt` and the selected `Generic` class.
+///
+/// Unlike [`derived_generic_plan`], this query respects both
+/// `no-generic-instance-for` and an explicit instance for the same ADT. Callers
+/// that manufacture solver evidence must use this eligibility-aware form.
+#[salsa::tracked]
+pub fn derived_generic_instance_plan<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    adt: AdtDef<'db>,
+    generic: DefId<'db>,
+) -> Option<DerivedGenericPlan<'db>> {
+    let item_resolutions = resolve_derived_generic_item_types(db, module);
+    let info = local_adt_infos(db, module)
+        .into_iter()
+        .find(|info| info.adt.def_id_value(db) == adt.def_id_value(db))?;
+    derived_generic_instance_plan_with_resolutions(db, module, &item_resolutions, &info, generic)
+}
+
+fn resolve_derived_generic_item_types<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+) -> hir_nameres::ItemResolutionFacts<'db> {
+    let file = module.def_id_value(db).file(db);
+    let Some(module_id) = nameres::module_id_for_source_file(db, file) else {
+        return hir_nameres::resolve_item_type_facts(db, module);
+    };
+    let env = nameres::module_import_surface(db, module_id);
+    let Some(item_scope) = env.item_scope.as_ref() else {
+        return hir_nameres::resolve_item_type_facts(db, module);
+    };
+    hir_nameres::resolve_item_type_facts_with_imports(db, module, item_scope, &env)
+}
+
+pub(super) fn derived_generic_instance_plan_with_resolutions<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
+    info: &AdtDeriveInfo<'db>,
+    generic: DefId<'db>,
+) -> Option<DerivedGenericPlan<'db>> {
+    if info.adt.ctors(db).is_empty()
+        || no_generic_instance_for(db, module).contains(&adt_name(db, info.adt))
+        || manual_generic_instance_types(db, module, item_resolutions, generic)
+            .contains(&info.adt.def_id_value(db))
+    {
+        return None;
+    }
+    Some(derived_generic_plan_with_resolutions(
+        db,
+        module,
+        item_resolutions,
+        info,
     ))
 }
 
@@ -267,6 +324,7 @@ pub(super) fn derived_generic_plan_with_resolutions<'db>(
             let (inr_depth, wraps_inl) = generic_sum_wrapping(index, total);
             DerivedGenericFromArm {
                 ctor_index: index as u32,
+                field_count: ctor.field_count as u32,
                 ctor_name: ident_text(db, &ctor.name),
                 product_rep: *product_rep,
                 inr_depth,
@@ -282,6 +340,7 @@ pub(super) fn derived_generic_plan_with_resolutions<'db>(
             let (inr_depth, wraps_inl) = generic_sum_wrapping(index, total);
             DerivedGenericToArm {
                 ctor_index: index as u32,
+                field_count: ctor.field_count as u32,
                 ctor_name: ident_text(db, &ctor.name),
                 product_rep: *product_rep,
                 inr_depth,

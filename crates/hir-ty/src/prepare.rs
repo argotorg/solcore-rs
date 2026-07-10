@@ -10,9 +10,10 @@
 //! The overlay is intentionally the home for declaration-level rewrites that
 //! create names, instances, or cross-body entry points. Body-local tuple,
 //! boolean, conditional, and implicit-return desugars remain tracked views so
-//! a small body edit does not rebuild a whole module. Constructor wrappers,
-//! derived instances, and semantic field/call hooks can migrate here in later
-//! stages once their required resolution inputs are one-way dependencies.
+//! a small body edit does not rebuild a whole module. Contract constructor and
+//! deployment wrappers live here alongside runtime dispatch; derived instances
+//! and semantic field/call hooks can migrate here once their required
+//! resolution inputs are one-way dependencies.
 
 use std::collections::BTreeSet;
 
@@ -21,9 +22,13 @@ use hir::{
     arena::{Arena, Id},
     ast::{
         Ident,
-        function::{Expr, ExprKind, FuncBody, FuncParam, FuncSig, LitKind, Stmt, StmtKind},
+        function::{
+            AssignOp, Expr, ExprKind, FuncBody, FuncParam, FuncSig, LitKind, MatchArm, Pat,
+            PatKind, Stmt, StmtKind, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
+        },
         item::{
-            AdtDef, ContractDef, ContractItem, FuncKind, FunctionDef, InstanceDef, Item, Module,
+            AdtDef, ContractDef, ContractItem, FuncKind, FunctionDef, Import, ImportSelector,
+            InstanceDef, Item, Module, SelectedName,
         },
         ty::{PredRef, PredRefKind, TypeRef, TypeRefKind},
     },
@@ -31,11 +36,29 @@ use hir::{
     span::{Span, Spanned, SpannedElem},
 };
 
-use crate::{Db, contract_needs_generated_dispatch, module_has_canonical_std_dispatch_import};
+use crate::{Db, contract_needs_generated_dispatch};
+use nameres::{LibraryId, module_id_for_source_file, resolve_direct_import_target_candidate};
 
-const GENERATED_MAIN_NAME: &str = "main";
+const GENERATED_MAIN_NAME: &str = "$solcore$dispatch$main";
 const MAIN_FINGERPRINT: &str = "solcore.generated.std_dispatch.main";
 const MAIN_BODY_FINGERPRINT: &str = "solcore.generated.std_dispatch.main.body";
+const CONSTRUCTOR_INIT_NAME: &str = "$solcore$constructor$init_";
+const CONSTRUCTOR_COPY_NAME: &str = "$solcore$constructor$copy_arguments_for_constructor";
+const DEPLOYMENT_MAIN_NAME: &str = "$solcore$constructor$start";
+const CONSTRUCTOR_INIT_FINGERPRINT: &str = "solcore.generated.constructor.init";
+const CONSTRUCTOR_INIT_BODY_FINGERPRINT: &str = "solcore.generated.constructor.init.body";
+const CONSTRUCTOR_COPY_FINGERPRINT: &str = "solcore.generated.constructor.copy_arguments";
+const CONSTRUCTOR_COPY_BODY_FINGERPRINT: &str = "solcore.generated.constructor.copy_arguments.body";
+const DEPLOYMENT_MAIN_FINGERPRINT: &str = "solcore.generated.constructor.deployment_main";
+const DEPLOYMENT_MAIN_BODY_FINGERPRINT: &str = "solcore.generated.constructor.deployment_main.body";
+// `$` is not accepted by the source lexer, so user declarations cannot
+// capture these effective-HIR-only bindings.
+const STD_MODULE_ALIAS: &str = "$solcore$std";
+const STD_DISPATCH_MODULE_ALIAS: &str = "$solcore$std$dispatch";
+const SIG_STRING_CLASS_ALIAS: &str = "$solcore$SigString";
+const STD_MODULE_IMPORT_FINGERPRINT: &str = "solcore.generated.import.std";
+const STD_DISPATCH_MODULE_IMPORT_FINGERPRINT: &str = "solcore.generated.import.std_dispatch";
+const SIG_STRING_IMPORT_FINGERPRINT: &str = "solcore.generated.import.std_dispatch.sig_string";
 
 /// A source module paired with its compiler-prepared HIR overlay.
 ///
@@ -79,6 +102,15 @@ impl<'db> PreparedModule<'db> {
     ) -> Option<DefId<'db>> {
         self.origins(db).contract_dispatch_main(contract)
     }
+
+    /// Returns the compiler-owned deployment entry for `contract`, if generated.
+    pub fn contract_deployment_main(
+        self,
+        db: &'db dyn Db,
+        contract: DefId<'db>,
+    ) -> Option<DefId<'db>> {
+        self.origins(db).contract_deployment_main(contract)
+    }
 }
 
 /// Why a definition exists only in a prepared module.
@@ -92,6 +124,12 @@ pub enum GeneratedOriginKind {
     ContractDispatchSigStringInstance,
     /// `sigStr` method (or its body) in a generated `SigString` instance.
     ContractDispatchSigStringMethod,
+    /// Private compiler-only function containing the source constructor body.
+    ContractConstructorInit,
+    /// Private constructor-argument copying and ABI-decoding helper.
+    ContractConstructorCopyArguments,
+    /// Compiler-owned deployment entry that installs the runtime object.
+    ContractDeploymentMain,
 }
 
 /// Returns whether `def` is a compiler-owned std.dispatch runtime entry.
@@ -101,6 +139,33 @@ pub enum GeneratedOriginKind {
 /// wrapper. Source-lowered functions never receive this reserved fingerprint.
 pub fn is_contract_dispatch_main_def(db: &dyn Db, def: DefId<'_>) -> bool {
     def.kind(db) == DefKind::Function && def.fingerprint(db).as_deref() == Some(MAIN_FINGERPRINT)
+}
+
+/// Returns whether `def` is a compiler-owned contract deployment entry.
+///
+/// Like [`is_contract_dispatch_main_def`], the fingerprint fallback supports
+/// consumers handed an already-prepared module without its wrapper.
+pub fn is_contract_deployment_main_def(db: &dyn Db, def: DefId<'_>) -> bool {
+    def.kind(db) == DefKind::Function
+        && def.fingerprint(db).as_deref() == Some(DEPLOYMENT_MAIN_FINGERPRINT)
+}
+
+/// Stable backend spelling for a compiler-private contract overlay function.
+///
+/// Effective-HIR names are intentionally impossible to spell in source so
+/// they cannot capture user references. Backends may retain the established
+/// readable names because their qualified names also carry a DefId hash.
+pub fn contract_overlay_backend_name(db: &dyn Db, def: DefId<'_>) -> Option<&'static str> {
+    if def.kind(db) != DefKind::Function {
+        return None;
+    }
+    match def.fingerprint(db).as_deref()? {
+        MAIN_FINGERPRINT => Some("main"),
+        CONSTRUCTOR_INIT_FINGERPRINT => Some("init_"),
+        CONSTRUCTOR_COPY_FINGERPRINT => Some("copy_arguments_for_constructor"),
+        DEPLOYMENT_MAIN_FINGERPRINT => Some("_start"),
+        _ => None,
+    }
 }
 
 /// User-source provenance for one compiler-owned definition.
@@ -136,6 +201,14 @@ impl<'db> GeneratedOriginMap<'db> {
         })
     }
 
+    pub fn contract_deployment_main(&self, contract: DefId<'db>) -> Option<DefId<'db>> {
+        self.entries.iter().find_map(|origin| {
+            (origin.contract == contract
+                && origin.kind == GeneratedOriginKind::ContractDeploymentMain)
+                .then_some(origin.def)
+        })
+    }
+
     fn extend(&mut self, origins: impl IntoIterator<Item = GeneratedOrigin<'db>>) {
         self.entries.extend(origins);
     }
@@ -144,42 +217,68 @@ impl<'db> GeneratedOriginMap<'db> {
 /// Builds the pre-typecheck HIR overlay for `source`.
 ///
 /// This query is deliberately source-only: it inspects explicit function
-/// signatures and the canonical import, but never calls body inference,
+/// signatures, but never calls body inference,
 /// module type checking, or specialization.  That one-way dependency avoids
-/// `typeck -> prepare -> typeck` query cycles. Imports remain source-owned;
-/// preparation therefore requires the explicit canonical `std.dispatch`
-/// import instead of synthesizing a hidden dependency.
+/// `typeck -> prepare -> typeck` query cycles. Runtime dispatch dependencies
+/// are compiler-owned imports with private aliases in the effective module;
+/// ABI-decoding a non-empty constructor still requires canonical `std` in the
+/// source module.
 #[salsa::tracked]
 pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModule<'db> {
-    if !module_has_canonical_std_dispatch_import(db, source) {
-        return PreparedModule::new(db, source, source, GeneratedOriginMap::default());
-    }
+    let has_std = module_has_canonical_std_import(db, source);
 
     let module_def = source.def_id_value(db);
     let mut generated_items = Vec::new();
     let mut prepared_source_items = Vec::with_capacity(source.items(db).len());
     let mut origins = GeneratedOriginMap::default();
+    let mut generated_dispatch = false;
+    let mut generated_constructor_std = false;
 
     for item in source.items(db) {
         let Item::ContractDef(contract) = *item else {
             prepared_source_items.push(*item);
             continue;
         };
-        if !contract_needs_generated_dispatch(db, contract) {
-            prepared_source_items.push(*item);
-            continue;
+
+        let mut prepared_contract = contract;
+        let constructor_needs_std = contract_constructor_needs_std(db, contract);
+        if !contract_has_prepared_constructor(db, contract)
+            && (has_std || !constructor_needs_std)
+            && let Some(artifacts) = prepare_contract_constructor(db, prepared_contract)
+        {
+            generated_constructor_std |= constructor_needs_std;
+            origins.extend(artifacts.origins.iter().cloned());
+            prepared_contract = artifacts.contract;
         }
-        let Some(artifacts) = prepare_contract_dispatch(db, module_def, contract) else {
-            prepared_source_items.push(*item);
-            continue;
-        };
-        generated_items.extend(artifacts.top_level_items.iter().copied());
-        origins.extend(artifacts.origins.iter().cloned());
-        prepared_source_items.push(Item::ContractDef(artifacts.contract));
+
+        if contract_needs_generated_dispatch(db, contract)
+            && !contract_has_prepared_dispatch(db, prepared_contract)
+            && let Some(artifacts) = prepare_contract_dispatch(db, module_def, prepared_contract)
+        {
+            generated_dispatch = true;
+            generated_items.extend(artifacts.top_level_items.iter().copied());
+            origins.extend(artifacts.origins.iter().cloned());
+            prepared_contract = artifacts.contract;
+        }
+        prepared_source_items.push(Item::ContractDef(prepared_contract));
     }
 
     if origins.entries.is_empty() {
         return PreparedModule::new(db, source, source, origins);
+    }
+
+    if generated_dispatch {
+        generated_items.splice(
+            0..0,
+            generated_dispatch_imports(db, module_def, source.span(db))
+                .into_iter()
+                .map(Item::Import),
+        );
+    } else if generated_constructor_std {
+        generated_items.insert(
+            0,
+            Item::Import(generated_std_import(db, module_def, source.span(db))),
+        );
     }
 
     generated_items.extend(prepared_source_items);
@@ -190,6 +289,167 @@ pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModu
         generated_items,
     );
     PreparedModule::new(db, source, effective, origins)
+}
+
+fn generated_dispatch_imports<'db>(
+    db: &'db dyn Db,
+    module: DefId<'db>,
+    span: Span<'db>,
+) -> [Import<'db>; 3] {
+    [
+        generated_std_import(db, module, span),
+        generated_module_alias_import(
+            db,
+            module,
+            span,
+            &["std", "dispatch"],
+            STD_DISPATCH_MODULE_ALIAS,
+            STD_DISPATCH_MODULE_IMPORT_FINGERPRINT,
+        ),
+        generated_selected_alias_import(
+            db,
+            module,
+            span,
+            &["std", "dispatch"],
+            "SigString",
+            SIG_STRING_CLASS_ALIAS,
+            SIG_STRING_IMPORT_FINGERPRINT,
+        ),
+    ]
+}
+
+fn generated_std_import<'db>(db: &'db dyn Db, module: DefId<'db>, span: Span<'db>) -> Import<'db> {
+    generated_module_alias_import(
+        db,
+        module,
+        span,
+        &["std"],
+        STD_MODULE_ALIAS,
+        STD_MODULE_IMPORT_FINGERPRINT,
+    )
+}
+
+fn generated_module_alias_import<'db>(
+    db: &'db dyn Db,
+    module: DefId<'db>,
+    span: Span<'db>,
+    path: &[&str],
+    alias: &str,
+    fingerprint: &str,
+) -> Import<'db> {
+    Import::new(
+        db,
+        generated_def(db, module, DefKind::Import, alias, fingerprint),
+        span,
+        None,
+        path.iter()
+            .map(|segment| spanned_ident(db, span, segment))
+            .collect(),
+        Some(spanned_ident(db, span, alias)),
+        None,
+        Vec::new(),
+    )
+}
+
+fn generated_selected_alias_import<'db>(
+    db: &'db dyn Db,
+    module: DefId<'db>,
+    span: Span<'db>,
+    path: &[&str],
+    name: &str,
+    alias: &str,
+    fingerprint: &str,
+) -> Import<'db> {
+    Import::new(
+        db,
+        generated_def(db, module, DefKind::Import, alias, fingerprint),
+        span,
+        None,
+        path.iter()
+            .map(|segment| spanned_ident(db, span, segment))
+            .collect(),
+        None,
+        Some(ImportSelector::Names(vec![SelectedName {
+            name: spanned_ident(db, span, name),
+            alias: Some(spanned_ident(db, span, alias)),
+            constructors: None,
+            is_operator: false,
+        }])),
+        Vec::new(),
+    )
+}
+
+/// Returns whether `module` explicitly wildcard-imports canonical `std`.
+///
+/// Non-empty constructor wrappers depend on `abi_decode`, `memory(bytes)`,
+/// `Proxy`, `slice`, and `BoundedMemoryWordReader`. The enablement gate remains
+/// source-owned, while generated references use a compiler-private qualified
+/// alias after the import has been validated. Nullary and implicit constructors
+/// have no std dependency and are always prepared.
+pub fn module_has_canonical_std_import<'db>(db: &'db dyn Db, module: Module<'db>) -> bool {
+    let Some(importing) = module_id_for_source_file(db, module.def_id_value(db).file(db)) else {
+        return false;
+    };
+    module.items(db).iter().any(|item| {
+        let Item::Import(import) = *item else {
+            return false;
+        };
+        is_canonical_std_wildcard_import(db, importing, import)
+    })
+}
+
+pub fn contract_constructor_needs_std(db: &dyn Db, contract: ContractDef<'_>) -> bool {
+    let mut constructors = contract.items(db).iter().filter_map(|item| match item {
+        ContractItem::FunctionDef(function) if function.kind(db) == FuncKind::Constructor => {
+            Some(*function)
+        }
+        _ => None,
+    });
+    let Some(constructor) = constructors.next() else {
+        return false;
+    };
+    constructors.next().is_none()
+        && !constructor.sig(db).params.atom().is_empty()
+        && explicit_param_types(constructor.sig(db).params.atom()).is_some()
+}
+
+fn contract_has_prepared_constructor(db: &dyn Db, contract: ContractDef<'_>) -> bool {
+    contract.items(db).iter().any(|item| {
+        matches!(
+            item,
+            ContractItem::FunctionDef(function)
+                if is_contract_deployment_main_def(db, function.def_id_value(db))
+        )
+    })
+}
+
+fn contract_has_prepared_dispatch(db: &dyn Db, contract: ContractDef<'_>) -> bool {
+    contract.items(db).iter().any(|item| {
+        matches!(
+            item,
+            ContractItem::FunctionDef(function)
+                if is_contract_dispatch_main_def(db, function.def_id_value(db))
+        )
+    })
+}
+
+fn is_canonical_std_wildcard_import<'db>(
+    db: &'db dyn Db,
+    importing: nameres::ModuleId<'db>,
+    import: Import<'db>,
+) -> bool {
+    import.external(db).is_none()
+        && import.alias_elem(db).is_none()
+        && import.hiding(db).is_empty()
+        && matches!(import.selector(db), Some(ImportSelector::Wildcard))
+        && matches!(
+            import.path_elems(db).as_slice(),
+            [segment] if ident_text(db, segment) == "std"
+        )
+        && resolve_direct_import_target_candidate(db, importing, import).is_ok_and(|target| {
+            target.module.library(db) == &LibraryId::Std
+                && target.module.logical_path(db).as_slice() == ["std"]
+        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -215,6 +475,735 @@ struct RawFallback<'db> {
     payable: bool,
     params: Vec<TypeRef<'db>>,
     ret: TypeRef<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+struct RawConstructor<'db> {
+    def: Option<DefId<'db>>,
+    span: Span<'db>,
+    params: Vec<FuncParam<'db>>,
+    param_types: Vec<TypeRef<'db>>,
+    body: Option<FuncBody<'db>>,
+    payable: bool,
+}
+
+#[salsa::tracked]
+fn prepare_contract_constructor<'db>(
+    db: &'db dyn Db,
+    contract: ContractDef<'db>,
+) -> Option<PreparedContractArtifacts<'db>> {
+    let constructors = contract
+        .items(db)
+        .iter()
+        .filter_map(|item| match item {
+            ContractItem::FunctionDef(function) if function.kind(db) == FuncKind::Constructor => {
+                Some(*function)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if constructors.len() > 1 {
+        // Source diagnostics own the duplicate-constructor error. Do not add a
+        // deployment entry to structurally invalid recovery input.
+        return None;
+    }
+
+    let span = constructors.first().map_or_else(
+        || contract.name_elem(db).span(db),
+        |function| function.span(db),
+    );
+    let constructor = if let Some(function) = constructors.first().copied() {
+        let sig = function.sig(db);
+        RawConstructor {
+            def: Some(function.def_id_value(db)),
+            span,
+            params: sig.params.atom().clone(),
+            param_types: explicit_param_types(sig.params.atom())?,
+            body: function.body(db),
+            payable: sig.payable.is_some(),
+        }
+    } else {
+        RawConstructor {
+            def: None,
+            span,
+            params: Vec::new(),
+            param_types: Vec::new(),
+            body: None,
+            payable: false,
+        }
+    };
+
+    let contract_def = contract.def_id_value(db);
+    let contract_name = ident_text(db, &contract.name_elem(db));
+    let (init, mut init_origins) = generated_constructor_init(db, contract_def, &constructor);
+    let (copy, mut copy_origins) =
+        generated_constructor_copy_arguments(db, contract_def, &contract_name, &constructor);
+    let (start, mut start_origins) =
+        generated_deployment_main(db, contract_def, &contract_name, &constructor);
+
+    let mut contract_items = contract
+        .items(db)
+        .iter()
+        .filter(|item| {
+            !matches!(
+                item,
+                ContractItem::FunctionDef(function)
+                    if function.kind(db) == FuncKind::Constructor
+            )
+        })
+        .copied()
+        .collect::<Vec<_>>();
+    contract_items.extend([
+        ContractItem::FunctionDef(init),
+        ContractItem::FunctionDef(copy),
+        ContractItem::FunctionDef(start),
+    ]);
+    let prepared_contract = ContractDef::new(
+        db,
+        contract_def,
+        contract.span(db),
+        contract.name_elem(db),
+        contract.ty_param_elems(db).clone(),
+        contract.fields(db).clone(),
+        contract_items,
+    );
+    let mut origins = Vec::new();
+    origins.append(&mut init_origins);
+    origins.append(&mut copy_origins);
+    origins.append(&mut start_origins);
+    Some(PreparedContractArtifacts {
+        contract: prepared_contract,
+        top_level_items: Vec::new(),
+        origins,
+    })
+}
+
+fn generated_constructor_init<'db>(
+    db: &'db dyn Db,
+    contract: DefId<'db>,
+    constructor: &RawConstructor<'db>,
+) -> (FunctionDef<'db>, Vec<GeneratedOrigin<'db>>) {
+    let function_def = generated_def(
+        db,
+        contract,
+        DefKind::Function,
+        CONSTRUCTOR_INIT_NAME,
+        CONSTRUCTOR_INIT_FINGERPRINT,
+    );
+    let body_def = generated_def(
+        db,
+        function_def,
+        DefKind::FuncBody,
+        CONSTRUCTOR_INIT_NAME,
+        CONSTRUCTOR_INIT_BODY_FINGERPRINT,
+    );
+    let body = constructor.body.map_or_else(
+        || generated_unit_body(db, body_def, constructor.span),
+        |source| clone_body_with_def(db, source, body_def),
+    );
+    let sig = FuncSig {
+        span: constructor.span,
+        type_vars: Vec::new(),
+        preds: Vec::new(),
+        public: None,
+        payable: None,
+        name: spanned_ident(db, constructor.span, CONSTRUCTOR_INIT_NAME),
+        params: SpannedElem::new(constructor.params.clone(), constructor.span),
+        ret: Some(unit_ty(db, constructor.span)),
+    };
+    let function = FunctionDef::new(
+        db,
+        function_def,
+        constructor.span,
+        FuncKind::Function,
+        sig,
+        Some(body),
+    );
+    (
+        function,
+        generated_function_origins(
+            function_def,
+            body_def,
+            GeneratedOriginKind::ContractConstructorInit,
+            contract,
+            constructor.def,
+            constructor.span,
+        ),
+    )
+}
+
+fn generated_constructor_copy_arguments<'db>(
+    db: &'db dyn Db,
+    contract: DefId<'db>,
+    contract_name: &str,
+    constructor: &RawConstructor<'db>,
+) -> (FunctionDef<'db>, Vec<GeneratedOrigin<'db>>) {
+    let function_def = generated_def(
+        db,
+        contract,
+        DefKind::Function,
+        CONSTRUCTOR_COPY_NAME,
+        CONSTRUCTOR_COPY_FINGERPRINT,
+    );
+    let body_def = generated_def(
+        db,
+        function_def,
+        DefKind::FuncBody,
+        CONSTRUCTOR_COPY_NAME,
+        CONSTRUCTOR_COPY_BODY_FINGERPRINT,
+    );
+    let args_ty = product_ty(db, constructor.span, &constructor.param_types);
+    let mut builder = BodyBuilder::new(db, constructor.span);
+    let top_level_stmts = if constructor.params.is_empty() {
+        let unit = builder.alloc_expr(ExprKind::Tuple(Vec::new()));
+        vec![builder.alloc_stmt(StmtKind::Return(Some(unit)))]
+    } else {
+        let res = builder.let_stmt("res", Some(args_ty), None);
+        let args_proxy = builder.qualified_proxy(STD_MODULE_ALIAS, args_ty);
+        let minimum_size_value = builder.call_path(
+            &[STD_MODULE_ALIAS, "ABIAttribs", "headSize"],
+            vec![args_proxy],
+        );
+        let minimum_size = builder.let_stmt(
+            "minimumSize",
+            Some(named_ty(db, constructor.span, "word", Vec::new())),
+            Some(minimum_size_value),
+        );
+        let arg_size = builder.let_stmt(
+            "argSize",
+            Some(named_ty(db, constructor.span, "word", Vec::new())),
+            None,
+        );
+        let memory_offset = builder.let_stmt(
+            "memoryDataOffset",
+            Some(named_ty(db, constructor.span, "word", Vec::new())),
+            None,
+        );
+        let copy = builder.alloc_stmt(StmtKind::Assembly {
+            body: constructor_copy_yul(db, constructor.span, contract_name),
+        });
+        let offset = builder.ident("memoryDataOffset");
+        let memory_value = builder.call_path(&[STD_MODULE_ALIAS, "memory", "memory"], vec![offset]);
+        let arg_size_expr = builder.ident("argSize");
+        let bounded_source = builder.call_path(
+            &[STD_MODULE_ALIAS, "slice", "slice"],
+            vec![memory_value, arg_size_expr],
+        );
+        let source_ty = qualified_named_ty(
+            db,
+            constructor.span,
+            STD_MODULE_ALIAS,
+            "slice",
+            vec![qualified_named_ty(
+                db,
+                constructor.span,
+                STD_MODULE_ALIAS,
+                "memory",
+                vec![qualified_named_ty(
+                    db,
+                    constructor.span,
+                    STD_MODULE_ALIAS,
+                    "bytes",
+                    Vec::new(),
+                )],
+            )],
+        );
+        let source = builder.let_stmt("source", Some(source_ty), Some(bounded_source));
+        let source_expr = builder.ident("source");
+        let args_proxy = builder.qualified_proxy(STD_MODULE_ALIAS, args_ty);
+        let reader_proxy = builder.qualified_proxy(
+            STD_MODULE_ALIAS,
+            qualified_named_ty(
+                db,
+                constructor.span,
+                STD_MODULE_ALIAS,
+                "BoundedMemoryWordReader",
+                Vec::new(),
+            ),
+        );
+        let decoded = builder.call_path(
+            &[STD_MODULE_ALIAS, "abi_decode"],
+            vec![source_expr, args_proxy, reader_proxy],
+        );
+        let lhs = builder.ident("res");
+        let assign = builder.alloc_stmt(StmtKind::Assign {
+            op: AssignOp::Plain,
+            lhs,
+            rhs: decoded,
+        });
+        let result = builder.ident("res");
+        let ret = builder.alloc_stmt(StmtKind::Return(Some(result)));
+        vec![
+            res,
+            minimum_size,
+            arg_size,
+            memory_offset,
+            copy,
+            source,
+            assign,
+            ret,
+        ]
+    };
+    let (stmts, exprs, pats) = builder.finish();
+    let body = FuncBody::new(
+        db,
+        body_def,
+        constructor.span,
+        top_level_stmts,
+        stmts,
+        exprs,
+        pats,
+    );
+    let sig = FuncSig {
+        span: constructor.span,
+        type_vars: Vec::new(),
+        preds: Vec::new(),
+        public: None,
+        payable: None,
+        name: spanned_ident(db, constructor.span, CONSTRUCTOR_COPY_NAME),
+        params: SpannedElem::new(Vec::new(), constructor.span),
+        ret: Some(args_ty),
+    };
+    let function = FunctionDef::new(
+        db,
+        function_def,
+        constructor.span,
+        FuncKind::Function,
+        sig,
+        Some(body),
+    );
+    (
+        function,
+        generated_function_origins(
+            function_def,
+            body_def,
+            GeneratedOriginKind::ContractConstructorCopyArguments,
+            contract,
+            constructor.def,
+            constructor.span,
+        ),
+    )
+}
+
+fn generated_deployment_main<'db>(
+    db: &'db dyn Db,
+    contract: DefId<'db>,
+    contract_name: &str,
+    constructor: &RawConstructor<'db>,
+) -> (FunctionDef<'db>, Vec<GeneratedOrigin<'db>>) {
+    let function_def = generated_def(
+        db,
+        contract,
+        DefKind::Function,
+        DEPLOYMENT_MAIN_NAME,
+        DEPLOYMENT_MAIN_FINGERPRINT,
+    );
+    let body_def = generated_def(
+        db,
+        function_def,
+        DefKind::FuncBody,
+        DEPLOYMENT_MAIN_NAME,
+        DEPLOYMENT_MAIN_BODY_FINGERPRINT,
+    );
+    let args_ty = product_ty(db, constructor.span, &constructor.param_types);
+    let mut builder = BodyBuilder::new(db, constructor.span);
+    let mut top_level_stmts = vec![builder.alloc_stmt(StmtKind::Assembly {
+        body: deployment_setup_yul(db, constructor.span, contract_name),
+    })];
+    if !constructor.payable {
+        top_level_stmts.push(builder.alloc_stmt(StmtKind::Assembly {
+            body: nonpayable_constructor_yul(db, constructor.span),
+        }));
+    }
+    let copy_args = builder.call_ident(CONSTRUCTOR_COPY_NAME, Vec::new());
+    top_level_stmts.push(builder.let_stmt("conargs", Some(args_ty), Some(copy_args)));
+    // Haskell invokes its constructor init helper indirectly with the product. Rust's frontend can
+    // express the same operation without dictionary evidence: destructure a
+    // multi-argument product, then make an ordinary direct call.
+    match constructor.params.len() {
+        0 => {
+            let invoke = builder.call_ident(CONSTRUCTOR_INIT_NAME, Vec::new());
+            top_level_stmts.push(builder.alloc_stmt(StmtKind::Expr(invoke)));
+        }
+        1 => {
+            let conargs = builder.ident("conargs");
+            let invoke = builder.call_ident(CONSTRUCTOR_INIT_NAME, vec![conargs]);
+            top_level_stmts.push(builder.alloc_stmt(StmtKind::Expr(invoke)));
+        }
+        len => {
+            let names = (0..len)
+                .map(|index| format!("conarg{index}"))
+                .collect::<Vec<_>>();
+            let pat = builder.product_pat(&names);
+            let args = names.iter().map(|name| builder.ident(name)).collect();
+            let invoke = builder.call_ident(CONSTRUCTOR_INIT_NAME, args);
+            let invoke = builder.alloc_stmt(StmtKind::Expr(invoke));
+            let conargs = builder.ident("conargs");
+            top_level_stmts.push(builder.alloc_stmt(StmtKind::Match {
+                scrutinees: vec![conargs],
+                arms: vec![MatchArm {
+                    span: constructor.span,
+                    pats: vec![pat],
+                    body: vec![invoke],
+                }],
+            }));
+        }
+    }
+    top_level_stmts.push(builder.alloc_stmt(StmtKind::Assembly {
+        body: return_runtime_object_yul(db, constructor.span, contract_name),
+    }));
+    let (stmts, exprs, pats) = builder.finish();
+    let body = FuncBody::new(
+        db,
+        body_def,
+        constructor.span,
+        top_level_stmts,
+        stmts,
+        exprs,
+        pats,
+    );
+    let sig = FuncSig {
+        span: constructor.span,
+        type_vars: Vec::new(),
+        preds: Vec::new(),
+        public: None,
+        payable: None,
+        name: spanned_ident(db, constructor.span, DEPLOYMENT_MAIN_NAME),
+        params: SpannedElem::new(Vec::new(), constructor.span),
+        ret: Some(unit_ty(db, constructor.span)),
+    };
+    let function = FunctionDef::new(
+        db,
+        function_def,
+        constructor.span,
+        FuncKind::Function,
+        sig,
+        Some(body),
+    );
+    (
+        function,
+        generated_function_origins(
+            function_def,
+            body_def,
+            GeneratedOriginKind::ContractDeploymentMain,
+            contract,
+            constructor.def,
+            constructor.span,
+        ),
+    )
+}
+
+fn generated_function_origins<'db>(
+    function: DefId<'db>,
+    body: DefId<'db>,
+    kind: GeneratedOriginKind,
+    contract: DefId<'db>,
+    source: Option<DefId<'db>>,
+    span: Span<'db>,
+) -> Vec<GeneratedOrigin<'db>> {
+    vec![
+        GeneratedOrigin {
+            def: function,
+            kind,
+            contract,
+            method: source,
+            span,
+        },
+        GeneratedOrigin {
+            def: body,
+            kind,
+            contract,
+            method: source,
+            span,
+        },
+    ]
+}
+
+fn clone_body_with_def<'db>(
+    db: &'db dyn Db,
+    source: FuncBody<'db>,
+    def: DefId<'db>,
+) -> FuncBody<'db> {
+    FuncBody::new(
+        db,
+        def,
+        source.span(db),
+        source.top_level_stmts(db).clone(),
+        source.stmts(db).clone(),
+        source.exprs(db).clone(),
+        source.pats(db).clone(),
+    )
+}
+
+fn generated_unit_body<'db>(db: &'db dyn Db, def: DefId<'db>, span: Span<'db>) -> FuncBody<'db> {
+    let mut builder = BodyBuilder::new(db, span);
+    let unit = builder.alloc_expr(ExprKind::Tuple(Vec::new()));
+    let ret = builder.alloc_stmt(StmtKind::Return(Some(unit)));
+    let (stmts, exprs, pats) = builder.finish();
+    FuncBody::new(db, def, span, vec![ret], stmts, exprs, pats)
+}
+
+fn constructor_copy_yul<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    contract_name: &str,
+) -> Vec<YulStmt<'db>> {
+    let deployer = format!("{contract_name}Deploy");
+    let program_size = yul_call(db, span, "datasize", vec![yul_string(span, &deployer)]);
+    let codesize = yul_call(db, span, "codesize", Vec::new());
+    let arg_size = yul_call(
+        db,
+        span,
+        "sub",
+        vec![codesize, yul_ident_expr(db, span, "programSize")],
+    );
+    let free_ptr = yul_call(db, span, "mload", vec![yul_number(span, "64")]);
+    let unrounded_free_ptr = yul_call(
+        db,
+        span,
+        "add",
+        vec![
+            yul_ident_expr(db, span, "memoryDataOffset"),
+            yul_ident_expr(db, span, "argSize"),
+        ],
+    );
+    let add_rounding = yul_call(
+        db,
+        span,
+        "add",
+        vec![unrounded_free_ptr, yul_number(span, "31")],
+    );
+    let mask = yul_call(db, span, "not", vec![yul_number(span, "31")]);
+    let new_free_ptr = yul_call(db, span, "and", vec![add_rounding, mask]);
+    let update_free_ptr = yul_call(
+        db,
+        span,
+        "mstore",
+        vec![yul_number(span, "64"), new_free_ptr],
+    );
+    let copy = yul_call(
+        db,
+        span,
+        "codecopy",
+        vec![
+            yul_ident_expr(db, span, "memoryDataOffset"),
+            yul_ident_expr(db, span, "programSize"),
+            yul_ident_expr(db, span, "argSize"),
+        ],
+    );
+    let truncated = yul_call(
+        db,
+        span,
+        "lt",
+        vec![
+            yul_ident_expr(db, span, "argSize"),
+            yul_ident_expr(db, span, "minimumSize"),
+        ],
+    );
+    let store_selector = yul_call(
+        db,
+        span,
+        "mstore",
+        vec![yul_number(span, "0"), yul_hex(span, "0x08638556")],
+    );
+    let revert = yul_call(
+        db,
+        span,
+        "revert",
+        vec![yul_number(span, "28"), yul_number(span, "4")],
+    );
+    vec![
+        yul_let(db, span, "programSize", Some(program_size)),
+        yul_assign(db, span, "argSize", arg_size),
+        yul_assign(db, span, "memoryDataOffset", free_ptr),
+        YulStmt {
+            span,
+            kind: YulStmtKind::If {
+                cond: truncated,
+                body: vec![
+                    yul_expr_stmt(span, store_selector),
+                    yul_expr_stmt(span, revert),
+                ],
+            },
+        },
+        yul_expr_stmt(span, update_free_ptr),
+        yul_expr_stmt(span, copy),
+    ]
+}
+
+fn deployment_setup_yul<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    contract_name: &str,
+) -> Vec<YulStmt<'db>> {
+    let deployer = format!("{contract_name}Deploy");
+    let memoryguard = yul_call(db, span, "memoryguard", vec![yul_number(span, "128")]);
+    let initialize_memory = yul_call(
+        db,
+        span,
+        "mstore",
+        vec![yul_number(span, "64"), memoryguard],
+    );
+    let codesize = yul_call(db, span, "codesize", Vec::new());
+    let deployer_size = yul_call(db, span, "datasize", vec![yul_string(span, &deployer)]);
+    let truncated = yul_call(db, span, "lt", vec![codesize, deployer_size]);
+    let revert = yul_call(
+        db,
+        span,
+        "revert",
+        vec![yul_number(span, "0"), yul_number(span, "0")],
+    );
+    vec![
+        yul_expr_stmt(span, initialize_memory),
+        YulStmt {
+            span,
+            kind: YulStmtKind::If {
+                cond: truncated,
+                body: vec![yul_expr_stmt(span, revert)],
+            },
+        },
+    ]
+}
+
+fn nonpayable_constructor_yul<'db>(db: &'db dyn Db, span: Span<'db>) -> Vec<YulStmt<'db>> {
+    let callvalue = yul_call(db, span, "callvalue", Vec::new());
+    let store_selector = yul_call(
+        db,
+        span,
+        "mstore",
+        vec![yul_number(span, "0"), yul_hex(span, "0xb5988ea3")],
+    );
+    let revert = yul_call(
+        db,
+        span,
+        "revert",
+        vec![yul_number(span, "28"), yul_number(span, "4")],
+    );
+    vec![YulStmt {
+        span,
+        kind: YulStmtKind::If {
+            cond: callvalue,
+            body: vec![
+                yul_expr_stmt(span, store_selector),
+                yul_expr_stmt(span, revert),
+            ],
+        },
+    }]
+}
+
+fn return_runtime_object_yul<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    contract_name: &str,
+) -> Vec<YulStmt<'db>> {
+    let runtime = yul_string(span, contract_name);
+    let size = yul_call(db, span, "datasize", vec![runtime.clone()]);
+    let offset = yul_call(db, span, "dataoffset", vec![runtime.clone()]);
+    let runtime_size = yul_call(db, span, "datasize", vec![runtime]);
+    let copy = yul_call(
+        db,
+        span,
+        "codecopy",
+        vec![yul_number(span, "0"), offset, runtime_size],
+    );
+    let ret = yul_call(
+        db,
+        span,
+        "return",
+        vec![yul_number(span, "0"), yul_ident_expr(db, span, "size")],
+    );
+    vec![
+        yul_let(db, span, "size", Some(size)),
+        yul_expr_stmt(span, copy),
+        yul_expr_stmt(span, ret),
+    ]
+}
+
+fn yul_ident<'db>(db: &'db dyn Db, span: Span<'db>, name: &str) -> SpannedElem<'db, Ident<'db>> {
+    spanned_ident(db, span, name)
+}
+
+fn yul_ident_expr<'db>(db: &'db dyn Db, span: Span<'db>, name: &str) -> YulExpr<'db> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Ident(yul_ident(db, span, name)),
+    }
+}
+
+fn yul_number<'db>(span: Span<'db>, value: &str) -> YulExpr<'db> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Lit(YulLitKind::Number(value.to_owned())),
+    }
+}
+
+fn yul_hex<'db>(span: Span<'db>, value: &str) -> YulExpr<'db> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Lit(YulLitKind::Hex(value.to_owned())),
+    }
+}
+
+fn yul_string<'db>(span: Span<'db>, value: &str) -> YulExpr<'db> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Lit(YulLitKind::String(format!(
+            "\"{}\"",
+            value.replace('\\', "\\\\").replace('"', "\\\"")
+        ))),
+    }
+}
+
+fn yul_call<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    name: &str,
+    args: Vec<YulExpr<'db>>,
+) -> YulExpr<'db> {
+    YulExpr {
+        span,
+        kind: YulExprKind::Call {
+            name: yul_ident(db, span, name),
+            args,
+        },
+    }
+}
+
+fn yul_let<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    name: &str,
+    init: Option<YulExpr<'db>>,
+) -> YulStmt<'db> {
+    YulStmt {
+        span,
+        kind: YulStmtKind::Let {
+            names: vec![yul_ident(db, span, name)],
+            init,
+        },
+    }
+}
+
+fn yul_assign<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    name: &str,
+    value: YulExpr<'db>,
+) -> YulStmt<'db> {
+    YulStmt {
+        span,
+        kind: YulStmtKind::Assign {
+            names: vec![yul_ident(db, span, name)],
+            value,
+        },
+    }
+}
+
+fn yul_expr_stmt<'db>(span: Span<'db>, expr: YulExpr<'db>) -> YulStmt<'db> {
+    YulStmt {
+        span,
+        kind: YulStmtKind::Expr(expr),
+    }
 }
 
 #[salsa::tracked]
@@ -375,7 +1364,7 @@ fn dispatch_name_declarations<'db>(
         db,
         PredRefKind {
             ty: named_ty(db, method.span, &ty_name, Vec::new()),
-            class: spanned_ident(db, method.span, "SigString"),
+            class: spanned_ident(db, method.span, SIG_STRING_CLASS_ALIAS),
             args: SpannedElem::new(Vec::new(), method.span),
         },
     );
@@ -441,9 +1430,10 @@ fn sig_string_method<'db>(
         kind: StmtKind::Return(Some(value)),
     });
     let body = FuncBody::new(db, body_def, span, vec![ret], stmts, exprs, Arena::new());
-    let proxy_ty = named_ty(
+    let proxy_ty = qualified_named_ty(
         db,
         span,
+        STD_MODULE_ALIAS,
         "Proxy",
         vec![named_ty(db, span, ty_name, Vec::new())],
     );
@@ -462,7 +1452,13 @@ fn sig_string_method<'db>(
             }],
             span,
         ),
-        ret: Some(named_ty(db, span, "string", Vec::new())),
+        ret: Some(qualified_named_ty(
+            db,
+            span,
+            STD_MODULE_ALIAS,
+            "string",
+            Vec::new(),
+        )),
     };
     FunctionDef::new(db, method_def, span, FuncKind::Function, sig, Some(body))
 }
@@ -479,53 +1475,88 @@ fn generated_dispatch_main<'db>(
     let mut method_values = Vec::with_capacity(methods.len());
     for method in methods {
         let name_ty = format!("DispatchNameTy_{contract_name}_{}", method.name);
-        let name = builder.proxy(named_ty(db, method.span, &name_ty, Vec::new()));
-        let payability = builder.proxy(named_ty(
-            db,
-            method.span,
-            if method.payable {
-                "Payable"
-            } else {
-                "NonPayable"
-            },
-            Vec::new(),
-        ));
-        let args_ty = product_ty(db, method.span, &method.params);
-        let args = builder.proxy(args_ty);
-        let rets = builder.proxy(method.ret);
-        let implementation = builder.ident(&method.name);
-        method_values
-            .push(builder.call_ident("Method", vec![name, payability, args, rets, implementation]));
-    }
-    let methods = builder.product_expr(&method_values);
-    let fallback = match fallback {
-        Some(fallback) => {
-            let payability = builder.proxy(named_ty(
+        let name = builder.qualified_proxy(
+            STD_MODULE_ALIAS,
+            named_ty(db, method.span, &name_ty, Vec::new()),
+        );
+        let payability = builder.qualified_proxy(
+            STD_MODULE_ALIAS,
+            qualified_named_ty(
                 db,
-                span,
-                if fallback.payable {
+                method.span,
+                STD_DISPATCH_MODULE_ALIAS,
+                if method.payable {
                     "Payable"
                 } else {
                     "NonPayable"
                 },
                 Vec::new(),
-            ));
+            ),
+        );
+        let args_ty = product_ty(db, method.span, &method.params);
+        let args = builder.qualified_proxy(STD_MODULE_ALIAS, args_ty);
+        let rets = builder.qualified_proxy(STD_MODULE_ALIAS, method.ret);
+        let implementation = builder.ident(&method.name);
+        method_values.push(builder.call_path(
+            &[STD_DISPATCH_MODULE_ALIAS, "Method", "Method"],
+            vec![name, payability, args, rets, implementation],
+        ));
+    }
+    let methods = builder.product_expr(&method_values);
+    let fallback = match fallback {
+        Some(fallback) => {
+            let payability = builder.qualified_proxy(
+                STD_MODULE_ALIAS,
+                qualified_named_ty(
+                    db,
+                    span,
+                    STD_DISPATCH_MODULE_ALIAS,
+                    if fallback.payable {
+                        "Payable"
+                    } else {
+                        "NonPayable"
+                    },
+                    Vec::new(),
+                ),
+            );
             let args_ty = product_ty(db, span, &fallback.params);
-            let args = builder.proxy(args_ty);
-            let rets = builder.proxy(fallback.ret);
+            let args = builder.qualified_proxy(STD_MODULE_ALIAS, args_ty);
+            let rets = builder.qualified_proxy(STD_MODULE_ALIAS, fallback.ret);
             let implementation = builder.ident(&fallback.name);
-            builder.call_ident("Fallback", vec![payability, args, rets, implementation])
+            builder.call_path(
+                &[STD_DISPATCH_MODULE_ALIAS, "Fallback", "Fallback"],
+                vec![payability, args, rets, implementation],
+            )
         }
         None => {
-            let payability = builder.proxy(named_ty(db, span, "NonPayable", Vec::new()));
-            let args = builder.proxy(unit_ty(db, span));
-            let rets = builder.proxy(unit_ty(db, span));
-            let implementation = builder.ident("fallback_default_implementation");
-            builder.call_ident("Fallback", vec![payability, args, rets, implementation])
+            let payability = builder.qualified_proxy(
+                STD_MODULE_ALIAS,
+                qualified_named_ty(
+                    db,
+                    span,
+                    STD_DISPATCH_MODULE_ALIAS,
+                    "NonPayable",
+                    Vec::new(),
+                ),
+            );
+            let args = builder.qualified_proxy(STD_MODULE_ALIAS, unit_ty(db, span));
+            let rets = builder.qualified_proxy(STD_MODULE_ALIAS, unit_ty(db, span));
+            let implementation =
+                builder.path(&[STD_DISPATCH_MODULE_ALIAS, "fallback_default_implementation"]);
+            builder.call_path(
+                &[STD_DISPATCH_MODULE_ALIAS, "Fallback", "Fallback"],
+                vec![payability, args, rets, implementation],
+            )
         }
     };
-    let contract_value = builder.call_ident("Contract", vec![methods, fallback]);
-    let run = builder.class_method_call("RunContract", "exec", vec![contract_value]);
+    let contract_value = builder.call_path(
+        &[STD_DISPATCH_MODULE_ALIAS, "Contract", "Contract"],
+        vec![methods, fallback],
+    );
+    let run = builder.call_path(
+        &[STD_DISPATCH_MODULE_ALIAS, "RunContract", "exec"],
+        vec![contract_value],
+    );
     let run_stmt = builder.alloc_stmt(StmtKind::Expr(run));
     let unit = builder.alloc_expr(ExprKind::Tuple(Vec::new()));
     let return_stmt = builder.alloc_stmt(StmtKind::Return(Some(unit)));
@@ -545,7 +1576,7 @@ fn generated_dispatch_main<'db>(
         GENERATED_MAIN_NAME,
         MAIN_BODY_FINGERPRINT,
     );
-    let (stmts, exprs) = builder.finish();
+    let (stmts, exprs, pats) = builder.finish();
     let body = FuncBody::new(
         db,
         body_def,
@@ -553,7 +1584,7 @@ fn generated_dispatch_main<'db>(
         vec![run_stmt, return_stmt],
         stmts,
         exprs,
-        Arena::new(),
+        pats,
     );
     let sig = FuncSig {
         span,
@@ -580,6 +1611,7 @@ struct BodyBuilder<'db> {
     span: Span<'db>,
     stmts: Arena<Stmt<'db>>,
     exprs: Arena<Expr<'db>>,
+    pats: Arena<Pat<'db>>,
 }
 
 impl<'db> BodyBuilder<'db> {
@@ -589,11 +1621,12 @@ impl<'db> BodyBuilder<'db> {
             span,
             stmts: Arena::new(),
             exprs: Arena::new(),
+            pats: Arena::new(),
         }
     }
 
-    fn finish(self) -> (Arena<Stmt<'db>>, Arena<Expr<'db>>) {
-        (self.stmts, self.exprs)
+    fn finish(self) -> (Arena<Stmt<'db>>, Arena<Expr<'db>>, Arena<Pat<'db>>) {
+        (self.stmts, self.exprs, self.pats)
     }
 
     fn alloc_stmt(&mut self, kind: StmtKind<'db>) -> Id<Stmt<'db>> {
@@ -610,9 +1643,30 @@ impl<'db> BodyBuilder<'db> {
         })
     }
 
+    fn alloc_pat(&mut self, kind: PatKind<'db>) -> Id<Pat<'db>> {
+        self.pats.alloc(Pat {
+            span: self.span,
+            kind,
+        })
+    }
+
     fn ident(&mut self, name: &str) -> Id<Expr<'db>> {
         let ident = spanned_ident(self.db, self.span, name);
         self.alloc_expr(ExprKind::Ident(ident))
+    }
+
+    fn path(&mut self, segments: &[&str]) -> Id<Expr<'db>> {
+        let (first, rest) = segments
+            .split_first()
+            .expect("compiler-generated paths are non-empty");
+        let mut expr = self.ident(first);
+        for segment in rest {
+            expr = self.alloc_expr(ExprKind::Field {
+                base: expr,
+                field: spanned_ident(self.db, self.span, segment),
+            });
+        }
+        expr
     }
 
     fn call(&mut self, callee: Id<Expr<'db>>, args: Vec<Id<Expr<'db>>>) -> Id<Expr<'db>> {
@@ -624,23 +1678,28 @@ impl<'db> BodyBuilder<'db> {
         self.call(callee, args)
     }
 
-    fn class_method_call(
-        &mut self,
-        class: &str,
-        method: &str,
-        args: Vec<Id<Expr<'db>>>,
-    ) -> Id<Expr<'db>> {
-        let base = self.ident(class);
-        let callee = self.alloc_expr(ExprKind::Field {
-            base,
-            field: spanned_ident(self.db, self.span, method),
-        });
+    fn call_path(&mut self, path: &[&str], args: Vec<Id<Expr<'db>>>) -> Id<Expr<'db>> {
+        let callee = self.path(path);
         self.call(callee, args)
     }
 
-    fn proxy(&mut self, ty: TypeRef<'db>) -> Id<Expr<'db>> {
-        let proxy = self.ident("Proxy");
-        let proxy_ty = named_ty(self.db, self.span, "Proxy", vec![ty]);
+    fn let_stmt(
+        &mut self,
+        name: &str,
+        ty: Option<TypeRef<'db>>,
+        init: Option<Id<Expr<'db>>>,
+    ) -> Id<Stmt<'db>> {
+        self.alloc_stmt(StmtKind::Let {
+            comptime: None,
+            name: spanned_ident(self.db, self.span, name),
+            ty,
+            init,
+        })
+    }
+
+    fn qualified_proxy(&mut self, qualifier: &str, ty: TypeRef<'db>) -> Id<Expr<'db>> {
+        let proxy = self.path(&[qualifier, "Proxy", "Proxy"]);
+        let proxy_ty = qualified_named_ty(self.db, self.span, qualifier, "Proxy", vec![ty]);
         self.alloc_expr(ExprKind::TypeAnnot {
             expr: proxy,
             ty: proxy_ty,
@@ -654,6 +1713,24 @@ impl<'db> BodyBuilder<'db> {
             [head, tail @ ..] => {
                 let tail = self.product_expr(tail);
                 self.alloc_expr(ExprKind::Tuple(vec![*head, tail]))
+            }
+        }
+    }
+
+    fn product_pat(&mut self, names: &[String]) -> Id<Pat<'db>> {
+        match names {
+            [] => self.alloc_pat(PatKind::Tuple { elems: Vec::new() }),
+            [one] => {
+                let name = spanned_ident(self.db, self.span, one);
+                self.alloc_pat(PatKind::Var(name))
+            }
+            [head, tail @ ..] => {
+                let head_name = spanned_ident(self.db, self.span, head);
+                let head = self.alloc_pat(PatKind::Var(head_name));
+                let tail = self.product_pat(tail);
+                self.alloc_pat(PatKind::Tuple {
+                    elems: vec![head, tail],
+                })
             }
         }
     }
@@ -708,6 +1785,23 @@ fn named_ty<'db>(
         db,
         TypeRefKind::Named {
             qualifier: None,
+            name: spanned_ident(db, span, name),
+            args: SpannedElem::new(args, span),
+        },
+    )
+}
+
+fn qualified_named_ty<'db>(
+    db: &'db dyn Db,
+    span: Span<'db>,
+    qualifier: &str,
+    name: &str,
+    args: Vec<TypeRef<'db>>,
+) -> TypeRef<'db> {
+    TypeRef::new(
+        db,
+        TypeRefKind::Named {
+            qualifier: Some(spanned_ident(db, span, qualifier)),
             name: spanned_ident(db, span, name),
             args: SpannedElem::new(args, span),
         },
@@ -825,13 +1919,14 @@ mod tests {
             BTreeMap::new(),
         ));
         let main_path = main_root.join("main.solc");
+        let std_path = std_root.join("std.solc");
         let dispatch_path = std_root.join("dispatch.solc");
         db.module_fs_snapshot = Some(ModuleFsSnapshot::new(
             &db,
-            BTreeSet::from([main_path.clone(), dispatch_path.clone()]),
+            BTreeSet::from([main_path.clone(), std_path.clone(), dispatch_path.clone()]),
             BTreeMap::from([
                 (main_root, vec!["main".to_owned()]),
-                (std_root, vec!["dispatch".to_owned()]),
+                (std_root, vec!["std".to_owned(), "dispatch".to_owned()]),
             ]),
         ));
         let main_file = SourceFile::new(
@@ -843,6 +1938,18 @@ mod tests {
             &db,
             url::Url::from_file_path(&dispatch_path).expect("dispatch URL"),
             Some(String::new()),
+        );
+        let std_file = SourceFile::new(
+            &db,
+            url::Url::from_file_path(&std_path).expect("std URL"),
+            Some(String::new()),
+        );
+        db.module_files.insert(
+            ModuleKey {
+                library: LibraryId::Std,
+                logical_path: vec!["std".to_owned()],
+            },
+            std_file,
         );
         db.module_files.insert(
             ModuleKey {
@@ -907,19 +2014,34 @@ contract C { public function answer(x:uint256) -> uint256 { return x; } }
         assert!(contract.items(&db).iter().any(|item| matches!(
             item,
             ContractItem::FunctionDef(function)
-                if function.def_id_value(&db) == main && ident_text(&db, &function.sig(&db).name) == "main"
+                if function.def_id_value(&db) == main
+                    && ident_text(&db, &function.sig(&db).name) == GENERATED_MAIN_NAME
         )));
+        assert_eq!(
+            prepare_module(&db, prepared.module(&db)).module(&db),
+            prepared.module(&db)
+        );
     }
 
     #[test]
-    fn requires_canonical_import_and_suppresses_existing_main() {
+    fn runtime_dispatch_is_implicit_and_existing_main_suppresses_it() {
         let (db, file) = db_with_main(
             "contract C { public function answer() -> uint256 { return uint256(1); } }",
         );
         let source = source_module(&db, file);
         let prepared = prepare_module(&db, source);
-        assert_eq!(prepared.module(&db), source);
-        assert!(prepared.origins(&db).entries().is_empty());
+        assert_ne!(prepared.module(&db), source);
+        let contract = first_contract(&db, prepared.module(&db));
+        assert!(
+            prepared
+                .contract_deployment_main(&db, contract.def_id_value(&db))
+                .is_some()
+        );
+        assert!(
+            prepared
+                .contract_dispatch_main(&db, contract.def_id_value(&db))
+                .is_some()
+        );
 
         let (db, file) = db_with_main(
             r#"
@@ -929,8 +2051,179 @@ contract C { function main() -> () {} }
         );
         let source = source_module(&db, file);
         let prepared = prepare_module(&db, source);
+        assert_ne!(prepared.module(&db), source);
+        let contract = first_contract(&db, prepared.module(&db));
+        assert!(
+            prepared
+                .contract_deployment_main(&db, contract.def_id_value(&db))
+                .is_some()
+        );
+        assert!(
+            prepared
+                .contract_dispatch_main(&db, contract.def_id_value(&db))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn nonempty_constructor_waits_for_canonical_std_import() {
+        let (db, file) =
+            db_with_main("contract C { constructor(x:word) {} function main() -> () {} }");
+        let source = source_module(&db, file);
+        let prepared = prepare_module(&db, source);
         assert_eq!(prepared.module(&db), source);
         assert!(prepared.origins(&db).entries().is_empty());
+    }
+
+    #[test]
+    fn constructor_overlay_preserves_source_and_generates_deployment_entry() {
+        let (db, file) = db_with_main(
+            r#"
+import std.{*};
+import std.dispatch.{*};
+contract C {
+  payable constructor(x:word, y:word) { let z = x; }
+  function main() -> () { return (); }
+}
+"#,
+        );
+        let source = source_module(&db, file);
+        let prepared = prepare_module(&db, source);
+        let source_contract = first_contract(&db, prepared.source(&db));
+        assert!(source_contract.items(&db).iter().any(|item| matches!(
+            item,
+            ContractItem::FunctionDef(function)
+                if function.kind(&db) == FuncKind::Constructor
+        )));
+
+        let effective = first_contract(&db, prepared.module(&db));
+        assert!(!effective.items(&db).iter().any(|item| matches!(
+            item,
+            ContractItem::FunctionDef(function)
+                if function.kind(&db) == FuncKind::Constructor
+        )));
+        let names = effective
+            .items(&db)
+            .iter()
+            .filter_map(|item| match item {
+                ContractItem::FunctionDef(function) => {
+                    Some(ident_text(&db, &function.sig(&db).name))
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        assert!(names.contains(CONSTRUCTOR_INIT_NAME), "{names:?}");
+        assert!(names.contains(CONSTRUCTOR_COPY_NAME), "{names:?}");
+        assert!(names.contains(DEPLOYMENT_MAIN_NAME), "{names:?}");
+        let deployment = prepared
+            .contract_deployment_main(&db, effective.def_id_value(&db))
+            .expect("generated deployment main");
+        assert!(is_contract_deployment_main_def(&db, deployment));
+        assert!(matches!(
+            prepared
+                .origin_for_def(&db, deployment)
+                .map(|origin| origin.kind),
+            Some(GeneratedOriginKind::ContractDeploymentMain)
+        ));
+        assert!(
+            prepared
+                .contract_dispatch_main(&db, effective.def_id_value(&db))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn explicit_constructor_overlay_is_idempotent() {
+        let (db, file) = db_with_main(
+            r#"
+import std.{*};
+contract C {
+  payable constructor(x:word) { let saved = x; }
+  function main() -> () { return (); }
+}
+"#,
+        );
+        let source = source_module(&db, file);
+        let first = prepare_module(&db, source).module(&db);
+        let second = prepare_module(&db, first).module(&db);
+        assert_eq!(second, first);
+
+        let contract = first_contract(&db, second);
+        let generated = contract
+            .items(&db)
+            .iter()
+            .filter_map(|item| match item {
+                ContractItem::FunctionDef(function) => function.def_id_value(&db).fingerprint(&db),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for fingerprint in [
+            CONSTRUCTOR_INIT_FINGERPRINT,
+            CONSTRUCTOR_COPY_FINGERPRINT,
+            DEPLOYMENT_MAIN_FINGERPRINT,
+        ] {
+            assert_eq!(
+                generated
+                    .iter()
+                    .filter(|candidate| candidate.as_str() == fingerprint)
+                    .count(),
+                1,
+                "{generated:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn constructor_body_edit_keeps_generated_wrapper_identity() {
+        let before = r#"
+import std.{*};
+import std.dispatch.{*};
+contract C {
+  constructor(x:word) { let z = 1; }
+  function main() -> () { return (); }
+}
+"#;
+        let after = r#"
+import std.{*};
+import std.dispatch.{*};
+contract C {
+  constructor(x:word) { let z = 2; }
+  function main() -> () { return (); }
+}
+"#;
+        let (mut db, file) = db_with_main(before);
+        let before_module = prepare_module(&db, source_module(&db, file)).module(&db);
+        let before_contract = first_contract(&db, before_module);
+        let before_defs = constructor_wrapper_defs(&db, before_contract);
+
+        file.set_content(&mut db).to(Some(after.to_owned()));
+        let after_module = prepare_module(&db, source_module(&db, file)).module(&db);
+        let after_contract = first_contract(&db, after_module);
+        let after_defs = constructor_wrapper_defs(&db, after_contract);
+        assert_eq!(before_defs, after_defs);
+    }
+
+    fn constructor_wrapper_defs(
+        db: &TestDb,
+        contract: ContractDef<'_>,
+    ) -> BTreeMap<String, String> {
+        contract
+            .items(db)
+            .iter()
+            .filter_map(|item| match item {
+                ContractItem::FunctionDef(function) => {
+                    let name = ident_text(db, &function.sig(db).name);
+                    [
+                        CONSTRUCTOR_INIT_NAME,
+                        CONSTRUCTOR_COPY_NAME,
+                        DEPLOYMENT_MAIN_NAME,
+                    ]
+                    .contains(&name.as_str())
+                    .then(|| (name, format!("{:?}", function.def_id_value(db))))
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]

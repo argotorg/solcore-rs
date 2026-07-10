@@ -4,8 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
-use hir_ty::{BuiltinTyCtor, Ty, prepare_module};
+use hir::{anchor::DefLocationTable, ast::item::Module, diag::DiagnosticCode, input::SourceFile};
+use hir_ty::{AbiSignature, BuiltinTyCtor, Ty, abi_selector, prepare_module};
 use nameres::{
     LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
     module_key_for_path, module_path_display, resolve_module_path_candidate,
@@ -15,7 +15,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_specialize::{
     MonoComptimeObligationKind, MonoEntry, MonoExpr, MonoExprKind, MonoItem, MonoPatKind,
     MonoRuntimeMainOrigin, MonoStmt, MonoStmtKind, SpecializeDiagnosticKind, SpecializeOptions,
-    SpecializeOutput, specialize_module, specialize_name,
+    SpecializeOutput, specialize_module, specialize_name, specialize_prepared_module,
 };
 
 #[salsa::db]
@@ -341,6 +341,74 @@ contract C {
 }
 
 #[test]
+fn derived_generic_specialization_uses_the_imported_adt_definition_module() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        PathBuf::from("/std"),
+        BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(db, [main_root.as_path()]));
+    let lib_path = main_root.join("lib.solc");
+    let main_path = main_root.join("main.solc");
+    let lib_file = source_file_at_path(
+        db,
+        &lib_path,
+        r#"
+pragma no-patterson-condition;
+pragma no-bounded-variable-condition;
+
+export { Box(*), exercise };
+
+forall a rep . class a:Generic(rep) {
+  function from(x:a) -> rep;
+  function to(x:rep) -> a;
+}
+
+data Box = Box(word, bool);
+
+function exercise(x:Box) -> Box {
+  let rep : (word, bool) = Generic.from(x);
+  return Generic.to(rep);
+}
+"#,
+    );
+    let main_file = source_file_at_path(
+        db,
+        &main_path,
+        r#"
+import lib.{*};
+
+contract C {
+  function main(x:Box) -> Box { return exercise(x); }
+}
+"#,
+    );
+    let lib_key = module_key_for_path(LibraryId::Main, &main_root, &lib_path).unwrap();
+    let main_key = module_key_for_path(LibraryId::Main, &main_root, &main_path).unwrap();
+    db.module_files.insert(lib_key, lib_file);
+    db.module_files.insert(main_key, main_file);
+
+    let module = parse_file_to_hir(db, main_file).module(db);
+    let output = specialize_module(db, module, SpecializeOptions::default());
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("Generic_from$Box")),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name.starts_with("Generic_to$Box")),
+        "{names:?}"
+    );
+}
+
+#[test]
 fn invokable_invoke_replays_call_site_evidence() {
     let (_db, output) = specialize_src(
         r#"
@@ -532,84 +600,54 @@ contract C {
 }
 
 #[test]
-fn generated_contract_dispatch_does_not_auto_import_std_dispatch() {
-    let without_dispatch_import = specialize_src_with_std(
+fn generated_contract_dispatch_is_a_compiler_owned_implicit_dependency() {
+    for source in [
         r#"
-import std.{*};
+data Proxy = Proxy(word);
+data Contract = Contract(word);
+data Method = Method(word);
+data RunContract;
+
+function fallback_default_implementation() -> word { return 0; }
 
 contract C {
-  public function answer() -> uint256 {
-    return uint256(1);
-  }
+  public function answer(x : word) -> word { return x; }
 }
 "#,
-    );
-
-    assert!(
-        without_dispatch_import
-            .diagnostics
-            .iter()
-            .any(|diagnostic| {
-                matches!(
-                    diagnostic.kind,
-                    SpecializeDiagnosticKind::MissingStdDispatchImport { .. }
-                )
-            })
-    );
-    let blocked_contract = without_dispatch_import
-        .module
-        .items
-        .iter()
-        .find_map(|item| match item {
-            MonoItem::Contract(contract) => Some(contract),
-            _ => None,
-        })
-        .expect("blocked contract metadata");
-    assert!(
-        blocked_contract.entries.iter().all(|entry| !matches!(
-            entry,
-            MonoEntry::SelectorMethod { .. } | MonoEntry::RuntimeMain { .. }
-        )),
-        "{:?}",
-        blocked_contract.entries
-    );
-
-    let with_dispatch_import = specialize_src_with_std(
         r#"
 import std.{*};
 import std.dispatch.{*};
 
 contract C {
-  public function answer() -> uint256 {
-    return uint256(1);
-  }
+  public function answer() -> uint256 { return uint256(1); }
 }
 "#,
-    );
-
-    assert_eq!(with_dispatch_import.diagnostics, Vec::new());
-    let generated_contract = with_dispatch_import
-        .module
-        .items
-        .iter()
-        .find_map(|item| match item {
-            MonoItem::Contract(contract) => Some(contract),
-            _ => None,
-        })
-        .expect("generated contract metadata");
-    assert!(generated_contract.entries.iter().any(|entry| matches!(
-        entry,
-        MonoEntry::RuntimeMain {
-            origin: MonoRuntimeMainOrigin::StdDispatch,
-            ..
-        }
-    )));
-    assert!(
-        generated_contract
-            .entries
+    ] {
+        let output = specialize_src_with_std(source);
+        assert_eq!(output.diagnostics, Vec::new(), "{source}");
+        let generated_contract = output
+            .module
+            .items
             .iter()
-            .all(|entry| !matches!(entry, MonoEntry::SelectorMethod { .. }))
-    );
+            .find_map(|item| match item {
+                MonoItem::Contract(contract) => Some(contract),
+                _ => None,
+            })
+            .expect("generated contract metadata");
+        assert!(generated_contract.entries.iter().any(|entry| matches!(
+            entry,
+            MonoEntry::RuntimeMain {
+                origin: MonoRuntimeMainOrigin::StdDispatch,
+                ..
+            }
+        )));
+        assert!(
+            generated_contract
+                .entries
+                .iter()
+                .all(|entry| !matches!(entry, MonoEntry::SelectorMethod { .. }))
+        );
+    }
 }
 
 #[test]
@@ -656,6 +694,47 @@ contract C {
             .all(|entry| !matches!(entry, MonoEntry::RuntimeMain { .. })),
         "{:?}",
         contract.entries
+    );
+}
+
+#[test]
+fn parameterized_constructor_missing_std_import_is_reported_by_specialize_preflight() {
+    let (db, output) = specialize_src(
+        r#"
+contract C {
+  constructor(value: word) {}
+  function main() -> () { return (); }
+}
+"#,
+    );
+
+    let diagnostic = output
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            matches!(
+                diagnostic.kind,
+                SpecializeDiagnosticKind::MissingConstructorStdImport { .. }
+            )
+        })
+        .expect("parameterized constructor preflight diagnostic");
+    assert_eq!(
+        diagnostic.kind.code(),
+        DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT
+    );
+    assert_eq!(
+        diagnostic.kind.to_string(),
+        "constructor for contract `C` needs `import std.{*};` to decode arguments"
+    );
+    let lowered = diagnostic.lower(db);
+    assert_eq!(
+        lowered.code.as_deref(),
+        Some(DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT)
+    );
+    assert_eq!(lowered.helps, ["add `import std.{*};` to this module"]);
+    assert_eq!(
+        lowered.notes,
+        ["constructor arguments are decoded from bytes appended to the creation code"]
     );
 }
 
@@ -735,18 +814,22 @@ import std.{*};
 import std.dispatch.{*};
 
 contract C {
+  payable constructor(seed: word) { let saved = seed; }
   public function answer() -> uint256 { return uint256(1); }
 }
 "#;
     let (db, file, _) = specialize_src_with_std_and_db(src);
     let source = parse_file_to_hir(db, file).module(db);
-    let effective = prepare_module(db, source).module(db);
-    let output = specialize_module(db, effective, SpecializeOptions::default());
+    let prepared = prepare_module(db, source);
+    let output = specialize_prepared_module(db, prepared, SpecializeOptions::default());
     assert_eq!(output.diagnostics, Vec::new());
     assert!(output.module.items.iter().any(|item| {
         let MonoItem::Contract(contract) = item else {
             return false;
         };
+        assert!(contract.constructor.explicit);
+        assert!(contract.constructor.payable);
+        assert_eq!(contract.constructor.inputs.len(), 1);
         contract.entries.iter().any(|entry| {
             matches!(
                 entry,
@@ -755,7 +838,10 @@ contract C {
                     ..
                 }
             )
-        })
+        }) && contract
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, MonoEntry::DeploymentMain { .. }))
     }));
 }
 
@@ -779,18 +865,27 @@ contract B { public function main() -> word { return 2; } }
         })
         .flatten()
         .collect::<Vec<_>>();
-    assert_eq!(entries.len(), 2, "{entries:?}");
+    assert_eq!(entries.len(), 4, "{entries:?}");
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| matches!(entry, MonoEntry::DeploymentMain { .. }))
+            .count(),
+        2,
+        "{entries:?}"
+    );
     let specialized = entries
         .iter()
-        .map(|entry| match entry {
+        .filter_map(|entry| match entry {
             MonoEntry::RuntimeMain {
                 specialized,
                 origin: MonoRuntimeMainOrigin::User,
                 ..
-            } => specialized.as_str(),
-            _ => panic!("expected user runtime main entry: {entry:?}"),
+            } => Some(specialized.as_str()),
+            _ => None,
         })
         .collect::<Vec<_>>();
+    assert_eq!(specialized.len(), 2, "{entries:?}");
     assert_ne!(specialized[0], specialized[1]);
 }
 
@@ -826,6 +921,12 @@ contract PayableTest {
             ..
         }
     )));
+    assert!(
+        contract
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, MonoEntry::DeploymentMain { .. }))
+    );
     let names = function_names(&output);
     assert!(
         names
@@ -852,6 +953,164 @@ contract PayableTest {
             .specialized
             .as_deref()
             .is_some_and(|name| name.contains("_fallback_"))
+    );
+}
+
+#[test]
+fn constructor_overlay_roots_multi_argument_deployment_main() {
+    let output = specialize_src_with_std(
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+contract C {
+  constructor(x : word, y : word) { let z = x; }
+  function main() -> () { return (); }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let contract = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Contract(contract) => Some(contract),
+            _ => None,
+        })
+        .expect("contract");
+    assert!(contract.constructor.explicit);
+    assert_eq!(contract.constructor.inputs.len(), 2);
+    assert!(
+        contract
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, MonoEntry::DeploymentMain { .. }))
+    );
+    let names = function_names(&output);
+    assert!(
+        names.iter().any(|name| name.contains("_start")),
+        "{names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name.contains("copy_arguments_for_constructor")),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn constructor_product_adt_uses_generic_abi_with_only_the_std_prelude() {
+    let output = specialize_src_with_std(
+        r#"
+import std.{*};
+
+data Config = Config(word, bool);
+
+contract C {
+  constructor(config: Config, label: memory(string)) {}
+  function main() -> () { return (); }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(
+        names.iter().any(|name| name.starts_with("Generic_to$")),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn dynamic_product_adt_dispatch_and_constructor_use_abi_tuple_boundaries() {
+    let output = specialize_src_with_std(
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+data Payload = Payload(memory(string), bool);
+
+contract C {
+  constructor(prefix: word, payload: Payload) {}
+
+  public function roundtrip(prefix: word, payload: Payload) -> (word, Payload) {
+    return (prefix, payload);
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("Generic_to$") && name.contains("Payload")),
+        "{names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("Generic_from$") && name.contains("Payload")),
+        "{names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("ABIDecode_decode$") && name.contains("ABITuple")),
+        "{names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("ABIEncode_encodeInto$") && name.contains("ABITuple")),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn product_adt_dispatch_uses_the_same_structural_selector_as_hir_ty() {
+    let (db, _, output) = specialize_src_with_std_and_db(
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+data Point = Point(word, bool);
+
+contract Shapes {
+  public function roundtrip(p: Point) -> Point { return p; }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let expected = u32::from_be_bytes(
+        abi_selector(
+            db,
+            AbiSignature::new(db, "roundtrip((uint256,bool))".to_owned()),
+        )
+        .0,
+    )
+    .to_string();
+    assert!(
+        output.module.items.iter().any(|item| match item {
+            MonoItem::Function(function) => {
+                stmts_have_number_literal(&function.body, &expected)
+            }
+            _ => false,
+        }),
+        "std.dispatch selector did not match hir-ty's structural signature: {expected}"
+    );
+    let names = function_names(&output);
+    assert!(
+        names.iter().any(|name| name.starts_with("Generic_from$")),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name.starts_with("Generic_to$")),
+        "{names:?}"
     );
 }
 
@@ -1233,6 +1492,46 @@ contract C {
 }
 
 #[test]
+fn generic_abi_decoder_evidence_specializes_for_internal_sum_adt() {
+    let output = specialize_src_with_std(
+        r#"
+import std.{*};
+import std.Generic.{*};
+import std.ABIGeneric.{*};
+
+data Choice = Left(word) | Right(bool);
+
+contract C {
+  function main() -> word {
+    let buf = allocate_zeroed_memory(64);
+    let rdr : MemoryWordReader = MemoryWordReader(buf);
+    let dec : ABIDecoder(Choice, MemoryWordReader) =
+        ABIDecoder(rdr) : ABIDecoder(Choice, MemoryWordReader);
+    let value : Choice = ABIDecode.decode(dec, 0);
+    match value {
+    | Choice.Left(x) => return x;
+    | Choice.Right(_) => return 0;
+    }
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(
+        names.iter().any(|name| name.starts_with("Generic_to$")),
+        "{names:?}"
+    );
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("ABIDecode_decode$")),
+        "{names:?}"
+    );
+}
+
+#[test]
 fn snapshot_small_specialized_module() {
     let (db, output) = specialize_src(
         r#"
@@ -1248,7 +1547,7 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     let summaries = function_summaries(db, &output);
-    assert_eq!(summaries.len(), 2, "{summaries:?}");
+    assert_eq!(summaries.len(), 3, "{summaries:?}");
     assert!(
         summaries
             .iter()
@@ -1259,6 +1558,12 @@ contract C {
         summaries
             .iter()
             .any(|summary| summary.contains("_main_") && summary.ends_with("(word) -> word")),
+        "{summaries:?}"
+    );
+    assert!(
+        summaries
+            .iter()
+            .any(|summary| summary.contains("_start_") && summary.ends_with("() -> ()")),
         "{summaries:?}"
     );
 }
@@ -1323,8 +1628,16 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     assert_eq!(main_return_number(&output), Some("55".to_owned()));
-    assert_eq!(function_names(&output).len(), 1);
-    assert!(function_names(&output)[0].contains("_main_"));
+    let names = function_names(&output);
+    assert_eq!(names.len(), 2, "{names:?}");
+    assert!(
+        names.iter().any(|name| name.contains("_main_")),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name.contains("_start_")),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -2135,6 +2448,7 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
+                .chain(refs.compiler_refs)
                 .filter_map(
                     |path| match resolve_module_path_candidate(&*db, module, &path) {
                         Ok(resolved) => Some((resolved.module.key(&*db), resolved.file_path)),

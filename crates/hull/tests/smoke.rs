@@ -180,6 +180,25 @@ contract C {
 }
 
 #[test]
+fn compiler_owned_std_dispatch_needs_no_source_import() {
+    let (db, output) = specialize_src_with_std(
+        "implicit_std_dispatch",
+        r#"
+contract C {
+  public function echo(x : word) -> word { return x; }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(hull.contains("dispatch_selector_matches"), "{hull}");
+    assert!(hull.contains("opcodes_calldataload"), "{hull}");
+}
+
+#[test]
 fn dispatch_basic_fixture_uses_std_dispatch_main() {
     let fixture = repo_root()
         .join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/basic.solc");
@@ -235,11 +254,17 @@ fn deployment_objects_copy_runtime_and_guard_constructor_value() {
     );
     assert!(outer.contains("if callvalue()"), "{hull}");
     assert!(outer.contains("0xb5988ea3"), "{hull}");
+    assert!(outer.matches("_start").count() >= 2, "{hull}");
     assert!(
         outer.contains("codecopy(0, dataoffset(\"NonPayableCtor\"), datasize(\"NonPayableCtor\"))"),
         "{hull}"
     );
     assert!(outer.contains("return(0, size)"), "{hull}");
+    let runtime = hull
+        .split("object \"NonPayableCtor\" {")
+        .nth(1)
+        .expect("runtime object");
+    assert!(!runtime.contains("_start"), "{hull}");
 
     let fixture = repo
         .join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/payable_ctor.solc");
@@ -256,12 +281,12 @@ fn deployment_objects_copy_runtime_and_guard_constructor_value() {
 }
 
 #[test]
-fn deployment_decodes_static_constructor_args_from_appended_code() {
+fn importless_nullary_constructor_uses_overlay_deployment_entry() {
     let (db, output) = specialize_src(
-        "ctor_args",
+        "nullary_ctor_overlay",
         r#"
 contract C {
-  constructor(x : word, y : word) {}
+  constructor() {}
 
   function main() -> () {
     return ();
@@ -272,20 +297,82 @@ contract C {
     assert_eq!(output.diagnostics, Vec::new());
     let emitted = emit_module(db, &output.module, EmitOptions::default());
     assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
-    assert!(hull.contains("let constructor_arg0 : word"), "{hull}");
+    let outer = hull.split("object \"C\" {").next().expect("outer object");
+    assert!(outer.contains("_start"), "{hull}");
+    assert!(outer.contains("init_"), "{hull}");
     assert!(
-        hull.contains("if lt(codesize(), add(datasize(\"CDeploy\"), 64))"),
+        outer.contains("codecopy(0, dataoffset(\"C\"), datasize(\"C\"))"),
+        "{hull}"
+    );
+    assert!(!outer.contains("constructor_arg"), "{hull}");
+}
+
+#[test]
+fn std_constructor_overlay_decodes_appended_arguments_in_deployment_closure() {
+    let (db, output) = specialize_src_with_std(
+        "std_ctor_overlay_args",
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+data Config = Config(word, bool);
+
+contract C {
+  constructor(config : Config, label : memory(string)) {
+    let saved_config = config;
+    let saved_label = label;
+  }
+
+  public function echo(config : Config) -> Config { return config; }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    let outer = hull.split("object \"C\" {").next().expect("outer object");
+    assert!(outer.contains("copy_arguments_for_constructor"), "{hull}");
+    assert!(outer.contains("abi_decode"), "{hull}");
+    assert!(outer.contains("BoundedMemoryWordReader"), "{hull}");
+    for function in [
+        "WordReader_advance$BoundedMemoryWordReader",
+        "WordReader_read$BoundedMemoryWordReader",
+        "WordReader_copyToMem$BoundedMemoryWordReader",
+    ] {
+        let body = hull_function(&hull, function);
+        assert!(body.contains("0x08638556"), "{body}");
+    }
+    assert!(outer.contains("Generic_to$Config"), "{hull}");
+    assert!(
+        outer.contains("argSize := sub(codesize(), programSize)"),
+        "{hull}"
+    );
+    assert!(outer.contains("minimumSize"), "{hull}");
+    assert!(outer.contains("if lt(argSize, "), "{hull}");
+    assert!(outer.contains("mstore(0, 0x08638556)"), "{hull}");
+    assert!(
+        outer.contains("codecopy(memoryDataOffset, programSize, argSize)"),
         "{hull}"
     );
     assert!(
-        hull.contains("codecopy(0, datasize(\"CDeploy\"), 32)"),
+        !outer.contains("codecopy(0, datasize(\"CDeploy\"), 32)"),
         "{hull}"
     );
+    assert!(!outer.contains("constructor_arg"), "{hull}");
+    assert!(outer.matches("_start").count() >= 2, "{hull}");
+
+    let runtime = hull.split("object \"C\" {").nth(1).expect("runtime object");
     assert!(
-        hull.contains("codecopy(0, add(datasize(\"CDeploy\"), 32), 32)"),
+        !runtime.contains("copy_arguments_for_constructor"),
         "{hull}"
     );
+    assert!(!runtime.contains("_start"), "{hull}");
+    assert!(runtime.contains("Generic_to$Config"), "{hull}");
+    assert!(runtime.contains("Generic_from$Config"), "{hull}");
 }
 
 #[test]
@@ -297,6 +384,7 @@ import std.{*};
 import std.dispatch.{*};
 
 contract C {
+  constructor(initial : bool) { let saved = initial; }
   public function echo(x : bool) -> bool { return x; }
 }
 "#,
@@ -310,7 +398,99 @@ contract C {
         hull.contains("ABIDecode_decode$ABIDecoderLbool_CalldataWordReaderJ"),
         "{hull}"
     );
+    assert!(
+        hull.contains("ABIDecode_decode$ABIDecoderLbool_BoundedMemoryWordReaderJ"),
+        "{hull}"
+    );
     assert!(hull.contains("ABIEncode_encodeInto$bool"), "{hull}");
+    for reader in ["CalldataWordReader", "BoundedMemoryWordReader"] {
+        let decoder = hull_function(
+            &hull,
+            &format!("ABIDecode_decode$ABIDecoderLbool_{reader}J"),
+        );
+        // Both calldata dispatch and constructor-memory decoding must retain
+        // the canonical-bool rejection path from the shared std instance.
+        assert!(decoder.contains("0x0557dbbf"), "{decoder}");
+    }
+}
+
+#[test]
+fn std_dispatch_product_adt_uses_generic_abi_decode_and_encode() {
+    let (db, output) = specialize_src_with_std(
+        "std_product_adt_dispatch",
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+data Point = Point(word, bool);
+
+contract C {
+  public function roundtrip(p : Point) -> Point { return p; }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert!(hull.contains("Generic_to$Point"), "{hull}");
+    assert!(hull.contains("Generic_from$Point"), "{hull}");
+    assert!(
+        hull.contains("ABIDecode_decode$ABIDecoderLPoint_CalldataWordReaderJ"),
+        "{hull}"
+    );
+    assert!(hull.contains("ABIEncode_encodeInto$Point"), "{hull}");
+}
+
+#[test]
+fn dynamic_product_adt_uses_abi_tuple_boundaries_at_nonzero_offsets() {
+    let (db, output) = specialize_src_with_std(
+        "std_dynamic_product_adt_dispatch",
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+data Payload = Payload(memory(string), bool);
+
+contract C {
+  constructor(prefix : word, payload : Payload) {}
+
+  public function roundtrip(prefix : word, payload : Payload) -> (word, Payload) {
+    return (prefix, payload);
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    let hull = pretty_program(db, &emitted.program);
+    assert_eq!(
+        check_program_with_db(db, &emitted.program),
+        Vec::new(),
+        "{hull}"
+    );
+    assert!(hull.contains("Generic_to$Payload"), "{hull}");
+    assert!(hull.contains("Generic_from$Payload"), "{hull}");
+    assert!(
+        hull.contains("ABIDecode_decode$ABIDecoderLABITuple"),
+        "{hull}"
+    );
+    let tuple_decoder = hull_function(&hull, "ABIDecode_decode$ABIDecoderLABITuple");
+    assert!(
+        tuple_decoder.contains("Add_add$word(currentHeadOffset, 32)"),
+        "{tuple_decoder}"
+    );
+    assert!(
+        !tuple_decoder.contains("ABIAttribs_headSize"),
+        "a dynamic ADT tail is bounded by its outer offset slot, not its wider product head:\n{tuple_decoder}"
+    );
+    assert!(hull.contains("ABIEncode_encodeInto$ABITuple"), "{hull}");
+    assert!(
+        hull.contains("Add_add$word(basePtr, offset), Sub_sub$word(tail, basePtr)"),
+        "{hull}"
+    );
 }
 
 #[test]
@@ -1149,6 +1329,7 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
+                .chain(refs.compiler_refs)
                 .filter_map(
                     |path| match resolve_module_path_candidate(&*db, module, &path) {
                         Ok(resolved) => Some((resolved.module.key(&*db), resolved.file_path)),
@@ -1413,8 +1594,12 @@ fn hull_function<'a>(hull: &'a str, name_fragment: &str) -> &'a str {
     let mut search_from = 0;
     while let Some(relative_start) = hull[search_from..].find("function ") {
         let start = search_from + relative_start;
-        let header_end = hull[start..]
-            .find('{')
+        let header_line_end = hull[start..]
+            .find('\n')
+            .map(|offset| start + offset)
+            .unwrap_or(hull.len());
+        let header_end = hull[start..header_line_end]
+            .rfind('{')
             .map(|offset| start + offset)
             .expect("function header has body");
         let header = &hull[start..header_end];

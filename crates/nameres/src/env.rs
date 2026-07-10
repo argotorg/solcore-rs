@@ -29,19 +29,27 @@ pub fn module_env<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> ModuleEnv<'db>
 
 /// Builds an imported-name environment for an already parsed HIR module.
 ///
-/// The logical `module` is still used to resolve relative import paths, but
-/// imports and local item scope come from `hir_module`'s source file/content.
+/// The logical `module` is still used to resolve relative import paths, while
+/// imports and local item scope come directly from `hir_module`. This is the
+/// semantic entry point for compiler-owned overlays whose imports do not exist
+/// in the source file.
 pub fn module_env_for_hir_module<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     hir_module: Module<'db>,
 ) -> ModuleEnv<'db> {
-    let file = hir_module.def_id_value(db).file(db);
     let item_scope = hir_nameres::item_scope(db, hir_module);
-    let imports = module_imports(db, file);
-    let instances = instance_imports_for_file(db, module, file);
+    let imports = hir_module
+        .items(db)
+        .iter()
+        .filter_map(|item| match item {
+            Item::Import(import) => Some(*import),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let instances = instance_imports_for_hir_module(db, module, hir_module);
     let mut builder = ModuleEnvBuilder::new(db, module, item_scope, instances);
-    for import in imports.imports {
+    for import in imports {
         builder.add_import(import);
     }
     builder.finish()

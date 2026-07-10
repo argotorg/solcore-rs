@@ -30,14 +30,17 @@ pub(super) struct FunctionInfo<'db> {
     pub(super) function: FunctionDef<'db>,
     pub(super) body: Option<FuncBody<'db>>,
     pub(super) type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
-    pub(super) kind: FunctionInfoKind,
+    pub(super) kind: FunctionInfoKind<'db>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) enum FunctionInfoKind {
+pub(super) enum FunctionInfoKind<'db> {
     Source,
     Contract,
-    InstanceMethod { method: String },
+    InstanceMethod {
+        instance: DefId<'db>,
+        method: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -56,6 +59,7 @@ pub(super) struct ClassInfo<'db> {
 
 #[derive(Debug, Clone)]
 pub(super) struct AdtInfo<'db> {
+    pub(super) module: Module<'db>,
     pub(super) adt: AdtDef<'db>,
 }
 
@@ -250,7 +254,8 @@ impl<'db> Driver<'db> {
                             );
                         }
                         ContractItem::AdtDef(adt) => {
-                            self.adts.insert(adt.def_id_value(self.db), AdtInfo { adt });
+                            self.adts
+                                .insert(adt.def_id_value(self.db), AdtInfo { module, adt });
                         }
                         ContractItem::TypeAlias(_) | ContractItem::Error { .. } => {}
                     }
@@ -308,6 +313,7 @@ impl<'db> Driver<'db> {
                             body: method.body(self.db),
                             type_vars: method_type_vars,
                             kind: FunctionInfoKind::InstanceMethod {
+                                instance: instance.def_id_value(self.db),
                                 method: method_name,
                             },
                         },
@@ -315,7 +321,8 @@ impl<'db> Driver<'db> {
                 }
             }
             Item::AdtDef(adt) => {
-                self.adts.insert(adt.def_id_value(self.db), AdtInfo { adt });
+                self.adts
+                    .insert(adt.def_id_value(self.db), AdtInfo { module, adt });
             }
             Item::ClassDef(class) => {
                 let mut type_vars = inherited.to_vec();
@@ -349,7 +356,25 @@ impl<'db> Driver<'db> {
                 continue;
             };
             has_contract = true;
-            let surface = contract_dispatch_surface_for_module(self.db, self.module, *contract);
+            // Constructor declarations are replaced by deployment wrappers in
+            // effective HIR. Keep ABI/source metadata anchored to the source
+            // contract while roots come from the prepared contract.
+            let source_module = self.prepared.source(self.db);
+            let source_contract = source_module
+                .items(self.db)
+                .iter()
+                .find_map(|item| match item {
+                    Item::ContractDef(source)
+                        if source.def_id_value(self.db) == contract.def_id_value(self.db) =>
+                    {
+                        Some(*source)
+                    }
+                    _ => None,
+                });
+            let (surface_module, surface_contract) =
+                source_contract.map_or((self.module, *contract), |source| (source_module, source));
+            let surface =
+                contract_dispatch_surface_for_module(self.db, surface_module, surface_contract);
             let constructor_surface = surface.constructor.clone();
             let fallback_surface = surface.fallback.clone();
             let mut entries = Vec::new();
@@ -364,7 +389,6 @@ impl<'db> Driver<'db> {
             let mut constructor_meta = MonoConstructor {
                 source: None,
                 explicit: matches!(constructor_surface, DispatchConstructor::Explicit { .. }),
-                specialized: None,
                 payable: match &constructor_surface {
                     DispatchConstructor::Implicit => false,
                     DispatchConstructor::Explicit { payable, .. } => *payable,
@@ -404,24 +428,34 @@ impl<'db> Driver<'db> {
                 self.runtime_main_origin(function, def)
                     .map(|origin| (function, origin))
             });
-            if let DispatchConstructor::Explicit {
-                source_index,
-                payable,
-                inputs,
-            } = &constructor_surface
+            let deployment_main = contract.items(self.db).iter().find_map(|item| {
+                let ContractItem::FunctionDef(function) = *item else {
+                    return None;
+                };
+                let def = function.def_id_value(self.db);
+                (self
+                    .prepared
+                    .origin_for_def(self.db, def)
+                    .is_some_and(|origin| {
+                        origin.kind == GeneratedOriginKind::ContractDeploymentMain
+                    })
+                    || is_contract_deployment_main_def(self.db, def))
+                .then_some(function)
+            });
+            if let DispatchConstructor::Explicit { source_index, .. } = &constructor_surface
                 && let Some(ContractItem::FunctionDef(function)) =
-                    contract.items(self.db).get(*source_index)
-                && let Some(key) = self.root_for_def(function.def_id_value(self.db))
+                    surface_contract.items(self.db).get(*source_index)
             {
                 constructor_meta.source = Some(function.def_id_value(self.db));
-                constructor_meta.specialized = Some(key.base_name.clone());
                 constructor_meta.span = function.span(self.db);
-                entries.push(MonoEntry::Constructor {
+            }
+            if let Some(function) = deployment_main
+                && let Some(key) = self.root_for_def(function.def_id_value(self.db))
+            {
+                entries.push(MonoEntry::DeploymentMain {
                     source: function.def_id_value(self.db),
                     specialized: key.base_name.clone(),
                     span: function.span(self.db),
-                    payable: *payable,
-                    inputs: mono_abi_params(inputs.clone()),
                 });
                 roots.push(key);
             }
@@ -625,11 +659,8 @@ impl<'db> Driver<'db> {
             });
             return;
         }
-        self.resolve_mptc_from_preds(
-            info.module,
-            lowered.scheme.body(self.db).preds(self.db),
-            &mut subst,
-        );
+        let givens = self.function_givens(&info, &lowered);
+        self.resolve_mptc_from_preds(info.module, &givens, &mut subst);
         let Some(params) = self.function_params(&info, &lowered, &subst, pending.key.ty) else {
             return;
         };
@@ -778,14 +809,18 @@ impl<'db> Driver<'db> {
             FunctionInfoKind::Source | FunctionInfoKind::Contract => {
                 self.qualified_source_base_name(info)
             }
-            FunctionInfoKind::InstanceMethod { method } => method.clone(),
+            FunctionInfoKind::InstanceMethod { method, .. } => method.clone(),
         }
     }
 
     fn qualified_source_base_name(&self, info: &FunctionInfo<'db>) -> String {
         let def = info.function.def_id_value(self.db);
         let mut parts = def_owner_path(self.db, def);
-        parts.push(ident_text(self.db, &info.function.sig(self.db).name));
+        parts.push(
+            contract_overlay_backend_name(self.db, def)
+                .map(str::to_owned)
+                .unwrap_or_else(|| ident_text(self.db, &info.function.sig(self.db).name)),
+        );
         parts.push(def_hash_suffix(self.db, def));
         join_sanitized_name_components(parts)
     }
@@ -856,6 +891,20 @@ impl<'db> Driver<'db> {
             body_map,
             self.entry_module,
         ))
+    }
+
+    pub(super) fn function_givens(
+        &self,
+        info: &FunctionInfo<'db>,
+        lowered: &LoweredFunction<'db>,
+    ) -> Vec<Pred<'db>> {
+        let mut givens = lowered.scheme.body(self.db).preds(self.db).clone();
+        if let FunctionInfoKind::InstanceMethod { instance, .. } = &info.kind
+            && let Some(instance) = self.instances.get(instance)
+        {
+            givens.extend(instance.preds.iter().copied());
+        }
+        givens
     }
 
     fn try_lower_pred_with_vars(
@@ -929,7 +978,7 @@ impl<'db> Driver<'db> {
         let trait_env = trait_env_with_givens(
             self.db,
             module_trait_env,
-            lowered.scheme.body(self.db).preds(self.db).clone(),
+            self.function_givens(info, lowered),
         );
         let ctx = BodyTyContext::new(
             info.module,

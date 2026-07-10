@@ -18,9 +18,9 @@ pub use desugar::{
     BodyDesugarPlan, BoolNode, FrontendDesugarPlan, FrontendTransform, IndirectArgShape,
     frontend_desugar_plan,
 };
+pub(crate) use dispatch::module_manual_generic_abi_diagnostics;
 pub use dispatch::{
     DispatchConstructor, DispatchFallback, DispatchMethod, DispatchSurface,
     contract_dispatch_surface, contract_dispatch_surface_for_module,
     contract_needs_generated_dispatch, module_contract_diagnostics,
-    module_has_canonical_std_dispatch_import,
 };

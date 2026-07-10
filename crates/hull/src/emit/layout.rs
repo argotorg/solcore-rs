@@ -157,12 +157,15 @@ impl<'db> Emitter<'db> {
         let ctors = plan
             .from_arms
             .iter()
-            .map(|arm| CtorLayout {
-                name: arm.ctor_name.clone(),
-                payload: self.hull_ty(subst_sem_ty(self.db, arm.product_rep, args), span),
-                fields: sem_product_fields(self.db, subst_sem_ty(self.db, arm.product_rep, args)),
+            .map(|arm| {
+                let product = subst_sem_ty(self.db, arm.product_rep, args);
+                Some(CtorLayout {
+                    name: arm.ctor_name.clone(),
+                    payload: self.hull_ty(product, span),
+                    fields: sem_product_fields_exact(self.db, product, arm.field_count as usize)?,
+                })
             })
-            .collect();
+            .collect::<Option<Vec<_>>>()?;
         self.layout_stack.pop();
         Some(AdtLayout {
             name,
@@ -229,6 +232,39 @@ pub(super) fn sem_product_fields<'db>(db: &'db dyn hir_ty::Db, ty: SemTy<'db>) -
         }
         _ => vec![ty],
     }
+}
+
+fn sem_product_fields_exact<'db>(
+    db: &'db dyn hir_ty::Db,
+    mut product: SemTy<'db>,
+    arity: usize,
+) -> Option<Vec<SemTy<'db>>> {
+    if arity == 0 {
+        return match product.kind(db) {
+            SemTyKind::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
+                args,
+            } if args.is_empty() => Some(Vec::new()),
+            _ => None,
+        };
+    }
+    let mut fields = Vec::with_capacity(arity);
+    for _ in 1..arity {
+        let SemTyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } = product.kind(db)
+        else {
+            return None;
+        };
+        if args.len() != 2 {
+            return None;
+        }
+        fields.push(args[0]);
+        product = args[1];
+    }
+    fields.push(product);
+    Some(fields)
 }
 
 pub(super) fn product_field_exprs<'db>(base: Expr<'db>, fields: &[Ty<'db>]) -> Vec<Expr<'db>> {

@@ -9,7 +9,7 @@ pub struct SpecializeDiagnostic<'db> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecializeDiagnosticKind<'db> {
-    MissingStdDispatchImport {
+    MissingConstructorStdImport {
         contract: String,
     },
     FreeTypeVariable {
@@ -80,11 +80,8 @@ impl<'db> SpecializeDiagnostic<'db> {
         for note in self.kind.notes() {
             diagnostic = diagnostic.with_note(note);
         }
-        if matches!(
-            &self.kind,
-            SpecializeDiagnosticKind::MissingStdDispatchImport { .. }
-        ) {
-            diagnostic = diagnostic.with_help("add `import std.dispatch.{*};` to this module");
+        if let SpecializeDiagnosticKind::MissingConstructorStdImport { .. } = &self.kind {
+            diagnostic = diagnostic.with_help("add `import std.{*};` to this module");
         }
         diagnostic
     }
@@ -93,8 +90,8 @@ impl<'db> SpecializeDiagnostic<'db> {
 impl SpecializeDiagnosticKind<'_> {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::MissingStdDispatchImport { .. } => {
-                DiagnosticCode::TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT
+            Self::MissingConstructorStdImport { .. } => {
+                DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT
             }
             Self::FreeTypeVariable { .. } => DiagnosticCode::SPECIALIZE_FREE_TYPE_VARIABLE,
             Self::InstantiationFuelExhausted { .. } => {
@@ -127,8 +124,8 @@ impl SpecializeDiagnosticKind<'_> {
 
     fn primary_label(&self) -> &'static str {
         match self {
-            Self::MissingStdDispatchImport { .. } => {
-                "generated dispatch is required for this contract"
+            Self::MissingConstructorStdImport { .. } => {
+                "constructor arguments require std ABI decoding"
             }
             Self::FreeTypeVariable { .. } => "type must be concrete here",
             Self::InstantiationFuelExhausted { .. } => "specialization limit reached here",
@@ -153,9 +150,10 @@ impl SpecializeDiagnosticKind<'_> {
 
     fn notes(&self) -> Vec<String> {
         match self {
-            Self::MissingStdDispatchImport { .. } => {
-                vec!["contract dispatch is provided by `std.dispatch`".to_owned()]
-            }
+            Self::MissingConstructorStdImport { .. } => vec![
+                "constructor arguments are decoded from bytes appended to the creation code"
+                    .to_owned(),
+            ],
             Self::FreeTypeVariable { context, .. } if context == "entry specialization" => vec![
                 "entry points are specialization roots and must have a single concrete type"
                     .to_owned(),
@@ -217,9 +215,9 @@ impl SpecializeDiagnosticKind<'_> {
 impl fmt::Display for SpecializeDiagnosticKind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingStdDispatchImport { contract } => write!(
+            Self::MissingConstructorStdImport { contract } => write!(
                 f,
-                "contract `{contract}` needs `import std.dispatch.{{*}};` for generated dispatch"
+                "constructor for contract `{contract}` needs `import std.{{*}};` to decode arguments"
             ),
             Self::FreeTypeVariable { context, ty } => {
                 if context == "entry specialization" {

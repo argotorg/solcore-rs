@@ -1,4 +1,5 @@
 import std.{*};
+import std.ABIGeneric.{*};
 import std.opcodes.{callvalue, calldatasize, calldataload, shr};
 
 export {
@@ -63,6 +64,17 @@ forall a b. a:SigString, b: SigString =>
 instance (a,b):SigString {
   function sigStr(x:Proxy((a,b))) -> string {
     SigString.sigStr( Proxy:Proxy(a) ) +  "," + SigString.sigStr( Proxy:Proxy(b) )
+  }
+}
+
+// A single-constructor user ADT is exposed to the canonical ABI as a tuple.
+// Its Generic representation is the constructor product, so parentheses retain
+// the parameter boundary: Point(word, word) is `(uint256,uint256)`, not two
+// separate method parameters.
+forall a rep. a:Generic(rep), rep:SigString =>
+default instance a:SigString {
+  function sigStr(x:Proxy(a)) -> string {
+    return "(" + SigString.sigStr(Proxy:Proxy(rep)) + ")";
   }
 }
 
@@ -164,7 +176,8 @@ forall args rets fn
     // check we have enough calldata for the head of args
     require(calldatasize() >= (ABIAttribs.headSize(pargs) + 4), Error(0x08638556)); // ABIInputTruncated()
 
-    // TODO: calldatasize checks for dynamic types
+    // Dynamic offsets, lengths, and copies are range-checked by
+    // CalldataWordReader as the shared decoder advances through calldata.
 
     // abi decode args from calldata
     let ptr : calldata(bytes) = calldata(4);

@@ -4,17 +4,20 @@ expression: render_fixture(&fixture)
 ---
 object "DataTypeStorageFullDeploy" {
   code {
-    mstore(64, memoryguard(128))
-    if lt(codesize(), datasize("DataTypeStorageFullDeploy")) {
-      revert(0, 0)
+    function usr$main_DataTypeStorageFull__start_d1108d95f() {
+      mstore(64, memoryguard(128))
+      if lt(codesize(), datasize("DataTypeStorageFullDeploy")) {
+        revert(0, 0)
+      }
+      if callvalue() {
+        mstore(0, 0xb5988ea3)
+        revert(28, 4)
+      }
+      let asm$size_0 := datasize("DataTypeStorageFull")
+      codecopy(0, dataoffset("DataTypeStorageFull"), datasize("DataTypeStorageFull"))
+      return(0, asm$size_0)
     }
-    if callvalue() {
-      mstore(0, 0xb5988ea3)
-      revert(28, 4)
-    }
-    let asm$size_0 := datasize("DataTypeStorageFull")
-    codecopy(0, dataoffset("DataTypeStorageFull"), datasize("DataTypeStorageFull"))
-    return(0, asm$size_0)
+    usr$main_DataTypeStorageFull__start_d1108d95f()
   }
   object "DataTypeStorageFull" {
     code {

@@ -1,25 +1,25 @@
 use hir::{
     anchor::DefId,
-    ast::item::{ContractDef, ContractItem, FuncKind, Import, ImportSelector, Item, Module},
+    ast::item::{ContractDef, ContractItem, FuncKind, Item, Module},
     diag::{Diagnostic, DiagnosticCode},
     nameres as hir_nameres,
     span::Spanned,
 };
-use nameres::{LibraryId, module_id_for_source_file, resolve_direct_import_target_candidate};
+use nameres::{LibraryId, module_id_for_source_file};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 
 use super::{
     abi::{
         AbiParam, AbiSelector, AbiSignature, AbiType, abi_outputs, abi_params, abi_selector,
-        contract_diag_unsupported_abi_type, method_signature_string,
+        abi_type_contains_user_adt, contract_diag_unsupported_abi_type, method_signature_string,
     },
     helpers::{
         find_contract_by_def, function_type_vars, ident_text, lower_normalized_function,
         param_names, resolve_contract_item_types, type_var_bindings,
     },
 };
-use crate::Db;
+use crate::{ClassId, ClauseOrigin, Db, PredKind, TraitEnvId, TyCtor, TyKind, UserTyCtorKind};
 
 /// Typed dispatch/ABI surface for one contract.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -36,6 +36,10 @@ pub struct DispatchSurface<'db> {
     /// Fallback entry. A missing source fallback is represented as the default
     /// non-payable unit fallback.
     pub fallback: DispatchFallback<'db>,
+    /// Canonical-ABI diagnostics produced specifically by the constructor.
+    /// These remain compilation errors even when a source runtime `main`
+    /// suppresses generated method dispatch.
+    pub constructor_abi_diagnostics: Vec<Diagnostic>,
     /// Diagnostics produced while building the surface.
     pub diagnostics: Vec<Diagnostic>,
 }
@@ -134,6 +138,7 @@ fn contract_dispatch_surface_by_def<'db>(
             methods: Vec::new(),
             constructor: DispatchConstructor::Implicit,
             fallback: DispatchFallback::Default,
+            constructor_abi_diagnostics: Vec::new(),
             diagnostics: Vec::new(),
         };
     };
@@ -143,7 +148,7 @@ fn contract_dispatch_surface_by_def<'db>(
 
 /// Returns diagnostics for every contract dispatch surface in a module.
 pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<Diagnostic> {
-    let has_std_dispatch_import = module_has_canonical_std_dispatch_import(db, module);
+    let has_std_import = crate::prepare::module_has_canonical_std_import(db, module);
     module
         .items(db)
         .iter()
@@ -154,22 +159,20 @@ pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) ->
         .flat_map(|contract| {
             let dispatch_generated = contract_needs_generated_dispatch(db, contract);
             let surface = contract_dispatch_surface(db, module, contract);
-            let surface_has_dispatch_errors = surface.diagnostics.iter().any(|diagnostic| {
-                matches!(
-                    diagnostic.code.as_deref(),
-                    Some("SC0230" | "SC0231" | "SC0232" | "SC0233" | "SC0235")
-                )
-            });
-            let mut diagnostics = surface
-                .diagnostics
-                .into_iter()
-                .filter(move |diagnostic| {
-                    diagnostic.code.as_deref() != Some("SC0231") || dispatch_generated
-                })
-                .collect::<Vec<_>>();
+            let mut diagnostics = if dispatch_generated {
+                surface.diagnostics
+            } else {
+                let mut diagnostics = surface
+                    .diagnostics
+                    .into_iter()
+                    .filter(|diagnostic| diagnostic.code.as_deref() != Some("SC0231"))
+                    .collect::<Vec<_>>();
+                diagnostics.extend(surface.constructor_abi_diagnostics);
+                diagnostics
+            };
             diagnostics.extend(contract_runtime_main_diagnostics(db, contract));
-            if dispatch_generated && !has_std_dispatch_import && !surface_has_dispatch_errors {
-                diagnostics.push(contract_diag_missing_std_dispatch_import(
+            if crate::prepare::contract_constructor_needs_std(db, contract) && !has_std_import {
+                diagnostics.push(contract_diag_missing_constructor_std_import(
                     db,
                     contract,
                     &surface.name,
@@ -180,10 +183,164 @@ pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) ->
         .filter(|diagnostic| {
             matches!(
                 diagnostic.code.as_deref(),
-                Some("SC0230" | "SC0231" | "SC0232" | "SC0233" | "SC0234" | "SC0235" | "SC0236")
+                Some("SC0230" | "SC0231" | "SC0232" | "SC0233" | "SC0235" | "SC0236" | "SC0237")
             )
         })
         .collect()
+}
+
+pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    trait_env: TraitEnvId<'db>,
+) -> Vec<Diagnostic> {
+    let manual_evidence = trait_env
+        .clauses(db)
+        .into_iter()
+        .filter_map(|clause| {
+            let ClauseOrigin::Instance { def: instance, .. } = clause.origin else {
+                return None;
+            };
+            if instance
+                .fingerprint(db)
+                .as_deref()
+                .is_some_and(|fingerprint| {
+                    fingerprint.starts_with("solcore.generated.std_dispatch.")
+                })
+            {
+                return None;
+            }
+            if module_id_for_source_file(db, instance.file(db))
+                .is_some_and(|module| matches!(module.library(db), LibraryId::Std))
+            {
+                return None;
+            }
+            let PredKind::InClass {
+                class: ClassId::User(class),
+                main,
+                ..
+            } = clause.head.kind(db)
+            else {
+                return None;
+            };
+            let class_name = canonical_abi_class_name(db, *class)?;
+            let generic_adt = if class_name == "Generic" {
+                match main.kind(db) {
+                    TyKind::Named {
+                        ctor: TyCtor::User(user),
+                        ..
+                    } if user.kind == UserTyCtorKind::Adt => Some(user.def),
+                    _ => return None,
+                }
+            } else {
+                None
+            };
+            Some((instance, class_name, generic_adt))
+        })
+        .collect::<Vec<_>>();
+    if manual_evidence.is_empty() {
+        return Vec::new();
+    }
+
+    let item_resolutions = resolve_contract_item_types(db, module);
+    let mut diagnostics = Vec::new();
+    for item in module.items(db) {
+        let Item::ContractDef(contract) = *item else {
+            continue;
+        };
+        let dispatch_generated = contract_needs_generated_dispatch(db, contract);
+        let contract_name = ident_text(db, &contract.name_elem(db));
+        let contract_type_vars =
+            type_var_bindings(contract.def_id_value(db), contract.ty_param_elems(db));
+        for item in contract.items(db) {
+            let ContractItem::FunctionDef(function) = *item else {
+                continue;
+            };
+            let sig = function.sig(db);
+            let abi_context = match function.kind(db) {
+                FuncKind::Constructor => Some("constructor".to_owned()),
+                FuncKind::Function if sig.public.is_some() && dispatch_generated => {
+                    Some(format!("public function `{}`", ident_text(db, &sig.name)))
+                }
+                FuncKind::Function | FuncKind::Fallback => None,
+            };
+            let Some(abi_context) = abi_context else {
+                continue;
+            };
+            let type_vars =
+                function_type_vars(db, &contract_type_vars, function.def_id_value(db), sig);
+            let lowered = lower_normalized_function(
+                db,
+                module,
+                &item_resolutions,
+                contract.def_id_value(db),
+                function,
+                &type_vars,
+            );
+            let mut exposed_tys = lowered.params.clone();
+            if function.kind(db) == FuncKind::Function {
+                exposed_tys.push(lowered.ret);
+            }
+            for (instance, class_name, generic_adt) in &manual_evidence {
+                if generic_adt.is_some_and(|adt| {
+                    !exposed_tys
+                        .iter()
+                        .any(|ty| abi_type_contains_user_adt(db, *ty, adt))
+                }) {
+                    continue;
+                }
+                let subject = generic_adt.map_or_else(
+                    || format!("visible manual `{class_name}` evidence"),
+                    |adt| {
+                        let adt_name = adt.name(db).unwrap_or_else(|| "<anonymous ADT>".to_owned());
+                        format!("`{adt_name}` with visible manual `Generic` evidence")
+                    },
+                );
+                diagnostics.push(
+                    Diagnostic::error(format!(
+                        "{abi_context} ABI for contract `{contract_name}` cannot use {subject}"
+                    ))
+                    .with_code("SC0231")
+                    .with_primary_label(
+                        db,
+                        sig.span,
+                        Some("external ABI evidence must be compiler-owned and canonical"),
+                    )
+                    .with_note(format!(
+                        "instance `{}` can override canonical `{class_name}` behavior",
+                        instance
+                            .name(db)
+                            .unwrap_or_else(|| class_name.to_string())
+                    ))
+                    .with_help(
+                        "remove the visible manual ABI instance or keep this declaration out of the external ABI",
+                    ),
+                );
+            }
+        }
+    }
+    diagnostics
+}
+
+fn canonical_abi_class_name(db: &dyn Db, class: DefId<'_>) -> Option<&'static str> {
+    let name = class.name(db)?;
+    let module = module_id_for_source_file(db, class.file(db))?;
+    if module.library(db) != &LibraryId::Std {
+        return None;
+    }
+    match (module.logical_path(db).as_slice(), name.as_str()) {
+        ([path], "Generic" | "ABIAttribs" | "ABIEncode" | "ABIDecode") if path == "std" => {
+            match name.as_str() {
+                "Generic" => Some("Generic"),
+                "ABIAttribs" => Some("ABIAttribs"),
+                "ABIEncode" => Some("ABIEncode"),
+                "ABIDecode" => Some("ABIDecode"),
+                _ => None,
+            }
+        }
+        ([path], "SigString") if path == "dispatch" => Some("SigString"),
+        _ => None,
+    }
 }
 
 fn contract_runtime_main_diagnostics<'db>(
@@ -221,51 +378,7 @@ fn contract_runtime_main_diagnostics<'db>(
 /// convention: any contract-local ordinary function named `main` is a
 /// user-supplied runtime entry, irrespective of visibility.
 pub fn contract_needs_generated_dispatch<'db>(db: &'db dyn Db, contract: ContractDef<'db>) -> bool {
-    !contract.items(db).iter().any(|item| {
-        let ContractItem::FunctionDef(function) = item else {
-            return false;
-        };
-        function.kind(db) == FuncKind::Function && ident_text(db, &function.sig(db).name) == "main"
-    })
-}
-
-/// Returns whether `module` explicitly wildcard-imports the canonical standard
-/// dispatch module required by generated contract entries.
-pub fn module_has_canonical_std_dispatch_import<'db>(db: &'db dyn Db, module: Module<'db>) -> bool {
-    let Some(importing) = module_id_for_source_file(db, module.def_id_value(db).file(db)) else {
-        return false;
-    };
-    module.items(db).iter().any(|item| {
-        let Item::Import(import) = *item else {
-            return false;
-        };
-        is_std_dispatch_wildcard_import(db, importing, import)
-    })
-}
-
-fn is_std_dispatch_wildcard_import<'db>(
-    db: &'db dyn Db,
-    importing: nameres::ModuleId<'db>,
-    import: Import<'db>,
-) -> bool {
-    import.external(db).is_none()
-        && import.alias_elem(db).is_none()
-        && import.hiding(db).is_empty()
-        && matches!(import.selector(db), Some(ImportSelector::Wildcard))
-        && import_path_is(db, import, &["std", "dispatch"])
-        && resolve_direct_import_target_candidate(db, importing, import).is_ok_and(|target| {
-            target.module.library(db) == &LibraryId::Std
-                && target.module.logical_path(db).as_slice() == ["dispatch"]
-        })
-}
-
-fn import_path_is(db: &dyn Db, import: Import<'_>, expected: &[&str]) -> bool {
-    let path = import.path_elems(db);
-    path.len() == expected.len()
-        && path
-            .iter()
-            .zip(expected)
-            .all(|(elem, expected)| ident_text(db, elem) == *expected)
+    !contract.has_runtime_main(db)
 }
 
 fn contract_dispatch_surface_with_resolutions<'db>(
@@ -280,6 +393,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
     let mut diagnostics = Vec::new();
     let mut methods = Vec::new();
     let mut constructor: Option<DispatchConstructor> = None;
+    let mut constructor_abi_diagnostics = Vec::new();
     let mut fallback: Option<DispatchFallback<'db>> = None;
 
     for (source_index, item) in contract.items(db).iter().enumerate() {
@@ -354,9 +468,10 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                     db,
                     &param_names(db, sig.params.atom()),
                     &lowered.params,
-                    &mut diagnostics,
+                    &mut constructor_abi_diagnostics,
                     sig.span,
                 );
+                diagnostics.extend(constructor_abi_diagnostics.iter().cloned());
                 constructor = Some(DispatchConstructor::Explicit {
                     source_index,
                     payable: sig.payable.is_some(),
@@ -449,6 +564,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
         methods,
         constructor,
         fallback,
+        constructor_abi_diagnostics,
         diagnostics,
     }
 }
@@ -540,20 +656,33 @@ fn contract_diag_unsupported_fallback_shape<'db>(
         .with_primary_label(db, span, Some("unsupported fallback ABI"))
 }
 
-fn contract_diag_missing_std_dispatch_import<'db>(
+fn contract_diag_missing_constructor_std_import<'db>(
     db: &'db dyn Db,
     contract: ContractDef<'db>,
     name: &str,
 ) -> Diagnostic {
+    let span = contract
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            ContractItem::FunctionDef(function)
+                if function.kind(db) == FuncKind::Constructor
+                    && !function.sig(db).params.atom().is_empty() =>
+            {
+                Some(function.sig(db).params.span(db))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| contract.name_elem(db).span(db));
     Diagnostic::error(format!(
-        "contract `{name}` needs `import std.dispatch.{{*}};` for generated dispatch"
+        "constructor for contract `{name}` needs `import std.{{*}};` to decode arguments"
     ))
-    .with_code(DiagnosticCode::TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT)
+    .with_code(DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT)
     .with_primary_label(
         db,
-        contract.name_elem(db).span(db),
-        Some("generated dispatch is required for this contract"),
+        span,
+        Some("constructor arguments require std ABI decoding"),
     )
-    .with_note("contract dispatch is provided by `std.dispatch`")
-    .with_help("add `import std.dispatch.{*};` to this module")
+    .with_note("constructor arguments are decoded from bytes appended to the creation code")
+    .with_help("add `import std.{*};` to this module")
 }

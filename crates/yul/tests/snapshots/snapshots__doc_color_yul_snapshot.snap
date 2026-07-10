@@ -4,17 +4,20 @@ expression: render_fixture(&fixture)
 ---
 object "RGBDeploy" {
   code {
-    mstore(64, memoryguard(128))
-    if lt(codesize(), datasize("RGBDeploy")) {
-      revert(0, 0)
+    function usr$047rgb_RGB__start_d48fc98ea() {
+      mstore(64, memoryguard(128))
+      if lt(codesize(), datasize("RGBDeploy")) {
+        revert(0, 0)
+      }
+      if callvalue() {
+        mstore(0, 0xb5988ea3)
+        revert(28, 4)
+      }
+      let asm$size_0 := datasize("RGB")
+      codecopy(0, dataoffset("RGB"), datasize("RGB"))
+      return(0, asm$size_0)
     }
-    if callvalue() {
-      mstore(0, 0xb5988ea3)
-      revert(28, 4)
-    }
-    let asm$size_0 := datasize("RGB")
-    codecopy(0, dataoffset("RGB"), datasize("RGB"))
-    return(0, asm$size_0)
+    usr$047rgb_RGB__start_d48fc98ea()
   }
   object "RGB" {
     code {

@@ -111,6 +111,9 @@ pub struct ModulePathRef<'db> {
     pub external: Option<Span<'db>>,
     /// Path segments in source order.
     pub segments: Vec<SpannedElem<'db, Ident<'db>>>,
+    /// Whether this compiler-owned path must resolve in the canonical standard
+    /// library and may not use the source-level local `std.*` fallback.
+    pub canonical_std: bool,
 }
 
 /// Import/export module references found in one source file.
@@ -124,6 +127,9 @@ pub struct ModuleImports<'db> {
     pub import_refs: Vec<ModulePathRef<'db>>,
     /// Module paths mentioned by exports/re-exports.
     pub export_refs: Vec<ModulePathRef<'db>>,
+    /// Compiler-owned semantic dependencies that participate in loading and
+    /// reachability without becoming source-level imports.
+    pub compiler_refs: Vec<ModulePathRef<'db>>,
 }
 
 /// Resolved module path and its file location.

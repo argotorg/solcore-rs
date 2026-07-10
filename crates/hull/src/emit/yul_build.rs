@@ -23,21 +23,6 @@ impl<'db> Emitter<'db> {
         }
     }
 
-    pub(super) fn yul_let(
-        &self,
-        span: Span<'db>,
-        name: &str,
-        init: Option<YulExpr<'db>>,
-    ) -> YulStmt<'db> {
-        YulStmt {
-            span,
-            kind: YulStmtKind::Let {
-                names: vec![self.yul_ident(span, name)],
-                init,
-            },
-        }
-    }
-
     pub(super) fn yul_expr_stmt(&self, span: Span<'db>, expr: YulExpr<'db>) -> YulStmt<'db> {
         YulStmt {
             span,
@@ -64,16 +49,6 @@ impl<'db> Emitter<'db> {
         YulExpr {
             span,
             kind: YulExprKind::Lit(YulLitKind::Number(value.into())),
-        }
-    }
-
-    pub(super) fn yul_string(&self, span: Span<'db>, value: &str) -> YulExpr<'db> {
-        YulExpr {
-            span,
-            kind: YulExprKind::Lit(YulLitKind::String(format!(
-                "\"{}\"",
-                value.replace('\\', "\\\\").replace('"', "\\\"")
-            ))),
         }
     }
 

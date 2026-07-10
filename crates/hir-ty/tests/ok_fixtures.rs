@@ -4,8 +4,8 @@ use dir_test::{Fixture, dir_test};
 use hir::diag::Diagnostic;
 use nameres::{ModuleKey, module_id_from_key};
 use solcore_test_utils::{
-    define_frontend_test_db, load_fixture_case, lower_any_diagnostics, render_diagnostics,
-    repo_root_from_manifest, run_in_large_stack,
+    define_frontend_test_db, load_fixture_case, load_reachable_modules, lower_any_diagnostics,
+    render_diagnostics, repo_root_from_manifest, run_in_large_stack,
 };
 
 define_frontend_test_db!(TestDb, solcore_hir_ty);
@@ -23,6 +23,7 @@ fn hir_ty_ok_fixture_has_no_diagnostics(fixture: Fixture<&str>) {
         let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
         let mut db = TestDb::default();
         let entry = load_fixture_case(&mut db, &case_dir, &repo_root, BTreeMap::new());
+        load_reachable_modules(&mut db, entry.clone());
         let diagnostics = full_frontend_diagnostics(&db, entry);
         assert!(
             diagnostics.is_empty(),

@@ -348,10 +348,11 @@ fn lower_adt_ctor<'db>(
     base_start: usize,
     ctor: ParsedAdtCtor<'_>,
 ) -> item::AdtCtor<'db> {
+    let field_count = ctor.fields.len();
     let name = lower_spanned_ident(db, anchor, base_start, ctor.name);
     let fields_span = span_from_absolute(anchor, ctor.span, base_start);
     let fields_ty = lower_type_list_ref(db, anchor, base_start, ctor.span, ctor.fields);
-    item::AdtCtor::new(name, SpannedElem::new(fields_ty, fields_span))
+    item::AdtCtor::new(name, SpannedElem::new(fields_ty, fields_span), field_count)
 }
 
 pub(super) fn lower_adt<'db>(

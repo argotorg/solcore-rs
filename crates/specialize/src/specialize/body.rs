@@ -242,6 +242,23 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                                 span: expr.span,
                             })
                         }
+                        hir_nameres::Resolution::Def {
+                            def,
+                            kind: hir_nameres::DefResolutionKind::Function,
+                        } => {
+                            let origin = self.driver.call_origin_for_def(def);
+                            let name = if matches!(origin, MonoCallOrigin::Builtin(_)) {
+                                def.name(self.driver.db)
+                                    .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
+                            } else {
+                                self.specialize_direct_function(def, mono_ty.ty(), expr.span)
+                            };
+                            MonoExprKind::Var(MonoId {
+                                name,
+                                ty: mono_ty,
+                                span: expr.span,
+                            })
+                        }
                         _ => MonoExprKind::Field {
                             base: Box::new(self.expr(*base)?),
                             field: ident_text(self.driver.db, field),

@@ -3,17 +3,6 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_ct_indirect_escape/main.solc
 ---
-error[SC0109]: import std: file not found
- --> /main/main.solc:5:8
-  |
-4 | // calls, this silently defeats the comptime contract (accept-bug).
-5 | import std;
-  |        ^^^ module reference
-6 |
-  |
-  = help: check the module path or add the missing source file
----
-
 error[SC0207]: cannot satisfy class constraint: operator Add.add
   --> /main/main.solc:17:12
    |

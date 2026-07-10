@@ -1,3 +1,4 @@
+use super::derived_generic::AdtDeriveInfo;
 use super::*;
 
 #[salsa::tracked]
@@ -399,54 +400,180 @@ impl<'db> TraitClauseBuilder<'db> {
         item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
         generic: DefId<'db>,
     ) {
-        let excluded = no_generic_instance_for(self.db, module);
-        let manual = manual_generic_instance_types(self.db, module, item_resolutions, generic);
+        let mut seen = FxHashSet::default();
         for info in local_adt_infos(self.db, module) {
-            if info.adt.ctors(self.db).is_empty() {
-                continue;
-            }
-            if excluded.contains(&adt_name(self.db, info.adt))
-                || manual.contains(&info.adt.def_id_value(self.db))
-            {
-                continue;
-            }
-            let params = info
-                .adt
-                .ty_param_elems(self.db)
-                .iter()
-                .enumerate()
-                .map(|(index, _)| Ty::bound(self.db, index as u32))
-                .collect::<Vec<_>>();
-            let main = Ty::named(
+            seen.insert(info.adt.def_id_value(self.db));
+            let Some(plan) = derived_generic_instance_plan_with_resolutions(
                 self.db,
-                TyCtor::User(crate::UserTyCtor {
-                    def: info.adt.def_id_value(self.db),
-                    kind: crate::UserTyCtorKind::Adt,
-                }),
-                params,
-            );
-            self.clauses.push(ProgramClause {
-                binder_count: info.type_vars.len() as u32,
-                head: Pred::in_class(
-                    self.db,
-                    ClassId::User(generic),
-                    main,
-                    vec![
-                        derived_generic_plan_with_resolutions(
-                            self.db,
-                            module,
-                            item_resolutions,
-                            &info,
-                        )
-                        .rep,
-                    ],
-                ),
-                conditions: Vec::new(),
-                origin: ClauseOrigin::Derived(DerivedClauseKind::Generic {
-                    adt: info.adt.def_id_value(self.db),
-                }),
-            });
+                module,
+                item_resolutions,
+                &info,
+                generic,
+            ) else {
+                continue;
+            };
+            self.push_derived_generic_clause(&info, &plan, generic);
         }
+
+        // Imported ADTs referenced by signatures need definition-side
+        // derived evidence during frontend type checking. Reconstructing it in
+        // the specializer is too late for generated std.dispatch obligations.
+        let mut pending = VecDeque::new();
+        for resolution in &item_resolutions.types {
+            match &resolution.resolution {
+                hir_nameres::Resolution::Def {
+                    def,
+                    kind: hir_nameres::DefResolutionKind::Adt,
+                } => pending.push_back(*def),
+                hir_nameres::Resolution::Def {
+                    def,
+                    kind: hir_nameres::DefResolutionKind::TypeAlias,
+                } => {
+                    let alias_module =
+                        parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
+                    let Some(binder_count) = type_alias_binder_count(self.db, alias_module, *def)
+                    else {
+                        continue;
+                    };
+                    let alias = Ty::named(
+                        self.db,
+                        TyCtor::User(crate::UserTyCtor {
+                            def: *def,
+                            kind: crate::UserTyCtorKind::Alias,
+                        }),
+                        (0..binder_count)
+                            .map(|index| Ty::bound(self.db, index))
+                            .collect(),
+                    );
+                    let normalized =
+                        AliasNormalizer::new(self.db, module, item_resolutions).normalize_ty(alias);
+                    collect_adt_defs_from_ty(self.db, normalized, &mut pending);
+                }
+                _ => {}
+            }
+        }
+
+        // A directly referenced imported ADT can expose more imported ADTs in
+        // its derived representation. Close that dependency graph here so the
+        // generated ABI obligations see every definition-side `Generic`
+        // clause. Walking type arguments is significant for representations
+        // such as `Box(Inner)`, where `Inner` is not the representation head.
+        while let Some(def) = pending.pop_front() {
+            if !seen.insert(def) {
+                continue;
+            }
+            let definition_module = parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
+            let Some(info) = local_adt_infos(self.db, definition_module)
+                .into_iter()
+                .find(|info| info.adt.def_id_value(self.db) == def)
+            else {
+                continue;
+            };
+            let Some(plan) =
+                derived_generic_instance_plan(self.db, definition_module, info.adt, generic)
+            else {
+                continue;
+            };
+            collect_adt_defs_from_ty(self.db, plan.rep, &mut pending);
+            self.push_derived_generic_clause(&info, &plan, generic);
+        }
+    }
+
+    fn push_derived_generic_clause(
+        &mut self,
+        info: &AdtDeriveInfo<'db>,
+        plan: &DerivedGenericPlan<'db>,
+        generic: DefId<'db>,
+    ) {
+        let params = info
+            .adt
+            .ty_param_elems(self.db)
+            .iter()
+            .enumerate()
+            .map(|(index, _)| Ty::bound(self.db, index as u32))
+            .collect::<Vec<_>>();
+        let main = Ty::named(
+            self.db,
+            TyCtor::User(crate::UserTyCtor {
+                def: info.adt.def_id_value(self.db),
+                kind: crate::UserTyCtorKind::Adt,
+            }),
+            params,
+        );
+        self.clauses.push(ProgramClause {
+            binder_count: info.type_vars.len() as u32,
+            head: Pred::in_class(self.db, ClassId::User(generic), main, vec![plan.rep]),
+            conditions: Vec::new(),
+            origin: ClauseOrigin::Derived(DerivedClauseKind::Generic {
+                adt: info.adt.def_id_value(self.db),
+            }),
+        });
+    }
+}
+
+fn type_alias_binder_count<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<u32> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| type_alias_binder_count_in_item(db, *item, def, 0))
+}
+
+fn type_alias_binder_count_in_item<'db>(
+    db: &'db dyn Db,
+    item: Item<'db>,
+    def: DefId<'db>,
+    inherited: u32,
+) -> Option<u32> {
+    match item {
+        Item::TypeAlias(alias) if alias.def_id_value(db) == def => {
+            Some(inherited + alias.ty_param_elems(db).len() as u32)
+        }
+        Item::ContractDef(contract) => {
+            let inherited = inherited + contract.ty_param_elems(db).len() as u32;
+            contract.items(db).iter().find_map(|item| match *item {
+                ContractItem::TypeAlias(alias) => {
+                    type_alias_binder_count_in_item(db, Item::TypeAlias(alias), def, inherited)
+                }
+                ContractItem::FunctionDef(_)
+                | ContractItem::AdtDef(_)
+                | ContractItem::Error { .. } => None,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn collect_adt_defs_from_ty<'db>(db: &'db dyn Db, ty: Ty<'db>, defs: &mut VecDeque<DefId<'db>>) {
+    match ty.kind(db) {
+        TyKind::Named { ctor, args } => {
+            if let TyCtor::User(crate::UserTyCtor {
+                def,
+                kind: crate::UserTyCtorKind::Adt,
+            }) = ctor
+            {
+                defs.push_back(*def);
+            }
+            for arg in args {
+                collect_adt_defs_from_ty(db, *arg, defs);
+            }
+        }
+        TyKind::Function { params, ret } => {
+            for param in params {
+                collect_adt_defs_from_ty(db, *param, defs);
+            }
+            collect_adt_defs_from_ty(db, *ret, defs);
+        }
+        TyKind::Tuple(elems) => {
+            for elem in elems {
+                collect_adt_defs_from_ty(db, *elem, defs);
+            }
+        }
+        TyKind::Comptime(inner) => collect_adt_defs_from_ty(db, *inner, defs),
+        TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => {}
     }
 }
 

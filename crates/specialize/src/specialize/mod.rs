@@ -29,12 +29,13 @@ use hir_ty::{
     ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback, Evidence,
     GeneratedOriginKind, InferResultExt, InferenceResult, LoweredFunction, Pred, PredKind,
     PreparedModule, ProductShape, Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor,
-    UserTyCtorKind, canonical_goal, contract_dispatch_surface_for_module,
-    contract_needs_generated_dispatch, derived_generic_plan, frontend_desugar_plan, infer_body,
-    is_contract_dispatch_main_def, lower_normalized_function_with_inferred_signature,
-    module_has_canonical_std_dispatch_import, prepare_module, solve, solver::DerivedClauseKind,
-    trait_env_from_module_resolution, trait_env_from_module_resolution_and_imports,
-    trait_env_with_givens,
+    UserTyCtorKind, canonical_goal, contract_constructor_needs_std,
+    contract_dispatch_surface_for_module, contract_overlay_backend_name,
+    derived_generic_instance_plan, derived_generic_plan, frontend_desugar_plan, infer_body,
+    is_contract_deployment_main_def, is_contract_dispatch_main_def,
+    lower_normalized_function_with_inferred_signature, module_has_canonical_std_import,
+    prepare_module, solve, solver::DerivedClauseKind, trait_env_from_module_resolution,
+    trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
 use nameres::{LibraryId, ModuleId, module_key_for_path, resolve_reachable_full};
 use parser::parse_file_to_hir;
@@ -112,25 +113,39 @@ pub struct SpecializeOutput<'db> {
     pub diagnostics: Vec<SpecializeDiagnostic<'db>>,
 }
 
-/// Specializes one HIR module from its backend entry surface.
+/// Prepares and specializes one source HIR module from its backend entry surface.
+///
+/// Call [`specialize_prepared_module`] when the caller already owns a
+/// [`PreparedModule`]; passing only its effective `Module` here discards the
+/// source constructor metadata kept by that wrapper.
 pub fn specialize_module<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     options: SpecializeOptions,
 ) -> SpecializeOutput<'db> {
-    let mut preflight = missing_std_dispatch_import_diagnostics(db, module);
     let prepared = prepare_module(db, module);
+    specialize_prepared_module(db, prepared, options)
+}
+
+/// Specializes an existing frontend overlay without preparing it a second time.
+pub fn specialize_prepared_module<'db>(
+    db: &'db dyn Db,
+    prepared: PreparedModule<'db>,
+    options: SpecializeOptions,
+) -> SpecializeOutput<'db> {
+    let source = prepared.source(db);
+    let mut preflight = missing_constructor_std_import_diagnostics(db, source);
     let mut output = Driver::new(db, prepared, options).run();
     preflight.append(&mut output.diagnostics);
     output.diagnostics = preflight;
     output
 }
 
-fn missing_std_dispatch_import_diagnostics<'db>(
+fn missing_constructor_std_import_diagnostics<'db>(
     db: &'db dyn Db,
     source: Module<'db>,
 ) -> Vec<SpecializeDiagnostic<'db>> {
-    if module_has_canonical_std_dispatch_import(db, source) {
+    if module_has_canonical_std_import(db, source) {
         return Vec::new();
     }
     source
@@ -140,11 +155,23 @@ fn missing_std_dispatch_import_diagnostics<'db>(
             let Item::ContractDef(contract) = *item else {
                 return None;
             };
-            contract_needs_generated_dispatch(db, contract).then(|| SpecializeDiagnostic {
-                kind: SpecializeDiagnosticKind::MissingStdDispatchImport {
+            if !contract_constructor_needs_std(db, contract) {
+                return None;
+            }
+            let constructor_params = contract.items(db).iter().find_map(|item| match item {
+                ContractItem::FunctionDef(function)
+                    if function.kind(db) == FuncKind::Constructor
+                        && !function.sig(db).params.atom().is_empty() =>
+                {
+                    Some(function.sig(db).params.span(db))
+                }
+                _ => None,
+            })?;
+            Some(SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::MissingConstructorStdImport {
                     contract: ident_text(db, &contract.name_elem(db)),
                 },
-                span: Some(contract.name_elem(db).span(db)),
+                span: Some(constructor_params),
             })
         })
         .collect()

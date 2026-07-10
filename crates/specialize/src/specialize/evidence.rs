@@ -65,7 +65,19 @@ impl<'db> Driver<'db> {
                 self.specialize_derived_generic(adt, method, *main, rep, target_ty, call_span)
             }
             Evidence::Builtin { pred } => {
-                if let Some(evidence) = self.solve_closed_pred(pred, Some(call_span))
+                let method_evidence = match pred.kind(self.db) {
+                    PredKind::InClass {
+                        class: ClassId::User(class),
+                        ..
+                    } => self.solve_class_method_pred(*class, method, target_ty, Some(call_span)),
+                    _ => None,
+                };
+                let replacement = method_evidence.or_else(|| {
+                    self.solve_closed_pred(pred, Some(call_span))
+                        .or_else(|| self.solve_reachable_pred(pred, Some(call_span)))
+                        .or_else(|| self.derived_generic_evidence(pred))
+                });
+                if let Some(evidence) = replacement
                     && !matches!(evidence, Evidence::Builtin { .. })
                 {
                     return self
@@ -75,6 +87,39 @@ impl<'db> Driver<'db> {
             }
             Evidence::Derived { .. } => None,
         }
+    }
+
+    fn derived_generic_evidence(&self, pred: Pred<'db>) -> Option<Evidence<'db>> {
+        let PredKind::InClass {
+            class: ClassId::User(class),
+            main,
+            args: class_args,
+        } = pred.kind(self.db)
+        else {
+            return None;
+        };
+        if class.name(self.db).as_deref() != Some("Generic") || class_args.len() != 1 {
+            return None;
+        }
+        let TyKind::Named {
+            ctor:
+                TyCtor::User(UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+            args,
+        } = main.kind(self.db)
+        else {
+            return None;
+        };
+        let info = self.adts.get(def)?;
+        let plan = derived_generic_instance_plan(self.db, info.module, info.adt, *class)?;
+        let rep = TySubst::from_args(args.clone()).apply_ty(self.db, plan.rep);
+        (rep == class_args[0]).then_some(Evidence::Derived {
+            kind: DerivedClauseKind::Generic { adt: *def },
+            pred,
+            sub_evidence: Vec::new(),
+        })
     }
 
     fn solve_closed_pred(
@@ -168,6 +213,7 @@ impl<'db> Driver<'db> {
             })?;
         self.solve_closed_pred(pred, span)
             .or_else(|| self.solve_reachable_pred(pred, span))
+            .or_else(|| self.derived_generic_evidence(pred))
     }
 
     pub(super) fn solve_operator_method_pred(
@@ -229,6 +275,7 @@ impl<'db> Driver<'db> {
         extras: &[Ty<'db>],
         subst: &mut TySubst<'db>,
     ) {
+        let mut resolved = false;
         for info in self.instances.values() {
             let PredKind::InClass {
                 class: inst_class,
@@ -273,8 +320,53 @@ impl<'db> Driver<'db> {
                 let mut recovered = TySubst::default();
                 if recovered.match_ty(self.db, *extra, concrete) {
                     subst.extend_consistent(recovered);
+                    resolved = true;
                 }
             }
+        }
+        if !resolved {
+            self.try_resolve_derived_generic_mptc(class, main, extras, subst);
+        }
+    }
+
+    fn try_resolve_derived_generic_mptc(
+        &self,
+        class: ClassId<'db>,
+        main: Ty<'db>,
+        extras: &[Ty<'db>],
+        subst: &mut TySubst<'db>,
+    ) {
+        let ClassId::User(class_def) = class else {
+            return;
+        };
+        if class_def.name(self.db).as_deref() != Some("Generic") || extras.len() != 1 {
+            return;
+        }
+        let TyKind::Named {
+            ctor:
+                TyCtor::User(UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+            args,
+        } = main.kind(self.db)
+        else {
+            return;
+        };
+        let Some(info) = self.adts.get(def) else {
+            return;
+        };
+        let Some(plan) = derived_generic_instance_plan(self.db, info.module, info.adt, class_def)
+        else {
+            return;
+        };
+        let concrete_rep = TySubst::from_args(args.clone()).apply_ty(self.db, plan.rep);
+        if !ty_is_closed(self.db, concrete_rep) {
+            return;
+        }
+        let mut recovered = TySubst::default();
+        if recovered.match_ty(self.db, extras[0], concrete_rep) {
+            subst.extend_consistent(recovered);
         }
     }
 }

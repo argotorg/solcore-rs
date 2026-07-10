@@ -23,9 +23,9 @@ use hir_ty::{
 };
 use parser::parse_file_to_hir;
 use specialize::{
-    MonoAbiParam, MonoArm, MonoBuiltinCtor, MonoCallOrigin, MonoContract, MonoEntry, MonoExpr,
-    MonoExprArm, MonoExprKind, MonoFunction, MonoId, MonoIntrinsic, MonoItem, MonoModule, MonoPat,
-    MonoPatKind, MonoStmt, MonoStmtKind,
+    MonoArm, MonoBuiltinCtor, MonoCallOrigin, MonoContract, MonoEntry, MonoExpr, MonoExprArm,
+    MonoExprKind, MonoFunction, MonoId, MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind,
+    MonoStmt, MonoStmtKind,
 };
 
 use crate::{
@@ -37,7 +37,6 @@ use crate::{
     word::wrap_word_literal,
 };
 
-mod abi;
 mod contract;
 mod diagnostics;
 mod emitter;
@@ -47,13 +46,12 @@ mod reachability;
 mod storage;
 mod yul_build;
 
-use abi::{AbiWordKind, abi_word_kind, abi_word_to_bool_expr, constructor_inputs_are_static_word};
 use diagnostics::prune_emit_diagnostics;
 pub use diagnostics::{EmitDiagnostic, EmitDiagnosticKind, EmitOptions, EmitOutput};
 pub use emitter::emit_module;
 use layout::{
-    bool_expr, bool_sum_ty, hull_ty_word_slots, product_expr, product_field_exprs,
-    sem_product_fields, sem_ty_needs_untyped_word_default, sum_right_ty,
+    bool_expr, hull_ty_word_slots, product_expr, product_field_exprs, sem_product_fields,
+    sem_ty_needs_untyped_word_default, sum_right_ty,
 };
 use match_compile::{
     AdtLayout, CtorLayout, constructor_name_matches, encode_constructor, wrap_lit_text,
@@ -61,7 +59,6 @@ use match_compile::{
 use reachability::deployment_closure;
 use storage::StorageFieldKind;
 
-const ADDRESS_MASK: &str = "0xffffffffffffffffffffffffffffffffffffffff";
 const STORAGE_INDEX_READ: &str = "__solcore_storage_index_read";
 const STORAGE_INDEX_SLOT: &str = "__solcore_storage_index_slot";
 const STORAGE_HASH2_HELPER: &str = "__solcore_storage_hash2";

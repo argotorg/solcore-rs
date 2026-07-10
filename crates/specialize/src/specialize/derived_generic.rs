@@ -45,8 +45,9 @@ impl<'db> Driver<'db> {
         _target_ty: Ty<'db>,
         span: Span<'db>,
     ) -> Option<MonoFunction<'db>> {
-        let adt = self.adts.get(&key.adt)?.adt;
-        let plan = derived_generic_plan(self.db, self.module, adt)?;
+        let info = self.adts.get(&key.adt)?;
+        let adt = info.adt;
+        let plan = derived_generic_plan(self.db, info.module, adt)?;
         let mut subst = TySubst::default();
         let adt_head = Ty::named(
             self.db,
@@ -87,7 +88,8 @@ impl<'db> Driver<'db> {
                 .iter()
                 .map(|arm| {
                     let product_rep = subst.apply_ty(self.db, arm.product_rep);
-                    let vars = product_vars(self.db, product_rep, span, "f");
+                    let vars =
+                        product_vars(self.db, product_rep, arm.field_count as usize, span, "f")?;
                     let pat = MonoPat {
                         span,
                         ty: MonoTy::new_unchecked(key.main),
@@ -107,22 +109,23 @@ impl<'db> Driver<'db> {
                     let payload = product_expr_from_vars(self.db, &vars, product_rep, span);
                     let expr =
                         wrap_sum_expr(self.db, payload, rep, arm.inr_depth, arm.wraps_inl, span);
-                    MonoArm {
+                    Some(MonoArm {
                         span,
                         pats: vec![pat],
                         body: vec![MonoStmt {
                             span,
                             kind: MonoStmtKind::Return(Some(expr)),
                         }],
-                    }
+                    })
                 })
-                .collect()
+                .collect::<Option<Vec<_>>>()?
         } else {
             plan.to_arms
                 .iter()
                 .map(|arm| {
                     let product_rep = subst.apply_ty(self.db, arm.product_rep);
-                    let vars = product_vars(self.db, product_rep, span, "f");
+                    let vars =
+                        product_vars(self.db, product_rep, arm.field_count as usize, span, "f")?;
                     let payload_pat = product_pat_from_vars(self.db, &vars, product_rep, span);
                     let pat = unwrap_sum_pat(
                         self.db,
@@ -149,16 +152,16 @@ impl<'db> Driver<'db> {
                             args: vars.iter().map(|var| var_expr(var, span)).collect(),
                         },
                     };
-                    MonoArm {
+                    Some(MonoArm {
                         span,
                         pats: vec![pat],
                         body: vec![MonoStmt {
                             span,
                             kind: MonoStmtKind::Return(Some(expr)),
                         }],
-                    }
+                    })
                 })
-                .collect()
+                .collect::<Option<Vec<_>>>()?
         };
         Some(MonoFunction {
             origin: MonoFunctionOrigin::DerivedGeneric {

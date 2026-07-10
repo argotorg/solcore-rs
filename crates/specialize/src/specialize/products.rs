@@ -7,10 +7,11 @@ pub(super) struct ProductVar<'db> {
 pub(super) fn product_vars<'db>(
     db: &'db dyn Db,
     ty: Ty<'db>,
+    arity: usize,
     span: Span<'db>,
     prefix: &str,
-) -> Vec<ProductVar<'db>> {
-    product_fields(db, ty)
+) -> Option<Vec<ProductVar<'db>>> {
+    product_fields_exact(db, ty, arity)?
         .into_iter()
         .enumerate()
         .map(|(index, ty)| ProductVar {
@@ -20,25 +21,35 @@ pub(super) fn product_vars<'db>(
                 span,
             },
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .into()
 }
 
-fn product_fields<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Vec<Ty<'db>> {
-    if ty_is_builtin(db, ty, BuiltinTyCtor::Unit) {
-        return Vec::new();
+fn product_fields_exact<'db>(
+    db: &'db dyn Db,
+    mut product: Ty<'db>,
+    arity: usize,
+) -> Option<Vec<Ty<'db>>> {
+    if arity == 0 {
+        return ty_is_builtin(db, product, BuiltinTyCtor::Unit).then(Vec::new);
     }
-    match ty.kind(db) {
-        TyKind::Named {
+    let mut fields = Vec::with_capacity(arity);
+    for _ in 1..arity {
+        let TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
             args,
-        } if args.len() == 2 => {
-            let mut fields = vec![args[0]];
-            fields.extend(product_fields(db, args[1]));
-            fields
+        } = product.kind(db)
+        else {
+            return None;
+        };
+        if args.len() != 2 {
+            return None;
         }
-        TyKind::Tuple(elems) => elems.clone(),
-        _ => vec![ty],
+        fields.push(args[0]);
+        product = args[1];
     }
+    fields.push(product);
+    Some(fields)
 }
 
 pub(super) fn var_expr<'db>(var: &ProductVar<'db>, span: Span<'db>) -> MonoExpr<'db> {

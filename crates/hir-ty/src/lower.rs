@@ -352,7 +352,11 @@ impl<'db> TypeLowering<'db> {
     /// Lowers an ADT constructor to a function-like scheme.
     pub fn lower_adt_ctor(&self, adt: AdtDef<'db>, ctor: &AdtCtor<'db>) -> LoweredAdtCtor<'db> {
         let fields = self.lower_type(*ctor.fields.atom());
-        let params = tuple_params(self.db, fields);
+        let params = match ctor.field_count {
+            0 => Vec::new(),
+            1 => vec![fields],
+            _ => tuple_params(self.db, fields),
+        };
         let adt_def = adt.def_id_value(self.db);
         let ret_args = adt
             .ty_param_elems(self.db)

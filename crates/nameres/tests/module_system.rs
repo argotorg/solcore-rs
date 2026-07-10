@@ -13,8 +13,9 @@ use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
 use solcore_nameres::{
     LibraryId, ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleKey, ModuleTree, module_diagnostics,
-    module_id_from_key, module_key_for_path, public_interface, reachable_diagnostics,
-    resolve_module_path_candidate, resolve_reachable_full, strongly_connected_components,
+    module_id_from_key, module_imports, module_key_for_path, public_interface,
+    reachable_diagnostics, resolve_module_path_candidate, resolve_reachable_full,
+    strongly_connected_components,
 };
 use url::Url;
 
@@ -95,6 +96,65 @@ fn std_subpath_falls_back_to_local_module_when_std_module_is_missing() {
     assert!(graph.modules.contains(&local));
     let interface = public_interface(&db, local);
     assert!(interface.terms.contains_key("value"));
+}
+
+#[test]
+fn compiler_dispatch_dependency_never_falls_back_to_a_local_std_module() {
+    let mut db = TestDb::default();
+    let main_root = PathBuf::from("/memory/main");
+    let std_root = PathBuf::from("/memory/empty-std");
+    let local_dispatch_path = main_root.join("std/dispatch.solc");
+    db.module_tree = Some(ModuleTree::new(
+        &db,
+        main_root.clone(),
+        std_root.clone(),
+        BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(ModuleFsSnapshot::new(
+        &db,
+        BTreeSet::from([local_dispatch_path.clone()]),
+        BTreeMap::new(),
+    ));
+
+    let main_key = module_key(["main"]);
+    let main_file = SourceFile::new(
+        &db,
+        Url::from_file_path(main_root.join("main.solc")).expect("main URL"),
+        Some("contract C {}".to_owned()),
+    );
+    db.module_files.insert(main_key.clone(), main_file);
+    let local_key = module_key(["std", "dispatch"]);
+    let local_file = SourceFile::new(
+        &db,
+        Url::from_file_path(&local_dispatch_path).expect("local dispatch URL"),
+        Some("function counterfeit() -> word { return 0; }".to_owned()),
+    );
+    db.module_files.insert(local_key.clone(), local_file);
+
+    let main = module_id_from_key(&db, &main_key);
+    let compiler_ref = module_imports(&db, main_file)
+        .compiler_refs
+        .into_iter()
+        .next()
+        .expect("implicit std.dispatch dependency");
+    assert!(compiler_ref.canonical_std);
+    let candidate =
+        resolve_module_path_candidate(&db, main, &compiler_ref).expect("canonical candidate");
+    assert_eq!(candidate.module.library(&db), &LibraryId::Std);
+    assert_eq!(candidate.module.logical_path(&db), &["dispatch".to_owned()]);
+    assert_eq!(candidate.file_path, std_root.join("dispatch.solc"));
+
+    let diagnostics = lowered_module_diagnostics(&db, main);
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0109")
+                && diagnostic.message.contains("std.dispatch")
+        }),
+        "{diagnostics:?}"
+    );
+    let graph = resolve_reachable_full(&db, main);
+    let local = module_id_from_key(&db, &local_key);
+    assert!(!graph.modules.contains(&local), "{graph:?}");
 }
 
 #[test]
@@ -447,6 +507,7 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) {
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
+                .chain(refs.compiler_refs)
                 .filter_map(|path| {
                     let resolved = resolve_module_path_candidate(&*db, module, &path).ok()?;
                     Some((resolved.module.key(&*db), resolved.file_path))

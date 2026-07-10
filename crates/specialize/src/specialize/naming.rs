@@ -258,7 +258,10 @@ pub(super) fn def_hash_suffix<'db>(db: &'db dyn Db, def: DefId<'db>) -> String {
 fn hash_def_id<'db>(db: &'db dyn Db, def: DefId<'db>, state: &mut DefaultHasher) {
     hash_source_file_identity(db, def.file(db), state);
     def.kind(db).hash(state);
-    def.name(db).hash(state);
+    contract_overlay_backend_name(db, def)
+        .map(str::to_owned)
+        .or_else(|| def.name(db))
+        .hash(state);
     def.fingerprint(db).hash(state);
     def.disambiguator(db).as_u32().hash(state);
     if let Some(owner) = def.owner(db) {

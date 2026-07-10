@@ -637,6 +637,16 @@ pub fn module_typeck_diagnostics<'db>(
             .diagnostics
             .iter()
             .filter(|diagnostic| !source_diagnostics.contains(diagnostic))
+            // The source-facing SC0229 diagnostic below owns collisions with
+            // compiler-generated dispatch name types. Do not also expose the
+            // effective-HIR duplicate as SC0108.
+            .filter(|diagnostic| {
+                !matches!(
+                    diagnostic,
+                    hir_nameres::NameresDiagnostic::DuplicateDeclaration { name, .. }
+                        if name.starts_with("DispatchNameTy_")
+                )
+            })
             .cloned()
             .collect::<Vec<_>>()
     };
@@ -695,6 +705,11 @@ pub fn module_typeck_diagnostics<'db>(
     }
     diagnostics.extend(
         module_contract_diagnostics(db, source_module)
+            .into_iter()
+            .map(AnyDiagnostic::Typeck),
+    );
+    diagnostics.extend(
+        module_manual_generic_abi_diagnostics(db, source_module, trait_env)
             .into_iter()
             .map(AnyDiagnostic::Typeck),
     );

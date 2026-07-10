@@ -512,6 +512,7 @@ pub fn load_reachable_modules(host: &mut AnalysisHost, entry: ModuleKey) {
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
+                .chain(refs.compiler_refs)
                 .filter_map(|path| {
                     let resolved = resolve_module_path_candidate(&*host, module, &path).ok()?;
                     Some((resolved.module.key(&*host), resolved.file_path))

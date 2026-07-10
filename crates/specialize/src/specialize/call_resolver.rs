@@ -189,11 +189,26 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             .iter()
             .map(|arg| self.expr(*arg))
             .collect::<Option<Vec<_>>>()?;
+        let resolution = self.expr_resolution(callee);
         let mut callee_ty = self
             .expr_ty(callee)
             .map(|ty| self.subst.apply_ty(self.driver.db, ty))
             .unwrap_or_else(|| Ty::unknown(self.driver.db));
         if !ty_is_closed(self.driver.db, callee_ty)
+            && matches!(
+                resolution,
+                Some(hir_nameres::Resolution::Def {
+                    kind: hir_nameres::DefResolutionKind::Function,
+                    ..
+                })
+            )
+        {
+            callee_ty = Ty::function(
+                self.driver.db,
+                arg_exprs.iter().map(|arg| arg.ty.ty()).collect(),
+                result_ty,
+            );
+        } else if !ty_is_closed(self.driver.db, callee_ty)
             && let Some(invokable_ty) = self.invokable_call_main_ty(call_expr, callee)
         {
             callee_ty = invokable_ty;
@@ -206,7 +221,6 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             );
         }
         let mono_callee_ty = self.driver.mono_ty(callee_ty, "callee", span)?;
-        let resolution = self.expr_resolution(callee);
         match resolution {
             Some(hir_nameres::Resolution::Def {
                 def,
@@ -557,11 +571,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 lowered.scheme.body(self.driver.db).ty(self.driver.db),
                 callee_ty,
             );
-            self.driver.resolve_mptc_from_preds(
-                info.module,
-                lowered.scheme.body(self.driver.db).preds(self.driver.db),
-                &mut subst,
-            );
+            let givens = self.driver.function_givens(&info, &lowered);
+            self.driver
+                .resolve_mptc_from_preds(info.module, &givens, &mut subst);
             let args = subst.specialization_args();
             if !self
                 .driver

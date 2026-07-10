@@ -178,12 +178,11 @@ pub enum MonoEntry<'db> {
         inputs: Vec<MonoAbiParam>,
         outputs: Vec<MonoAbiParam>,
     },
-    Constructor {
+    /// Compiler-generated deployment entry produced by the constructor HIR overlay.
+    DeploymentMain {
         source: DefId<'db>,
         specialized: String,
         span: Span<'db>,
-        payable: bool,
-        inputs: Vec<MonoAbiParam>,
     },
     Fallback {
         source: DefId<'db>,
@@ -210,12 +209,12 @@ pub enum MonoRuntimeMainOrigin {
     StdDispatch,
 }
 
-/// Constructor dispatch/ABI metadata.
+/// Source constructor ABI metadata. Constructor execution is rooted exclusively
+/// through [`MonoEntry::DeploymentMain`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MonoConstructor<'db> {
     pub source: Option<DefId<'db>>,
     pub explicit: bool,
-    pub specialized: Option<String>,
     pub payable: bool,
     pub inputs: Vec<MonoAbiParam>,
     pub span: Span<'db>,

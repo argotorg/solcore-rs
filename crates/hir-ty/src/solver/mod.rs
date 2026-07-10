@@ -76,12 +76,13 @@ mod soundness;
 use canonical::{
     GoalRenaming, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
 };
-use derived_generic::{
-    adt_name, derived_generic_plan_with_resolutions, imported_generic_class, local_adt_infos,
-    local_generic_class, manual_generic_instance_types, no_generic_instance_for,
-    visible_generic_class,
+pub use derived_generic::{
+    derived_generic_instance_plan, derived_generic_plan, generic_derivation_diagnostics,
 };
-pub use derived_generic::{derived_generic_plan, generic_derivation_diagnostics};
+use derived_generic::{
+    derived_generic_instance_plan_with_resolutions, imported_generic_class, local_adt_infos,
+    local_generic_class, visible_generic_class,
+};
 use display::{display_scheme_source, display_vars};
 use engine::{Answer, TabledEngine};
 pub use env::{
@@ -242,6 +243,8 @@ pub struct DerivedGenericPlan<'db> {
 pub struct DerivedGenericFromArm<'db> {
     /// Constructor ordinal in source declaration order.
     pub ctor_index: u32,
+    /// Number of fields in the source constructor parameter list.
+    pub field_count: u32,
     /// Constructor name.
     pub ctor_name: String,
     /// Product payload representation before sum wrapping.
@@ -257,6 +260,8 @@ pub struct DerivedGenericFromArm<'db> {
 pub struct DerivedGenericToArm<'db> {
     /// Constructor ordinal in source declaration order.
     pub ctor_index: u32,
+    /// Number of fields in the source constructor parameter list.
+    pub field_count: u32,
     /// Constructor name.
     pub ctor_name: String,
     /// Product payload representation after sum unwrapping.

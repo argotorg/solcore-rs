@@ -14,7 +14,20 @@ pub fn resolve_module_path_candidate<'db>(
     let segments = path_segments(db, path);
     let tree = db.module_tree();
 
-    let (library, logical_path, root) = if path.external.is_some() {
+    let (library, logical_path, root) = if path.canonical_std {
+        let Some((prefix, rest)) = segments.split_first() else {
+            return Err(Box::new(module_not_found_diag(db, path, None)));
+        };
+        if prefix != "std" || path.external.is_some() {
+            return Err(Box::new(module_not_found_diag(db, path, None)));
+        }
+        let logical_path = if rest.is_empty() {
+            vec!["std".to_owned()]
+        } else {
+            rest.to_vec()
+        };
+        (LibraryId::Std, logical_path, tree.std_root(db).clone())
+    } else if path.external.is_some() {
         let Some((lib_name, rest)) = segments.split_first() else {
             return Err(Box::new(module_not_found_diag(db, path, None)));
         };

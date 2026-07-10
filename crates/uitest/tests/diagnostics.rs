@@ -46,7 +46,7 @@ fn nameres_fail_diagnostics(fixture: Fixture<&str>) {
     glob: "**/main.solc"
 )]
 fn typeck_fail_diagnostics(fixture: Fixture<&str>) {
-    run_fixture_case(fixture, full_frontend_diagnostics);
+    run_fixture_case_with_dependencies(fixture, full_frontend_diagnostics);
 }
 
 #[dir_test(
@@ -54,7 +54,7 @@ fn typeck_fail_diagnostics(fixture: Fixture<&str>) {
     glob: "**/main.solc"
 )]
 fn solver_fail_diagnostics(fixture: Fixture<&str>) {
-    run_fixture_case(fixture, full_frontend_diagnostics);
+    run_fixture_case_with_dependencies(fixture, full_frontend_diagnostics);
 }
 
 #[dir_test(

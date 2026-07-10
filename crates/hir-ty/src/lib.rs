@@ -24,7 +24,7 @@ pub use contract::{
     DispatchFallback, DispatchMethod, DispatchSurface, FrontendDesugarPlan, FrontendTransform,
     IndirectArgShape, abi_selector, contract_abi_json, contract_dispatch_surface,
     contract_dispatch_surface_for_module, contract_needs_generated_dispatch, frontend_desugar_plan,
-    module_contract_diagnostics, module_has_canonical_std_dispatch_import,
+    module_contract_diagnostics,
 };
 pub use desugar::{
     BodyDesugarView, BodyPreTypeckDesugarPlan, BoolUnitSumNode, BoolUnitSumView,
@@ -49,15 +49,16 @@ pub use lower::{
 };
 pub use prepare::{
     GeneratedOrigin, GeneratedOriginKind, GeneratedOriginMap, PreparedModule,
-    is_contract_dispatch_main_def, prepare_module,
+    contract_constructor_needs_std, contract_overlay_backend_name, is_contract_deployment_main_def,
+    is_contract_dispatch_main_def, module_has_canonical_std_import, prepare_module,
 };
 pub use solver::{
     BaseTraitEnvId, BaseTraitEnvSource, Candidate, CanonicalGoal, ClauseOrigin,
     DerivedGenericClauseSource, DerivedGenericFromArm, DerivedGenericPlan, DerivedGenericToArm,
     Evidence, LocalGivensId, ModuleTraitEnvSource, ProgramClause, Solution, SolverReport,
     Substitution, TraitClauseSetId, TraitEnvId, canonical_goal, canonical_goal_with_allowed,
-    derived_generic_plan, instance_soundness_diagnostics, solve, solve_report,
-    trait_env_for_module, trait_env_from_module_resolution,
+    derived_generic_instance_plan, derived_generic_plan, instance_soundness_diagnostics, solve,
+    solve_report, trait_env_for_module, trait_env_from_module_resolution,
     trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
 

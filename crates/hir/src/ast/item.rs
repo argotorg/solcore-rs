@@ -82,12 +82,26 @@ pub struct AdtCtor<'db> {
     pub name: SpannedElem<'db, Ident<'db>>,
     /// Constructor field type list and span.
     pub fields: SpannedElem<'db, TypeRef<'db>>,
+    /// Number of fields in the source constructor parameter list.
+    ///
+    /// This is kept separately because the lowered type reference intentionally
+    /// erases the outer tuple around a unary field. For example, `Wrap((a, b))`
+    /// and `Pair(a, b)` otherwise have the same lowered field type shape.
+    pub field_count: usize,
 }
 
 impl<'db> AdtCtor<'db> {
     /// Creates an ADT constructor value.
-    pub fn new(name: SpannedElem<'db, Ident<'db>>, fields: SpannedElem<'db, TypeRef<'db>>) -> Self {
-        Self { name, fields }
+    pub fn new(
+        name: SpannedElem<'db, Ident<'db>>,
+        fields: SpannedElem<'db, TypeRef<'db>>,
+        field_count: usize,
+    ) -> Self {
+        Self {
+            name,
+            fields,
+            field_count,
+        }
     }
 }
 
@@ -467,6 +481,22 @@ impl<'db> ContractDef<'db> {
     /// Returns type parameters with their binder spans.
     pub fn ty_param_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
         ContractDef::ty_params(*self, db)
+    }
+
+    /// Returns whether this contract supplies its own ordinary runtime entry.
+    ///
+    /// This source-only predicate is shared by import-graph construction and
+    /// the compiler overlay so implicit runtime dependencies cannot drift from
+    /// the dispatch-generation condition.
+    pub fn has_runtime_main(&self, db: &'db dyn Db) -> bool {
+        self.items(db).iter().any(|item| {
+            matches!(
+                item,
+                ContractItem::FunctionDef(function)
+                    if function.kind(db) == FuncKind::Function
+                        && function.sig(db).name.atom().text(db) == "main"
+            )
+        })
     }
 }
 

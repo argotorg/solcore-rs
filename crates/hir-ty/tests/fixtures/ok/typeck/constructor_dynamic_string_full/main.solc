@@ -1,22 +1,4 @@
-data string;
-data memory(t) = memory(word);
-data storage(t) = storage(word);
-
-forall a b.
-class a:CanStore(b) {
-  function store(r:a, v:b) -> ();
-  function load(r:a) -> b;
-}
-
-instance storage(string):CanStore(memory(string)) {
-  function store(dst: storage(string), src: memory(string)) -> () {
-    return ();
-  }
-
-  function load(src: storage(string)) -> memory(string) {
-    return memory(0);
-  }
-}
+import std.{*};
 
 contract C {
   value : string;

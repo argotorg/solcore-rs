@@ -545,6 +545,7 @@ fn collect_module_validation_diagnostics<'db>(
         .import_refs
         .iter()
         .chain(module_items.export_refs.iter())
+        .chain(module_items.compiler_refs.iter())
     {
         if let Err(diagnostic) = resolve_module_path(db, module, path.clone()) {
             diagnostics.push(*diagnostic);
