@@ -96,7 +96,7 @@ pub fn trait_env_from_module_resolution_and_imports<'db>(
     let mut superclass_builder = TraitClauseBuilder::new(db);
     superclass_builder.add_module_superclasses(module, &module_resolution.item_resolutions);
     clause_sets.push(superclass_builder.finish());
-    for module in visible_class_modules(db, imports) {
+    for module in unique_modules(visible_class_modules(db, imports)) {
         clause_sets.push(module_superclass_clause_set(db, module));
     }
 

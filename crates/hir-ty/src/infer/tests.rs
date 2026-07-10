@@ -21,9 +21,9 @@ use parser::parse_file_to_hir;
 
 use super::*;
 use crate::{
-    BinderEnv, Solution, TraitEnvId, TypeLowering, UserTyCtor, UserTyCtorKind, canonical_goal,
-    solve, solve_report, trait_env_for_module, trait_env_from_module_resolution,
-    trait_env_with_givens,
+    BinderEnv, ClauseOrigin, Solution, TraitEnvId, TypeLowering, UserTyCtor, UserTyCtorKind,
+    canonical_goal, solve, solve_report, trait_env_for_module, trait_env_from_module_resolution,
+    trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
 
 #[salsa::db]
@@ -1525,6 +1525,58 @@ instance word:Ord {}
         }
     ));
     assert_eq!(lib_module.display(&db), "lib");
+}
+
+#[test]
+fn trait_env_from_module_resolution_and_imports_deduplicates_superclass_modules() {
+    let mut db = TestDb::default();
+    let lib_path = PathBuf::from("/main/lib.solc");
+    let main_path = PathBuf::from("/main/main.solc");
+    let lib_file = source_file_at_path(
+        &db,
+        &lib_path,
+        r#"
+export { Parent, Child };
+
+forall a . class a:Parent {}
+forall a . a:Parent => class a:Child {}
+"#,
+    );
+    let main_file = source_file_at_path(
+        &db,
+        &main_path,
+        r#"
+import lib.{Parent, Child};
+"#,
+    );
+    let lib_key = module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &lib_path).unwrap();
+    let main_key =
+        module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &main_path).unwrap();
+    db.module_files.insert(lib_key, lib_file);
+    db.module_files.insert(main_key.clone(), main_file);
+
+    let main_module = module_id_from_key(&db, &main_key);
+    let main_hir = parse_file_to_hir(&db, main_file).module(&db);
+    let imports = nameres::module_env_for_hir_module(&db, main_module, main_hir);
+    let item_scope = imports.item_scope.clone().expect("main item scope");
+    let resolution = hir_nameres::resolve_module_with_imports(&db, main_hir, item_scope, &imports);
+    let trait_env =
+        trait_env_from_module_resolution_and_imports(&db, main_hir, &resolution, &imports);
+    let ClassId::User(child_def) =
+        class_id(&db, parse_file_to_hir(&db, lib_file).module(&db), "Child")
+    else {
+        panic!("Child must be a user-defined class");
+    };
+    let superclass_origins = trait_env
+        .clauses(&db)
+        .iter()
+        .filter_map(|clause| match &clause.origin {
+            ClauseOrigin::Superclass(def) => Some(*def),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(superclass_origins, vec![child_def]);
 }
 
 #[test]
