@@ -540,7 +540,7 @@ fn pre_typeck_desugar_plan_records_tuple_product_shapes_and_origins() {
         &db,
         r#"
 contract C {
-  seed: (word, bool) = (1, true);
+  seed: (word, bool) = if (true) then (1, true) else (2, false);
 
   public function f(x : word, y : bool, z : word) -> (word, bool, word) {
     let t : (word, bool, word) = (x, y, z);
@@ -680,6 +680,38 @@ contract C {
                 product,
                 ..
             } if origin.kind == SourceOriginKind::TupleExpr && product_is_pair(product)
+        )),
+        "{field_init_transforms:?}"
+    );
+    assert!(
+        field_init_transforms.iter().any(|transform| matches!(
+            transform,
+            FieldInitPreTypeckTransform::IfExprToMatch {
+                origin,
+                ..
+            } if origin.kind == SourceOriginKind::IfExpression
+        )),
+        "{field_init_transforms:?}"
+    );
+    assert!(
+        field_init_transforms.iter().any(|transform| matches!(
+            transform,
+            FieldInitPreTypeckTransform::BoolToUnitSum {
+                origin,
+                value: true,
+                ..
+            } if origin.kind == SourceOriginKind::BoolConstructor
+        )),
+        "{field_init_transforms:?}"
+    );
+    assert!(
+        field_init_transforms.iter().any(|transform| matches!(
+            transform,
+            FieldInitPreTypeckTransform::BoolToUnitSum {
+                origin,
+                value: false,
+                ..
+            } if origin.kind == SourceOriginKind::BoolConstructor
         )),
         "{field_init_transforms:?}"
     );

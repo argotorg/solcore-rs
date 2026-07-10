@@ -567,6 +567,28 @@ pub enum FieldInitPreTypeckTransform<'db> {
         /// Unit/single/right-nested-pair payload shape.
         product: ProductShape<Id<Expr<'db>>>,
     },
+    /// If expression viewed as a match over the boolean condition.
+    IfExprToMatch {
+        /// Source expression in the field initializer arena.
+        expr: Id<Expr<'db>>,
+        /// Diagnostic origin for generated match nodes.
+        origin: SourceOrigin<'db>,
+        /// Boolean condition expression.
+        cond: Id<Expr<'db>>,
+        /// Expression in the true branch.
+        then_expr: Id<Expr<'db>>,
+        /// Expression in the false branch.
+        else_expr: Id<Expr<'db>>,
+    },
+    /// Bool constructor viewed as a unit-sum constructor.
+    BoolToUnitSum {
+        /// Source expression in the field initializer arena.
+        expr: Id<Expr<'db>>,
+        /// Diagnostic origin for generated unit-sum nodes.
+        origin: SourceOrigin<'db>,
+        /// Source boolean value.
+        value: bool,
+    },
 }
 
 /// Computes pre-typecheck desugar facts for the parsed module without changing
@@ -718,6 +740,7 @@ impl<'db> ModuleCollector<'db> {
 
     fn field_init(&mut self, contract: DefId<'db>, field_name: String, init: &FieldInit<'db>) {
         let mut collector = FieldInitCollector {
+            db: self.db,
             exprs: &init.exprs,
             transforms: Vec::new(),
         };
@@ -1038,6 +1061,7 @@ impl<'db> BodyCollector<'db> {
 }
 
 struct FieldInitCollector<'a, 'db> {
+    db: &'db dyn Db,
     exprs: &'a Arena<Expr<'db>>,
     transforms: Vec<FieldInitPreTypeckTransform<'db>>,
 }
@@ -1046,7 +1070,25 @@ impl<'a, 'db> FieldInitCollector<'a, 'db> {
     fn expr(&mut self, expr_id: Id<Expr<'db>>) {
         let expr = self.exprs.get(expr_id);
         match &expr.kind {
-            ExprKind::DotCtor { args, .. } => {
+            ExprKind::Ident(name) => {
+                if let Some(value) = bool_source_value((*name.atom()).text(self.db)) {
+                    self.transforms
+                        .push(FieldInitPreTypeckTransform::BoolToUnitSum {
+                            expr: expr_id,
+                            origin: SourceOrigin::new(expr.span, SourceOriginKind::BoolConstructor),
+                            value,
+                        });
+                }
+            }
+            ExprKind::DotCtor { name, args, .. } => {
+                if let Some(value) = bool_source_value((*name.atom()).text(self.db)) {
+                    self.transforms
+                        .push(FieldInitPreTypeckTransform::BoolToUnitSum {
+                            expr: expr_id,
+                            origin: SourceOrigin::new(expr.span, SourceOriginKind::BoolConstructor),
+                            value,
+                        });
+                }
                 for arg in args {
                     self.expr(*arg);
                 }
@@ -1072,6 +1114,14 @@ impl<'a, 'db> FieldInitCollector<'a, 'db> {
                 then_expr,
                 else_expr,
             } => {
+                self.transforms
+                    .push(FieldInitPreTypeckTransform::IfExprToMatch {
+                        expr: expr_id,
+                        origin: SourceOrigin::new(expr.span, SourceOriginKind::IfExpression),
+                        cond: *cond,
+                        then_expr: *then_expr,
+                        else_expr: *else_expr,
+                    });
                 self.expr(*cond);
                 self.expr(*then_expr);
                 self.expr(*else_expr);
@@ -1089,7 +1139,6 @@ impl<'a, 'db> FieldInitCollector<'a, 'db> {
             }
             ExprKind::Lambda { .. }
             | ExprKind::Lit(_)
-            | ExprKind::Ident(_)
             | ExprKind::Proxy { .. }
             | ExprKind::Error => {}
         }
