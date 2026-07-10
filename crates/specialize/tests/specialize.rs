@@ -1250,6 +1250,50 @@ contract C {
 }
 
 #[test]
+fn if_statement_specializes_through_pre_typeck_match_view() {
+    let (_db, output) = specialize_src(
+        r#"
+contract C {
+  public function main(c: bool) -> word {
+    let x : word = 1;
+    if (c) {
+      x = 2;
+    } else {
+      x = 3;
+    }
+    return x;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let main = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| {
+            let MonoItem::Function(function) = item else {
+                return None;
+            };
+            function.name.contains("main").then_some(function)
+        })
+        .expect("specialized main");
+    let MonoStmtKind::Match { scrutinees, arms } = &main.body[1].kind else {
+        panic!(
+            "expected if statement to specialize as match: {:#?}",
+            main.body
+        );
+    };
+    assert_eq!(scrutinees.len(), 1);
+    assert_eq!(arms.len(), 2);
+    assert!(matches!(&arms[0].pats[0].kind, MonoPatKind::Con { ctor, .. } if ctor.name == "true"));
+    assert!(matches!(&arms[1].pats[0].kind, MonoPatKind::Con { ctor, .. } if ctor.name == "false"));
+    assert!(matches!(arms[0].body[0].kind, MonoStmtKind::Assign { .. }));
+    assert!(matches!(arms[1].body[0].kind, MonoStmtKind::Assign { .. }));
+}
+
+#[test]
 fn unknown_match_pattern_binders_shadow_outer_constants() {
     let (_db, output) = specialize_src(
         r#"

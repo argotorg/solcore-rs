@@ -117,21 +117,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 cond,
                 then_body,
                 else_body,
-            } => MonoStmtKind::If {
-                cond: self.expr(*cond)?,
-                then_body: then_body
-                    .iter()
-                    .map(|stmt| self.stmt(*stmt))
-                    .collect::<Option<Vec<_>>>()?,
-                else_body: match else_body.as_ref() {
-                    Some(body) => Some(
-                        body.iter()
-                            .map(|stmt| self.stmt(*stmt))
-                            .collect::<Option<Vec<_>>>()?,
-                    ),
-                    None => None,
-                },
-            },
+            } => self.if_stmt(stmt_id, *cond, then_body, else_body.as_deref(), span)?,
             StmtKind::Block { body } => MonoStmtKind::Block(
                 body.iter()
                     .map(|stmt| self.stmt(*stmt))
@@ -608,6 +594,79 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         BodyDesugarView::new(&self.pre_typeck_desugar)
     }
 
+    fn if_stmt(
+        &mut self,
+        stmt_id: Id<Stmt<'db>>,
+        fallback_cond: Id<Expr<'db>>,
+        fallback_then_body: &[Id<Stmt<'db>>],
+        fallback_else_body: Option<&[Id<Stmt<'db>>]>,
+        span: Span<'db>,
+    ) -> Option<MonoStmtKind<'db>> {
+        let planned = self
+            .desugar_view()
+            .if_stmt_match(self.body, stmt_id)
+            .map(|view| {
+                (
+                    view.cond,
+                    view.then_body.to_vec(),
+                    view.else_body.map(|body| body.to_vec()),
+                )
+            });
+        let Some((cond, then_body, else_body)) = planned else {
+            return Some(MonoStmtKind::If {
+                cond: self.expr(fallback_cond)?,
+                then_body: self.stmts(fallback_then_body)?,
+                else_body: match fallback_else_body {
+                    Some(body) => Some(self.stmts(body)?),
+                    None => None,
+                },
+            });
+        };
+
+        let cond = self.expr(cond)?;
+        let bool_ty = cond.ty;
+        let then_body = self.stmts(&then_body)?;
+        let else_body = match else_body.as_deref() {
+            Some(body) => self.stmts(body)?,
+            None => Vec::new(),
+        };
+
+        Some(MonoStmtKind::Match {
+            scrutinees: vec![cond],
+            arms: vec![
+                MonoArm {
+                    span,
+                    pats: vec![self.bool_ctor_pat(true, bool_ty, span)],
+                    body: then_body,
+                },
+                MonoArm {
+                    span,
+                    pats: vec![self.bool_ctor_pat(false, bool_ty, span)],
+                    body: else_body,
+                },
+            ],
+        })
+    }
+
+    fn stmts(&mut self, stmts: &[Id<Stmt<'db>>]) -> Option<Vec<MonoStmt<'db>>> {
+        stmts.iter().map(|stmt| self.stmt(*stmt)).collect()
+    }
+
+    fn bool_ctor_pat(&self, value: bool, ty: MonoTy<'db>, span: Span<'db>) -> MonoPat<'db> {
+        MonoPat {
+            span,
+            ty,
+            kind: MonoPatKind::Con {
+                ctor: MonoId {
+                    name: bool_ctor_name(value).to_owned(),
+                    ty,
+                    span,
+                },
+                args: Vec::new(),
+            },
+        }
+    }
+
     fn tuple_expr_product_shape(
         &self,
         expr: Id<Expr<'db>>,
@@ -890,4 +949,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         }
         Some(out)
     }
+}
+
+fn bool_ctor_name(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
 }
