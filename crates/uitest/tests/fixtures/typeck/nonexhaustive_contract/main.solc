@@ -6,4 +6,8 @@ contract C {
     | Flag.Off => return 0;
     }
   }
+
+  function main() -> word {
+    return 0;
+  }
 }

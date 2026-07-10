@@ -98,6 +98,35 @@ pub fn resolve_module_path<'db>(
     }
 }
 
+/// Resolves the module named directly by an import declaration.
+///
+/// This applies the same library-root, standard-library fallback, and loaded
+/// source checks as [`resolve_module_path`]. It does not interpret the import's
+/// selector, alias, or hiding list.
+pub fn resolve_direct_import_target<'db>(
+    db: &'db dyn Db,
+    importing: ModuleId<'db>,
+    import: Import<'db>,
+) -> Result<ModuleId<'db>, Box<ModuleDiagnostic<'db>>> {
+    let path = path_ref_from_import(db, import);
+    resolve_module_path(db, importing, path)
+}
+
+/// Resolves the candidate module named directly by an import declaration.
+///
+/// Unlike [`resolve_direct_import_target`], this does not require the target
+/// source to have been loaded into the database. The returned logical module
+/// identity still applies standard-library fallback rules using the immutable
+/// filesystem snapshot.
+pub fn resolve_direct_import_target_candidate<'db>(
+    db: &'db dyn Db,
+    importing: ModuleId<'db>,
+    import: Import<'db>,
+) -> Result<ResolvedModulePath<'db>, Box<ModuleDiagnostic<'db>>> {
+    let path = path_ref_from_import(db, import);
+    resolve_module_path_candidate(db, importing, &path)
+}
+
 fn root_for_library<'db>(
     db: &'db dyn Db,
     tree: ModuleTree,

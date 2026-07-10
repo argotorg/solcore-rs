@@ -1773,7 +1773,7 @@ pub(super) fn dispatch_name_collision_diagnostics<'db>(
     }
     let mut diagnostics = Vec::new();
     for item in module.items(db) {
-        collect_dispatch_name_collisions(db, *item, true, &reserved, &mut diagnostics);
+        collect_dispatch_name_collisions(db, *item, &reserved, &mut diagnostics);
     }
     diagnostics
 }
@@ -1823,16 +1823,13 @@ fn dispatch_reserved_type_names<'db>(
 fn collect_dispatch_name_collisions<'db>(
     db: &'db dyn HirDb,
     item: Item<'db>,
-    top_level: bool,
     reserved: &FxHashMap<String, LabelSpan>,
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) {
     match item {
         Item::AdtDef(adt) => {
             let name = ident_text(db, &adt.name_elem(db));
-            if let Some(previous) = reserved.get(&name)
-                && !(top_level && is_empty_dispatch_data_decl(db, adt))
-            {
+            if let Some(previous) = reserved.get(&name) {
                 diagnostics.push(TypeckDiagnostic::DuplicateType {
                     span: LabelSpan::from_span(db, adt.name_elem(db).span(db)),
                     name,
@@ -1851,19 +1848,25 @@ fn collect_dispatch_name_collisions<'db>(
             }
         }
         Item::ContractDef(contract) => {
+            let name = ident_text(db, &contract.name_elem(db));
+            if let Some(previous) = reserved.get(&name) {
+                diagnostics.push(TypeckDiagnostic::DuplicateType {
+                    span: LabelSpan::from_span(db, contract.name_elem(db).span(db)),
+                    name,
+                    previous: Some(previous.clone()),
+                });
+            }
             for item in contract.items(db) {
                 match *item {
                     ContractItem::AdtDef(adt) => collect_dispatch_name_collisions(
                         db,
                         Item::AdtDef(adt),
-                        false,
                         reserved,
                         diagnostics,
                     ),
                     ContractItem::TypeAlias(alias) => collect_dispatch_name_collisions(
                         db,
                         Item::TypeAlias(alias),
-                        false,
                         reserved,
                         diagnostics,
                     ),
@@ -1871,18 +1874,24 @@ fn collect_dispatch_name_collisions<'db>(
                 }
             }
         }
+        Item::ClassDef(class) => {
+            let class_name = &class.head(db).kind(db).class;
+            let name = ident_text(db, class_name);
+            if let Some(previous) = reserved.get(&name) {
+                diagnostics.push(TypeckDiagnostic::DuplicateType {
+                    span: LabelSpan::from_span(db, class_name.span(db)),
+                    name,
+                    previous: Some(previous.clone()),
+                });
+            }
+        }
         Item::FunctionDef(_)
         | Item::InstanceDef(_)
-        | Item::ClassDef(_)
         | Item::Import(_)
         | Item::Export(_)
         | Item::Pragma(_)
         | Item::Error { .. } => {}
     }
-}
-
-fn is_empty_dispatch_data_decl<'db>(db: &'db dyn HirDb, adt: AdtDef<'db>) -> bool {
-    adt.ty_param_elems(db).is_empty() && adt.ctors(db).is_empty()
 }
 
 fn dispatch_name_type_name(contract: &str, method: &str) -> String {

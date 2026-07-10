@@ -1,9 +1,11 @@
 use hir::{
     anchor::DefId,
-    ast::item::{ContractDef, ContractItem, FuncKind, Item, Module},
-    diag::Diagnostic,
+    ast::item::{ContractDef, ContractItem, FuncKind, Import, ImportSelector, Item, Module},
+    diag::{Diagnostic, DiagnosticCode},
     nameres as hir_nameres,
+    span::Spanned,
 };
+use nameres::{LibraryId, module_id_for_source_file, resolve_direct_import_target_candidate};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 
@@ -141,6 +143,7 @@ fn contract_dispatch_surface_by_def<'db>(
 
 /// Returns diagnostics for every contract dispatch surface in a module.
 pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<Diagnostic> {
+    let has_std_dispatch_import = module_has_canonical_std_dispatch_import(db, module);
     module
         .items(db)
         .iter()
@@ -149,30 +152,120 @@ pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) ->
             _ => None,
         })
         .flat_map(|contract| {
-            let dispatch_generated = contract_generates_dispatch(db, contract);
-            contract_dispatch_surface(db, module, contract)
+            let dispatch_generated = contract_needs_generated_dispatch(db, contract);
+            let surface = contract_dispatch_surface(db, module, contract);
+            let surface_has_dispatch_errors = surface.diagnostics.iter().any(|diagnostic| {
+                matches!(
+                    diagnostic.code.as_deref(),
+                    Some("SC0230" | "SC0231" | "SC0232" | "SC0233" | "SC0235")
+                )
+            });
+            let mut diagnostics = surface
                 .diagnostics
                 .into_iter()
                 .filter(move |diagnostic| {
                     diagnostic.code.as_deref() != Some("SC0231") || dispatch_generated
                 })
+                .collect::<Vec<_>>();
+            diagnostics.extend(contract_runtime_main_diagnostics(db, contract));
+            if dispatch_generated && !has_std_dispatch_import && !surface_has_dispatch_errors {
+                diagnostics.push(contract_diag_missing_std_dispatch_import(
+                    db,
+                    contract,
+                    &surface.name,
+                ));
+            }
+            diagnostics
         })
         .filter(|diagnostic| {
             matches!(
                 diagnostic.code.as_deref(),
-                Some("SC0230" | "SC0231" | "SC0232" | "SC0233")
+                Some("SC0230" | "SC0231" | "SC0232" | "SC0233" | "SC0234" | "SC0235" | "SC0236")
             )
         })
         .collect()
 }
 
-fn contract_generates_dispatch<'db>(db: &'db dyn Db, contract: ContractDef<'db>) -> bool {
+fn contract_runtime_main_diagnostics<'db>(
+    db: &'db dyn Db,
+    contract: ContractDef<'db>,
+) -> Vec<Diagnostic> {
+    contract
+        .items(db)
+        .iter()
+        .filter_map(|item| {
+            let ContractItem::FunctionDef(function) = *item else {
+                return None;
+            };
+            let sig = function.sig(db);
+            (function.kind(db) == FuncKind::Function
+                && ident_text(db, &sig.name) == "main"
+                && !sig.params.atom().is_empty())
+            .then(|| {
+                Diagnostic::error("contract runtime `main` must not take parameters")
+                    .with_code(DiagnosticCode::TYPECK_CONTRACT_RUNTIME_MAIN_ARITY)
+                    .with_primary_label(
+                        db,
+                        sig.params.span(db),
+                        Some("runtime entry is called without arguments"),
+                    )
+                    .with_help("remove the parameters or rename this function")
+            })
+        })
+        .collect()
+}
+
+/// Returns whether the compiler must synthesize this contract's runtime entry.
+///
+/// This deliberately follows the language's existing/Haskell-compatible
+/// convention: any contract-local ordinary function named `main` is a
+/// user-supplied runtime entry, irrespective of visibility.
+pub fn contract_needs_generated_dispatch<'db>(db: &'db dyn Db, contract: ContractDef<'db>) -> bool {
     !contract.items(db).iter().any(|item| {
         let ContractItem::FunctionDef(function) = item else {
             return false;
         };
-        ident_text(db, &function.sig(db).name) == "main"
+        function.kind(db) == FuncKind::Function && ident_text(db, &function.sig(db).name) == "main"
     })
+}
+
+/// Returns whether `module` explicitly wildcard-imports the canonical standard
+/// dispatch module required by generated contract entries.
+pub fn module_has_canonical_std_dispatch_import<'db>(db: &'db dyn Db, module: Module<'db>) -> bool {
+    let Some(importing) = module_id_for_source_file(db, module.def_id_value(db).file(db)) else {
+        return false;
+    };
+    module.items(db).iter().any(|item| {
+        let Item::Import(import) = *item else {
+            return false;
+        };
+        is_std_dispatch_wildcard_import(db, importing, import)
+    })
+}
+
+fn is_std_dispatch_wildcard_import<'db>(
+    db: &'db dyn Db,
+    importing: nameres::ModuleId<'db>,
+    import: Import<'db>,
+) -> bool {
+    import.external(db).is_none()
+        && import.alias_elem(db).is_none()
+        && import.hiding(db).is_empty()
+        && matches!(import.selector(db), Some(ImportSelector::Wildcard))
+        && import_path_is(db, import, &["std", "dispatch"])
+        && resolve_direct_import_target_candidate(db, importing, import).is_ok_and(|target| {
+            target.module.library(db) == &LibraryId::Std
+                && target.module.logical_path(db).as_slice() == ["dispatch"]
+        })
+}
+
+fn import_path_is(db: &dyn Db, import: Import<'_>, expected: &[&str]) -> bool {
+    let path = import.path_elems(db);
+    path.len() == expected.len()
+        && path
+            .iter()
+            .zip(expected)
+            .all(|(elem, expected)| ident_text(db, elem) == *expected)
 }
 
 fn contract_dispatch_surface_with_resolutions<'db>(
@@ -286,18 +379,26 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                     function,
                     &type_vars,
                 );
+                let inputs = abi_params(
+                    db,
+                    &param_names(db, sig.params.atom()),
+                    &lowered.params,
+                    &mut diagnostics,
+                    sig.span,
+                );
+                let outputs = abi_outputs(db, lowered.ret, &mut diagnostics, sig.span);
+                if !inputs.is_empty() || !outputs.is_empty() {
+                    diagnostics.push(contract_diag_unsupported_fallback_shape(
+                        db,
+                        function.span(db),
+                    ));
+                }
                 fallback = Some(DispatchFallback::Explicit {
                     def: function.def_id_value(db),
                     source_index,
                     payable: sig.payable.is_some(),
-                    inputs: abi_params(
-                        db,
-                        &param_names(db, sig.params.atom()),
-                        &lowered.params,
-                        &mut diagnostics,
-                        sig.span,
-                    ),
-                    outputs: abi_outputs(db, lowered.ret, &mut diagnostics, sig.span),
+                    inputs,
+                    outputs,
                 });
             }
         }
@@ -306,19 +407,39 @@ fn contract_dispatch_surface_with_resolutions<'db>(
     let constructor = constructor.unwrap_or(DispatchConstructor::Implicit);
     let fallback = fallback.unwrap_or(DispatchFallback::Default);
 
-    let mut seen = FxHashMap::<String, DefId<'db>>::default();
-    for method in &methods {
+    let mut seen_signatures = FxHashMap::<String, usize>::default();
+    let mut seen_selectors = FxHashMap::<AbiSelector, usize>::default();
+    for (method_index, method) in methods.iter().enumerate() {
         if abi_params_contain_unsupported(&method.inputs) {
             continue;
         }
-        if let Some(previous) = seen.insert(method.signature.clone(), method.def) {
+
+        if let Some(&previous_index) = seen_signatures.get(&method.signature) {
             diagnostics.push(contract_diag_duplicate_signature(
                 db,
-                method.def,
-                previous,
+                dispatch_method_span(db, contract, method),
+                dispatch_method_span(db, contract, &methods[previous_index]),
                 &contract_name,
                 &method.signature,
             ));
+        } else {
+            seen_signatures.insert(method.signature.clone(), method_index);
+        }
+
+        if let Some(&previous_index) = seen_selectors.get(&method.selector) {
+            let previous = &methods[previous_index];
+            if previous.signature != method.signature {
+                diagnostics.push(contract_diag_selector_collision(
+                    db,
+                    dispatch_method_span(db, contract, method),
+                    dispatch_method_span(db, contract, previous),
+                    &contract_name,
+                    method,
+                    previous,
+                ));
+            }
+        } else {
+            seen_selectors.insert(method.selector, method_index);
         }
     }
 
@@ -341,16 +462,55 @@ fn abi_params_contain_unsupported(params: &[AbiParam]) -> bool {
 
 fn contract_diag_duplicate_signature<'db>(
     db: &'db dyn Db,
-    def: DefId<'db>,
-    previous: DefId<'db>,
+    current_span: hir::span::Span<'db>,
+    previous_span: hir::span::Span<'db>,
     contract: &str,
     signature: &str,
 ) -> Diagnostic {
-    let _ = (db, def, previous);
     Diagnostic::error(format!(
         "duplicate public ABI signature in contract `{contract}`: {signature}"
     ))
     .with_code("SC0230")
+    .with_primary_label(db, current_span, Some("duplicate ABI signature"))
+    .with_secondary_label(db, previous_span, Some("previous declaration"))
+}
+
+fn contract_diag_selector_collision<'db>(
+    db: &'db dyn Db,
+    current_span: hir::span::Span<'db>,
+    previous_span: hir::span::Span<'db>,
+    contract: &str,
+    current: &DispatchMethod<'db>,
+    previous: &DispatchMethod<'db>,
+) -> Diagnostic {
+    Diagnostic::error(format!(
+        "public ABI selector collision in contract `{contract}`: `{}` and `{}` both use {}",
+        previous.signature,
+        current.signature,
+        current.selector.to_hex(),
+    ))
+    .with_code(DiagnosticCode::TYPECK_CONTRACT_SELECTOR_COLLISION)
+    .with_primary_label(
+        db,
+        current_span,
+        Some(format!("`{}` collides here", current.signature)),
+    )
+    .with_secondary_label(
+        db,
+        previous_span,
+        Some(format!("`{}` first used this selector", previous.signature)),
+    )
+}
+
+fn dispatch_method_span<'db>(
+    db: &'db dyn Db,
+    contract: ContractDef<'db>,
+    method: &DispatchMethod<'db>,
+) -> hir::span::Span<'db> {
+    match contract.items(db).get(method.source_index) {
+        Some(ContractItem::FunctionDef(function)) => function.sig(db).span,
+        _ => contract.name_elem(db).span(db),
+    }
 }
 
 fn contract_diag_multiple_constructors<'db>(
@@ -369,4 +529,31 @@ fn contract_diag_multiple_fallbacks<'db>(
     Diagnostic::error("contract has more than one fallback")
         .with_code("SC0233")
         .with_primary_label(db, span, Some("extra fallback"))
+}
+
+fn contract_diag_unsupported_fallback_shape<'db>(
+    db: &'db dyn Db,
+    span: hir::span::Span<'db>,
+) -> Diagnostic {
+    Diagnostic::error("fallback ABI must be unit -> unit")
+        .with_code("SC0231")
+        .with_primary_label(db, span, Some("unsupported fallback ABI"))
+}
+
+fn contract_diag_missing_std_dispatch_import<'db>(
+    db: &'db dyn Db,
+    contract: ContractDef<'db>,
+    name: &str,
+) -> Diagnostic {
+    Diagnostic::error(format!(
+        "contract `{name}` needs `import std.dispatch.{{*}};` for generated dispatch"
+    ))
+    .with_code(DiagnosticCode::TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT)
+    .with_primary_label(
+        db,
+        contract.name_elem(db).span(db),
+        Some("generated dispatch is required for this contract"),
+    )
+    .with_note("contract dispatch is provided by `std.dispatch`")
+    .with_help("add `import std.dispatch.{*};` to this module")
 }

@@ -6,6 +6,7 @@ pub(super) struct TypeckDiagnosticCollector<'db> {
     pub(super) hir_module: Module<'db>,
     pub(super) env: nameres::ModuleEnv<'db>,
     pub(super) item_resolutions: hir_nameres::ItemResolutionMap<'db>,
+    pub(super) trait_env: TraitEnvId<'db>,
     pub(super) diagnostics: Vec<AnyDiagnostic>,
 }
 
@@ -1084,11 +1085,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         );
         let mut givens = lowered.scheme.body(self.db).preds(self.db).clone();
         givens.extend(extra_givens.iter().copied());
-        let trait_env = trait_env_with_givens(
-            self.db,
-            crate::solver::trait_env_for_module(self.db, self.module),
-            givens,
-        );
+        let trait_env = trait_env_with_givens(self.db, self.trait_env, givens);
         let ctx = BodyTyContext::new(
             self.hir_module,
             body_map.clone(),
@@ -1282,7 +1279,6 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 continue;
             }
             let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(self.db, body);
-            let trait_env = crate::solver::trait_env_for_module(self.db, self.module);
             let ctx = BodyTyContext::new(
                 self.hir_module,
                 body_map,
@@ -1295,7 +1291,7 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 self.db,
                 field.ty(),
             )))
-            .with_trait_env(trait_env)
+            .with_trait_env(self.trait_env)
             .with_partial_data(partial_data_entries(&self.env))
             .with_pre_typeck_desugar(pre_typeck_desugar);
             self.diagnostics.extend(

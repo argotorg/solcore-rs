@@ -14,7 +14,7 @@ pub fn function_scheme<'db>(
     def: DefId<'db>,
 ) -> Option<TyScheme<'db>> {
     let hir_module = module_hir(db, module)?;
-    let env = nameres::module_import_surface(db, module);
+    let env = nameres::module_env_for_hir_module(db, module, hir_module);
     let scope = env.item_scope.clone()?;
     let item_resolutions =
         hir_nameres::resolve_item_type_facts_with_imports(db, hir_module, &scope, &env);
@@ -178,7 +178,8 @@ pub(super) fn module_for_def<'db>(
 #[salsa::tracked]
 pub(super) fn module_hir<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Option<Module<'db>> {
     let file = db.module_file(module)?;
-    Some(parse_file_to_hir(db, file).module(db))
+    let source = parse_file_to_hir(db, file).module(db);
+    Some(crate::prepare_module(db, source).module(db))
 }
 
 #[salsa::tracked]
@@ -187,7 +188,7 @@ pub(super) fn item_resolutions_for_module<'db>(
     module: ModuleId<'db>,
 ) -> Option<hir_nameres::ItemResolutionMap<'db>> {
     let hir_module = module_hir(db, module)?;
-    let env = nameres::module_env(db, module);
+    let env = nameres::module_env_for_hir_module(db, module, hir_module);
     let scope = env.item_scope.clone()?;
     Some(hir_nameres::resolve_item_types_with_imports(
         db, hir_module, &scope, &env,
@@ -200,7 +201,7 @@ pub(super) fn item_resolution_facts_for_module<'db>(
     module: ModuleId<'db>,
 ) -> Option<hir_nameres::ItemResolutionFacts<'db>> {
     let hir_module = module_hir(db, module)?;
-    let env = nameres::module_import_surface(db, module);
+    let env = nameres::module_env_for_hir_module(db, module, hir_module);
     let scope = env.item_scope.clone()?;
     Some(hir_nameres::resolve_item_type_facts_with_imports(
         db, hir_module, &scope, &env,
@@ -612,15 +613,40 @@ pub fn module_typeck_diagnostics<'db>(
     if !parse_diagnostics(db, file).is_empty() {
         return Vec::new();
     }
-    let Some(hir_module) = module_hir(db, module) else {
-        return Vec::new();
-    };
-    let env = nameres::module_env(db, module);
+    let source_module = parse_file_to_hir(db, file).module(db);
+    let prepared = crate::prepare_module(db, source_module);
+    let hir_module = prepared.module(db);
+    let env = nameres::module_env_for_hir_module(db, module, hir_module);
     let Some(item_scope) = env.item_scope.clone() else {
         return Vec::new();
     };
-    let item_resolutions =
-        hir_nameres::resolve_item_types_with_imports(db, hir_module, &item_scope, &env);
+    let module_resolution =
+        hir_nameres::resolve_module_with_imports(db, hir_module, item_scope, &env);
+    let generated_nameres_diagnostics = if hir_module == source_module {
+        Vec::new()
+    } else {
+        let source_env = nameres::module_env_for_hir_module(db, module, source_module);
+        let source_diagnostics = source_env
+            .item_scope
+            .clone()
+            .map_or_else(Vec::new, |scope| {
+                hir_nameres::resolve_module_with_imports(db, source_module, scope, &source_env)
+                    .diagnostics
+            });
+        module_resolution
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| !source_diagnostics.contains(diagnostic))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let item_resolutions = module_resolution.item_resolutions.clone();
+    let trait_env = crate::solver::trait_env_from_module_resolution_and_imports(
+        db,
+        hir_module,
+        &module_resolution,
+        &env.import_surface(),
+    );
     let instance_diagnostics = instance_soundness_diagnostics(db, module);
     let suppress_body_after_instance_error = instance_diagnostics
         .iter()
@@ -629,6 +655,15 @@ pub fn module_typeck_diagnostics<'db>(
         .iter()
         .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower()))
         .collect::<Vec<_>>();
+    // The normal module-resolution driver already publishes source HIR
+    // diagnostics. Publish only diagnostics newly introduced by the effective
+    // module so generated-name failures do not become late specialization
+    // errors and source diagnostics are not duplicated at the typeck layer.
+    diagnostics.extend(
+        generated_nameres_diagnostics
+            .into_iter()
+            .map(AnyDiagnostic::Nameres),
+    );
     diagnostics.extend(
         item_type_constructor_arity_diagnostics(db, module, &item_resolutions)
             .into_iter()
@@ -640,7 +675,7 @@ pub fn module_typeck_diagnostics<'db>(
             .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
     );
     diagnostics.extend(
-        dispatch_name_collision_diagnostics(db, hir_module)
+        dispatch_name_collision_diagnostics(db, source_module)
             .into_iter()
             .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
     );
@@ -659,7 +694,7 @@ pub fn module_typeck_diagnostics<'db>(
         return diagnostics;
     }
     diagnostics.extend(
-        module_contract_diagnostics(db, hir_module)
+        module_contract_diagnostics(db, source_module)
             .into_iter()
             .map(AnyDiagnostic::Typeck),
     );
@@ -678,6 +713,7 @@ pub fn module_typeck_diagnostics<'db>(
         hir_module,
         env,
         item_resolutions,
+        trait_env,
         diagnostics,
     };
     for item in hir_module.items(db) {

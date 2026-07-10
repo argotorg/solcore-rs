@@ -2,6 +2,24 @@ use super::*;
 
 #[salsa::tracked]
 pub fn trait_env_for_module<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> TraitEnvId<'db> {
+    if let Some(file) = db.module_file(module) {
+        let source = parse_file_to_hir(db, file).module(db);
+        let hir_module = crate::prepare_module(db, source).module(db);
+        if hir_module != source {
+            let env = nameres::module_env_for_hir_module(db, module, hir_module);
+            if let Some(item_scope) = env.item_scope.clone() {
+                let resolution =
+                    hir_nameres::resolve_module_with_imports(db, hir_module, item_scope, &env);
+                return trait_env_from_module_resolution_and_imports(
+                    db,
+                    hir_module,
+                    &resolution,
+                    &env.import_surface(),
+                );
+            }
+        }
+    }
+
     let env = nameres::module_import_surface(db, module);
 
     let mut modules = Vec::new();

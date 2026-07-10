@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/typeck/desugar_origin_spans/main.solc
 error[SC0201]: type mismatch: expected word, found bool
  --> /main/main.solc:2:29
   |
-1 | contract C {
+1 | contract C { function main() -> word { return 0; }
 2 |   seed: word = if true then false else 1;
   |                             ^^^^^ expression has mismatched type
 3 | }

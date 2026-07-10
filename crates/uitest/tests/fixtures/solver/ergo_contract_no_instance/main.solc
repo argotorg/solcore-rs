@@ -8,4 +8,6 @@ contract Check {
   function go(x: word) -> Bool {
     return Eq.eq(x, x);
   }
+
+  function main() -> () {}
 }

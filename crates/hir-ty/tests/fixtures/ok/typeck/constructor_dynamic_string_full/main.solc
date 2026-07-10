@@ -28,4 +28,8 @@ contract C {
   public function get() -> memory(string) {
     return value;
   }
+
+  function main() -> () {
+    return ();
+  }
 }

@@ -1,5 +1,5 @@
 data Opt = Some(word) | None;
-contract K {}
+contract K { function main() -> word { return 0; } }
 
 function opt_ret() -> Opt {
   return 1;

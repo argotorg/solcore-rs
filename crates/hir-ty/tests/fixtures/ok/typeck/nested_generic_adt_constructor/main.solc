@@ -4,4 +4,8 @@ contract Box(t) {
   function mk(x: word) -> Option(word) {
     return .Some(x);
   }
+
+  function main() -> () {
+    return ();
+  }
 }

@@ -1,4 +1,5 @@
 import std.{*};
+import std.dispatch.{*};
 
 contract Uint256Binops {
   public function mul_u256(x : uint256, y : uint256) -> uint256 {

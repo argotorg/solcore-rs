@@ -9,4 +9,8 @@ contract C {
   function leak() -> mapping(address, uint256) {
     return balances;
   }
+
+  function main() -> word {
+    return 0;
+  }
 }

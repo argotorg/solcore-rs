@@ -209,6 +209,75 @@ pub fn module_id_from_key<'db>(db: &'db dyn Db, key: &ModuleKey) -> ModuleId<'db
     ModuleId::new(db, key.library.clone(), key.logical_path.clone())
 }
 
+/// Finds the logical module identity corresponding to a source file.
+///
+/// When roots overlap, an identity whose loaded source is exactly `file` wins.
+/// Otherwise this returns the first identity derivable from the configured
+/// roots, which also supports compiler-owned HIR overlays that retain the
+/// original file URL. Test and in-memory drivers may use the canonical virtual
+/// URL shape `memory:///main/...`, `memory:///std/...`, or
+/// `memory:///external/<name>/...`; those identities are accepted only when
+/// the resulting module is loaded as exactly `file`.
+pub fn module_id_for_source_file<'db>(db: &'db dyn Db, file: SourceFile) -> Option<ModuleId<'db>> {
+    let tree = db.module_tree();
+    let mut candidates = Vec::new();
+    if let Some(path) = hir::url_to_file_path(file.url(db)) {
+        if let Some(key) = module_key_for_path(LibraryId::Main, tree.main_root(db), &path) {
+            candidates.push(module_id_from_key(db, &key));
+        }
+        if let Some(key) = module_key_for_path(LibraryId::Std, tree.std_root(db), &path) {
+            candidates.push(module_id_from_key(db, &key));
+        }
+        for (name, root) in tree.external_roots(db) {
+            if let Some(key) = module_key_for_path(LibraryId::External(name.clone()), root, &path) {
+                candidates.push(module_id_from_key(db, &key));
+            }
+        }
+    }
+    let rooted = candidates
+        .iter()
+        .copied()
+        .find(|candidate| db.module_file(*candidate) == Some(file))
+        .or_else(|| candidates.into_iter().next());
+    rooted.or_else(|| virtual_module_id_for_source_file(db, file))
+}
+
+fn virtual_module_id_for_source_file<'db>(
+    db: &'db dyn Db,
+    file: SourceFile,
+) -> Option<ModuleId<'db>> {
+    let url = file.url(db);
+    if url.scheme() != "memory" {
+        return None;
+    }
+    let segments = url
+        .path_segments()?
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let (library, mut logical_path) = match segments.as_slice() {
+        [root, rest @ ..] if root == "main" => (LibraryId::Main, rest.to_vec()),
+        [root, rest @ ..] if root == "std" => (LibraryId::Std, rest.to_vec()),
+        [root, name, rest @ ..] if root == "external" => {
+            (LibraryId::External(name.clone()), rest.to_vec())
+        }
+        _ => return None,
+    };
+    let last = logical_path.last_mut()?;
+    *last = last.strip_suffix(".solc")?.to_owned();
+    if last.is_empty() {
+        return None;
+    }
+    let candidate = module_id_from_key(
+        db,
+        &ModuleKey {
+            library,
+            logical_path,
+        },
+    );
+    (db.module_file(candidate) == Some(file)).then_some(candidate)
+}
+
 pub(super) fn record_source_file_field(db: &dyn Db, file: SourceFile) {
     if tracing::enabled!(Level::DEBUG) {
         tracing::Span::current().record("file", field::display(file_url_tail(db, file)));

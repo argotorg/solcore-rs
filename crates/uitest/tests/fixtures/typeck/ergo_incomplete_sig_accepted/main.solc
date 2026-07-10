@@ -1,5 +1,9 @@
 contract C {
-  public function main(x) {
+  public function id(x) {
     return x;
+  }
+
+  function main() -> word {
+    return 0;
   }
 }

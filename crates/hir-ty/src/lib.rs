@@ -11,6 +11,7 @@ pub mod desugar;
 mod display;
 pub mod infer;
 pub mod lower;
+pub mod prepare;
 pub mod solver;
 mod support;
 
@@ -22,7 +23,8 @@ pub use contract::{
     AbiParam, AbiSelector, AbiSignature, AbiType, BodyDesugarPlan, BoolNode, DispatchConstructor,
     DispatchFallback, DispatchMethod, DispatchSurface, FrontendDesugarPlan, FrontendTransform,
     IndirectArgShape, abi_selector, contract_abi_json, contract_dispatch_surface,
-    contract_dispatch_surface_for_module, frontend_desugar_plan, module_contract_diagnostics,
+    contract_dispatch_surface_for_module, contract_needs_generated_dispatch, frontend_desugar_plan,
+    module_contract_diagnostics, module_has_canonical_std_dispatch_import,
 };
 pub use desugar::{
     BodyDesugarView, BodyPreTypeckDesugarPlan, BoolUnitSumNode, BoolUnitSumView,
@@ -44,6 +46,10 @@ pub use infer::{
 pub use lower::{
     BinderEnv, LoweredAdtCtor, LoweredField, LoweredFunction, LoweredTypeAlias, TypeLowering,
     TypeLoweringDiagnostic, builtin_scheme,
+};
+pub use prepare::{
+    GeneratedOrigin, GeneratedOriginKind, GeneratedOriginMap, PreparedModule,
+    is_contract_dispatch_main_def, prepare_module,
 };
 pub use solver::{
     BaseTraitEnvId, BaseTraitEnvSource, Candidate, CanonicalGoal, ClauseOrigin,

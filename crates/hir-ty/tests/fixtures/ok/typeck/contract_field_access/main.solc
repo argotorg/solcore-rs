@@ -4,4 +4,8 @@ contract Simple {
   public function getVal() -> word {
     return val;
   }
+
+  function main() -> () {
+    return ();
+  }
 }

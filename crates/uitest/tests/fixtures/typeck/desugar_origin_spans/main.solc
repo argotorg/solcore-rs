@@ -1,4 +1,4 @@
-contract C {
+contract C { function main() -> word { return 0; }
   seed: word = if true then false else 1;
 }
 

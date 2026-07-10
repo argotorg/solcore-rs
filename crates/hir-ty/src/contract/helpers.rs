@@ -9,7 +9,7 @@ use hir::{
     nameres as hir_nameres,
     nameres::param_bindings,
 };
-use nameres::{LibraryId, module_id_from_key, module_key_for_path};
+use nameres::module_id_for_source_file;
 
 use crate::{Db, LoweredFunction, lower_normalized_function_with_inferred_signature};
 
@@ -46,21 +46,9 @@ pub(super) fn resolve_contract_item_types<'db>(
     module: Module<'db>,
 ) -> hir_nameres::ItemResolutionFacts<'db> {
     let file = module.def_id_value(db).file(db);
-    let Some(path) = hir::url_to_file_path(file.url(db)) else {
+    let Some(module_id) = module_id_for_source_file(db, file) else {
         return hir_nameres::resolve_item_type_facts(db, module);
     };
-    let tree = db.module_tree();
-    let key = module_key_for_path(LibraryId::Main, tree.main_root(db), &path)
-        .or_else(|| module_key_for_path(LibraryId::Std, tree.std_root(db), &path))
-        .or_else(|| {
-            tree.external_roots(db).iter().find_map(|(name, root)| {
-                module_key_for_path(LibraryId::External(name.clone()), root, &path)
-            })
-        });
-    let Some(key) = key else {
-        return hir_nameres::resolve_item_type_facts(db, module);
-    };
-    let module_id = module_id_from_key(db, &key);
     let env = nameres::module_import_surface(db, module_id);
     let Some(item_scope) = env.item_scope.as_ref() else {
         return hir_nameres::resolve_item_type_facts(db, module);

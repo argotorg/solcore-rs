@@ -106,6 +106,9 @@ impl DiagnosticCode {
     pub const TYPECK_NAMESPACE_AS_VALUE: &'static str = "SC0228";
     pub const TYPECK_CLASS_AS_TYPE: &'static str = "SC0229";
     pub const TYPECK_DUPLICATE_TYPE: &'static str = "SC0229";
+    pub const TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT: &'static str = "SC0234";
+    pub const TYPECK_CONTRACT_SELECTOR_COLLISION: &'static str = "SC0235";
+    pub const TYPECK_CONTRACT_RUNTIME_MAIN_ARITY: &'static str = "SC0236";
     pub const TYPECK_RUNTIME_TO_COMPTIME_PARAM: &'static str = "SC0240";
     pub const TYPECK_COMPTIME_LET_RUNTIME: &'static str = "SC0241";
     pub const TYPECK_COMPTIME_RETURN_RUNTIME: &'static str = "SC0242";
@@ -317,6 +320,18 @@ impl DiagnosticCode {
         DiagnosticCodeEntry::new("TYPECK_NAMESPACE_AS_VALUE", Self::TYPECK_NAMESPACE_AS_VALUE),
         DiagnosticCodeEntry::new("TYPECK_CLASS_AS_TYPE", Self::TYPECK_CLASS_AS_TYPE),
         DiagnosticCodeEntry::new("TYPECK_DUPLICATE_TYPE", Self::TYPECK_DUPLICATE_TYPE),
+        DiagnosticCodeEntry::new(
+            "TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT",
+            Self::TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT,
+        ),
+        DiagnosticCodeEntry::new(
+            "TYPECK_CONTRACT_SELECTOR_COLLISION",
+            Self::TYPECK_CONTRACT_SELECTOR_COLLISION,
+        ),
+        DiagnosticCodeEntry::new(
+            "TYPECK_CONTRACT_RUNTIME_MAIN_ARITY",
+            Self::TYPECK_CONTRACT_RUNTIME_MAIN_ARITY,
+        ),
         DiagnosticCodeEntry::new(
             "TYPECK_RUNTIME_TO_COMPTIME_PARAM",
             Self::TYPECK_RUNTIME_TO_COMPTIME_PARAM,

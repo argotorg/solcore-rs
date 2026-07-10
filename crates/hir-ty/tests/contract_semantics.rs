@@ -6,7 +6,7 @@ use std::{
 use hir::{
     anchor::DefLocationTable,
     ast::item::{AdtDef, ContractDef, FunctionDef, Item, Module},
-    diag::Diagnostic,
+    diag::{Diagnostic, DiagnosticCode},
     input::SourceFile,
 };
 use nameres::{LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
@@ -17,7 +17,8 @@ use solcore_hir_ty::{
     FieldInitPreTypeckTransform, FrontendTransform, IndirectArgShape, PreTypeckTransform,
     ProductShape, SourceOriginKind, Ty, TyCtor, TyKind, contract_abi_json,
     contract_dispatch_surface, derived_generic_plan, frontend_desugar_plan, function_scheme,
-    infer::module_typeck_diagnostics, pre_typeck_desugar_plan,
+    infer::module_typeck_diagnostics, module_has_canonical_std_dispatch_import,
+    pre_typeck_desugar_plan, prepare_module,
 };
 
 #[salsa::db]
@@ -25,6 +26,7 @@ use solcore_hir_ty::{
 struct TestDb {
     storage: salsa::Storage<Self>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
+    existing_files: BTreeSet<PathBuf>,
 }
 
 #[salsa::db]
@@ -52,7 +54,7 @@ impl nameres::Db for TestDb {
     }
 
     fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
-        ModuleFsSnapshot::new(self, BTreeSet::new(), BTreeMap::new())
+        ModuleFsSnapshot::new(self, self.existing_files.clone(), BTreeMap::new())
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
@@ -68,6 +70,11 @@ fn source_file(db: &TestDb, name: &str, src: &str) -> SourceFile {
     SourceFile::new(db, url, Some(src.to_owned()))
 }
 
+fn source_file_at(db: &TestDb, path: &str, src: &str) -> SourceFile {
+    let url = url::Url::from_file_path(path).expect("absolute source path");
+    SourceFile::new(db, url, Some(src.to_owned()))
+}
+
 fn parse_module<'db>(db: &'db TestDb, src: &str) -> Module<'db> {
     parse_file_to_hir(db, source_file(db, "contract_semantics", src)).module(db)
 }
@@ -78,9 +85,17 @@ fn db_with_main(src: &str) -> (TestDb, ModuleKey) {
         library: LibraryId::Main,
         logical_path: vec!["main".to_owned()],
     };
-    let file = source_file(&db, "main", src);
+    let path = PathBuf::from("/main/main.solc");
+    let file = source_file_at(&db, "/main/main.solc", src);
+    db.existing_files.insert(path);
     db.module_files.insert(key.clone(), file);
     (db, key)
+}
+
+fn insert_module_source(db: &mut TestDb, key: ModuleKey, path: &str, src: &str) {
+    let file = source_file_at(db, path, src);
+    db.existing_files.insert(PathBuf::from(path));
+    db.module_files.insert(key, file);
 }
 
 fn contract_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> ContractDef<'db> {
@@ -154,11 +169,290 @@ fn product_is_triple<T>(shape: &ProductShape<T>) -> bool {
 
 fn diagnostics(src: &str) -> Vec<Diagnostic> {
     let (db, key) = db_with_main(src);
-    let module = module_id_from_key(&db, &key);
-    module_typeck_diagnostics(&db, module)
+    diagnostics_for_module(&db, &key)
+}
+
+fn diagnostics_for_module(db: &TestDb, key: &ModuleKey) -> Vec<Diagnostic> {
+    let module = module_id_from_key(db, key);
+    module_typeck_diagnostics(db, module)
         .iter()
-        .map(|diagnostic| diagnostic.lower(&db))
+        .map(|diagnostic| diagnostic.lower(db))
         .collect()
+}
+
+#[test]
+fn generated_dispatch_requires_explicit_std_dispatch_import() {
+    let missing = diagnostics(
+        r#"
+import std.{*};
+
+contract Answer {
+  public function add(x: word) -> word {
+    return 1;
+  }
+}
+"#,
+    );
+    let diagnostic = missing
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code.as_deref()
+                == Some(DiagnosticCode::TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT)
+        })
+        .expect("missing std.dispatch diagnostic");
+    assert!(
+        diagnostic.message.contains("contract `Answer`"),
+        "{diagnostic:?}"
+    );
+    assert_eq!(diagnostic.labels.len(), 1, "{diagnostic:?}");
+    assert_eq!(
+        diagnostic.labels[0].span().end().as_u32() - diagnostic.labels[0].span().begin().as_u32(),
+        6,
+        "{diagnostic:?}"
+    );
+    assert_eq!(
+        diagnostic.helps,
+        ["add `import std.dispatch.{*};` to this module"],
+        "{diagnostic:?}"
+    );
+
+    let imported_source = r#"
+import std.{*};
+import std.dispatch.{*};
+
+contract Answer {
+  public function add(x: word) -> word {
+    return 1;
+  }
+}
+"#;
+    let (mut imported_db, imported_key) = db_with_main(imported_source);
+    insert_module_source(
+        &mut imported_db,
+        ModuleKey {
+            library: LibraryId::Std,
+            logical_path: vec!["dispatch".to_owned()],
+        },
+        "/std/dispatch.solc",
+        "",
+    );
+    let imported = diagnostics_for_module(&imported_db, &imported_key);
+    assert!(
+        imported.iter().all(|diagnostic| {
+            diagnostic.code.as_deref()
+                != Some(DiagnosticCode::TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT)
+        }),
+        "{imported:?}"
+    );
+
+    let (mut unloaded_db, unloaded_key) = db_with_main(imported_source);
+    unloaded_db
+        .existing_files
+        .insert(PathBuf::from("/std/dispatch.solc"));
+    let unloaded_file = SourceFile::new(
+        &unloaded_db,
+        "memory:///main/main.solc"
+            .parse()
+            .expect("fixture memory URL"),
+        Some(imported_source.to_owned()),
+    );
+    unloaded_db.module_files.insert(unloaded_key, unloaded_file);
+    let unloaded_source = parse_file_to_hir(&unloaded_db, unloaded_file).module(&unloaded_db);
+    assert!(
+        module_has_canonical_std_dispatch_import(&unloaded_db, unloaded_source),
+        "canonical import identity must not depend on loading the target source"
+    );
+    assert_ne!(
+        prepare_module(&unloaded_db, unloaded_source).module(&unloaded_db),
+        unloaded_source,
+        "an unloaded but canonical std.dispatch import still enables preparation"
+    );
+
+    let (mut fallback_db, fallback_key) = db_with_main(imported_source);
+    insert_module_source(
+        &mut fallback_db,
+        ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec!["std".to_owned(), "dispatch".to_owned()],
+        },
+        "/main/std/dispatch.solc",
+        "",
+    );
+    let local_fallback = diagnostics_for_module(&fallback_db, &fallback_key);
+    assert!(
+        local_fallback.iter().any(|diagnostic| {
+            diagnostic.code.as_deref()
+                == Some(DiagnosticCode::TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT)
+        }),
+        "a local std.dispatch fallback must not satisfy the canonical std import: {local_fallback:?}"
+    );
+
+    let manual_main = diagnostics(
+        r#"
+contract Answer {
+  function main() -> () {
+    return ();
+  }
+}
+"#,
+    );
+    assert!(
+        manual_main.iter().all(|diagnostic| {
+            diagnostic.code.as_deref()
+                != Some(DiagnosticCode::TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT)
+        }),
+        "{manual_main:?}"
+    );
+
+    let public_main = diagnostics(
+        r#"
+contract Answer {
+  public function main() -> () {
+    return ();
+  }
+}
+"#,
+    );
+    assert!(
+        public_main.iter().all(|diagnostic| {
+            diagnostic.code.as_deref()
+                != Some(DiagnosticCode::TYPECK_CONTRACT_MISSING_STD_DISPATCH_IMPORT)
+        }),
+        "an existing contract-local `main` suppresses generated dispatch: {public_main:?}"
+    );
+
+    let parameterized_main = diagnostics(
+        r#"
+contract Answer {
+  public function main(x: word) -> word { return x; }
+}
+"#,
+    );
+    assert!(
+        parameterized_main.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_CONTRACT_RUNTIME_MAIN_ARITY)
+        }),
+        "{parameterized_main:?}"
+    );
+}
+
+#[test]
+fn prepared_dispatch_uses_its_synthetic_sigstring_instance_during_typeck() {
+    let (mut db, key) = db_with_main(
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+contract Answer {
+  public function ping(x: word) -> word { return x; }
+}
+"#,
+    );
+    insert_module_source(
+        &mut db,
+        ModuleKey {
+            library: LibraryId::Std,
+            logical_path: vec!["std".to_owned()],
+        },
+        "/std/std.solc",
+        r#"
+export { Proxy(*), string };
+data Proxy(t) = Proxy;
+data string;
+"#,
+    );
+    insert_module_source(
+        &mut db,
+        ModuleKey {
+            library: LibraryId::Std,
+            logical_path: vec!["dispatch".to_owned()],
+        },
+        "/std/dispatch.solc",
+        r#"
+import std.{*};
+
+export {
+  Contract(*),
+  Fallback(*),
+  Method(*),
+  NonPayable,
+  Payable,
+  RunContract,
+  SigString,
+  fallback_default_implementation
+};
+
+data Contract(methods, fb) = Contract(methods, fb);
+data Method(name, payability, args, rets, fn) =
+  Method(Proxy(name), Proxy(payability), Proxy(args), Proxy(rets), fn);
+data Fallback(payability, args, rets, fn) =
+  Fallback(Proxy(payability), Proxy(args), Proxy(rets), fn);
+data Payable;
+data NonPayable;
+
+forall t . class t:SigString {
+  function sigStr(value: Proxy(t)) -> string;
+}
+
+forall c . class c:RunContract {
+  function exec(value: c) -> ();
+}
+
+forall name payability args rets fn fb
+  . name:SigString
+=> instance Contract(Method(name, payability, args, rets, fn), fb):RunContract {
+  function exec(value: Contract(Method(name, payability, args, rets, fn), fb)) -> () {
+    return ();
+  }
+}
+
+function fallback_default_implementation() -> () { return (); }
+"#,
+    );
+
+    let module_id = module_id_from_key(&db, &key);
+    let file = db.module_files.get(&key).copied().expect("main module");
+    let source = parse_file_to_hir(&db, file).module(&db);
+    let effective = prepare_module(&db, source).module(&db);
+    assert_ne!(
+        effective, source,
+        "dispatch preparation should create an overlay"
+    );
+
+    let env = nameres::module_env_for_hir_module(&db, module_id, effective);
+    let scope = env.item_scope.clone().expect("prepared item scope");
+    let resolution = hir::nameres::resolve_module_with_imports(&db, effective, scope, &env);
+    assert!(
+        resolution.diagnostics.is_empty(),
+        "prepared HIR must resolve against its overlay scope: {:?}",
+        resolution.diagnostics
+    );
+
+    let diagnostics = diagnostics_for_module(&db, &key);
+    assert!(
+        diagnostics.is_empty(),
+        "the local generated SigString instance must be in the prepared trait environment: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn source_cannot_claim_a_generated_dispatch_name_type() {
+    let diagnostics = diagnostics(
+        r#"
+data DispatchNameTy_C_ping;
+
+contract C {
+  public function ping(x: word) -> word { return x; }
+}
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_DUPLICATE_TYPE)
+                && diagnostic.message.contains("DispatchNameTy_C_ping")
+        }),
+        "{diagnostics:?}"
+    );
 }
 
 #[test]
@@ -204,6 +498,30 @@ contract Token {
     assert_eq!(surface.methods[0].selector.to_hex(), "0xc290d691");
     assert_eq!(surface.methods[0].outputs[0].ty.to_string(), "uint256");
     assert_eq!(surface.methods[0].outputs[1].ty.to_string(), "bool");
+}
+
+#[test]
+fn dispatch_surface_rejects_nonunit_fallback_shape() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+contract C {
+  fallback() -> word { return 1; }
+}
+"#,
+    );
+    let contract = contract_named(&db, module, "C");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert!(
+        surface.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0231")
+                && diagnostic.message == "fallback ABI must be unit -> unit"
+        }),
+        "{:?}",
+        surface.diagnostics
+    );
 }
 
 #[test]
@@ -422,22 +740,79 @@ contract Dup {
     );
     let contract = contract_named(&db, module, "Dup");
     let surface = contract_dispatch_surface(&db, module, contract);
+    let duplicate = surface
+        .diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code.as_deref() == Some("SC0230"))
+        .unwrap_or_else(|| panic!("missing duplicate diagnostic: {:?}", surface.diagnostics));
+    assert_eq!(duplicate.labels.len(), 2, "{duplicate:?}");
+    assert!(duplicate.labels[0].is_primary(), "{duplicate:?}");
+    assert!(!duplicate.labels[1].is_primary(), "{duplicate:?}");
+    assert_eq!(
+        duplicate.labels[0].message(),
+        Some("duplicate ABI signature")
+    );
+    assert_eq!(duplicate.labels[1].message(), Some("previous declaration"));
+}
+
+#[test]
+fn different_signatures_with_the_same_selector_are_diagnosed() {
+    let src = r#"
+data bytes16 = bytes16(word);
+
+contract Collision {
+  public function burn(x: word) -> () { return (); }
+  public function collate_propagate_storage(x: bytes16) -> () { return (); }
+  function main() -> () { return (); }
+}
+"#;
+    let db = TestDb::default();
+    let module = parse_module(&db, src);
+    let contract = contract_named(&db, module, "Collision");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert_eq!(surface.methods[0].signature, "burn(uint256)");
+    assert_eq!(
+        surface.methods[1].signature,
+        "collate_propagate_storage(bytes16)"
+    );
+    assert_eq!(surface.methods[0].selector, surface.methods[1].selector);
+    assert_eq!(surface.methods[0].selector.to_hex(), "0x42966c68");
+
+    let collision = surface
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_CONTRACT_SELECTOR_COLLISION)
+        })
+        .unwrap_or_else(|| panic!("missing selector collision: {:?}", surface.diagnostics));
+    assert_eq!(collision.labels.len(), 2, "{collision:?}");
+    assert!(collision.labels[0].is_primary(), "{collision:?}");
+    assert!(!collision.labels[1].is_primary(), "{collision:?}");
     assert!(
-        surface
-            .diagnostics
-            .iter()
-            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0230")),
-        "{:?}",
-        surface.diagnostics
+        collision.message.contains("burn(uint256)")
+            && collision
+                .message
+                .contains("collate_propagate_storage(bytes16)")
+            && collision.message.contains("0x42966c68"),
+        "{collision:?}"
+    );
+
+    let lowered = diagnostics(src);
+    assert!(
+        lowered.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_CONTRACT_SELECTOR_COLLISION)
+        }),
+        "{lowered:?}"
     );
 }
 
 #[test]
 fn contract_field_initializers_are_typed() {
-    let ok = diagnostics("contract C { x: word = 1; }");
+    let ok = diagnostics("contract C { x: word = 1; function main() -> () { return (); } }");
     assert!(ok.is_empty(), "{ok:?}");
 
-    let bad = diagnostics("contract C { x: word = true; }");
+    let bad = diagnostics("contract C { x: word = true; function main() -> () { return (); } }");
     assert!(
         bad.iter()
             .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0201")),
@@ -448,20 +823,21 @@ fn contract_field_initializers_are_typed() {
 #[test]
 fn storage_mapping_compound_assign_requires_numeric_element() {
     let common = "data mapping(key, value) = mapping(word);\ndata uint256 = uint256(word);\n";
+    let manual_main = "function main() -> () { return (); }";
 
     let ok_word = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, word); function f(k: word) -> () {{ m[k] += 1; }} }}"
+        "{common}contract C {{ m : mapping(word, word); function f(k: word) -> () {{ m[k] += 1; }} {manual_main} }}"
     ));
     assert!(ok_word.is_empty(), "{ok_word:?}");
 
     let ok_uint = diagnostics(&format!(
         "{common}contract C {{ m : mapping(word, uint256); \
-         function f(k: word, v: uint256) -> () {{ m[k] += v; }} }}"
+         function f(k: word, v: uint256) -> () {{ m[k] += v; }} {manual_main} }}"
     ));
     assert!(ok_uint.is_empty(), "{ok_uint:?}");
 
     let bad_add = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, bool); function f(k: word) -> () {{ m[k] += true; }} }}"
+        "{common}contract C {{ m : mapping(word, bool); function f(k: word) -> () {{ m[k] += true; }} {manual_main} }}"
     ));
     assert!(
         bad_add
@@ -471,7 +847,7 @@ fn storage_mapping_compound_assign_requires_numeric_element() {
     );
 
     let bad_sub = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, bool); function f(k: word) -> () {{ m[k] -= true; }} }}"
+        "{common}contract C {{ m : mapping(word, bool); function f(k: word) -> () {{ m[k] -= true; }} {manual_main} }}"
     ));
     assert!(
         bad_sub

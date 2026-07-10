@@ -9,7 +9,7 @@ function pick(x : Nat, y : Nat) -> word {
 }
 
 contract T {
-  public function main(w : word) -> word {
+  public function main() -> word {
     return pick(Nat.Zero, Nat.Zero);
   }
 }

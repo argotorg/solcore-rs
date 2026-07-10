@@ -7,9 +7,9 @@ error[SC0220]: top-level function must have complete type annotations
  --> /main/main.solc:2:19
   |
 1 | contract C {
-2 |   public function main(x) {
-  |                   ^^^^ incomplete signature
+2 |   public function id(x) {
+  |                   ^^ incomplete signature
 3 |     return x;
   |
-  = note: signature: public function main(x)
+  = note: signature: public function id(x)
   = note: annotate every parameter (name : Type) and provide a return type (-> Type)

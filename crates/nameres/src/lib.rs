@@ -92,11 +92,14 @@ pub use model::{
 };
 use modes::{BodyDiagnosticPolicy, CtorInclusion, ExportResolutionMode};
 use paths::{module_path_span, path_segments};
-pub use paths::{resolve_module_path, resolve_module_path_candidate};
+pub use paths::{
+    resolve_direct_import_target, resolve_direct_import_target_candidate, resolve_module_path,
+    resolve_module_path_candidate,
+};
 pub use scc::strongly_connected_components;
 pub use util::{
-    ModuleDisplay, ModulePathDisplay, module_file_path, module_id_display, module_id_from_key,
-    module_key_for_path, module_path_display,
+    ModuleDisplay, ModulePathDisplay, module_file_path, module_id_display,
+    module_id_for_source_file, module_id_from_key, module_key_for_path, module_path_display,
 };
 use util::{
     best_name_suggestion, ident_text, namespace_context, private_surface_key, record_body_field,

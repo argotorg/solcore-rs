@@ -11,7 +11,8 @@ pub fn instance_soundness_diagnostics<'db>(
     if !parse_diagnostics(db, file).is_empty() {
         return Vec::new();
     }
-    let hir_module = parse_file_to_hir(db, file).module(db);
+    let source = parse_file_to_hir(db, file).module(db);
+    let hir_module = crate::prepare_module(db, source).module(db);
     if !hir_module
         .items(db)
         .iter()
@@ -19,7 +20,7 @@ pub fn instance_soundness_diagnostics<'db>(
     {
         return Vec::new();
     }
-    let env = nameres::module_env(db, module);
+    let env = nameres::module_env_for_hir_module(db, module, hir_module);
     let Some(item_scope) = env.item_scope.clone() else {
         return Vec::new();
     };
