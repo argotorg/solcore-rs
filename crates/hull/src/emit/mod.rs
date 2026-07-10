@@ -23,9 +23,9 @@ use hir_ty::{
 };
 use parser::parse_file_to_hir;
 use specialize::{
-    MonoAbiParam, MonoArm, MonoCallOrigin, MonoContract, MonoEntry, MonoExpr, MonoExprKind,
-    MonoFunction, MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind, MonoStmt,
-    MonoStmtKind,
+    MonoAbiParam, MonoArm, MonoCallOrigin, MonoContract, MonoEntry, MonoExpr, MonoExprArm,
+    MonoExprKind, MonoFunction, MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind,
+    MonoStmt, MonoStmtKind,
 };
 
 use crate::{

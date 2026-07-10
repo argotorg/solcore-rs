@@ -346,6 +346,10 @@ pub enum MonoExprKind<'db> {
         expr: Box<MonoExpr<'db>>,
         ty: MonoTy<'db>,
     },
+    Match {
+        scrutinee: Box<MonoExpr<'db>>,
+        arms: Vec<MonoExprArm<'db>>,
+    },
     If {
         cond: Box<MonoExpr<'db>>,
         then_expr: Box<MonoExpr<'db>>,
@@ -365,6 +369,14 @@ pub struct MonoArm<'db> {
     pub span: Span<'db>,
     pub pats: Vec<MonoPat<'db>>,
     pub body: Vec<MonoStmt<'db>>,
+}
+
+/// Specialized expression match arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MonoExprArm<'db> {
+    pub span: Span<'db>,
+    pub pat: MonoPat<'db>,
+    pub expr: MonoExpr<'db>,
 }
 
 /// Specialized pattern.

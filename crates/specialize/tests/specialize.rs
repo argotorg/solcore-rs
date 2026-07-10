@@ -1324,7 +1324,13 @@ contract C {
     else {
         panic!("expected if expression let init: {:#?}", main.body);
     };
-    assert!(matches!(&init.kind, MonoExprKind::If { .. }));
+    let MonoExprKind::Match { scrutinee, arms } = &init.kind else {
+        panic!("expected if expression to specialize as match: {:#?}", init);
+    };
+    assert!(matches!(&scrutinee.kind, MonoExprKind::Var(_)));
+    assert_eq!(arms.len(), 2);
+    assert!(matches!(&arms[0].pat.kind, MonoPatKind::Con { ctor, .. } if ctor.name == "true"));
+    assert!(matches!(&arms[1].pat.kind, MonoPatKind::Con { ctor, .. } if ctor.name == "false"));
 }
 
 #[test]
@@ -1574,6 +1580,12 @@ fn expr_has_closure_dispatch(expr: &MonoExpr<'_>) -> bool {
             expr_has_closure_dispatch(base) || expr_has_closure_dispatch(index)
         }
         MonoExprKind::Field { base, .. } => expr_has_closure_dispatch(base),
+        MonoExprKind::Match { scrutinee, arms } => {
+            expr_has_closure_dispatch(scrutinee)
+                || arms.iter().any(|arm| {
+                    pat_has_closure_dispatch(&arm.pat) || expr_has_closure_dispatch(&arm.expr)
+                })
+        }
         MonoExprKind::If {
             cond,
             then_expr,

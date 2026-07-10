@@ -296,7 +296,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 cond,
                 then_expr,
                 else_expr,
-            } => self.if_expr(expr_id, *cond, *then_expr, *else_expr)?,
+            } => self.if_expr(expr_id, *cond, *then_expr, *else_expr, expr.span)?,
             ExprKind::Lambda { params, body, .. } => {
                 self.lambda_expr(params.atom(), *body, ty, expr.span)?
             }
@@ -713,6 +713,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         fallback_cond: Id<Expr<'db>>,
         fallback_then_expr: Id<Expr<'db>>,
         fallback_else_expr: Id<Expr<'db>>,
+        span: Span<'db>,
     ) -> Option<MonoExprKind<'db>> {
         let planned = self
             .desugar_view()
@@ -720,10 +721,22 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             .map(|view| (view.cond, view.then_expr, view.else_expr));
         let (cond, then_expr, else_expr) =
             planned.unwrap_or((fallback_cond, fallback_then_expr, fallback_else_expr));
-        Some(MonoExprKind::If {
-            cond: Box::new(self.expr(cond)?),
-            then_expr: Box::new(self.expr(then_expr)?),
-            else_expr: Box::new(self.expr(else_expr)?),
+        let cond = self.expr(cond)?;
+        let bool_ty = cond.ty;
+        Some(MonoExprKind::Match {
+            scrutinee: Box::new(cond),
+            arms: vec![
+                MonoExprArm {
+                    span,
+                    pat: self.bool_ctor_pat(true, bool_ty, span),
+                    expr: self.expr(then_expr)?,
+                },
+                MonoExprArm {
+                    span,
+                    pat: self.bool_ctor_pat(false, bool_ty, span),
+                    expr: self.expr(else_expr)?,
+                },
+            ],
         })
     }
 

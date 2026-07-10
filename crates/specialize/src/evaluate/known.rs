@@ -134,6 +134,21 @@ where
     })
 }
 
+pub(super) fn match_expr_arms_with<'db, F>(
+    env: &VEnv<'db>,
+    scrutinee: &MonoExpr<'db>,
+    arms: &[crate::ir::MonoExprArm<'db>],
+    is_known: F,
+) -> Option<(VEnv<'db>, MonoExpr<'db>)>
+where
+    F: Fn(&MonoExpr<'db>) -> bool + Copy,
+{
+    arms.iter().find_map(|arm| {
+        let env = match_pat(env.clone(), &arm.pat, scrutinee, is_known)?;
+        Some((env, arm.expr.clone()))
+    })
+}
+
 fn match_pat<'db, F>(
     mut env: VEnv<'db>,
     pat: &MonoPat<'db>,

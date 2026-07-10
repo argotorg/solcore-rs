@@ -23,8 +23,8 @@ use super::{
     ident_text,
     known::{
         bool_expr, build_type_reg, int_expr, known_bool, known_int, known_string,
-        literal_from_known_expr, lvalue_root_name, match_arms_with, remove_assigned,
-        remove_comptime_assigned, string_expr,
+        literal_from_known_expr, lvalue_root_name, match_arms_with, match_expr_arms_with,
+        remove_assigned, remove_comptime_assigned, string_expr,
     },
     value::{BigInt, bitand_word, bitor_word, bitxor_word, word_div, word_low_byte, word_mod},
     yul_const::{
@@ -33,8 +33,8 @@ use super::{
 };
 use crate::{
     ir::{
-        MonoArm, MonoCallOrigin, MonoExpr, MonoExprKind, MonoFunction, MonoId, MonoIntrinsic,
-        MonoItem, MonoModule, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
+        MonoArm, MonoCallOrigin, MonoExpr, MonoExprArm, MonoExprKind, MonoFunction, MonoId,
+        MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
         visit::{Visitor, walk_stmt},
     },
     specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind},
@@ -991,6 +991,37 @@ impl<'db> Evaluator<'db> {
                     }
                 }
             }
+            MonoExprKind::Match { scrutinee, arms } => {
+                let scrutinee = self.eval_expr(env, comptime_env, *scrutinee);
+                let arms = arms
+                    .into_iter()
+                    .map(|arm| self.eval_expr_arm_labels(env, comptime_env, arm))
+                    .collect::<Vec<_>>();
+                if self.expr_is_known_value(&scrutinee)
+                    && let Some((matched_env, expr)) =
+                        match_expr_arms_with(env, &scrutinee, &arms, |expr| {
+                            self.expr_is_known_value(expr)
+                        })
+                {
+                    let matched_comptime_env =
+                        self.with_known_env_bindings_comptime(&matched_env, comptime_env.clone());
+                    return self.eval_expr(&matched_env, &matched_comptime_env, expr);
+                }
+                MonoExpr {
+                    span,
+                    ty,
+                    kind: MonoExprKind::Match {
+                        scrutinee: Box::new(scrutinee),
+                        arms: arms
+                            .into_iter()
+                            .map(|arm| MonoExprArm {
+                                expr: self.eval_expr(env, comptime_env, arm.expr),
+                                ..arm
+                            })
+                            .collect(),
+                    },
+                }
+            }
             MonoExprKind::If {
                 cond,
                 then_expr,
@@ -1176,6 +1207,16 @@ impl<'db> Evaluator<'db> {
             .into_iter()
             .map(|pat| self.eval_pat_label(env, comptime_env, pat))
             .collect();
+        arm
+    }
+
+    fn eval_expr_arm_labels(
+        &mut self,
+        env: &VEnv<'db>,
+        comptime_env: &CEnv,
+        mut arm: MonoExprArm<'db>,
+    ) -> MonoExprArm<'db> {
+        arm.pat = self.eval_pat_label(env, comptime_env, arm.pat);
         arm
     }
 
@@ -1878,6 +1919,12 @@ impl<'db> Evaluator<'db> {
             MonoExprKind::StorageIndex { .. } => false,
             MonoExprKind::Field { base, .. } => self.expr_is_comptime(base, comptime_env),
             MonoExprKind::TypeAnnot { expr, .. } => self.expr_is_comptime(expr, comptime_env),
+            MonoExprKind::Match { scrutinee, arms } => {
+                self.expr_is_comptime(scrutinee, comptime_env)
+                    && arms
+                        .iter()
+                        .all(|arm| self.expr_is_comptime(&arm.expr, comptime_env))
+            }
             MonoExprKind::If {
                 cond,
                 then_expr,

@@ -365,6 +365,9 @@ impl<'db> Emitter<'db> {
                 },
             },
             MonoExprKind::TypeAnnot { expr: inner, .. } => self.emit_expr(inner),
+            MonoExprKind::Match { scrutinee, arms } => {
+                self.emit_match_expr(expr, &ty, scrutinee, arms)
+            }
             MonoExprKind::If {
                 cond,
                 then_expr,
@@ -451,6 +454,41 @@ impl<'db> Emitter<'db> {
                     },
                 }
             }
+        }
+    }
+
+    fn emit_match_expr(
+        &mut self,
+        expr: &MonoExpr<'db>,
+        ty: &Ty<'db>,
+        scrutinee: &MonoExpr<'db>,
+        arms: &[MonoExprArm<'db>],
+    ) -> Expr<'db> {
+        let Some((then_expr, else_expr)) = bool_match_expr_arms(arms) else {
+            self.push(
+                expr.span,
+                EmitDiagnosticKind::UnsupportedMonoConstruct {
+                    construct: "expression match".to_owned(),
+                },
+            );
+            return Expr {
+                span: expr.span,
+                ty: ty.clone(),
+                kind: ExprKind::Call {
+                    callee: "unsupported".into(),
+                    args: Vec::new(),
+                },
+            };
+        };
+        Expr {
+            span: expr.span,
+            ty: ty.clone(),
+            kind: ExprKind::If {
+                target: ty.clone(),
+                cond: Box::new(self.emit_expr(scrutinee)),
+                then_expr: Box::new(self.emit_expr(then_expr)),
+                else_expr: Box::new(self.emit_expr(else_expr)),
+            },
         }
     }
 
@@ -847,10 +885,34 @@ fn mono_expr_name(kind: &MonoExprKind<'_>) -> &'static str {
         MonoExprKind::Field { .. } => "field access",
         MonoExprKind::Index { .. } => "index access",
         MonoExprKind::StorageIndex { .. } => "storage index access",
+        MonoExprKind::Match { .. } => "expression match",
         MonoExprKind::Proxy(_) => "proxy expression",
         MonoExprKind::Lambda { .. } => "lambda expression",
         MonoExprKind::ClosureDispatch { .. } => "closure dispatch",
         MonoExprKind::Error => "error expression",
         _ => "expression",
+    }
+}
+
+fn bool_match_expr_arms<'a, 'db>(
+    arms: &'a [MonoExprArm<'db>],
+) -> Option<(&'a MonoExpr<'db>, &'a MonoExpr<'db>)> {
+    let mut then_expr = None;
+    let mut else_expr = None;
+    for arm in arms {
+        match bool_constructor_pat_value(&arm.pat)? {
+            true if then_expr.is_none() => then_expr = Some(&arm.expr),
+            false if else_expr.is_none() => else_expr = Some(&arm.expr),
+            _ => return None,
+        }
+    }
+    Some((then_expr?, else_expr?))
+}
+
+fn bool_constructor_pat_value(pat: &MonoPat<'_>) -> Option<bool> {
+    match &pat.kind {
+        MonoPatKind::Con { ctor, args } if args.is_empty() && ctor.name == "true" => Some(true),
+        MonoPatKind::Con { ctor, args } if args.is_empty() && ctor.name == "false" => Some(false),
+        _ => None,
     }
 }
