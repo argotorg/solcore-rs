@@ -269,7 +269,7 @@ pub enum TypeckDiagnostic {
         /// Prior overlapping instance predicate.
         overlaps: String,
     },
-    /// `SC0219`: a default instance head was not headed by a type variable.
+    /// `SC0219`: a default instance main argument contained no type variable.
     InvalidDefaultInstance {
         /// Source span for the instance head.
         span: LabelSpan,
@@ -725,7 +725,7 @@ impl TypeckDiagnostic {
                 }
             }
             TypeckDiagnostic::InvalidDefaultInstance { span, head } => Diagnostic::error(format!(
-                "Cannot have a default instance with a non-type variable as main argument: {head}"
+                "Cannot have a default instance whose main argument contains no type variable: {head}"
             ))
             .with_code(DiagnosticCode::TYPECK_INVALID_DEFAULT_INSTANCE)
             .with_primary_label_span(span.clone(), Some("invalid default instance head")),

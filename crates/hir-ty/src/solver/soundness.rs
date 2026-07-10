@@ -336,11 +336,26 @@ fn check_default_instance_head<'db>(
         });
         return;
     };
-    if !matches!(main.kind(db), TyKind::BoundVar(_)) {
+    if !ty_contains_bound_var(db, *main) {
         diagnostics.push(TypeckDiagnostic::InvalidDefaultInstance {
             span,
             head: display_pred_source(db, head, type_var_names),
         });
+    }
+}
+
+fn ty_contains_bound_var(db: &dyn Db, ty: Ty<'_>) -> bool {
+    match ty.kind(db) {
+        TyKind::BoundVar(_) => true,
+        TyKind::Named { args, .. } | TyKind::Tuple(args) => {
+            args.iter().any(|arg| ty_contains_bound_var(db, *arg))
+        }
+        TyKind::Function { params, ret } => {
+            params.iter().any(|param| ty_contains_bound_var(db, *param))
+                || ty_contains_bound_var(db, *ret)
+        }
+        TyKind::Comptime(inner) => ty_contains_bound_var(db, *inner),
+        TyKind::Error | TyKind::Unknown => false,
     }
 }
 

@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/invalid_default_instance/main.solc
 ---
-error[SC0219]: Cannot have a default instance with a non-type variable as main argument: word : C
+error[SC0219]: Cannot have a default instance whose main argument contains no type variable: word : C
  --> /main/main.solc:2:18
   |
 1 | forall a . class a:C {}

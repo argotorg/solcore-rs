@@ -1671,3 +1671,40 @@ fn pragma_corpus_files_have_no_instance_soundness_diagnostics() {
         );
     }
 }
+
+#[test]
+fn structured_default_instance_head_is_allowed_only_when_it_contains_a_type_variable() {
+    let (db, key) = db_with_main_typeck(
+        r#"
+data Box(a) = Box(a);
+forall a . class a:Marker {}
+forall a . default instance Box(a):Marker {}
+"#,
+    );
+    let module_id = module_id_from_key(&db, &key);
+    let diagnostics = crate::solver::instance_soundness_diagnostics(&db, module_id);
+    assert!(
+        diagnostics.iter().all(|diagnostic| !matches!(
+            diagnostic,
+            TypeckDiagnostic::InvalidDefaultInstance { .. }
+        )),
+        "{diagnostics:?}"
+    );
+
+    let (db, key) = db_with_main_typeck(
+        r#"
+data Box(a) = Box(a);
+forall a . class a:Marker {}
+default instance Box(word):Marker {}
+"#,
+    );
+    let module_id = module_id_from_key(&db, &key);
+    let diagnostics = crate::solver::instance_soundness_diagnostics(&db, module_id);
+    assert!(
+        diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            TypeckDiagnostic::InvalidDefaultInstance { .. }
+        )),
+        "{diagnostics:?}"
+    );
+}
