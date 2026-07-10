@@ -18,25 +18,31 @@ use crate::{
     infer_body, trait_env_from_module_resolution, trait_env_with_givens,
 };
 
-/// Tracked frontend-desugar plan for one module.
+/// Tracked backend-facing frontend rewrite plan for one module.
+///
+/// This is intentionally separate from `crate::desugar::PreTypeckDesugarPlan`.
+/// Pre-typecheck desugar changes the input view used by inference, while this
+/// plan records rewrites that need resolved storage fields, ABI/dispatch
+/// context, solved call-site evidence, or backend-compatibility metadata and
+/// are consumed by specialization and later backend phases.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct FrontendDesugarPlan<'db> {
     /// Per-body transform plan entries.
     pub bodies: Vec<BodyDesugarPlan<'db>>,
 }
 
-/// Transform plan for one function body.
+/// Backend-facing transform plan for one function body.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct BodyDesugarPlan<'db> {
     /// Function/method definition.
     pub function: DefId<'db>,
     /// Human-readable function name.
     pub function_name: String,
-    /// HIR-to-HIR rewrites and storage hooks in traversal order.
+    /// Backend-visible rewrites and hooks in traversal order.
     pub transforms: Vec<FrontendTransform<'db>>,
 }
 
-/// One planned frontend rewrite.
+/// One planned backend-facing frontend rewrite.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum FrontendTransform<'db> {
     /// `if` statement rewritten to a two-arm match on desugared bool.
@@ -133,8 +139,12 @@ pub enum BoolNode<'db> {
 /// Payload shape for an indirect-call argument tuple.
 pub type IndirectArgShape<'db> = ProductShape<Id<Expr<'db>>>;
 
-/// Returns a tracked frontend-desugar plan for if/bool and contract field
-/// access rewrites in `module`.
+/// Returns the tracked backend-facing frontend rewrite plan for `module`.
+///
+/// Keep purely syntactic core-language normalization in
+/// [`crate::pre_typeck_desugar_plan`]. Type checking must use that pre-typeck
+/// view; entries here are for specialization/backend replay and compatibility
+/// metadata.
 #[salsa::tracked]
 pub fn frontend_desugar_plan<'db>(
     db: &'db dyn Db,

@@ -1,8 +1,15 @@
-//! Cache-stable frontend desugar planning.
+//! Cache-stable pre-typecheck desugar planning.
 //!
 //! This module records desugar facts without mutating parsed HIR or reparsing
 //! generated source. That keeps the parser and LSP-facing spans tied to the
-//! user's file while later phases can opt into a normalized view.
+//! user's file while type checking and specialization can opt into a normalized
+//! view.
+//!
+//! Plans in this module are the input view for type checking: tuple syntax,
+//! bool constructors, and `if` forms are interpreted as their core product,
+//! sum, or match shapes before inference. Backend-facing rewrites that require
+//! type-class evidence, ABI surface knowledge, or storage hooks belong in
+//! `contract::desugar` instead.
 
 use hir::{
     anchor::DefId,
@@ -441,7 +448,11 @@ impl<'a, 'db> BodyDesugarView<'a, 'db> {
     }
 }
 
-/// Planned pre-typecheck desugars for one module.
+/// Pre-typecheck input view for one module.
+///
+/// This plan is consumed before or during type checking. It deliberately avoids
+/// backend-only hooks so each body can keep depending on the smallest possible
+/// tracked desugar tree.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct PreTypeckDesugarPlan<'db> {
     /// Tuple type references from item signatures, aliases, and fields.
@@ -449,9 +460,9 @@ pub struct PreTypeckDesugarPlan<'db> {
     /// Body-local type annotations live in [`BodyPreTypeckDesugarPlan::types`]
     /// so type checking can depend on one body at a time.
     pub types: Vec<TypeProductDesugar<'db>>,
-    /// Tuple expression/pattern rewrites inside function and lambda bodies.
+    /// Type-checker input views inside function and lambda bodies.
     pub bodies: Vec<BodyPreTypeckDesugarPlan<'db>>,
-    /// Tuple expression rewrites inside contract field initializers.
+    /// Type-checker input views inside contract field initializers.
     pub field_inits: Vec<FieldInitPreTypeckDesugarPlan<'db>>,
 }
 
@@ -466,14 +477,17 @@ pub struct TypeProductDesugar<'db> {
     pub product: ProductShape<TypeRef<'db>>,
 }
 
-/// Planned body-local pre-typecheck desugars.
+/// Body-local pre-typecheck input view.
+///
+/// The source body is left unchanged; consumers query this plan through
+/// [`BodyDesugarView`] to interpret selected source nodes as core syntax.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct BodyPreTypeckDesugarPlan<'db> {
     /// Function or lambda body containing the source nodes.
     pub body: FuncBody<'db>,
     /// Tuple type references inside local annotations and lambda signatures.
     pub types: Vec<TypeProductDesugar<'db>>,
-    /// Tuple expression/pattern transforms in traversal order.
+    /// Expression/pattern/statement transforms in traversal order.
     pub transforms: Vec<PreTypeckTransform<'db>>,
 }
 
@@ -544,7 +558,10 @@ pub enum BoolUnitSumNode<'db> {
     Pat(Id<Pat<'db>>),
 }
 
-/// Planned pre-typecheck desugars for a contract field initializer.
+/// Field-initializer pre-typecheck input view.
+///
+/// Field initializers are typechecked through synthetic bodies, so this module
+/// also records a compact module-level view for diagnostics and tests.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct FieldInitPreTypeckDesugarPlan<'db> {
     /// Contract owning the field.
