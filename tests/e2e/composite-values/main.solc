@@ -1,0 +1,27 @@
+import std.{*};
+import std.dispatch.{*};
+
+data Point = Point(word, bool);
+data TaggedPoint = TaggedPoint(Point, word);
+
+contract CompositeValues {
+  constructor() {}
+
+  // #[((7, true), 9) -> (((7, true), 9))]
+  public function pack(point: Point, tag: word) -> TaggedPoint {
+    return TaggedPoint(point, tag);
+  }
+
+  // #[(((7, true), 9)) -> ((7, true), 9)]
+  public function unpack(tagged: TaggedPoint) -> (Point, word) {
+    match tagged {
+      | TaggedPoint(point, tag) => return (point, tag);
+    }
+  }
+
+  // #[(((0, false), 0)) -> (((0, false), 0))]
+  // #[(((42, true), 99)) -> (((42, true), 99))]
+  public function echo(tagged: TaggedPoint) -> TaggedPoint {
+    return tagged;
+  }
+}

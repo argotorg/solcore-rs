@@ -453,7 +453,7 @@ fn encode_abi_value(
         }
         (AbiShape::Unit, DirectiveValue::Tuple(values)) if values.is_empty() => Ok(()),
         (AbiShape::Tuple(shapes), DirectiveValue::Tuple(values)) => {
-            let nested = encode_abi_values(path, shapes, values)?;
+            let nested = encode_tuple_values(path, shapes, values)?;
             encoded.extend_from_slice(&nested);
             Ok(())
         }
@@ -465,6 +465,32 @@ fn encode_abi_value(
             directive_value_kind(value)
         ))),
     }
+}
+
+fn encode_tuple_values(
+    path: &str,
+    shapes: &[AbiShape],
+    values: &[DirectiveValue],
+) -> Result<Vec<u8>, DirectiveError> {
+    if shapes.len() != values.len() {
+        return Err(DirectiveError::semantic(format!(
+            "{path}: expected {} tuple element{}, directive provides {}",
+            shapes.len(),
+            if shapes.len() == 1 { "" } else { "s" },
+            values.len()
+        )));
+    }
+
+    let mut encoded = Vec::new();
+    for (index, (shape, value)) in shapes.iter().zip(values).enumerate() {
+        encode_abi_value(
+            &format!("{path}, tuple element {}", index + 1),
+            shape,
+            value,
+            &mut encoded,
+        )?;
+    }
+    Ok(encoded)
 }
 
 fn directive_value_kind(value: &DirectiveValue) -> &'static str {
@@ -678,6 +704,11 @@ mod tests {
         DirectiveValue::Word(value.into())
     }
 
+    fn resolution_error(source: &str, inputs: &[AbiShape], outputs: &[AbiShape]) -> DirectiveError {
+        let directive = parse_e2e_directive(source).unwrap().unwrap();
+        resolve_e2e_directive("f", [0; 4], inputs, outputs, &directive).unwrap_err()
+    }
+
     #[test]
     fn parses_scalar_and_multi_output_directives() {
         assert_eq!(
@@ -793,6 +824,123 @@ mod tests {
             DirectiveValue::Word(format!("0x1{}", "0".repeat(40)).parse::<Word256>().unwrap());
         let error = encode_static_abi("argument", &[AbiShape::Address], &[address]).unwrap_err();
         assert!(error.message.contains("exceeds 160 bits"), "{error}");
+    }
+
+    #[test]
+    fn reports_top_level_input_and_result_shape_mismatches() {
+        let error = resolution_error("#[(1) -> 1]", &[AbiShape::Bool], &[AbiShape::Word]);
+        assert_eq!(
+            error.message,
+            "f: argument 1: expected bool, found uint256 literal"
+        );
+
+        let error = resolution_error("#[(1) -> 1]", &[AbiShape::Word], &[AbiShape::Bool]);
+        assert_eq!(
+            error.message,
+            "f: result 1: expected bool, found uint256 literal"
+        );
+
+        let tuple = AbiShape::Tuple(vec![AbiShape::Word, AbiShape::Bool]);
+        let error = resolution_error(
+            "#[(1) -> 1]",
+            std::slice::from_ref(&tuple),
+            &[AbiShape::Word],
+        );
+        assert_eq!(
+            error.message,
+            "f: argument 1: expected (uint256, bool), found uint256 literal"
+        );
+
+        let error = resolution_error("#[(1) -> 1]", &[AbiShape::Word], &[tuple]);
+        assert_eq!(
+            error.message,
+            "f: result 1: expected (uint256, bool), found uint256 literal"
+        );
+    }
+
+    #[test]
+    fn reports_top_level_input_and_result_arity_mismatches() {
+        let error = resolution_error(
+            "#[(1) -> 1]",
+            &[AbiShape::Word, AbiShape::Word],
+            &[AbiShape::Word],
+        );
+        assert_eq!(
+            error.message,
+            "f: expected 2 ABI arguments, directive provides 1"
+        );
+
+        let error = resolution_error("#[(1) -> (1, 2)]", &[AbiShape::Word], &[AbiShape::Word]);
+        assert_eq!(
+            error.message,
+            "f: expected 1 ABI result, directive provides 2"
+        );
+    }
+
+    #[test]
+    fn reports_nested_input_tuple_paths_and_arities() {
+        let nested = AbiShape::Tuple(vec![
+            AbiShape::Word,
+            AbiShape::Tuple(vec![AbiShape::Bool, AbiShape::Word]),
+        ]);
+        let error = resolution_error(
+            "#[((1, (true, false))) -> 1]",
+            std::slice::from_ref(&nested),
+            &[AbiShape::Word],
+        );
+        assert_eq!(
+            error.message,
+            "f: argument 1, tuple element 2, tuple element 2: expected uint256, found boolean literal"
+        );
+
+        let error = resolution_error(
+            "#[((1)) -> 1]",
+            &[AbiShape::Tuple(vec![AbiShape::Word, AbiShape::Bool])],
+            &[AbiShape::Word],
+        );
+        assert_eq!(
+            error.message,
+            "f: argument 1: expected 2 tuple elements, directive provides 1"
+        );
+
+        let error = resolution_error("#[((1, (true))) -> 1]", &[nested], &[AbiShape::Word]);
+        assert_eq!(
+            error.message,
+            "f: argument 1, tuple element 2: expected 2 tuple elements, directive provides 1"
+        );
+    }
+
+    #[test]
+    fn reports_nested_result_tuple_paths_and_arities() {
+        let nested = AbiShape::Tuple(vec![
+            AbiShape::Word,
+            AbiShape::Tuple(vec![AbiShape::Bool, AbiShape::Word]),
+        ]);
+        let error = resolution_error(
+            "#[() -> ((1, (true, false)))]",
+            &[],
+            std::slice::from_ref(&nested),
+        );
+        assert_eq!(
+            error.message,
+            "f: result 1, tuple element 2, tuple element 2: expected uint256, found boolean literal"
+        );
+
+        let error = resolution_error(
+            "#[() -> ((1))]",
+            &[],
+            &[AbiShape::Tuple(vec![AbiShape::Word, AbiShape::Bool])],
+        );
+        assert_eq!(
+            error.message,
+            "f: result 1: expected 2 tuple elements, directive provides 1"
+        );
+
+        let error = resolution_error("#[() -> ((1, (true)))]", &[], &[nested]);
+        assert_eq!(
+            error.message,
+            "f: result 1, tuple element 2: expected 2 tuple elements, directive provides 1"
+        );
     }
 
     #[test]
