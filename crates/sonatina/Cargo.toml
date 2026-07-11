@@ -1,0 +1,20 @@
+[package]
+name = "solcore-sonatina"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+hir = { workspace = true }
+hull = { path = "../hull", package = "solcore-hull" }
+smallvec = { workspace = true }
+sonatina-ir = { workspace = true }
+sonatina-triple = { workspace = true }
+sonatina-verifier = { workspace = true }
+
+[dev-dependencies]
+hir-ty = { workspace = true }
+nameres = { workspace = true }
+parser = { workspace = true }
+salsa = { workspace = true }
+solcore-test-utils = { path = "../test-utils" }
+specialize = { path = "../specialize", package = "solcore-specialize" }

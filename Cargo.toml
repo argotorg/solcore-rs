@@ -11,6 +11,10 @@ percent-encoding = "2.3"
 ena = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+smallvec = "1"
+sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
+sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
+sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
 parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
 nameres = { path = "crates/nameres", package = "solcore-nameres" }

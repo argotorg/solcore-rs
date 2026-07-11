@@ -15,6 +15,7 @@ hull = { path = "../hull", package = "solcore-hull" }
 parser = { workspace = true }
 nameres = { workspace = true }
 specialize = { path = "../specialize", package = "solcore-specialize" }
+sonatina = { path = "../sonatina", package = "solcore-sonatina" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 yul = { path = "../yul", package = "solcore-yul" }
