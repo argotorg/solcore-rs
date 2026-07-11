@@ -1426,6 +1426,7 @@ dependencies = [
  "solcore-parser",
  "solcore-specialize",
  "solcore-test-utils",
+ "sonatina-codegen",
  "sonatina-ir",
  "sonatina-triple",
  "sonatina-verifier",
@@ -1520,6 +1521,26 @@ dependencies = [
  "solcore-specialize",
  "solcore-test-utils",
  "url",
+]
+
+[[package]]
+name = "sonatina-codegen"
+version = "0.0.3-alpha"
+source = "git+https://github.com/fe-lang/sonatina?rev=039a9f5#039a9f530856a7c0097ffc9dad904eed3bf33fe3"
+dependencies = [
+ "bit-set",
+ "cranelift-entity",
+ "dashmap 6.2.1",
+ "indexmap",
+ "rayon",
+ "rustc-hash",
+ "smallvec",
+ "sonatina-ir",
+ "sonatina-macros",
+ "sonatina-triple",
+ "sonatina-verifier",
+ "tracing",
+ "vec-collections",
 ]
 
 [[package]]

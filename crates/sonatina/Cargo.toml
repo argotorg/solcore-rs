@@ -17,4 +17,5 @@ nameres = { workspace = true }
 parser = { workspace = true }
 salsa = { workspace = true }
 solcore-test-utils = { path = "../test-utils" }
+sonatina-codegen = { workspace = true }
 specialize = { path = "../specialize", package = "solcore-specialize" }

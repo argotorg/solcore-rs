@@ -12,6 +12,7 @@ ena = "0.14"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 smallvec = "1"
+sonatina-codegen = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
 sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
 sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
 sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
