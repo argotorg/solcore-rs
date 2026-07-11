@@ -616,6 +616,7 @@ fn generated_constructor_init<'db>(
         function_def,
         constructor.span,
         FuncKind::Function,
+        Vec::new(),
         sig,
         Some(body),
     );
@@ -769,6 +770,7 @@ fn generated_constructor_copy_arguments<'db>(
         function_def,
         constructor.span,
         FuncKind::Function,
+        Vec::new(),
         sig,
         Some(body),
     );
@@ -877,6 +879,7 @@ fn generated_deployment_main<'db>(
         function_def,
         constructor.span,
         FuncKind::Function,
+        Vec::new(),
         sig,
         Some(body),
     );
@@ -1460,7 +1463,15 @@ fn sig_string_method<'db>(
             Vec::new(),
         )),
     };
-    FunctionDef::new(db, method_def, span, FuncKind::Function, sig, Some(body))
+    FunctionDef::new(
+        db,
+        method_def,
+        span,
+        FuncKind::Function,
+        Vec::new(),
+        sig,
+        Some(body),
+    )
 }
 
 fn generated_dispatch_main<'db>(
@@ -1601,6 +1612,7 @@ fn generated_dispatch_main<'db>(
         function_def,
         span,
         FuncKind::Function,
+        Vec::new(),
         sig,
         Some(body),
     ))

@@ -72,6 +72,18 @@ fn function_relative_span<'db>(db: &'db dyn hir::Db, function: FunctionDef<'db>)
 }
 
 #[salsa::tracked]
+fn function_leading_comment_text<'db>(
+    db: &'db dyn hir::Db,
+    function: FunctionDef<'db>,
+) -> Vec<String> {
+    function
+        .leading_comments(db)
+        .iter()
+        .map(|comment| comment.text.clone())
+        .collect()
+}
+
+#[salsa::tracked]
 fn lambda_first_stmt_relative_span<'db>(db: &'db dyn hir::Db, body: FuncBody<'db>) -> (u32, u32) {
     let stmt_id = body
         .top_level_stmts(db)
@@ -175,6 +187,55 @@ fn relative_span_query_backdates_after_edit_above_def() {
 }
 
 #[test]
+fn editing_leading_comment_invalidates_only_comment_consumers() {
+    let mut db = TestDb::default();
+    let url = "memory:///comment-incr.solc".parse().expect("valid url");
+    let file = SourceFile::new(
+        &db,
+        url,
+        Some("// one\nfunction id(x: word) -> word { return x; }\n".to_owned()),
+    );
+
+    let (before_identity, before_span) = {
+        let function = first_function(&db, file);
+        let def = function.def_id_value(&db);
+        let identity = (
+            def.kind(&db),
+            def.name(&db),
+            def.disambiguator(&db).as_u32(),
+        );
+        let span = function_relative_span(&db, function);
+        assert_eq!(
+            function_leading_comment_text(&db, function),
+            vec![" one".to_owned()]
+        );
+        (identity, span)
+    };
+
+    file.set_content(&mut db).to(Some(
+        "// two\nfunction id(x: word) -> word { return x; }\n".to_owned(),
+    ));
+
+    let function = first_function(&db, file);
+    let def = function.def_id_value(&db);
+    let after_identity = (
+        def.kind(&db),
+        def.name(&db),
+        def.disambiguator(&db).as_u32(),
+    );
+    let _ = db.take_executed();
+    let after_span = function_relative_span(&db, function);
+    let after_comments = function_leading_comment_text(&db, function);
+    let executed = db.take_executed();
+
+    assert_eq!(after_identity, before_identity);
+    assert_eq!(after_span, before_span);
+    assert_eq!(after_comments, vec![" two".to_owned()]);
+    assert_eq!(relative_span_query_executions(&executed), 0);
+    assert_eq!(comment_query_executions(&executed), 1);
+}
+
+#[test]
 fn lambda_body_relative_span_backdates_after_cosmetic_signature_edit() {
     let mut db = TestDb::default();
     let url = "memory:///lambda-incr.solc".parse().expect("valid url");
@@ -254,5 +315,12 @@ fn lambda_span_query_executions(events: &[String]) -> usize {
     events
         .iter()
         .filter(|event| event.contains("lambda_first_stmt_relative_span"))
+        .count()
+}
+
+fn comment_query_executions(events: &[String]) -> usize {
+    events
+        .iter()
+        .filter(|event| event.contains("function_leading_comment_text"))
         .count()
 }

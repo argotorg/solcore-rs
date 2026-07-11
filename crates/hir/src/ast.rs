@@ -12,6 +12,8 @@ pub mod item;
 /// Unresolved type and predicate references.
 pub mod ty;
 
+pub use item::{SourceComment, SourceCommentKind};
+
 /// Interned identifier text.
 ///
 /// `Ident` intentionally stores only the textual name. Source position and

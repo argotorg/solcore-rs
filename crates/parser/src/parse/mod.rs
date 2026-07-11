@@ -25,7 +25,7 @@ use recovery::{
     trace_recovery,
 };
 use stmt::parsed_stmt_parser;
-use tokenize::{tokenize, tokenize_with_base};
+use tokenize::{tokenize_with_base, tokenize_with_comments};
 
 use crate::types::*;
 
@@ -35,7 +35,7 @@ use crate::types::*;
 /// converted into user-facing parse errors. The function never panics on
 /// malformed source.
 pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedTopItem<'src>> {
-    let (tokens, mut errors) = tokenize(src);
+    let (tokens, comments, mut errors) = tokenize_with_comments(src);
     let token_count = tokens.len();
     let stream = chumsky::input::Stream::from_iter(tokens)
         .map((0..src.len()).into(), |(tok, span): (_, _)| (tok, span));
@@ -46,7 +46,8 @@ pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedT
         .parse(stream)
         .into_output_errors();
 
-    let output = output.unwrap_or_default();
+    let mut output = output.unwrap_or_default();
+    attach_leading_comments(src, &comments, &mut output);
     let recovery_spans = output
         .iter()
         .filter_map(|item| match item {
@@ -87,6 +88,118 @@ pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedT
     }
 
     ParseOutput { output, errors }
+}
+
+fn attach_leading_comments<'src>(
+    source: &'src str,
+    comments: &[ParsedSourceComment<'src>],
+    items: &mut [ParsedTopItem<'src>],
+) {
+    for item in items {
+        match item {
+            ParsedTopItem::Function {
+                span,
+                leading_comments,
+                ..
+            } => {
+                *leading_comments = comments_directly_before(source, comments, span.start);
+            }
+            ParsedTopItem::Instance { methods, .. } => {
+                for method in methods {
+                    method.leading_comments =
+                        comments_directly_before(source, comments, method.span.start);
+                }
+            }
+            ParsedTopItem::Contract { items, .. } => {
+                for item in items {
+                    if let ParsedContractItem::Function(function) = item {
+                        function.leading_comments =
+                            comments_directly_before(source, comments, function.span.start);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn comments_directly_before<'src>(
+    source: &'src str,
+    comments: &[ParsedSourceComment<'src>],
+    declaration_start: usize,
+) -> Vec<ParsedSourceComment<'src>> {
+    let mut cursor = declaration_start;
+    let mut attached = Vec::new();
+
+    for comment in comments.iter().rev() {
+        if comment.span.end > cursor {
+            continue;
+        }
+
+        let Some(gap) = source.get(comment.span.end..cursor) else {
+            break;
+        };
+        if !gap.chars().all(char::is_whitespace)
+            || line_break_count(gap) > 1
+            || comment_has_code_before_it_on_line(source, comments, *comment)
+        {
+            break;
+        }
+
+        attached.push(*comment);
+        cursor = comment.span.start;
+    }
+
+    attached.reverse();
+    attached
+}
+
+fn comment_has_code_before_it_on_line(
+    source: &str,
+    comments: &[ParsedSourceComment<'_>],
+    comment: ParsedSourceComment<'_>,
+) -> bool {
+    let line_start = source[..comment.span.start]
+        .rfind(['\n', '\r'])
+        .map_or(0, |index| index + 1);
+    let mut cursor = line_start;
+
+    for previous in comments {
+        if previous.span.start < line_start || previous.span.end > comment.span.start {
+            continue;
+        }
+        if source[cursor..previous.span.start]
+            .chars()
+            .any(|ch| !ch.is_whitespace())
+        {
+            return true;
+        }
+        cursor = previous.span.end;
+    }
+
+    source[cursor..comment.span.start]
+        .chars()
+        .any(|ch| !ch.is_whitespace())
+}
+
+fn line_break_count(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut count = 0;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\n' => {
+                count += 1;
+                index += 1;
+            }
+            b'\r' => {
+                count += 1;
+                index += usize::from(bytes.get(index + 1) == Some(&b'\n')) + 1;
+            }
+            _ => index += 1,
+        }
+    }
+    count
 }
 
 /// Parses statements inside a function or lambda body span.

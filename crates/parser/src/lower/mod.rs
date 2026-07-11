@@ -160,11 +160,18 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                 }
                 ParsedTopItem::Function {
                     span,
+                    leading_comments,
                     sig,
                     body_span,
                 } => {
-                    let function =
-                        lower_function(&mut ctx, span, item::FuncKind::Function, sig, body_span);
+                    let function = lower_function(
+                        &mut ctx,
+                        span,
+                        item::FuncKind::Function,
+                        leading_comments,
+                        sig,
+                        body_span,
+                    );
                     items.push(item::Item::FunctionDef(function));
                 }
                 ParsedTopItem::Error { span } => items.push(item::Item::Error {

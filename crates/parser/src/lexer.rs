@@ -4,7 +4,31 @@
 //! Comments and whitespace are skipped; invalid characters are reported by the
 //! parser's tokenization wrapper so the rest of the grammar can recover.
 
+use std::ops::Range;
+
 use logos::Logos;
+
+/// Additional state collected while lexing.
+///
+/// Comments remain skipped tokens as far as the parser grammar is concerned,
+/// but their source ranges are retained here for declaration trivia lowering.
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct LexerExtras {
+    pub(crate) comments: Vec<LexedComment>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LexedCommentKind {
+    Line,
+    Block,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LexedComment {
+    pub(crate) kind: LexedCommentKind,
+    pub(crate) range: Range<usize>,
+}
 
 /// Lexer error kind.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -26,6 +50,7 @@ pub enum LexError {
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\n\r\f]+")]
 #[logos(error = LexError)]
+#[logos(extras = LexerExtras)]
 pub enum Token<'a> {
     /// `contract`.
     #[token("contract")]
@@ -279,6 +304,11 @@ fn line_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> logos::Skip {
     let remainder = lex.remainder();
     let len = remainder.find('\n').unwrap_or(remainder.len());
     lex.bump(len);
+    let range = lex.span();
+    lex.extras.comments.push(LexedComment {
+        kind: LexedCommentKind::Line,
+        range,
+    });
     logos::Skip
 }
 
@@ -301,6 +331,11 @@ fn block_comment<'a>(lex: &mut logos::Lexer<'a, Token<'a>>) -> Result<logos::Ski
                 i += 2;
                 if depth == 0 {
                     lex.bump(i);
+                    let range = lex.span();
+                    lex.extras.comments.push(LexedComment {
+                        kind: LexedCommentKind::Block,
+                        range,
+                    });
                     return Ok(logos::Skip);
                 }
             }

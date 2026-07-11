@@ -258,6 +258,7 @@ where
         .map_with(|(sig, body_span), e| ParsedFunctionDef {
             span: e.span(),
             kind: FuncKind::Function,
+            leading_comments: Vec::new(),
             sig,
             body_span,
         })
@@ -289,6 +290,7 @@ where
             |(((modifiers, name_span), (params, params_span)), body_span), e| ParsedFunctionDef {
                 span: e.span(),
                 kind: FuncKind::Constructor,
+                leading_comments: Vec::new(),
                 sig: ParsedFuncSig {
                     span: e.span(),
                     type_vars: Vec::new(),
@@ -384,6 +386,7 @@ where
                 ParsedFunctionDef {
                     span: e.span(),
                     kind: FuncKind::Fallback,
+                    leading_comments: Vec::new(),
                     sig: ParsedFuncSig {
                         span: e.span(),
                         type_vars,
@@ -411,6 +414,7 @@ where
     function_def_parser(FunctionContext::Module)
         .map(|def| ParsedTopItem::Function {
             span: def.span,
+            leading_comments: def.leading_comments,
             sig: def.sig,
             body_span: def.body_span,
         })

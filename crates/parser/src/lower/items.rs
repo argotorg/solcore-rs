@@ -515,6 +515,7 @@ pub(super) fn lower_function<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     kind: item::FuncKind,
+    leading_comments: Vec<ParsedSourceComment<'_>>,
     sig: ParsedFuncSig<'_>,
     body_span: LexSpan,
 ) -> item::FunctionDef<'db> {
@@ -547,7 +548,26 @@ pub(super) fn lower_function<'db>(
         pats,
     );
 
-    item::FunctionDef::new(ctx.db, func_def, func_span, kind, lowered_sig, Some(body))
+    let leading_comments = leading_comments
+        .into_iter()
+        .map(|comment| item::SourceComment {
+            kind: match comment.kind {
+                ParsedSourceCommentKind::Line => item::SourceCommentKind::Line,
+                ParsedSourceCommentKind::Block => item::SourceCommentKind::Block,
+            },
+            text: comment.text.to_owned(),
+        })
+        .collect();
+
+    item::FunctionDef::new(
+        ctx.db,
+        func_def,
+        func_span,
+        kind,
+        leading_comments,
+        lowered_sig,
+        Some(body),
+    )
 }
 
 pub(super) fn lower_instance<'db>(
@@ -583,7 +603,14 @@ pub(super) fn lower_instance<'db>(
         methods
             .into_iter()
             .map(|method| {
-                lower_function(ctx, method.span, method.kind, method.sig, method.body_span)
+                lower_function(
+                    ctx,
+                    method.span,
+                    method.kind,
+                    method.leading_comments,
+                    method.sig,
+                    method.body_span,
+                )
             })
             .collect::<Vec<_>>()
     });
@@ -610,6 +637,7 @@ fn lower_contract_item<'db>(
             ctx,
             function.span,
             function.kind,
+            function.leading_comments,
             function.sig,
             function.body_span,
         )),

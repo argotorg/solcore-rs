@@ -122,6 +122,30 @@ pub enum FuncKind {
     Fallback,
 }
 
+/// Lexical form of a source comment attached to a declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum SourceCommentKind {
+    /// A `// ...` comment.
+    Line,
+    /// A `/* ... */` comment.
+    Block,
+}
+
+/// A source comment immediately preceding a declaration.
+///
+/// `text` contains the comment body exactly as written between the delimiters;
+/// it is deliberately not trimmed. Locations are not stored here because a
+/// leading comment begins before the definition anchor. Keeping the comment as
+/// its own tracked field preserves the anchor-relative spans and incremental
+/// identity of the declaration itself.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct SourceComment {
+    /// Whether the source used line or block comment syntax.
+    pub kind: SourceCommentKind,
+    /// Comment contents without the outer `//` or `/* ... */` delimiters.
+    pub text: String,
+}
+
 /// Function, method, constructor, or fallback definition.
 ///
 /// The signature is always present; the body is optional to allow signatures in
@@ -142,6 +166,11 @@ pub struct FunctionDef<'db> {
     #[tracked]
     #[returns(copy)]
     pub kind: FuncKind,
+
+    /// Consecutive source comments directly leading this callable.
+    #[tracked]
+    #[returns(ref)]
+    pub leading_comments: Vec<SourceComment>,
 
     /// Source-level signature.
     #[tracked]

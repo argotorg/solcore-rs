@@ -1,5 +1,6 @@
 use hir::{
     ast::{
+        SourceComment, SourceCommentKind,
         function::{ExprKind, FuncParam, StmtKind},
         item::{ContractItem, FunctionDef, Item, Module},
         ty::TypeRefKind,
@@ -62,6 +63,24 @@ fn top_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> Functi
         .expect("top-level function")
 }
 
+fn contract_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> FunctionDef<'db> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ContractDef(contract) => contract.items(db).iter().find_map(|item| match item {
+                ContractItem::FunctionDef(function)
+                    if (*function.sig(db).name.atom()).text(db) == name =>
+                {
+                    Some(*function)
+                }
+                _ => None,
+            }),
+            _ => None,
+        })
+        .expect("contract function")
+}
+
 #[test]
 fn block_comments_do_not_swallow_following_items_and_unterminated_comments_diagnose() {
     let db = TestDb::default();
@@ -85,6 +104,67 @@ fn block_comments_do_not_swallow_following_items_and_unterminated_comments_diagn
             .iter()
             .any(|message| message == "unterminated block comment")
     );
+}
+
+#[test]
+fn function_hir_retains_only_directly_leading_source_comments() {
+    let db = TestDb::default();
+    let (_, module) = parse_module(
+        &db,
+        "function-comments",
+        r#"
+contract C {
+  // ordinary documentation
+  // #[(0, 1) -> 1]
+  /* block /* nested */ documentation */
+  public function add(x: word, y: word) -> word { return x; }
+
+  function body_comment() {
+    // this belongs to the body
+  }
+  function after_body() {}
+
+  // separated from the declaration
+
+  function after_blank_line() {}
+
+  function trailing_owner() {} // trailing on the prior declaration
+  function after_trailing() {}
+}
+"#,
+    );
+
+    assert_eq!(
+        contract_function(&db, module, "add").leading_comments(&db),
+        &[
+            SourceComment {
+                kind: SourceCommentKind::Line,
+                text: " ordinary documentation".to_owned(),
+            },
+            SourceComment {
+                kind: SourceCommentKind::Line,
+                text: " #[(0, 1) -> 1]".to_owned(),
+            },
+            SourceComment {
+                kind: SourceCommentKind::Block,
+                text: " block /* nested */ documentation ".to_owned(),
+            },
+        ]
+    );
+    for name in [
+        "body_comment",
+        "after_body",
+        "after_blank_line",
+        "trailing_owner",
+        "after_trailing",
+    ] {
+        assert!(
+            contract_function(&db, module, name)
+                .leading_comments(&db)
+                .is_empty(),
+            "{name} unexpectedly received leading comments"
+        );
+    }
 }
 
 #[test]

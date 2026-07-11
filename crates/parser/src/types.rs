@@ -17,6 +17,26 @@ pub(crate) type SpannedStr<'src> = (&'src str, LexSpan);
 /// Parser error type used by Chumsky combinators.
 pub(crate) type ParserErr<'src> = extra::Err<Rich<'src, Token<'src>>>;
 
+/// Lexical form of a parsed source comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ParsedSourceCommentKind {
+    /// A `// ...` comment.
+    Line,
+    /// A `/* ... */` comment.
+    Block,
+}
+
+/// Comment trivia retained while keeping it out of the parser grammar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ParsedSourceComment<'src> {
+    /// Lexical comment form.
+    pub(crate) kind: ParsedSourceCommentKind,
+    /// Exact text between the outer comment delimiters.
+    pub(crate) text: &'src str,
+    /// Absolute span including the comment delimiters.
+    pub(crate) span: LexSpan,
+}
+
 /// User-facing parse error before conversion to HIR diagnostics.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedError {
@@ -161,6 +181,8 @@ pub(crate) enum ParsedTopItem<'src> {
     Function {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the function.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Function signature.
         sig: ParsedFuncSig<'src>,
         /// Absolute span of the body braces.
@@ -370,6 +392,8 @@ pub(crate) struct ParsedFunctionDef<'src> {
     pub(crate) span: LexSpan,
     /// Function kind.
     pub(crate) kind: FuncKind,
+    /// Consecutive comments directly preceding the function.
+    pub(crate) leading_comments: Vec<ParsedSourceComment<'src>>,
     /// Function signature.
     pub(crate) sig: ParsedFuncSig<'src>,
     /// Absolute span of the body braces.
