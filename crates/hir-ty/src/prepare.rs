@@ -341,6 +341,7 @@ fn generated_module_alias_import<'db>(
         db,
         generated_def(db, module, DefKind::Import, alias, fingerprint),
         span,
+        Vec::new(),
         None,
         path.iter()
             .map(|segment| spanned_ident(db, span, segment))
@@ -364,6 +365,7 @@ fn generated_selected_alias_import<'db>(
         db,
         generated_def(db, module, DefKind::Import, alias, fingerprint),
         span,
+        Vec::new(),
         None,
         path.iter()
             .map(|segment| spanned_ident(db, span, segment))
@@ -562,9 +564,11 @@ fn prepare_contract_constructor<'db>(
         db,
         contract_def,
         contract.span(db),
+        contract.leading_comments(db).clone(),
         contract.name_elem(db),
         contract.ty_param_elems(db).clone(),
         contract.fields(db).clone(),
+        contract.field_comments(db).clone(),
         contract_items,
     );
     let mut origins = Vec::new();
@@ -1288,9 +1292,11 @@ fn prepare_contract_dispatch<'db>(
         db,
         contract_def,
         contract.span(db),
+        contract.leading_comments(db).clone(),
         contract.name_elem(db),
         contract.ty_param_elems(db).clone(),
         contract.fields(db).clone(),
+        contract.field_comments(db).clone(),
         contract_items,
     );
     Some(PreparedContractArtifacts {
@@ -1329,7 +1335,9 @@ fn dispatch_name_declarations<'db>(
         db,
         adt_def,
         method.span,
+        Vec::new(),
         spanned_ident(db, method.span, &ty_name),
+        Vec::new(),
         Vec::new(),
         Vec::new(),
     );
@@ -1375,6 +1383,7 @@ fn dispatch_name_declarations<'db>(
         db,
         instance_def,
         method.span,
+        Vec::new(),
         Vec::new(),
         Vec::new(),
         None,
@@ -2033,6 +2042,121 @@ contract C { public function answer(x:uint256) -> uint256 { return x; } }
             prepare_module(&db, prepared.module(&db)).module(&db),
             prepared.module(&db)
         );
+    }
+
+    #[test]
+    fn preparation_preserves_contract_and_field_comments() {
+        let src = r#"
+import std.{*};
+import std.dispatch.{*};
+// contract documentation
+contract C {
+  // stored value documentation
+  stored: word;
+  // constructor documentation
+  constructor() {}
+  // method documentation
+  public function answer(x:uint256) -> uint256 { return x; }
+}
+"#;
+        let (db, file) = db_with_main(src);
+        let source = source_module(&db, file);
+        let prepared = prepare_module(&db, source);
+        let source_contract = first_contract(&db, prepared.source(&db));
+        let effective_contract = first_contract(&db, prepared.module(&db));
+
+        assert_eq!(
+            trimmed_comment_texts(source_contract.leading_comments(&db)),
+            ["contract documentation"]
+        );
+        assert_eq!(
+            effective_contract.leading_comments(&db),
+            source_contract.leading_comments(&db)
+        );
+        assert_eq!(
+            effective_contract.field_comments(&db),
+            source_contract.field_comments(&db)
+        );
+
+        let fields = effective_contract
+            .fields_with_comments(&db)
+            .collect::<Vec<_>>();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(
+            trimmed_comment_texts(fields[0].1),
+            ["stored value documentation"]
+        );
+
+        let mut generated_functions = 0;
+        for item in effective_contract.items(&db) {
+            let ContractItem::FunctionDef(function) = item else {
+                continue;
+            };
+            if prepared
+                .origin_for_def(&db, function.def_id_value(&db))
+                .is_some()
+            {
+                generated_functions += 1;
+                assert!(function.leading_comments(&db).is_empty());
+            }
+        }
+        assert!(generated_functions > 0);
+
+        let mut generated_imports = 0;
+        let mut generated_adts = 0;
+        let mut generated_instances = 0;
+        for item in prepared.module(&db).items(&db) {
+            match item {
+                Item::Import(import)
+                    if matches!(
+                        import.def_id(&db).fingerprint(&db).as_deref(),
+                        Some(
+                            STD_MODULE_IMPORT_FINGERPRINT
+                                | STD_DISPATCH_MODULE_IMPORT_FINGERPRINT
+                                | SIG_STRING_IMPORT_FINGERPRINT
+                        )
+                    ) =>
+                {
+                    generated_imports += 1;
+                    assert!(import.leading_comments(&db).is_empty());
+                }
+                Item::AdtDef(adt)
+                    if prepared
+                        .origin_for_def(&db, adt.def_id_value(&db))
+                        .is_some() =>
+                {
+                    generated_adts += 1;
+                    assert!(adt.leading_comments(&db).is_empty());
+                    assert_eq!(adt.ctors(&db).len(), adt.ctor_comments(&db).len());
+                    assert!(
+                        adt.ctors_with_comments(&db)
+                            .all(|(_, comments)| comments.is_empty())
+                    );
+                }
+                Item::InstanceDef(instance)
+                    if prepared
+                        .origin_for_def(&db, instance.def_id_value(&db))
+                        .is_some() =>
+                {
+                    generated_instances += 1;
+                    assert!(instance.leading_comments(&db).is_empty());
+                    assert!(
+                        instance
+                            .methods(&db)
+                            .iter()
+                            .all(|method| method.leading_comments(&db).is_empty())
+                    );
+                }
+                _ => {}
+            }
+        }
+        assert!(generated_imports > 0);
+        assert!(generated_adts > 0);
+        assert!(generated_instances > 0);
+    }
+
+    fn trimmed_comment_texts(comments: &[hir::ast::SourceComment]) -> Vec<&str> {
+        comments.iter().map(|comment| comment.text.trim()).collect()
     }
 
     #[test]

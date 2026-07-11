@@ -34,6 +34,11 @@ pub struct AdtDef<'db> {
     #[returns(copy)]
     pub span: Span<'db>,
 
+    /// Consecutive source comments directly leading this declaration.
+    #[tracked]
+    #[returns(ref)]
+    pub leading_comments: Vec<SourceComment>,
+
     /// Declared type name.
     #[tracked]
     pub name: SpannedElem<'db, Ident<'db>>,
@@ -47,6 +52,15 @@ pub struct AdtDef<'db> {
     #[tracked]
     #[returns(ref)]
     pub ctors: Vec<AdtCtor<'db>>,
+
+    /// Leading comments for each constructor, parallel to [`Self::ctors`].
+    ///
+    /// The lowerer maintains the invariant that both vectors have equal
+    /// lengths. Keeping the payload in a separate tracked field distinguishes
+    /// documentation data from semantic constructor data.
+    #[tracked]
+    #[returns(ref)]
+    pub ctor_comments: Vec<Vec<SourceComment>>,
 }
 
 impl<'db> Spanned<'db> for AdtDef<'db> {
@@ -56,6 +70,14 @@ impl<'db> Spanned<'db> for AdtDef<'db> {
 }
 
 impl<'db> AdtDef<'db> {
+    fn assert_comment_alignment(&self, db: &'db dyn Db) {
+        assert_eq!(
+            self.ctors(db).len(),
+            self.ctor_comments(db).len(),
+            "ADT constructors and constructor comments must remain aligned"
+        );
+    }
+
     /// Returns the stable definition identity for this ADT.
     pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
         AdtDef::def_id(*self, db)
@@ -69,6 +91,27 @@ impl<'db> AdtDef<'db> {
     /// Returns type parameters with their binder spans.
     pub fn ty_param_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
         AdtDef::ty_params(*self, db)
+    }
+
+    /// Returns leading comments for the constructor at `index`.
+    pub fn ctor_leading_comments(
+        &self,
+        db: &'db dyn Db,
+        index: usize,
+    ) -> Option<&'db [SourceComment]> {
+        self.assert_comment_alignment(db);
+        self.ctor_comments(db).get(index).map(Vec::as_slice)
+    }
+
+    /// Iterates over constructors paired with their leading comments.
+    pub fn ctors_with_comments(
+        &self,
+        db: &'db dyn Db,
+    ) -> impl ExactSizeIterator<Item = (&'db AdtCtor<'db>, &'db [SourceComment])> + 'db {
+        self.assert_comment_alignment(db);
+        self.ctors(db)
+            .iter()
+            .zip(self.ctor_comments(db).iter().map(Vec::as_slice))
     }
 }
 
@@ -135,15 +178,29 @@ pub enum SourceCommentKind {
 ///
 /// `text` contains the comment body exactly as written between the delimiters;
 /// it is deliberately not trimmed. Locations are not stored here because a
-/// leading comment begins before the definition anchor. Keeping the comment as
-/// its own tracked field preserves the anchor-relative spans and incremental
-/// identity of the declaration itself.
+/// leading comment begins before the definition anchor. Keeping comment
+/// payloads in their own tracked fields lets consumers depend on documentation
+/// independently from the corresponding semantic item data when its spans are
+/// otherwise unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct SourceComment {
     /// Whether the source used line or block comment syntax.
     pub kind: SourceCommentKind,
     /// Comment contents without the outer `//` or `/* ... */` delimiters.
     pub text: String,
+}
+
+/// Interned source comments used by recovery items that have no tracked node.
+///
+/// Ordinary declarations store their comments in a tracked field. Recovery
+/// placeholders live directly in [`Item`] and [`ContractItem`], whose handles
+/// are intentionally `Copy`; interning keeps those enum values lightweight
+/// while retaining comments for tooling that also inspects malformed input.
+#[salsa::interned(debug)]
+pub struct SourceComments<'db> {
+    /// Comments in source order.
+    #[returns(ref)]
+    pub comments: Vec<SourceComment>,
 }
 
 /// Function, method, constructor, or fallback definition.
@@ -209,6 +266,11 @@ pub struct TypeAlias<'db> {
     #[returns(copy)]
     pub span: Span<'db>,
 
+    /// Consecutive source comments directly leading this declaration.
+    #[tracked]
+    #[returns(ref)]
+    pub leading_comments: Vec<SourceComment>,
+
     /// Alias name.
     #[tracked]
     pub name: SpannedElem<'db, Ident<'db>>,
@@ -262,6 +324,11 @@ pub struct ClassDef<'db> {
     #[returns(copy)]
     pub span: Span<'db>,
 
+    /// Consecutive source comments directly leading this declaration.
+    #[tracked]
+    #[returns(ref)]
+    pub leading_comments: Vec<SourceComment>,
+
     /// Type variables introduced by the class head.
     #[tracked]
     #[returns(ref)]
@@ -280,6 +347,15 @@ pub struct ClassDef<'db> {
     #[tracked]
     #[returns(ref)]
     pub methods: Vec<FuncSig<'db>>,
+
+    /// Leading comments for each method, parallel to [`Self::methods`].
+    ///
+    /// The lowerer maintains the invariant that both vectors have equal
+    /// lengths. Keeping the payload in a separate tracked field distinguishes
+    /// documentation data from semantic method signatures.
+    #[tracked]
+    #[returns(ref)]
+    pub method_comments: Vec<Vec<SourceComment>>,
 }
 
 impl<'db> Spanned<'db> for ClassDef<'db> {
@@ -289,6 +365,14 @@ impl<'db> Spanned<'db> for ClassDef<'db> {
 }
 
 impl<'db> ClassDef<'db> {
+    fn assert_comment_alignment(&self, db: &'db dyn Db) {
+        assert_eq!(
+            self.methods(db).len(),
+            self.method_comments(db).len(),
+            "class methods and method comments must remain aligned"
+        );
+    }
+
     /// Returns the stable definition identity for this class.
     pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
         ClassDef::def_id(*self, db)
@@ -297,6 +381,27 @@ impl<'db> ClassDef<'db> {
     /// Returns type variables with their binder spans.
     pub fn type_var_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
         ClassDef::type_vars(*self, db)
+    }
+
+    /// Returns leading comments for the method at `index`.
+    pub fn method_leading_comments(
+        &self,
+        db: &'db dyn Db,
+        index: usize,
+    ) -> Option<&'db [SourceComment]> {
+        self.assert_comment_alignment(db);
+        self.method_comments(db).get(index).map(Vec::as_slice)
+    }
+
+    /// Iterates over method signatures paired with their leading comments.
+    pub fn methods_with_comments(
+        &self,
+        db: &'db dyn Db,
+    ) -> impl ExactSizeIterator<Item = (&'db FuncSig<'db>, &'db [SourceComment])> + 'db {
+        self.assert_comment_alignment(db);
+        self.methods(db)
+            .iter()
+            .zip(self.method_comments(db).iter().map(Vec::as_slice))
     }
 }
 
@@ -315,6 +420,11 @@ pub struct InstanceDef<'db> {
     #[tracked]
     #[returns(copy)]
     pub span: Span<'db>,
+
+    /// Consecutive source comments directly leading this declaration.
+    #[tracked]
+    #[returns(ref)]
+    pub leading_comments: Vec<SourceComment>,
 
     /// Instance type variables.
     #[tracked]
@@ -439,7 +549,23 @@ pub enum ContractItem<'db> {
     Error {
         /// Span covering the recovered invalid contract item.
         span: Span<'db>,
+        /// Consecutive source comments directly leading the invalid item.
+        leading_comments: SourceComments<'db>,
     },
+}
+
+impl<'db> ContractItem<'db> {
+    /// Returns consecutive source comments directly leading this item.
+    pub fn leading_comments(self, db: &'db dyn Db) -> &'db [SourceComment] {
+        match self {
+            Self::FunctionDef(def) => def.leading_comments(db),
+            Self::TypeAlias(def) => def.leading_comments(db),
+            Self::AdtDef(def) => def.leading_comments(db),
+            Self::Error {
+                leading_comments, ..
+            } => leading_comments.comments(db),
+        }
+    }
 }
 
 impl<'db> Spanned<'db> for ContractItem<'db> {
@@ -448,7 +574,7 @@ impl<'db> Spanned<'db> for ContractItem<'db> {
             Self::FunctionDef(def) => def.span(db),
             Self::TypeAlias(def) => def.span(db),
             Self::AdtDef(def) => def.span(db),
-            Self::Error { span } => *span,
+            Self::Error { span, .. } => *span,
         }
     }
 }
@@ -470,6 +596,11 @@ pub struct ContractDef<'db> {
     #[returns(copy)]
     pub span: Span<'db>,
 
+    /// Consecutive source comments directly leading this declaration.
+    #[tracked]
+    #[returns(ref)]
+    pub leading_comments: Vec<SourceComment>,
+
     /// Contract name.
     #[tracked]
     pub name: SpannedElem<'db, Ident<'db>>,
@@ -484,6 +615,15 @@ pub struct ContractDef<'db> {
     #[returns(ref)]
     pub fields: Vec<FieldDef<'db>>,
 
+    /// Leading comments for each field, parallel to [`Self::fields`].
+    ///
+    /// The lowerer maintains the invariant that both vectors have equal
+    /// lengths. Keeping the payload in a separate tracked field distinguishes
+    /// documentation data from semantic field data.
+    #[tracked]
+    #[returns(ref)]
+    pub field_comments: Vec<Vec<SourceComment>>,
+
     /// Nested contract items in source order.
     #[tracked]
     #[returns(ref)]
@@ -497,6 +637,14 @@ impl<'db> Spanned<'db> for ContractDef<'db> {
 }
 
 impl<'db> ContractDef<'db> {
+    fn assert_comment_alignment(&self, db: &'db dyn Db) {
+        assert_eq!(
+            self.fields(db).len(),
+            self.field_comments(db).len(),
+            "contract fields and field comments must remain aligned"
+        );
+    }
+
     /// Returns the stable definition identity for this contract.
     pub fn def_id_value(&self, db: &'db dyn Db) -> DefId<'db> {
         ContractDef::def_id(*self, db)
@@ -510,6 +658,27 @@ impl<'db> ContractDef<'db> {
     /// Returns type parameters with their binder spans.
     pub fn ty_param_elems(&self, db: &'db dyn Db) -> &Vec<SpannedElem<'db, Ident<'db>>> {
         ContractDef::ty_params(*self, db)
+    }
+
+    /// Returns leading comments for the field at `index`.
+    pub fn field_leading_comments(
+        &self,
+        db: &'db dyn Db,
+        index: usize,
+    ) -> Option<&'db [SourceComment]> {
+        self.assert_comment_alignment(db);
+        self.field_comments(db).get(index).map(Vec::as_slice)
+    }
+
+    /// Iterates over fields paired with their leading comments.
+    pub fn fields_with_comments(
+        &self,
+        db: &'db dyn Db,
+    ) -> impl ExactSizeIterator<Item = (&'db FieldDef<'db>, &'db [SourceComment])> + 'db {
+        self.assert_comment_alignment(db);
+        self.fields(db)
+            .iter()
+            .zip(self.field_comments(db).iter().map(Vec::as_slice))
     }
 
     /// Returns whether this contract supplies its own ordinary runtime entry.
@@ -597,6 +766,11 @@ pub struct Import<'db> {
     #[returns(copy)]
     pub span: Span<'db>,
 
+    /// Consecutive source comments directly leading this declaration.
+    #[tracked]
+    #[returns(ref)]
+    pub leading_comments: Vec<SourceComment>,
+
     /// Span of the external-library marker when present.
     #[tracked]
     #[returns(copy)]
@@ -670,6 +844,11 @@ pub struct Export<'db> {
     #[returns(copy)]
     pub span: Span<'db>,
 
+    /// Consecutive source comments directly leading this declaration.
+    #[tracked]
+    #[returns(ref)]
+    pub leading_comments: Vec<SourceComment>,
+
     /// Export payload.
     #[tracked]
     #[returns(ref)]
@@ -697,6 +876,11 @@ pub struct Pragma<'db> {
     #[tracked]
     #[returns(copy)]
     pub span: Span<'db>,
+
+    /// Consecutive source comments directly leading this declaration.
+    #[tracked]
+    #[returns(ref)]
+    pub leading_comments: Vec<SourceComment>,
 
     /// Pragma name.
     #[tracked]
@@ -739,7 +923,29 @@ pub enum Item<'db> {
     Error {
         /// Span covering the recovered invalid top-level item.
         span: Span<'db>,
+        /// Consecutive source comments directly leading the invalid item.
+        leading_comments: SourceComments<'db>,
     },
+}
+
+impl<'db> Item<'db> {
+    /// Returns consecutive source comments directly leading this item.
+    pub fn leading_comments(self, db: &'db dyn Db) -> &'db [SourceComment] {
+        match self {
+            Self::FunctionDef(def) => def.leading_comments(db),
+            Self::TypeAlias(def) => def.leading_comments(db),
+            Self::AdtDef(def) => def.leading_comments(db),
+            Self::ClassDef(def) => def.leading_comments(db),
+            Self::InstanceDef(def) => def.leading_comments(db),
+            Self::ContractDef(def) => def.leading_comments(db),
+            Self::Import(def) => def.leading_comments(db),
+            Self::Export(def) => def.leading_comments(db),
+            Self::Pragma(def) => def.leading_comments(db),
+            Self::Error {
+                leading_comments, ..
+            } => leading_comments.comments(db),
+        }
+    }
 }
 
 impl<'db> Spanned<'db> for Item<'db> {
@@ -754,7 +960,7 @@ impl<'db> Spanned<'db> for Item<'db> {
             Self::Import(def) => def.span(db),
             Self::Export(def) => def.span(db),
             Self::Pragma(def) => def.span(db),
-            Self::Error { span } => *span,
+            Self::Error { span, .. } => *span,
         }
     }
 }

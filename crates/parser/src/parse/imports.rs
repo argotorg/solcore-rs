@@ -144,6 +144,7 @@ where
         .map_with(
             |(((external, path), selector), hiding), e| ParsedTopItem::Import {
                 span: e.span(),
+                leading_comments: Vec::new(),
                 external,
                 path,
                 alias: None,
@@ -160,6 +161,7 @@ where
         .then_ignore(top_level_semicolon_parser("import declaration"))
         .map_with(|((external, path), alias), e| ParsedTopItem::Import {
             span: e.span(),
+            leading_comments: Vec::new(),
             external,
             path,
             alias: Some(alias),
@@ -173,6 +175,7 @@ where
         .then_ignore(top_level_semicolon_parser("import declaration"))
         .map_with(|(external, path), e| ParsedTopItem::Import {
             span: e.span(),
+            leading_comments: Vec::new(),
             external,
             path,
             alias: None,
@@ -237,6 +240,7 @@ where
         .then_ignore(just(Token::Semi))
         .map_with(|names, e| ParsedTopItem::Export {
             span: e.span(),
+            leading_comments: Vec::new(),
             kind: ParsedExportKind::List(names),
         });
     let items_from = just(Token::Export)
@@ -246,6 +250,7 @@ where
         .then_ignore(just(Token::Semi))
         .map_with(|(path, names), e| ParsedTopItem::Export {
             span: e.span(),
+            leading_comments: Vec::new(),
             kind: ParsedExportKind::ItemsFrom(path, names),
         });
     let module_as = just(Token::Export)
@@ -255,6 +260,7 @@ where
         .then_ignore(just(Token::Semi))
         .map_with(|(path, alias), e| ParsedTopItem::Export {
             span: e.span(),
+            leading_comments: Vec::new(),
             kind: ParsedExportKind::ModuleAs(path, alias),
         });
     let module = just(Token::Export)
@@ -262,6 +268,7 @@ where
         .then_ignore(just(Token::Semi))
         .map_with(|path, e| ParsedTopItem::Export {
             span: e.span(),
+            leading_comments: Vec::new(),
             kind: ParsedExportKind::Module(path),
         });
 
@@ -286,6 +293,7 @@ where
         .then_ignore(just(Token::Semi))
         .map_with(|(name, items), e| ParsedTopItem::Pragma {
             span: e.span(),
+            leading_comments: Vec::new(),
             name,
             items,
         })

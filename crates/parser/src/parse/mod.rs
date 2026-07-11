@@ -51,7 +51,7 @@ pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedT
     let recovery_spans = output
         .iter()
         .filter_map(|item| match item {
-            ParsedTopItem::Error { span } => Some(*span),
+            ParsedTopItem::Error { span, .. } => Some(*span),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -96,13 +96,68 @@ fn attach_leading_comments<'src>(
     items: &mut [ParsedTopItem<'src>],
 ) {
     for item in items {
-        match item {
-            ParsedTopItem::Function {
+        let (span, leading_comments) = match item {
+            ParsedTopItem::Import {
                 span,
                 leading_comments,
                 ..
-            } => {
-                *leading_comments = comments_directly_before(source, comments, span.start);
+            }
+            | ParsedTopItem::Export {
+                span,
+                leading_comments,
+                ..
+            }
+            | ParsedTopItem::Pragma {
+                span,
+                leading_comments,
+                ..
+            }
+            | ParsedTopItem::TypeAlias {
+                span,
+                leading_comments,
+                ..
+            }
+            | ParsedTopItem::Adt {
+                span,
+                leading_comments,
+                ..
+            }
+            | ParsedTopItem::Class {
+                span,
+                leading_comments,
+                ..
+            }
+            | ParsedTopItem::Instance {
+                span,
+                leading_comments,
+                ..
+            }
+            | ParsedTopItem::Contract {
+                span,
+                leading_comments,
+                ..
+            }
+            | ParsedTopItem::Function {
+                span,
+                leading_comments,
+                ..
+            }
+            | ParsedTopItem::Error {
+                span,
+                leading_comments,
+            } => (*span, leading_comments),
+        };
+        *leading_comments = comments_directly_before(source, comments, span.start);
+
+        match item {
+            ParsedTopItem::Adt { ctors, .. } => {
+                attach_adt_constructor_comments(source, comments, ctors);
+            }
+            ParsedTopItem::Class { methods, .. } => {
+                for method in methods {
+                    method.leading_comments =
+                        comments_directly_before(source, comments, method.sig.span.start);
+                }
             }
             ParsedTopItem::Instance { methods, .. } => {
                 for method in methods {
@@ -110,11 +165,34 @@ fn attach_leading_comments<'src>(
                         comments_directly_before(source, comments, method.span.start);
                 }
             }
-            ParsedTopItem::Contract { items, .. } => {
+            ParsedTopItem::Contract { fields, items, .. } => {
+                for field in fields {
+                    field.leading_comments =
+                        comments_directly_before(source, comments, field.span.start);
+                }
                 for item in items {
-                    if let ParsedContractItem::Function(function) = item {
-                        function.leading_comments =
-                            comments_directly_before(source, comments, function.span.start);
+                    let (span, leading_comments) = match item {
+                        ParsedContractItem::Function(function) => {
+                            (function.span, &mut function.leading_comments)
+                        }
+                        ParsedContractItem::TypeAlias {
+                            span,
+                            leading_comments,
+                            ..
+                        }
+                        | ParsedContractItem::Adt {
+                            span,
+                            leading_comments,
+                            ..
+                        }
+                        | ParsedContractItem::Error {
+                            span,
+                            leading_comments,
+                        } => (*span, leading_comments),
+                    };
+                    *leading_comments = comments_directly_before(source, comments, span.start);
+                    if let ParsedContractItem::Adt { ctors, .. } = item {
+                        attach_adt_constructor_comments(source, comments, ctors);
                     }
                 }
             }
@@ -123,25 +201,84 @@ fn attach_leading_comments<'src>(
     }
 }
 
+fn attach_adt_constructor_comments<'src>(
+    source: &'src str,
+    comments: &[ParsedSourceComment<'src>],
+    ctors: &mut [ParsedAdtCtor<'src>],
+) {
+    for ctor in ctors {
+        let introducer = ctor
+            .introducer
+            .expect("ADT parser must retain each constructor introducer");
+        let trailing_comments =
+            comments_directly_after_introducer(source, comments, introducer, ctor.span.start);
+        let next_start = trailing_comments
+            .first()
+            .map_or(ctor.span.start, |comment| comment.span.start);
+        let introducer_gap_is_direct = source
+            .get(introducer.end..next_start)
+            .is_some_and(|gap| gap.chars().all(char::is_whitespace) && line_break_count(gap) <= 1);
+
+        let mut leading_comments = if introducer_gap_is_direct {
+            comments_directly_before(source, comments, introducer.start)
+        } else {
+            Vec::new()
+        };
+        leading_comments.extend(trailing_comments);
+        ctor.leading_comments = leading_comments;
+    }
+}
+
 fn comments_directly_before<'src>(
     source: &'src str,
     comments: &[ParsedSourceComment<'src>],
     declaration_start: usize,
 ) -> Vec<ParsedSourceComment<'src>> {
+    comments_directly_before_since(source, comments, declaration_start, 0, None)
+}
+
+fn comments_directly_after_introducer<'src>(
+    source: &'src str,
+    comments: &[ParsedSourceComment<'src>],
+    introducer: LexSpan,
+    declaration_start: usize,
+) -> Vec<ParsedSourceComment<'src>> {
+    comments_directly_before_since(
+        source,
+        comments,
+        declaration_start,
+        introducer.end,
+        Some(introducer.end),
+    )
+}
+
+fn comments_directly_before_since<'src>(
+    source: &'src str,
+    comments: &[ParsedSourceComment<'src>],
+    declaration_start: usize,
+    minimum_start: usize,
+    allowed_line_prefix_end: Option<usize>,
+) -> Vec<ParsedSourceComment<'src>> {
     let mut cursor = declaration_start;
     let mut attached = Vec::new();
+    let first_candidate = comments.partition_point(|comment| comment.span.start < minimum_start);
+    let past_last_candidate =
+        comments.partition_point(|comment| comment.span.end <= declaration_start);
 
-    for comment in comments.iter().rev() {
-        if comment.span.end > cursor {
-            continue;
-        }
+    for comment in comments[first_candidate..past_last_candidate].iter().rev() {
+        debug_assert!(comment.span.end <= cursor);
 
         let Some(gap) = source.get(comment.span.end..cursor) else {
             break;
         };
         if !gap.chars().all(char::is_whitespace)
             || line_break_count(gap) > 1
-            || comment_has_code_before_it_on_line(source, comments, *comment)
+            || comment_has_code_before_it_on_line(
+                source,
+                comments,
+                *comment,
+                allowed_line_prefix_end,
+            )
         {
             break;
         }
@@ -158,13 +295,19 @@ fn comment_has_code_before_it_on_line(
     source: &str,
     comments: &[ParsedSourceComment<'_>],
     comment: ParsedSourceComment<'_>,
+    allowed_line_prefix_end: Option<usize>,
 ) -> bool {
     let line_start = source[..comment.span.start]
         .rfind(['\n', '\r'])
         .map_or(0, |index| index + 1);
-    let mut cursor = line_start;
+    let mut cursor = allowed_line_prefix_end
+        .filter(|end| line_start <= *end && *end <= comment.span.start)
+        .unwrap_or(line_start);
+    let first_candidate = comments.partition_point(|previous| previous.span.end <= cursor);
+    let past_last_candidate =
+        comments.partition_point(|previous| previous.span.start < comment.span.start);
 
-    for previous in comments {
+    for previous in &comments[first_candidate..past_last_candidate] {
         if previous.span.start < line_start || previous.span.end > comment.span.start {
             continue;
         }

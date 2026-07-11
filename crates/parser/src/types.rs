@@ -37,6 +37,19 @@ pub(crate) struct ParsedSourceComment<'src> {
     pub(crate) span: LexSpan,
 }
 
+/// Source metadata shared by item lowerers.
+///
+/// Parsed item variants keep these fields directly so the grammar remains
+/// convenient to destructure. Lowering groups them when an item's payload
+/// would otherwise exceed a readable argument count.
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedItemMeta<'src> {
+    /// Span covering the declaration.
+    pub(crate) span: LexSpan,
+    /// Consecutive comments directly preceding the declaration.
+    pub(crate) leading_comments: Vec<ParsedSourceComment<'src>>,
+}
+
 /// User-facing parse error before conversion to HIR diagnostics.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedError {
@@ -87,6 +100,8 @@ pub(crate) enum ParsedTopItem<'src> {
     Import {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Span of an external-library marker.
         external: Option<LexSpan>,
         /// Imported module path.
@@ -102,6 +117,8 @@ pub(crate) enum ParsedTopItem<'src> {
     Export {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Export payload.
         kind: ParsedExportKind<'src>,
     },
@@ -109,6 +126,8 @@ pub(crate) enum ParsedTopItem<'src> {
     Pragma {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Pragma name.
         name: SpannedStr<'src>,
         /// Pragma items.
@@ -118,6 +137,8 @@ pub(crate) enum ParsedTopItem<'src> {
     TypeAlias {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Alias name.
         name: SpannedStr<'src>,
         /// Type parameters.
@@ -129,6 +150,8 @@ pub(crate) enum ParsedTopItem<'src> {
     Adt {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Type name.
         name: SpannedStr<'src>,
         /// Type parameters.
@@ -140,19 +163,23 @@ pub(crate) enum ParsedTopItem<'src> {
     Class {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Type variables introduced by `forall`.
         type_vars: Vec<SpannedStr<'src>>,
         /// Superclass predicates.
         super_preds: Vec<ParsedPred<'src>>,
         /// Class head predicate.
         head: ParsedPred<'src>,
-        /// Method signatures.
-        methods: Vec<ParsedFuncSig<'src>>,
+        /// Method signature declarations.
+        methods: Vec<ParsedClassMethod<'src>>,
     },
     /// Instance declaration.
     Instance {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Type variables introduced by `forall`.
         type_vars: Vec<SpannedStr<'src>>,
         /// Context predicates.
@@ -168,6 +195,8 @@ pub(crate) enum ParsedTopItem<'src> {
     Contract {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Contract name.
         name: SpannedStr<'src>,
         /// Contract type parameters.
@@ -192,6 +221,8 @@ pub(crate) enum ParsedTopItem<'src> {
     Error {
         /// Span covering the recovered invalid item.
         span: LexSpan,
+        /// Consecutive comments directly preceding the recovered item.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
     },
 }
 
@@ -330,10 +361,23 @@ pub(crate) struct ParsedPred<'src> {
 pub(crate) struct ParsedAdtCtor<'src> {
     /// Span covering the constructor.
     pub(crate) span: LexSpan,
+    /// `=` or `|` token introducing this constructor, filled by the ADT parser.
+    pub(crate) introducer: Option<LexSpan>,
+    /// Consecutive comments directly preceding the constructor.
+    pub(crate) leading_comments: Vec<ParsedSourceComment<'src>>,
     /// Constructor name.
     pub(crate) name: SpannedStr<'src>,
     /// Field types.
     pub(crate) fields: Vec<ParsedTy<'src>>,
+}
+
+/// Parsed method signature declared by a class.
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedClassMethod<'src> {
+    /// Consecutive comments directly preceding the method signature.
+    pub(crate) leading_comments: Vec<ParsedSourceComment<'src>>,
+    /// Method signature.
+    pub(crate) sig: ParsedFuncSig<'src>,
 }
 
 /// Parsed function parameter.
@@ -405,6 +449,8 @@ pub(crate) struct ParsedFunctionDef<'src> {
 pub(crate) struct ParsedFieldDef<'src> {
     /// Span covering the field declaration.
     pub(crate) span: LexSpan,
+    /// Consecutive comments directly preceding the field.
+    pub(crate) leading_comments: Vec<ParsedSourceComment<'src>>,
     /// Field name.
     pub(crate) name: SpannedStr<'src>,
     /// Field type.
@@ -422,6 +468,8 @@ pub(crate) enum ParsedContractItem<'src> {
     TypeAlias {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// Alias name.
         name: SpannedStr<'src>,
         /// Type parameters.
@@ -433,6 +481,8 @@ pub(crate) enum ParsedContractItem<'src> {
     Adt {
         /// Span covering the declaration.
         span: LexSpan,
+        /// Consecutive comments directly preceding the declaration.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
         /// ADT name.
         name: SpannedStr<'src>,
         /// Type parameters.
@@ -444,6 +494,8 @@ pub(crate) enum ParsedContractItem<'src> {
     Error {
         /// Span covering the malformed contract item.
         span: LexSpan,
+        /// Consecutive comments directly preceding the recovered item.
+        leading_comments: Vec<ParsedSourceComment<'src>>,
     },
 }
 

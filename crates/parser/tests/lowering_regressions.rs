@@ -81,6 +81,16 @@ fn contract_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> F
         .expect("contract function")
 }
 
+fn assert_comment_texts(comments: &[SourceComment], expected: &[&str]) {
+    assert_eq!(
+        comments
+            .iter()
+            .map(|comment| comment.text.as_str())
+            .collect::<Vec<_>>(),
+        expected
+    );
+}
+
 #[test]
 fn block_comments_do_not_swallow_following_items_and_unterminated_comments_diagnose() {
     let db = TestDb::default();
@@ -165,6 +175,330 @@ contract C {
             "{name} unexpectedly received leading comments"
         );
     }
+}
+
+#[test]
+fn hir_retains_comments_for_every_item_like_declaration() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "all-item-comments",
+        r#"
+// top import
+import dependency;
+// top export
+export dependency;
+// top pragma
+pragma feature Example;
+// top alias
+type Alias = word;
+// top data
+data TopData = // first constructor after equals
+  First
+  // second constructor before separator
+  | Second;
+// top class
+class a:Documented {
+  // class method
+  function describe(x: a) -> word;
+}
+// top instance
+instance word:Documented {
+  // instance method
+  function describe(x: word) -> word { return x; }
+}
+// top contract
+contract C {
+  // contract field
+  value: word;
+  // contract alias
+  type LocalAlias = word;
+  // contract data
+  data LocalData =
+    // local first constructor
+    LocalFirst
+    | // local second constructor after separator
+      LocalSecond;
+  // contract constructor
+  constructor() {}
+  // contract fallback
+  fallback() -> () {}
+  // contract function
+  function get() -> word { return value; }
+}
+// top function
+function top() {}
+"#,
+    );
+    let diagnostics = diagnostics(&db, file);
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics: {diagnostics:#?}"
+    );
+
+    let expected_top_comments = [
+        " top import",
+        " top export",
+        " top pragma",
+        " top alias",
+        " top data",
+        " top class",
+        " top instance",
+        " top contract",
+        " top function",
+    ];
+    assert_eq!(module.items(&db).len(), expected_top_comments.len());
+    for (item, expected) in module.items(&db).iter().zip(expected_top_comments) {
+        assert_comment_texts(item.leading_comments(&db), &[expected]);
+    }
+
+    let top_adt = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::AdtDef(adt) => Some(*adt),
+            _ => None,
+        })
+        .expect("top-level ADT");
+    assert_eq!(top_adt.ctors_with_comments(&db).len(), 2);
+    assert_comment_texts(
+        top_adt.ctor_leading_comments(&db, 0).expect("first ctor"),
+        &[" first constructor after equals"],
+    );
+    assert_comment_texts(
+        top_adt.ctor_leading_comments(&db, 1).expect("second ctor"),
+        &[" second constructor before separator"],
+    );
+
+    let class = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ClassDef(class) => Some(*class),
+            _ => None,
+        })
+        .expect("class");
+    assert_eq!(class.methods_with_comments(&db).len(), 1);
+    assert_comment_texts(
+        class.method_leading_comments(&db, 0).expect("class method"),
+        &[" class method"],
+    );
+
+    let instance = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::InstanceDef(instance) => Some(*instance),
+            _ => None,
+        })
+        .expect("instance");
+    assert_comment_texts(
+        instance.methods(&db)[0].leading_comments(&db),
+        &[" instance method"],
+    );
+
+    let contract = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ContractDef(contract) => Some(*contract),
+            _ => None,
+        })
+        .expect("contract");
+    assert_eq!(contract.fields_with_comments(&db).len(), 1);
+    assert_comment_texts(
+        contract
+            .field_leading_comments(&db, 0)
+            .expect("contract field"),
+        &[" contract field"],
+    );
+
+    let expected_contract_item_comments = [
+        " contract alias",
+        " contract data",
+        " contract constructor",
+        " contract fallback",
+        " contract function",
+    ];
+    assert_eq!(
+        contract.items(&db).len(),
+        expected_contract_item_comments.len()
+    );
+    for (item, expected) in contract
+        .items(&db)
+        .iter()
+        .zip(expected_contract_item_comments)
+    {
+        assert_comment_texts(item.leading_comments(&db), &[expected]);
+    }
+
+    let local_adt = contract
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            ContractItem::AdtDef(adt) => Some(*adt),
+            _ => None,
+        })
+        .expect("contract-local ADT");
+    assert_eq!(local_adt.ctors_with_comments(&db).len(), 2);
+    assert_comment_texts(
+        local_adt
+            .ctor_leading_comments(&db, 0)
+            .expect("local first ctor"),
+        &[" local first constructor"],
+    );
+    assert_comment_texts(
+        local_adt
+            .ctor_leading_comments(&db, 1)
+            .expect("local second ctor"),
+        &[" local second constructor after separator"],
+    );
+}
+
+#[test]
+fn item_comments_do_not_cross_blank_lines_trailing_code_or_bodies() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "item-comment-boundaries",
+        r#"
+type Owner = word; // trailing top-level comment
+data AfterTrailing;
+// separated top-level comment
+
+class a:Boundary {
+  // separated method comment
+
+  function method(x: a) -> word;
+}
+contract C {
+  first: word; // trailing field comment
+  type AfterTrailingField = word;
+  // separated field comment
+
+  second: word;
+  data Nested = First // trailing constructor comment
+    | Second
+    // separated from the constructor name by a blank line after `|`
+    |
+
+    Third;
+  function body_owner() {
+    // body-only comment
+  }
+  type AfterBody = word;
+}
+"#,
+    );
+    let diagnostics = diagnostics(&db, file);
+    assert!(
+        diagnostics.is_empty(),
+        "unexpected diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        module
+            .items(&db)
+            .iter()
+            .all(|item| item.leading_comments(&db).is_empty())
+    );
+
+    let class = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ClassDef(class) => Some(*class),
+            _ => None,
+        })
+        .expect("class");
+    assert!(
+        class
+            .method_leading_comments(&db, 0)
+            .expect("class method")
+            .is_empty()
+    );
+
+    let contract = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ContractDef(contract) => Some(*contract),
+            _ => None,
+        })
+        .expect("contract");
+    assert!(
+        contract
+            .fields_with_comments(&db)
+            .all(|(_, comments)| comments.is_empty())
+    );
+    assert!(
+        contract
+            .items(&db)
+            .iter()
+            .all(|item| item.leading_comments(&db).is_empty())
+    );
+    let adt = contract
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            ContractItem::AdtDef(adt) => Some(*adt),
+            _ => None,
+        })
+        .expect("nested ADT");
+    assert!(
+        adt.ctors_with_comments(&db)
+            .all(|(_, comments)| comments.is_empty())
+    );
+}
+
+#[test]
+fn recovery_items_retain_comments_without_leaking_to_following_items() {
+    let db = TestDb::default();
+    let (_, module) = parse_module(
+        &db,
+        "recovery-item-comments",
+        r#"
+// invalid top-level item
+unknown top;
+function valid_top() {}
+contract C {
+  // invalid contract item
+  unknown nested;
+  function valid_nested() {}
+}
+"#,
+    );
+
+    let top_error = module.items(&db)[0];
+    assert!(matches!(top_error, Item::Error { .. }));
+    assert_comment_texts(
+        top_error.leading_comments(&db),
+        &[" invalid top-level item"],
+    );
+    assert!(
+        top_function(&db, module, "valid_top")
+            .leading_comments(&db)
+            .is_empty()
+    );
+
+    let contract = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ContractDef(contract) => Some(*contract),
+            _ => None,
+        })
+        .expect("contract");
+    let nested_error = contract.items(&db)[0];
+    assert!(matches!(nested_error, ContractItem::Error { .. }));
+    assert_comment_texts(
+        nested_error.leading_comments(&db),
+        &[" invalid contract item"],
+    );
+    assert!(
+        contract_function(&db, module, "valid_nested")
+            .leading_comments(&db)
+            .is_empty()
+    );
 }
 
 #[test]

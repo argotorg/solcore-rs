@@ -38,13 +38,17 @@ pub(super) fn lower_parse_errors(
 
 pub(super) fn lower_import<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
-    span: LexSpan,
+    meta: ParsedItemMeta<'_>,
     external: Option<LexSpan>,
     path: Vec<SpannedStr<'_>>,
     alias: Option<SpannedStr<'_>>,
     selector: Option<ParsedImportSelector<'_>>,
     hiding: Vec<ParsedImportName>,
 ) -> item::Import<'db> {
+    let ParsedItemMeta {
+        span,
+        leading_comments,
+    } = meta;
     let fingerprint =
         import_fingerprint(external, &path, alias.as_ref(), selector.as_ref(), &hiding);
     let import_def =
@@ -66,7 +70,15 @@ pub(super) fn lower_import<'db>(
         .collect();
     let span = span_from_absolute(anchor, span, base_start);
     item::Import::new(
-        ctx.db, import_def, span, external, path, alias, selector, hiding,
+        ctx.db,
+        import_def,
+        span,
+        lower_source_comments(leading_comments),
+        external,
+        path,
+        alias,
+        selector,
+        hiding,
     )
 }
 
@@ -116,6 +128,7 @@ fn lower_constructor_selector<'db>(
 pub(super) fn lower_export<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
+    leading_comments: Vec<ParsedSourceComment<'_>>,
     kind: ParsedExportKind<'_>,
 ) -> item::Export<'db> {
     let fingerprint = export_fingerprint(&kind);
@@ -126,7 +139,13 @@ pub(super) fn lower_export<'db>(
     let base_start = span.start;
     let kind = lower_export_kind(ctx.db, anchor, base_start, kind);
     let span = span_from_absolute(anchor, span, base_start);
-    item::Export::new(ctx.db, export_def, span, kind)
+    item::Export::new(
+        ctx.db,
+        export_def,
+        span,
+        lower_source_comments(leading_comments),
+        kind,
+    )
 }
 
 fn lower_export_kind<'db>(
@@ -183,6 +202,7 @@ fn lower_exported_name<'db>(
 pub(super) fn lower_pragma<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
+    leading_comments: Vec<ParsedSourceComment<'_>>,
     name: SpannedStr<'_>,
     items: Vec<SpannedStr<'_>>,
 ) -> item::Pragma<'db> {
@@ -195,7 +215,14 @@ pub(super) fn lower_pragma<'db>(
         .map(|segment| lower_spanned_ident(ctx.db, anchor, span.start, segment))
         .collect();
     let span = span_from_absolute(anchor, span, span.start);
-    item::Pragma::new(ctx.db, pragma_def, span, name, items)
+    item::Pragma::new(
+        ctx.db,
+        pragma_def,
+        span,
+        lower_source_comments(leading_comments),
+        name,
+        items,
+    )
 }
 
 pub(super) fn lower_type_ref<'db>(
@@ -325,6 +352,7 @@ fn lower_pred_ref<'db>(
 pub(super) fn lower_type_alias<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
+    leading_comments: Vec<ParsedSourceComment<'_>>,
     name: SpannedStr<'_>,
     ty_params: Vec<SpannedStr<'_>>,
     parsed_ty: ParsedTy<'_>,
@@ -339,7 +367,15 @@ pub(super) fn lower_type_alias<'db>(
         .collect::<Vec<_>>();
     let ty = lower_type_ref(ctx.db, anchor, span.start, parsed_ty);
     let span = span_from_absolute(anchor, span, span.start);
-    item::TypeAlias::new(ctx.db, alias_def, span, name, ty_params, ty)
+    item::TypeAlias::new(
+        ctx.db,
+        alias_def,
+        span,
+        lower_source_comments(leading_comments),
+        name,
+        ty_params,
+        ty,
+    )
 }
 
 fn lower_adt_ctor<'db>(
@@ -358,6 +394,7 @@ fn lower_adt_ctor<'db>(
 pub(super) fn lower_adt<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
+    leading_comments: Vec<ParsedSourceComment<'_>>,
     name: SpannedStr<'_>,
     ty_params: Vec<SpannedStr<'_>>,
     ctors: Vec<ParsedAdtCtor<'_>>,
@@ -370,13 +407,26 @@ pub(super) fn lower_adt<'db>(
         .into_iter()
         .map(|param| lower_spanned_ident(ctx.db, anchor, span.start, param))
         .collect::<Vec<_>>();
-    let ctors = ctors
+    let (ctors, ctor_comments) = ctors
         .into_iter()
-        .map(|ctor| lower_adt_ctor(ctx.db, anchor, span.start, ctor))
-        .collect::<Vec<_>>();
+        .map(|mut ctor| {
+            let comments = lower_source_comments(std::mem::take(&mut ctor.leading_comments));
+            let ctor = lower_adt_ctor(ctx.db, anchor, span.start, ctor);
+            (ctor, comments)
+        })
+        .unzip::<_, _, Vec<_>, Vec<_>>();
     let span = span_from_absolute(anchor, span, span.start);
 
-    item::AdtDef::new(ctx.db, adt_def, span, name, ty_params, ctors)
+    item::AdtDef::new(
+        ctx.db,
+        adt_def,
+        span,
+        lower_source_comments(leading_comments),
+        name,
+        ty_params,
+        ctors,
+        ctor_comments,
+    )
 }
 
 fn lower_func_sig<'db>(
@@ -446,10 +496,11 @@ fn lower_func_sig<'db>(
 pub(super) fn lower_class<'db, 'src>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
+    leading_comments: Vec<ParsedSourceComment<'src>>,
     mut type_vars: Vec<SpannedStr<'src>>,
     super_preds: Vec<ParsedPred<'src>>,
     head: ParsedPred<'src>,
-    methods: Vec<ParsedFuncSig<'src>>,
+    methods: Vec<ParsedClassMethod<'src>>,
 ) -> item::ClassDef<'db> {
     let class_name = head.class.0;
     let class_def = ctx.alloc_def_with_location(DefKind::Class, Some(class_name), span.start);
@@ -465,20 +516,27 @@ pub(super) fn lower_class<'db, 'src>(
         .map(|pred| lower_pred_ref(ctx.db, anchor, span.start, pred))
         .collect::<Vec<_>>();
     let head = lower_pred_ref(ctx.db, anchor, span.start, head);
-    let methods = methods
+    let (methods, method_comments) = methods
         .into_iter()
-        .map(|sig| lower_func_sig(ctx.db, anchor, span.start, sig))
-        .collect::<Vec<_>>();
+        .map(|method| {
+            (
+                lower_func_sig(ctx.db, anchor, span.start, method.sig),
+                lower_source_comments(method.leading_comments),
+            )
+        })
+        .unzip::<_, _, Vec<_>, Vec<_>>();
     let span = span_from_absolute(anchor, span, span.start);
 
     item::ClassDef::new(
         ctx.db,
         class_def,
         span,
+        lower_source_comments(leading_comments),
         type_vars,
         super_preds,
         head,
         methods,
+        method_comments,
     )
 }
 
@@ -509,6 +567,21 @@ fn is_builtin_type_name(name: &str) -> bool {
         name,
         "word" | "bool" | "string" | "integer" | "()" | "pair" | "sum"
     )
+}
+
+pub(super) fn lower_source_comments(
+    comments: Vec<ParsedSourceComment<'_>>,
+) -> Vec<item::SourceComment> {
+    comments
+        .into_iter()
+        .map(|comment| item::SourceComment {
+            kind: match comment.kind {
+                ParsedSourceCommentKind::Line => item::SourceCommentKind::Line,
+                ParsedSourceCommentKind::Block => item::SourceCommentKind::Block,
+            },
+            text: comment.text.to_owned(),
+        })
+        .collect()
 }
 
 pub(super) fn lower_function<'db>(
@@ -548,16 +621,7 @@ pub(super) fn lower_function<'db>(
         pats,
     );
 
-    let leading_comments = leading_comments
-        .into_iter()
-        .map(|comment| item::SourceComment {
-            kind: match comment.kind {
-                ParsedSourceCommentKind::Line => item::SourceCommentKind::Line,
-                ParsedSourceCommentKind::Block => item::SourceCommentKind::Block,
-            },
-            text: comment.text.to_owned(),
-        })
-        .collect();
+    let leading_comments = lower_source_comments(leading_comments);
 
     item::FunctionDef::new(
         ctx.db,
@@ -572,13 +636,17 @@ pub(super) fn lower_function<'db>(
 
 pub(super) fn lower_instance<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
-    span: LexSpan,
+    meta: ParsedItemMeta<'_>,
     type_vars: Vec<SpannedStr<'_>>,
     preds: Vec<ParsedPred<'_>>,
     default_kw: Option<LexSpan>,
     head: ParsedPred<'_>,
     methods: Vec<ParsedFunctionDef<'_>>,
 ) -> item::InstanceDef<'db> {
+    let ParsedItemMeta {
+        span,
+        leading_comments,
+    } = meta;
     let instance_name = head.class.0;
     let fingerprint = instance_head_fingerprint(&type_vars, &head);
     let instance_def = ctx.alloc_def_with_fingerprint(
@@ -620,6 +688,7 @@ pub(super) fn lower_instance<'db>(
         ctx.db,
         instance_def,
         span,
+        lower_source_comments(leading_comments),
         type_vars,
         preds,
         default_kw,
@@ -643,18 +712,41 @@ fn lower_contract_item<'db>(
         )),
         ParsedContractItem::TypeAlias {
             span,
+            leading_comments,
             name,
             ty_params,
             ty,
-        } => item::ContractItem::TypeAlias(lower_type_alias(ctx, span, name, ty_params, ty)),
+        } => item::ContractItem::TypeAlias(lower_type_alias(
+            ctx,
+            span,
+            leading_comments,
+            name,
+            ty_params,
+            ty,
+        )),
         ParsedContractItem::Adt {
             span,
+            leading_comments,
             name,
             ty_params,
             ctors,
-        } => item::ContractItem::AdtDef(lower_adt(ctx, span, name, ty_params, ctors)),
-        ParsedContractItem::Error { span } => item::ContractItem::Error {
+        } => item::ContractItem::AdtDef(lower_adt(
+            ctx,
+            span,
+            leading_comments,
+            name,
+            ty_params,
+            ctors,
+        )),
+        ParsedContractItem::Error {
+            span,
+            leading_comments,
+        } => item::ContractItem::Error {
             span: root_span_from_lex(ctx.db, ctx.file, span),
+            leading_comments: item::SourceComments::new(
+                ctx.db,
+                lower_source_comments(leading_comments),
+            ),
         },
     }
 }
@@ -681,6 +773,7 @@ fn lower_field<'db>(
 pub(super) fn lower_contract<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
+    leading_comments: Vec<ParsedSourceComment<'_>>,
     name: SpannedStr<'_>,
     ty_params: Vec<SpannedStr<'_>>,
     fields: Vec<ParsedFieldDef<'_>>,
@@ -694,18 +787,32 @@ pub(super) fn lower_contract<'db>(
         .into_iter()
         .map(|param| lower_spanned_ident(ctx.db, anchor, span.start, param))
         .collect::<Vec<_>>();
-    let (fields, items) = ctx.with_owner(contract_def, |ctx| {
-        let fields = fields
+    let (fields, field_comments, items) = ctx.with_owner(contract_def, |ctx| {
+        let (fields, field_comments) = fields
             .into_iter()
-            .map(|field| lower_field(ctx, anchor, span.start, field))
-            .collect::<Vec<_>>();
+            .map(|mut field| {
+                let comments = lower_source_comments(std::mem::take(&mut field.leading_comments));
+                let field = lower_field(ctx, anchor, span.start, field);
+                (field, comments)
+            })
+            .unzip::<_, _, Vec<_>, Vec<_>>();
         let items = items
             .into_iter()
             .map(|item| lower_contract_item(ctx, item))
             .collect::<Vec<_>>();
-        (fields, items)
+        (fields, field_comments, items)
     });
     let span = span_from_absolute(anchor, span, span.start);
 
-    item::ContractDef::new(ctx.db, contract_def, span, name, ty_params, fields, items)
+    item::ContractDef::new(
+        ctx.db,
+        contract_def,
+        span,
+        lower_source_comments(leading_comments),
+        name,
+        ty_params,
+        fields,
+        field_comments,
+        items,
+    )
 }

@@ -100,7 +100,7 @@ impl<'db> ErrorCollector<'db> {
                 }
             }
             Item::Import(_) | Item::Export(_) | Item::Pragma(_) => {}
-            Item::Error { span } => self.push("Item::Error", span),
+            Item::Error { span, .. } => self.push("Item::Error", span),
         }
     }
 
@@ -113,7 +113,7 @@ impl<'db> ErrorCollector<'db> {
                     self.ty(*ctor.fields.atom());
                 }
             }
-            ContractItem::Error { span } => self.push("ContractItem::Error", span),
+            ContractItem::Error { span, .. } => self.push("ContractItem::Error", span),
         }
     }
 

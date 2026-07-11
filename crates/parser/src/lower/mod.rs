@@ -85,77 +85,124 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
             match parsed {
                 ParsedTopItem::Import {
                     span,
+                    leading_comments,
                     external,
                     path,
                     alias,
                     selector,
                     hiding,
                 } => {
-                    let import =
-                        lower_import(&mut ctx, span, external, path, alias, selector, hiding);
+                    let import = lower_import(
+                        &mut ctx,
+                        ParsedItemMeta {
+                            span,
+                            leading_comments,
+                        },
+                        external,
+                        path,
+                        alias,
+                        selector,
+                        hiding,
+                    );
                     items.push(item::Item::Import(import));
                 }
-                ParsedTopItem::Export { span, kind } => {
-                    let export = lower_export(&mut ctx, span, kind);
+                ParsedTopItem::Export {
+                    span,
+                    leading_comments,
+                    kind,
+                } => {
+                    let export = lower_export(&mut ctx, span, leading_comments, kind);
                     items.push(item::Item::Export(export));
                 }
                 ParsedTopItem::Pragma {
                     span,
+                    leading_comments,
                     name,
                     items: pragma_items,
                 } => {
-                    let pragma = lower_pragma(&mut ctx, span, name, pragma_items);
+                    let pragma = lower_pragma(&mut ctx, span, leading_comments, name, pragma_items);
                     items.push(item::Item::Pragma(pragma));
                 }
                 ParsedTopItem::TypeAlias {
                     span,
+                    leading_comments,
                     name,
                     ty_params,
                     ty,
                 } => {
-                    let alias = lower_type_alias(&mut ctx, span, name, ty_params, ty);
+                    let alias =
+                        lower_type_alias(&mut ctx, span, leading_comments, name, ty_params, ty);
                     items.push(item::Item::TypeAlias(alias));
                 }
                 ParsedTopItem::Adt {
                     span,
+                    leading_comments,
                     name,
                     ty_params,
                     ctors,
                 } => {
-                    let adt = lower_adt(&mut ctx, span, name, ty_params, ctors);
+                    let adt = lower_adt(&mut ctx, span, leading_comments, name, ty_params, ctors);
                     items.push(item::Item::AdtDef(adt));
                 }
                 ParsedTopItem::Class {
                     span,
+                    leading_comments,
                     type_vars,
                     super_preds,
                     head,
                     methods,
                 } => {
-                    let class = lower_class(&mut ctx, span, type_vars, super_preds, head, methods);
+                    let class = lower_class(
+                        &mut ctx,
+                        span,
+                        leading_comments,
+                        type_vars,
+                        super_preds,
+                        head,
+                        methods,
+                    );
                     items.push(item::Item::ClassDef(class));
                 }
                 ParsedTopItem::Instance {
                     span,
+                    leading_comments,
                     type_vars,
                     preds,
                     default_kw,
                     head,
                     methods,
                 } => {
-                    let instance =
-                        lower_instance(&mut ctx, span, type_vars, preds, default_kw, head, methods);
+                    let instance = lower_instance(
+                        &mut ctx,
+                        ParsedItemMeta {
+                            span,
+                            leading_comments,
+                        },
+                        type_vars,
+                        preds,
+                        default_kw,
+                        head,
+                        methods,
+                    );
                     items.push(item::Item::InstanceDef(instance));
                 }
                 ParsedTopItem::Contract {
                     span,
+                    leading_comments,
                     name,
                     ty_params,
                     fields,
                     items: contract_items,
                 } => {
-                    let contract =
-                        lower_contract(&mut ctx, span, name, ty_params, fields, contract_items);
+                    let contract = lower_contract(
+                        &mut ctx,
+                        span,
+                        leading_comments,
+                        name,
+                        ty_params,
+                        fields,
+                        contract_items,
+                    );
                     items.push(item::Item::ContractDef(contract));
                 }
                 ParsedTopItem::Function {
@@ -174,8 +221,15 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                     );
                     items.push(item::Item::FunctionDef(function));
                 }
-                ParsedTopItem::Error { span } => items.push(item::Item::Error {
+                ParsedTopItem::Error {
+                    span,
+                    leading_comments,
+                } => items.push(item::Item::Error {
                     span: root_span_from_lex(db, file, span),
+                    leading_comments: item::SourceComments::new(
+                        db,
+                        items::lower_source_comments(leading_comments),
+                    ),
                 }),
             }
         }

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use hir::{
     ast::{
         function::{ExprKind, FuncBody},
-        item::{FunctionDef, Item},
+        item::{AdtDef, ClassDef, ContractDef, FunctionDef, Item},
     },
     input::SourceFile,
     span::Spanned,
@@ -84,6 +84,53 @@ fn function_leading_comment_text<'db>(
 }
 
 #[salsa::tracked]
+fn nested_item_semantic_names<'db>(
+    db: &'db dyn hir::Db,
+    adt: AdtDef<'db>,
+    class: ClassDef<'db>,
+    contract: ContractDef<'db>,
+) -> (String, String, String) {
+    let ctor = adt
+        .ctors(db)
+        .first()
+        .expect("ADT constructor")
+        .name
+        .atom()
+        .text(db)
+        .to_owned();
+    let method = class
+        .methods(db)
+        .first()
+        .expect("class method")
+        .name
+        .atom()
+        .text(db)
+        .to_owned();
+    let field = contract
+        .fields(db)
+        .first()
+        .expect("contract field")
+        .name()
+        .atom()
+        .text(db)
+        .to_owned();
+    (ctor, method, field)
+}
+
+#[salsa::tracked]
+fn nested_item_comment_texts<'db>(
+    db: &'db dyn hir::Db,
+    adt: AdtDef<'db>,
+    class: ClassDef<'db>,
+    contract: ContractDef<'db>,
+) -> (String, String, String) {
+    let ctor = adt.ctor_comments(db)[0][0].text.clone();
+    let method = class.method_comments(db)[0][0].text.clone();
+    let field = contract.field_comments(db)[0][0].text.clone();
+    (ctor, method, field)
+}
+
+#[salsa::tracked]
 fn lambda_first_stmt_relative_span<'db>(db: &'db dyn hir::Db, body: FuncBody<'db>) -> (u32, u32) {
     let stmt_id = body
         .top_level_stmts(db)
@@ -116,6 +163,38 @@ fn first_lambda_body<'db>(db: &'db TestDb, file: SourceFile) -> FuncBody<'db> {
             _ => None,
         })
         .expect("lambda expression")
+}
+
+fn nested_item_defs<'db>(
+    db: &'db TestDb,
+    file: SourceFile,
+) -> (AdtDef<'db>, ClassDef<'db>, ContractDef<'db>) {
+    let module = parse_file_to_hir(db, file).module(db);
+    let adt = module
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::AdtDef(def) => Some(*def),
+            _ => None,
+        })
+        .expect("a top-level ADT");
+    let class = module
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ClassDef(def) => Some(*def),
+            _ => None,
+        })
+        .expect("a top-level class");
+    let contract = module
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ContractDef(def) => Some(*def),
+            _ => None,
+        })
+        .expect("a top-level contract");
+    (adt, class, contract)
 }
 
 #[test]
@@ -236,6 +315,90 @@ fn editing_leading_comment_invalidates_only_comment_consumers() {
 }
 
 #[test]
+fn editing_nested_item_comments_preserves_semantic_fields() {
+    let mut db = TestDb::default();
+    let url = "memory:///nested-comment-incr.solc"
+        .parse()
+        .expect("valid url");
+    let before_src = "data Choice =
+  // alpha
+  First;
+class a:Documented {
+  // alpha
+  function describe(x: a) -> word;
+}
+contract C {
+  // alpha
+  value: word;
+}
+";
+    let file = SourceFile::new(&db, url, Some(before_src.to_owned()));
+
+    let (before_semantics, before_comments) = {
+        let (adt, class, contract) = nested_item_defs(&db, file);
+        let _ = db.take_executed();
+        let semantics = nested_item_semantic_names(&db, adt, class, contract);
+        let comments = nested_item_comment_texts(&db, adt, class, contract);
+        let executed = db.take_executed();
+        assert_eq!(nested_semantic_query_executions(&executed), 1);
+        assert_eq!(nested_comment_query_executions(&executed), 1);
+        (semantics, comments)
+    };
+    assert_eq!(
+        before_semantics,
+        (
+            "First".to_owned(),
+            "describe".to_owned(),
+            "value".to_owned()
+        )
+    );
+    assert_eq!(
+        before_comments,
+        (
+            " alpha".to_owned(),
+            " alpha".to_owned(),
+            " alpha".to_owned()
+        )
+    );
+
+    // Keep the payload byte length unchanged so every nested declaration keeps
+    // the same owner-relative span. Only the parallel comment fields change.
+    file.set_content(&mut db).to(Some(
+        "data Choice =
+  // bravo
+  First;
+class a:Documented {
+  // bravo
+  function describe(x: a) -> word;
+}
+contract C {
+  // bravo
+  value: word;
+}
+"
+        .to_owned(),
+    ));
+
+    let (adt, class, contract) = nested_item_defs(&db, file);
+    let _ = db.take_executed();
+    let after_semantics = nested_item_semantic_names(&db, adt, class, contract);
+    let after_comments = nested_item_comment_texts(&db, adt, class, contract);
+    let executed = db.take_executed();
+
+    assert_eq!(after_semantics, before_semantics);
+    assert_eq!(
+        after_comments,
+        (
+            " bravo".to_owned(),
+            " bravo".to_owned(),
+            " bravo".to_owned()
+        )
+    );
+    assert_eq!(nested_semantic_query_executions(&executed), 0);
+    assert_eq!(nested_comment_query_executions(&executed), 1);
+}
+
+#[test]
 fn lambda_body_relative_span_backdates_after_cosmetic_signature_edit() {
     let mut db = TestDb::default();
     let url = "memory:///lambda-incr.solc".parse().expect("valid url");
@@ -322,5 +485,19 @@ fn comment_query_executions(events: &[String]) -> usize {
     events
         .iter()
         .filter(|event| event.contains("function_leading_comment_text"))
+        .count()
+}
+
+fn nested_semantic_query_executions(events: &[String]) -> usize {
+    events
+        .iter()
+        .filter(|event| event.contains("nested_item_semantic_names"))
+        .count()
+}
+
+fn nested_comment_query_executions(events: &[String]) -> usize {
+    events
+        .iter()
+        .filter(|event| event.contains("nested_item_comment_texts"))
         .count()
 }

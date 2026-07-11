@@ -466,6 +466,7 @@ where
     type_alias_payload_parser()
         .map_with(|(name, ty_params, ty), e| ParsedTopItem::TypeAlias {
             span: e.span(),
+            leading_comments: Vec::new(),
             name,
             ty_params,
             ty,
@@ -490,6 +491,10 @@ where
         .then(fields)
         .map_with(|(name, fields), e| ParsedAdtCtor {
             span: e.span(),
+            // Filled by `adt_payload_parser`, which owns the introducing
+            // `=`/`|` token.
+            introducer: None,
+            leading_comments: Vec::new(),
             name,
             fields,
         })
@@ -525,13 +530,31 @@ where
         .map(|params| params.unwrap_or_default())
         .boxed();
 
+    let following_ctor = just(Token::Pipe)
+        .map_with(|_, e| e.span())
+        .then(data_ctor_parser())
+        .map(|(introducer, mut ctor)| {
+            ctor.introducer = Some(introducer);
+            ctor
+        });
+    let ctor_list = data_ctor_parser()
+        .then(following_ctor.repeated().collect::<Vec<_>>())
+        .map(|(first, mut rest)| {
+            let mut ctors = Vec::with_capacity(rest.len() + 1);
+            ctors.push(first);
+            ctors.append(&mut rest);
+            ctors
+        });
     let ctors = just(Token::Eq)
-        .ignore_then(
-            data_ctor_parser()
-                .separated_by(just(Token::Pipe))
-                .at_least(1)
-                .collect::<Vec<_>>(),
-        )
+        .map_with(|_, e| e.span())
+        .then(ctor_list)
+        .map(|(introducer, mut ctors)| {
+            ctors
+                .first_mut()
+                .expect("constructor list parser always returns one constructor")
+                .introducer = Some(introducer);
+            ctors
+        })
         .or_not()
         .map(|ctors| ctors.unwrap_or_default())
         .boxed();
@@ -551,6 +574,7 @@ where
     adt_payload_parser()
         .map_with(|(name, ty_params, ctors), e| ParsedTopItem::Adt {
             span: e.span(),
+            leading_comments: Vec::new(),
             name,
             ty_params,
             ctors,
@@ -560,12 +584,16 @@ where
         .boxed()
 }
 
-fn method_sig_parser<'src, I>() -> impl Parser<'src, I, ParsedFuncSig<'src>, ParserErr<'src>>
+fn method_sig_parser<'src, I>() -> impl Parser<'src, I, ParsedClassMethod<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     signature_parser(FunctionContext::Module)
         .then_ignore(just(Token::Semi))
+        .map(|sig| ParsedClassMethod {
+            leading_comments: Vec::new(),
+            sig,
+        })
         .boxed()
 }
 
@@ -597,6 +625,7 @@ where
             forall_preds.append(&mut super_preds);
             ParsedTopItem::Class {
                 span: e.span(),
+                leading_comments: Vec::new(),
                 type_vars,
                 super_preds: forall_preds,
                 head,
@@ -644,6 +673,7 @@ where
                 forall_preds.append(&mut preds);
                 ParsedTopItem::Instance {
                     span: e.span(),
+                    leading_comments: Vec::new(),
                     type_vars,
                     preds: forall_preds,
                     default_kw,
@@ -666,6 +696,7 @@ where
                 forall_preds.append(&mut preds);
                 ParsedTopItem::Instance {
                     span: e.span(),
+                    leading_comments: Vec::new(),
                     type_vars,
                     preds: forall_preds,
                     default_kw,
@@ -696,6 +727,7 @@ where
         .then_ignore(just(Token::Semi))
         .map_with(|((name, ty), init), e| ParsedFieldDef {
             span: e.span(),
+            leading_comments: Vec::new(),
             name,
             ty,
             init,
@@ -728,6 +760,7 @@ where
     let type_alias = type_alias_payload_parser()
         .map_with(|(name, ty_params, ty), e| ParsedContractItem::TypeAlias {
             span: e.span(),
+            leading_comments: Vec::new(),
             name,
             ty_params,
             ty,
@@ -737,6 +770,7 @@ where
     let adt_def = adt_payload_parser()
         .map_with(|(name, ty_params, ctors), e| ParsedContractItem::Adt {
             span: e.span(),
+            leading_comments: Vec::new(),
             name,
             ty_params,
             ctors,
@@ -758,7 +792,10 @@ where
         .map_with(|_, e| {
             let span = e.span();
             trace_recovery("contract_member", span);
-            ParsedContractItem::Error { span }
+            ParsedContractItem::Error {
+                span,
+                leading_comments: Vec::new(),
+            }
         });
 
     choice((
@@ -818,6 +855,7 @@ where
             }
             ParsedTopItem::Contract {
                 span: e.span(),
+                leading_comments: Vec::new(),
                 name,
                 ty_params,
                 fields,
@@ -854,7 +892,10 @@ where
         .map_with(|_, e| {
             let span = e.span();
             trace_recovery("top_level_item", span);
-            ParsedTopItem::Error { span }
+            ParsedTopItem::Error {
+                span,
+                leading_comments: Vec::new(),
+            }
         });
 
     choice((

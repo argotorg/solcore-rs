@@ -12,7 +12,7 @@ pub mod item;
 /// Unresolved type and predicate references.
 pub mod ty;
 
-pub use item::{SourceComment, SourceCommentKind};
+pub use item::{SourceComment, SourceCommentKind, SourceComments};
 
 /// Interned identifier text.
 ///
