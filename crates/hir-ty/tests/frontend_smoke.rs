@@ -275,6 +275,32 @@ fn curated_solver_files_execute_solver_and_soundness_queries() {
     }
 }
 
+#[test]
+fn generated_dispatch_reuses_std_instance_facts_per_module() {
+    let repo = repo_root();
+    let entry = repo.join("tests/e2e/00answer/main.solc");
+    let std_root = repo.join("std");
+    let outcome = run_frontend(&entry, &std_root);
+
+    let module_fact_executions = query_executions(&outcome.executed, "module_instance_facts");
+    let per_origin_executions = query_executions(&outcome.executed, "instance_origin_clause_set");
+    let report = format!(
+        "generated dispatch + std instance facts\n  module facts: {module_fact_executions}\n  per-origin clauses: {per_origin_executions}\n  frontend diagnostics: {:#?}\n  typeck diagnostics: {:#?}",
+        outcome.frontend_diagnostics, outcome.typeck_diagnostics,
+    );
+    eprintln!("{report}");
+
+    assert!(outcome.unresolved_imports.is_empty(), "{report}");
+    assert!(outcome.frontend_diagnostics.is_empty(), "{report}");
+    assert!(outcome.typeck_diagnostics.is_empty(), "{report}");
+    assert!(module_fact_executions > 0, "{report}");
+    // The canonical std surface exposes well over one hundred instance
+    // origins. They must be lowered by their handful of owner modules, rather
+    // than by one tracked query per origin.
+    assert!(module_fact_executions < 32, "{report}");
+    assert_eq!(per_origin_executions, 0, "{report}");
+}
+
 fn corpus_entry(corpus_root: &Path, relative: &str) -> CorpusEntry {
     for status in ["ok", "fail", "known-diagnostic-gaps"] {
         let test_root = corpus_root.join(status).join("test");

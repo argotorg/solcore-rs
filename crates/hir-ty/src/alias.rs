@@ -21,7 +21,7 @@ use crate::{
 const DEFAULT_ALIAS_NORMALIZATION_NODE_BUDGET: usize = 16_384;
 
 /// Alias-normalization diagnostic independent of the final typecheck surface.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum AliasError {
     /// A recursive type alias was encountered.
     Cycle {

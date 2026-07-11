@@ -20,39 +20,40 @@ pub fn instance_soundness_diagnostics<'db>(
     {
         return Vec::new();
     }
-    let env = nameres::module_env_for_hir_module(db, module, hir_module);
-    let Some(item_scope) = env.item_scope.clone() else {
+    let Some(facts) = module_instance_facts(db, module).as_ref() else {
         return Vec::new();
     };
-    let item_resolutions =
-        hir_nameres::resolve_item_types_with_imports(db, hir_module, &item_scope, &env);
-    if !item_resolutions.diagnostics.is_empty() {
+    if facts.has_resolution_diagnostics {
         return Vec::new();
     }
 
-    let pragmas = InstanceSoundnessPragmas::from_module(db, hir_module);
+    let pragmas = InstanceSoundnessPragmas::from_module(db, facts.module);
     let mut diagnostics =
-        crate::alias::type_alias_normalization_errors(db, hir_module, &item_resolutions)
+        crate::alias::type_alias_normalization_errors(db, facts.module, &facts.item_resolutions)
             .into_iter()
             .map(alias_error_to_diagnostic)
             .collect::<Vec<_>>();
-    let mut prior_heads = imported_non_default_heads(db, module, &env);
-    for item in hir_module.items(db) {
-        if let Item::InstanceDef(instance) = item
-            && let Some(head) = check_instance_soundness(
-                db,
-                hir_module,
-                *instance,
-                &item_resolutions,
-                &pragmas,
-                &prior_heads,
-                &mut diagnostics,
-            )
-            && instance.default_kw(db).is_none()
+    let mut prior_heads = imported_non_default_heads(db, module, &facts.imports);
+    for fact in &facts.instances {
+        let class = fact.class(db);
+        let same_class_prior = class
+            .and_then(|class| prior_heads.get(&class))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if let Some(head) = check_instance_soundness(
+            db,
+            facts.module,
+            fact,
+            &facts.item_resolutions,
+            &pragmas,
+            same_class_prior,
+            &mut diagnostics,
+        ) && !fact.default
+            && let Some(class) = class
         {
-            prior_heads.push(InstanceHead {
+            prior_heads.entry(class).or_default().push(InstanceHead {
                 pred: head,
-                span: LabelSpan::from_span(db, instance.head(db).span(db)),
+                span: fact.head_span.clone(),
             });
         }
     }
@@ -121,37 +122,40 @@ impl PragmaEscape {
 fn check_instance_soundness<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
-    instance: InstanceDef<'db>,
+    fact: &InstanceFact<'db>,
     item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     pragmas: &InstanceSoundnessPragmas,
     prior_heads: &[InstanceHead<'db>],
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) -> Option<Pred<'db>> {
+    let instance = fact.instance;
     let type_vars = type_var_bindings(instance.def_id_value(db), instance.type_var_elems(db));
     let type_var_names = type_var_names(db, &type_vars);
-    let lowerer = TypeLowering::from_item_resolutions(
-        db,
-        item_resolutions,
-        BinderEnv::from_type_vars(&type_vars),
-    );
     let head_ref = instance.head(db);
-    let head_span = LabelSpan::from_span(db, head_ref.span(db));
+    let head_span = fact.head_span.clone();
     let class_name = head_ref_class_name(db, head_ref);
-    let head_norm =
-        normalize_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(head_ref));
-    diagnostics.extend(head_norm.errors.into_iter().map(alias_error_to_diagnostic));
-    let head = head_norm.value;
+    diagnostics.extend(
+        fact.head_alias_errors
+            .iter()
+            .cloned()
+            .map(alias_error_to_diagnostic),
+    );
+    let head = fact.head;
     if matches!(head.kind(db), PredKind::Error) {
         return None;
     }
-    let conditions = instance
-        .preds(db)
+    let conditions = fact
+        .conditions
         .iter()
-        .map(|pred| {
-            let norm =
-                normalize_pred_aliases(db, module, item_resolutions, lowerer.lower_pred(*pred));
-            diagnostics.extend(norm.errors.into_iter().map(alias_error_to_diagnostic));
-            (norm.value, LabelSpan::from_span(db, pred.span(db)))
+        .map(|condition| {
+            diagnostics.extend(
+                condition
+                    .alias_errors
+                    .iter()
+                    .cloned()
+                    .map(alias_error_to_diagnostic),
+            );
+            (condition.pred, condition.span.clone())
         })
         .collect::<Vec<_>>();
 
@@ -163,11 +167,11 @@ fn check_instance_soundness<'db>(
         db,
         head,
         head_span.clone(),
-        instance.default_kw(db).is_some(),
+        fact.default,
         &type_var_names,
         diagnostics,
     );
-    if instance.default_kw(db).is_none() {
+    if !fact.default {
         check_overlapping_instance(
             db,
             head,
@@ -237,44 +241,29 @@ fn imported_non_default_heads<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     env: &nameres::ModuleImportSurface<'db>,
-) -> Vec<InstanceHead<'db>> {
-    let mut heads = Vec::new();
+) -> FxHashMap<ClassId<'db>, Vec<InstanceHead<'db>>> {
+    let mut heads = FxHashMap::<ClassId<'db>, Vec<InstanceHead<'db>>>::default();
     for origin in &env.instances {
         if origin.module == module {
             continue;
         }
-        let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, origin.module)
-        else {
+        let Some(facts) = module_instance_facts(db, origin.module).as_ref() else {
             continue;
         };
-        let Some(instance) = scope
+        let Some(fact) = facts
             .instances
             .iter()
-            .find(|instance| instance.def_id_value(db) == origin.def_id)
-            .copied()
+            .find(|fact| fact.def == origin.def_id)
         else {
             continue;
         };
-        if instance.default_kw(db).is_some() {
+        if fact.default {
             continue;
         }
-        let type_vars = type_var_bindings(instance.def_id_value(db), instance.type_var_elems(db));
-        let lowerer = TypeLowering::from_item_resolutions(
-            db,
-            &item_resolutions,
-            BinderEnv::from_type_vars(&type_vars),
-        );
-        let head = normalize_pred_aliases(
-            db,
-            scope.module,
-            &item_resolutions,
-            lowerer.lower_pred(instance.head(db)),
-        )
-        .value;
-        if !matches!(head.kind(db), PredKind::Error) {
-            heads.push(InstanceHead {
-                pred: head,
-                span: LabelSpan::from_span(db, instance.head(db).span(db)),
+        if let Some(class) = fact.class(db) {
+            heads.entry(class).or_default().push(InstanceHead {
+                pred: fact.head,
+                span: fact.head_span.clone(),
             });
         }
     }
@@ -368,9 +357,6 @@ fn check_overlapping_instance<'db>(
     diagnostics: &mut Vec<TypeckDiagnostic>,
 ) {
     for prior in prior_heads {
-        if !same_class(db, head, prior.pred) {
-            continue;
-        }
         if instance_heads_overlap(db, head, prior.pred) {
             diagnostics.push(TypeckDiagnostic::OverlappingInstance {
                 instance_span: head_span,
@@ -381,16 +367,6 @@ fn check_overlapping_instance<'db>(
             return;
         }
     }
-}
-
-fn same_class<'db>(db: &'db dyn Db, lhs: Pred<'db>, rhs: Pred<'db>) -> bool {
-    matches!(
-        (lhs.kind(db), rhs.kind(db)),
-        (
-            PredKind::InClass { class: lhs_class, .. },
-            PredKind::InClass { class: rhs_class, .. }
-        ) if lhs_class == rhs_class
-    )
 }
 
 fn instance_heads_overlap<'db>(db: &'db dyn Db, lhs: Pred<'db>, rhs: Pred<'db>) -> bool {

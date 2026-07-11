@@ -90,6 +90,25 @@ pub fn trait_env_from_module_resolution_and_imports<'db>(
     module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
     imports: &nameres::ModuleImportSurface<'db>,
 ) -> TraitEnvId<'db> {
+    let module_id = imports
+        .owner
+        .and_then(|_| nameres::module_id_for_source_file(db, module.def_id_value(db).file(db)));
+    trait_env_from_module_resolution_and_imports_impl(
+        db,
+        module_id,
+        module,
+        module_resolution,
+        imports,
+    )
+}
+
+fn trait_env_from_module_resolution_and_imports_impl<'db>(
+    db: &'db dyn Db,
+    module_id: Option<ModuleId<'db>>,
+    module: Module<'db>,
+    module_resolution: &hir_nameres::ModuleResolutionMap<'db>,
+    imports: &nameres::ModuleImportSurface<'db>,
+) -> TraitEnvId<'db> {
     let mut clause_sets = Vec::new();
     clause_sets.push(builtin_trait_clause_set(db));
 
@@ -100,15 +119,37 @@ pub fn trait_env_from_module_resolution_and_imports<'db>(
         clause_sets.push(module_superclass_clause_set(db, module));
     }
 
+    let shared_local_facts = module_id
+        .and_then(|module| module_instance_facts(db, module).as_ref())
+        .filter(|facts| {
+            facts.module == module && facts.item_resolutions == *module_resolution.item_resolutions
+        });
     for item in module.items(db) {
         if let Item::InstanceDef(instance) = item {
             let mut instance_builder = TraitClauseBuilder::new(db);
-            instance_builder.add_instance(module, *instance, &module_resolution.item_resolutions);
+            if let Some(fact) = shared_local_facts.and_then(|facts| {
+                facts
+                    .instances
+                    .iter()
+                    .find(|fact| fact.def == instance.def_id_value(db))
+            }) {
+                instance_builder.add_instance_fact(fact);
+            } else {
+                instance_builder.add_instance(
+                    module,
+                    *instance,
+                    &module_resolution.item_resolutions,
+                );
+            }
             clause_sets.push(instance_builder.finish());
         }
     }
     for origin in &imports.instances {
-        clause_sets.push(instance_origin_clause_set(db, origin.module, origin.def_id));
+        let mut instance_builder = TraitClauseBuilder::new(db);
+        if let Some(fact) = instance_fact_for_origin(db, origin.module, origin.def_id) {
+            instance_builder.add_instance_fact(fact);
+        }
+        clause_sets.push(instance_builder.finish());
     }
 
     if let Some(generic) = local_generic_class(db, module)
@@ -158,11 +199,9 @@ pub(super) fn base_trait_env_clauses<'db>(
                 extend_clause_set(&mut clauses, db, module_superclass_clause_set(db, *module));
             }
             for origin in &source.instance_origins {
-                extend_clause_set(
-                    &mut clauses,
-                    db,
-                    instance_origin_clause_set(db, origin.module, origin.def_id),
-                );
+                if let Some(fact) = instance_fact_for_origin(db, origin.module, origin.def_id) {
+                    clauses.push(fact.clause());
+                }
             }
             if let Some(source) = source.derived_generic {
                 extend_clause_set(
@@ -237,25 +276,16 @@ fn module_superclass_clause_set<'db>(
     builder.finish()
 }
 
-#[salsa::tracked]
-fn instance_origin_clause_set<'db>(
+fn instance_fact_for_origin<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
     def_id: DefId<'db>,
-) -> TraitClauseSetId<'db> {
-    let mut builder = TraitClauseBuilder::new(db);
-    let Some((scope, item_resolutions)) = scope_resolution_for_module_id(db, module) else {
-        return builder.finish();
-    };
-    if let Some(instance) = scope
+) -> Option<&'db InstanceFact<'db>> {
+    module_instance_facts(db, module)
+        .as_ref()?
         .instances
         .iter()
-        .find(|instance| instance.def_id_value(db) == def_id)
-        .copied()
-    {
-        builder.add_instance(scope.module, instance, &item_resolutions);
-    }
-    builder.finish()
+        .find(|fact| fact.def == def_id)
 }
 
 #[salsa::tracked]
@@ -420,6 +450,10 @@ impl<'db> TraitClauseBuilder<'db> {
                 default: instance.default_kw(self.db).is_some(),
             },
         });
+    }
+
+    fn add_instance_fact(&mut self, fact: &InstanceFact<'db>) {
+        self.clauses.push(fact.clause());
     }
 
     fn add_derived_generic_instances(

@@ -69,6 +69,7 @@ mod display;
 mod engine;
 mod env;
 mod evidence;
+mod instance_facts;
 mod r#match;
 mod module_lookup;
 mod soundness;
@@ -90,6 +91,7 @@ pub use env::{
     trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
 use evidence::{apply_evidence, clause_evidence, solution_from_answers};
+use instance_facts::{InstanceFact, module_instance_facts};
 use r#match::{
     InstantiatedClause, MatchSubst, collect_evidence_vars, collect_pred_vars, collect_ty_vars,
     head_can_unify, instantiate_clause, match_head, max_pred_var, offset_pred_vars, ty_equal,
