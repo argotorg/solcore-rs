@@ -1,7 +1,8 @@
 use hir::input::SourceFile;
-use nameres::{ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree};
+use nameres::{ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
+use salsa::Setter;
 use tracing::Level;
 
 use crate::trace::emit_salsa_event;
@@ -19,6 +20,8 @@ pub(crate) struct DriverDb {
     pub(crate) module_tree: Option<ModuleTree>,
     /// Filesystem facts used by module path resolution.
     pub(crate) module_fs_snapshot: Option<ModuleFsSnapshot>,
+    /// Tracked snapshot of `module_files` consumed by name resolution.
+    pub(crate) module_file_snapshot: Option<ModuleFileSnapshot>,
     /// Loaded source file for each logical module key.
     pub(crate) module_files: FxHashMap<ModuleKey, SourceFile>,
 }
@@ -33,6 +36,7 @@ impl DriverDb {
             }),
             module_tree: None,
             module_fs_snapshot: None,
+            module_file_snapshot: None,
             module_files: FxHashMap::default(),
         }
     }
@@ -41,6 +45,23 @@ impl DriverDb {
 impl Default for DriverDb {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl DriverDb {
+    pub(crate) fn sync_module_file_snapshot(&mut self) {
+        let files = self
+            .module_files
+            .iter()
+            .map(|(key, file)| (key.clone(), *file))
+            .collect();
+        if let Some(snapshot) = self.module_file_snapshot {
+            if snapshot.files(self) != &files {
+                snapshot.set_files(self).to(files);
+            }
+        } else {
+            self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+        }
     }
 }
 
@@ -72,8 +93,16 @@ impl nameres::Db for DriverDb {
             .expect("DriverDb module filesystem snapshot is initialized before use")
     }
 
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+        self.module_file_snapshot
+            .expect("DriverDb module file snapshot is initialized before use")
+    }
+
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-        self.module_files.get(&module.key(self)).copied()
+        self.module_file_snapshot()
+            .files(self)
+            .get(&module.key(self))
+            .copied()
     }
 }
 

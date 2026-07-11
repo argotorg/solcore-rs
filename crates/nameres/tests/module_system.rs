@@ -11,9 +11,10 @@ use hir::{
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
+use salsa::Setter;
 use solcore_nameres::{
-    LibraryId, ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleKey, ModuleTree, module_diagnostics,
-    module_id_from_key, module_imports, module_key_for_path, public_interface,
+    LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleKey, ModuleTree,
+    module_diagnostics, module_id_from_key, module_imports, module_key_for_path, public_interface,
     reachable_diagnostics, resolve_module_path_candidate, resolve_reachable_full,
     strongly_connected_components,
 };
@@ -25,7 +26,31 @@ struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
     module_fs_snapshot: Option<ModuleFsSnapshot>,
+    module_file_snapshot: Option<ModuleFileSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
+}
+
+impl TestDb {
+    fn sync_module_files(&mut self) {
+        let files = self
+            .module_files
+            .iter()
+            .map(|(key, file)| (key.clone(), *file))
+            .collect();
+        if let Some(snapshot) = self.module_file_snapshot {
+            if snapshot.files(self) != &files {
+                snapshot.set_files(self).to(files);
+            }
+        } else {
+            self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+        }
+    }
+
+    fn insert_module_file(&mut self, key: ModuleKey, file: SourceFile) {
+        if self.module_files.insert(key, file) != Some(file) {
+            self.sync_module_files();
+        }
+    }
 }
 
 #[salsa::db]
@@ -55,8 +80,16 @@ impl solcore_nameres::Db for TestDb {
             .expect("test module filesystem snapshot initialized")
     }
 
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+        self.module_file_snapshot
+            .expect("test module file snapshot initialized")
+    }
+
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-        self.module_files.get(&module.key(self)).copied()
+        self.module_file_snapshot()
+            .files(self)
+            .get(&module.key(self))
+            .copied()
     }
 }
 
@@ -122,14 +155,14 @@ fn compiler_dispatch_dependency_never_falls_back_to_a_local_std_module() {
         Url::from_file_path(main_root.join("main.solc")).expect("main URL"),
         Some("contract C {}".to_owned()),
     );
-    db.module_files.insert(main_key.clone(), main_file);
+    db.insert_module_file(main_key.clone(), main_file);
     let local_key = module_key(["std", "dispatch"]);
     let local_file = SourceFile::new(
         &db,
         Url::from_file_path(&local_dispatch_path).expect("local dispatch URL"),
         Some("function counterfeit() -> word { return 0; }".to_owned()),
     );
-    db.module_files.insert(local_key.clone(), local_file);
+    db.insert_module_file(local_key.clone(), local_file);
 
     let main = module_id_from_key(&db, &main_key);
     let compiler_ref = module_imports(&db, main_file)
@@ -417,7 +450,7 @@ fn load_sources<const N: usize>(sources: [(Vec<&str>, &str); N]) -> (TestDb, Mod
         };
         let url = fixture_url(&key);
         let file = SourceFile::new(&db, url, Some(source.to_owned()));
-        db.module_files.insert(key, file);
+        db.insert_module_file(key, file);
     }
     (
         db,
@@ -485,7 +518,7 @@ fn load_entry(
     ));
     let entry_key = module_key_for_path(LibraryId::Main, root, entry_path).expect("entry key");
     let entry_file = source_file_for_path(&db, entry_path);
-    db.module_files.insert(entry_key.clone(), entry_file);
+    db.insert_module_file(entry_key.clone(), entry_file);
     load_reachable_modules(&mut db, entry_key.clone());
     (db, entry_key)
 }
@@ -518,7 +551,7 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) {
         for (target_key, file_path) in targets {
             if !db.module_files.contains_key(&target_key) && file_path.exists() {
                 let file = source_file_for_path(db, &file_path);
-                db.module_files.insert(target_key.clone(), file);
+                db.insert_module_file(target_key.clone(), file);
             }
             if db.module_files.contains_key(&target_key) {
                 queue.push(target_key);
@@ -586,7 +619,7 @@ fn load_library_files(db: &mut TestDb, library: LibraryId, root: &Path, dir: &Pa
             let source = fs::read_to_string(&path).expect("fixture source");
             let url = fixture_url(&key);
             let file = SourceFile::new(db, url, Some(source));
-            db.module_files.insert(key, file);
+            db.insert_module_file(key, file);
         }
     }
 }

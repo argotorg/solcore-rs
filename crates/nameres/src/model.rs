@@ -8,9 +8,10 @@ pub trait Db: parser::Db {
     /// Returns the filesystem facts used by module path resolution.
     fn module_fs_snapshot(&self) -> ModuleFsSnapshot;
 
+    /// Returns the tracked mapping from logical modules to loaded source files.
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot;
+
     /// Returns the source file loaded for a logical module, if any.
-    ///
-    /// Drivers may populate this map lazily while traversing imports.
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile>;
 }
 
@@ -46,6 +47,19 @@ pub struct ModuleFsSnapshot {
     /// Sibling `.solc` file stems by parent directory.
     #[returns(ref)]
     pub sibling_stems: BTreeMap<PathBuf, Vec<String>>,
+}
+
+/// Snapshot of the source files loaded for each logical module.
+///
+/// The complete mapping is a Salsa input so tracked name-resolution queries do
+/// not depend on driver-owned, untracked maps. Editing the contents of an
+/// existing [`SourceFile`] leaves this snapshot unchanged; only adding,
+/// removing, or remapping a logical module updates it.
+#[salsa::input(debug)]
+pub struct ModuleFileSnapshot {
+    /// Loaded source file by lifetime-free logical module identity.
+    #[returns(ref)]
+    pub files: BTreeMap<ModuleKey, SourceFile>,
 }
 
 /// Logical library namespace that owns a module path.

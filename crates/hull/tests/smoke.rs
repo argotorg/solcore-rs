@@ -6,11 +6,12 @@ use std::{
 
 use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
 use nameres::{
-    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
-    module_key_for_path, module_path_display, resolve_module_path_candidate,
+    LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
+    module_id_from_key, module_key_for_path, module_path_display, resolve_module_path_candidate,
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
+use salsa::Setter;
 use solcore_hull::{
     CheckDiagnosticKind, EmitDiagnostic, EmitDiagnosticKind, EmitOptions, check_program_with_db,
     emit_module, pretty_program,
@@ -23,7 +24,26 @@ struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
     module_fs_snapshot: Option<ModuleFsSnapshot>,
+    module_file_snapshot: Option<ModuleFileSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
+}
+
+impl TestDb {
+    fn insert_module_file(&mut self, key: ModuleKey, file: SourceFile) {
+        if self.module_files.insert(key, file) == Some(file) {
+            return;
+        }
+        let files = self
+            .module_files
+            .iter()
+            .map(|(key, file)| (key.clone(), *file))
+            .collect();
+        if let Some(snapshot) = self.module_file_snapshot {
+            snapshot.set_files(self).to(files);
+        } else {
+            self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+        }
+    }
 }
 
 #[salsa::db]
@@ -57,8 +77,16 @@ impl nameres::Db for TestDb {
             .unwrap_or_else(|| ModuleFsSnapshot::new(self, BTreeSet::new(), BTreeMap::new()))
     }
 
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+        self.module_file_snapshot
+            .unwrap_or_else(|| ModuleFileSnapshot::new(self, BTreeMap::new()))
+    }
+
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-        self.module_files.get(&module.key(self)).copied()
+        self.module_file_snapshot()
+            .files(self)
+            .get(&module.key(self))
+            .copied()
     }
 }
 
@@ -1260,7 +1288,7 @@ fn specialize_fixture(path: &Path) -> (&'static TestDb, SpecializeOutput<'static
         url::Url::from_file_path(path).expect("file URL"),
         Some(source),
     );
-    db.module_files.insert(key.clone(), file);
+    db.insert_module_file(key.clone(), file);
     let unresolved = load_reachable_modules(db, key);
     assert!(unresolved.is_empty(), "{unresolved:?}");
     let module = parse_file_to_hir(db, file).module(db);
@@ -1354,7 +1382,7 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
                             url::Url::from_file_path(&file_path).expect("file URL"),
                             Some(source),
                         );
-                        db.module_files.insert(target_key.clone(), file);
+                        db.insert_module_file(target_key.clone(), file);
                     }
                     Err(err) => unresolved.push(format!("{}: {err}", file_path.display())),
                 }

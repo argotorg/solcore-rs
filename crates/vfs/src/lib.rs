@@ -16,12 +16,12 @@ use hir::{
     input::SourceFile,
 };
 use nameres::{
-    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
-    module_key_for_path, reachable_diagnostics, resolve_module_path_candidate,
+    LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
+    module_id_from_key, module_key_for_path, reachable_diagnostics, resolve_module_path_candidate,
     resolve_reachable_full,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use salsa::{Database as _, Setter};
+use salsa::{Durability, Setter};
 use url::Url;
 
 /// Virtual root for user sources.
@@ -74,51 +74,44 @@ pub struct AnalysisHost {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
     module_fs_snapshot: Option<ModuleFsSnapshot>,
-    module_files: FxHashMap<ModuleKey, SourceFile>,
+    module_file_snapshot: Option<ModuleFileSnapshot>,
+    module_files: BTreeMap<ModuleKey, SourceFile>,
     files: FxHashMap<PathBuf, SourceFile>,
 }
 
 impl AnalysisHost {
     /// Creates an empty host with virtual `/main` and `/std` roots configured.
     pub fn new() -> Self {
+        Self::with_storage(salsa::Storage::new(None))
+    }
+
+    fn with_storage(storage: salsa::Storage<Self>) -> Self {
         let mut host = Self {
-            storage: salsa::Storage::new(None),
+            storage,
             module_tree: None,
             module_fs_snapshot: None,
-            module_files: FxHashMap::default(),
+            module_file_snapshot: None,
+            module_files: BTreeMap::new(),
             files: FxHashMap::default(),
         };
         host.initialize_roots(BTreeMap::new());
+        host.module_file_snapshot = Some(ModuleFileSnapshot::new(&host, BTreeMap::new()));
         host.rebuild_module_fs_snapshot();
         host
     }
 
     /// Adds or replaces an in-memory file at an absolute virtual path.
     pub fn set_virtual_file(&mut self, path: impl Into<PathBuf>, contents: String) -> SourceFile {
-        let path = normalize_absolute_path(path.into());
-        let file = if let Some(file) = self.files.get(&path).copied() {
-            file.set_content(self).to(Some(contents));
-            file
-        } else {
-            let file = source_file_for_virtual_path(self, &path, contents);
-            self.files.insert(path.clone(), file);
-            file
-        };
-        self.register_module_file(&path, file);
-        self.rebuild_module_fs_snapshot();
+        let (file, changes) =
+            self.set_virtual_file_deferred(path.into(), contents, Durability::LOW);
+        self.finish_file_changes(changes);
         file
     }
 
     /// Removes an in-memory file at an absolute virtual path.
     pub fn remove_virtual_file(&mut self, path: impl Into<PathBuf>) {
-        let path = normalize_absolute_path(path.into());
-        if let Some(file) = self.files.remove(&path) {
-            file.set_content(self).to(None);
-        }
-        if let Some(key) = self.module_key_for_virtual_path(&path) {
-            self.remove_module_file(&key);
-        }
-        self.rebuild_module_fs_snapshot();
+        let changes = self.remove_virtual_file_deferred(path.into());
+        self.finish_file_changes(changes);
     }
 
     /// Returns the source file stored at `path`, if present.
@@ -128,15 +121,26 @@ impl AnalysisHost {
 
     /// Seeds `/std` with the embedded standard library.
     pub fn seed_std(&mut self) {
+        let mut changes = FileChanges::default();
         for (name, contents) in STD_FILES {
-            self.set_virtual_file(PathBuf::from(STD_ROOT).join(name), (*contents).to_owned());
+            let (_, file_changes) = self.set_virtual_file_deferred(
+                PathBuf::from(STD_ROOT).join(name),
+                (*contents).to_owned(),
+                Durability::HIGH,
+            );
+            changes.merge(file_changes);
         }
+        self.finish_file_changes(changes);
     }
 
     fn initialize_roots(&mut self, external_roots: BTreeMap<String, PathBuf>) {
         let main_root = PathBuf::from(MAIN_ROOT);
         let std_root = PathBuf::from(STD_ROOT);
-        self.module_tree = Some(ModuleTree::new(self, main_root, std_root, external_roots));
+        self.module_tree = Some(
+            ModuleTree::builder(main_root, std_root, external_roots)
+                .durability(Durability::HIGH)
+                .new(self),
+        );
     }
 
     fn ensure_external_root(&mut self, name: &str) {
@@ -152,26 +156,19 @@ impl AnalysisHost {
         tree.set_external_roots(self).to(external_roots);
     }
 
-    fn register_module_file(&mut self, path: &Path, file: SourceFile) {
+    fn register_module_file(&mut self, path: &Path, file: SourceFile) -> bool {
         if let Some(key) = self.module_key_for_virtual_path(path) {
-            self.set_module_file(key, file);
+            return self.set_module_file(key, file);
         }
+        false
     }
 
-    fn set_module_file(&mut self, key: ModuleKey, file: SourceFile) {
-        if self.module_files.insert(key, file) != Some(file) {
-            // NOTE(codex): `module_files` is untracked Salsa state read by
-            // tracked name-resolution queries through `Db::module_file`.
-            // Advance the revision whenever loading changes so cached
-            // "not loaded" import results cannot survive graph expansion.
-            self.synthetic_write(salsa::Durability::LOW);
-        }
+    fn set_module_file(&mut self, key: ModuleKey, file: SourceFile) -> bool {
+        self.module_files.insert(key, file) != Some(file)
     }
 
-    fn remove_module_file(&mut self, key: &ModuleKey) {
-        if self.module_files.remove(key).is_some() {
-            self.synthetic_write(salsa::Durability::LOW);
-        }
+    fn remove_module_file(&mut self, key: &ModuleKey) -> bool {
+        self.module_files.remove(key).is_some()
     }
 
     fn module_key_for_virtual_path(&self, path: &Path) -> Option<ModuleKey> {
@@ -190,12 +187,95 @@ impl AnalysisHost {
     fn rebuild_module_fs_snapshot(&mut self) {
         let (existing_files, sibling_stems) = module_fs_snapshot_from_paths(self.files.keys());
         if let Some(snapshot) = self.module_fs_snapshot {
-            snapshot.set_existing_files(self).to(existing_files);
-            snapshot.set_sibling_stems(self).to(sibling_stems);
+            if snapshot.existing_files(self) != &existing_files {
+                snapshot.set_existing_files(self).to(existing_files);
+            }
+            if snapshot.sibling_stems(self) != &sibling_stems {
+                snapshot.set_sibling_stems(self).to(sibling_stems);
+            }
         } else {
             self.module_fs_snapshot =
                 Some(ModuleFsSnapshot::new(self, existing_files, sibling_stems));
         }
+    }
+
+    fn sync_module_file_snapshot(&mut self) {
+        let files = self.module_files.clone();
+        if let Some(snapshot) = self.module_file_snapshot {
+            if snapshot.files(self) != &files {
+                snapshot.set_files(self).to(files);
+            }
+        } else {
+            self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+        }
+    }
+
+    fn set_virtual_file_deferred(
+        &mut self,
+        path: PathBuf,
+        contents: String,
+        durability: Durability,
+    ) -> (SourceFile, FileChanges) {
+        let path = normalize_absolute_path(path);
+        let (file, file_set_changed) = if let Some(file) = self.files.get(&path).copied() {
+            if file.content(self).as_deref() != Some(contents.as_str()) {
+                file.set_content(self)
+                    .with_durability(durability)
+                    .to(Some(contents));
+            }
+            (file, false)
+        } else {
+            let file = source_file_for_virtual_path(self, &path, contents, durability);
+            self.files.insert(path.clone(), file);
+            (file, true)
+        };
+        let module_files_changed = self.register_module_file(&path, file);
+        (
+            file,
+            FileChanges {
+                file_set_changed,
+                module_files_changed,
+            },
+        )
+    }
+
+    fn remove_virtual_file_deferred(&mut self, path: PathBuf) -> FileChanges {
+        let path = normalize_absolute_path(path);
+        let file_set_changed = if let Some(file) = self.files.remove(&path) {
+            file.set_content(self).to(None);
+            true
+        } else {
+            false
+        };
+        let module_files_changed = self
+            .module_key_for_virtual_path(&path)
+            .is_some_and(|key| self.remove_module_file(&key));
+        FileChanges {
+            file_set_changed,
+            module_files_changed,
+        }
+    }
+
+    fn finish_file_changes(&mut self, changes: FileChanges) {
+        if changes.module_files_changed {
+            self.sync_module_file_snapshot();
+        }
+        if changes.file_set_changed {
+            self.rebuild_module_fs_snapshot();
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FileChanges {
+    file_set_changed: bool,
+    module_files_changed: bool,
+}
+
+impl FileChanges {
+    fn merge(&mut self, other: Self) {
+        self.file_set_changed |= other.file_set_changed;
+        self.module_files_changed |= other.module_files_changed;
     }
 }
 
@@ -233,9 +313,16 @@ impl nameres::Db for AnalysisHost {
             .expect("AnalysisHost module filesystem snapshot is initialized before use")
     }
 
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+        self.module_file_snapshot
+            .expect("AnalysisHost module file snapshot is initialized before use")
+    }
+
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-        self.report_untracked_read();
-        self.module_files.get(&module.key(self)).copied()
+        self.module_file_snapshot()
+            .files(self)
+            .get(&module.key(self))
+            .copied()
     }
 }
 
@@ -247,6 +334,23 @@ impl hir_ty::Db for AnalysisHost {}
 pub struct Workspace {
     host: AnalysisHost,
     entry_path: Option<PathBuf>,
+}
+
+/// One file-system mutation applied by [`Workspace::apply_file_changes`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WorkspaceFileChange {
+    /// Add or replace a user file below `/main`.
+    Set { path: String, contents: String },
+    /// Remove a user file below `/main`.
+    Remove { path: String },
+    /// Add or replace a file in a named external library.
+    SetExternal {
+        library: String,
+        path: String,
+        contents: String,
+    },
+    /// Remove a file from a named external library.
+    RemoveExternal { library: String, path: String },
 }
 
 impl Workspace {
@@ -265,30 +369,77 @@ impl Workspace {
     ///
     /// Both `main.solc` and `/main/main.solc` refer to `/main/main.solc`.
     pub fn set_file(&mut self, path: &str, contents: String) {
-        self.host.set_virtual_file(main_path(path), contents);
-        self.load_entry_modules();
+        self.apply_file_changes([WorkspaceFileChange::Set {
+            path: path.to_owned(),
+            contents,
+        }]);
     }
 
     /// Removes a user file under `/main`.
     pub fn remove_file(&mut self, path: &str) {
-        self.host.remove_virtual_file(main_path(path));
-        self.load_entry_modules();
+        self.apply_file_changes([WorkspaceFileChange::Remove {
+            path: path.to_owned(),
+        }]);
     }
 
     /// Adds or replaces a file in a named external library under `/ext/<name>`.
     pub fn set_external_file(&mut self, library: &str, path: &str, contents: String) {
-        let name = normalize_external_name(library);
-        self.host.ensure_external_root(&name);
-        self.host
-            .set_virtual_file(external_path(&name, path), contents);
-        self.load_entry_modules();
+        self.apply_file_changes([WorkspaceFileChange::SetExternal {
+            library: library.to_owned(),
+            path: path.to_owned(),
+            contents,
+        }]);
     }
 
     /// Removes a file from a named external library under `/ext/<name>`.
     pub fn remove_external_file(&mut self, library: &str, path: &str) {
-        let name = normalize_external_name(library);
-        self.host.ensure_external_root(&name);
-        self.host.remove_virtual_file(external_path(&name, path));
+        self.apply_file_changes([WorkspaceFileChange::RemoveExternal {
+            library: library.to_owned(),
+            path: path.to_owned(),
+        }]);
+    }
+
+    /// Applies several user/external file changes as one workspace update.
+    ///
+    /// The module registry and filesystem snapshot are rebuilt at most once,
+    /// and reachable-module loading runs once after all changes are visible.
+    pub fn apply_file_changes(&mut self, changes: impl IntoIterator<Item = WorkspaceFileChange>) {
+        let mut accumulated = FileChanges::default();
+        for change in changes {
+            let current = match change {
+                WorkspaceFileChange::Set { path, contents } => {
+                    self.host
+                        .set_virtual_file_deferred(main_path(&path), contents, Durability::LOW)
+                        .1
+                }
+                WorkspaceFileChange::Remove { path } => {
+                    self.host.remove_virtual_file_deferred(main_path(&path))
+                }
+                WorkspaceFileChange::SetExternal {
+                    library,
+                    path,
+                    contents,
+                } => {
+                    let name = normalize_external_name(&library);
+                    self.host.ensure_external_root(&name);
+                    self.host
+                        .set_virtual_file_deferred(
+                            external_path(&name, &path),
+                            contents,
+                            Durability::LOW,
+                        )
+                        .1
+                }
+                WorkspaceFileChange::RemoveExternal { library, path } => {
+                    let name = normalize_external_name(&library);
+                    self.host.ensure_external_root(&name);
+                    self.host
+                        .remove_virtual_file_deferred(external_path(&name, &path))
+                }
+            };
+            accumulated.merge(current);
+        }
+        self.host.finish_file_changes(accumulated);
         self.load_entry_modules();
     }
 
@@ -498,6 +649,7 @@ fn range_from_absolute_span(db: &AnalysisHost, span: hir::diag::AbsoluteSpan) ->
 pub fn load_reachable_modules(host: &mut AnalysisHost, entry: ModuleKey) {
     let mut queue = VecDeque::from([entry]);
     let mut visited = FxHashSet::default();
+    let mut module_files_changed = false;
 
     while let Some(key) = queue.pop_front() {
         if !visited.insert(key.clone()) {
@@ -524,21 +676,31 @@ pub fn load_reachable_modules(host: &mut AnalysisHost, entry: ModuleKey) {
             if !host.module_files.contains_key(&target_key)
                 && let Some(file) = host.files.get(&file_path).copied()
             {
-                host.set_module_file(target_key.clone(), file);
+                module_files_changed |= host.set_module_file(target_key.clone(), file);
             }
             if host.module_files.contains_key(&target_key) {
                 queue.push_back(target_key);
             }
         }
     }
+    if module_files_changed {
+        host.sync_module_file_snapshot();
+    }
 }
 
-fn source_file_for_virtual_path(db: &AnalysisHost, path: &Path, source: String) -> SourceFile {
+fn source_file_for_virtual_path(
+    db: &AnalysisHost,
+    path: &Path,
+    source: String,
+    durability: Durability,
+) -> SourceFile {
     let path = path
         .to_str()
         .expect("virtual paths are constructed from UTF-8 strings");
     let url = Url::parse(&format!("file://{path}")).expect("virtual absolute file URL");
-    SourceFile::new(db, url, Some(source))
+    SourceFile::builder(url, Some(source))
+        .durability(durability)
+        .new(db)
 }
 
 fn module_fs_snapshot_from_paths<'a>(
@@ -606,6 +768,31 @@ fn normalize_external_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    fn host_with_execution_log() -> (AnalysisHost, Arc<Mutex<Vec<String>>>) {
+        let executed = Arc::new(Mutex::new(Vec::new()));
+        let host = AnalysisHost::with_storage(salsa::Storage::new(Some(Box::new({
+            let executed = executed.clone();
+            move |event| {
+                if let salsa::EventKind::WillExecute { database_key } = event.kind {
+                    executed
+                        .lock()
+                        .expect("execution log lock")
+                        .push(format!("{database_key:?}"));
+                }
+            }
+        }))));
+        (host, executed)
+    }
+
+    fn take_executed(executed: &Mutex<Vec<String>>) -> Vec<String> {
+        std::mem::take(&mut *executed.lock().expect("execution log lock"))
+    }
+
+    fn query_executions(events: &[String], query: &str) -> usize {
+        events.iter().filter(|event| event.contains(query)).count()
+    }
 
     fn workspace_with_main(source: &str) -> Workspace {
         let mut workspace = Workspace::new();
@@ -656,6 +843,18 @@ mod tests {
             .into_iter()
             .map(|diagnostic| diagnostic.message)
             .collect()
+    }
+
+    fn workspace_from_files(files: &[(&str, &str)], entry: &str) -> Workspace {
+        let mut workspace = Workspace::new();
+        workspace.apply_file_changes(files.iter().map(|(path, contents)| {
+            WorkspaceFileChange::Set {
+                path: (*path).to_owned(),
+                contents: (*contents).to_owned(),
+            }
+        }));
+        workspace.set_entry(entry);
+        workspace
     }
 
     #[test]
@@ -734,6 +933,7 @@ mod tests {
             .module_key_for_virtual_path(&main_path("math.solc"))
             .expect("math module key");
         assert!(workspace.host.module_files.remove(&math_key).is_some());
+        workspace.host.sync_module_file_snapshot();
         let diagnostics = workspace.diagnostics();
         assert!(
             diagnostics.iter().any(|diagnostic| {
@@ -782,6 +982,118 @@ mod tests {
             .source_file(main_path("main.solc"))
             .expect("main source file");
         assert_eq!(before_file, restored_file);
+        assert!(workspace.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn identical_virtual_and_workspace_updates_do_not_reexecute_queries() {
+        let source = "function main() -> word { return 1; }\n";
+        let (mut host, executed) = host_with_execution_log();
+        let file = host.set_virtual_file(main_path("main.solc"), source.to_owned());
+        let _ = parser::parse_file_to_hir(&host, file);
+        let _ = take_executed(&executed);
+
+        let same_file = host.set_virtual_file(main_path("main.solc"), source.to_owned());
+        assert_eq!(same_file, file);
+        let _ = parser::parse_file_to_hir(&host, same_file);
+        let events = take_executed(&executed);
+        assert_eq!(
+            query_executions(&events, "parse_file_to_hir"),
+            0,
+            "{events:#?}"
+        );
+
+        host.seed_std();
+        let mut workspace = Workspace {
+            host,
+            entry_path: None,
+        };
+        workspace.set_entry("main.solc");
+        assert!(workspace.diagnostics().is_empty());
+        let _ = take_executed(&executed);
+
+        workspace.set_file("main.solc", source.to_owned());
+        assert!(workspace.diagnostics().is_empty());
+        let events = take_executed(&executed);
+        assert_eq!(
+            query_executions(&events, "parse_file_to_hir"),
+            0,
+            "{events:#?}"
+        );
+    }
+
+    #[test]
+    fn incremental_diagnostics_match_a_fresh_workspace_across_batch_changes() {
+        let initial_main = "import util.{value};\nfunction main() -> word { return value(); }\n";
+        let initial_util = "function value() -> word { return 1; }\nexport { value };\n";
+        let mut incremental = workspace_from_files(
+            &[("main.solc", initial_main), ("util.solc", initial_util)],
+            "main.solc",
+        );
+        assert!(incremental.diagnostics().is_empty());
+
+        let broken_main =
+            "import helper.{answer};\nfunction main() -> word { return answer(missing); }\n";
+        let broken_helper = "function answer(x: bool) -> word { return x; }\nexport { answer };\n";
+        incremental.apply_file_changes([
+            WorkspaceFileChange::Set {
+                path: "main.solc".to_owned(),
+                contents: broken_main.to_owned(),
+            },
+            WorkspaceFileChange::Remove {
+                path: "util.solc".to_owned(),
+            },
+            WorkspaceFileChange::Set {
+                path: "helper.solc".to_owned(),
+                contents: broken_helper.to_owned(),
+            },
+        ]);
+        let fresh = workspace_from_files(
+            &[("main.solc", broken_main), ("helper.solc", broken_helper)],
+            "main.solc",
+        );
+        assert_eq!(incremental.diagnostics(), fresh.diagnostics());
+
+        let fixed_main =
+            "import helper.{answer};\nfunction main() -> word { return answer(true); }\n";
+        let fixed_helper = "function answer(x: bool) -> word { return 1; }\nexport { answer };\n";
+        incremental.apply_file_changes([
+            WorkspaceFileChange::Set {
+                path: "main.solc".to_owned(),
+                contents: fixed_main.to_owned(),
+            },
+            WorkspaceFileChange::Set {
+                path: "helper.solc".to_owned(),
+                contents: fixed_helper.to_owned(),
+            },
+        ]);
+        let fresh = workspace_from_files(
+            &[("main.solc", fixed_main), ("helper.solc", fixed_helper)],
+            "main.solc",
+        );
+        assert_eq!(incremental.diagnostics(), fresh.diagnostics());
+        assert!(incremental.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn batch_update_resolves_a_multi_hop_import_chain() {
+        let workspace = workspace_from_files(
+            &[
+                (
+                    "main.solc",
+                    "import a.{fromA};\nfunction main() -> word { return fromA(); }\n",
+                ),
+                (
+                    "a.solc",
+                    "import b.{value};\nfunction fromA() -> word { return value(); }\nexport { fromA };\n",
+                ),
+                (
+                    "b.solc",
+                    "function value() -> word { return 42; }\nexport { value };\n",
+                ),
+            ],
+            "main.solc",
+        );
         assert!(workspace.diagnostics().is_empty());
     }
 

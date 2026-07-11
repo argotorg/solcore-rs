@@ -9,8 +9,8 @@ use hir::{
     input::SourceFile,
 };
 use nameres::{
-    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_diagnostics,
-    module_id_from_key,
+    LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
+    module_diagnostics, module_id_from_key,
 };
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
@@ -23,6 +23,7 @@ struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
     module_fs_snapshot: Option<ModuleFsSnapshot>,
+    module_file_snapshot: Option<ModuleFileSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
     executed: Arc<Mutex<Vec<String>>>,
 }
@@ -44,6 +45,7 @@ impl Default for TestDb {
             }))),
             module_tree: None,
             module_fs_snapshot: None,
+            module_file_snapshot: None,
             module_files: FxHashMap::default(),
             executed,
         }
@@ -53,6 +55,22 @@ impl Default for TestDb {
 impl TestDb {
     fn take_executed(&self) -> Vec<String> {
         std::mem::take(&mut *self.executed.lock().expect("execution log lock"))
+    }
+
+    fn insert_module_file(&mut self, key: ModuleKey, file: SourceFile) {
+        if self.module_files.insert(key, file) == Some(file) {
+            return;
+        }
+        let files = self
+            .module_files
+            .iter()
+            .map(|(key, file)| (key.clone(), *file))
+            .collect();
+        if let Some(snapshot) = self.module_file_snapshot {
+            snapshot.set_files(self).to(files);
+        } else {
+            self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+        }
     }
 }
 
@@ -83,8 +101,16 @@ impl nameres::Db for TestDb {
             .expect("test module filesystem snapshot initialized")
     }
 
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+        self.module_file_snapshot
+            .expect("test module file snapshot initialized")
+    }
+
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-        self.module_files.get(&module.key(self)).copied()
+        self.module_file_snapshot()
+            .files(self)
+            .get(&module.key(self))
+            .copied()
     }
 }
 
@@ -401,7 +427,7 @@ fn db_with_main(content: &str) -> (TestDb, SourceFile, ModuleKey) {
         library: LibraryId::Main,
         logical_path: vec!["main".to_owned()],
     };
-    db.module_files.insert(key.clone(), file);
+    db.insert_module_file(key.clone(), file);
     (db, file, key)
 }
 
@@ -424,7 +450,7 @@ fn db_with_selected_import_conflict(content: &str) -> (TestDb, SourceFile, Modul
         "memory:///util.solc".parse().expect("valid URL"),
         Some("function f() -> word { return 0; }\nexport { f };\n".to_owned()),
     );
-    db.module_files.insert(util_key, util_file);
+    db.insert_module_file(util_key, util_file);
 
     let file = SourceFile::new(
         &db,
@@ -435,7 +461,7 @@ fn db_with_selected_import_conflict(content: &str) -> (TestDb, SourceFile, Modul
         library: LibraryId::Main,
         logical_path: vec!["main".to_owned()],
     };
-    db.module_files.insert(key.clone(), file);
+    db.insert_module_file(key.clone(), file);
     (db, file, key)
 }
 

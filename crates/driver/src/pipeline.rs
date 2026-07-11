@@ -96,7 +96,6 @@ pub(crate) fn run_compiler() {
         std_root.clone(),
         external_roots.clone(),
     ));
-
     let entry_key = match module_key_for_path(LibraryId::Main, &main_root, &input_path) {
         Some(key) => key,
         None => {
@@ -116,6 +115,7 @@ pub(crate) fn run_compiler() {
         }
     };
     db.module_files.insert(entry_key.clone(), entry_file);
+    db.sync_module_file_snapshot();
 
     db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(
         &db,

@@ -44,10 +44,7 @@ macro_rules! define_frontend_test_db {
             storage: $crate::reexports::salsa::Storage<Self>,
             module_tree: Option<$crate::reexports::nameres::ModuleTree>,
             module_fs_snapshot: Option<$crate::reexports::nameres::ModuleFsSnapshot>,
-            module_files: $crate::reexports::rustc_hash::FxHashMap<
-                $crate::reexports::nameres::ModuleKey,
-                $crate::reexports::hir::input::SourceFile,
-            >,
+            module_file_snapshot: Option<$crate::reexports::nameres::ModuleFileSnapshot>,
         }
 
         #[salsa::db]
@@ -89,11 +86,23 @@ macro_rules! define_frontend_test_db {
                 })
             }
 
+            fn module_file_snapshot(&self) -> $crate::reexports::nameres::ModuleFileSnapshot {
+                self.module_file_snapshot.unwrap_or_else(|| {
+                    $crate::reexports::nameres::ModuleFileSnapshot::new(
+                        self,
+                        std::collections::BTreeMap::new(),
+                    )
+                })
+            }
+
             fn module_file<'db>(
                 &'db self,
                 module: $crate::reexports::nameres::ModuleId<'db>,
             ) -> Option<$crate::reexports::hir::input::SourceFile> {
-                self.module_files.get(&module.key(self)).copied()
+                self.module_file_snapshot()
+                    .files(self)
+                    .get(&module.key(self))
+                    .copied()
             }
         }
 
@@ -117,18 +126,34 @@ macro_rules! define_frontend_test_db {
                 key: $crate::reexports::nameres::ModuleKey,
                 file: $crate::reexports::hir::input::SourceFile,
             ) {
-                self.module_files.insert(key, file);
+                use $crate::reexports::salsa::Setter as _;
+                let mut files = self
+                    .module_file_snapshot
+                    .map(|snapshot| snapshot.files(self).clone())
+                    .unwrap_or_default();
+                if files.insert(key, file) == Some(file) {
+                    return;
+                }
+                if let Some(snapshot) = self.module_file_snapshot {
+                    snapshot.set_files(self).to(files);
+                } else {
+                    self.module_file_snapshot = Some(
+                        $crate::reexports::nameres::ModuleFileSnapshot::new(self, files),
+                    );
+                }
             }
 
             fn contains_module_file(&self, key: &$crate::reexports::nameres::ModuleKey) -> bool {
-                self.module_files.contains_key(key)
+                self.module_file_snapshot
+                    .is_some_and(|snapshot| snapshot.files(self).contains_key(key))
             }
 
             fn module_file_for_key(
                 &self,
                 key: &$crate::reexports::nameres::ModuleKey,
             ) -> Option<$crate::reexports::hir::input::SourceFile> {
-                self.module_files.get(key).copied()
+                self.module_file_snapshot
+                    .and_then(|snapshot| snapshot.files(self).get(key).copied())
             }
         }
     };

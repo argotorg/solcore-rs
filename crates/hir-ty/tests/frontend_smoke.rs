@@ -8,12 +8,13 @@ use std::{
 
 use hir::{diag::AnyDiagnostic, input::SourceFile};
 use nameres::{
-    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
-    module_key_for_path, module_path_display, reachable_diagnostics, resolve_module_path_candidate,
-    resolve_reachable_full,
+    LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
+    module_id_from_key, module_key_for_path, module_path_display, reachable_diagnostics,
+    resolve_module_path_candidate, resolve_reachable_full,
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
+use salsa::Setter;
 use solcore_hir_ty::infer::reachable_typeck_diagnostics;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -76,6 +77,7 @@ struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
     module_fs_snapshot: Option<ModuleFsSnapshot>,
+    module_file_snapshot: Option<ModuleFileSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
     executed: Arc<Mutex<Vec<String>>>,
 }
@@ -97,6 +99,7 @@ impl Default for TestDb {
             }))),
             module_tree: None,
             module_fs_snapshot: None,
+            module_file_snapshot: None,
             module_files: FxHashMap::default(),
             executed,
         }
@@ -106,6 +109,22 @@ impl Default for TestDb {
 impl TestDb {
     fn take_executed(&self) -> Vec<String> {
         std::mem::take(&mut *self.executed.lock().expect("execution log lock"))
+    }
+
+    fn insert_module_file(&mut self, key: ModuleKey, file: SourceFile) {
+        if self.module_files.insert(key, file) == Some(file) {
+            return;
+        }
+        let files = self
+            .module_files
+            .iter()
+            .map(|(key, file)| (key.clone(), *file))
+            .collect();
+        if let Some(snapshot) = self.module_file_snapshot {
+            snapshot.set_files(self).to(files);
+        } else {
+            self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+        }
     }
 }
 
@@ -136,8 +155,16 @@ impl nameres::Db for TestDb {
             .expect("test module filesystem snapshot initialized")
     }
 
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+        self.module_file_snapshot
+            .expect("test module file snapshot initialized")
+    }
+
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-        self.module_files.get(&module.key(self)).copied()
+        self.module_file_snapshot()
+            .files(self)
+            .get(&module.key(self))
+            .copied()
     }
 }
 
@@ -327,7 +354,7 @@ fn run_frontend_with_roots(
     let entry_key = module_key_for_path(LibraryId::Main, main_root, path)
         .expect("entry file is under its main root");
     let entry_file = source_file_for_path(&db, path, source);
-    db.module_files.insert(entry_key.clone(), entry_file);
+    db.insert_module_file(entry_key.clone(), entry_file);
 
     let unresolved_imports = load_reachable_modules(&mut db, entry_key.clone());
     let entry = module_id_from_key(&db, &entry_key);
@@ -391,7 +418,7 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
                 match fs::read_to_string(&file_path) {
                     Ok(source) => {
                         let file = source_file_for_path(db, &file_path, source);
-                        db.module_files.insert(target_key.clone(), file);
+                        db.insert_module_file(target_key.clone(), file);
                     }
                     Err(err) => unresolved.push(format!(
                         "failed to read {} for {}: {err}",

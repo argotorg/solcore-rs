@@ -7,11 +7,12 @@ use std::{
 use hir::{anchor::DefLocationTable, ast::item::Module, diag::DiagnosticCode, input::SourceFile};
 use hir_ty::{AbiSignature, BuiltinTyCtor, Ty, abi_selector, prepare_module};
 use nameres::{
-    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
-    module_key_for_path, module_path_display, resolve_module_path_candidate,
+    LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
+    module_id_from_key, module_key_for_path, module_path_display, resolve_module_path_candidate,
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
+use salsa::Setter;
 use solcore_specialize::{
     MonoComptimeObligationKind, MonoEntry, MonoExpr, MonoExprKind, MonoItem, MonoPatKind,
     MonoRuntimeMainOrigin, MonoStmt, MonoStmtKind, SpecializeDiagnosticKind, SpecializeOptions,
@@ -24,7 +25,26 @@ struct TestDb {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
     module_fs_snapshot: Option<ModuleFsSnapshot>,
+    module_file_snapshot: Option<ModuleFileSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
+}
+
+impl TestDb {
+    fn insert_module_file(&mut self, key: ModuleKey, file: SourceFile) {
+        if self.module_files.insert(key, file) == Some(file) {
+            return;
+        }
+        let files = self
+            .module_files
+            .iter()
+            .map(|(key, file)| (key.clone(), *file))
+            .collect();
+        if let Some(snapshot) = self.module_file_snapshot {
+            snapshot.set_files(self).to(files);
+        } else {
+            self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+        }
+    }
 }
 
 #[salsa::db]
@@ -58,8 +78,16 @@ impl nameres::Db for TestDb {
             .unwrap_or_else(|| ModuleFsSnapshot::new(self, BTreeSet::new(), BTreeMap::new()))
     }
 
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+        self.module_file_snapshot
+            .unwrap_or_else(|| ModuleFileSnapshot::new(self, BTreeMap::new()))
+    }
+
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-        self.module_files.get(&module.key(self)).copied()
+        self.module_file_snapshot()
+            .files(self)
+            .get(&module.key(self))
+            .copied()
     }
 }
 
@@ -115,7 +143,7 @@ fn specialize_src_with_std_and_db(
     let key =
         module_key_for_path(LibraryId::Main, &main_root, &main_path).expect("file under main root");
     let file = source_file_at_path(db, &main_path, src);
-    db.module_files.insert(key.clone(), file);
+    db.insert_module_file(key.clone(), file);
     let unresolved = load_reachable_modules(db, key);
     assert!(unresolved.is_empty(), "{unresolved:?}");
     let module = parse_file_to_hir(db, file).module(db);
@@ -150,7 +178,7 @@ fn specialize_source_at_root(root: &Path, rel_path: &str, src: &str) -> Speciali
     let path = root.join(rel_path);
     let key = module_key_for_path(LibraryId::Main, root, &path).expect("file under main root");
     let file = source_file_at_path(db, &path, src);
-    db.module_files.insert(key, file);
+    db.insert_module_file(key, file);
     let module = parse_file_to_hir(db, file).module(db);
     specialize_module(db, module, SpecializeOptions::default())
 }
@@ -329,8 +357,8 @@ contract C {
     );
     let lib_key = module_key_for_path(LibraryId::Main, &main_root, &lib_path).unwrap();
     let main_key = module_key_for_path(LibraryId::Main, &main_root, &main_path).unwrap();
-    db.module_files.insert(lib_key, lib_file);
-    db.module_files.insert(main_key, main_file);
+    db.insert_module_file(lib_key, lib_file);
+    db.insert_module_file(main_key, main_file);
 
     let module = parse_file_to_hir(db, main_file).module(db);
     let output = specialize_module(db, module, SpecializeOptions::default());
@@ -388,8 +416,8 @@ contract C {
     );
     let lib_key = module_key_for_path(LibraryId::Main, &main_root, &lib_path).unwrap();
     let main_key = module_key_for_path(LibraryId::Main, &main_root, &main_path).unwrap();
-    db.module_files.insert(lib_key, lib_file);
-    db.module_files.insert(main_key, main_file);
+    db.insert_module_file(lib_key, lib_file);
+    db.insert_module_file(main_key, main_file);
 
     let module = parse_file_to_hir(db, main_file).module(db);
     let output = specialize_module(db, module, SpecializeOptions::default());
@@ -1946,7 +1974,7 @@ contract NotProbe {
     );
     let key = module_key_for_path(LibraryId::Main, &main_root, &main_path)
         .expect("probe under main root");
-    db.module_files.insert(key.clone(), file);
+    db.insert_module_file(key.clone(), file);
     let unresolved = load_reachable_modules(db, key);
     assert!(unresolved.is_empty(), "{unresolved:?}");
 
@@ -2380,7 +2408,7 @@ fn specialize_fixture(path: &Path) -> SpecializeOutput<'static> {
         url::Url::from_file_path(path).expect("file URL"),
         Some(source),
     );
-    db.module_files.insert(key.clone(), file);
+    db.insert_module_file(key.clone(), file);
     let unresolved = load_reachable_modules(db, key.clone());
     assert!(unresolved.is_empty(), "{unresolved:?}");
     let module = parse_file_to_hir(db, file).module(db);
@@ -2473,7 +2501,7 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
                             url::Url::from_file_path(&file_path).expect("file URL"),
                             Some(source),
                         );
-                        db.module_files.insert(target_key.clone(), file);
+                        db.insert_module_file(target_key.clone(), file);
                     }
                     Err(err) => unresolved.push(format!(
                         "failed to read {} for {}: {err}",

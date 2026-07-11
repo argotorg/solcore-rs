@@ -9,9 +9,13 @@ use hir::{
     diag::{Diagnostic, DiagnosticCode},
     input::SourceFile,
 };
-use nameres::{LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key};
+use nameres::{
+    LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
+    module_id_from_key,
+};
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
+use salsa::Setter;
 use solcore_hir_ty::solver::generic_derivation_diagnostics;
 use solcore_hir_ty::{
     BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback,
@@ -26,8 +30,36 @@ use solcore_hir_ty::{
 #[derive(Default, Clone)]
 struct TestDb {
     storage: salsa::Storage<Self>,
+    module_fs_snapshot: Option<ModuleFsSnapshot>,
+    module_file_snapshot: Option<ModuleFileSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
     existing_files: BTreeSet<PathBuf>,
+}
+
+impl TestDb {
+    fn sync_inputs(&mut self) {
+        let existing_files = self.existing_files.clone();
+        if let Some(snapshot) = self.module_fs_snapshot {
+            if snapshot.existing_files(self) != &existing_files {
+                snapshot.set_existing_files(self).to(existing_files);
+            }
+        } else {
+            self.module_fs_snapshot =
+                Some(ModuleFsSnapshot::new(self, existing_files, BTreeMap::new()));
+        }
+        let files = self
+            .module_files
+            .iter()
+            .map(|(key, file)| (key.clone(), *file))
+            .collect();
+        if let Some(snapshot) = self.module_file_snapshot {
+            if snapshot.files(self) != &files {
+                snapshot.set_files(self).to(files);
+            }
+        } else {
+            self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+        }
+    }
 }
 
 #[salsa::db]
@@ -55,11 +87,20 @@ impl nameres::Db for TestDb {
     }
 
     fn module_fs_snapshot(&self) -> ModuleFsSnapshot {
-        ModuleFsSnapshot::new(self, self.existing_files.clone(), BTreeMap::new())
+        self.module_fs_snapshot
+            .unwrap_or_else(|| ModuleFsSnapshot::new(self, BTreeSet::new(), BTreeMap::new()))
+    }
+
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+        self.module_file_snapshot
+            .unwrap_or_else(|| ModuleFileSnapshot::new(self, BTreeMap::new()))
     }
 
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-        self.module_files.get(&module.key(self)).copied()
+        self.module_file_snapshot()
+            .files(self)
+            .get(&module.key(self))
+            .copied()
     }
 }
 
@@ -90,6 +131,7 @@ fn db_with_main(src: &str) -> (TestDb, ModuleKey) {
     let file = source_file_at(&db, "/main/main.solc", src);
     db.existing_files.insert(path);
     db.module_files.insert(key.clone(), file);
+    db.sync_inputs();
     (db, key)
 }
 
@@ -97,6 +139,7 @@ fn insert_module_source(db: &mut TestDb, key: ModuleKey, path: &str, src: &str) 
     let file = source_file_at(db, path, src);
     db.existing_files.insert(PathBuf::from(path));
     db.module_files.insert(key, file);
+    db.sync_inputs();
 }
 
 fn insert_real_std_modules(db: &mut TestDb) {

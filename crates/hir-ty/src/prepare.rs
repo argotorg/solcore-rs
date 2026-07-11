@@ -1851,7 +1851,8 @@ mod tests {
         input::SourceFile,
     };
     use nameres::{
-        LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
+        LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
+        module_id_from_key,
     };
     use parser::parse_file_to_hir;
     use rustc_hash::FxHashMap;
@@ -1865,6 +1866,7 @@ mod tests {
         storage: salsa::Storage<Self>,
         module_tree: Option<ModuleTree>,
         module_fs_snapshot: Option<ModuleFsSnapshot>,
+        module_file_snapshot: Option<ModuleFileSnapshot>,
         module_files: FxHashMap<ModuleKey, SourceFile>,
         executed: Arc<Mutex<Vec<String>>>,
     }
@@ -1886,6 +1888,7 @@ mod tests {
                 }))),
                 module_tree: None,
                 module_fs_snapshot: None,
+                module_file_snapshot: None,
                 module_files: FxHashMap::default(),
                 executed,
             }
@@ -1895,6 +1898,22 @@ mod tests {
     impl TestDb {
         fn take_executed(&self) -> Vec<String> {
             std::mem::take(&mut *self.executed.lock().expect("execution log lock"))
+        }
+
+        fn insert_module_file(&mut self, key: ModuleKey, file: SourceFile) {
+            if self.module_files.insert(key, file) == Some(file) {
+                return;
+            }
+            let files = self
+                .module_files
+                .iter()
+                .map(|(key, file)| (key.clone(), *file))
+                .collect();
+            if let Some(snapshot) = self.module_file_snapshot {
+                snapshot.set_files(self).to(files);
+            } else {
+                self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+            }
         }
     }
 
@@ -1921,8 +1940,15 @@ mod tests {
             self.module_fs_snapshot.expect("filesystem snapshot")
         }
 
+        fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+            self.module_file_snapshot.expect("module file snapshot")
+        }
+
         fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-            self.module_files.get(&module.key(self)).copied()
+            self.module_file_snapshot()
+                .files(self)
+                .get(&module.key(self))
+                .copied()
         }
     }
 
@@ -1965,21 +1991,21 @@ mod tests {
             url::Url::from_file_path(&std_path).expect("std URL"),
             Some(String::new()),
         );
-        db.module_files.insert(
+        db.insert_module_file(
             ModuleKey {
                 library: LibraryId::Std,
                 logical_path: vec!["std".to_owned()],
             },
             std_file,
         );
-        db.module_files.insert(
+        db.insert_module_file(
             ModuleKey {
                 library: LibraryId::Main,
                 logical_path: vec!["main".to_owned()],
             },
             main_file,
         );
-        db.module_files.insert(
+        db.insert_module_file(
             ModuleKey {
                 library: LibraryId::Std,
                 logical_path: vec!["dispatch".to_owned()],

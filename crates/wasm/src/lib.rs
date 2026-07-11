@@ -9,7 +9,10 @@ use hir::{
 use nameres::{Db as _, LibraryId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use vfs::{AnalysisHost, DiagRange, DiagnosticSeverity, MAIN_ROOT, STD_FILES, STD_ROOT, Workspace};
+use vfs::{
+    AnalysisHost, DiagRange, DiagnosticSeverity, MAIN_ROOT, STD_FILES, STD_ROOT, Workspace,
+    WorkspaceFileChange,
+};
 use wasm_bindgen::prelude::*;
 
 /// Installs a panic hook so browser console errors include Rust panic details.
@@ -154,9 +157,15 @@ struct AbsoluteLabel {
 /// Compiles already-deserialized input. Tests use this native helper directly.
 pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
     let mut workspace = Workspace::new();
-    for file in input.files {
-        workspace.set_file(&file.path, file.content);
-    }
+    workspace.apply_file_changes(
+        input
+            .files
+            .into_iter()
+            .map(|file| WorkspaceFileChange::Set {
+                path: file.path,
+                contents: file.content,
+            }),
+    );
     workspace.set_entry(&input.entry);
 
     let mut diagnostics = workspace

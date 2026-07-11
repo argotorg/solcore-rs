@@ -14,10 +14,11 @@ use hir::{
     sema::ty::QualTy,
 };
 use nameres::{
-    LibraryId, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree, module_id_from_key,
-    module_key_for_path,
+    LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
+    module_id_from_key, module_key_for_path,
 };
 use parser::parse_file_to_hir;
+use salsa::Setter;
 
 use super::*;
 use crate::{
@@ -30,7 +31,26 @@ use crate::{
 #[derive(Default, Clone)]
 struct TestDb {
     storage: salsa::Storage<Self>,
+    module_file_snapshot: Option<ModuleFileSnapshot>,
     module_files: FxHashMap<ModuleKey, SourceFile>,
+}
+
+impl TestDb {
+    fn insert_module_file(&mut self, key: ModuleKey, file: SourceFile) {
+        if self.module_files.insert(key, file) == Some(file) {
+            return;
+        }
+        let files = self
+            .module_files
+            .iter()
+            .map(|(key, file)| (key.clone(), *file))
+            .collect();
+        if let Some(snapshot) = self.module_file_snapshot {
+            snapshot.set_files(self).to(files);
+        } else {
+            self.module_file_snapshot = Some(ModuleFileSnapshot::new(self, files));
+        }
+    }
 }
 
 #[salsa::db]
@@ -61,8 +81,16 @@ impl nameres::Db for TestDb {
         ModuleFsSnapshot::new(self, BTreeSet::new(), BTreeMap::new())
     }
 
+    fn module_file_snapshot(&self) -> ModuleFileSnapshot {
+        self.module_file_snapshot
+            .unwrap_or_else(|| ModuleFileSnapshot::new(self, BTreeMap::new()))
+    }
+
     fn module_file<'db>(&'db self, module: ModuleId<'db>) -> Option<SourceFile> {
-        self.module_files.get(&module.key(self)).copied()
+        self.module_file_snapshot()
+            .files(self)
+            .get(&module.key(self))
+            .copied()
     }
 }
 
@@ -96,7 +124,7 @@ fn insert_module_source(db: &mut TestDb, path: &[&str], src: &str) -> ModuleKey 
         .parse()
         .expect("valid url");
     let file = SourceFile::new(&*db, url, Some(src.to_owned()));
-    db.module_files.insert(key.clone(), file);
+    db.insert_module_file(key.clone(), file);
     key
 }
 
@@ -1502,8 +1530,8 @@ instance word:Ord {}
     let lib_key = module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &lib_path).unwrap();
     let main_key =
         module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &main_path).unwrap();
-    db.module_files.insert(lib_key.clone(), lib_file);
-    db.module_files.insert(main_key.clone(), main_file);
+    db.insert_module_file(lib_key.clone(), lib_file);
+    db.insert_module_file(main_key.clone(), main_file);
     let lib_module = module_id_from_key(&db, &lib_key);
     let main_module = module_id_from_key(&db, &main_key);
     let lib_hir = parse_file_to_hir(&db, lib_file).module(&db);
@@ -1552,8 +1580,8 @@ import lib.{Parent, Child};
     let lib_key = module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &lib_path).unwrap();
     let main_key =
         module_key_for_path(LibraryId::Main, &PathBuf::from("/main"), &main_path).unwrap();
-    db.module_files.insert(lib_key, lib_file);
-    db.module_files.insert(main_key.clone(), main_file);
+    db.insert_module_file(lib_key, lib_file);
+    db.insert_module_file(main_key.clone(), main_file);
 
     let main_module = module_id_from_key(&db, &main_key);
     let main_hir = parse_file_to_hir(&db, main_file).module(&db);

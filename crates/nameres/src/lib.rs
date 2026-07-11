@@ -88,9 +88,9 @@ use item_refs::{
 };
 pub use model::{
     ConstructorVisibility, Db, FullResolutionSummary, InstanceImports, Interface, ItemRef,
-    LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleFsSnapshot, ModuleGraph, ModuleId,
-    ModuleImportSurface, ModuleImports, ModuleKey, ModulePathRef, ModuleTree, Namespace, Origin,
-    ResolvedModulePath, ValidationSummary, VisibleConstructors,
+    LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleFileSnapshot, ModuleFsSnapshot,
+    ModuleGraph, ModuleId, ModuleImportSurface, ModuleImports, ModuleKey, ModulePathRef,
+    ModuleTree, Namespace, Origin, ResolvedModulePath, ValidationSummary, VisibleConstructors,
 };
 use modes::{BodyDiagnosticPolicy, CtorInclusion, ExportResolutionMode};
 use paths::{module_path_span, path_segments};

@@ -94,6 +94,7 @@ pub(crate) fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) -> Res
             }
         }
     }
+    db.sync_module_file_snapshot();
     Ok(())
 }
 
