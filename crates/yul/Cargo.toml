@@ -14,5 +14,6 @@ nameres = { workspace = true }
 parser = { workspace = true }
 rustc-hash = { workspace = true }
 salsa = { workspace = true }
+solcore-test-utils = { path = "../test-utils" }
 specialize = { path = "../specialize", package = "solcore-specialize" }
 url = { workspace = true }
