@@ -55,15 +55,17 @@ npm run build:lsp-wasm
 Or directly from the repository root:
 
 ```sh
-wasm-pack build --target web crates/wasm --out-dir pkg
-wasm-pack build --target web crates/lsp --out-dir pkg -- --features wasm
+wasm-pack build --target web crates/wasm --out-dir pkg --profile wasm-release
+wasm-pack build --target web crates/lsp --out-dir pkg --profile wasm-release -- --features wasm
 ```
 
-That produces `crates/wasm/pkg/` and `crates/lsp/pkg/`. The workspace `[profile.release]` is size-tuned
-(`strip` + `opt-level = "z"` + `lto`). A final `wasm-opt -Oz` pass (requires `brew install binaryen`;
-wasm-pack's bundled wasm-opt is too old for reference-types) reduces the generated package further.
-`npm run build:wasm` applies it automatically when `wasm-opt` is on `PATH` and skips it gracefully
-otherwise; `vite build` reports the current raw and gzipped asset sizes. The Playground imports `init`,
+That produces `crates/wasm/pkg/` and `crates/lsp/pkg/`. The workspace `[profile.wasm-release]` keeps
+browser builds size-tuned (`strip` + `opt-level = "z"` + fat `lto`); the normal `[profile.release]`
+is instead tuned for native compiler throughput. A final `wasm-opt -Oz` pass (requires
+`brew install binaryen`; wasm-pack's bundled wasm-opt is too old for reference-types) reduces the
+generated package further. `npm run build:wasm` applies it automatically when `wasm-opt` is on
+`PATH` and skips it gracefully otherwise; `vite build` reports the current raw and gzipped asset
+sizes. The Playground imports `init`,
 `compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted
 `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The LSP worker imports
 `SolcoreLsp` from `solcore-lsp`; `src/languageServer/lsp.worker.ts` passes Vite's emitted

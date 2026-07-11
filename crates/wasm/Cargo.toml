@@ -23,7 +23,7 @@ yul = { path = "../yul", package = "solcore-yul" }
 sonatina = { path = "../sonatina", package = "solcore-sonatina" }
 
 # wasm-pack's bundled wasm-opt is too old for reference-types (multiple tables).
-# Size is handled by the workspace `[profile.release]` (strip + opt-level=z + lto);
+# Size is handled by the workspace `[profile.wasm-release]` (strip + opt-level=z + lto);
 # for a final size pass run a modern `wasm-opt -Oz --enable-reference-types` (see playground/README).
-[package.metadata.wasm-pack.profile.release]
+[package.metadata.wasm-pack.profile.custom]
 wasm-opt = false

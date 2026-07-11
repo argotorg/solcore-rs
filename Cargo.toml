@@ -25,10 +25,30 @@ vfs = { path = "crates/vfs", package = "solcore-vfs" }
 [workspace.package]
 edition = "2024"
 
-# Release profile is size-tuned primarily for the `solcore-wasm` browser bundle
-# (`wasm-pack build`). Only affects explicit `--release` builds; dev/test/clippy are unaffected.
+# Native release builds favor compiler throughput. Browser bundles use the
+# separate `wasm-release` profile below so native and wasm builds do not trade
+# off against one another.
 [profile.release]
-opt-level = "z"   # optimize for size
-lto = true        # fat LTO across the dependency tree
-codegen-units = 1 # smaller code at the cost of build parallelism
-strip = true      # strip symbols + DWARF debug info (the dominant wasm-size win)
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+strip = true
+
+# Keep the browser bundle on the previous size-oriented settings. Playground
+# wasm-pack commands select this profile explicitly.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+# E2E execution spends most of its time building test binaries and external
+# EVM artifacts. Moderate optimization is sufficient and avoids the release
+# profile's LTO cost.
+[profile.e2e]
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 16
+strip = true

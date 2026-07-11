@@ -45,3 +45,13 @@ Set `E2E=1` to run execution tests. `E2E_PIPELINE_ONLY=1` stops after backend
 code generation; `E2E_REQUIRED=1` makes missing tools an error. Anvil defaults
 to the Osaka hardfork to match Sonatina's target; `ANVIL_HARDFORK` can override
 it for an alternate runtime.
+
+For local optimized runs, use the workspace's E2E profile. It uses moderate
+optimization (`opt-level = 2`) without LTO, keeping execution representative
+while avoiding the native release profile's link-time optimization cost:
+
+```sh
+E2E=1 E2E_REQUIRED=1 cargo test --profile e2e \
+  -p solcore-yul -p solcore-sonatina --test e2e --locked -- \
+  --nocapture --test-threads=1
+```
