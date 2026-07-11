@@ -32,13 +32,22 @@ function formatLocation(range: Pos | null): string {
   return `${range.file}:${range.startLine}:${range.startCol}`;
 }
 
-function outputText(tab: OutputTab, hull: string | null, yul: string | null): string {
+function outputText(
+  tab: OutputTab,
+  hull: string | null,
+  yul: string | null,
+  sonatina: string | null,
+): string {
   if (tab === "hull") {
     return hull ?? "// Hull output will appear here after a successful compile.";
   }
 
   if (tab === "yul") {
     return yul ?? "// Yul output will appear here after a successful compile.";
+  }
+
+  if (tab === "sonatina") {
+    return sonatina ?? "; Sonatina IR output will appear here after a successful compile.";
   }
 
   return "";
@@ -82,7 +91,12 @@ export function OutputPane(): JSX.Element {
     [],
   );
 
-  const renderedOutput = outputText(outputTab, result?.hull ?? null, result?.yul ?? null);
+  const renderedOutput = outputText(
+    outputTab,
+    result?.hull ?? null,
+    result?.yul ?? null,
+    result?.sonatina ?? null,
+  );
 
   return (
     <section className="output-pane" aria-label="Compiler output">
@@ -104,6 +118,15 @@ export function OutputPane(): JSX.Element {
           onClick={() => setOutputTab("yul")}
         >
           Yul
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={outputTab === "sonatina"}
+          className={`output-tab ${outputTab === "sonatina" ? "is-active" : ""}`}
+          onClick={() => setOutputTab("sonatina")}
+        >
+          Sonatina IR
         </button>
         <button
           type="button"

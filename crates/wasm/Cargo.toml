@@ -20,6 +20,7 @@ parser = { workspace = true }
 hull = { path = "../hull", package = "solcore-hull" }
 specialize = { path = "../specialize", package = "solcore-specialize" }
 yul = { path = "../yul", package = "solcore-yul" }
+sonatina = { path = "../sonatina", package = "solcore-sonatina" }
 
 # wasm-pack's bundled wasm-opt is too old for reference-types (multiple tables).
 # Size is handled by the workspace `[profile.release]` (strip + opt-level=z + lto);

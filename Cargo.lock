@@ -1501,6 +1501,7 @@ dependencies = [
  "solcore-hull",
  "solcore-nameres",
  "solcore-parser",
+ "solcore-sonatina",
  "solcore-specialize",
  "solcore-vfs",
  "solcore-yul",

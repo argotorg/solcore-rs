@@ -60,9 +60,15 @@ wasm-pack build --target web crates/lsp --out-dir pkg -- --features wasm
 ```
 
 That produces `crates/wasm/pkg/` and `crates/lsp/pkg/`. The workspace `[profile.release]` is size-tuned
-(`strip` + `opt-level = "z"` + `lto`), so `wasm-pack build` alone yields ~3.9&nbsp;MB (down from ~8.6&nbsp;MB
-unstripped). A final `wasm-opt -Oz` pass (requires `brew install binaryen`; wasm-pack's bundled wasm-opt is
-too old for reference-types) brings the compiler wasm to ~3.3&nbsp;MB (~1.06&nbsp;MB gzipped). `npm run build:wasm` applies it automatically when `wasm-opt` is on `PATH` and skips it gracefully otherwise. The Playground imports `init`, `compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The LSP worker imports `SolcoreLsp` from `solcore-lsp`; `src/languageServer/lsp.worker.ts` passes Vite's emitted `solcore_lsp_bg.wasm?url` asset to `init()`. The shared compiler API shape lives in `src/compiler/types.ts` and should stay the single source of truth for the Playground compile protocol.
+(`strip` + `opt-level = "z"` + `lto`). A final `wasm-opt -Oz` pass (requires `brew install binaryen`;
+wasm-pack's bundled wasm-opt is too old for reference-types) reduces the generated package further.
+`npm run build:wasm` applies it automatically when `wasm-opt` is on `PATH` and skips it gracefully
+otherwise; `vite build` reports the current raw and gzipped asset sizes. The Playground imports `init`,
+`compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted
+`solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The LSP worker imports
+`SolcoreLsp` from `solcore-lsp`; `src/languageServer/lsp.worker.ts` passes Vite's emitted
+`solcore_lsp_bg.wasm?url` asset to `init()`. The shared compiler API shape lives in
+`src/compiler/types.ts` and should stay the single source of truth for the Playground compile protocol.
 
 The compile worker protocol is intentionally Playground-specific batch compile messaging:
 
@@ -70,10 +76,34 @@ The compile worker protocol is intentionally Playground-specific batch compile m
 // request
 { id: number; kind: "compile"; input: CompileInput }
 
+interface CompileInput {
+  files: Array<{ path: string; content: string }>;
+  entry: string;
+  options: {
+    emitHull: boolean;
+    emitYul: boolean;
+    emitSonatina: boolean;
+    emitAbi: boolean;
+  };
+}
+
 // response
 { id: number; kind: "result"; result: CompileResult }
 { id: number; kind: "error"; message: string }
+
+interface CompileResult {
+  success: boolean;
+  diagnostics: Diag[];
+  hull: string | null;
+  yul: string | null;
+  sonatina: string | null;
+  abi: string | null;
+}
 ```
+
+The Playground requests Hull, Yul, and Sonatina IR in one compile and exposes each textual output in
+its own tab. Backend fields remain `null` when an output was not requested or compilation stopped
+before that backend ran.
 
 ## File key contract
 

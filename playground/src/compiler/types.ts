@@ -4,6 +4,7 @@ export interface CompileInput {
   options: {
     emitHull: boolean;
     emitYul: boolean;
+    emitSonatina: boolean;
     emitAbi: boolean;
   };
 }
@@ -35,6 +36,7 @@ export interface CompileResult {
   diagnostics: Diag[];
   hull: string | null;
   yul: string | null;
+  sonatina: string | null;
   abi: string | null;
 }
 

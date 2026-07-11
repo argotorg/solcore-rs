@@ -22,13 +22,15 @@ pub fn __start() {
 ///
 /// `input` is a JS object:
 /// `{ files: [{ path: string, content: string }], entry: string,
-/// options?: { emitHull?: bool, emitYul?: bool, emitAbi?: bool } }`.
+/// options?: { emitHull?: bool, emitYul?: bool, emitSonatina?: bool,
+/// emitAbi?: bool } }`.
 #[wasm_bindgen]
 pub fn compile(input: JsValue) -> Result<JsValue, JsValue> {
     let input = serde_wasm_bindgen::from_value(input)
         .map_err(|err| JsValue::from_str(&format!("invalid compile input: {err}")))?;
     let result = compile_impl(input);
-    serde_wasm_bindgen::to_value(&result)
+    result
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
         .map_err(|err| JsValue::from_str(&format!("failed to serialize compile result: {err}")))
 }
 
@@ -76,6 +78,8 @@ pub(crate) struct Options {
     #[serde(default)]
     pub(crate) emit_yul: bool,
     #[serde(default)]
+    pub(crate) emit_sonatina: bool,
+    #[serde(default)]
     pub(crate) emit_abi: bool,
 }
 
@@ -86,6 +90,7 @@ pub(crate) struct CompileResult {
     pub(crate) diagnostics: Vec<Diag>,
     pub(crate) hull: Option<String>,
     pub(crate) yul: Option<String>,
+    pub(crate) sonatina: Option<String>,
     pub(crate) abi: Option<String>,
 }
 
@@ -169,8 +174,12 @@ pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
 
     let mut hull = None;
     let mut yul = None;
+    let mut sonatina = None;
     let mut abi = None;
-    let wants_backend = input.options.emit_hull || input.options.emit_yul || input.options.emit_abi;
+    let wants_backend = input.options.emit_hull
+        || input.options.emit_yul
+        || input.options.emit_sonatina
+        || input.options.emit_abi;
 
     if wants_backend && !diagnostics.iter().any(Diag::is_error) {
         run_backend(
@@ -179,6 +188,7 @@ pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
             &mut diagnostics,
             &mut hull,
             &mut yul,
+            &mut sonatina,
             &mut abi,
         );
     }
@@ -189,6 +199,7 @@ pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
         diagnostics,
         hull,
         yul,
+        sonatina,
         abi,
     }
 }
@@ -199,6 +210,7 @@ fn run_backend(
     diagnostics: &mut Vec<Diag>,
     hull_text: &mut Option<String>,
     yul_text: &mut Option<String>,
+    sonatina_text: &mut Option<String>,
     abi_text: &mut Option<String>,
 ) {
     let db = workspace.db();
@@ -217,7 +229,7 @@ fn run_backend(
         return;
     };
 
-    if options.emit_hull || options.emit_yul {
+    if options.emit_hull || options.emit_yul || options.emit_sonatina {
         let module = parser::parse_file_to_hir(db, entry_file).module(db);
         let specialized =
             specialize::specialize_module(db, module, specialize::SpecializeOptions::default());
@@ -261,6 +273,15 @@ fn run_backend(
                 Err(err) => diagnostics.push(message_diag(
                     DiagnosticSeverity::Error,
                     format!("Yul translation failed:\n  {err}"),
+                )),
+            }
+        }
+        if options.emit_sonatina {
+            match sonatina::render_hull_program(db, &emitted.program) {
+                Ok(rendered) => *sonatina_text = Some(rendered),
+                Err(err) => diagnostics.push(message_diag(
+                    DiagnosticSeverity::Error,
+                    format!("Sonatina translation failed:\n  {err}"),
                 )),
             }
         }
@@ -598,12 +619,13 @@ mod tests {
     }
 
     #[test]
-    fn clean_program_emits_hull_and_yul() {
+    fn clean_program_emits_hull_yul_and_sonatina() {
         let result = compile_impl(input(
             "contract Main {\n  public function main() -> word {\n    return 1;\n  }\n}\n",
             Options {
                 emit_hull: true,
                 emit_yul: true,
+                emit_sonatina: true,
                 emit_abi: false,
             },
         ));
@@ -612,6 +634,35 @@ mod tests {
         assert!(!result.diagnostics.iter().any(Diag::is_error));
         assert!(result.hull.as_deref().is_some_and(|text| !text.is_empty()));
         assert!(result.yul.as_deref().is_some_and(|text| !text.is_empty()));
+        assert!(
+            result
+                .sonatina
+                .as_deref()
+                .is_some_and(|text| text.contains("target = \"evm-ethereum-osaka\""))
+        );
+    }
+
+    #[test]
+    fn sonatina_only_runs_the_shared_hull_pipeline() {
+        let result = compile_impl(input(
+            "contract Main {\n  public function main() -> word {\n    return 1;\n  }\n}\n",
+            Options {
+                emit_hull: false,
+                emit_yul: false,
+                emit_sonatina: true,
+                emit_abi: false,
+            },
+        ));
+
+        assert!(result.success);
+        assert!(result.hull.is_none());
+        assert!(result.yul.is_none());
+        assert!(
+            result
+                .sonatina
+                .as_deref()
+                .is_some_and(|text| !text.is_empty())
+        );
     }
 
     #[test]
@@ -621,6 +672,7 @@ mod tests {
             Options {
                 emit_hull: true,
                 emit_yul: true,
+                emit_sonatina: true,
                 emit_abi: false,
             },
         ));
@@ -628,6 +680,7 @@ mod tests {
         assert!(!result.success);
         assert!(result.hull.is_none());
         assert!(result.yul.is_none());
+        assert!(result.sonatina.is_none());
         let primary = result
             .diagnostics
             .iter()

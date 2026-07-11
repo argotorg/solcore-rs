@@ -9,12 +9,13 @@ export interface WorkspaceFile {
   content: string;
 }
 
-export type OutputTab = "hull" | "yul" | "problems";
+export type OutputTab = "hull" | "yul" | "sonatina" | "problems";
 export type ThemeMode = "light" | "dark";
 
 interface WorkspaceOptions {
   emitHull: boolean;
   emitYul: boolean;
+  emitSonatina: boolean;
   emitAbi: boolean;
 }
 
@@ -236,6 +237,7 @@ function diagnosticResult(message: string): CompileResult {
     diagnostics: [diagnostic],
     hull: null,
     yul: null,
+    sonatina: null,
     abi: null,
   };
 }
@@ -266,6 +268,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   options: {
     emitHull: true,
     emitYul: true,
+    emitSonatina: true,
     emitAbi: false,
   },
 
