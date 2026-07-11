@@ -28,6 +28,7 @@ fn cli_prints_help_and_version() {
     );
     assert!(stdout.contains("-o, --output-dir DIR"), "{stdout}");
     assert!(stdout.contains("--abi"), "{stdout}");
+    assert!(stdout.contains("--emit-sonatina[=FILE]"), "{stdout}");
     assert!(stdout.contains("--root DIR"), "{stdout}");
 
     let version = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
@@ -474,6 +475,85 @@ contract C {
     assert!(hull_text.contains("object \"CDeploy\""), "{hull_text}");
     assert!(hull_text.contains("function main_C_main_"), "{hull_text}");
     assert!(!hull_text.contains("dispatch_selector"), "{hull_text}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_emits_sonatina_to_stdout_and_output_dir() {
+    let dir = temp_dir("emit-sonatina");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    let output_dir = dir.join("artifacts");
+    let sonatina_output = output_dir.join("main.sonatina");
+    fs::write(&input, "function main() -> word { return 42; }\n").expect("write source");
+
+    let stdout_output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--emit-sonatina")
+        .arg(&input)
+        .output()
+        .expect("run driver Sonatina stdout");
+    assert!(
+        stdout_output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&stdout_output.stdout),
+        String::from_utf8_lossy(&stdout_output.stderr)
+    );
+    let sonatina_stdout =
+        String::from_utf8(stdout_output.stdout).expect("Sonatina output is UTF-8");
+    assert!(!sonatina_stdout.trim().is_empty(), "empty Sonatina output");
+
+    let file_output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--emit-sonatina=main.sonatina")
+        .arg(&input)
+        .output()
+        .expect("run driver Sonatina file output");
+    assert!(
+        file_output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&file_output.stdout),
+        String::from_utf8_lossy(&file_output.stderr)
+    );
+    assert!(file_output.stdout.is_empty(), "unexpected stdout");
+    let sonatina_file = fs::read_to_string(&sonatina_output).expect("read Sonatina output");
+    assert_eq!(sonatina_file, sonatina_stdout);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_rejects_multiple_backend_stdout_targets() {
+    let dir = temp_dir("multiple-backend-stdout");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    fs::write(&input, "function main() -> word { return 42; }\n").expect("write source");
+
+    for (first, second) in [
+        ("--emit-hull", "--emit-yul"),
+        ("--emit-hull", "--emit-sonatina"),
+        ("--emit-yul", "--emit-sonatina"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+            .arg(first)
+            .arg(second)
+            .arg(&input)
+            .output()
+            .expect("run driver with conflicting stdout outputs");
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{first} + {second} unexpectedly succeeded"
+        );
+        let stderr = strip_ansi(&String::from_utf8_lossy(&output.stderr));
+        assert!(
+            stderr.contains("cannot write multiple backend outputs to stdout"),
+            "stderr:\n{stderr}"
+        );
+        assert!(stderr.contains(first), "stderr:\n{stderr}");
+        assert!(stderr.contains(second), "stderr:\n{stderr}");
+    }
 
     let _ = fs::remove_dir_all(&dir);
 }

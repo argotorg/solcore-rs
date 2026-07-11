@@ -42,6 +42,8 @@ pub(crate) struct Args {
     pub(crate) emit_hull: Option<EmitTarget>,
     /// Optional Yul output target.
     pub(crate) emit_yul: Option<EmitTarget>,
+    /// Optional Sonatina IR output target.
+    pub(crate) emit_sonatina: Option<EmitTarget>,
     /// Optional top-level Yul object selection for strict-assembly output.
     pub(crate) emit_yul_object: Option<String>,
 }
@@ -100,6 +102,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut emit_abi = false;
     let mut emit_hull = None;
     let mut emit_yul = None;
+    let mut emit_sonatina = None;
     let mut emit_yul_object = None;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
@@ -154,6 +157,9 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some("--emit-yul") => {
                 emit_yul = Some(EmitTarget::Stdout);
             }
+            Some("--emit-sonatina") => {
+                emit_sonatina = Some(EmitTarget::Stdout);
+            }
             Some("--emit-yul-object") => {
                 let value = next_string_option_value(&mut iter, "--emit-yul-object", "NAME")?;
                 emit_yul_object = Some(value);
@@ -205,6 +211,13 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                     return Err("--emit-yul= requires FILE".to_owned());
                 }
                 emit_yul = Some(EmitTarget::File(PathBuf::from(value)));
+            }
+            Some(arg) if arg.starts_with("--emit-sonatina=") => {
+                let value = &arg["--emit-sonatina=".len()..];
+                if value.is_empty() {
+                    return Err("--emit-sonatina= requires FILE".to_owned());
+                }
+                emit_sonatina = Some(EmitTarget::File(PathBuf::from(value)));
             }
             Some(arg) if arg.starts_with("--root=") => {
                 let value = &arg["--root=".len()..];
@@ -265,6 +278,14 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                     return Err("--emit-yul= requires FILE".to_owned());
                 }
                 emit_yul = Some(EmitTarget::File(PathBuf::from(value)));
+            }
+            _ if arg_str.is_none()
+                && let Some(value) = strip_os_prefix(&arg, "--emit-sonatina=") =>
+            {
+                if value.as_os_str().is_empty() {
+                    return Err("--emit-sonatina= requires FILE".to_owned());
+                }
+                emit_sonatina = Some(EmitTarget::File(PathBuf::from(value)));
             }
             _ if arg_str.is_none()
                 && let Some(value) = strip_os_prefix(&arg, "--root=") =>
@@ -344,6 +365,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         emit_abi,
         emit_hull,
         emit_yul,
+        emit_sonatina,
         emit_yul_object,
     })))
 }
@@ -544,6 +566,7 @@ Options:
   --abi                              Emit a JSON ABI file for each contract
   --emit-hull[=FILE]                 Emit Hull to stdout or FILE
   --emit-yul[=FILE]                  Emit Yul strict assembly to stdout or FILE
+  --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE
   --emit-yul-object NAME             Select one top-level Yul object for --emit-yul
   --color auto|always|never          Configure diagnostic colors (default: auto)
   --unicode auto|always|never        Configure diagnostic Unicode output (default: auto)

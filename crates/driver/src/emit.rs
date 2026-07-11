@@ -55,15 +55,24 @@ pub(crate) fn maybe_emit_backend_outputs(
     entry_file: SourceFile,
     args: &Args,
 ) -> Result<(), BackendFailure> {
-    if args.emit_hull.is_none() && args.emit_yul.is_none() {
+    if args.emit_hull.is_none() && args.emit_yul.is_none() && args.emit_sonatina.is_none() {
         return Ok(());
     }
-    if matches!(args.emit_hull, Some(EmitTarget::Stdout))
-        && matches!(args.emit_yul, Some(EmitTarget::Stdout))
-    {
-        return Err(BackendFailure::Message(
-            "cannot write both --emit-hull and --emit-yul to stdout".to_owned(),
-        ));
+
+    let stdout_backends = [
+        ("--emit-hull", &args.emit_hull),
+        ("--emit-yul", &args.emit_yul),
+        ("--emit-sonatina", &args.emit_sonatina),
+    ]
+    .into_iter()
+    .filter(|(_, target)| matches!(target.as_ref(), Some(EmitTarget::Stdout)))
+    .map(|(option, _)| option)
+    .collect::<Vec<_>>();
+    if stdout_backends.len() > 1 {
+        return Err(BackendFailure::Message(format!(
+            "cannot write multiple backend outputs to stdout: {}",
+            stdout_backends.join(", ")
+        )));
     }
 
     let module = parser::parse_file_to_hir(db, entry_file).module(db);
@@ -114,6 +123,12 @@ pub(crate) fn maybe_emit_backend_outputs(
                     BackendFailure::Message(format!("Yul translation failed:\n  {err}"))
                 })?;
         write_emit_output(target, args.output_dir.as_deref(), &yul)?;
+    }
+    if let Some(target) = &args.emit_sonatina {
+        let sonatina = sonatina::render_hull_program(db, &emitted.program).map_err(|err| {
+            BackendFailure::Message(format!("Sonatina translation failed:\n  {err}"))
+        })?;
+        write_emit_output(target, args.output_dir.as_deref(), &sonatina)?;
     }
     Ok(())
 }
