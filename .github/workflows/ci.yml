@@ -128,6 +128,7 @@ jobs:
     env:
       E2E: "1"
       E2E_REQUIRED: "1"
+      ANVIL_HARDFORK: "osaka"
       SOLC: ${{ runner.temp }}/solc
 
     steps:
