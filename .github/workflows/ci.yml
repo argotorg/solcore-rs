@@ -129,7 +129,6 @@ jobs:
       E2E: "1"
       E2E_REQUIRED: "1"
       ANVIL_HARDFORK: "osaka"
-      SOLC: ${{ runner.temp }}/solc
 
     steps:
       - name: Checkout
@@ -145,6 +144,9 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1.9.0
         with:
           version: v1.7.1
+
+      - name: Configure solc path
+        run: echo "SOLC=$RUNNER_TEMP/solc" >> "$GITHUB_ENV"
 
       - name: Install solc
         run: |
