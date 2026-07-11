@@ -1,0 +1,16 @@
+// test multiple contract fields
+import std.{*};
+// import StorageLib;
+
+
+contract Counter {
+  counter1 : word;
+  counter2 : uint256;
+  counter3 : word;
+  // #[() -> 3]
+  public function run() -> word {
+    counter1 += 1;
+    counter3 += 2;
+    return counter1 + counter3;
+  }
+}

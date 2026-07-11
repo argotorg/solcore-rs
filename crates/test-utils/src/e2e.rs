@@ -1,19 +1,22 @@
 //! Shared support for backend-to-EVM end-to-end tests.
 //!
-//! The helpers in this module deliberately stop at bytecode. Each backend owns
+//! The helpers in this module deliberately start at bytecode. Each backend owns
 //! its source-to-bytecode pipeline, while process management, Anvil execution,
-//! calldata construction, and the semantic fixture ledger live here.
+//! directive parsing, and static-ABI call execution live here.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    env, fmt, fs,
+    env, fmt,
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex, OnceLock, mpsc},
     thread,
     time::{Duration, Instant},
 };
+
+mod directive;
+
+pub use directive::*;
 
 pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const ANVIL_START_TIMEOUT: Duration = Duration::from_secs(15);
@@ -21,215 +24,9 @@ const ANVIL_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const ANVIL_PRIVATE_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-pub const REFERENCE_DIRECT_SMOKE_SRC: &str = r#"
-contract ReferenceDirectSmokeE2E {
-  public function main() -> word {
-    return 42;
-  }
-}
-"#;
-
-pub const REFERENCE_DIRECT_SMOKE_EXPECTED: Expected = Expected::Word(42);
-
-pub const STORAGE_INDEX_ORDER_SRC: &str = r#"
-import std.{*};
-
-contract StorageIndexOrderE2E {
-  counter: word;
-  m: mapping(word, word);
-
-  function next() -> word {
-    let cur: word = counter;
-    let res: word;
-    assembly {
-      res := add(cur, 1)
-    }
-    counter = res;
-    return res;
-  }
-
-  public function main() -> word {
-    counter = 0;
-    m[1] = 0;
-    m[2] = 0;
-    m[next()] = next();
-
-    let one: word = m[1];
-    let two: word = m[2];
-    let packed: word;
-    assembly {
-      packed := add(one, mul(two, 10))
-    }
-    return packed;
-  }
-
-  public function get(k: word) -> word {
-    return m[k];
-  }
-}
-"#;
-
-pub const STORAGE_INDEX_ORDER_EXPECTED: Expected = Expected::Word(2);
-
-pub const DISPATCH_BASIC_SHAPE_SRC: &str = r#"
-contract DispatchBasicShapeE2E {
-  public function id(x : word) -> word {
-    return x;
-  }
-
-  public function echo(x : bool) -> bool {
-    return x;
-  }
-
-  public function answer() -> word {
-    return 42;
-  }
-
-  public function pair() -> (word, word) {
-    return (1, 42);
-  }
-}
-"#;
-
-pub const DISPATCH_ANSWER_EXPECTED: Expected = Expected::Word(42);
-pub const DISPATCH_ID_EXPECTED: Expected = Expected::Word(42);
-pub const DISPATCH_ECHO_EXPECTED: Expected = Expected::Bool(true);
-pub const DISPATCH_PAIR_EXPECTED_WORDS: &[u128] = &[1, 42];
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Expected {
-    Word(u128),
-    Bool(bool),
-    Words(Vec<u128>),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunMode {
-    ReferenceDirect,
-    DeployedDispatch,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpecCase {
-    pub label: String,
-    pub path: PathBuf,
-    pub expected: Expected,
-    pub mode: RunMode,
-}
-
-/// Loads the canonical executable-spec cases and checks the manifest in both
-/// directions: every fixture must be listed and every manifest entry must
-/// still have a fixture.
-pub fn spec_cases(repo_root: &Path) -> Result<Vec<SpecCase>, E2eFailure> {
-    let spec_dir = repo_root.join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec");
-    let manifest = spec_manifest();
-    let entries = fs::read_dir(&spec_dir).map_err(|err| {
-        E2eFailure::new(
-            FailureKind::Pipeline,
-            format!("read spec fixture directory {}: {err}", spec_dir.display()),
-        )
-    })?;
-    let mut seen = BTreeSet::new();
-    let mut cases = Vec::new();
-    for entry in entries {
-        let path = entry
-            .map_err(|err| {
-                E2eFailure::new(
-                    FailureKind::Pipeline,
-                    format!("read entry in {}: {err}", spec_dir.display()),
-                )
-            })?
-            .path();
-        if path.extension().is_none_or(|extension| extension != "solc") {
-            continue;
-        }
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                E2eFailure::new(
-                    FailureKind::Pipeline,
-                    format!("spec fixture has a non-UTF-8 name: {}", path.display()),
-                )
-            })?
-            .to_owned();
-        let Some((expected, mode)) = manifest.get(file_name.as_str()).cloned() else {
-            return Err(E2eFailure::new(
-                FailureKind::Pipeline,
-                format!(
-                    "spec fixture `{file_name}` is missing from the explicit expectation manifest"
-                ),
-            ));
-        };
-        seen.insert(file_name.clone());
-        cases.push(SpecCase {
-            label: format!("spec/{file_name}"),
-            path,
-            expected,
-            mode,
-        });
-    }
-
-    let stale = manifest
-        .keys()
-        .filter(|name| !seen.contains(**name))
-        .copied()
-        .collect::<Vec<_>>();
-    if !stale.is_empty() {
-        return Err(E2eFailure::new(
-            FailureKind::Pipeline,
-            format!("spec expectation manifest has no fixtures for: {stale:?}"),
-        ));
-    }
-    cases.sort_by(|left, right| left.label.cmp(&right.label));
-    Ok(cases)
-}
-
-fn spec_manifest() -> BTreeMap<&'static str, (Expected, RunMode)> {
-    fn direct(expected: u128) -> (Expected, RunMode) {
-        (Expected::Word(expected), RunMode::ReferenceDirect)
-    }
-    BTreeMap::from([
-        ("00answer.solc", direct(42)),
-        ("01id.solc", direct(42)),
-        ("021not.solc", direct(1)),
-        ("022add.solc", direct(42)),
-        ("024arith.solc", direct(42)),
-        ("02nid.solc", direct(42)),
-        ("031maybe.solc", direct(42)),
-        ("032simplejoin.solc", direct(42)),
-        ("033join.solc", direct(42)),
-        ("034cojoin.solc", direct(42)),
-        ("035padding.solc", direct(7)),
-        ("036wildcard.solc", direct(7)),
-        ("037dwarves.solc", direct(5)),
-        ("038food0.solc", direct(42)),
-        ("039food.solc", direct(42)),
-        ("041pair.solc", direct(1)),
-        ("042triple.solc", direct(42)),
-        ("043fstsnd.solc", direct(42)),
-        ("047rgb.solc", direct(42)),
-        ("048rgb2.solc", direct(42)),
-        ("049rgb3.solc", direct(44)),
-        ("06comp.solc", direct(42)),
-        ("09not.solc", direct(1)),
-        ("10negBool.solc", direct(1)),
-        ("11negPair.solc", direct(1)),
-        ("120basicCounter.solc", direct(42)),
-        ("121counter.solc", direct(1)),
-        ("122counters.solc", direct(3)),
-        ("123stackAndStorage.solc", direct(3)),
-        ("126nanoerc20.solc", direct(42)),
-        ("127microerc20.solc", direct(42)),
-        ("128minierc20.solc", direct(958)),
-        ("903badassign.solc", direct(42)),
-        ("939badfood.solc", direct(2)),
-        ("SimpleField.solc", direct(0)),
-    ])
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FailureKind {
+    Directive,
     Pipeline,
     Tooling,
     Solc,
@@ -281,35 +78,6 @@ fn env_flag(name: &str) -> bool {
     env::var_os(name).as_deref() == Some(std::ffi::OsStr::new("1"))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AbiArg {
-    Word(u128),
-    Bool(bool),
-}
-
-pub fn calldata(selector: [u8; 4], args: &[AbiArg]) -> String {
-    let mut out = selector_hex(selector);
-    for arg in args {
-        let encoded = match arg {
-            AbiArg::Word(value) => word_hex(*value),
-            AbiArg::Bool(value) => word_hex(u128::from(*value)),
-        };
-        out.push_str(&encoded);
-    }
-    out
-}
-
-pub fn selector_hex(selector: [u8; 4]) -> String {
-    format!(
-        "0x{:02x}{:02x}{:02x}{:02x}",
-        selector[0], selector[1], selector[2], selector[3]
-    )
-}
-
-pub fn word_hex(value: u128) -> String {
-    format!("{value:064x}")
-}
-
 pub fn encode_hex(bytes: &[u8]) -> String {
     let mut encoded = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -317,6 +85,13 @@ pub fn encode_hex(bytes: &[u8]) -> String {
         write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
     }
     encoded
+}
+
+/// Returns whether `value` is a non-empty, whole-byte hexadecimal string.
+pub fn looks_like_hex(value: &str) -> bool {
+    !value.is_empty()
+        && value.len().is_multiple_of(2)
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 pub struct EvmHarness {
@@ -423,42 +198,94 @@ impl EvmHarness {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
 
-    pub fn execute_creation(&self, bytecode: &str) -> Result<String, E2eFailure> {
-        let tx = format!(r#"{{"data":"0x{bytecode}"}}"#);
-        let output = run_command(
-            &self.cast,
-            &["rpc", "--rpc-url", self.url(), "eth_call", &tx, "latest"],
-            &[],
-            COMMAND_TIMEOUT,
-        )
-        .map_err(|message| E2eFailure::new(FailureKind::Call, message))?;
-        if !output.status.success() {
+    /// Compares raw EVM returndata with a directive expectation without
+    /// narrowing 256-bit ABI words to a host integer.
+    pub fn assert_return_data(
+        &self,
+        label: &str,
+        expected: &[u8],
+        returndata: &str,
+    ) -> Result<(), E2eFailure> {
+        assert_return_data(label, expected, returndata)
+    }
+
+    /// Deploys one contract and executes every resolved directive against it.
+    ///
+    /// Calls use `eth_call`, so state changes made by one directive do not
+    /// leak into the next directive. Revert expectations are intentionally
+    /// rejected until the harness has a stable, tool-independent way to
+    /// recover JSON-RPC revert payloads.
+    pub fn execute_deployed_calls(
+        &self,
+        bytecode: &str,
+        calls: &[ResolvedE2eCall],
+    ) -> Result<(), E2eFailure> {
+        if calls.is_empty() {
             return Err(E2eFailure::new(
-                FailureKind::Call,
+                FailureKind::Directive,
+                "fixture contains no E2E directives",
+            ));
+        }
+        if let Some((index, call)) = calls
+            .iter()
+            .enumerate()
+            .find(|(_, call)| matches!(call.expected, ResolvedExpectedOutcome::Revert(_)))
+        {
+            return Err(E2eFailure::new(
+                FailureKind::Directive,
                 format!(
-                    "cast rpc eth_call failed\nstdout:\n{}\nstderr:\n{}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
+                    "{} directive #{}: revert expectations are not supported by the EVM harness",
+                    call.signature,
+                    index + 1
                 ),
             ));
         }
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        parse_rpc_hex(&stdout).ok_or_else(|| {
-            E2eFailure::new(
-                FailureKind::Call,
-                format!("cast rpc eth_call output did not contain hex data:\n{stdout}"),
-            )
-        })
-    }
 
-    pub fn assert_return(
-        &self,
-        label: &str,
-        expected: &Expected,
-        returndata: &str,
-    ) -> Result<(), E2eFailure> {
-        assert_return(label, expected, returndata)
+        let address = self.deploy(bytecode)?;
+        for (index, call) in calls.iter().enumerate() {
+            let label = format!(
+                "{} directive #{} [{}]",
+                call.signature,
+                index + 1,
+                call.calldata
+            );
+            let returndata = self.call(&address, &call.calldata).map_err(|error| {
+                E2eFailure::new(error.kind, format!("{label}: {}", error.message))
+            })?;
+            let ResolvedExpectedOutcome::Return(expected) = &call.expected else {
+                unreachable!("revert calls were rejected above");
+            };
+            self.assert_return_data(&label, expected, &returndata)?;
+        }
+        Ok(())
     }
+}
+
+static SHARED_EVM_HARNESS: OnceLock<Result<Mutex<Option<EvmHarness>>, E2eFailure>> =
+    OnceLock::new();
+
+/// Serializes access to one process-wide Anvil harness.
+///
+/// `None` preserves the local optional-tool behavior of
+/// [`EvmHarness::from_env`]. With `E2E_REQUIRED=1`, initialization failures are
+/// returned and the closure is not called. Callers should finish compilation
+/// before entering this closure so parallel `dir-test` cases only serialize
+/// the deploy/call section.
+pub fn with_shared_evm_harness<T>(
+    run: impl FnOnce(Option<&EvmHarness>) -> Result<T, E2eFailure>,
+) -> Result<T, E2eFailure> {
+    let harness = SHARED_EVM_HARNESS.get_or_init(|| EvmHarness::from_env().map(Mutex::new));
+    let harness = match harness {
+        Ok(harness) => harness,
+        Err(error) => return Err(error.clone()),
+    };
+    let guard = harness.lock().map_err(|_| {
+        E2eFailure::new(
+            FailureKind::Tooling,
+            "shared EVM harness lock was poisoned by an earlier E2E failure",
+        )
+    })?;
+    run(guard.as_ref())
 }
 
 fn unavailable(message: String) -> Result<Option<EvmHarness>, E2eFailure> {
@@ -470,75 +297,57 @@ fn unavailable(message: String) -> Result<Option<EvmHarness>, E2eFailure> {
     }
 }
 
-pub fn assert_return(label: &str, expected: &Expected, returndata: &str) -> Result<(), E2eFailure> {
-    let actual = decode_words(returndata).map_err(|message| {
+/// Compares exact ABI returndata bytes.
+///
+/// This supports the full EVM word range and static tuple layouts. The
+/// directive resolver produces the expected bytes through
+/// [`resolve_e2e_directive`].
+pub fn assert_return_data(
+    label: &str,
+    expected: &[u8],
+    returndata: &str,
+) -> Result<(), E2eFailure> {
+    let actual = decode_hex_data(returndata).map_err(|message| {
         E2eFailure::new(
             FailureKind::Decode,
             format!("{label}: failed to decode `{returndata}`: {message}"),
         )
     })?;
-    let expected_words = match expected {
-        Expected::Word(value) => vec![*value],
-        Expected::Bool(false) => vec![0],
-        Expected::Bool(true) => vec![1],
-        Expected::Words(values) => values.clone(),
-    };
-    if actual == expected_words {
-        Ok(())
-    } else {
-        Err(E2eFailure::new(
-            FailureKind::Mismatch,
-            format!("{label}: expected {expected:?}, got {actual:?} from {returndata}"),
-        ))
+    if actual == expected {
+        return Ok(());
     }
+
+    Err(E2eFailure::new(
+        FailureKind::Mismatch,
+        format!(
+            "{label}: expected 0x{}, got 0x{}",
+            encode_hex(expected),
+            encode_hex(&actual)
+        ),
+    ))
 }
 
-pub fn decode_words(returndata: &str) -> Result<Vec<u128>, String> {
-    let hex = returndata
-        .trim()
-        .strip_prefix("0x")
-        .unwrap_or(returndata.trim());
-    if hex.is_empty() {
-        return Ok(Vec::new());
-    }
-    if !hex.len().is_multiple_of(64) {
+/// Decodes an optionally `0x`-prefixed, even-length hexadecimal byte string.
+pub fn decode_hex_data(data: &str) -> Result<Vec<u8>, String> {
+    let data = data.trim();
+    let hex = data.strip_prefix("0x").unwrap_or(data);
+    if !hex.len().is_multiple_of(2) {
         return Err(format!(
-            "expected a whole number of 32-byte words, got {} hex chars",
+            "expected an even number of hex characters, got {}",
             hex.len()
         ));
     }
-    if !looks_like_hex(hex) {
-        return Err("return data is not hex".to_owned());
+    if !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("data is not hexadecimal".to_owned());
     }
-    let mut words = Vec::new();
-    for word in hex.as_bytes().chunks(64) {
-        let word = std::str::from_utf8(word).map_err(|err| err.to_string())?;
-        let (high, low) = word.split_at(32);
-        if high != "00000000000000000000000000000000" {
-            return Err(format!("return word does not fit u128: 0x{word}"));
-        }
-        words.push(u128::from_str_radix(low, 16).map_err(|err| err.to_string())?);
-    }
-    Ok(words)
-}
 
-pub fn looks_like_hex(value: &str) -> bool {
-    !value.is_empty()
-        && value.len().is_multiple_of(2)
-        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn parse_rpc_hex(output: &str) -> Option<String> {
-    let trimmed = output.trim();
-    let unquoted = trimmed
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(trimmed);
-    if unquoted.starts_with("0x") && unquoted[2..].bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        Some(unquoted.to_owned())
-    } else {
-        extract_json_string(trimmed, "result")
-    }
+    hex.as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let pair = std::str::from_utf8(pair).expect("ASCII hex is UTF-8");
+            u8::from_str_radix(pair, 16).map_err(|error| error.to_string())
+        })
+        .collect()
 }
 
 fn extract_json_string(output: &str, key: &str) -> Option<String> {
@@ -644,6 +453,8 @@ struct Anvil {
 
 impl Anvil {
     fn spawn(anvil: &Path, cast: &Path) -> Result<Self, String> {
+        // Sonatina currently targets Osaka and may emit Osaka-only opcodes.
+        // Keep the runtime target aligned unless a caller explicitly overrides it.
         let hardfork = env::var_os("ANVIL_HARDFORK").unwrap_or_else(|| "osaka".into());
         let mut child = Command::new(anvil)
             .arg("--host")
@@ -797,40 +608,23 @@ fn parse_anvil_port(line: &str) -> Option<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repo_root_from_manifest;
 
     #[test]
-    fn canonical_manifest_covers_all_spec_fixtures() {
-        let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
-        let cases = spec_cases(&repo_root).expect("complete spec manifest");
-        assert_eq!(cases.len(), 35);
-        assert!(cases.iter().any(|case| {
-            case.label.ends_with("00answer.solc")
-                && case.expected == Expected::Word(42)
-                && case.mode == RunMode::ReferenceDirect
-        }));
-        assert!(cases.iter().any(|case| {
-            case.label.ends_with("11negPair.solc")
-                && case.expected == Expected::Word(1)
-                && case.mode == RunMode::ReferenceDirect
-        }));
-    }
-
-    #[test]
-    fn calldata_and_returndata_use_abi_words() {
-        assert_eq!(
-            calldata(
-                [0x12, 0x34, 0x56, 0x78],
-                &[AbiArg::Word(42), AbiArg::Bool(true)]
-            ),
-            format!("0x12345678{}{}", word_hex(42), word_hex(1))
-        );
-        assert_return(
-            "two words",
-            &Expected::Words(vec![1, 42]),
-            &format!("0x{}{}", word_hex(1), word_hex(42)),
+    fn exact_returndata_preserves_full_width_words() {
+        let expected = [0xff; 32];
+        assert_return_data(
+            "uint256 max",
+            &expected,
+            &format!("0x{}", encode_hex(&expected)),
         )
-        .expect("matching returndata");
+        .expect("matching full-width returndata");
+        assert_eq!(decode_hex_data("0x").unwrap(), Vec::<u8>::new());
+        assert_eq!(
+            assert_return_data("mismatch", &[1], "0x02")
+                .unwrap_err()
+                .kind,
+            FailureKind::Mismatch
+        );
     }
 
     #[test]

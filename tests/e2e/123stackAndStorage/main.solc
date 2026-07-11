@@ -1,0 +1,17 @@
+// test multiple contract fields
+import std.{*};
+
+contract Counter {
+  counter1 : word;
+  counter2 : uint256;
+  counter3 : word;
+
+  // #[() -> 3]
+  public function run() -> word {
+    let x: word;
+    x = counter1 + 1;
+    counter1 = x;
+    counter3 += 2;
+    return counter1 + counter3;
+  }
+}

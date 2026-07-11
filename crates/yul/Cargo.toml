@@ -8,6 +8,7 @@ hir = { workspace = true }
 hull = { path = "../hull", package = "solcore-hull" }
 
 [dev-dependencies]
+dir-test = "0.4.1"
 hir-ty = { workspace = true }
 insta = "1.43.2"
 nameres = { workspace = true }

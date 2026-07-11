@@ -1,0 +1,17 @@
+import std.{*};
+pragma no-patterson-condition ;
+pragma no-coverage-condition ;
+pragma no-bounded-variable-condition ;
+
+contract Simple {
+  myval : word ;
+
+  function getVal () -> word {
+    return myval ;
+  }
+
+  // #[() -> 0]
+  public function run () -> word {
+    return getVal();
+  }
+}

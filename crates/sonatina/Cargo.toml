@@ -12,6 +12,7 @@ sonatina-triple = { workspace = true }
 sonatina-verifier = { workspace = true }
 
 [dev-dependencies]
+dir-test = "0.4.1"
 hir-ty = { workspace = true }
 nameres = { workspace = true }
 parser = { workspace = true }

@@ -1,0 +1,14 @@
+function add(x : word, y : word) -> word {
+  let res: word;
+  assembly {
+     res := add(x, y)
+  }
+  return res;
+}
+
+contract Add1 {
+  // #[() -> 42]
+  public function run() -> word {
+    return add(40, 2);
+  }
+}

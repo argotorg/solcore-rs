@@ -1,0 +1,11 @@
+contract RGB {
+  data Color = R | G | B;
+  // #[() -> 42]
+  public function run() -> word {
+    match Color.B {
+      | Color.R => return 4;
+      | Color.G => return 2;
+      | Color.B => return 42;
+    }
+  }
+}

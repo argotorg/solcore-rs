@@ -1,0 +1,6 @@
+contract Answer {
+  // #[() -> 42]
+  public function run() -> word {
+    return 42;
+  }
+}

@@ -1,0 +1,22 @@
+contract Not {
+  data Bool = False | True;
+
+  // #[() -> 1]
+  public function run() -> word {
+    return fromBool(bnot(Bool.False));
+  }
+
+  function fromBool(b : Bool) -> word {
+    match(b) {
+      | Bool.False => return 0;
+      | Bool.True  => return 1;
+    }
+  }
+
+  function bnot(b : Bool) -> Bool {
+    match b {
+      | Bool.False => return Bool.True;
+      | Bool.True => return Bool.False;
+    }
+  }
+}

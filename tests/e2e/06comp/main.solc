@@ -1,0 +1,10 @@
+contract Compose {
+  function id(x : word) -> word { return x; }
+
+  function idid(x : word) -> word { return id(id(x)); }
+
+  // #[() -> 42]
+  public function run() -> word {
+    return idid(42);
+  }
+}

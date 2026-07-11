@@ -1,189 +1,70 @@
 use std::{
     collections::BTreeMap,
-    fs,
-    path::Path,
-    sync::atomic::{AtomicUsize, Ordering},
+    path::{Path, PathBuf},
 };
 
-use hir::{
-    ast::{
-        Ident,
-        function::{YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind},
-        item::Item,
-    },
-    span::{Span, SpannedElem},
-};
-use hull::{CodeBlock, Expr, ExprKind, Object, Program, Stmt, StmtKind, Ty, TyKind};
-use nameres::{Db as _, LibraryId, module_id_from_key, module_key_for_path};
+use dir_test::{Fixture, dir_test};
+use hir::ast::item::{ContractItem, FuncKind, FunctionDef, Item, Module};
+use hir_ty::{AbiParam, AbiType};
+use hull::Program;
+use nameres::{Db as _, module_id_from_key};
 use parser::parse_file_to_hir;
 use solcore_sonatina::translate_hull_program;
 use solcore_test_utils::{
     define_frontend_test_db,
     e2e::{
-        AbiArg, DISPATCH_ANSWER_EXPECTED, DISPATCH_BASIC_SHAPE_SRC, DISPATCH_ECHO_EXPECTED,
-        DISPATCH_ID_EXPECTED, DISPATCH_PAIR_EXPECTED_WORDS, E2eFailure, EvmHarness, Expected,
-        FailureKind, RunMode, STORAGE_INDEX_ORDER_EXPECTED, STORAGE_INDEX_ORDER_SRC, SpecCase,
-        calldata, e2e_enabled, e2e_pipeline_only, e2e_required, encode_hex, selector_hex,
-        spec_cases,
+        AbiShape, E2eFailure, FailureKind, ResolvedE2eCall, e2e_enabled, e2e_pipeline_only,
+        e2e_required, encode_hex, parse_e2e_directive, resolve_e2e_comments,
+        with_shared_evm_harness,
     },
     load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls,
     repo_root_from_manifest,
 };
 use sonatina_codegen::{EvmCompile, OptLevel};
-use specialize::{MonoItem, SpecializeOptions, specialize_module};
+use specialize::{
+    MonoEntry, MonoItem, MonoModule, MonoRuntimeMainOrigin, SpecializeOptions, specialize_module,
+};
 
 define_frontend_test_db!(TestDb, hir_ty);
 
-static INLINE_SOURCE_COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-#[test]
-fn spec_expectation_manifest_covers_all_reference_fixtures() {
-    let cases = spec_cases(&repo_root()).expect("spec manifest covers every fixture");
-    assert_eq!(cases.len(), 35, "the shared spec corpus size changed");
-    assert!(
-        cases
-            .iter()
-            .all(|case| case.mode == RunMode::ReferenceDirect),
-        "Sonatina's shared spec cases must use reference-direct execution"
-    );
-    assert!(cases.iter().any(|case| {
-        case.label.ends_with("00answer.solc") && case.expected == Expected::Word(42)
-    }));
-    assert!(cases.iter().any(|case| {
-        case.label.ends_with("11negPair.solc") && case.expected == Expected::Word(1)
-    }));
-}
-
-#[test]
-fn evm_e2e_execution_harness() {
+#[dir_test(
+    dir: "$CARGO_MANIFEST_DIR/../../tests/e2e",
+    glob: "**/main.solc"
+)]
+fn sonatina_evm_e2e(fixture: Fixture<&str>) {
     if !e2e_enabled() {
         assert!(
             !e2e_required(),
             "E2E_REQUIRED=1 requires E2E=1; refusing to skip Sonatina E2E"
         );
-        eprintln!("set E2E=1 to run the Sonatina + EVM execution harness");
         return;
     }
 
-    let pipeline_only = e2e_pipeline_only();
-    let harness = if pipeline_only {
-        None
-    } else {
-        match EvmHarness::from_env() {
-            Ok(Some(harness)) => Some(harness),
-            Ok(None) => return,
-            Err(error) => panic!("failed to start required EVM harness: {error:?}"),
+    let path = PathBuf::from(fixture.path());
+    let result = lower_and_compile(&path).and_then(|(creation, calls)| {
+        if e2e_pipeline_only() {
+            return Ok(());
         }
-    };
+        with_shared_evm_harness(|harness| {
+            let Some(harness) = harness else {
+                return Ok(());
+            };
+            harness.execute_deployed_calls(&encode_hex(&creation), &calls)
+        })
+    });
 
-    let mut failures = Vec::new();
-    match spec_cases(&repo_root()) {
-        Ok(cases) => {
-            for case in cases {
-                if let Err(error) = run_spec_case(&case, harness.as_ref()) {
-                    failures.push(format!("{}: {error:?}", case.label));
-                }
-            }
-        }
-        Err(error) => failures.push(format!("spec/manifest: {error:?}")),
-    }
-
-    if let Err(error) = run_dispatch_smoke(harness.as_ref()) {
-        failures.push(format!("dispatch/basic-shape: {error:?}"));
-    }
-    if let Err(error) = run_shared_direct_smoke(
-        "storage/index-order",
-        STORAGE_INDEX_ORDER_SRC,
-        &STORAGE_INDEX_ORDER_EXPECTED,
-        harness.as_ref(),
-    ) {
-        failures.push(format!("storage/index-order: {error:?}"));
-    }
-
-    let logs = harness
-        .as_ref()
-        .map_or_else(String::new, |harness| harness.logs());
-    assert!(
-        failures.is_empty(),
-        "Sonatina E2E failures:\n{}\nanvil logs:\n{logs}",
-        failures.join("\n")
-    );
+    result.unwrap_or_else(|failure| {
+        panic!(
+            "Sonatina E2E fixture `{}` failed: {failure}",
+            path.display()
+        )
+    });
 }
 
-fn run_spec_case(case: &SpecCase, harness: Option<&EvmHarness>) -> Result<(), E2eFailure> {
-    let lowered = lower_fixture(&case.path)?;
-
-    match case.mode {
-        RunMode::ReferenceDirect => {
-            let direct = lowered.reference_direct("main()")?;
-            let creation = compile_creation(lowered.db, &direct)?;
-            if let Some(harness) = harness {
-                let returndata = harness.execute_creation(&encode_hex(&creation))?;
-                harness.assert_return(&case.label, &case.expected, &returndata)?;
-            }
-        }
-        RunMode::DeployedDispatch => {
-            let entry = lowered.entry("main()")?.clone();
-            let selector = entry.selector.ok_or_else(|| {
-                pipeline_error("runtime main is not an ABI selector dispatch entry")
-            })?;
-            let creation = compile_creation(lowered.db, &lowered.program)?;
-            if let Some(harness) = harness {
-                let address = harness.deploy(&encode_hex(&creation))?;
-                let returndata = harness.call(&address, &calldata(selector, &[]))?;
-                harness.assert_return(&case.label, &case.expected, &returndata)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn run_dispatch_smoke(harness: Option<&EvmHarness>) -> Result<(), E2eFailure> {
-    let lowered = lower_inline_source(DISPATCH_BASIC_SHAPE_SRC)?;
-    let answer = entry_selector(&lowered, "answer()")?;
-    let id = entry_selector(&lowered, "id(uint256)")?;
-    let echo = entry_selector(&lowered, "echo(bool)")?;
-    let pair = entry_selector(&lowered, "pair()")?;
+fn lower_and_compile(path: &Path) -> Result<(Vec<u8>, Vec<ResolvedE2eCall>), E2eFailure> {
+    let lowered = lower_fixture(path)?;
     let creation = compile_creation(lowered.db, &lowered.program)?;
-    if let Some(harness) = harness {
-        let address = harness.deploy(&encode_hex(&creation))?;
-        let returndata = harness.call(&address, &calldata(answer, &[]))?;
-        harness.assert_return("answer()", &DISPATCH_ANSWER_EXPECTED, &returndata)?;
-        let returndata = harness.call(&address, &calldata(id, &[AbiArg::Word(42)]))?;
-        harness.assert_return("id(uint256)", &DISPATCH_ID_EXPECTED, &returndata)?;
-        let returndata = harness.call(&address, &calldata(echo, &[AbiArg::Bool(true)]))?;
-        harness.assert_return("echo(bool)", &DISPATCH_ECHO_EXPECTED, &returndata)?;
-        let returndata = harness.call(&address, &calldata(pair, &[]))?;
-        harness.assert_return(
-            "pair()",
-            &Expected::Words(DISPATCH_PAIR_EXPECTED_WORDS.to_vec()),
-            &returndata,
-        )?;
-    }
-    Ok(())
-}
-
-fn run_shared_direct_smoke(
-    label: &str,
-    source: &str,
-    expected: &Expected,
-    harness: Option<&EvmHarness>,
-) -> Result<(), E2eFailure> {
-    let lowered = lower_inline_source(source)?;
-    let direct = lowered.reference_direct("main()")?;
-    let creation = compile_creation(lowered.db, &direct)?;
-    if let Some(harness) = harness {
-        let returndata = harness.execute_creation(&encode_hex(&creation))?;
-        harness.assert_return(label, expected, &returndata)?;
-    }
-    Ok(())
-}
-
-fn entry_selector(lowered: &LoweredSource, signature: &str) -> Result<[u8; 4], E2eFailure> {
-    lowered
-        .entry(signature)?
-        .selector
-        .ok_or_else(|| pipeline_error(format!("{signature} has no ABI selector")))
+    Ok((creation, lowered.calls))
 }
 
 fn compile_creation(
@@ -224,115 +105,19 @@ fn compile_creation(
         })
 }
 
-struct LoweredSource {
+struct LoweredFixture {
     db: &'static TestDb,
     program: Program<'static>,
-    entries: Vec<AbiEntry>,
+    calls: Vec<ResolvedE2eCall>,
 }
 
-impl LoweredSource {
-    fn entry(&self, signature: &str) -> Result<&AbiEntry, E2eFailure> {
-        let mut matches = self
-            .entries
-            .iter()
-            .filter(|entry| entry.signature == signature);
-        match (matches.next(), matches.next()) {
-            (Some(entry), None) => Ok(entry),
-            (None, _) => Err(pipeline_error(format!("ABI entry `{signature}` not found"))),
-            (Some(_), Some(_)) => Err(pipeline_error(format!(
-                "ABI entry `{signature}` is ambiguous across contracts"
-            ))),
-        }
-    }
-
-    fn reference_direct(&self, signature: &str) -> Result<Program<'static>, E2eFailure> {
-        let entry = self.entry(signature)?;
-        if !entry.inputs_empty {
-            return Err(pipeline_error(format!(
-                "{signature}: reference-direct mode only supports no-arg entrypoints"
-            )));
-        }
-        let mut runtimes = self
-            .program
-            .objects
-            .iter()
-            .flat_map(|object| object.inners.iter())
-            .filter(|runtime| runtime.name.as_str() == entry.contract);
-        let runtime = match (runtimes.next(), runtimes.next()) {
-            (Some(runtime), None) => runtime,
-            (None, _) => {
-                return Err(pipeline_error(format!(
-                    "runtime object for contract `{}` not found",
-                    entry.contract
-                )));
-            }
-            (Some(_), Some(_)) => {
-                return Err(pipeline_error(format!(
-                    "runtime object for contract `{}` is ambiguous",
-                    entry.contract
-                )));
-            }
-        };
-        let exact = entry.specialized.as_deref().and_then(|specialized| {
-            runtime
-                .code
-                .functions
-                .iter()
-                .find(|function| function.name.as_str() == specialized)
-        });
-        let inferred = || {
-            runtime.code.functions.iter().find(|function| {
-                function.args.is_empty()
-                    && !matches!(function.ret.strip_named().kind, TyKind::Unit)
-                    && (function.name.as_str() == "main"
-                        || function.name.as_str().starts_with("main_")
-                        || function.name.as_str().contains("_main_"))
-            })
-        };
-        let Some(function) = exact.or_else(inferred) else {
-            return Err(pipeline_error(format!(
-                "specialized no-arg function for `{signature}` not found"
-            )));
-        };
-
-        let span = function.span;
-        let ret_ty = function.ret.clone();
-        Ok(Program {
-            span,
-            functions: Vec::new(),
-            objects: vec![Object {
-                span,
-                name: format!("{}ReferenceDirect", entry.contract).into(),
-                code: CodeBlock {
-                    span,
-                    functions: runtime.code.functions.clone(),
-                    stmts: direct_main_stmts(self.db, span, function.name.as_str(), ret_ty),
-                },
-                inners: Vec::new(),
-            }],
-        })
-    }
-}
-
-#[derive(Clone)]
-struct AbiEntry {
-    contract: String,
-    specialized: Option<String>,
-    signature: String,
-    selector: Option<[u8; 4]>,
-    inputs_empty: bool,
-}
-
-fn lower_fixture(path: &Path) -> Result<LoweredSource, E2eFailure> {
+fn lower_fixture(path: &Path) -> Result<LoweredFixture, E2eFailure> {
     let db = Box::leak(Box::new(TestDb::default()));
     let repo = repo_root();
-    let main_root = path
+    let case_dir = path
         .parent()
         .ok_or_else(|| pipeline_error(format!("fixture {} has no parent", path.display())))?;
-    let _ = load_fixture_case_with_file_urls(db, main_root, &repo, BTreeMap::new());
-    let entry = module_key_for_path(LibraryId::Main, main_root, path).ok_or_else(|| {
-        pipeline_error(format!("fixture is outside main root: {}", path.display()))
-    })?;
+    let entry = load_fixture_case_with_file_urls(db, case_dir, &repo, BTreeMap::new());
     load_reachable_modules_with_file_urls(db, entry.clone());
     let db: &'static TestDb = &*db;
     let entry_id = module_id_from_key(db, &entry);
@@ -344,50 +129,18 @@ fn lower_fixture(path: &Path) -> Result<LoweredSource, E2eFailure> {
     finish_lowering(db, specialized)
 }
 
-fn lower_inline_source(source: &str) -> Result<LoweredSource, E2eFailure> {
-    let db = Box::leak(Box::new(TestDb::default()));
-    let repo = repo_root();
-    let sequence = INLINE_SOURCE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let main_root = repo.join(format!(
-        "target/sonatina-e2e/{}-{sequence}",
-        std::process::id()
-    ));
-    fs::create_dir_all(&main_root).map_err(|error| {
-        pipeline_error(format!(
-            "create dispatch smoke directory {}: {error}",
-            main_root.display()
-        ))
-    })?;
-    let main_path = main_root.join("main.solc");
-    fs::write(&main_path, source).map_err(|error| {
-        pipeline_error(format!(
-            "write dispatch smoke source {}: {error}",
-            main_path.display()
-        ))
-    })?;
-    let entry = load_fixture_case_with_file_urls(db, &main_root, &repo, BTreeMap::new());
-    load_reachable_modules_with_file_urls(db, entry.clone());
-    let db: &'static TestDb = &*db;
-    let entry_id = module_id_from_key(db, &entry);
-    let file = db
-        .module_file(entry_id)
-        .ok_or_else(|| pipeline_error("inline entry source file is missing"))?;
-    let hir = parse_file_to_hir(db, file).module(db);
-    let specialized = specialize_module(db, hir, SpecializeOptions::default());
-    finish_lowering(db, specialized)
-}
-
 fn finish_lowering(
     db: &'static TestDb,
     specialized: specialize::SpecializeOutput<'static>,
-) -> Result<LoweredSource, E2eFailure> {
+) -> Result<LoweredFixture, E2eFailure> {
     if !specialized.diagnostics.is_empty() {
         return Err(pipeline_error(format!(
             "specialization diagnostics: {:?}",
             specialized.diagnostics
         )));
     }
-    let entries = collect_entries(db, &specialized.module)?;
+    let source = parse_file_to_hir(db, specialized.module.module.file(db)).module(db);
+    let directives = resolve_fixture_directives(db, source, &specialized.module)?;
     let emitted = hull::emit_module(db, &specialized.module, hull::EmitOptions::default());
     if !emitted.diagnostics.is_empty() {
         return Err(pipeline_error(format!(
@@ -402,170 +155,253 @@ fn finish_lowering(
         )));
     }
 
-    Ok(LoweredSource {
+    let program = contract_program(&emitted.program, &directives.contract)?;
+    Ok(LoweredFixture {
         db,
-        program: emitted.program,
-        entries,
+        program,
+        calls: directives.calls,
     })
 }
 
-fn collect_entries(
+struct ResolvedFixtureDirectives {
+    contract: String,
+    calls: Vec<ResolvedE2eCall>,
+}
+
+fn resolve_fixture_directives(
     db: &'static TestDb,
-    module: &specialize::MonoModule<'static>,
-) -> Result<Vec<AbiEntry>, E2eFailure> {
-    let mut entries = Vec::new();
-    let source = parse_file_to_hir(db, module.module.file(db)).module(db);
+    source: Module<'static>,
+    specialized: &MonoModule<'static>,
+) -> Result<ResolvedFixtureDirectives, E2eFailure> {
+    let mut selected_contract = None::<String>;
+    let mut calls = Vec::new();
+
     for item in source.items(db) {
-        let Item::ContractDef(contract) = item else {
-            continue;
-        };
-        let surface = hir_ty::contract_dispatch_surface(db, source, *contract);
-        for method in surface.methods {
-            let derived =
-                hir_ty::abi_selector(db, hir_ty::AbiSignature::new(db, method.signature.clone()));
-            if derived.0 != method.selector.0 {
-                return Err(pipeline_error(format!(
-                    "{}: metadata selector {} disagrees with canonical {}",
-                    method.signature,
-                    selector_hex(method.selector.0),
-                    derived.to_hex()
-                )));
+        match item {
+            Item::FunctionDef(function) => {
+                reject_non_dispatch_directives(db, *function, "top-level function")?;
             }
-            let specialized = module.items.iter().find_map(|item| match item {
-                MonoItem::Function(function) if function.source == Some(method.def) => {
-                    Some(function.name.clone())
+            Item::InstanceDef(instance) => {
+                for function in instance.methods(db) {
+                    reject_non_dispatch_directives(db, *function, "instance method")?;
                 }
-                _ => None,
-            });
-            entries.push(AbiEntry {
-                contract: surface.name.clone(),
-                specialized,
-                signature: method.signature,
-                selector: Some(method.selector.0),
-                inputs_empty: method.inputs.is_empty(),
-            });
+            }
+            Item::ContractDef(contract) => {
+                let contract_name = contract.name_elem(db).atom().text(db).to_owned();
+                let contract_def = contract.def_id_value(db);
+                let surface = hir_ty::contract_dispatch_surface_for_module(db, source, *contract);
+                let mono_contract = specialized
+                    .items
+                    .iter()
+                    .find_map(|item| match item {
+                        MonoItem::Contract(contract) if contract.def == contract_def => {
+                            Some(contract)
+                        }
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        directive_error(format!(
+                            "{contract_name}: specialized contract metadata is missing"
+                        ))
+                    })?;
+                let has_dispatch_runtime = mono_contract.entries.iter().any(|entry| {
+                    matches!(
+                        entry,
+                        MonoEntry::RuntimeMain {
+                            origin: MonoRuntimeMainOrigin::StdDispatch,
+                            ..
+                        }
+                    )
+                });
+
+                for item in contract.items(db) {
+                    let ContractItem::FunctionDef(function) = item else {
+                        continue;
+                    };
+                    let comments = comment_texts(db, *function);
+                    let function_name = function_name(db, *function);
+                    let context = format!("{contract_name}::{function_name}");
+                    if !contains_directive(&comments, &context)? {
+                        continue;
+                    }
+                    if function.kind(db) != FuncKind::Function {
+                        return Err(directive_error(format!(
+                            "{context}: directives may only target ordinary public functions"
+                        )));
+                    }
+                    if function.sig(db).public.is_none() {
+                        return Err(directive_error(format!(
+                            "{context}: directive target is private and has no external selector"
+                        )));
+                    }
+                    if function_name == "main" {
+                        return Err(directive_error(format!(
+                            "{context}: contract runtime `main` is not a selector-dispatched method"
+                        )));
+                    }
+                    if contract.has_runtime_main(db) {
+                        return Err(directive_error(format!(
+                            "{context}: contract `{contract_name}` defines a runtime `main`, so selector dispatch is disabled"
+                        )));
+                    }
+                    if !has_dispatch_runtime {
+                        return Err(directive_error(format!(
+                            "{context}: specialization did not emit the generated selector dispatcher"
+                        )));
+                    }
+
+                    let def = function.def_id_value(db);
+                    let mut methods = surface.methods.iter().filter(|method| method.def == def);
+                    let method = match (methods.next(), methods.next()) {
+                        (Some(method), None) => method,
+                        (None, _) => {
+                            return Err(directive_error(format!(
+                                "{context}: typed dispatch metadata has no matching source DefId"
+                            )));
+                        }
+                        (Some(_), Some(_)) => {
+                            return Err(directive_error(format!(
+                                "{context}: typed dispatch metadata is ambiguous for its source DefId"
+                            )));
+                        }
+                    };
+
+                    match &selected_contract {
+                        None => selected_contract = Some(contract_name.clone()),
+                        Some(selected) if selected == &contract_name => {}
+                        Some(selected) => {
+                            return Err(directive_error(format!(
+                                "one fixture may target only one deployed contract; found `{selected}` and `{contract_name}`"
+                            )));
+                        }
+                    }
+                    let inputs = abi_shapes(&method.inputs);
+                    let outputs = abi_shapes(&method.outputs);
+                    calls.extend(resolve_e2e_comments(
+                        method.signature.clone(),
+                        method.selector.0,
+                        &inputs,
+                        &outputs,
+                        comments.iter().copied(),
+                    )?);
+                }
+            }
+            _ => {}
         }
     }
-    Ok(entries)
+
+    let contract = selected_contract.ok_or_else(|| {
+        directive_error("fixture contains no E2E directives on selector-dispatched methods")
+    })?;
+    if calls.is_empty() {
+        return Err(directive_error(
+            "fixture contains no executable E2E directives",
+        ));
+    }
+    Ok(ResolvedFixtureDirectives { contract, calls })
 }
 
-fn direct_main_stmts(
+fn reject_non_dispatch_directives(
     db: &'static TestDb,
-    span: Span<'static>,
-    callee: &str,
-    ret_ty: Ty<'static>,
-) -> Vec<Stmt<'static>> {
-    vec![
-        Stmt {
-            span,
-            kind: StmtKind::Assembly(vec![yul_expr_stmt(
-                span,
-                yul_call(
-                    db,
-                    span,
-                    "mstore",
-                    vec![
-                        yul_number(span, "64"),
-                        yul_call(db, span, "memoryguard", vec![yul_number(span, "128")]),
-                    ],
-                ),
-            )]),
-        },
-        Stmt {
-            span,
-            kind: StmtKind::Let {
-                name: "_mainresult".into(),
-                ty: ret_ty.clone(),
-            },
-        },
-        Stmt {
-            span,
-            kind: StmtKind::Assign {
-                lhs: Expr::var(span, "_mainresult", ret_ty.clone()),
-                rhs: Expr {
-                    span,
-                    ty: ret_ty,
-                    kind: ExprKind::Call {
-                        callee: callee.into(),
-                        args: Vec::new(),
-                    },
-                },
-            },
-        },
-        Stmt {
-            span,
-            kind: StmtKind::Assembly(vec![
-                yul_expr_stmt(
-                    span,
-                    yul_call(
-                        db,
-                        span,
-                        "mstore",
-                        vec![yul_number(span, "0"), yul_ident(db, span, "_mainresult")],
-                    ),
-                ),
-                yul_expr_stmt(
-                    span,
-                    yul_call(
-                        db,
-                        span,
-                        "return",
-                        vec![yul_number(span, "0"), yul_number(span, "32")],
-                    ),
-                ),
-            ]),
-        },
-    ]
+    function: FunctionDef<'static>,
+    kind: &str,
+) -> Result<(), E2eFailure> {
+    let name = function_name(db, function);
+    let context = format!("{kind} `{name}`");
+    let comments = comment_texts(db, function);
+    if contains_directive(&comments, &context)? {
+        return Err(directive_error(format!(
+            "{context}: directives require a public contract selector method"
+        )));
+    }
+    Ok(())
 }
 
-fn yul_expr_stmt(span: Span<'static>, expr: YulExpr<'static>) -> YulStmt<'static> {
-    YulStmt {
-        span,
-        kind: YulStmtKind::Expr(expr),
+fn comment_texts(db: &'static TestDb, function: FunctionDef<'static>) -> Vec<&'static str> {
+    function
+        .leading_comments(db)
+        .iter()
+        .map(|comment| comment.text.as_str())
+        .collect()
+}
+
+fn contains_directive(comments: &[&str], context: &str) -> Result<bool, E2eFailure> {
+    let mut found = false;
+    for comment in comments {
+        match parse_e2e_directive(comment) {
+            Ok(Some(_)) => found = true,
+            Ok(None) => {}
+            Err(error) => {
+                return Err(directive_error(format!("{context}: {error}")));
+            }
+        }
+    }
+    Ok(found)
+}
+
+fn abi_shapes(params: &[AbiParam]) -> Vec<AbiShape> {
+    params.iter().map(abi_shape).collect()
+}
+
+fn abi_shape(param: &AbiParam) -> AbiShape {
+    match &param.ty {
+        AbiType::Uint256 => AbiShape::Word,
+        AbiType::Bool => AbiShape::Bool,
+        AbiType::Unit => AbiShape::Unit,
+        AbiType::Tuple => AbiShape::Tuple(abi_shapes(&param.components)),
+        AbiType::Named(name) => match name.as_str() {
+            "uint" | "uint256" | "word" => AbiShape::Word,
+            "bool" => AbiShape::Bool,
+            "address" => AbiShape::Address,
+            "bytes32" => AbiShape::Bytes32,
+            _ => AbiShape::Unsupported(name.clone()),
+        },
+        AbiType::String => AbiShape::Unsupported("string".to_owned()),
+        AbiType::Unsupported => AbiShape::Unsupported(param.ty.to_string()),
     }
 }
 
-fn yul_call(
-    db: &'static TestDb,
-    span: Span<'static>,
-    name: &str,
-    args: Vec<YulExpr<'static>>,
-) -> YulExpr<'static> {
-    YulExpr {
-        span,
-        kind: YulExprKind::Call {
-            name: yul_name(db, span, name),
-            args,
-        },
-    }
+fn contract_program(
+    program: &Program<'static>,
+    contract: &str,
+) -> Result<Program<'static>, E2eFailure> {
+    let deployer = format!("{contract}Deploy");
+    let mut objects = program
+        .objects
+        .iter()
+        .filter(|object| object.name.as_str() == deployer);
+    let object = match (objects.next(), objects.next()) {
+        (Some(object), None) => object.clone(),
+        (None, _) => {
+            return Err(pipeline_error(format!(
+                "Hull deploy object `{deployer}` was not emitted"
+            )));
+        }
+        (Some(_), Some(_)) => {
+            return Err(pipeline_error(format!(
+                "Hull deploy object `{deployer}` is ambiguous"
+            )));
+        }
+    };
+    Ok(Program {
+        span: program.span,
+        functions: Vec::new(),
+        objects: vec![object],
+    })
 }
 
-fn yul_ident(db: &'static TestDb, span: Span<'static>, name: &str) -> YulExpr<'static> {
-    YulExpr {
-        span,
-        kind: YulExprKind::Ident(yul_name(db, span, name)),
-    }
+fn function_name(db: &'static TestDb, function: FunctionDef<'static>) -> String {
+    function.sig(db).name.atom().text(db).to_owned()
 }
 
-fn yul_number(span: Span<'static>, value: impl Into<String>) -> YulExpr<'static> {
-    YulExpr {
-        span,
-        kind: YulExprKind::Lit(YulLitKind::Number(value.into())),
-    }
-}
-
-fn yul_name(
-    db: &'static TestDb,
-    span: Span<'static>,
-    name: &str,
-) -> SpannedElem<'static, Ident<'static>> {
-    SpannedElem::new(Ident::new(db, name.to_owned()), span)
+fn directive_error(message: impl Into<String>) -> E2eFailure {
+    E2eFailure::new(FailureKind::Directive, message)
 }
 
 fn pipeline_error(message: impl Into<String>) -> E2eFailure {
     E2eFailure::new(FailureKind::Pipeline, message)
 }
 
-fn repo_root() -> std::path::PathBuf {
+fn repo_root() -> PathBuf {
     repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"))
 }

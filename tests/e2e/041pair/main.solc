@@ -1,0 +1,13 @@
+contract Pair {
+
+  function fst(p : (word, word)) -> word {
+    match p {
+      | (a,b) => return a;
+    }
+  }
+
+  // #[() -> 1]
+  public function run() -> word {
+    return fst((1,0));
+  }
+}

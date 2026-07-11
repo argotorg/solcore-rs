@@ -1,0 +1,10 @@
+import std.{*};
+contract Counter {
+  counter : word;
+
+  // #[() -> 42]
+  public function run() -> word {
+    counter = Num.add(counter, 42);
+    return counter;
+  }
+}
