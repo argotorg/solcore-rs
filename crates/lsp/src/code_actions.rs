@@ -294,8 +294,13 @@ fn missing_import_for_diagnostic<'db>(
     diagnostic: &vfs::Diagnostic,
 ) -> Option<MissingImport> {
     let primary = diagnostic.primary.as_ref()?;
+    // Source declarations are resolved by `nameres`, while compiler-generated
+    // contract entries are resolved during type checking. Both retain the same
+    // structured name-resolution diagnostic, so auto-imports can treat them
+    // uniformly without knowing which module provides the missing symbol.
     nameres::module_diagnostics(db, module)
         .iter()
+        .chain(hir_ty::infer::module_typeck_diagnostics(db, module).iter())
         .find_map(|candidate| {
             let AnyDiagnostic::Nameres(candidate) = candidate else {
                 return None;
@@ -1164,6 +1169,37 @@ mod tests {
             action(&class_actions).title,
             "Import `Comparable` from `lib.classes`"
         );
+    }
+
+    #[test]
+    fn generated_dispatch_missing_type_and_class_have_auto_import_candidates() {
+        let source = r#"import std.{*};
+import std.opcodes.{address as address_};
+
+contract C {
+  constructor() {}
+  public function nothing() -> () {}
+}
+"#;
+        let (world, uri) = world_with_main(source);
+
+        for (code, expected_title) in [
+            (
+                hir::diag::DiagnosticCode::NAMERES_UNDEFINED_TYPE_CONSTRUCTOR,
+                "Import `NonPayable` from `std.dispatch`",
+            ),
+            (
+                hir::diag::DiagnosticCode::NAMERES_UNDEFINED_CLASS,
+                "Import `SigString` from `std.dispatch`",
+            ),
+        ] {
+            let diagnostic = diagnostic_with_code(&world, &uri, code);
+            let actions = handle_code_action(&world, &uri, diagnostic.range, &context(diagnostic))
+                .expect("code actions");
+            let action = action(&actions);
+            assert_eq!(action.title, expected_title);
+            assert_eq!(action.is_preferred, Some(true));
+        }
     }
 
     #[test]
