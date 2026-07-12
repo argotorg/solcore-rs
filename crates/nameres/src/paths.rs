@@ -63,7 +63,9 @@ pub fn resolve_module_path_candidate<'db>(
     } else if segments.first().is_some_and(|segment| segment == "lib") && segments.len() > 1 {
         let library = importing.library(db).clone();
         let root = root_for_library(db, tree, &library, path)?;
-        (library, segments[1..].to_vec(), root)
+        let mut logical_path = multi_root_workspace_prefix(db, importing);
+        logical_path.extend_from_slice(&segments[1..]);
+        (library, logical_path, root)
     } else {
         let library = importing.library(db).clone();
         let root = root_for_library(db, tree, &library, path)?;
@@ -75,6 +77,31 @@ pub fn resolve_module_path_candidate<'db>(
     let module = ModuleId::new(db, library, logical_path.clone());
     let file_path = root.join(module_file_path(&logical_path));
     Ok(ResolvedModulePath { module, file_path })
+}
+
+/// Preserves the LSP's internal root namespace for `lib.*` imports.
+///
+/// Normally `lib.foo` is absolute below `/main`. Multi-root editor sessions
+/// place each client workspace folder below a reserved two-segment prefix, so
+/// the effective absolute root is that folder's namespace instead. Open files
+/// detached from a removed folder retain the same isolation until they close.
+fn multi_root_workspace_prefix(db: &dyn Db, importing: ModuleId<'_>) -> Vec<String> {
+    if importing.library(db) != &LibraryId::Main {
+        return Vec::new();
+    }
+    let logical_path = importing.logical_path(db);
+    match logical_path.as_slice() {
+        [prefix, namespace, ..]
+            if matches!(
+                prefix.as_str(),
+                "__solcore_workspace__" | "__solcore_detached__"
+            ) && namespace.len() >= 16
+                && namespace.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+        {
+            vec![prefix.clone(), namespace.clone()]
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Resolves a module path reference to a loaded module.
