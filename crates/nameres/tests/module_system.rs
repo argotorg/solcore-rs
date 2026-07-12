@@ -14,8 +14,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use salsa::Setter;
 use solcore_nameres::{
     LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleKey, ModuleTree,
-    module_diagnostics, module_id_from_key, module_imports, module_key_for_path, public_interface,
-    reachable_diagnostics, resolve_module_path_candidate, resolve_reachable_full,
+    Namespace, auto_import_candidates, auto_import_index, module_diagnostics, module_id_from_key,
+    module_imports, module_key_for_path, public_interface, reachable_diagnostics,
+    resolve_module_path_candidate, resolve_reachable_full, source_import_path,
     strongly_connected_components,
 };
 use url::Url;
@@ -110,6 +111,415 @@ fn plain_import_has_no_diagnostics() {
     );
     let interface = public_interface(&db, util);
     assert!(interface.terms.contains_key("value"));
+}
+
+#[test]
+fn auto_imports_index_unreachable_public_symbols_and_rank_direct_exports_first() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "export { wanted }; function wanted() -> word { return 0; }",
+        ),
+        (
+            vec!["direct"],
+            "export { wanted, Thing, Eqish }; function wanted() -> word { return 1; } data Thing = Thing; class a:Eqish {}",
+        ),
+        (vec!["wrapper"], "export direct.{wanted};"),
+        (vec!["private"], "function wanted() -> word { return 2; }"),
+        (
+            vec!["broken"],
+            "export { wanted }; lost(x: word) -> word { return 0; } function wanted() -> word { return 3; }",
+        ),
+        (vec!["broken_wrapper"], "export broken.{wanted};"),
+        (
+            vec!["ambiguous"],
+            "export direct.{wanted}; export other.{wanted};",
+        ),
+        (
+            vec!["other"],
+            "export { wanted }; function wanted() -> word { return 4; }",
+        ),
+        (
+            vec!["term_collision"],
+            "export { Clash }; function Clash() -> word { return 5; }",
+        ),
+        (
+            vec!["type_collision"],
+            "export { Clash }; data Clash = Clash;",
+        ),
+        (
+            vec!["namespace_ambiguous"],
+            "export term_collision.{Clash}; export type_collision.{Clash};",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    let broken_wrapper = module_id_from_key(&db, &module_key(["broken_wrapper"]));
+    assert!(
+        public_interface(&db, broken_wrapper)
+            .terms
+            .contains_key("wanted")
+    );
+    let namespace_ambiguous = module_id_from_key(&db, &module_key(["namespace_ambiguous"]));
+    let ambiguous_interface = public_interface(&db, namespace_ambiguous);
+    assert!(ambiguous_interface.terms.contains_key("Clash"));
+    assert!(ambiguous_interface.types.contains_key("Clash"));
+
+    let candidates = auto_import_candidates(&db, importing, "wanted", Namespace::Term);
+    let paths = candidates
+        .iter()
+        .map(|candidate| candidate.import_path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, ["lib.direct", "lib.other", "lib.wrapper"]);
+    assert!(!candidates[0].is_reexport());
+    assert!(!candidates[1].is_reexport());
+    assert!(candidates[2].is_reexport());
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.public_name == "wanted")
+    );
+
+    let type_candidates = auto_import_candidates(&db, importing, "Thing", Namespace::Type);
+    assert_eq!(type_candidates.len(), 1);
+    assert_eq!(type_candidates[0].import_path, "lib.direct");
+    assert!(auto_import_candidates(&db, importing, "Thing", Namespace::Term).is_empty());
+    let class_candidates = auto_import_candidates(&db, importing, "Eqish", Namespace::Class);
+    assert_eq!(class_candidates.len(), 1);
+    assert_eq!(class_candidates[0].import_path, "lib.direct");
+    assert_eq!(
+        auto_import_candidates(&db, importing, "Clash", Namespace::Term)[0].import_path,
+        "lib.term_collision"
+    );
+    assert_eq!(
+        auto_import_candidates(&db, importing, "Clash", Namespace::Type)[0].import_path,
+        "lib.type_collision"
+    );
+
+    let index = auto_import_index(&db, importing);
+    assert!(
+        index
+            .iter()
+            .all(|candidate| candidate.provider != importing)
+    );
+    assert!(
+        index
+            .iter()
+            .all(|candidate| candidate.import_path != "lib.private")
+    );
+    assert!(
+        index
+            .iter()
+            .all(|candidate| candidate.import_path != "lib.broken")
+    );
+    assert!(
+        index
+            .iter()
+            .all(|candidate| candidate.import_path != "lib.broken_wrapper")
+    );
+    assert!(
+        index
+            .iter()
+            .all(|candidate| candidate.import_path != "lib.ambiguous")
+    );
+    assert!(
+        index
+            .iter()
+            .all(|candidate| candidate.import_path != "lib.namespace_ambiguous")
+    );
+}
+
+#[test]
+fn auto_imports_exclude_namespace_blind_selector_collisions_within_one_provider() {
+    let (db, entry) = load_sources([
+        (vec!["main"], "function main() {}"),
+        (
+            vec!["provider"],
+            "export { Shared, term_only, TypeOnly };
+             function Shared() -> word { return 1; }
+             data Shared = Shared;
+             function term_only() -> word { return 2; }
+             data TypeOnly = TypeOnly;",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    let provider = module_id_from_key(&db, &module_key(["provider"]));
+    let interface = public_interface(&db, provider);
+    assert!(interface.terms.contains_key("Shared"));
+    assert!(interface.types.contains_key("Shared"));
+
+    assert!(auto_import_candidates(&db, importing, "Shared", Namespace::Term).is_empty());
+    assert!(auto_import_candidates(&db, importing, "Shared", Namespace::Type).is_empty());
+
+    let term_candidates = auto_import_candidates(&db, importing, "term_only", Namespace::Term);
+    assert_eq!(term_candidates.len(), 1);
+    assert_eq!(term_candidates[0].import_path, "lib.provider");
+    let type_candidates = auto_import_candidates(&db, importing, "TypeOnly", Namespace::Type);
+    assert_eq!(type_candidates.len(), 1);
+    assert_eq!(type_candidates[0].import_path, "lib.provider");
+}
+
+#[test]
+fn auto_imports_suppress_different_target_for_explicit_selector_but_keep_same_target() {
+    let (db, entry) = load_sources([
+        (vec!["main"], "import lib.a.{Foo}; function main() {}"),
+        (
+            vec!["a"],
+            "export { Foo }; function Foo() -> word { return 1; }",
+        ),
+        (
+            vec!["b"],
+            "export { Foo }; function Foo() -> word { return 2; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+
+    let candidates = auto_import_candidates(&db, importing, "Foo", Namespace::Term);
+    let paths = candidates
+        .iter()
+        .map(|candidate| candidate.import_path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, ["lib.a"]);
+}
+
+#[test]
+fn auto_imports_consider_selector_aliases_by_their_local_name() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "import lib.a.{Original as Foo}; function main() {}",
+        ),
+        (
+            vec!["a"],
+            "export { Original }; function Original() -> word { return 1; }",
+        ),
+        (
+            vec!["b"],
+            "export { Foo }; function Foo() -> word { return 2; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+
+    assert!(auto_import_candidates(&db, importing, "Foo", Namespace::Term).is_empty());
+}
+
+#[test]
+fn auto_imports_consider_bindings_from_wildcard_selectors() {
+    let (db, entry) = load_sources([
+        (vec!["main"], "import lib.a.{*}; function main() {}"),
+        (
+            vec!["a"],
+            "export { Foo }; function Foo() -> word { return 1; }",
+        ),
+        (
+            vec!["b"],
+            "export { Foo }; function Foo() -> word { return 2; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+
+    let candidates = auto_import_candidates(&db, importing, "Foo", Namespace::Term);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].import_path, "lib.a");
+}
+
+#[test]
+fn auto_imports_suppress_cross_namespace_collisions_from_different_targets() {
+    let (db, entry) = load_sources([
+        (vec!["main"], "import lib.a.{Foo}; function main() {}"),
+        (
+            vec!["a"],
+            "export { Foo }; function Foo() -> word { return 1; }",
+        ),
+        (vec!["b"], "export { Foo }; data Foo = Foo;"),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+
+    assert!(auto_import_candidates(&db, importing, "Foo", Namespace::Type).is_empty());
+}
+
+#[test]
+fn auto_imports_keep_main_workspace_namespaces_isolated() {
+    let workspace_a = "1111111111111111";
+    let workspace_b = "2222222222222222";
+    let detached = "3333333333333333";
+    let (db, entry) = load_sources([
+        (
+            vec!["__solcore_workspace__", workspace_a, "main"],
+            "function main() {}",
+        ),
+        (
+            vec!["__solcore_workspace__", workspace_a, "nested", "util"],
+            "export { wanted }; function wanted() -> word { return 1; }",
+        ),
+        (
+            vec!["__solcore_workspace__", workspace_b, "nested", "util"],
+            "export { wanted }; function wanted() -> word { return 2; }",
+        ),
+        (
+            vec!["__solcore_detached__", detached, "main"],
+            "function main() {}",
+        ),
+        (
+            vec!["__solcore_detached__", detached, "nested", "util"],
+            "export { wanted }; function wanted() -> word { return 3; }",
+        ),
+    ]);
+    let importing = module_id_from_key(
+        &db,
+        &ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec![
+                "__solcore_workspace__".to_owned(),
+                workspace_a.to_owned(),
+                "main".to_owned(),
+            ],
+        },
+    );
+    // `load_sources` always reports `main` as its convenience entry; make sure
+    // this test does not accidentally exercise that unrelated synthetic key.
+    assert_ne!(importing, module_id_from_key(&db, &entry));
+
+    let candidates = auto_import_candidates(&db, importing, "wanted", Namespace::Term);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].import_path, "lib.nested.util");
+    assert_eq!(
+        candidates[0].provider.logical_path(&db),
+        &[
+            "__solcore_workspace__".to_owned(),
+            workspace_a.to_owned(),
+            "nested".to_owned(),
+            "util".to_owned(),
+        ]
+    );
+    assert!(!candidates[0].import_path.contains("__solcore_workspace__"));
+
+    let detached_importing = module_id_from_key(
+        &db,
+        &ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec![
+                "__solcore_detached__".to_owned(),
+                detached.to_owned(),
+                "main".to_owned(),
+            ],
+        },
+    );
+    let detached_candidates =
+        auto_import_candidates(&db, detached_importing, "wanted", Namespace::Term);
+    assert_eq!(detached_candidates.len(), 1);
+    assert_eq!(detached_candidates[0].import_path, "lib.nested.util");
+    assert_eq!(
+        &detached_candidates[0].provider.logical_path(&db)[..2],
+        &["__solcore_detached__".to_owned(), detached.to_owned()]
+    );
+}
+
+#[test]
+fn source_import_paths_use_canonical_library_syntax() {
+    let mut db = TestDb::default();
+    let external_roots = BTreeMap::from([
+        ("pkg".to_owned(), PathBuf::from("/memory/pkg")),
+        ("bad-name".to_owned(), PathBuf::from("/memory/bad-name")),
+    ]);
+    db.module_tree = Some(ModuleTree::new(
+        &db,
+        PathBuf::from("/memory/main"),
+        PathBuf::from("/memory/std"),
+        external_roots,
+    ));
+    db.module_fs_snapshot = Some(ModuleFsSnapshot::new(&db, BTreeSet::new(), BTreeMap::new()));
+    let keys = [
+        ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec!["main".to_owned()],
+        },
+        ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec!["nested".to_owned(), "util".to_owned()],
+        },
+        ModuleKey {
+            library: LibraryId::Std,
+            logical_path: vec!["collections".to_owned(), "list".to_owned()],
+        },
+        ModuleKey {
+            library: LibraryId::External("pkg".to_owned()),
+            logical_path: vec!["math".to_owned(), "api".to_owned()],
+        },
+    ];
+    let sources = [
+        "function main() {}",
+        "function local_only() {}",
+        "export { std_value }; function std_value() -> word { return 1; }",
+        "export { external_value }; function external_value() -> word { return 2; }",
+    ];
+    for (key, source) in keys.iter().zip(sources) {
+        let file = SourceFile::new(&db, fixture_url(key), Some(source.to_owned()));
+        db.insert_module_file(key.clone(), file);
+    }
+    let modules = keys
+        .iter()
+        .map(|key| module_id_from_key(&db, key))
+        .collect::<Vec<_>>();
+
+    assert_eq!(source_import_path(&db, modules[0], modules[0]), None);
+    assert_eq!(
+        source_import_path(&db, modules[0], modules[1]).as_deref(),
+        Some("lib.nested.util")
+    );
+    assert_eq!(
+        source_import_path(&db, modules[0], modules[2]).as_deref(),
+        Some("std.collections.list")
+    );
+    assert_eq!(
+        source_import_path(&db, modules[0], modules[3]).as_deref(),
+        Some("@pkg.math.api")
+    );
+    for (index, (path, expected)) in [
+        ("lib.nested.util", modules[1]),
+        ("std.collections.list", modules[2]),
+        ("@pkg.math.api", modules[3]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let file = SourceFile::new(
+            &db,
+            format!("memory:///roundtrip-{index}.solc")
+                .parse()
+                .expect("round-trip test URL"),
+            Some(format!("import {path};")),
+        );
+        let import_ref = module_imports(&db, file)
+            .import_refs
+            .into_iter()
+            .next()
+            .expect("generated path parses as an import");
+        assert_eq!(
+            resolve_module_path_candidate(&db, modules[0], &import_ref)
+                .expect("generated path resolves")
+                .module,
+            expected
+        );
+    }
+
+    let invalid_main = ModuleId::new(&db, LibraryId::Main, vec!["bad.path".to_owned()]);
+    let invalid_std = ModuleId::new(&db, LibraryId::Std, vec!["bad-name".to_owned()]);
+    let invalid_external = ModuleId::new(
+        &db,
+        LibraryId::External("bad-name".to_owned()),
+        vec!["api".to_owned()],
+    );
+    assert_eq!(source_import_path(&db, modules[0], invalid_main), None);
+    assert_eq!(source_import_path(&db, modules[0], invalid_std), None);
+    assert_eq!(source_import_path(&db, modules[0], invalid_external), None);
+    assert_eq!(
+        auto_import_candidates(&db, modules[0], "std_value", Namespace::Term)[0].import_path,
+        "std.collections.list"
+    );
+    assert_eq!(
+        auto_import_candidates(&db, modules[0], "external_value", Namespace::Term)[0].import_path,
+        "@pkg.math.api"
+    );
 }
 
 #[test]

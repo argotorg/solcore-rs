@@ -175,6 +175,34 @@ pub struct Origin<'db> {
     pub def_id: DefId<'db>,
 }
 
+/// One public symbol that can be brought into a module with a selective import.
+///
+/// `provider` is the module named by the generated import while `origin` is the
+/// definition ultimately exposed by that provider. Their equality therefore
+/// distinguishes direct exports from re-exports without discarding definition
+/// identity needed by candidate ranking.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct AutoImportCandidate<'db> {
+    /// Loaded module whose public interface exposes this symbol.
+    pub provider: ModuleId<'db>,
+    /// Canonical source-level path to use in an import declaration.
+    pub import_path: String,
+    /// Name exposed by the provider and accepted by a selective import.
+    pub public_name: String,
+    /// Namespace in which the name is exported.
+    pub namespace: Namespace,
+    /// Definition identity ultimately reached through the provider.
+    pub origin: Origin<'db>,
+}
+
+impl<'db> AutoImportCandidate<'db> {
+    /// Returns `true` when the provider exposes a definition from another
+    /// module rather than one of its own definitions.
+    pub fn is_reexport(&self) -> bool {
+        self.provider != self.origin.module
+    }
+}
+
 /// Public or imported item reference.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ItemRef<'db> {

@@ -172,6 +172,25 @@ pub fn module_path_display<'db>(db: &'db dyn Db, path: &ModulePathRef<'db>) -> S
     ModulePathDisplay::new(db, path).to_string()
 }
 
+/// Returns the internal two-segment LSP workspace scope prefix, if present.
+///
+/// This deliberately recognizes only the namespace shape emitted by the LSP;
+/// ordinary source directories with similar names remain normal module paths.
+pub(super) fn main_workspace_prefix(logical_path: &[String]) -> &[String] {
+    match logical_path {
+        [prefix, namespace, ..]
+            if matches!(
+                prefix.as_str(),
+                "__solcore_workspace__" | "__solcore_detached__"
+            ) && namespace.len() >= 16
+                && namespace.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+        {
+            &logical_path[..2]
+        }
+        _ => &logical_path[..0],
+    }
+}
+
 /// Converts a logical module path into the conventional source file path.
 ///
 /// Each logical segment becomes a path component and the file extension is

@@ -45,6 +45,7 @@ use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{Level, field};
 
+mod auto_import;
 mod diagnostics;
 mod env;
 mod graph;
@@ -58,6 +59,7 @@ mod scc;
 mod util;
 mod validation;
 
+pub use auto_import::{auto_import_candidates, auto_import_index, source_import_path};
 pub use diagnostics::{
     ModuleDiagnostic, body_diagnostics, module_diagnostics, reachable_diagnostics,
 };
@@ -88,10 +90,11 @@ use item_refs::{
     strip_constructor_visibility, visible_data_ref_with_constructors,
 };
 pub use model::{
-    ConstructorVisibility, Db, FullResolutionSummary, InstanceImports, Interface, ItemRef,
-    LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleFileSnapshot, ModuleFsSnapshot,
-    ModuleGraph, ModuleId, ModuleImportSurface, ModuleImports, ModuleKey, ModulePathRef,
-    ModuleTree, Namespace, Origin, ResolvedModulePath, ValidationSummary, VisibleConstructors,
+    AutoImportCandidate, ConstructorVisibility, Db, FullResolutionSummary, InstanceImports,
+    Interface, ItemRef, LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleFileSnapshot,
+    ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleImportSurface, ModuleImports, ModuleKey,
+    ModulePathRef, ModuleTree, Namespace, Origin, ResolvedModulePath, ValidationSummary,
+    VisibleConstructors,
 };
 use modes::{BodyDiagnosticPolicy, CtorInclusion, ExportResolutionMode};
 use paths::{module_path_span, path_segments};
@@ -105,9 +108,10 @@ pub use util::{
     module_id_for_source_file, module_id_from_key, module_key_for_path, module_path_display,
 };
 use util::{
-    best_name_suggestion, ident_text, namespace_context, private_surface_key, record_body_field,
-    record_module_field, record_source_file_field, selector_kind, sorted_namespaces,
-    spanned_name_text, trace_import_decision, unique_modules, unique_origins, unique_strings,
+    best_name_suggestion, ident_text, main_workspace_prefix, namespace_context,
+    private_surface_key, record_body_field, record_module_field, record_source_file_field,
+    selector_kind, sorted_namespaces, spanned_name_text, trace_import_decision, unique_modules,
+    unique_origins, unique_strings,
 };
 use validation::{
     default_module_binding_name, interface_names, validate_duplicate_exports, validate_imports,

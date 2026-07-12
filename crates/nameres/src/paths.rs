@@ -89,19 +89,7 @@ fn multi_root_workspace_prefix(db: &dyn Db, importing: ModuleId<'_>) -> Vec<Stri
     if importing.library(db) != &LibraryId::Main {
         return Vec::new();
     }
-    let logical_path = importing.logical_path(db);
-    match logical_path.as_slice() {
-        [prefix, namespace, ..]
-            if matches!(
-                prefix.as_str(),
-                "__solcore_workspace__" | "__solcore_detached__"
-            ) && namespace.len() >= 16
-                && namespace.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
-        {
-            vec![prefix.clone(), namespace.clone()]
-        }
-        _ => Vec::new(),
-    }
+    main_workspace_prefix(importing.logical_path(db)).to_vec()
 }
 
 /// Resolves a module path reference to a loaded module.
