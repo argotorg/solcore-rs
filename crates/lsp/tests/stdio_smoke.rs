@@ -1,19 +1,74 @@
 #![cfg(feature = "native")]
 
 use std::{
+    fs,
     io::{self, BufRead, BufReader, Read, Write},
+    path::PathBuf,
     process::{Child, ChildStdin, Command, Stdio},
     sync::mpsc,
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use lsp_types::Url;
 use serde_json::{Value, json};
 
-const MAIN_URI: &str = "file:///main/main.solc";
+const MAIN_SOURCE: &str = "\
+import math.{double};
+
+function f() -> word {
+  return double(true);
+}
+";
+const MATH_SOURCE: &str = "\
+function double(x: word) -> word {
+  return x;
+}
+
+export { double };
+";
+
+struct TestWorkspace {
+    root: PathBuf,
+    root_uri: Url,
+    main_uri: Url,
+    math_uri: Url,
+}
+
+impl TestWorkspace {
+    fn new() -> Self {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "solcore-lsp-stdio-smoke-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create test workspace");
+        let main = root.join("main.solc");
+        let math = root.join("math.solc");
+        fs::write(&main, MAIN_SOURCE).expect("write main source");
+        fs::write(&math, MATH_SOURCE).expect("write math source");
+
+        Self {
+            root_uri: Url::from_directory_path(&root).expect("workspace root URI"),
+            main_uri: Url::from_file_path(main).expect("main URI"),
+            math_uri: Url::from_file_path(math).expect("math URI"),
+            root,
+        }
+    }
+}
+
+impl Drop for TestWorkspace {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
 
 #[test]
 fn native_stdio_publishes_diagnostics() {
+    let workspace = TestWorkspace::new();
     let mut child = Command::new(env!("CARGO_BIN_EXE_solcore-lsp"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -43,7 +98,7 @@ fn native_stdio_publishes_diagnostics() {
         let _ = stderr_tx.send(output);
     });
 
-    let result = run_lsp_smoke(&mut stdin, &messages_rx);
+    let result = run_lsp_smoke(&mut stdin, &messages_rx, &workspace);
     let shutdown_result = shutdown_child(&mut child, stdin, &messages_rx);
 
     let _ = reader.join();
@@ -58,6 +113,7 @@ fn native_stdio_publishes_diagnostics() {
 fn run_lsp_smoke(
     stdin: &mut ChildStdin,
     messages_rx: &mpsc::Receiver<Value>,
+    workspace: &TestWorkspace,
 ) -> Result<(), String> {
     send_message(
         stdin,
@@ -66,7 +122,7 @@ fn run_lsp_smoke(
             "id": 1,
             "method": "initialize",
             "params": {
-                "rootUri": null,
+                "rootUri": workspace.root_uri,
                 "capabilities": {}
             }
         }),
@@ -97,10 +153,10 @@ fn run_lsp_smoke(
             "method": "textDocument/didOpen",
             "params": {
                 "textDocument": {
-                    "uri": MAIN_URI,
+                    "uri": workspace.main_uri,
                     "languageId": "solcore",
                     "version": 1,
-                    "text": "function f() -> word {\n  return true;\n}\n"
+                    "text": MAIN_SOURCE
                 }
             }
         }),
@@ -108,7 +164,8 @@ fn run_lsp_smoke(
 
     let diagnostics = recv_until(messages_rx, |message| {
         message.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics")
-            && message.pointer("/params/uri").and_then(Value::as_str) == Some(MAIN_URI)
+            && message.pointer("/params/uri").and_then(Value::as_str)
+                == Some(workspace.main_uri.as_str())
             && message
                 .pointer("/params/diagnostics")
                 .and_then(Value::as_array)
@@ -128,6 +185,72 @@ fn run_lsp_smoke(
         return Err(format!("expected an error diagnostic, got: {diagnostics}"));
     }
 
+    send_message(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "textDocument/definition",
+            "params": {
+                "textDocument": { "uri": workspace.main_uri },
+                "position": { "line": 3, "character": 10 }
+            }
+        }),
+    )?;
+
+    let definition = recv_until(messages_rx, |message| {
+        message.get("id").and_then(Value::as_i64) == Some(2)
+    })?;
+    if definition.pointer("/result/uri").and_then(Value::as_str)
+        != Some(workspace.math_uri.as_str())
+    {
+        return Err(format!(
+            "expected definition in unopened sibling {}, got: {definition}",
+            workspace.math_uri
+        ));
+    }
+
+    fs::remove_file(workspace.root.join("math.solc"))
+        .map_err(|error| format!("failed to remove watched math.solc: {error}"))?;
+    send_message(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": "workspace/didChangeWatchedFiles",
+            "params": {
+                "changes": [{
+                    "uri": workspace.math_uri,
+                    "type": 3
+                }]
+            }
+        }),
+    )?;
+    let deleted_import_diagnostics = recv_until(messages_rx, |message| {
+        message.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics")
+            && message.pointer("/params/uri").and_then(Value::as_str)
+                == Some(workspace.main_uri.as_str())
+            && message
+                .pointer("/params/diagnostics")
+                .and_then(Value::as_array)
+                .is_some_and(|diagnostics| {
+                    diagnostics.iter().any(|diagnostic| {
+                        diagnostic
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .is_some_and(|message| message.contains("file not found"))
+                    })
+                })
+    })?;
+    if deleted_import_diagnostics
+        .pointer("/params/diagnostics")
+        .and_then(Value::as_array)
+        .is_none()
+    {
+        return Err(format!(
+            "expected diagnostics after deleting watched import: {deleted_import_diagnostics}"
+        ));
+    }
+
     Ok(())
 }
 
@@ -140,14 +263,14 @@ fn shutdown_child(
         &mut stdin,
         &json!({
             "jsonrpc": "2.0",
-            "id": 2,
+            "id": 3,
             "method": "shutdown",
             "params": null
         }),
     )?;
 
     let _ = recv_until(messages_rx, |message| {
-        message.get("id").and_then(Value::as_i64) == Some(2)
+        message.get("id").and_then(Value::as_i64) == Some(3)
     });
 
     send_message(
