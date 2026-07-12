@@ -199,7 +199,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             }
             ExprKind::Field { base, field } => {
                 if self.is_namespace_qualifier(body, *base) {
-                    self.expr_as_qualifier(body, *base);
+                    let access_path =
+                        expr_path(self.db, body, expr_id).map(|segments| segments.join("."));
+                    self.expr_as_qualifier(body, *base, access_path.as_deref());
                 } else {
                     self.expr(body, *base);
                 }
@@ -283,10 +285,19 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                             {
                                 return Resolution::Err;
                             }
+                            let kind = if self.lookup_type(qualifier_text).is_some()
+                                || self.lookup_module(qualifier_text).is_some()
+                            {
+                                UndefinedNameKind::Field
+                            } else {
+                                UndefinedNameKind::QualifiedConstructor {
+                                    access_path: qualified.clone(),
+                                }
+                            };
                             self.map.diagnostics.push(self.undefined_name_diag(
                                 &qualified,
                                 name.span(self.db),
-                                UndefinedNameKind::Field,
+                                kind,
                             ));
                             Resolution::Err
                         })
@@ -481,7 +492,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .unwrap_or_else(|| self.resolve_ident(name))
     }
 
-    fn expr_as_qualifier(&mut self, body: FuncBody<'db>, expr_id: Id<Expr<'db>>) {
+    fn expr_as_qualifier(
+        &mut self,
+        body: FuncBody<'db>,
+        expr_id: Id<Expr<'db>>,
+        access_path: Option<&str>,
+    ) {
         let expr = body.exprs(self.db).get(expr_id);
         match &expr.kind {
             ExprKind::Ident(name) => {
@@ -501,14 +517,16 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         self.map.diagnostics.push(self.undefined_name_diag(
                             text,
                             name.span(self.db),
-                            UndefinedNameKind::ModuleQualifier,
+                            UndefinedNameKind::ModuleQualifier {
+                                access_path: access_path.unwrap_or(text).to_owned(),
+                            },
                         ));
                         Resolution::Err
                     });
                 self.map.record_expr(body, expr_id, resolution);
             }
             ExprKind::Field { base, field } => {
-                self.expr_as_qualifier(body, *base);
+                self.expr_as_qualifier(body, *base, access_path);
                 if let Some(resolution) = self.resolve_field_expr(body, *base, field) {
                     self.map.record_expr(body, expr_id, resolution);
                 }
@@ -575,7 +593,9 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     .push(self.undefined_name_diag_with_private(
                         field_text,
                         field.span(self.db),
-                        UndefinedNameKind::Field,
+                        UndefinedNameKind::ModuleMember {
+                            access_path: qualified,
+                        },
                         private_candidate,
                     ));
                 return Some(Resolution::Err);

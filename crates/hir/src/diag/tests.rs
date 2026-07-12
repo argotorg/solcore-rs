@@ -104,7 +104,15 @@ fn undefined_name_kind_stays_off_the_rendering_surface() {
 
     let term = lowered(UndefinedNameKind::Term);
     for kind in [
-        UndefinedNameKind::ModuleQualifier,
+        UndefinedNameKind::ModuleQualifier {
+            access_path: "missing.member".to_owned(),
+        },
+        UndefinedNameKind::QualifiedConstructor {
+            access_path: "missing.Constructor".to_owned(),
+        },
+        UndefinedNameKind::ModuleMember {
+            access_path: "missing.member".to_owned(),
+        },
         UndefinedNameKind::Field,
         UndefinedNameKind::Other,
     ] {

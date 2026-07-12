@@ -5,13 +5,30 @@ use super::*;
 /// This stays on the typed name-resolution diagnostic instead of the generic
 /// rendering surface so semantic clients can distinguish auto-importable bare
 /// terms from names whose spelling occurs in a different lookup position.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum UndefinedNameKind {
     /// An unqualified term lookup, such as a function or value expression.
     Term,
-    /// A name used as a module or type qualifier.
-    ModuleQualifier,
-    /// A member lookup after a resolved module, type, or value path.
+    /// An unresolved module or type qualifier in a qualified access.
+    ///
+    /// The access path keeps every source segment, including the selected
+    /// member, so semantic clients can distinguish `Option.Some` from
+    /// `math.value` without reconstructing syntax from a diagnostic span.
+    ModuleQualifier {
+        /// Dotted access path exactly as written in the source.
+        access_path: String,
+    },
+    /// An unresolved qualified constructor pattern.
+    QualifiedConstructor {
+        /// Dotted constructor path exactly as written in the source.
+        access_path: String,
+    },
+    /// A missing member after a resolved module qualifier.
+    ModuleMember {
+        /// Dotted module-member access path exactly as written in the source.
+        access_path: String,
+    },
+    /// A member lookup after a resolved type or value path.
     Field,
     /// A specialized lookup that is not safely treated as a bare term.
     Other,

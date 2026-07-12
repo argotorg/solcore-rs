@@ -6,9 +6,9 @@ use hir::{
     diag::Diagnostic,
     input::SourceFile,
     nameres::{
-        DefResolutionKind, EmptyImportedNames, NameresDiagnostic, NameresDiagnosticPolicy,
-        Resolution, UndefinedNameKind, item_scope, resolve_module,
-        resolve_module_with_imports_and_policy,
+        DefResolutionKind, EmptyImportedNames, ImportedNames, ModuleRef, NameresDiagnostic,
+        NameresDiagnosticPolicy, Namespace, Resolution, UndefinedNameKind, item_scope,
+        resolve_module, resolve_module_with_imports_and_policy,
     },
 };
 use solcore_parser::{parse_diagnostics, parse_file_to_hir};
@@ -108,6 +108,26 @@ fn diagnostic_codes(db: &TestDb, module: Module<'_>) -> Vec<String> {
         .collect()
 }
 
+struct ModuleOnlyImports<'db> {
+    owner: Module<'db>,
+}
+
+impl<'db> ImportedNames<'db> for ModuleOnlyImports<'db> {
+    fn imported(
+        &self,
+        db: &'db dyn hir::Db,
+        namespace: Namespace,
+        name: &str,
+    ) -> Option<Resolution<'db>> {
+        (namespace == Namespace::Module && name == "math").then(|| {
+            Resolution::Module(ModuleRef {
+                owner: self.owner.def_id_value(db),
+                name: name.to_owned(),
+            })
+        })
+    }
+}
+
 #[test]
 fn parse_recovery_suppression_policy_silences_name_lookup_cascades() {
     let cases = [
@@ -204,6 +224,14 @@ fn undefined_name_kind_distinguishes_bare_terms_from_path_lookups() {
         "data Local = Present;
          function bare() -> word { return missing; }
          function qualified() -> word { return math.value(); }
+         function ctorExpr() -> word { return Option.Some(0); }
+         function ctorPat(x: word) -> word {
+           match x {
+           | Option.Some(y) => return y;
+           | _ => return 0;
+           }
+         }
+         function valueMember(x: word) -> word { return x.absent; }
          function member() -> word { return Local.absent; }",
     );
     assert!(parse_diagnostics(&db, file).is_empty());
@@ -213,7 +241,9 @@ fn undefined_name_kind_distinguishes_bare_terms_from_path_lookups() {
         .diagnostics
         .iter()
         .filter_map(|diagnostic| match diagnostic {
-            NameresDiagnostic::UndefinedName { name, kind, .. } => Some((name.as_str(), *kind)),
+            NameresDiagnostic::UndefinedName { name, kind, .. } => {
+                Some((name.as_str(), kind.clone()))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -222,10 +252,106 @@ fn undefined_name_kind_distinguishes_bare_terms_from_path_lookups() {
         diagnostics,
         [
             ("missing", UndefinedNameKind::Term),
-            ("math", UndefinedNameKind::ModuleQualifier),
+            (
+                "math",
+                UndefinedNameKind::ModuleQualifier {
+                    access_path: "math.value".to_owned(),
+                },
+            ),
+            (
+                "Option",
+                UndefinedNameKind::ModuleQualifier {
+                    access_path: "Option.Some".to_owned(),
+                },
+            ),
+            (
+                "Option.Some",
+                UndefinedNameKind::QualifiedConstructor {
+                    access_path: "Option.Some".to_owned(),
+                },
+            ),
             ("absent", UndefinedNameKind::Field),
         ]
     );
+}
+
+#[test]
+fn missing_resolved_module_member_has_qualified_lookup_context() {
+    let db = TestDb::default();
+    let (file, module) = parse_and_module(
+        &db,
+        "missing_module_member",
+        "data Local = Present;
+         function missing() -> word {
+           let fromModule = math.value();
+           return Local.absent;
+         }",
+    );
+    assert!(parse_diagnostics(&db, file).is_empty());
+
+    let scope = item_scope(&db, module);
+    let imports = ModuleOnlyImports { owner: module };
+    let resolution = resolve_module_with_imports_and_policy(
+        &db,
+        module,
+        scope,
+        &imports,
+        NameresDiagnosticPolicy::Emit,
+    );
+    let diagnostics = resolution
+        .diagnostics
+        .iter()
+        .filter_map(|diagnostic| match diagnostic {
+            NameresDiagnostic::UndefinedName { name, kind, .. } => {
+                Some((name.as_str(), kind.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        diagnostics,
+        [
+            (
+                "value",
+                UndefinedNameKind::ModuleMember {
+                    access_path: "math.value".to_owned(),
+                },
+            ),
+            ("absent", UndefinedNameKind::Field),
+        ]
+    );
+}
+
+#[test]
+fn missing_constructor_on_resolved_type_is_not_an_import_context() {
+    let db = TestDb::default();
+    let (file, module) = parse_and_module(
+        &db,
+        "missing_local_constructor",
+        "data Option = None;
+         function missing(value: Option) -> word {
+           match value {
+           | Option.Some => return 1;
+           | _ => return 0;
+           }
+         }",
+    );
+    assert!(parse_diagnostics(&db, file).is_empty());
+
+    let resolution = resolve_module(&db, module);
+    let diagnostics = resolution
+        .diagnostics
+        .iter()
+        .filter_map(|diagnostic| match diagnostic {
+            NameresDiagnostic::UndefinedName { name, kind, .. } => {
+                Some((name.as_str(), kind.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(diagnostics, [("Option.Some", UndefinedNameKind::Field)]);
 }
 
 fn body_map<'db>(
