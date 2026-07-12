@@ -438,7 +438,7 @@ impl<'db> Driver<'db> {
                 for method in &surface.methods {
                     self.dispatch_selector_overrides.push((
                         format!(
-                            "MethodLDispatchNameTy_{}_{}",
+                            "DispatchNameTy_{}_{}",
                             ident_text(self.db, &contract.name_elem(self.db)),
                             method.name
                         ),

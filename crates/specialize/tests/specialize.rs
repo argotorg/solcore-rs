@@ -233,6 +233,13 @@ fn naming_matches_reference_mangling() {
         specialize_name(&db, "std.map", &[pair]),
         "std_map$pairLword_boolJ"
     );
+
+    let word_to_word = Ty::function(&db, vec![word], word);
+    let bool_to_word = Ty::function(&db, vec![Ty::builtin(&db, BuiltinTyCtor::Bool)], word);
+    assert_ne!(
+        specialize_name(&db, "apply", &[word_to_word]),
+        specialize_name(&db, "apply", &[bool_to_word])
+    );
 }
 
 #[test]
@@ -319,7 +326,12 @@ contract C {
             .any(|name| name.contains("_same_") && name.ends_with("$word")),
         "{names:?}"
     );
-    assert!(names.contains(&"Eq_eq$word".to_owned()), "{names:?}");
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("Eq_eq_d") && name.ends_with("$word")),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -373,7 +385,103 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     let names = function_names(&output);
-    assert!(names.contains(&"Boxed_id$word".to_owned()), "{names:?}");
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("Boxed_id_d") && name.ends_with("$word")),
+        "{names:?}"
+    );
+}
+
+#[test]
+fn same_named_classes_in_different_modules_get_distinct_method_symbols() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        PathBuf::from("/std"),
+        BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(db, [main_root.as_path()]));
+
+    let modules = [
+        (
+            "left.solc",
+            r#"
+export { left };
+
+forall a . class a:Pick {
+  function choose(x:a) -> word;
+}
+
+instance word:Pick {
+  function choose(x:word) -> word {
+    let y : word;
+    assembly { y := sload(x) }
+    return y;
+  }
+}
+
+function left(x:word) -> word { return Pick.choose(x); }
+"#,
+        ),
+        (
+            "right.solc",
+            r#"
+export { right };
+
+forall a . class a:Pick {
+  function choose(x:a) -> word;
+}
+
+instance word:Pick {
+  function choose(x:word) -> word {
+    let y : word;
+    assembly { y := sload(x) }
+    return x;
+  }
+}
+
+function right(x:word) -> word { return Pick.choose(x); }
+"#,
+        ),
+        (
+            "main.solc",
+            r#"
+import left.{left};
+import right.{right};
+
+contract C {
+  public function main(x:word) -> word {
+    let unused = right(x);
+    return left(x);
+  }
+}
+"#,
+        ),
+    ];
+
+    let mut main_file = None;
+    for (name, src) in modules {
+        let path = main_root.join(name);
+        let file = source_file_at_path(db, &path, src);
+        let key = module_key_for_path(LibraryId::Main, &main_root, &path).unwrap();
+        db.insert_module_file(key, file);
+        if name == "main.solc" {
+            main_file = Some(file);
+        }
+    }
+
+    let module = parse_file_to_hir(db, main_file.expect("main module")).module(db);
+    let output = specialize_module(db, module, SpecializeOptions::default());
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let method_names = function_names(&output)
+        .into_iter()
+        .filter(|name| name.starts_with("Pick_choose_d") && name.ends_with("$word"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(method_names.len(), 2, "{method_names:?}");
 }
 
 #[test]
@@ -435,11 +543,13 @@ contract C {
     assert!(
         names
             .iter()
-            .any(|name| name.starts_with("Generic_from$Box")),
+            .any(|name| name.starts_with("Generic_from_d") && name.contains("$Box_")),
         "{names:?}"
     );
     assert!(
-        names.iter().any(|name| name.starts_with("Generic_to$Box")),
+        names
+            .iter()
+            .any(|name| name.starts_with("Generic_to_d") && name.contains("$Box_")),
         "{names:?}"
     );
 }
@@ -477,7 +587,11 @@ contract C {
     assert_eq!(output.diagnostics, Vec::new());
     let names = function_names(&output);
     assert!(
-        names.contains(&"invokable_invoke$t_id".to_owned()),
+        names.iter().any(|name| {
+            name.starts_with("invokable_invoke_d")
+                && name.contains("$t_id_")
+                && name.ends_with("_word_word")
+        }),
         "{names:?}"
     );
     assert!(
@@ -539,10 +653,19 @@ contract C {
     assert_eq!(output.diagnostics, Vec::new());
     let names = function_names(&output);
     assert!(
-        names.contains(&"Encoder_encode$Foo".to_owned()),
+        names.iter().any(|name| {
+            name.starts_with("Encoder_encode_d")
+                && name.contains("$Foo_")
+                && name.ends_with("_word")
+        }),
         "{names:?}"
     );
-    assert!(names.contains(&"Sink_sink$word".to_owned()), "{names:?}");
+    assert!(
+        names
+            .iter()
+            .any(|name| name.starts_with("Sink_sink_d") && name.ends_with("$word_word")),
+        "{names:?}"
+    );
     assert!(
         !names.iter().any(|name| name.contains("$t")),
         "unrecovered type variable in {names:?}"
@@ -550,7 +673,7 @@ contract C {
 }
 
 #[test]
-fn instance_method_names_use_only_class_head_main_type() {
+fn instance_method_names_include_the_complete_class_head() {
     let (_db, output) = specialize_src(
         r#"
 data Box = Box(word);
@@ -587,15 +710,18 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     let names = function_names(&output);
-    assert!(names.contains(&"Convert_toRep$Box".to_owned()), "{names:?}");
     assert!(
-        names.contains(&"Convert_fromRep$Box".to_owned()),
+        names.iter().any(|name| {
+            name.starts_with("Convert_toRep_d") && name.contains("$Box_") && name.ends_with("_word")
+        }),
         "{names:?}"
     );
     assert!(
-        !names
-            .iter()
-            .any(|name| name == "Convert_toRep$Box_word" || name == "Convert_fromRep$Box_word"),
+        names.iter().any(|name| {
+            name.starts_with("Convert_fromRep_d")
+                && name.contains("$Box_")
+                && name.ends_with("_word")
+        }),
         "{names:?}"
     );
 }
@@ -1392,7 +1518,7 @@ contract C {
     assert_eq!(output.diagnostics, Vec::new());
     let names = function_names(&output);
     assert!(
-        names.iter().any(|name| name.starts_with("Generic_from$")),
+        names.iter().any(|name| name.starts_with("Generic_from_d")),
         "{names:?}"
     );
 }
@@ -1426,13 +1552,13 @@ contract C {
     assert_eq!(output.diagnostics, Vec::new());
     let names = function_names(&output);
     assert!(
-        names.iter().any(|name| name.starts_with("Generic_to$")),
+        names.iter().any(|name| name.starts_with("Generic_to_d")),
         "{names:?}"
     );
     assert!(
         names
             .iter()
-            .any(|name| name.starts_with("ABIDecode_decode$")),
+            .any(|name| name.starts_with("ABIDecode_decode_d")),
         "{names:?}"
     );
 }

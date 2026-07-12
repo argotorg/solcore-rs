@@ -4,7 +4,7 @@ use super::*;
 
 /// Reference-style specialization name: `base$word` or
 /// `base$FooLword_boolJ`.
-pub fn specialize_name<'db>(db: &'db dyn HirDb, base: &str, tys: &[Ty<'db>]) -> String {
+pub fn specialize_name<'db>(db: &'db dyn Db, base: &str, tys: &[Ty<'db>]) -> String {
     let mut mangler = NameMangler::new();
     mangler.push_flattened_component(base);
     if !tys.is_empty() {
@@ -334,7 +334,7 @@ impl NameMangler {
         }
     }
 
-    fn push_ty_list<'db>(&mut self, db: &'db dyn HirDb, tys: &[Ty<'db>]) {
+    fn push_ty_list<'db>(&mut self, db: &'db dyn Db, tys: &[Ty<'db>]) {
         for (index, ty) in tys.iter().enumerate() {
             if index > 0 {
                 self.out.push('_');
@@ -343,23 +343,29 @@ impl NameMangler {
         }
     }
 
-    fn push_ty<'db>(&mut self, db: &'db dyn HirDb, ty: Ty<'db>) {
+    fn push_ty<'db>(&mut self, db: &'db dyn Db, ty: Ty<'db>) {
         match ty.kind(db) {
             TyKind::Named { ctor, args } => {
-                let name = match ctor {
+                let (name, user_def) = match ctor {
                     TyCtor::Builtin(ctor) => {
                         if *ctor == BuiltinTyCtor::Unit && args.is_empty() {
                             self.out.push_str("unit");
                             return;
                         }
-                        ctor.name().to_owned()
+                        (ctor.name().to_owned(), None)
                     }
-                    TyCtor::User(user) => user
-                        .def
-                        .name(db)
-                        .unwrap_or_else(|| format!("{:?}", user.def.kind(db))),
+                    TyCtor::User(user) => (
+                        user.def
+                            .name(db)
+                            .unwrap_or_else(|| format!("{:?}", user.def.kind(db))),
+                        Some(user.def),
+                    ),
                 };
                 self.push_flattened_component(&name);
+                if let Some(def) = user_def {
+                    self.out.push('_');
+                    self.push_raw(&def_hash_suffix(db, def));
+                }
                 if !args.is_empty() {
                     self.out.push('L');
                     self.push_ty_list(db, args);
@@ -377,7 +383,13 @@ impl NameMangler {
                 self.out.push_str(&var.index.to_string());
             }
             TyKind::Comptime(inner) => self.push_ty(db, *inner),
-            TyKind::Function { .. } => self.out.push_str("fn"),
+            TyKind::Function { params, ret } => {
+                self.out.push_str("fnL");
+                self.push_ty_list(db, params);
+                self.out.push_str("JR");
+                self.push_ty(db, *ret);
+                self.out.push('J');
+            }
             TyKind::Error => self.out.push_str("error"),
             TyKind::Unknown => self.out.push_str("unknown"),
         }
@@ -486,12 +498,17 @@ pub(super) fn class_method_name_parts<'db>(
     pred: Pred<'db>,
 ) -> (String, Vec<Ty<'db>>) {
     match pred.kind(db) {
-        PredKind::InClass { class, main, .. } => {
+        PredKind::InClass {
+            class, main, args, ..
+        } => {
             let class = match class {
                 ClassId::Builtin(class) => class.name().to_owned(),
                 ClassId::User(def) => def.name(db).unwrap_or_else(|| "Class".to_owned()),
             };
-            (class, vec![*main])
+            let mut head_tys = Vec::with_capacity(args.len() + 1);
+            head_tys.push(*main);
+            head_tys.extend(args.iter().copied());
+            (class, head_tys)
         }
         _ => ("Class".to_owned(), Vec::new()),
     }

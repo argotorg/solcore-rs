@@ -29,7 +29,10 @@ impl<'db> Driver<'db> {
                 }
                 let base = specialize_name(
                     self.db,
-                    &format!("{class_name}_{method}"),
+                    &format!(
+                        "{class_name}_{method}_{}",
+                        def_hash_suffix(self.db, method_def.def_id_value(self.db))
+                    ),
                     head_tys.as_slice(),
                 );
                 let key = SpecKey {

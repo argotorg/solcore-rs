@@ -22,7 +22,11 @@ impl<'db> Driver<'db> {
         if !self.ensure_specialization_type_size(&[main, rep, target_ty], Some(span)) {
             return None;
         }
-        let name = specialize_name(self.db, &format!("Generic_{method}"), &[main, rep]);
+        let name = specialize_name(
+            self.db,
+            &format!("Generic_{method}_{}", def_hash_suffix(self.db, adt)),
+            &[main, rep],
+        );
         self.synthetic.insert(key.clone(), name.clone());
         self.synthetic_order.push(key.clone());
         let Some(fun) = self.build_derived_generic_function(&key, &name, target_ty, span) else {
