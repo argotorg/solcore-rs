@@ -12,7 +12,7 @@ use std::{
 };
 
 use hir::{
-    diag::{DiagnosticLevel, sort_dedup_rendered_diagnostics},
+    diag::{Applicability as HirApplicability, DiagnosticLevel, sort_dedup_rendered_diagnostics},
     input::SourceFile,
 };
 use nameres::{
@@ -574,6 +574,39 @@ pub struct DiagLabel {
 /// Backward-compatible alias for a diagnostic label.
 pub type DiagnosticLabel = DiagLabel;
 
+/// Confidence level for applying a diagnostic suggestion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SuggestionApplicability {
+    /// The edit can be applied mechanically.
+    MachineApplicable,
+    /// The edit is plausible but may need user review.
+    MaybeIncorrect,
+    /// The edit contains placeholders requiring user input.
+    HasPlaceholders,
+    /// The compiler did not classify the edit.
+    Unspecified,
+}
+
+/// One replacement edit belonging to a diagnostic suggestion.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiagnosticTextEdit {
+    /// Absolute source range to replace.
+    pub range: DiagRange,
+    /// Replacement source text.
+    pub replacement: String,
+}
+
+/// Structured quick-fix suggestion emitted by the compiler.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiagnosticSuggestion {
+    /// User-facing action title.
+    pub title: String,
+    /// Confidence level for applying the edit.
+    pub applicability: SuggestionApplicability,
+    /// All edits required by this suggestion.
+    pub edits: Vec<DiagnosticTextEdit>,
+}
+
 /// Serde-free owned diagnostic mirror for playground and LSP adapters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
@@ -591,6 +624,8 @@ pub struct Diagnostic {
     pub notes: Vec<String>,
     /// Additional help text.
     pub helps: Vec<String>,
+    /// Structured source edits that can resolve the diagnostic.
+    pub suggestions: Vec<DiagnosticSuggestion>,
 }
 
 impl Diagnostic {
@@ -612,6 +647,22 @@ impl Diagnostic {
             .find(|label| label.is_primary)
             .or_else(|| labels.first())
             .map(|label| label.range.clone());
+        let suggestions = diagnostic
+            .suggestions
+            .iter()
+            .map(|suggestion| DiagnosticSuggestion {
+                title: suggestion.title.clone(),
+                applicability: suggestion.applicability.into(),
+                edits: suggestion
+                    .edits
+                    .iter()
+                    .map(|edit| DiagnosticTextEdit {
+                        range: range_from_absolute_span(db, edit.span.resolve_to_absolute(db)),
+                        replacement: edit.replacement.clone(),
+                    })
+                    .collect(),
+            })
+            .collect();
         Self {
             severity: diagnostic.level.into(),
             code: diagnostic.code,
@@ -620,6 +671,18 @@ impl Diagnostic {
             labels,
             notes: diagnostic.notes,
             helps: diagnostic.helps,
+            suggestions,
+        }
+    }
+}
+
+impl From<HirApplicability> for SuggestionApplicability {
+    fn from(applicability: HirApplicability) -> Self {
+        match applicability {
+            HirApplicability::MachineApplicable => Self::MachineApplicable,
+            HirApplicability::MaybeIncorrect => Self::MaybeIncorrect,
+            HirApplicability::HasPlaceholders => Self::HasPlaceholders,
+            HirApplicability::Unspecified => Self::Unspecified,
         }
     }
 }
@@ -865,6 +928,79 @@ mod tests {
 
         assert_eq!(messages(&workspace), driver_style_messages(source));
         assert!(workspace.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn owned_diagnostics_preserve_heuristic_suggestion_applicability() {
+        let source =
+            "function value() -> word { return 1; }\nfunction main() -> word { return vaue(); }\n";
+        let workspace = workspace_with_main(source);
+        let diagnostic = workspace
+            .diagnostics()
+            .into_iter()
+            .find(|diagnostic| {
+                diagnostic.code.as_deref()
+                    == Some(hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME)
+            })
+            .expect("undefined-name diagnostic");
+        let suggestion = diagnostic
+            .suggestions
+            .first()
+            .expect("structured suggestion");
+        let typo = source.find("vaue").expect("typo") as u32;
+
+        assert_eq!(suggestion.title, "Replace with `value`");
+        assert_eq!(
+            suggestion.applicability,
+            SuggestionApplicability::MaybeIncorrect
+        );
+        assert_eq!(
+            suggestion.edits,
+            vec![DiagnosticTextEdit {
+                range: DiagRange {
+                    file_url: "file:///main/main.solc".to_owned(),
+                    start: typo,
+                    end: typo + "vaue".len() as u32,
+                },
+                replacement: "value".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn owned_diagnostics_preserve_exact_suggestion_applicability() {
+        let source = "data Option = None | Some(word);\nfunction main(x: word) -> Option { return Some(x); }\n";
+        let workspace = workspace_with_main(source);
+        let diagnostic = workspace
+            .diagnostics()
+            .into_iter()
+            .find(|diagnostic| {
+                diagnostic.code.as_deref()
+                    == Some(hir::diag::DiagnosticCode::NAMERES_UNQUALIFIED_CONSTRUCTOR)
+            })
+            .expect("unqualified-constructor diagnostic");
+        let suggestion = diagnostic
+            .suggestions
+            .first()
+            .expect("structured suggestion");
+        let constructor = source.rfind("Some").expect("constructor reference") as u32;
+
+        assert_eq!(suggestion.title, "Replace with `Option.Some`");
+        assert_eq!(
+            suggestion.applicability,
+            SuggestionApplicability::MachineApplicable
+        );
+        assert_eq!(
+            suggestion.edits,
+            vec![DiagnosticTextEdit {
+                range: DiagRange {
+                    file_url: "file:///main/main.solc".to_owned(),
+                    start: constructor,
+                    end: constructor + "Some".len() as u32,
+                },
+                replacement: "Option.Some".to_owned(),
+            }]
+        );
     }
 
     #[test]

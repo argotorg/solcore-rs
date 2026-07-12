@@ -94,6 +94,13 @@ impl NameresDiagnostic {
                 }
                 if let Some(suggestion) = suggestion {
                     diagnostic = diagnostic.with_help(format!("did you mean `{suggestion}`?"));
+                    if let Some(replacement) = replacement_for_name(name, suggestion) {
+                        diagnostic = diagnostic.with_suggestion(replace_with_suggestion(
+                            span,
+                            replacement,
+                            Applicability::MaybeIncorrect,
+                        ));
+                    }
                 }
                 diagnostic
             }
@@ -117,9 +124,21 @@ impl NameresDiagnostic {
                             "`{}` is a constructor of type `{}`",
                             constructor.ctor_name, constructor.ty_name
                         ))
-                        .with_help(format!("use `{}` as the type name", constructor.ty_name));
+                        .with_help(format!("use `{}` as the type name", constructor.ty_name))
+                        .with_suggestion(replace_with_suggestion(
+                            span,
+                            &constructor.ty_name,
+                            Applicability::MachineApplicable,
+                        ));
                 } else if let Some(suggestion) = suggestion {
                     diagnostic = diagnostic.with_help(format!("did you mean type `{suggestion}`?"));
+                    if let Some(replacement) = replacement_for_name(name, suggestion) {
+                        diagnostic = diagnostic.with_suggestion(replace_with_suggestion(
+                            span,
+                            replacement,
+                            Applicability::MaybeIncorrect,
+                        ));
+                    }
                 }
                 diagnostic
             }
@@ -137,10 +156,19 @@ impl NameresDiagnostic {
                     .as_ref()
                     .map(|qualified| format!("use `{qualified}`"))
                     .unwrap_or_else(|| "use Type.Constructor form".to_owned());
-                Diagnostic::error(format!("unqualified constructor: {name}"))
+                let diagnostic = Diagnostic::error(format!("unqualified constructor: {name}"))
                     .with_code(DiagnosticCode::NAMERES_UNQUALIFIED_CONSTRUCTOR)
                     .with_primary_label_span(span.clone(), Some("constructor must be qualified"))
-                    .with_help(help)
+                    .with_help(help);
+                if let Some(qualification) = qualification {
+                    diagnostic.with_suggestion(replace_with_suggestion(
+                        span,
+                        qualification,
+                        Applicability::MachineApplicable,
+                    ))
+                } else {
+                    diagnostic
+                }
             }
             NameresDiagnostic::InvalidPattern { span } => {
                 Diagnostic::error("invalid pattern syntax")
@@ -171,6 +199,33 @@ impl NameresDiagnostic {
                 diagnostic
             }
         }
+    }
+}
+
+fn replace_with_suggestion(
+    span: &LabelSpan,
+    replacement: &str,
+    applicability: Applicability,
+) -> Suggestion {
+    Suggestion {
+        title: format!("Replace with `{replacement}`"),
+        applicability,
+        edits: vec![AnchoredTextEdit {
+            span: span.clone(),
+            replacement: replacement.to_owned(),
+        }],
+    }
+}
+
+fn replacement_for_name<'a>(name: &str, suggestion: &'a str) -> Option<&'a str> {
+    match (name.rsplit_once('.'), suggestion.rsplit_once('.')) {
+        (Some((name_qualifier, _)), Some((suggestion_qualifier, leaf)))
+            if name_qualifier == suggestion_qualifier =>
+        {
+            Some(leaf)
+        }
+        (Some(_), _) => None,
+        (None, _) => Some(suggestion),
     }
 }
 

@@ -135,7 +135,9 @@ impl<'db> ModuleDiagnostic<'db> {
                     .with_primary_label_span(span.clone(), Some("module reference"))
                     .with_help("check the module path or add the missing source file");
                 if let Some(suggestion) = suggestion {
-                    diagnostic = diagnostic.with_help(format!("did you mean `{suggestion}`?"));
+                    diagnostic = diagnostic
+                        .with_help(format!("did you mean `{suggestion}`?"))
+                        .with_suggestion(replace_with_suggestion(span, suggestion));
                 }
                 diagnostic
             }
@@ -153,7 +155,9 @@ impl<'db> ModuleDiagnostic<'db> {
                         .with_note(format!("`{name}` is not exported by module `{module}`"));
                 }
                 if let Some(suggestion) = suggestion {
-                    diagnostic = diagnostic.with_help(format!("did you mean `{suggestion}`?"));
+                    diagnostic = diagnostic
+                        .with_help(format!("did you mean `{suggestion}`?"))
+                        .with_suggestion(replace_with_suggestion(span, suggestion));
                 }
                 diagnostic.with_help("check the imported module's exported names")
             }
@@ -275,6 +279,17 @@ impl<'db> ModuleDiagnostic<'db> {
                 .with_secondary_label_span(local_span.clone(), Some("local binding with this name"))
                 .with_note("rename the local binding or use an import alias"),
         }
+    }
+}
+
+fn replace_with_suggestion(span: &LabelSpan, replacement: &str) -> Suggestion {
+    Suggestion {
+        title: format!("Replace with `{replacement}`"),
+        applicability: Applicability::MaybeIncorrect,
+        edits: vec![AnchoredTextEdit {
+            span: span.clone(),
+            replacement: replacement.to_owned(),
+        }],
     }
 }
 

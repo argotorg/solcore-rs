@@ -34,7 +34,8 @@ use hir::{
         },
     },
     diag::{
-        AnyDiagnostic, Diagnostic, DiagnosticCode, LabelSpan, Offset, sort_dedup_query_diagnostics,
+        AnchoredTextEdit, AnyDiagnostic, Applicability, Diagnostic, DiagnosticCode, LabelSpan,
+        Offset, Suggestion, sort_dedup_query_diagnostics,
     },
     input::SourceFile,
     nameres as hir_nameres,

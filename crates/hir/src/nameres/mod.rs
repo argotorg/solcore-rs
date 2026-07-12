@@ -41,7 +41,7 @@ use crate::{
         },
         ty::{PredRef, TypeRef, TypeRefKind},
     },
-    diag::{Diagnostic, DiagnosticCode, LabelSpan},
+    diag::{AnchoredTextEdit, Applicability, Diagnostic, DiagnosticCode, LabelSpan, Suggestion},
     span::{Span, Spanned, SpannedElem},
 };
 
