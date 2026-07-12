@@ -21,7 +21,7 @@ struct CanonicalizedPending<'db> {
     goal_vars: FxHashMap<u32, TyVid<'db>>,
 }
 
-struct ObligationCanonicalizer<'a, 'db> {
+pub(super) struct ObligationCanonicalizer<'a, 'db> {
     db: &'db dyn Db,
     engine: &'a mut InferTable<'db>,
     next: u32,
@@ -30,17 +30,21 @@ struct ObligationCanonicalizer<'a, 'db> {
 }
 
 impl<'a, 'db> ObligationCanonicalizer<'a, 'db> {
-    fn new(db: &'db dyn Db, engine: &'a mut InferTable<'db>) -> Self {
+    pub(super) fn new(
+        db: &'db dyn Db,
+        engine: &'a mut InferTable<'db>,
+        rigid_binders: u32,
+    ) -> Self {
         Self {
             db,
             engine,
-            next: 0,
+            next: rigid_binders,
             vars: FxHashMap::default(),
             goal_vars: FxHashMap::default(),
         }
     }
 
-    fn ty(&mut self, ty: InferTy<'db>) -> Ty<'db> {
+    pub(super) fn ty(&mut self, ty: InferTy<'db>) -> Ty<'db> {
         match self.engine.resolve(ty) {
             InferTy::Error => Ty::error(self.db),
             InferTy::Unknown => Ty::unknown(self.db),
@@ -73,7 +77,7 @@ impl<'a, 'db> ObligationCanonicalizer<'a, 'db> {
         }
     }
 
-    fn allowed_vars(&self) -> Vec<u32> {
+    pub(super) fn allowed_vars(&self) -> Vec<u32> {
         let mut vars = self.goal_vars.keys().copied().collect::<Vec<_>>();
         vars.sort_unstable();
         vars
@@ -646,7 +650,8 @@ impl<'db> InferCtx<'db> {
             .cloned()
             .map(|arg| self.normalize_aliases(arg))
             .collect::<Vec<_>>();
-        let mut canonicalizer = ObligationCanonicalizer::new(self.db, &mut self.engine);
+        let mut canonicalizer =
+            ObligationCanonicalizer::new(self.db, &mut self.engine, self.root_binder_count);
         let main = canonicalizer.ty(main);
         let args = args.into_iter().map(|arg| canonicalizer.ty(arg)).collect();
         let allowed_vars = canonicalizer.allowed_vars();

@@ -401,6 +401,21 @@ fn return_expr<'db>(db: &'db TestDb, body: FuncBody<'db>) -> Id<Expr<'db>> {
     }
 }
 
+#[test]
+fn obligation_canonicalization_keeps_rigid_and_goal_variables_disjoint() {
+    let db = TestDb::default();
+    let mut table = InferTable::new(&db);
+    let open = table.fresh_var();
+    let mut canonicalizer = ObligationCanonicalizer::new(&db, &mut table, 1);
+
+    let rigid = canonicalizer.ty(InferTy::BoundVar(0));
+    let goal = canonicalizer.ty(open);
+
+    assert!(matches!(rigid.kind(&db), TyKind::BoundVar(var) if var.index == 0));
+    assert!(matches!(goal.kind(&db), TyKind::BoundVar(var) if var.index == 1));
+    assert_eq!(canonicalizer.allowed_vars(), vec![1]);
+}
+
 fn function_info_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> FunctionInfo<'db> {
     function_infos(db, module)
         .into_iter()
