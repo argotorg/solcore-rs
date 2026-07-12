@@ -8,6 +8,7 @@
 use hir::{
     Db as HirDb, anchor::DefLocationTable, ast::item, diag::AnyDiagnostic, input::SourceFile,
 };
+use logos::Logos;
 use tracing::{Level, field};
 
 /// Token definitions used by the parser.
@@ -22,6 +23,20 @@ mod types;
 /// Database contract required by parser queries.
 #[salsa::db]
 pub trait Db: salsa::Database + HirDb {}
+
+/// Returns whether `text` is one ordinary source identifier.
+///
+/// This intentionally follows the lexer and the normal identifier grammar:
+/// reserved keywords, pragma-only hyphenated names, `_`, and token sequences
+/// are rejected. Editor features such as rename use this to avoid producing
+/// source that reparses as a different token kind.
+pub fn is_valid_identifier(text: &str) -> bool {
+    let mut lexer = lexer::Token::lexer(text);
+    matches!(
+        lexer.next(),
+        Some(Ok(lexer::Token::Ident(name))) if name == text && !name.contains('-')
+    ) && lexer.next().is_none()
+}
 
 /// Output of parsing and lowering one source file.
 ///
@@ -89,4 +104,31 @@ fn file_url_tail(db: &dyn Db, file: SourceFile) -> String {
 #[salsa::tracked(returns(ref))]
 pub fn parse_diagnostics(db: &dyn Db, file: SourceFile) -> Vec<AnyDiagnostic> {
     parse_file_to_hir(db, file).diagnostics(db).clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_identifier;
+
+    #[test]
+    fn validates_identifiers_with_the_source_lexer() {
+        for valid in ["value", "value_2", "λ", "fλ2"] {
+            assert!(is_valid_identifier(valid), "expected {valid:?} to be valid");
+        }
+        for invalid in [
+            "",
+            "_",
+            "_value",
+            "2value",
+            "return",
+            "true",
+            "value-name",
+            "two names",
+        ] {
+            assert!(
+                !is_valid_identifier(invalid),
+                "expected {invalid:?} to be invalid"
+            );
+        }
+    }
 }

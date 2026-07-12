@@ -58,17 +58,17 @@ pub fn handle_definition(
         return Some(GotoDefinitionResponse::Scalar(location));
     }
 
+    if let Some(location) =
+        import_module_location_at(world, db, module, current_module, file, offset)
+    {
+        return Some(GotoDefinitionResponse::Scalar(location));
+    }
+
     if let Some(location) = (|| {
         let target = reference_target_at(world, uri, position)?;
         let span = target_declaration_span(db, &target)?;
         location_for_span(world, db, span)
     })() {
-        return Some(GotoDefinitionResponse::Scalar(location));
-    }
-
-    if let Some(location) =
-        import_module_location_at(world, db, module, current_module, file, offset)
-    {
         return Some(GotoDefinitionResponse::Scalar(location));
     }
 

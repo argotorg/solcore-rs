@@ -79,6 +79,18 @@ fn semantic_hover_info<'db>(
         ReferenceTarget::Local(local) => local_hover(db, module, current_module, imports, local),
         ReferenceTarget::Field(field) => field_hover(db, *field),
         ReferenceTarget::ClassMethod { class, name } => class_method_hover(db, *class, name),
+        ReferenceTarget::Module(module_ref) => Some(HoverInfo {
+            code: format!("module {}", module_ref.name),
+            documentation: None,
+        }),
+        ReferenceTarget::ImportAlias { name, .. } => Some(HoverInfo {
+            code: format!("import alias {name}"),
+            documentation: None,
+        }),
+        ReferenceTarget::ExportedModuleAlias { name, .. } => Some(HoverInfo {
+            code: format!("exported module alias {name}"),
+            documentation: None,
+        }),
     }
 }
 
