@@ -1,5 +1,22 @@
 use super::*;
 
+/// Lookup context for an `SC0101` undefined-name diagnostic.
+///
+/// This stays on the typed name-resolution diagnostic instead of the generic
+/// rendering surface so semantic clients can distinguish auto-importable bare
+/// terms from names whose spelling occurs in a different lookup position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum UndefinedNameKind {
+    /// An unqualified term lookup, such as a function or value expression.
+    Term,
+    /// A name used as a module or type qualifier.
+    ModuleQualifier,
+    /// A member lookup after a resolved module, type, or value path.
+    Field,
+    /// A specialized lookup that is not safely treated as a bare term.
+    Other,
+}
+
 /// Typed local name-resolution diagnostic.
 ///
 /// The variants mirror the `SC010x` local resolver codes and store
@@ -13,6 +30,8 @@ pub enum NameresDiagnostic {
         name: String,
         /// Source span of the failed lookup.
         span: LabelSpan,
+        /// Semantic position in which lookup failed.
+        kind: UndefinedNameKind,
         /// Nearest visible name, when one is close enough to be actionable.
         suggestion: Option<String>,
         /// Exact private imported item hidden behind a module qualifier.
@@ -75,6 +94,7 @@ impl NameresDiagnostic {
             NameresDiagnostic::UndefinedName {
                 name,
                 span,
+                kind: _,
                 suggestion,
                 private_candidate,
             } => {
@@ -250,12 +270,14 @@ pub(super) fn undefined_name<'db>(
     db: &'db dyn Db,
     name: &str,
     span: Span<'db>,
+    kind: UndefinedNameKind,
     suggestion: Option<String>,
     private_candidate: Option<PrivateCandidate>,
 ) -> NameresDiagnostic {
     NameresDiagnostic::UndefinedName {
         name: name.to_owned(),
         span: LabelSpan::from_span(db, span),
+        kind,
         suggestion,
         private_candidate,
     }

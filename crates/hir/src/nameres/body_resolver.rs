@@ -153,9 +153,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 ) {
                     Resolution::Err
                 } else {
-                    self.map
-                        .diagnostics
-                        .push(self.undefined_name_diag(leaf, name.span(self.db)));
+                    self.map.diagnostics.push(self.undefined_name_diag(
+                        leaf,
+                        name.span(self.db),
+                        UndefinedNameKind::Other,
+                    ));
                     Resolution::Err
                 };
                 self.map.record_expr(body, expr_id, resolution);
@@ -281,9 +283,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                             {
                                 return Resolution::Err;
                             }
-                            self.map
-                                .diagnostics
-                                .push(self.undefined_name_diag(&qualified, name.span(self.db)));
+                            self.map.diagnostics.push(self.undefined_name_diag(
+                                &qualified,
+                                name.span(self.db),
+                                UndefinedNameKind::Field,
+                            ));
                             Resolution::Err
                         })
                     }
@@ -416,9 +420,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     .imports
                     .may_contain_unknown_unqualified(self.db, Namespace::Term, text)
                 {
-                    self.map
-                        .diagnostics
-                        .push(self.undefined_name_diag(text, name.span(self.db)));
+                    self.map.diagnostics.push(self.undefined_name_diag(
+                        text,
+                        name.span(self.db),
+                        UndefinedNameKind::Term,
+                    ));
                     Some(Resolution::Err)
                 } else {
                     None
@@ -445,9 +451,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     ));
                     return Resolution::Err;
                 }
-                self.map
-                    .diagnostics
-                    .push(self.undefined_name_diag(text, name.span(self.db)));
+                self.map.diagnostics.push(self.undefined_name_diag(
+                    text,
+                    name.span(self.db),
+                    UndefinedNameKind::Term,
+                ));
                 Resolution::Err
             })
     }
@@ -490,9 +498,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                         ) {
                             return Resolution::Err;
                         }
-                        self.map
-                            .diagnostics
-                            .push(self.undefined_name_diag(text, name.span(self.db)));
+                        self.map.diagnostics.push(self.undefined_name_diag(
+                            text,
+                            name.span(self.db),
+                            UndefinedNameKind::ModuleQualifier,
+                        ));
                         Resolution::Err
                     });
                 self.map.record_expr(body, expr_id, resolution);
@@ -538,9 +548,11 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 } | Resolution::Builtin(BuiltinKind::Type(_) | BuiltinKind::Class(_))
             )
         ) {
-            self.map
-                .diagnostics
-                .push(self.undefined_name_diag(field_text, field.span(self.db)));
+            self.map.diagnostics.push(self.undefined_name_diag(
+                field_text,
+                field.span(self.db),
+                UndefinedNameKind::Field,
+            ));
             return Some(Resolution::Err);
         }
 
@@ -563,6 +575,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     .push(self.undefined_name_diag_with_private(
                         field_text,
                         field.span(self.db),
+                        UndefinedNameKind::Field,
                         private_candidate,
                     ));
                 return Some(Resolution::Err);
@@ -576,21 +589,27 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         None
     }
 
-    fn undefined_name_diag(&self, name: &str, span: Span<'db>) -> NameresDiagnostic {
-        self.undefined_name_diag_with_private(name, span, None)
+    fn undefined_name_diag(
+        &self,
+        name: &str,
+        span: Span<'db>,
+        kind: UndefinedNameKind,
+    ) -> NameresDiagnostic {
+        self.undefined_name_diag_with_private(name, span, kind, None)
     }
 
     fn undefined_name_diag_with_private(
         &self,
         name: &str,
         span: Span<'db>,
+        kind: UndefinedNameKind,
         private_candidate: Option<PrivateCandidate>,
     ) -> NameresDiagnostic {
         let suggestion = private_candidate
             .is_none()
             .then(|| best_name_suggestion(name, self.name_candidate_names()))
             .flatten();
-        undefined_name(self.db, name, span, suggestion, private_candidate)
+        undefined_name(self.db, name, span, kind, suggestion, private_candidate)
     }
 
     fn undefined_type_ctor_diag(&self, name: &str, span: Span<'db>) -> NameresDiagnostic {
@@ -790,7 +809,25 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         {
             return false;
         }
-        self.lookup_type(first).is_some() || self.lookup_module(first).is_some()
+        if self.lookup_type(first).is_some() || self.lookup_module(first).is_some() {
+            return true;
+        }
+
+        if self.lookup_local(first).is_some()
+            || self.lookup_field(first).is_some()
+            || self.lookup_qualified_term(first).is_some()
+            || self.lookup_unqualified_class_method(first).is_some()
+            || self.same_name_constructor_resolution(first).is_some()
+        {
+            return false;
+        }
+
+        // A path-shaped expression whose base is still unresolved is not a
+        // bare term lookup. Resolve it as a qualifier so typed diagnostics do
+        // not expose its first segment as an auto-importable term. If the base
+        // later becomes a value, the checks above keep ordinary member access
+        // on the value-expression path.
+        true
     }
 
     fn add_local(&mut self, name: &str, resolution: Resolution<'db>) {

@@ -6,6 +6,7 @@ use super::{span::LabelAnchor, *};
 use crate::{
     anchor::{DefId, DefKind, DefLocationTable, Disambiguator},
     input::SourceFile,
+    nameres::{NameresDiagnostic, UndefinedNameKind},
 };
 
 #[salsa::db]
@@ -83,6 +84,34 @@ fn diagnostic_id_includes_level_and_suggestions() {
         with_machine_fix.diagnostic_id(&db),
         with_review_fix.diagnostic_id(&db)
     );
+}
+
+#[test]
+fn undefined_name_kind_stays_off_the_rendering_surface() {
+    let db = TestDb::default();
+    let file = source_file(&db, "undefined", Some("missing\n"));
+    let span = root_span(file, 0, 7);
+    let lowered = |kind| {
+        NameresDiagnostic::UndefinedName {
+            name: "missing".to_owned(),
+            span: span.clone(),
+            kind,
+            suggestion: None,
+            private_candidate: None,
+        }
+        .lower(&db)
+    };
+
+    let term = lowered(UndefinedNameKind::Term);
+    for kind in [
+        UndefinedNameKind::ModuleQualifier,
+        UndefinedNameKind::Field,
+        UndefinedNameKind::Other,
+    ] {
+        let diagnostic = lowered(kind);
+        assert_eq!(diagnostic, term);
+        assert_eq!(diagnostic.diagnostic_id(&db), term.diagnostic_id(&db));
+    }
 }
 
 #[test]

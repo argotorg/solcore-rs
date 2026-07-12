@@ -6,8 +6,9 @@ use hir::{
     diag::Diagnostic,
     input::SourceFile,
     nameres::{
-        DefResolutionKind, EmptyImportedNames, NameresDiagnosticPolicy, Resolution, item_scope,
-        resolve_module, resolve_module_with_imports_and_policy,
+        DefResolutionKind, EmptyImportedNames, NameresDiagnostic, NameresDiagnosticPolicy,
+        Resolution, UndefinedNameKind, item_scope, resolve_module,
+        resolve_module_with_imports_and_policy,
     },
 };
 use solcore_parser::{parse_diagnostics, parse_file_to_hir};
@@ -192,6 +193,39 @@ fn parse_clean_file_still_reports_undefined_name() {
     );
     assert!(parse_diagnostics(&db, file).is_empty());
     assert_eq!(diagnostic_codes(&db, module), ["SC0101"]);
+}
+
+#[test]
+fn undefined_name_kind_distinguishes_bare_terms_from_path_lookups() {
+    let db = TestDb::default();
+    let (file, module) = parse_and_module(
+        &db,
+        "undefined_name_kinds",
+        "data Local = Present;
+         function bare() -> word { return missing; }
+         function qualified() -> word { return math.value(); }
+         function member() -> word { return Local.absent; }",
+    );
+    assert!(parse_diagnostics(&db, file).is_empty());
+
+    let resolution = resolve_module(&db, module);
+    let diagnostics = resolution
+        .diagnostics
+        .iter()
+        .filter_map(|diagnostic| match diagnostic {
+            NameresDiagnostic::UndefinedName { name, kind, .. } => Some((name.as_str(), *kind)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        diagnostics,
+        [
+            ("missing", UndefinedNameKind::Term),
+            ("math", UndefinedNameKind::ModuleQualifier),
+            ("absent", UndefinedNameKind::Field),
+        ]
+    );
 }
 
 fn body_map<'db>(
