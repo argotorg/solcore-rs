@@ -81,8 +81,8 @@ pub use derived_generic::{
     derived_generic_instance_plan, derived_generic_plan, generic_derivation_diagnostics,
 };
 use derived_generic::{
-    derived_generic_instance_plan_with_resolutions, generic_derivation_enabled_for_module,
-    imported_generic_class, local_adt_infos, local_generic_class, visible_generic_class,
+    derived_generic_instance_plan_with_resolutions, imported_generic_class, local_adt_infos,
+    local_generic_class, visible_generic_class,
 };
 use display::{display_scheme_source, display_vars};
 use engine::{Answer, TabledEngine};

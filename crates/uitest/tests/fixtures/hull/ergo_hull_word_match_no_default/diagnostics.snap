@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/hull/ergo_hull_word_match_no_default/ma
 error[SC0302]: non-exhaustive pattern match
  --> /main/main.solc:6:11
   |
-5 |   public function name(d : word) -> word {
+5 |   public function name(d : uint256) -> uint256 {
 6 |     match d {
   |           ^ match is not exhaustive
 7 |     | 0 => return 100;

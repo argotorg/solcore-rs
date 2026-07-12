@@ -113,7 +113,7 @@ import std.{*};
 import std.dispatch.{*};
 
 contract IdDoc {
-  public function id(x : word) -> word {
+  public function id(x : uint256) -> uint256 {
     return x;
   }
 }
@@ -173,12 +173,12 @@ import std.{*};
 import std.dispatch.{*};
 
 contract DispatchBasicShape {
-  public function id(x : word) -> word {
+  public function id(x : uint256) -> uint256 {
     return x;
   }
 
-  public function answer() -> word {
-    return 42;
+  public function answer() -> uint256 {
+    return uint256(42);
   }
 }
 "#,
@@ -1018,7 +1018,6 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
-                .chain(refs.compiler_refs)
                 .filter_map(
                     |path| match resolve_module_path_candidate(&*db, module, &path) {
                         Ok(resolved) => Some((resolved.module.key(&*db), resolved.file_path)),
@@ -1118,7 +1117,7 @@ import std.{*};
 import std.dispatch.{*};
 
 contract IdDoc {
-  public function id(x : word) -> word {
+  public function id(x : uint256) -> uint256 {
     return x;
   }
 }
@@ -1168,12 +1167,12 @@ import std.{*};
 import std.dispatch.{*};
 
 contract DispatchBasicShape {
-  public function id(x : word) -> word {
+  public function id(x : uint256) -> uint256 {
     return x;
   }
 
-  public function answer() -> word {
-    return 42;
+  public function answer() -> uint256 {
+    return uint256(42);
   }
 }
 "#,

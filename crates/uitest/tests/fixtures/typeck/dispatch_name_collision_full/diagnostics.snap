@@ -4,14 +4,15 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/dispatch_name_collision_full/main.solc
 ---
 error[SC0229]: duplicate type definition: DispatchNameTy_C_ping
- --> /main/main.solc:1:6
+ --> /main/main.solc:4:6
   |
-1 | data DispatchNameTy_C_ping = Collision;
+3 |
+4 | data DispatchNameTy_C_ping = Collision;
   |      ^^^^^^^^^^^^^^^^^^^^^ duplicate type
-2 |
-3 | contract C {
-4 |   public function ping() -> word {
+5 |
+6 | contract C {
+7 |   public function ping() -> uint256 {
   |                   ---- existing definition
-5 |     return 0;
+8 |     return uint256(0);
   |
   = note: rename or remove the duplicate type definition

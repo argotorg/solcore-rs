@@ -9,9 +9,6 @@ pub struct SpecializeDiagnostic<'db> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpecializeDiagnosticKind<'db> {
-    MissingConstructorStdImport {
-        contract: String,
-    },
     FreeTypeVariable {
         context: String,
         ty: String,
@@ -80,9 +77,6 @@ impl<'db> SpecializeDiagnostic<'db> {
         for note in self.kind.notes() {
             diagnostic = diagnostic.with_note(note);
         }
-        if let SpecializeDiagnosticKind::MissingConstructorStdImport { .. } = &self.kind {
-            diagnostic = diagnostic.with_help("add `import std.{*};` to this module");
-        }
         diagnostic
     }
 }
@@ -90,9 +84,6 @@ impl<'db> SpecializeDiagnostic<'db> {
 impl SpecializeDiagnosticKind<'_> {
     pub fn code(&self) -> &'static str {
         match self {
-            Self::MissingConstructorStdImport { .. } => {
-                DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT
-            }
             Self::FreeTypeVariable { .. } => DiagnosticCode::SPECIALIZE_FREE_TYPE_VARIABLE,
             Self::InstantiationFuelExhausted { .. } => {
                 DiagnosticCode::SPECIALIZE_INSTANTIATION_FUEL_EXHAUSTED
@@ -124,9 +115,6 @@ impl SpecializeDiagnosticKind<'_> {
 
     fn primary_label(&self) -> &'static str {
         match self {
-            Self::MissingConstructorStdImport { .. } => {
-                "constructor arguments require std ABI decoding"
-            }
             Self::FreeTypeVariable { .. } => "type must be concrete here",
             Self::InstantiationFuelExhausted { .. } => "specialization limit reached here",
             Self::InstantiationDepthExceeded { .. } => "specialization depth limit reached here",
@@ -150,10 +138,6 @@ impl SpecializeDiagnosticKind<'_> {
 
     fn notes(&self) -> Vec<String> {
         match self {
-            Self::MissingConstructorStdImport { .. } => vec![
-                "constructor arguments are decoded from bytes appended to the creation code"
-                    .to_owned(),
-            ],
             Self::FreeTypeVariable { context, .. } if context == "entry specialization" => vec![
                 "entry points are specialization roots and must have a single concrete type"
                     .to_owned(),
@@ -215,10 +199,6 @@ impl SpecializeDiagnosticKind<'_> {
 impl fmt::Display for SpecializeDiagnosticKind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingConstructorStdImport { contract } => write!(
-                f,
-                "constructor for contract `{contract}` needs `import std.{{*}};` to decode arguments"
-            ),
             Self::FreeTypeVariable { context, ty } => {
                 if context == "entry specialization" {
                     write!(

@@ -27,7 +27,6 @@ pub(crate) fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) -> Res
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
-                .chain(refs.compiler_refs)
                 .filter_map(
                     |path| match resolve_module_path_candidate(&*db, module, &path) {
                         Ok(resolved) => {

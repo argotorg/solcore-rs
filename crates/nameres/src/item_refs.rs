@@ -8,11 +8,6 @@ pub(super) fn path_ref_from_import<'db>(
         span: import.span(db),
         external: import.external(db),
         segments: import.path(db).clone(),
-        canonical_std: import
-            .def_id(db)
-            .fingerprint(db)
-            .as_deref()
-            .is_some_and(|fingerprint| fingerprint.starts_with("solcore.generated.import.")),
     };
     path.span = module_path_span(db, &path);
     path
@@ -57,7 +52,6 @@ pub(super) fn path_ref_from_segments<'db>(
         span,
         external: None,
         segments,
-        canonical_std: false,
     }
 }
 
@@ -75,7 +69,6 @@ pub(super) fn path_ref_from_text<'db>(
         span,
         external: None,
         segments,
-        canonical_std: false,
     }
 }
 

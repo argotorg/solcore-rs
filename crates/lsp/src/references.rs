@@ -363,7 +363,6 @@ fn shared_selector_contains_target(world: &WorldState, target: &ReferenceTarget<
                             span: export.span(db),
                             external: None,
                             segments: path.clone(),
-                            canonical_std: false,
                         };
                         nameres::resolve_module_path(db, module_id, path_ref)
                             .ok()
@@ -470,7 +469,6 @@ fn import_export_target_in_module<'db>(
                             span: export.span(db),
                             external: None,
                             segments: path.clone(),
-                            canonical_std: false,
                         };
                         (
                             names.as_slice(),
@@ -1125,7 +1123,6 @@ fn collect_import_export_reference_locations<'db>(
                             span: export.span(db),
                             external: None,
                             segments: path.clone(),
-                            canonical_std: false,
                         };
                         (
                             names.as_slice(),

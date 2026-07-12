@@ -6,9 +6,6 @@ pub fn generic_derivation_diagnostics<'db>(
     item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
     env: &nameres::ModuleImportSurface<'db>,
 ) -> Vec<TypeckDiagnostic> {
-    if !generic_derivation_enabled_for_module(db, module) {
-        return Vec::new();
-    }
     let Some(generic) = visible_generic_class(db, env).or_else(|| local_generic_class(db, module))
     else {
         return Vec::new();
@@ -254,9 +251,6 @@ pub fn derived_generic_instance_plan<'db>(
     adt: AdtDef<'db>,
     generic: DefId<'db>,
 ) -> Option<DerivedGenericPlan<'db>> {
-    if !generic_derivation_enabled_for_module(db, module) {
-        return None;
-    }
     let item_resolutions = resolve_derived_generic_item_types(db, module);
     let info = local_adt_infos(db, module)
         .into_iter()
@@ -286,8 +280,7 @@ pub(super) fn derived_generic_instance_plan_with_resolutions<'db>(
     info: &AdtDeriveInfo<'db>,
     generic: DefId<'db>,
 ) -> Option<DerivedGenericPlan<'db>> {
-    if !generic_derivation_enabled_for_module(db, module)
-        || info.adt.ctors(db).is_empty()
+    if info.adt.ctors(db).is_empty()
         || no_generic_instance_for(db, module).contains(&adt_name(db, info.adt))
         || manual_generic_instance_types(db, module, item_resolutions, generic)
             .contains(&info.adt.def_id_value(db))
@@ -300,18 +293,6 @@ pub(super) fn derived_generic_instance_plan_with_resolutions<'db>(
         item_resolutions,
         info,
     ))
-}
-
-/// Whether compiler-synthesized `Generic` evidence is allowed for local ADTs.
-///
-/// The std package contains compiler/runtime representation wrappers. Moving
-/// the `Generic` class into the canonical prelude must not turn that local
-/// visibility into an auto-derive request for every internal std ADT. User and
-/// external-library modules remain eligible.
-pub(super) fn generic_derivation_enabled_for_module(db: &dyn Db, module: Module<'_>) -> bool {
-    let file = module.def_id_value(db).file(db);
-    !nameres::module_id_for_source_file(db, file)
-        .is_some_and(|module| matches!(module.library(db), nameres::LibraryId::Std))
 }
 
 pub(super) fn derived_generic_plan_with_resolutions<'db>(

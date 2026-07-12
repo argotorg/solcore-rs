@@ -683,9 +683,8 @@ impl<'db> ContractDef<'db> {
 
     /// Returns whether this contract supplies its own ordinary runtime entry.
     ///
-    /// This source-only predicate is shared by import-graph construction and
-    /// the compiler overlay so implicit runtime dependencies cannot drift from
-    /// the dispatch-generation condition.
+    /// This source-only predicate controls whether the compiler overlay adds a
+    /// generated dispatch entry.
     pub fn has_runtime_main(&self, db: &'db dyn Db) -> bool {
         self.items(db).iter().any(|item| {
             matches!(

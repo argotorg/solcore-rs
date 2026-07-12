@@ -38,7 +38,7 @@ pub fn instance_imports<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Instance
 /// Collects import-chain instance origins using imports parsed from `file`.
 ///
 /// This is useful for synthetic HIR modules that share a logical `ModuleId`
-/// with a file-backed module but have generated imports in their source text.
+/// with a file-backed module but use a different effective import list.
 pub fn instance_imports_for_file<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,
@@ -55,8 +55,7 @@ pub fn instance_imports_for_file<'db>(
 }
 
 /// Collects local and import-chain instance origins from an effective HIR
-/// module, including compiler-generated imports that are absent from its
-/// source file.
+/// module.
 pub fn instance_imports_for_hir_module<'db>(
     db: &'db dyn Db,
     module: ModuleId<'db>,

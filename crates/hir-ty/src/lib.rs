@@ -49,8 +49,8 @@ pub use lower::{
 };
 pub use prepare::{
     GeneratedOrigin, GeneratedOriginKind, GeneratedOriginMap, PreparedModule,
-    contract_constructor_needs_std, contract_overlay_backend_name, is_contract_deployment_main_def,
-    is_contract_dispatch_main_def, module_has_canonical_std_import, prepare_module,
+    contract_overlay_backend_name, is_contract_deployment_main_def, is_contract_dispatch_main_def,
+    prepare_module,
 };
 pub use solver::{
     BaseTraitEnvId, BaseTraitEnvSource, Candidate, CanonicalGoal, ClauseOrigin,

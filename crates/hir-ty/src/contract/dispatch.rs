@@ -148,7 +148,6 @@ fn contract_dispatch_surface_by_def<'db>(
 
 /// Returns diagnostics for every contract dispatch surface in a module.
 pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) -> Vec<Diagnostic> {
-    let has_std_import = crate::prepare::module_has_canonical_std_import(db, module);
     module
         .items(db)
         .iter()
@@ -171,19 +170,12 @@ pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) ->
                 diagnostics
             };
             diagnostics.extend(contract_runtime_main_diagnostics(db, contract));
-            if crate::prepare::contract_constructor_needs_std(db, contract) && !has_std_import {
-                diagnostics.push(contract_diag_missing_constructor_std_import(
-                    db,
-                    contract,
-                    &surface.name,
-                ));
-            }
             diagnostics
         })
         .filter(|diagnostic| {
             matches!(
                 diagnostic.code.as_deref(),
-                Some("SC0230" | "SC0231" | "SC0232" | "SC0233" | "SC0235" | "SC0236" | "SC0237")
+                Some("SC0230" | "SC0231" | "SC0232" | "SC0233" | "SC0235" | "SC0236")
             )
         })
         .collect()
@@ -654,35 +646,4 @@ fn contract_diag_unsupported_fallback_shape<'db>(
     Diagnostic::error("fallback ABI must be unit -> unit")
         .with_code("SC0231")
         .with_primary_label(db, span, Some("unsupported fallback ABI"))
-}
-
-fn contract_diag_missing_constructor_std_import<'db>(
-    db: &'db dyn Db,
-    contract: ContractDef<'db>,
-    name: &str,
-) -> Diagnostic {
-    let span = contract
-        .items(db)
-        .iter()
-        .find_map(|item| match item {
-            ContractItem::FunctionDef(function)
-                if function.kind(db) == FuncKind::Constructor
-                    && !function.sig(db).params.atom().is_empty() =>
-            {
-                Some(function.sig(db).params.span(db))
-            }
-            _ => None,
-        })
-        .unwrap_or_else(|| contract.name_elem(db).span(db));
-    Diagnostic::error(format!(
-        "constructor for contract `{name}` needs `import std.{{*}};` to decode arguments"
-    ))
-    .with_code(DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT)
-    .with_primary_label(
-        db,
-        span,
-        Some("constructor arguments require std ABI decoding"),
-    )
-    .with_note("constructor arguments are decoded from bytes appended to the creation code")
-    .with_help("add `import std.{*};` to this module")
 }

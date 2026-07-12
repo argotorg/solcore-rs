@@ -225,7 +225,7 @@ pub(super) fn base_trait_env_clauses<'db>(
 /// Returns only the base clauses whose head belongs to `class`.
 ///
 /// Most solver goals are class predicates. Memoizing this projection keeps the
-/// enlarged implicit-std environment from being scanned for every subgoal and
+/// enlarged imported environment from being scanned for every subgoal and
 /// shares the result across solves that layer different local givens over the
 /// same base environment.
 #[salsa::tracked(returns(ref))]
@@ -462,16 +462,6 @@ impl<'db> TraitClauseBuilder<'db> {
         item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
         generic: DefId<'db>,
     ) {
-        // The canonical standard library defines representation and ABI
-        // wrapper types, not user data models. Since `Generic` moved into the
-        // std prelude, treating that visibility as an auto-derive request
-        // would synthesize clauses for every std ADT whenever std is an
-        // implicit compiler dependency. Besides being unnecessary, deriving
-        // those clauses repeatedly dominates even small contract builds.
-        if !generic_derivation_enabled_for_module(self.db, module) {
-            return;
-        }
-
         let mut seen = FxHashSet::default();
         for info in local_adt_infos(self.db, module) {
             seen.insert(info.adt.def_id_value(self.db));

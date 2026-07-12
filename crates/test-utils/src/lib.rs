@@ -287,7 +287,6 @@ fn load_reachable_modules_with_url_style<Db>(
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
-                .chain(refs.compiler_refs)
                 .filter_map(|path| {
                     let resolved = resolve_module_path_candidate(&*db, module, &path).ok()?;
                     Some((resolved.module.key(&*db), resolved.file_path))

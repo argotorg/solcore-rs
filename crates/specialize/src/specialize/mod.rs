@@ -29,11 +29,10 @@ use hir_ty::{
     ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback, Evidence,
     GeneratedOriginKind, InferResultExt, InferenceResult, LoweredFunction, Pred, PredKind,
     PreparedModule, ProductShape, Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor,
-    UserTyCtorKind, canonical_goal, contract_constructor_needs_std,
-    contract_dispatch_surface_for_module, contract_overlay_backend_name,
-    derived_generic_instance_plan, derived_generic_plan, frontend_desugar_plan, infer_body,
-    is_contract_deployment_main_def, is_contract_dispatch_main_def,
-    lower_normalized_function_with_inferred_signature, module_has_canonical_std_import,
+    UserTyCtorKind, canonical_goal, contract_dispatch_surface_for_module,
+    contract_overlay_backend_name, derived_generic_instance_plan, derived_generic_plan,
+    frontend_desugar_plan, infer_body, is_contract_deployment_main_def,
+    is_contract_dispatch_main_def, lower_normalized_function_with_inferred_signature,
     prepare_module, solve, solver::DerivedClauseKind, trait_env_from_module_resolution,
     trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
@@ -133,46 +132,5 @@ pub fn specialize_prepared_module<'db>(
     prepared: PreparedModule<'db>,
     options: SpecializeOptions,
 ) -> SpecializeOutput<'db> {
-    let source = prepared.source(db);
-    let mut preflight = missing_constructor_std_import_diagnostics(db, source);
-    let mut output = Driver::new(db, prepared, options).run();
-    preflight.append(&mut output.diagnostics);
-    output.diagnostics = preflight;
-    output
-}
-
-fn missing_constructor_std_import_diagnostics<'db>(
-    db: &'db dyn Db,
-    source: Module<'db>,
-) -> Vec<SpecializeDiagnostic<'db>> {
-    if module_has_canonical_std_import(db, source) {
-        return Vec::new();
-    }
-    source
-        .items(db)
-        .iter()
-        .filter_map(|item| {
-            let Item::ContractDef(contract) = *item else {
-                return None;
-            };
-            if !contract_constructor_needs_std(db, contract) {
-                return None;
-            }
-            let constructor_params = contract.items(db).iter().find_map(|item| match item {
-                ContractItem::FunctionDef(function)
-                    if function.kind(db) == FuncKind::Constructor
-                        && !function.sig(db).params.atom().is_empty() =>
-                {
-                    Some(function.sig(db).params.span(db))
-                }
-                _ => None,
-            })?;
-            Some(SpecializeDiagnostic {
-                kind: SpecializeDiagnosticKind::MissingConstructorStdImport {
-                    contract: ident_text(db, &contract.name_elem(db)),
-                },
-                span: Some(constructor_params),
-            })
-        })
-        .collect()
+    Driver::new(db, prepared, options).run()
 }

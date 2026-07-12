@@ -33,37 +33,11 @@ pub fn module_imports<'db>(db: &'db dyn Db, file: SourceFile) -> ModuleImports<'
         }
     }
 
-    let needs_runtime = module_id_for_source_file(db, file)
-        .filter(|module_id| !matches!(module_id.library(db), LibraryId::Std))
-        .is_some_and(|_| {
-            module.items(db).iter().any(|item| {
-                matches!(item, Item::ContractDef(contract) if !contract.has_runtime_main(db))
-            })
-        });
-    let compiler_refs = if needs_runtime {
-        let span = Span::new(AnchorId::root(db, file), Offset::new(0), Offset::new(0));
-        [["std", "dispatch"].as_slice(), ["std"].as_slice()]
-            .into_iter()
-            .map(|segments| ModulePathRef {
-                span,
-                external: None,
-                segments: segments
-                    .iter()
-                    .map(|segment| SpannedElem::new(Ident::new(db, (*segment).to_owned()), span))
-                    .collect(),
-                canonical_std: true,
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-
     ModuleImports {
         imports,
         exports,
         import_refs,
         export_refs,
-        compiler_refs,
     }
 }
 
@@ -130,20 +104,6 @@ fn collect_reachable_modules<'db>(db: &'db dyn Db, entry: ModuleId<'db>) -> Reac
 
         for path in refs.export_refs {
             if let Ok(target) = resolve_module_path(db, module, path) {
-                reference_edges.push(ModuleEdge {
-                    from: module,
-                    to: target,
-                });
-                queue.push_back(target);
-            }
-        }
-
-        for path in refs.compiler_refs {
-            if let Ok(target) = resolve_module_path(db, module, path) {
-                import_edges.push(ModuleEdge {
-                    from: module,
-                    to: target,
-                });
                 reference_edges.push(ModuleEdge {
                     from: module,
                     to: target,

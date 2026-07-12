@@ -27,8 +27,7 @@ use hir::{
             PatKind, Stmt, StmtKind, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
         },
         item::{
-            AdtDef, ContractDef, ContractItem, FuncKind, FunctionDef, Import, ImportSelector,
-            InstanceDef, Item, Module, SelectedName,
+            AdtDef, ContractDef, ContractItem, FuncKind, FunctionDef, InstanceDef, Item, Module,
         },
         ty::{PredRef, PredRefKind, TypeRef, TypeRefKind},
     },
@@ -37,7 +36,6 @@ use hir::{
 };
 
 use crate::{Db, contract_needs_generated_dispatch};
-use nameres::{LibraryId, module_id_for_source_file, resolve_direct_import_target_candidate};
 
 const GENERATED_MAIN_NAME: &str = "$solcore$dispatch$main";
 const MAIN_FINGERPRINT: &str = "solcore.generated.std_dispatch.main";
@@ -51,14 +49,6 @@ const CONSTRUCTOR_COPY_FINGERPRINT: &str = "solcore.generated.constructor.copy_a
 const CONSTRUCTOR_COPY_BODY_FINGERPRINT: &str = "solcore.generated.constructor.copy_arguments.body";
 const DEPLOYMENT_MAIN_FINGERPRINT: &str = "solcore.generated.constructor.deployment_main";
 const DEPLOYMENT_MAIN_BODY_FINGERPRINT: &str = "solcore.generated.constructor.deployment_main.body";
-// `$` is not accepted by the source lexer, so user declarations cannot
-// capture these effective-HIR-only bindings.
-const STD_MODULE_ALIAS: &str = "$solcore$std";
-const STD_DISPATCH_MODULE_ALIAS: &str = "$solcore$std$dispatch";
-const SIG_STRING_CLASS_ALIAS: &str = "$solcore$SigString";
-const STD_MODULE_IMPORT_FINGERPRINT: &str = "solcore.generated.import.std";
-const STD_DISPATCH_MODULE_IMPORT_FINGERPRINT: &str = "solcore.generated.import.std_dispatch";
-const SIG_STRING_IMPORT_FINGERPRINT: &str = "solcore.generated.import.std_dispatch.sig_string";
 
 /// A source module paired with its compiler-prepared HIR overlay.
 ///
@@ -218,21 +208,16 @@ impl<'db> GeneratedOriginMap<'db> {
 ///
 /// This query is deliberately source-only: it inspects explicit function
 /// signatures, but never calls body inference,
-/// module type checking, or specialization.  That one-way dependency avoids
-/// `typeck -> prepare -> typeck` query cycles. Runtime dispatch dependencies
-/// are compiler-owned imports with private aliases in the effective module;
-/// ABI-decoding a non-empty constructor still requires canonical `std` in the
-/// source module.
+/// module type checking, or specialization. That one-way dependency avoids
+/// `typeck -> prepare -> typeck` query cycles. Generated contract entries use
+/// the same unqualified standard-library names as the reference compiler and
+/// therefore rely on the source module's explicit imports.
 #[salsa::tracked]
 pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModule<'db> {
-    let has_std = module_has_canonical_std_import(db, source);
-
     let module_def = source.def_id_value(db);
     let mut generated_items = Vec::new();
     let mut prepared_source_items = Vec::with_capacity(source.items(db).len());
     let mut origins = GeneratedOriginMap::default();
-    let mut generated_dispatch = false;
-    let mut generated_constructor_std = false;
 
     for item in source.items(db) {
         let Item::ContractDef(contract) = *item else {
@@ -241,12 +226,9 @@ pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModu
         };
 
         let mut prepared_contract = contract;
-        let constructor_needs_std = contract_constructor_needs_std(db, contract);
         if !contract_has_prepared_constructor(db, contract)
-            && (has_std || !constructor_needs_std)
             && let Some(artifacts) = prepare_contract_constructor(db, prepared_contract)
         {
-            generated_constructor_std |= constructor_needs_std;
             origins.extend(artifacts.origins.iter().cloned());
             prepared_contract = artifacts.contract;
         }
@@ -255,7 +237,6 @@ pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModu
             && !contract_has_prepared_dispatch(db, prepared_contract)
             && let Some(artifacts) = prepare_contract_dispatch(db, module_def, prepared_contract)
         {
-            generated_dispatch = true;
             generated_items.extend(artifacts.top_level_items.iter().copied());
             origins.extend(artifacts.origins.iter().cloned());
             prepared_contract = artifacts.contract;
@@ -267,20 +248,6 @@ pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModu
         return PreparedModule::new(db, source, source, origins);
     }
 
-    if generated_dispatch {
-        generated_items.splice(
-            0..0,
-            generated_dispatch_imports(db, module_def, source.span(db))
-                .into_iter()
-                .map(Item::Import),
-        );
-    } else if generated_constructor_std {
-        generated_items.insert(
-            0,
-            Item::Import(generated_std_import(db, module_def, source.span(db))),
-        );
-    }
-
     generated_items.extend(prepared_source_items);
     let effective = Module::new(
         db,
@@ -289,130 +256,6 @@ pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModu
         generated_items,
     );
     PreparedModule::new(db, source, effective, origins)
-}
-
-fn generated_dispatch_imports<'db>(
-    db: &'db dyn Db,
-    module: DefId<'db>,
-    span: Span<'db>,
-) -> [Import<'db>; 3] {
-    [
-        generated_std_import(db, module, span),
-        generated_module_alias_import(
-            db,
-            module,
-            span,
-            &["std", "dispatch"],
-            STD_DISPATCH_MODULE_ALIAS,
-            STD_DISPATCH_MODULE_IMPORT_FINGERPRINT,
-        ),
-        generated_selected_alias_import(
-            db,
-            module,
-            span,
-            &["std", "dispatch"],
-            "SigString",
-            SIG_STRING_CLASS_ALIAS,
-            SIG_STRING_IMPORT_FINGERPRINT,
-        ),
-    ]
-}
-
-fn generated_std_import<'db>(db: &'db dyn Db, module: DefId<'db>, span: Span<'db>) -> Import<'db> {
-    generated_module_alias_import(
-        db,
-        module,
-        span,
-        &["std"],
-        STD_MODULE_ALIAS,
-        STD_MODULE_IMPORT_FINGERPRINT,
-    )
-}
-
-fn generated_module_alias_import<'db>(
-    db: &'db dyn Db,
-    module: DefId<'db>,
-    span: Span<'db>,
-    path: &[&str],
-    alias: &str,
-    fingerprint: &str,
-) -> Import<'db> {
-    Import::new(
-        db,
-        generated_def(db, module, DefKind::Import, alias, fingerprint),
-        span,
-        Vec::new(),
-        None,
-        path.iter()
-            .map(|segment| spanned_ident(db, span, segment))
-            .collect(),
-        Some(spanned_ident(db, span, alias)),
-        None,
-        Vec::new(),
-    )
-}
-
-fn generated_selected_alias_import<'db>(
-    db: &'db dyn Db,
-    module: DefId<'db>,
-    span: Span<'db>,
-    path: &[&str],
-    name: &str,
-    alias: &str,
-    fingerprint: &str,
-) -> Import<'db> {
-    Import::new(
-        db,
-        generated_def(db, module, DefKind::Import, alias, fingerprint),
-        span,
-        Vec::new(),
-        None,
-        path.iter()
-            .map(|segment| spanned_ident(db, span, segment))
-            .collect(),
-        None,
-        Some(ImportSelector::Names(vec![SelectedName {
-            name: spanned_ident(db, span, name),
-            alias: Some(spanned_ident(db, span, alias)),
-            constructors: None,
-            is_operator: false,
-        }])),
-        Vec::new(),
-    )
-}
-
-/// Returns whether `module` explicitly wildcard-imports canonical `std`.
-///
-/// Non-empty constructor wrappers depend on `abi_decode`, `memory(bytes)`,
-/// `Proxy`, `slice`, and `BoundedMemoryWordReader`. The enablement gate remains
-/// source-owned, while generated references use a compiler-private qualified
-/// alias after the import has been validated. Nullary and implicit constructors
-/// have no std dependency and are always prepared.
-pub fn module_has_canonical_std_import<'db>(db: &'db dyn Db, module: Module<'db>) -> bool {
-    let Some(importing) = module_id_for_source_file(db, module.def_id_value(db).file(db)) else {
-        return false;
-    };
-    module.items(db).iter().any(|item| {
-        let Item::Import(import) = *item else {
-            return false;
-        };
-        is_canonical_std_wildcard_import(db, importing, import)
-    })
-}
-
-pub fn contract_constructor_needs_std(db: &dyn Db, contract: ContractDef<'_>) -> bool {
-    let mut constructors = contract.items(db).iter().filter_map(|item| match item {
-        ContractItem::FunctionDef(function) if function.kind(db) == FuncKind::Constructor => {
-            Some(*function)
-        }
-        _ => None,
-    });
-    let Some(constructor) = constructors.next() else {
-        return false;
-    };
-    constructors.next().is_none()
-        && !constructor.sig(db).params.atom().is_empty()
-        && explicit_param_types(constructor.sig(db).params.atom()).is_some()
 }
 
 fn contract_has_prepared_constructor(db: &dyn Db, contract: ContractDef<'_>) -> bool {
@@ -433,25 +276,6 @@ fn contract_has_prepared_dispatch(db: &dyn Db, contract: ContractDef<'_>) -> boo
                 if is_contract_dispatch_main_def(db, function.def_id_value(db))
         )
     })
-}
-
-fn is_canonical_std_wildcard_import<'db>(
-    db: &'db dyn Db,
-    importing: nameres::ModuleId<'db>,
-    import: Import<'db>,
-) -> bool {
-    import.external(db).is_none()
-        && import.alias_elem(db).is_none()
-        && import.hiding(db).is_empty()
-        && matches!(import.selector(db), Some(ImportSelector::Wildcard))
-        && matches!(
-            import.path_elems(db).as_slice(),
-            [segment] if ident_text(db, segment) == "std"
-        )
-        && resolve_direct_import_target_candidate(db, importing, import).is_ok_and(|target| {
-            target.module.library(db) == &LibraryId::Std
-                && target.module.logical_path(db).as_slice() == ["std"]
-        })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -664,21 +488,6 @@ fn generated_constructor_copy_arguments<'db>(
         vec![builder.alloc_stmt(StmtKind::Return(Some(unit)))]
     } else {
         let res = builder.let_stmt("res", Some(args_ty), None);
-        let args_proxy = builder.qualified_proxy(STD_MODULE_ALIAS, args_ty);
-        let minimum_size_value = builder.call_path(
-            &[STD_MODULE_ALIAS, "ABIAttribs", "headSize"],
-            vec![args_proxy],
-        );
-        let minimum_size = builder.let_stmt(
-            "minimumSize",
-            Some(named_ty(db, constructor.span, "word", Vec::new())),
-            Some(minimum_size_value),
-        );
-        let arg_size = builder.let_stmt(
-            "argSize",
-            Some(named_ty(db, constructor.span, "word", Vec::new())),
-            None,
-        );
         let memory_offset = builder.let_stmt(
             "memoryDataOffset",
             Some(named_ty(db, constructor.span, "word", Vec::new())),
@@ -688,48 +497,23 @@ fn generated_constructor_copy_arguments<'db>(
             body: constructor_copy_yul(db, constructor.span, contract_name),
         });
         let offset = builder.ident("memoryDataOffset");
-        let memory_value = builder.call_path(&[STD_MODULE_ALIAS, "memory", "memory"], vec![offset]);
-        let arg_size_expr = builder.ident("argSize");
-        let bounded_source = builder.call_path(
-            &[STD_MODULE_ALIAS, "slice", "slice"],
-            vec![memory_value, arg_size_expr],
-        );
-        let source_ty = qualified_named_ty(
+        let memory_value = builder.call_ident("memory", vec![offset]);
+        let source_ty = named_ty(
             db,
             constructor.span,
-            STD_MODULE_ALIAS,
-            "slice",
-            vec![qualified_named_ty(
-                db,
-                constructor.span,
-                STD_MODULE_ALIAS,
-                "memory",
-                vec![qualified_named_ty(
-                    db,
-                    constructor.span,
-                    STD_MODULE_ALIAS,
-                    "bytes",
-                    Vec::new(),
-                )],
-            )],
+            "memory",
+            vec![named_ty(db, constructor.span, "bytes", Vec::new())],
         );
-        let source = builder.let_stmt("source", Some(source_ty), Some(bounded_source));
+        let source = builder.let_stmt("source", Some(source_ty), Some(memory_value));
         let source_expr = builder.ident("source");
-        let args_proxy = builder.qualified_proxy(STD_MODULE_ALIAS, args_ty);
-        let reader_proxy = builder.qualified_proxy(
-            STD_MODULE_ALIAS,
-            qualified_named_ty(
-                db,
-                constructor.span,
-                STD_MODULE_ALIAS,
-                "BoundedMemoryWordReader",
-                Vec::new(),
-            ),
-        );
-        let decoded = builder.call_path(
-            &[STD_MODULE_ALIAS, "abi_decode"],
-            vec![source_expr, args_proxy, reader_proxy],
-        );
+        let args_proxy = builder.proxy(args_ty);
+        let reader_proxy = builder.proxy(named_ty(
+            db,
+            constructor.span,
+            "MemoryWordReader",
+            Vec::new(),
+        ));
+        let decoded = builder.call_ident("abi_decode", vec![source_expr, args_proxy, reader_proxy]);
         let lhs = builder.ident("res");
         let assign = builder.alloc_stmt(StmtKind::Assign {
             op: AssignOp::Plain,
@@ -738,16 +522,7 @@ fn generated_constructor_copy_arguments<'db>(
         });
         let result = builder.ident("res");
         let ret = builder.alloc_stmt(StmtKind::Return(Some(result)));
-        vec![
-            res,
-            minimum_size,
-            arg_size,
-            memory_offset,
-            copy,
-            source,
-            assign,
-            ret,
-        ]
+        vec![res, memory_offset, copy, source, assign, ret]
     };
     let (stmts, exprs, pats) = builder.finish();
     let body = FuncBody::new(
@@ -965,7 +740,7 @@ fn constructor_copy_yul<'db>(
         vec![codesize, yul_ident_expr(db, span, "programSize")],
     );
     let free_ptr = yul_call(db, span, "mload", vec![yul_number(span, "64")]);
-    let unrounded_free_ptr = yul_call(
+    let new_free_ptr = yul_call(
         db,
         span,
         "add",
@@ -974,14 +749,6 @@ fn constructor_copy_yul<'db>(
             yul_ident_expr(db, span, "argSize"),
         ],
     );
-    let add_rounding = yul_call(
-        db,
-        span,
-        "add",
-        vec![unrounded_free_ptr, yul_number(span, "31")],
-    );
-    let mask = yul_call(db, span, "not", vec![yul_number(span, "31")]);
-    let new_free_ptr = yul_call(db, span, "and", vec![add_rounding, mask]);
     let update_free_ptr = yul_call(
         db,
         span,
@@ -998,41 +765,10 @@ fn constructor_copy_yul<'db>(
             yul_ident_expr(db, span, "argSize"),
         ],
     );
-    let truncated = yul_call(
-        db,
-        span,
-        "lt",
-        vec![
-            yul_ident_expr(db, span, "argSize"),
-            yul_ident_expr(db, span, "minimumSize"),
-        ],
-    );
-    let store_selector = yul_call(
-        db,
-        span,
-        "mstore",
-        vec![yul_number(span, "0"), yul_hex(span, "0x08638556")],
-    );
-    let revert = yul_call(
-        db,
-        span,
-        "revert",
-        vec![yul_number(span, "28"), yul_number(span, "4")],
-    );
     vec![
         yul_let(db, span, "programSize", Some(program_size)),
-        yul_assign(db, span, "argSize", arg_size),
+        yul_let(db, span, "argSize", Some(arg_size)),
         yul_assign(db, span, "memoryDataOffset", free_ptr),
-        YulStmt {
-            span,
-            kind: YulStmtKind::If {
-                cond: truncated,
-                body: vec![
-                    yul_expr_stmt(span, store_selector),
-                    yul_expr_stmt(span, revert),
-                ],
-            },
-        },
         yul_expr_stmt(span, update_free_ptr),
         yul_expr_stmt(span, copy),
     ]
@@ -1375,7 +1111,7 @@ fn dispatch_name_declarations<'db>(
         db,
         PredRefKind {
             ty: named_ty(db, method.span, &ty_name, Vec::new()),
-            class: spanned_ident(db, method.span, SIG_STRING_CLASS_ALIAS),
+            class: spanned_ident(db, method.span, "SigString"),
             args: SpannedElem::new(Vec::new(), method.span),
         },
     );
@@ -1442,10 +1178,9 @@ fn sig_string_method<'db>(
         kind: StmtKind::Return(Some(value)),
     });
     let body = FuncBody::new(db, body_def, span, vec![ret], stmts, exprs, Arena::new());
-    let proxy_ty = qualified_named_ty(
+    let proxy_ty = named_ty(
         db,
         span,
-        STD_MODULE_ALIAS,
         "Proxy",
         vec![named_ty(db, span, ty_name, Vec::new())],
     );
@@ -1464,13 +1199,7 @@ fn sig_string_method<'db>(
             }],
             span,
         ),
-        ret: Some(qualified_named_ty(
-            db,
-            span,
-            STD_MODULE_ALIAS,
-            "string",
-            Vec::new(),
-        )),
+        ret: Some(named_ty(db, span, "string", Vec::new())),
     };
     FunctionDef::new(
         db,
@@ -1495,88 +1224,53 @@ fn generated_dispatch_main<'db>(
     let mut method_values = Vec::with_capacity(methods.len());
     for method in methods {
         let name_ty = format!("DispatchNameTy_{contract_name}_{}", method.name);
-        let name = builder.qualified_proxy(
-            STD_MODULE_ALIAS,
-            named_ty(db, method.span, &name_ty, Vec::new()),
-        );
-        let payability = builder.qualified_proxy(
-            STD_MODULE_ALIAS,
-            qualified_named_ty(
+        let name = builder.proxy(named_ty(db, method.span, &name_ty, Vec::new()));
+        let payability = builder.proxy(named_ty(
+            db,
+            method.span,
+            if method.payable {
+                "Payable"
+            } else {
+                "NonPayable"
+            },
+            Vec::new(),
+        ));
+        let args_ty = product_ty(db, method.span, &method.params);
+        let args = builder.proxy(args_ty);
+        let rets = builder.proxy(method.ret);
+        let implementation = builder.ident(&method.name);
+        method_values
+            .push(builder.call_ident("Method", vec![name, payability, args, rets, implementation]));
+    }
+    let methods = builder.product_expr(&method_values);
+    let fallback = match fallback {
+        Some(fallback) => {
+            let payability = builder.proxy(named_ty(
                 db,
-                method.span,
-                STD_DISPATCH_MODULE_ALIAS,
-                if method.payable {
+                span,
+                if fallback.payable {
                     "Payable"
                 } else {
                     "NonPayable"
                 },
                 Vec::new(),
-            ),
-        );
-        let args_ty = product_ty(db, method.span, &method.params);
-        let args = builder.qualified_proxy(STD_MODULE_ALIAS, args_ty);
-        let rets = builder.qualified_proxy(STD_MODULE_ALIAS, method.ret);
-        let implementation = builder.ident(&method.name);
-        method_values.push(builder.call_path(
-            &[STD_DISPATCH_MODULE_ALIAS, "Method", "Method"],
-            vec![name, payability, args, rets, implementation],
-        ));
-    }
-    let methods = builder.product_expr(&method_values);
-    let fallback = match fallback {
-        Some(fallback) => {
-            let payability = builder.qualified_proxy(
-                STD_MODULE_ALIAS,
-                qualified_named_ty(
-                    db,
-                    span,
-                    STD_DISPATCH_MODULE_ALIAS,
-                    if fallback.payable {
-                        "Payable"
-                    } else {
-                        "NonPayable"
-                    },
-                    Vec::new(),
-                ),
-            );
+            ));
             let args_ty = product_ty(db, span, &fallback.params);
-            let args = builder.qualified_proxy(STD_MODULE_ALIAS, args_ty);
-            let rets = builder.qualified_proxy(STD_MODULE_ALIAS, fallback.ret);
+            let args = builder.proxy(args_ty);
+            let rets = builder.proxy(fallback.ret);
             let implementation = builder.ident(&fallback.name);
-            builder.call_path(
-                &[STD_DISPATCH_MODULE_ALIAS, "Fallback", "Fallback"],
-                vec![payability, args, rets, implementation],
-            )
+            builder.call_ident("Fallback", vec![payability, args, rets, implementation])
         }
         None => {
-            let payability = builder.qualified_proxy(
-                STD_MODULE_ALIAS,
-                qualified_named_ty(
-                    db,
-                    span,
-                    STD_DISPATCH_MODULE_ALIAS,
-                    "NonPayable",
-                    Vec::new(),
-                ),
-            );
-            let args = builder.qualified_proxy(STD_MODULE_ALIAS, unit_ty(db, span));
-            let rets = builder.qualified_proxy(STD_MODULE_ALIAS, unit_ty(db, span));
-            let implementation =
-                builder.path(&[STD_DISPATCH_MODULE_ALIAS, "fallback_default_implementation"]);
-            builder.call_path(
-                &[STD_DISPATCH_MODULE_ALIAS, "Fallback", "Fallback"],
-                vec![payability, args, rets, implementation],
-            )
+            let payability = builder.proxy(named_ty(db, span, "NonPayable", Vec::new()));
+            let args = builder.proxy(unit_ty(db, span));
+            let rets = builder.proxy(unit_ty(db, span));
+            let implementation = builder.ident("fallback_default_implementation");
+            builder.call_ident("Fallback", vec![payability, args, rets, implementation])
         }
     };
-    let contract_value = builder.call_path(
-        &[STD_DISPATCH_MODULE_ALIAS, "Contract", "Contract"],
-        vec![methods, fallback],
-    );
-    let run = builder.call_path(
-        &[STD_DISPATCH_MODULE_ALIAS, "RunContract", "exec"],
-        vec![contract_value],
-    );
+    let contract_value = builder.call_ident("Contract", vec![methods, fallback]);
+    let run = builder.call_path(&["RunContract", "exec"], vec![contract_value]);
     let run_stmt = builder.alloc_stmt(StmtKind::Expr(run));
     let unit = builder.alloc_expr(ExprKind::Tuple(Vec::new()));
     let return_stmt = builder.alloc_stmt(StmtKind::Return(Some(unit)));
@@ -1718,9 +1412,9 @@ impl<'db> BodyBuilder<'db> {
         })
     }
 
-    fn qualified_proxy(&mut self, qualifier: &str, ty: TypeRef<'db>) -> Id<Expr<'db>> {
-        let proxy = self.path(&[qualifier, "Proxy", "Proxy"]);
-        let proxy_ty = qualified_named_ty(self.db, self.span, qualifier, "Proxy", vec![ty]);
+    fn proxy(&mut self, ty: TypeRef<'db>) -> Id<Expr<'db>> {
+        let proxy = self.ident("Proxy");
+        let proxy_ty = named_ty(self.db, self.span, "Proxy", vec![ty]);
         self.alloc_expr(ExprKind::TypeAnnot {
             expr: proxy,
             ty: proxy_ty,
@@ -1806,23 +1500,6 @@ fn named_ty<'db>(
         db,
         TypeRefKind::Named {
             qualifier: None,
-            name: spanned_ident(db, span, name),
-            args: SpannedElem::new(args, span),
-        },
-    )
-}
-
-fn qualified_named_ty<'db>(
-    db: &'db dyn Db,
-    span: Span<'db>,
-    qualifier: &str,
-    name: &str,
-    args: Vec<TypeRef<'db>>,
-) -> TypeRef<'db> {
-    TypeRef::new(
-        db,
-        TypeRefKind::Named {
-            qualifier: Some(spanned_ident(db, span, qualifier)),
             name: spanned_ident(db, span, name),
             args: SpannedElem::new(args, span),
         },
@@ -2128,24 +1805,10 @@ contract C {
         }
         assert!(generated_functions > 0);
 
-        let mut generated_imports = 0;
         let mut generated_adts = 0;
         let mut generated_instances = 0;
         for item in prepared.module(&db).items(&db) {
             match item {
-                Item::Import(import)
-                    if matches!(
-                        import.def_id(&db).fingerprint(&db).as_deref(),
-                        Some(
-                            STD_MODULE_IMPORT_FINGERPRINT
-                                | STD_DISPATCH_MODULE_IMPORT_FINGERPRINT
-                                | SIG_STRING_IMPORT_FINGERPRINT
-                        )
-                    ) =>
-                {
-                    generated_imports += 1;
-                    assert!(import.leading_comments(&db).is_empty());
-                }
                 Item::AdtDef(adt)
                     if prepared
                         .origin_for_def(&db, adt.def_id_value(&db))
@@ -2176,7 +1839,6 @@ contract C {
                 _ => {}
             }
         }
-        assert!(generated_imports > 0);
         assert!(generated_adts > 0);
         assert!(generated_instances > 0);
     }
@@ -2228,13 +1890,21 @@ contract C { function main() -> () {} }
     }
 
     #[test]
-    fn nonempty_constructor_waits_for_canonical_std_import() {
+    fn nonempty_constructor_is_prepared_without_injecting_imports() {
         let (db, file) =
             db_with_main("contract C { constructor(x:word) {} function main() -> () {} }");
         let source = source_module(&db, file);
         let prepared = prepare_module(&db, source);
-        assert_eq!(prepared.module(&db), source);
-        assert!(prepared.origins(&db).entries().is_empty());
+        assert_ne!(prepared.module(&db), source);
+        let contract = first_contract(&db, prepared.module(&db));
+        assert!(
+            prepared
+                .contract_deployment_main(&db, contract.def_id_value(&db))
+                .is_some()
+        );
+        assert!(prepared.module(&db).items(&db).iter().all(|item| {
+            !matches!(item, Item::Import(import) if import.def_id(&db).fingerprint(&db).is_some())
+        }));
     }
 
     #[test]

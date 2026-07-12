@@ -278,7 +278,9 @@ fn curated_solver_files_execute_solver_and_soundness_queries() {
 #[test]
 fn generated_dispatch_reuses_std_instance_facts_per_module() {
     let repo = repo_root();
-    let entry = repo.join("tests/e2e/00answer/main.solc");
+    let entry = repo.join(
+        "crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/empty_no_constructor.solc",
+    );
     let std_root = repo.join("std");
     let outcome = run_frontend(&entry, &std_root);
 
@@ -423,7 +425,6 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
-                .chain(refs.compiler_refs)
                 .filter_map(
                     |path| match resolve_module_path_candidate(&*db, module, &path) {
                         Ok(resolved) => Some((resolved.module.key(&*db), resolved.file_path)),

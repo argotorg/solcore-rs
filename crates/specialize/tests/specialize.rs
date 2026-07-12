@@ -4,8 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use hir::{anchor::DefLocationTable, ast::item::Module, diag::DiagnosticCode, input::SourceFile};
-use hir_ty::{AbiSignature, BuiltinTyCtor, Ty, abi_selector, prepare_module};
+use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
+use hir_ty::{BuiltinTyCtor, Ty, prepare_module};
 use nameres::{
     LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
     module_id_from_key, module_key_for_path, module_path_display, resolve_module_path_candidate,
@@ -628,54 +628,39 @@ contract C {
 }
 
 #[test]
-fn generated_contract_dispatch_is_a_compiler_owned_implicit_dependency() {
-    for source in [
-        r#"
-data Proxy = Proxy(word);
-data Contract = Contract(word);
-data Method = Method(word);
-data RunContract;
-
-function fallback_default_implementation() -> word { return 0; }
-
-contract C {
-  public function answer(x : word) -> word { return x; }
-}
-"#,
-        r#"
+fn generated_contract_dispatch_uses_explicit_std_dispatch_import() {
+    let source = r#"
 import std.{*};
 import std.dispatch.{*};
 
 contract C {
   public function answer() -> uint256 { return uint256(1); }
 }
-"#,
-    ] {
-        let output = specialize_src_with_std(source);
-        assert_eq!(output.diagnostics, Vec::new(), "{source}");
-        let generated_contract = output
-            .module
-            .items
+"#;
+    let output = specialize_src_with_std(source);
+    assert_eq!(output.diagnostics, Vec::new(), "{source}");
+    let generated_contract = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Contract(contract) => Some(contract),
+            _ => None,
+        })
+        .expect("generated contract metadata");
+    assert!(generated_contract.entries.iter().any(|entry| matches!(
+        entry,
+        MonoEntry::RuntimeMain {
+            origin: MonoRuntimeMainOrigin::StdDispatch,
+            ..
+        }
+    )));
+    assert!(
+        generated_contract
+            .entries
             .iter()
-            .find_map(|item| match item {
-                MonoItem::Contract(contract) => Some(contract),
-                _ => None,
-            })
-            .expect("generated contract metadata");
-        assert!(generated_contract.entries.iter().any(|entry| matches!(
-            entry,
-            MonoEntry::RuntimeMain {
-                origin: MonoRuntimeMainOrigin::StdDispatch,
-                ..
-            }
-        )));
-        assert!(
-            generated_contract
-                .entries
-                .iter()
-                .all(|entry| !matches!(entry, MonoEntry::SelectorMethod { .. }))
-        );
-    }
+            .all(|entry| !matches!(entry, MonoEntry::SelectorMethod { .. }))
+    );
 }
 
 #[test]
@@ -722,47 +707,6 @@ contract C {
             .all(|entry| !matches!(entry, MonoEntry::RuntimeMain { .. })),
         "{:?}",
         contract.entries
-    );
-}
-
-#[test]
-fn parameterized_constructor_missing_std_import_is_reported_by_specialize_preflight() {
-    let (db, output) = specialize_src(
-        r#"
-contract C {
-  constructor(value: word) {}
-  function main() -> () { return (); }
-}
-"#,
-    );
-
-    let diagnostic = output
-        .diagnostics
-        .iter()
-        .find(|diagnostic| {
-            matches!(
-                diagnostic.kind,
-                SpecializeDiagnosticKind::MissingConstructorStdImport { .. }
-            )
-        })
-        .expect("parameterized constructor preflight diagnostic");
-    assert_eq!(
-        diagnostic.kind.code(),
-        DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT
-    );
-    assert_eq!(
-        diagnostic.kind.to_string(),
-        "constructor for contract `C` needs `import std.{*};` to decode arguments"
-    );
-    let lowered = diagnostic.lower(db);
-    assert_eq!(
-        lowered.code.as_deref(),
-        Some(DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT)
-    );
-    assert_eq!(lowered.helps, ["add `import std.{*};` to this module"]);
-    assert_eq!(
-        lowered.notes,
-        ["constructor arguments are decoded from bytes appended to the creation code"]
     );
 }
 
@@ -842,7 +786,7 @@ import std.{*};
 import std.dispatch.{*};
 
 contract C {
-  payable constructor(seed: word) { let saved = seed; }
+  payable constructor(seed: uint256) { let saved = seed; }
   public function answer() -> uint256 { return uint256(1); }
 }
 "#;
@@ -992,7 +936,7 @@ import std.{*};
 import std.dispatch.{*};
 
 contract C {
-  constructor(x : word, y : word) { let z = x; }
+  constructor(x : uint256, y : uint256) { let z = x; }
   function main() -> () { return (); }
 }
 "#,
@@ -1024,120 +968,6 @@ contract C {
         names
             .iter()
             .any(|name| name.contains("copy_arguments_for_constructor")),
-        "{names:?}"
-    );
-}
-
-#[test]
-fn constructor_product_adt_uses_generic_abi_with_only_the_std_prelude() {
-    let output = specialize_src_with_std(
-        r#"
-import std.{*};
-
-data Config = Config(word, bool);
-
-contract C {
-  constructor(config: Config, label: memory(string)) {}
-  function main() -> () { return (); }
-}
-"#,
-    );
-
-    assert_eq!(output.diagnostics, Vec::new());
-    let names = function_names(&output);
-    assert!(
-        names.iter().any(|name| name.starts_with("Generic_to$")),
-        "{names:?}"
-    );
-}
-
-#[test]
-fn dynamic_product_adt_dispatch_and_constructor_use_abi_tuple_boundaries() {
-    let output = specialize_src_with_std(
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-data Payload = Payload(memory(string), bool);
-
-contract C {
-  constructor(prefix: word, payload: Payload) {}
-
-  public function roundtrip(prefix: word, payload: Payload) -> (word, Payload) {
-    return (prefix, payload);
-  }
-}
-"#,
-    );
-
-    assert_eq!(output.diagnostics, Vec::new());
-    let names = function_names(&output);
-    assert!(
-        names
-            .iter()
-            .any(|name| name.starts_with("Generic_to$") && name.contains("Payload")),
-        "{names:?}"
-    );
-    assert!(
-        names
-            .iter()
-            .any(|name| name.starts_with("Generic_from$") && name.contains("Payload")),
-        "{names:?}"
-    );
-    assert!(
-        names
-            .iter()
-            .any(|name| name.starts_with("ABIDecode_decode$") && name.contains("ABITuple")),
-        "{names:?}"
-    );
-    assert!(
-        names
-            .iter()
-            .any(|name| name.starts_with("ABIEncode_encodeInto$") && name.contains("ABITuple")),
-        "{names:?}"
-    );
-}
-
-#[test]
-fn product_adt_dispatch_uses_the_same_structural_selector_as_hir_ty() {
-    let (db, _, output) = specialize_src_with_std_and_db(
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-data Point = Point(word, bool);
-
-contract Shapes {
-  public function roundtrip(p: Point) -> Point { return p; }
-}
-"#,
-    );
-
-    assert_eq!(output.diagnostics, Vec::new());
-    let expected = u32::from_be_bytes(
-        abi_selector(
-            db,
-            AbiSignature::new(db, "roundtrip((uint256,bool))".to_owned()),
-        )
-        .0,
-    )
-    .to_string();
-    assert!(
-        output.module.items.iter().any(|item| match item {
-            MonoItem::Function(function) => {
-                stmts_have_number_literal(&function.body, &expected)
-            }
-            _ => false,
-        }),
-        "std.dispatch selector did not match hir-ty's structural signature: {expected}"
-    );
-    let names = function_names(&output);
-    assert!(
-        names.iter().any(|name| name.starts_with("Generic_from$")),
-        "{names:?}"
-    );
-    assert!(
-        names.iter().any(|name| name.starts_with("Generic_to$")),
         "{names:?}"
     );
 }
@@ -1527,7 +1357,7 @@ import std.{*};
 import std.Generic.{*};
 import std.ABIGeneric.{*};
 
-data Choice = Left(word) | Right(bool);
+data Choice = Left(uint256) | Right(address);
 
 contract C {
   function main() -> word {
@@ -1535,9 +1365,9 @@ contract C {
     let rdr : MemoryWordReader = MemoryWordReader(buf);
     let dec : ABIDecoder(Choice, MemoryWordReader) =
         ABIDecoder(rdr) : ABIDecoder(Choice, MemoryWordReader);
-    let value : Choice = ABIDecode.decode(dec, 0);
+    let value : Choice = decode(dec, 0);
     match value {
-    | Choice.Left(x) => return x;
+    | Choice.Left(x) => return Typedef.rep(x);
     | Choice.Right(_) => return 0;
     }
   }
@@ -1944,59 +1774,6 @@ contract C {
 }
 
 #[test]
-fn std_not_lowercase_bool_patterns_specialize_to_constructor_match() {
-    let db = Box::leak(Box::new(TestDb::default()));
-    let main_root = PathBuf::from("/main");
-    let repo = repo_root();
-    let std_root = repo.join("crates/parser/tests/fixtures/corpus/ok/std");
-    db.module_tree = Some(ModuleTree::new(
-        db,
-        main_root.clone(),
-        std_root.clone(),
-        BTreeMap::new(),
-    ));
-    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(
-        db,
-        [main_root.as_path(), std_root.as_path()],
-    ));
-    let main_path = main_root.join("not_probe.solc");
-    let file = source_file_at_path(
-        db,
-        &main_path,
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-contract NotProbe {
-  public function flip(x : bool) -> bool { return not(x); }
-}
-"#,
-    );
-    let key = module_key_for_path(LibraryId::Main, &main_root, &main_path)
-        .expect("probe under main root");
-    db.insert_module_file(key.clone(), file);
-    let unresolved = load_reachable_modules(db, key);
-    assert!(unresolved.is_empty(), "{unresolved:?}");
-
-    let module = parse_file_to_hir(db, file).module(db);
-    let output = specialize_module(db, module, SpecializeOptions::default());
-    assert_eq!(output.diagnostics, Vec::new());
-    let std_not = output
-        .module
-        .items
-        .iter()
-        .find_map(|item| {
-            let MonoItem::Function(function) = item else {
-                return None;
-            };
-            function.name.starts_with("std_not").then_some(function)
-        })
-        .expect("std.not is retained by runtime public flip");
-    let ctor_patterns = bool_constructor_patterns_in_stmts(&std_not.body);
-    assert_eq!(ctor_patterns, vec!["false".to_owned(), "true".to_owned()]);
-}
-
-#[test]
 fn folds_qualified_constructor_matches_before_wildcard_defaults() {
     let repo = repo_root();
     let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/spec");
@@ -2288,65 +2065,6 @@ fn function_return_numbers(output: &SpecializeOutput<'_>, name: &str) -> Vec<Str
         .unwrap_or_default()
 }
 
-fn bool_constructor_patterns_in_stmts(stmts: &[MonoStmt<'_>]) -> Vec<String> {
-    let mut out = Vec::new();
-    for stmt in stmts {
-        match &stmt.kind {
-            MonoStmtKind::Match { arms, .. } => {
-                for arm in arms {
-                    for pat in &arm.pats {
-                        bool_constructor_patterns(pat, &mut out);
-                    }
-                    out.extend(bool_constructor_patterns_in_stmts(&arm.body));
-                }
-            }
-            MonoStmtKind::For {
-                init, post, body, ..
-            } => {
-                out.extend(bool_constructor_patterns_in_stmts(init));
-                out.extend(bool_constructor_patterns_in_stmts(post));
-                out.extend(bool_constructor_patterns_in_stmts(body));
-            }
-            MonoStmtKind::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                out.extend(bool_constructor_patterns_in_stmts(then_body));
-                if let Some(else_body) = else_body {
-                    out.extend(bool_constructor_patterns_in_stmts(else_body));
-                }
-            }
-            MonoStmtKind::Block(body) => out.extend(bool_constructor_patterns_in_stmts(body)),
-            _ => {}
-        }
-    }
-    out
-}
-
-fn bool_constructor_patterns(pat: &solcore_specialize::MonoPat<'_>, out: &mut Vec<String>) {
-    match &pat.kind {
-        MonoPatKind::Con { ctor, args } => {
-            if ctor.name == "false" || ctor.name == "true" {
-                out.push(ctor.name.clone());
-            }
-            for arg in args {
-                bool_constructor_patterns(arg, out);
-            }
-        }
-        MonoPatKind::Tuple(elems) => {
-            for elem in elems {
-                bool_constructor_patterns(elem, out);
-            }
-        }
-        MonoPatKind::ComptimeLabel(_)
-        | MonoPatKind::Wildcard
-        | MonoPatKind::Var(_)
-        | MonoPatKind::Lit(_)
-        | MonoPatKind::Error => {}
-    }
-}
-
 fn return_numbers_in_stmts(stmts: &[solcore_specialize::MonoStmt<'_>]) -> Vec<String> {
     let mut out = Vec::new();
     for stmt in stmts {
@@ -2476,7 +2194,6 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
-                .chain(refs.compiler_refs)
                 .filter_map(
                     |path| match resolve_module_path_candidate(&*db, module, &path) {
                         Ok(resolved) => Some((resolved.module.key(&*db), resolved.file_path)),

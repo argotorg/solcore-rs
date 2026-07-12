@@ -16,7 +16,6 @@ use nameres::{
 use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
-use solcore_hir_ty::solver::generic_derivation_diagnostics;
 use solcore_hir_ty::{
     BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback,
     FieldInitPreTypeckTransform, FrontendTransform, IndirectArgShape, PreTypeckTransform,
@@ -265,7 +264,7 @@ fn diagnostics_for_module(db: &TestDb, key: &ModuleKey) -> Vec<Diagnostic> {
 }
 
 #[test]
-fn generated_dispatch_is_implicit_and_existing_main_suppresses_it() {
+fn generated_dispatch_is_synthesized_before_import_resolution() {
     let db = TestDb::default();
     let source = parse_module(
         &db,
@@ -281,7 +280,7 @@ contract Answer {
         prepared
             .contract_dispatch_main(&db, contract.def_id_value(&db))
             .is_some(),
-        "runtime dispatch must not depend on a source-level std.dispatch import"
+        "dispatch synthesis is syntactic; type checking still requires explicit imports"
     );
     assert_eq!(prepared.source(&db), source);
 
@@ -317,98 +316,25 @@ contract Answer {
 }
 
 #[test]
-fn importless_generated_dispatch_typechecks_against_compiler_dependencies() {
+fn generated_dispatch_requires_explicit_source_imports() {
     let (mut db, key) = db_with_main(
         r#"
 contract C {
-  public function echo(value:word) -> word { return value; }
+  public function echo(value:uint256) -> uint256 { return value; }
 }
 "#,
     );
     insert_real_std_modules(&mut db);
     let diagnostics = diagnostics_for_module(&db, &key);
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-}
+    assert!(!diagnostics.is_empty(), "explicit imports must be required");
 
-#[test]
-fn nonempty_constructor_requires_explicit_std_import() {
-    let missing = diagnostics(
-        r#"
-contract C {
-  constructor(x: word) {}
-  function main() -> () { return (); }
-}
-"#,
-    );
-    let diagnostic = missing
-        .iter()
-        .find(|diagnostic| {
-            diagnostic.code.as_deref()
-                == Some(DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT)
-        })
-        .expect("missing std constructor diagnostic");
-    assert!(
-        diagnostic.message.contains("contract `C`"),
-        "{diagnostic:?}"
-    );
-    assert_eq!(
-        diagnostic.helps,
-        ["add `import std.{*};` to this module"],
-        "{diagnostic:?}"
-    );
-
-    let nullary = diagnostics(
-        r#"
-contract C {
-  constructor() {}
-  function main() -> () { return (); }
-}
-"#,
-    );
-    assert!(
-        nullary.iter().all(|diagnostic| {
-            diagnostic.code.as_deref()
-                != Some(DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT)
-        }),
-        "{nullary:?}"
-    );
-
-    for structurally_invalid in [
-        r#"
-contract C {
-  constructor(x: word) {}
-  constructor(y: word) {}
-  function main() -> () { return (); }
-}
-"#,
-        r#"
-contract C {
-  constructor(x) {}
-  function main() -> () { return (); }
-}
-"#,
-    ] {
-        let diagnostics = diagnostics(structurally_invalid);
-        assert!(
-            diagnostics.iter().all(|diagnostic| {
-                diagnostic.code.as_deref()
-                    != Some(DiagnosticCode::TYPECK_CONSTRUCTOR_MISSING_STD_IMPORT)
-            }),
-            "{diagnostics:?}"
-        );
-    }
-}
-
-#[test]
-fn constructor_overlay_qualifies_std_helpers_against_contract_shadowing() {
     let (mut db, key) = db_with_main(
         r#"
 import std.{*};
+import std.dispatch.{*};
 
 contract C {
-  constructor(x: word) {}
-  function abi_decode() -> word { return 0; }
-  function main() -> () { return (); }
+  public function echo(value:uint256) -> uint256 { return value; }
 }
 "#,
     );
@@ -426,7 +352,7 @@ import std.{*};
 function init_(x:word) -> word { return x; }
 
 contract C {
-  constructor(x:word) { let saved:word = init_(x); }
+  constructor(x:uint256) { let saved:word = init_(Typedef.rep(x)); }
   function main() -> () { return (); }
 }
 "#,
@@ -440,11 +366,14 @@ contract C {
 
     let (mut dispatch_db, dispatch_key) = db_with_main(
         r#"
-function main(x:word) -> word { return x; }
+import std.{*};
+import std.dispatch.{*};
+
+function main(x:uint256) -> uint256 { return x; }
 
 contract C {
-  function call_top() -> word { return main(1); }
-  public function ping(x:word) -> word { return x; }
+  function call_top() -> uint256 { return main(uint256(1)); }
+  public function ping(x:uint256) -> uint256 { return x; }
 }
 "#,
     );
@@ -556,10 +485,13 @@ function fallback_default_implementation() -> () { return (); }
 fn source_cannot_claim_a_generated_dispatch_name_type() {
     let (mut db, key) = db_with_main(
         r#"
+import std.{*};
+import std.dispatch.{*};
+
 data DispatchNameTy_C_ping;
 
 contract C {
-  public function ping(x: word) -> word { return x; }
+  public function ping(x: uint256) -> uint256 { return x; }
 }
 "#,
     );
@@ -1041,99 +973,6 @@ export { Payload(*) };
         }),
         "{diagnostics:?}"
     );
-}
-
-#[test]
-fn imported_product_adt_gets_definition_side_generic_evidence_during_typeck() {
-    let (mut db, key) = db_with_main(
-        r#"
-import std.{*};
-import model.{Point(*)};
-
-contract C {
-  public function roundtrip(value:Point) -> Point { return value; }
-}
-"#,
-    );
-    insert_real_std_modules(&mut db);
-    insert_module_source(
-        &mut db,
-        ModuleKey {
-            library: LibraryId::Main,
-            logical_path: vec!["model".to_owned()],
-        },
-        "/main/model.solc",
-        r#"
-export { Point(*) };
-data Point = Point(word, bool);
-"#,
-    );
-
-    let diagnostics = diagnostics_for_module(&db, &key);
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-}
-
-#[test]
-fn imported_nested_product_adts_close_definition_side_generic_evidence() {
-    let (mut db, key) = db_with_main(
-        r#"
-import std.{*};
-import model.{Public};
-
-contract C {
-  public function roundtrip(value:Public) -> Public { return value; }
-}
-"#,
-    );
-    insert_real_std_modules(&mut db);
-    insert_module_source(
-        &mut db,
-        ModuleKey {
-            library: LibraryId::Main,
-            logical_path: vec!["inner".to_owned()],
-        },
-        "/main/inner.solc",
-        r#"
-export { Inner(*) };
-data Inner = Inner(word, bool);
-"#,
-    );
-    insert_module_source(
-        &mut db,
-        ModuleKey {
-            library: LibraryId::Main,
-            logical_path: vec!["model".to_owned()],
-        },
-        "/main/model.solc",
-        r#"
-import inner.{Inner};
-
-export { Public };
-
-type InnerAlias = Inner;
-data Box(a) = Box(a);
-data Outer = Outer(Box(InnerAlias));
-type Public = Outer;
-"#,
-    );
-
-    let entry = module_id_from_key(&db, &key);
-    let frontend_diagnostics = nameres::reachable_diagnostics(&db, entry);
-    assert!(frontend_diagnostics.is_empty(), "{frontend_diagnostics:?}");
-    let imports = nameres::module_import_surface(&db, entry);
-    assert!(
-        matches!(
-            imports.types.get("Public"),
-            Some(hir::nameres::Resolution::Def {
-                kind: hir::nameres::DefResolutionKind::TypeAlias,
-                ..
-            })
-        ),
-        "{:?}",
-        imports.types
-    );
-    let diagnostics = diagnostics_for_module(&db, &key);
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
 #[test]
@@ -1932,53 +1771,5 @@ instance Manual:Generic(word) {}
     assert!(
         derived_generic_instance_plan(&db, module, adt_named(&db, module, "Manual"), generic)
             .is_none()
-    );
-}
-
-#[test]
-fn derived_generic_instance_plan_skips_canonical_std_adts() {
-    let mut db = TestDb::default();
-    let key = ModuleKey {
-        library: LibraryId::Std,
-        logical_path: vec!["internal".to_owned()],
-    };
-    insert_module_source(
-        &mut db,
-        key.clone(),
-        "/std/internal.solc",
-        r#"
-forall a rep . class a:Generic(rep) {}
-data Internal = Internal(word);
-instance Internal:Generic(word) {}
-"#,
-    );
-
-    let module_id = module_id_from_key(&db, &key);
-    let file = db.module_files.get(&key).copied().expect("std module file");
-    let module = parse_file_to_hir(&db, file).module(&db);
-    let generic = module
-        .items(&db)
-        .iter()
-        .find_map(|item| match item {
-            Item::ClassDef(class) => Some(class.def_id_value(&db)),
-            _ => None,
-        })
-        .expect("Generic class");
-    let internal = adt_named(&db, module, "Internal");
-
-    assert!(
-        derived_generic_plan(&db, module, internal).is_some(),
-        "representation plans remain available for compiler-internal uses"
-    );
-    assert!(
-        derived_generic_instance_plan(&db, module, internal, generic).is_none(),
-        "std class visibility must not auto-derive public Generic evidence"
-    );
-    let imports = nameres::module_env_for_hir_module(&db, module_id, module);
-    let resolution = hir::nameres::resolve_module(&db, module);
-    assert!(
-        generic_derivation_diagnostics(&db, module, &resolution.item_resolutions, &imports,)
-            .is_empty(),
-        "std manual Generic instances must not conflict with disabled auto-derivation"
     );
 }

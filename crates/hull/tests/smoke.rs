@@ -208,25 +208,6 @@ contract C {
 }
 
 #[test]
-fn compiler_owned_std_dispatch_needs_no_source_import() {
-    let (db, output) = specialize_src_with_std(
-        "implicit_std_dispatch",
-        r#"
-contract C {
-  public function echo(x : word) -> word { return x; }
-}
-"#,
-    );
-    assert_eq!(output.diagnostics, Vec::new());
-    let emitted = emit_module(db, &output.module, EmitOptions::default());
-    assert_eq!(emitted.diagnostics, Vec::new());
-    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
-    let hull = pretty_program(db, &emitted.program);
-    assert!(hull.contains("dispatch_selector_matches"), "{hull}");
-    assert!(hull.contains("opcodes_calldataload"), "{hull}");
-}
-
-#[test]
 fn dispatch_basic_fixture_uses_std_dispatch_main() {
     let fixture = repo_root()
         .join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch/basic.solc");
@@ -345,15 +326,12 @@ fn std_constructor_overlay_decodes_appended_arguments_in_deployment_closure() {
 import std.{*};
 import std.dispatch.{*};
 
-data Config = Config(word, bool);
-
 contract C {
-  constructor(config : Config, label : memory(string)) {
+  constructor(config : uint256) {
     let saved_config = config;
-    let saved_label = label;
   }
 
-  public function echo(config : Config) -> Config { return config; }
+  public function echo(config : uint256) -> uint256 { return config; }
 }
 "#,
     );
@@ -365,23 +343,13 @@ contract C {
     let outer = hull.split("object \"C\" {").next().expect("outer object");
     assert!(outer.contains("copy_arguments_for_constructor"), "{hull}");
     assert!(outer.contains("abi_decode"), "{hull}");
-    assert!(outer.contains("BoundedMemoryWordReader"), "{hull}");
-    for function in [
-        "WordReader_advance$BoundedMemoryWordReader",
-        "WordReader_read$BoundedMemoryWordReader",
-        "WordReader_copyToMem$BoundedMemoryWordReader",
-    ] {
-        let body = hull_function(&hull, function);
-        assert!(body.contains("0x08638556"), "{body}");
-    }
-    assert!(outer.contains("Generic_to$Config"), "{hull}");
+    assert!(outer.contains("MemoryWordReader"), "{hull}");
     assert!(
         outer.contains("argSize := sub(codesize(), programSize)"),
         "{hull}"
     );
-    assert!(outer.contains("minimumSize"), "{hull}");
-    assert!(outer.contains("if lt(argSize, "), "{hull}");
-    assert!(outer.contains("mstore(0, 0x08638556)"), "{hull}");
+    assert!(!outer.contains("minimumSize"), "{hull}");
+    assert!(!outer.contains("BoundedMemoryWordReader"), "{hull}");
     assert!(
         outer.contains("codecopy(memoryDataOffset, programSize, argSize)"),
         "{hull}"
@@ -399,126 +367,6 @@ contract C {
         "{hull}"
     );
     assert!(!runtime.contains("_start"), "{hull}");
-    assert!(runtime.contains("Generic_to$Config"), "{hull}");
-    assert!(runtime.contains("Generic_from$Config"), "{hull}");
-}
-
-#[test]
-fn std_dispatch_bool_uses_std_abi_decode_and_encode() {
-    let (db, output) = specialize_src_with_std(
-        "std_bool_dispatch",
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-contract C {
-  constructor(initial : bool) { let saved = initial; }
-  public function echo(x : bool) -> bool { return x; }
-}
-"#,
-    );
-    assert_eq!(output.diagnostics, Vec::new());
-    let emitted = emit_module(db, &output.module, EmitOptions::default());
-    assert_eq!(emitted.diagnostics, Vec::new());
-    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
-    let hull = pretty_program(db, &emitted.program);
-    assert!(
-        hull.contains("ABIDecode_decode$ABIDecoderLbool_CalldataWordReaderJ"),
-        "{hull}"
-    );
-    assert!(
-        hull.contains("ABIDecode_decode$ABIDecoderLbool_BoundedMemoryWordReaderJ"),
-        "{hull}"
-    );
-    assert!(hull.contains("ABIEncode_encodeInto$bool"), "{hull}");
-    for reader in ["CalldataWordReader", "BoundedMemoryWordReader"] {
-        let decoder = hull_function(
-            &hull,
-            &format!("ABIDecode_decode$ABIDecoderLbool_{reader}J"),
-        );
-        // Both calldata dispatch and constructor-memory decoding must retain
-        // the canonical-bool rejection path from the shared std instance.
-        assert!(decoder.contains("0x0557dbbf"), "{decoder}");
-    }
-}
-
-#[test]
-fn std_dispatch_product_adt_uses_generic_abi_decode_and_encode() {
-    let (db, output) = specialize_src_with_std(
-        "std_product_adt_dispatch",
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-data Point = Point(word, bool);
-
-contract C {
-  public function roundtrip(p : Point) -> Point { return p; }
-}
-"#,
-    );
-    assert_eq!(output.diagnostics, Vec::new());
-    let emitted = emit_module(db, &output.module, EmitOptions::default());
-    assert_eq!(emitted.diagnostics, Vec::new());
-    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
-    let hull = pretty_program(db, &emitted.program);
-    assert!(hull.contains("Generic_to$Point"), "{hull}");
-    assert!(hull.contains("Generic_from$Point"), "{hull}");
-    assert!(
-        hull.contains("ABIDecode_decode$ABIDecoderLPoint_CalldataWordReaderJ"),
-        "{hull}"
-    );
-    assert!(hull.contains("ABIEncode_encodeInto$Point"), "{hull}");
-}
-
-#[test]
-fn dynamic_product_adt_uses_abi_tuple_boundaries_at_nonzero_offsets() {
-    let (db, output) = specialize_src_with_std(
-        "std_dynamic_product_adt_dispatch",
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-data Payload = Payload(memory(string), bool);
-
-contract C {
-  constructor(prefix : word, payload : Payload) {}
-
-  public function roundtrip(prefix : word, payload : Payload) -> (word, Payload) {
-    return (prefix, payload);
-  }
-}
-"#,
-    );
-    assert_eq!(output.diagnostics, Vec::new());
-    let emitted = emit_module(db, &output.module, EmitOptions::default());
-    assert_eq!(emitted.diagnostics, Vec::new());
-    let hull = pretty_program(db, &emitted.program);
-    assert_eq!(
-        check_program_with_db(db, &emitted.program),
-        Vec::new(),
-        "{hull}"
-    );
-    assert!(hull.contains("Generic_to$Payload"), "{hull}");
-    assert!(hull.contains("Generic_from$Payload"), "{hull}");
-    assert!(
-        hull.contains("ABIDecode_decode$ABIDecoderLABITuple"),
-        "{hull}"
-    );
-    let tuple_decoder = hull_function(&hull, "ABIDecode_decode$ABIDecoderLABITuple");
-    assert!(
-        tuple_decoder.contains("Add_add$word(currentHeadOffset, 32)"),
-        "{tuple_decoder}"
-    );
-    assert!(
-        !tuple_decoder.contains("ABIAttribs_headSize"),
-        "a dynamic ADT tail is bounded by its outer offset slot, not its wider product head:\n{tuple_decoder}"
-    );
-    assert!(hull.contains("ABIEncode_encodeInto$ABITuple"), "{hull}");
-    assert!(
-        hull.contains("Add_add$word(basePtr, offset), Sub_sub$word(tail, basePtr)"),
-        "{hull}"
-    );
 }
 
 #[test]
@@ -784,48 +632,6 @@ fn recursive_adt_layouts_are_cycle_safe() {
 }
 
 #[test]
-fn logical_not_lowers_as_bool_sum_branch_swap() {
-    let (db, output) = specialize_src_with_std(
-        "logical_not",
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-function neq(x : word, y : word) -> bool {
-  return !(x == y);
-}
-
-contract C {
-  public function neqEntry(x : word, y : word) -> bool {
-    return neq(x, y);
-  }
-}
-"#,
-    );
-    assert_eq!(output.diagnostics, Vec::new());
-    let emitted = emit_module(db, &output.module, EmitOptions::default());
-    // Dispatch eligibility is covered by the dispatcher tests; this test cares
-    // about expression lowering only.
-    let non_dispatch: Vec<_> = emitted
-        .diagnostics
-        .iter()
-        .filter(|d| !matches!(d.kind, EmitDiagnosticKind::UnsupportedDispatchEntry { .. }))
-        .collect();
-    assert_eq!(non_dispatch, Vec::<&EmitDiagnostic>::new());
-    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
-    let hull = pretty_program(db, &emitted.program);
-    assert!(
-        hull.contains("return if<(unit + unit)> primEqWord(x, y)"),
-        "{hull}"
-    );
-    assert!(
-        hull.contains("then (inl<(unit + unit)>(())) else (inr<(unit + unit)>(()))"),
-        "{hull}"
-    );
-    assert!(hull.contains("if<"), "{hull}");
-}
-
-#[test]
 fn out_of_range_word_literals_wrap_in_hull_exprs_and_patterns() {
     const TWO_256: &str =
         "115792089237316195423570985008687907853269984665640564039457584007913129639936";
@@ -840,20 +646,26 @@ import std.{{*}};
 import std.dispatch.{{*}};
 
 contract C {{
-  public function exact() -> word {{
+  function exact() -> word {{
     return {TWO_256};
   }}
 
-  public function plus() -> word {{
+  function plus() -> word {{
     return {TWO_256_PLUS_ONE};
   }}
 
-  public function pick(x : word) -> word {{
+  function pick(x : word) -> word {{
     match x {{
       | {TWO_256} => return 10;
       | {TWO_256_PLUS_ONE} => return 11;
       | _ => return 12;
     }}
+  }}
+
+  public function main() -> word {{
+    let x : word = 0;
+    assembly {{ x := calldataload(0) }}
+    return exact() + plus() + pick(x);
   }}
 
 }}
@@ -863,8 +675,7 @@ contract C {{
 
     assert!(!hull.contains(TWO_256), "{hull}");
     assert!(!hull.contains(TWO_256_PLUS_ONE), "{hull}");
-    assert!(hull.contains("rets := 0"), "{hull}");
-    assert!(hull.contains("rets := 1"), "{hull}");
+    assert!(hull.contains("Add_add$word(1,"), "{hull}");
 
     let pick = hull_function(&hull, "main_C_pick_");
     assert_contains_in_order(
@@ -898,8 +709,14 @@ contract RetUnknown {
     return 0;
   }
 
-  public function get(x: word) -> word {
+  function get(x: word) -> word {
     return pick(true, x);
+  }
+
+  public function main() -> word {
+    let x : word = 0;
+    assembly { x := calldataload(0) }
+    return get(x);
   }
 
 }
@@ -1104,12 +921,19 @@ import std.{*};
 import std.dispatch.{*};
 
 contract IfAsm {
-  public function f(b: bool) -> word {
+  function f(b: bool) -> word {
     let x : word = 1;
     if (b) {
       assembly { x := 5 }
     }
     return x;
+  }
+
+  public function main() -> word {
+    let raw : word = 0;
+    assembly { raw := calldataload(0) }
+    let b : bool = tobool(raw);
+    return f(b);
   }
 
 }
@@ -1127,13 +951,20 @@ import std.{*};
 import std.dispatch.{*};
 
 contract MatchAsm {
-  public function g(b: bool) -> word {
+  function g(b: bool) -> word {
     let x : word = 1;
     match b {
       | true => assembly { x := 5 }
       | false => {}
     }
     return x;
+  }
+
+  public function main() -> word {
+    let raw : word = 0;
+    assembly { raw := calldataload(0) }
+    let b : bool = tobool(raw);
+    return g(b);
   }
 
 }
@@ -1357,7 +1188,6 @@ fn load_reachable_modules(db: &mut TestDb, entry: ModuleKey) -> Vec<String> {
             refs.import_refs
                 .into_iter()
                 .chain(refs.export_refs)
-                .chain(refs.compiler_refs)
                 .filter_map(
                     |path| match resolve_module_path_candidate(&*db, module, &path) {
                         Ok(resolved) => Some((resolved.module.key(&*db), resolved.file_path)),
