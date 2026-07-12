@@ -29,6 +29,7 @@ use super::{
     value::{BigInt, bitand_word, bitor_word, bitxor_word, word_div, word_low_byte, word_mod},
     yul_const::{
         eval_yul_op, merge_yul_state, subst_yul_block, venv_to_yul_state, venv_to_yul_subst,
+        yul_written_names,
     },
 };
 use crate::{
@@ -568,7 +569,9 @@ impl<'db> Evaluator<'db> {
                 )
             }
             MonoStmtKind::Assembly(body) => {
-                let subst = venv_to_yul_subst(self.db, &env);
+                let mut subst = venv_to_yul_subst(self.db, &env);
+                let written = yul_written_names(self.db, &body);
+                subst.retain(|name, _| !written.contains(name));
                 let body = subst_yul_block(self.db, &subst, body);
                 let state = venv_to_yul_state(&env);
                 if let Some(state) = self.eval_yul_block(state, &body) {

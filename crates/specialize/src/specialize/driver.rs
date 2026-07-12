@@ -21,6 +21,7 @@ pub(super) struct Driver<'db> {
     pub(super) synthetic_order: Vec<SyntheticKey<'db>>,
     pub(super) synthetic_funs: FxHashMap<SyntheticKey<'db>, MonoFunction<'db>>,
     pub(super) queue: VecDeque<PendingSpec<'db>>,
+    pub(super) dispatch_selector_overrides: Vec<(String, String)>,
     pub(super) diagnostics: Vec<SpecializeDiagnostic<'db>>,
 }
 
@@ -123,6 +124,7 @@ impl<'db> Driver<'db> {
             synthetic_order: Vec::new(),
             synthetic_funs: FxHashMap::default(),
             queue: VecDeque::new(),
+            dispatch_selector_overrides: Vec::new(),
             diagnostics: Vec::new(),
         };
         driver.collect_module_index();
@@ -162,13 +164,14 @@ impl<'db> Driver<'db> {
             frontend_desugar: frontend_desugar_plan(self.db, self.module),
             items,
         };
-        let (module, mut eval_diagnostics) = evaluate_module(
+        let (mut module, mut eval_diagnostics) = evaluate_module(
             self.db,
             module,
             EvaluateOptions {
                 fuel: self.options.eval_fuel,
             },
         );
+        patch_runtime_dispatch_selectors(&mut module, &self.dispatch_selector_overrides);
         self.diagnostics.append(&mut eval_diagnostics);
 
         SpecializeOutput {
@@ -428,6 +431,21 @@ impl<'db> Driver<'db> {
                 self.runtime_main_origin(function, def)
                     .map(|origin| (function, origin))
             });
+            if runtime_main
+                .as_ref()
+                .is_some_and(|(_, origin)| *origin == MonoRuntimeMainOrigin::StdDispatch)
+            {
+                for method in &surface.methods {
+                    self.dispatch_selector_overrides.push((
+                        format!(
+                            "MethodLDispatchNameTy_{}_{}",
+                            ident_text(self.db, &contract.name_elem(self.db)),
+                            method.name
+                        ),
+                        u32::from_be_bytes(method.selector.0).to_string(),
+                    ));
+                }
+            }
             let deployment_main = contract.items(self.db).iter().find_map(|item| {
                 let ContractItem::FunctionDef(function) = *item else {
                     return None;
@@ -1059,5 +1077,80 @@ impl<'db> Driver<'db> {
     ) -> Option<MonoTy<'db>> {
         self.ensure_closed(ty, context, Some(span))
             .then(|| MonoTy::new_unchecked(ty))
+    }
+}
+
+fn patch_runtime_dispatch_selectors(module: &mut MonoModule<'_>, selectors: &[(String, String)]) {
+    for item in &mut module.items {
+        let MonoItem::Function(function) = item else {
+            continue;
+        };
+        if !function.name.starts_with("dispatch_selector_matches") {
+            continue;
+        }
+        let Some((_, selector)) = selectors
+            .iter()
+            .find(|(marker, _)| function.name.contains(marker))
+        else {
+            continue;
+        };
+        let _ = replace_selector_candidate(&mut function.body, selector);
+    }
+}
+
+fn replace_selector_candidate(stmts: &mut [MonoStmt<'_>], replacement: &str) -> bool {
+    for stmt in stmts {
+        let replaced = match &mut stmt.kind {
+            MonoStmtKind::Let { id, init, .. } if id.name == "candidate" => init
+                .as_mut()
+                .is_some_and(|expr| replace_selector_value(expr, replacement)),
+            MonoStmtKind::Assign { lhs, rhs, .. } if matches!(&lhs.kind, MonoExprKind::Var(id) if id.name == "candidate") => {
+                replace_selector_value(rhs, replacement)
+            }
+            MonoStmtKind::Match { arms, .. } => arms
+                .iter_mut()
+                .any(|arm| replace_selector_candidate(&mut arm.body, replacement)),
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                replace_selector_candidate(init, replacement)
+                    || replace_selector_candidate(post, replacement)
+                    || replace_selector_candidate(body, replacement)
+            }
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                replace_selector_candidate(then_body, replacement)
+                    || else_body
+                        .as_mut()
+                        .is_some_and(|body| replace_selector_candidate(body, replacement))
+            }
+            MonoStmtKind::Block(body) => replace_selector_candidate(body, replacement),
+            MonoStmtKind::Let { .. }
+            | MonoStmtKind::Return(_)
+            | MonoStmtKind::Expr(_)
+            | MonoStmtKind::Assign { .. }
+            | MonoStmtKind::Assembly(_)
+            | MonoStmtKind::Break
+            | MonoStmtKind::Continue
+            | MonoStmtKind::Error => false,
+        };
+        if replaced {
+            return true;
+        }
+    }
+    false
+}
+
+fn replace_selector_value(expr: &mut MonoExpr<'_>, replacement: &str) -> bool {
+    match &mut expr.kind {
+        MonoExprKind::Lit(hir::ast::function::LitKind::Number(value)) => {
+            *value = replacement.to_owned();
+            true
+        }
+        MonoExprKind::TypeAnnot { expr, .. } => replace_selector_value(expr, replacement),
+        _ => false,
     }
 }

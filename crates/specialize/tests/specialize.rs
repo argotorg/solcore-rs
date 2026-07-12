@@ -4,7 +4,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use hir::{anchor::DefLocationTable, ast::item::Module, input::SourceFile};
+use hir::{
+    anchor::DefLocationTable,
+    ast::{
+        function::{YulExprKind, YulStmtKind},
+        item::Module,
+    },
+    input::SourceFile,
+    nameres::ident_text,
+};
 use hir_ty::{BuiltinTyCtor, Ty, prepare_module};
 use nameres::{
     LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
@@ -929,6 +937,46 @@ contract PayableTest {
 }
 
 #[test]
+fn tuple_dispatch_uses_the_canonical_abi_selector() {
+    let output = specialize_src_with_std(
+        r#"
+import std.{*};
+import std.dispatch.{*};
+
+contract TupleSelector {
+  public function pack(point: (uint256, uint256), tag: uint256) -> uint256 {
+    return tag;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let selector = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Function(function)
+                if function.name.starts_with("dispatch_selector_matches")
+                    && function.name.contains("TupleSelector_pack") =>
+            {
+                Some(function)
+            }
+            _ => None,
+        })
+        .expect("tuple selector helper");
+    assert!(
+        stmts_have_number_literal(&selector.body, "2780501819"),
+        "{selector:?}"
+    );
+    assert!(
+        !stmts_have_number_literal(&selector.body, "2335799844"),
+        "{selector:?}"
+    );
+}
+
+#[test]
 fn constructor_overlay_roots_multi_argument_deployment_main() {
     let output = specialize_src_with_std(
         r#"
@@ -1522,6 +1570,52 @@ contract C {
 
     assert_eq!(output.diagnostics, Vec::new());
     assert_eq!(main_return_number(&output), Some("42".to_owned()));
+}
+
+#[test]
+fn assembly_substitution_does_not_reuse_values_after_an_in_block_write() {
+    let (db, output) = specialize_src(
+        r#"
+contract C {
+  public function main(x: word) -> word {
+    let a: word = 1;
+    assembly {
+      a := add(a, x)
+      a := add(a, a)
+    }
+    return a;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let function = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Function(function) if function.name.contains("_main_") => Some(function),
+            _ => None,
+        })
+        .expect("specialized main");
+    let body = function
+        .body
+        .iter()
+        .find_map(|stmt| match &stmt.kind {
+            MonoStmtKind::Assembly(body) => Some(body),
+            _ => None,
+        })
+        .expect("residual assembly");
+    let YulStmtKind::Assign { value, .. } = &body[1].kind else {
+        panic!("expected second assignment, got {:?}", body[1].kind);
+    };
+    let YulExprKind::Call { args, .. } = &value.kind else {
+        panic!("expected add call, got {:?}", value.kind);
+    };
+    assert!(args.iter().all(|arg| {
+        matches!(&arg.kind, YulExprKind::Ident(name) if ident_text(db, name) == "a")
+    }));
 }
 
 #[test]

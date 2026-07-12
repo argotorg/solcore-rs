@@ -1,6 +1,6 @@
 use hir::ast::function::{LitKind, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind};
 use hir_ty::Db;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     TypeReg, VEnv, YulState, ident_text,
@@ -76,6 +76,56 @@ pub(super) fn venv_to_yul_subst<'db>(
             yul_lit_from_known_expr(db, expr).map(|expr| (name.clone(), expr))
         })
         .collect()
+}
+
+pub(super) fn yul_written_names<'db>(db: &'db dyn Db, body: &[YulStmt<'db>]) -> FxHashSet<String> {
+    let mut names = FxHashSet::default();
+    collect_yul_written_names(db, body, &mut names);
+    names
+}
+
+fn collect_yul_written_names<'db>(
+    db: &'db dyn Db,
+    body: &[YulStmt<'db>],
+    names: &mut FxHashSet<String>,
+) {
+    for stmt in body {
+        match &stmt.kind {
+            YulStmtKind::Let { names: bound, .. } | YulStmtKind::Assign { names: bound, .. } => {
+                names.extend(bound.iter().map(|name| ident_text(db, name)));
+            }
+            YulStmtKind::Block(body) | YulStmtKind::If { body, .. } => {
+                collect_yul_written_names(db, body, names);
+            }
+            YulStmtKind::For {
+                init, post, body, ..
+            } => {
+                collect_yul_written_names(db, init, names);
+                collect_yul_written_names(db, post, names);
+                collect_yul_written_names(db, body, names);
+            }
+            YulStmtKind::Switch { cases, default, .. } => {
+                for case in cases {
+                    collect_yul_written_names(db, &case.body, names);
+                }
+                if let Some(default) = default {
+                    collect_yul_written_names(db, default, names);
+                }
+            }
+            YulStmtKind::FunctionDef {
+                params, rets, body, ..
+            } => {
+                names.extend(params.iter().map(|name| ident_text(db, name)));
+                names.extend(rets.iter().map(|name| ident_text(db, name)));
+                collect_yul_written_names(db, body, names);
+            }
+            YulStmtKind::Expr(_)
+            | YulStmtKind::Leave
+            | YulStmtKind::Break
+            | YulStmtKind::Continue
+            | YulStmtKind::Error => {}
+        }
+    }
 }
 
 fn yul_lit_from_known_expr<'db>(db: &'db dyn Db, expr: &MonoExpr<'db>) -> Option<YulExpr<'db>> {

@@ -751,7 +751,7 @@ data memory(t) = memory(word);
 
     assert_eq!(
         surface.methods[0].signature,
-        "spell(uint256,uint256,bool,string,bytes,bytes32,address,uint256)"
+        "spell(uint256,(uint256,bool),string,bytes,bytes32,address,uint256)"
     );
 }
 

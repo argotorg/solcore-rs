@@ -152,7 +152,7 @@ fn tuple_signature_string<'db>(
     for elem in flatten_tuple(db, elems) {
         parts.push(signature_type_string(db, elem, adt_stack)?);
     }
-    Ok(parts.join(","))
+    Ok(format!("({})", parts.join(",")))
 }
 
 fn signature_component_type_string<'db>(
