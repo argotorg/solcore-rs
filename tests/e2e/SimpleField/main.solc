@@ -1,4 +1,5 @@
 import std.{*};
+import std.dispatch.{*};
 pragma no-patterson-condition ;
 pragma no-coverage-condition ;
 pragma no-bounded-variable-condition ;
@@ -11,7 +12,7 @@ contract Simple {
   }
 
   // #[() -> 0]
-  public function run () -> word {
-    return getVal();
+  public function run () -> uint256 {
+    return uint256(getVal());
   }
 }

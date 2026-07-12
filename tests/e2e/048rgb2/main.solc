@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 contract RGB {
   data Color = R | G | B;
 
@@ -10,5 +13,5 @@ contract RGB {
   }
 
   // #[() -> 42]
-  public function run() -> word { return fromEnum(Color.B); }
+  public function run() -> uint256 { return uint256(fromEnum(Color.B)); }
 }

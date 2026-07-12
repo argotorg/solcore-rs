@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 data Food = Curry | Beans | Other;
 data CFood = Red(Food) | Green(Food) | Nocolor;
 
@@ -18,7 +21,7 @@ contract FoodContract {
   }
 
   // #[() -> 42]
-  public function run() -> word {
-  return fromEnum(id(CFood.Green(Food.Beans)));
+  public function run() -> uint256 {
+  return uint256(fromEnum(id(CFood.Green(Food.Beans))));
   }
 }

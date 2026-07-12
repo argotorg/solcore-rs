@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 contract Option {
   data Option(a) = None | Some(a);
 
@@ -9,7 +12,7 @@ contract Option {
   }
 
   // #[() -> 7]
-  public function run() -> word {
-    return maybe(7, Option.None);
+  public function run() -> uint256 {
+    return uint256(maybe(7, Option.None));
   }
 }

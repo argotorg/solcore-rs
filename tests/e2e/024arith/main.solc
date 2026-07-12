@@ -59,7 +59,9 @@ function exp(x : word, y: word) -> word {
 
 contract Arith {
   // #[() -> 42]
-  public function run() -> word {
-    return add(mod(sub(div(exp(2,18),4), 1), 16), 27);
+  public function run() -> uint256 {
+    return uint256(add(mod(sub(div(exp(2,18),4), 1), 16), 27));
   }
 }
+import std.{*};
+import std.dispatch.{*};

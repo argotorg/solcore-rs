@@ -26,5 +26,7 @@ contract NegBool {
   }
 
   // #[() -> 1]
-  public function run() -> word { return  fromB(Neg.neg(B.F)); }
+  public function run() -> uint256 { return uint256(fromB(Neg.neg(B.F))); }
 }
+import std.{*};
+import std.dispatch.{*};

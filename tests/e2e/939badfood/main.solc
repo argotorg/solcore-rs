@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 forall a . class a: Enum {
   function fromEnum(x : a) -> word;
 }
@@ -16,7 +19,7 @@ instance Food : Enum {
 
 contract FoodContract {
   // #[() -> 2]
-  public function run() -> word {
-        return Enum.fromEnum(Food.Beans);
+  public function run() -> uint256 {
+        return uint256(Enum.fromEnum(Food.Beans));
   }
 }

@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 contract Pair {
 
   function fst(p : (word, word)) -> word {
@@ -7,7 +10,7 @@ contract Pair {
   }
 
   // #[() -> 1]
-  public function run() -> word {
-    return fst((1,0));
+  public function run() -> uint256 {
+    return uint256(fst((1,0)));
   }
 }

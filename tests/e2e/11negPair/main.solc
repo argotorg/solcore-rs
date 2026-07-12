@@ -50,5 +50,7 @@ contract NegPair {
 }
 
  // #[() -> 1]
- public function run() -> word { return  fromB(fst(Neg.neg((B.F,B.T)))); }
+ public function run() -> uint256 { return uint256(fromB(fst(Neg.neg((B.F,B.T))))); }
 }
+import std.{*};
+import std.dispatch.{*};

@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 // test single contract field
 import std;
 pragma no-patterson-condition ;
@@ -8,8 +11,8 @@ contract Counter {
   counter : word;
 
   // #[() -> 1]
-  public function run() -> word {
+  public function run() -> uint256 {
     counter = std.addWord(counter, 1);
-    return counter;
+    return uint256(counter);
   }
 }

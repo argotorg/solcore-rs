@@ -30,5 +30,7 @@ function addPair(p : Pair(word, word)) -> word {
 
 contract FstSnd {
  // #[() -> 42]
- public function run() -> word { return  addPair(Pair(41,1)); }
+ public function run() -> uint256 { return uint256(addPair(Pair(41,1))); }
 }
+import std.{*};
+import std.dispatch.{*};

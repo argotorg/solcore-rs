@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 data RGB = Red(word) | Green(word) | Blue(word);
 
 contract RGB3 {
@@ -12,7 +15,7 @@ contract RGB3 {
       return res;
   }
   // #[() -> 44]
-  public function run() -> word {
-    choose(RGB.Green(42))
+  public function run() -> uint256 {
+    return uint256(choose(RGB.Green(42)));
   }
 }

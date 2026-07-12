@@ -1,4 +1,5 @@
 import std.{*};
+import std.dispatch.{*};
 
 contract Arithmetic {
   constructor() {}

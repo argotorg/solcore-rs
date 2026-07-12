@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 contract Triple {
 
   function asel(t : (word, word, word)) -> word {
@@ -7,7 +10,7 @@ contract Triple {
   }
 
   // #[() -> 42]
-  public function run() -> word {
-    return asel((1,21,42));
+  public function run() -> uint256 {
+    return uint256(asel((1,21,42)));
   }
 }

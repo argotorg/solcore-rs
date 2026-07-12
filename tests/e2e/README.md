@@ -1,7 +1,9 @@
 # Backend E2E fixtures
 
 Both the Yul and Sonatina backends run every `**/main.solc` fixture in this
-directory. Expectations live next to the contract function they exercise:
+directory. Selector-dispatched fixtures explicitly import both `std.{*}` and
+`std.dispatch.{*}`. Expectations live next to the contract function they
+exercise:
 
 ```solcore
 // #[(0, 1) -> 1]
@@ -13,30 +15,30 @@ public function add(x: uint256, y: uint256) -> uint256 {
 
 The directive grammar is `#[(arguments) -> expected]`. Directive values are
 typed contextually from the target function's canonical ABI signature. Decimal
-and hexadecimal words, booleans, and static tuples (including the ABI tuple
-representation of a single-constructor product data type) are supported. An
+and hexadecimal `uint256` values, booleans, and static tuples are supported. An
 argument or result with the wrong type or arity is rejected while resolving the
-fixture, before any EVM call is made.
+fixture, before any EVM call is made. The execution fixtures deliberately use
+only selector ABI types supported by the shared reference std. In particular,
+they do not expose primitive `word` or user ADTs directly; those surfaces lack
+complete dispatch evidence in the current Haskell snapshot.
 
 The outer parentheses delimit the argument or result list; another pair is
 needed for a tuple value. Thus a single composite argument and result use
 double parentheses:
 
 ```solcore
-data Point = Point(word, bool);
-
-// #[((7, true)) -> ((7, true))]
-public function echo(point: Point) -> Point {
+// #[((7, 1)) -> (7, 1)]
+public function echo(point: (uint256, uint256)) -> (uint256, uint256) {
   return point;
 }
 ```
 
-This nesting also distinguishes a single nested composite result from multiple
-outputs. For example, `(((7, true), 9))` is one `TaggedPoint(Point, word)`
-result, while `((7, true), 9)` is two results: a `Point` followed by a word.
-The complete shared example is in `composite-values/main.solc`. A directive
-such as `((7, 9), 9)` for `pack(Point, word)` is an error because the second
-`Point` field must be a boolean. Normal comments are ignored, while a malformed
+Top-level tuple returns are flattened into multiple ABI results. The language's
+right-nested tuple representation also flattens a nested tuple used as one ABI
+parameter: the single argument `((uint256, uint256), uint256)` is written as
+`((7, 1, 9))` in a directive. By contrast, two parameters consisting of a pair
+and a scalar are written as `((7, 1), 9)`. The complete shared example is in
+`composite-values/main.solc`. Normal comments are ignored, while a malformed
 comment beginning with `#[` is an error.
 
 Each case is lowered by the selected backend, compiled to EVM creation

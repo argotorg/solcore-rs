@@ -1,3 +1,6 @@
+import std.{*};
+import std.dispatch.{*};
+
 function add(x : word, y : word) -> word {
   let res: word;
   assembly {
@@ -8,7 +11,7 @@ function add(x : word, y : word) -> word {
 
 contract Add1 {
   // #[() -> 42]
-  public function run() -> word {
-    return add(40, 2);
+  public function run() -> uint256 {
+    return uint256(add(40, 2));
   }
 }

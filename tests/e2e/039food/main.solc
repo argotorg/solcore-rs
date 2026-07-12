@@ -24,7 +24,9 @@ contract FoodContract {
   }
 
   // #[() -> 42]
-  public function run() -> word {
-  return fromEnum(eat(CFood.Green(Food.Beans)));
+  public function run() -> uint256 {
+  return uint256(fromEnum(eat(CFood.Green(Food.Beans))));
   }
 }
+import std.{*};
+import std.dispatch.{*};

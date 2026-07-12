@@ -1,9 +1,12 @@
+import std.{*};
+import std.dispatch.{*};
+
 contract Not {
   data Bool = False | True;
 
   // #[() -> 1]
-  public function run() -> word {
-    return fromBool(bnot(Bool.False));
+  public function run() -> uint256 {
+    return uint256(fromBool(bnot(Bool.False)));
   }
 
   function fromBool(b : Bool) -> word {

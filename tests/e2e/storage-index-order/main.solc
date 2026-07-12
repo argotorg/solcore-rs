@@ -1,4 +1,5 @@
 import std.{*};
+import std.dispatch.{*};
 
 contract StorageIndexOrder {
   counter: word;
@@ -15,7 +16,7 @@ contract StorageIndexOrder {
   }
 
   // #[() -> 2]
-  public function run() -> word {
+  public function run() -> uint256 {
     counter = 0;
     m[1] = 0;
     m[2] = 0;
@@ -27,7 +28,7 @@ contract StorageIndexOrder {
     assembly {
       packed := add(one, mul(two, 10))
     }
-    return packed;
+    return uint256(packed);
   }
 
   function get(k: word) -> word {
