@@ -1076,6 +1076,107 @@ mod tests {
     }
 
     #[test]
+    fn missing_import_code_action_round_trips_over_wasm_dispatch() {
+        let mut world = WorldState::new();
+        let provider = "function value() -> word { return 1; }\n\nexport { value };\n";
+        let main = "function main() -> word { return value(); }\n";
+
+        let _ = dispatch(&mut world, &did_open_uri_message(MATH_URI, provider));
+        let opened = dispatch(&mut world, &did_open_uri_message(URI, main));
+        let notification = diagnostic_notification_for_uri(&opened, URI);
+        let diagnostic = notification["params"]["diagnostics"]
+            .as_array()
+            .and_then(|diagnostics| {
+                diagnostics.iter().find(|diagnostic| {
+                    diagnostic["code"] == hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME
+                })
+            })
+            .cloned()
+            .expect("undefined-name diagnostic");
+        let range = diagnostic["range"].clone();
+
+        let actions = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "missing-import-1",
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "range": range,
+                    "context": { "diagnostics": [diagnostic], "only": ["quickfix"] }
+                }
+            })
+            .to_string(),
+        );
+        let response = parse_message(&actions[0]);
+        let actions = response["result"]
+            .as_array()
+            .expect("code action result array");
+        assert_eq!(actions.len(), 1, "expected one auto-import: {response:#?}");
+        let action = &actions[0];
+        assert_eq!(action["title"], "Import `value` from `lib.math`");
+        assert_eq!(action["kind"], "quickfix");
+        assert_eq!(action["isPreferred"], true);
+        assert_eq!(
+            action["edit"]["changes"][URI][0],
+            serde_json::json!({
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 0 }
+                },
+                "newText": "import lib.math.{value};\n"
+            })
+        );
+    }
+
+    #[test]
+    fn standard_library_missing_import_round_trips_over_wasm_dispatch() {
+        let mut world = WorldState::new();
+        let source = "function main() -> word { assert(true); return 1; }\n";
+        let opened = dispatch(&mut world, &did_open_message(source));
+        let notification = diagnostic_notification_for_uri(&opened, URI);
+        let diagnostic = notification["params"]["diagnostics"]
+            .as_array()
+            .and_then(|diagnostics| {
+                diagnostics.iter().find(|diagnostic| {
+                    diagnostic["code"] == hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME
+                })
+            })
+            .cloned()
+            .expect("undefined-name diagnostic");
+
+        let actions = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "std-missing-import-1",
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "range": diagnostic["range"],
+                    "context": { "diagnostics": [diagnostic], "only": ["quickfix"] }
+                }
+            })
+            .to_string(),
+        );
+        let response = parse_message(&actions[0]);
+        let actions = response["result"]
+            .as_array()
+            .expect("code action result array");
+        assert_eq!(
+            actions.len(),
+            1,
+            "expected one std auto-import: {response:#?}"
+        );
+        assert_eq!(actions[0]["title"], "Import `assert` from `std`");
+        assert_eq!(
+            actions[0]["edit"]["changes"][URI][0]["newText"],
+            "import std.{assert};\n"
+        );
+    }
+
+    #[test]
     fn closing_untitled_document_removes_it_from_workspace_symbols() {
         let mut world = WorldState::new();
         let uri = "untitled:Untitled-1";

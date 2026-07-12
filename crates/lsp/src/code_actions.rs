@@ -5,16 +5,25 @@ use std::{
     collections::{HashMap, HashSet},
 };
 
+use hir::{
+    diag::{AnyDiagnostic, LabelSpan},
+    nameres::{NameresDiagnostic, UndefinedNameKind},
+};
 use lsp_types::{
     CodeAction, CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionResponse,
     Diagnostic as LspDiagnostic, Position, Range, TextEdit, Url, WorkspaceEdit,
 };
+use nameres::Db as _;
 use vfs::{DiagnosticSuggestion, DiagnosticTextEdit, SuggestionApplicability};
 
 use crate::{
     diagnostics::{compute_vfs_diagnostics, to_lsp_diagnostic},
+    import_edits::plan_import_edit,
+    resolve::module_id_for_uri,
     state::WorldState,
 };
+
+const MAX_AUTO_IMPORT_CANDIDATES: usize = 20;
 
 /// Computes compiler-provided quick fixes for diagnostics in an LSP request.
 ///
@@ -37,12 +46,11 @@ pub fn handle_code_action(
         return Some(Vec::new());
     }
 
+    let db = world.db();
+    let current_module = module_id_for_uri(world, db, uri);
     let mut actions = Vec::new();
     let mut seen = HashSet::new();
     for diagnostic in compute_vfs_diagnostics(world, uri) {
-        if diagnostic.suggestions.is_empty() {
-            continue;
-        }
         let published = to_lsp_diagnostic(world, line_index, diagnostic.clone());
         if !ranges_intersect(range, published.range) {
             continue;
@@ -55,7 +63,12 @@ pub fn handle_code_action(
             continue;
         };
 
-        for suggestion in &diagnostic.suggestions {
+        let mut suggestions = diagnostic.suggestions.clone();
+        if let Some(module) = current_module {
+            suggestions.extend(auto_import_suggestions(db, module, &diagnostic));
+        }
+
+        for suggestion in &suggestions {
             if matches!(
                 suggestion.applicability,
                 SuggestionApplicability::HasPlaceholders | SuggestionApplicability::Unspecified
@@ -85,6 +98,133 @@ pub fn handle_code_action(
     }
 
     Some(actions)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MissingImport {
+    name: String,
+    namespace: nameres::Namespace,
+}
+
+fn auto_import_suggestions<'db>(
+    db: &'db vfs::AnalysisHost,
+    current_module: nameres::ModuleId<'db>,
+    diagnostic: &vfs::Diagnostic,
+) -> Vec<DiagnosticSuggestion> {
+    let Some(missing) = missing_import_for_diagnostic(db, current_module, diagnostic) else {
+        return Vec::new();
+    };
+    if !parser::is_valid_identifier(&missing.name) {
+        return Vec::new();
+    }
+
+    let Some(file) = db.module_file(current_module) else {
+        return Vec::new();
+    };
+    let Some(source) = file.content(db).as_deref() else {
+        return Vec::new();
+    };
+    let parsed = parser::parse_file_to_hir(db, file);
+    let mut planned = Vec::new();
+    let candidates =
+        nameres::auto_import_candidates(db, current_module, &missing.name, missing.namespace);
+    for candidate in candidates {
+        let Some(edit) = plan_import_edit(
+            db,
+            source,
+            parsed,
+            &candidate.import_path,
+            &candidate.public_name,
+        ) else {
+            continue;
+        };
+        planned.push((candidate, edit));
+        if planned.len() == MAX_AUTO_IMPORT_CANDIDATES {
+            break;
+        }
+    }
+
+    let machine_applicable = planned.len() == 1 && diagnostic.suggestions.is_empty();
+    let file_url = file.url(db).as_str().to_owned();
+    planned
+        .into_iter()
+        .map(|(candidate, edit)| DiagnosticSuggestion {
+            title: format!(
+                "Import `{}` from `{}`",
+                candidate.public_name, candidate.import_path
+            ),
+            applicability: if machine_applicable {
+                SuggestionApplicability::MachineApplicable
+            } else {
+                SuggestionApplicability::MaybeIncorrect
+            },
+            edits: vec![DiagnosticTextEdit {
+                range: vfs::DiagRange {
+                    file_url: file_url.clone(),
+                    start: edit.start,
+                    end: edit.end,
+                },
+                replacement: edit.replacement,
+            }],
+        })
+        .collect()
+}
+
+fn missing_import_for_diagnostic<'db>(
+    db: &'db vfs::AnalysisHost,
+    module: nameres::ModuleId<'db>,
+    diagnostic: &vfs::Diagnostic,
+) -> Option<MissingImport> {
+    let primary = diagnostic.primary.as_ref()?;
+    nameres::module_diagnostics(db, module)
+        .iter()
+        .find_map(|candidate| {
+            let AnyDiagnostic::Nameres(candidate) = candidate else {
+                return None;
+            };
+            let (name, namespace, span, code) = match candidate {
+                NameresDiagnostic::UndefinedName {
+                    name,
+                    span,
+                    kind: UndefinedNameKind::Term,
+                    ..
+                } => (
+                    name,
+                    nameres::Namespace::Term,
+                    span,
+                    hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME,
+                ),
+                NameresDiagnostic::UndefinedTypeConstructor { name, span, .. } => (
+                    name,
+                    nameres::Namespace::Type,
+                    span,
+                    hir::diag::DiagnosticCode::NAMERES_UNDEFINED_TYPE_CONSTRUCTOR,
+                ),
+                NameresDiagnostic::UndefinedClass { name, span } => (
+                    name,
+                    nameres::Namespace::Class,
+                    span,
+                    hir::diag::DiagnosticCode::NAMERES_UNDEFINED_CLASS,
+                ),
+                _ => return None,
+            };
+            (diagnostic.code.as_deref() == Some(code) && diagnostic_span_matches(db, span, primary))
+                .then(|| MissingImport {
+                    name: name.clone(),
+                    namespace,
+                })
+        })
+}
+
+fn diagnostic_span_matches(
+    db: &vfs::AnalysisHost,
+    span: &LabelSpan,
+    range: &vfs::DiagRange,
+) -> bool {
+    let absolute = span.resolve_to_absolute(db);
+    absolute.file().url(db).as_str() == range.file_url
+        && absolute.start().as_u32() == range.start
+        && absolute.end().as_u32() == range.end
 }
 
 fn quick_fixes_requested(context: &CodeActionContext) -> bool {
@@ -250,15 +390,18 @@ mod tests {
     }
 
     fn undefined_name_diagnostic(world: &WorldState, uri: &Url) -> LspDiagnostic {
+        diagnostic_with_code(
+            world,
+            uri,
+            hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME,
+        )
+    }
+
+    fn diagnostic_with_code(world: &WorldState, uri: &Url, code: &str) -> LspDiagnostic {
         compute_diagnostics(world, uri)
             .into_iter()
-            .find(|diagnostic| {
-                diagnostic.code
-                    == Some(NumberOrString::String(
-                        hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME.to_owned(),
-                    ))
-            })
-            .expect("undefined-name diagnostic")
+            .find(|diagnostic| diagnostic.code == Some(NumberOrString::String(code.to_owned())))
+            .unwrap_or_else(|| panic!("missing diagnostic {code}"))
     }
 
     fn context(diagnostic: LspDiagnostic) -> CodeActionContext {
@@ -351,6 +494,31 @@ mod tests {
             handle_code_action(&world, &uri, diagnostic.range, &context(wrong_range)),
             Some(Vec::new())
         );
+    }
+
+    #[test]
+    fn typed_missing_import_lookup_requires_the_same_diagnostic_code() {
+        let (world, uri) = world_with_main("function main() -> word { return missing; }\n");
+        let db = world.db();
+        let module = module_id_for_uri(&world, db, &uri).expect("main module");
+        let mut diagnostic = compute_vfs_diagnostics(&world, &uri)
+            .into_iter()
+            .find(|diagnostic| {
+                diagnostic.code.as_deref()
+                    == Some(hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME)
+            })
+            .expect("undefined-name diagnostic");
+
+        assert_eq!(
+            missing_import_for_diagnostic(db, module, &diagnostic),
+            Some(MissingImport {
+                name: "missing".to_owned(),
+                namespace: nameres::Namespace::Term,
+            })
+        );
+        diagnostic.code =
+            Some(hir::diag::DiagnosticCode::NAMERES_UNDEFINED_TYPE_CONSTRUCTOR.to_owned());
+        assert_eq!(missing_import_for_diagnostic(db, module, &diagnostic), None);
     }
 
     #[test]
@@ -636,5 +804,271 @@ mod tests {
         };
 
         assert!(suggestion_workspace_edit(&world, &suggestion).is_none());
+    }
+
+    #[test]
+    fn unique_exported_term_gets_a_preferred_auto_import() {
+        let main = "function main() -> word { return value(); }\n";
+        let math = "function value() -> word { return 1; }\nexport { value };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(math_uri.clone(), math.to_owned()));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        let actions = handle_code_action(
+            &world,
+            &main_uri,
+            diagnostic.range,
+            &context(diagnostic.clone()),
+        )
+        .expect("code-action response");
+        let action = action(&actions);
+
+        assert_eq!(action.title, "Import `value` from `lib.math`");
+        assert_eq!(action.is_preferred, Some(true));
+        assert_eq!(
+            action
+                .edit
+                .as_ref()
+                .and_then(|edit| edit.changes.as_ref())
+                .and_then(|changes| changes.get(&main_uri)),
+            Some(&vec![TextEdit {
+                range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+                new_text: "import lib.math.{value};\n".to_owned(),
+            }])
+        );
+
+        let fixed = format!("import lib.math.{{value}};\n{main}");
+        let mut fixed_world = WorldState::new();
+        assert!(fixed_world.open_document(main_uri.clone(), fixed));
+        assert!(fixed_world.open_document(math_uri, math.to_owned()));
+        assert!(compute_diagnostics(&fixed_world, &main_uri).iter().all(
+            |diagnostic| diagnostic.code
+                != Some(NumberOrString::String(
+                    hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME.to_owned()
+                ))
+        ));
+    }
+
+    #[test]
+    fn multiple_auto_import_providers_are_sorted_and_nonpreferred() {
+        let main = "function main() -> word { return value(); }\n";
+        let provider = "function value() -> word { return 1; }\nexport { value };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(
+            Url::parse("file:///main/math.solc").expect("math uri"),
+            provider.to_owned()
+        ));
+        assert!(world.open_document(
+            Url::parse("file:///main/util.solc").expect("util uri"),
+            provider.to_owned()
+        ));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        let actions = handle_code_action(
+            &world,
+            &main_uri,
+            diagnostic.range,
+            &context(diagnostic.clone()),
+        )
+        .expect("code-action response");
+        let actions = actions
+            .iter()
+            .map(|action| match action {
+                CodeActionOrCommand::CodeAction(action) => action,
+                CodeActionOrCommand::Command(_) => panic!("expected code action"),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            actions
+                .iter()
+                .map(|action| action.title.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Import `value` from `lib.math`",
+                "Import `value` from `lib.util`"
+            ]
+        );
+        assert!(
+            actions
+                .iter()
+                .all(|action| action.is_preferred == Some(false))
+        );
+    }
+
+    #[test]
+    fn auto_import_extends_an_existing_selective_import() {
+        let main = "import lib.math.{other};\nfunction main() -> word { return value(); }\n";
+        let math = "function other() -> word { return 0; }\nfunction value() -> word { return 1; }\nexport { other, value };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(
+            Url::parse("file:///main/math.solc").expect("math uri"),
+            math.to_owned()
+        ));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+        let insertion = (main.find("other").expect("selector") + "other".len()) as u32;
+        let expected_range = world
+            .line_index(&main_uri)
+            .expect("line index")
+            .range(insertion, insertion);
+
+        let actions = handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic))
+            .expect("code-action response");
+        let edits = action(&actions)
+            .edit
+            .as_ref()
+            .and_then(|edit| edit.changes.as_ref())
+            .and_then(|changes| changes.get(&main_uri))
+            .expect("main edits");
+
+        assert_eq!(
+            edits,
+            &vec![TextEdit {
+                range: expected_range,
+                new_text: ", value".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn exported_types_and_classes_are_auto_importable() {
+        let type_main = "function keep(x: Token) -> Token { return x; }\n";
+        let type_provider = "data Token = Token(word);\nexport { Token };\n";
+        let mut type_world = WorldState::new();
+        let type_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(type_world.open_document(type_uri.clone(), type_main.to_owned()));
+        assert!(type_world.open_document(
+            Url::parse("file:///main/model.solc").expect("model uri"),
+            type_provider.to_owned()
+        ));
+        let type_diagnostic = diagnostic_with_code(
+            &type_world,
+            &type_uri,
+            hir::diag::DiagnosticCode::NAMERES_UNDEFINED_TYPE_CONSTRUCTOR,
+        );
+        let type_actions = handle_code_action(
+            &type_world,
+            &type_uri,
+            type_diagnostic.range,
+            &context(type_diagnostic),
+        )
+        .expect("type code actions");
+        assert_eq!(
+            action(&type_actions).title,
+            "Import `Token` from `lib.model`"
+        );
+
+        let class_main = "forall a. a:Comparable =>\nfunction keep(x: a) -> a { return x; }\n";
+        let class_provider = "forall a. class a:Comparable {\n  function compare(x: a, y: a) -> word;\n}\nexport { Comparable };\n";
+        let mut class_world = WorldState::new();
+        let class_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(class_world.open_document(class_uri.clone(), class_main.to_owned()));
+        assert!(class_world.open_document(
+            Url::parse("file:///main/classes.solc").expect("classes uri"),
+            class_provider.to_owned()
+        ));
+        let class_diagnostic = diagnostic_with_code(
+            &class_world,
+            &class_uri,
+            hir::diag::DiagnosticCode::NAMERES_UNDEFINED_CLASS,
+        );
+        let class_actions = handle_code_action(
+            &class_world,
+            &class_uri,
+            class_diagnostic.range,
+            &context(class_diagnostic),
+        )
+        .expect("class code actions");
+        assert_eq!(
+            action(&class_actions).title,
+            "Import `Comparable` from `lib.classes`"
+        );
+    }
+
+    #[test]
+    fn member_and_module_qualifier_errors_do_not_offer_term_imports() {
+        let field_main =
+            "data Local = Present;\nfunction main() -> word { return Local.missing; }\n";
+        let exported_missing = "function missing() -> word { return 1; }\nexport { missing };\n";
+        let mut field_world = WorldState::new();
+        let field_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(field_world.open_document(field_uri.clone(), field_main.to_owned()));
+        assert!(field_world.open_document(
+            Url::parse("file:///main/symbols.solc").expect("symbols uri"),
+            exported_missing.to_owned()
+        ));
+        let field_diagnostic = undefined_name_diagnostic(&field_world, &field_uri);
+        assert_eq!(
+            handle_code_action(
+                &field_world,
+                &field_uri,
+                field_diagnostic.range,
+                &context(field_diagnostic),
+            ),
+            Some(Vec::new())
+        );
+
+        let qualifier_main = "function main() -> word { return math.value(); }\n";
+        let mut qualifier_world = WorldState::new();
+        let qualifier_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(qualifier_world.open_document(qualifier_uri.clone(), qualifier_main.to_owned()));
+        assert!(qualifier_world.open_document(
+            Url::parse("file:///main/symbols.solc").expect("symbols uri"),
+            "function math() -> word { return 1; }\nexport { math };\n".to_owned()
+        ));
+        assert!(qualifier_world.open_document(
+            Url::parse("file:///main/math.solc").expect("math uri"),
+            "function value() -> word { return 1; }\nexport { value };\n".to_owned()
+        ));
+        let qualifier_diagnostic = undefined_name_diagnostic(&qualifier_world, &qualifier_uri);
+        assert_eq!(
+            handle_code_action(
+                &qualifier_world,
+                &qualifier_uri,
+                qualifier_diagnostic.range,
+                &context(qualifier_diagnostic),
+            ),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn auto_import_candidates_stay_inside_the_current_workspace_root() {
+        let base = std::env::temp_dir().join("solcore-lsp-auto-import-roots");
+        let left_path = base.join("left");
+        let right_path = base.join("right");
+        let left_root = Url::from_directory_path(&left_path).expect("left root");
+        let right_root = Url::from_directory_path(&right_path).expect("right root");
+        let left_main = Url::from_file_path(left_path.join("main.solc")).expect("left main");
+        let left_math = Url::from_file_path(left_path.join("math.solc")).expect("left math");
+        let right_extra = Url::from_file_path(right_path.join("extra.solc")).expect("right extra");
+        let main = "function main() -> word { return value(); }\n";
+        let provider = "function value() -> word { return 1; }\nexport { value };\n";
+        let mut world = WorldState::new();
+        world.load_workspace_roots([
+            (
+                left_root,
+                vec![
+                    (left_main.clone(), main.to_owned()),
+                    (left_math, provider.to_owned()),
+                ],
+            ),
+            (right_root, vec![(right_extra, provider.to_owned())]),
+        ]);
+        assert!(world.open_document(left_main.clone(), main.to_owned()));
+        let diagnostic = undefined_name_diagnostic(&world, &left_main);
+
+        let actions =
+            handle_code_action(&world, &left_main, diagnostic.range, &context(diagnostic))
+                .expect("code actions");
+
+        assert_eq!(action(&actions).title, "Import `value` from `lib.math`");
     }
 }
