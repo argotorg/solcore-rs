@@ -19,7 +19,7 @@ use lsp_types::{
     Url,
 };
 
-use crate::state::{WorldState, uri_to_vfs_path};
+use crate::{resolve::module_id_for_uri, state::WorldState};
 
 /// Semantic token types advertised by the server and used by the encoder.
 pub const TOKEN_TYPES: &[SemanticTokenType] = &[
@@ -46,12 +46,12 @@ pub const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
 /// Computes full-document semantic tokens for one open source document.
 pub fn handle_semantic_tokens_full(world: &WorldState, uri: &Url) -> Option<SemanticTokensResult> {
     let db = world.db();
-    let path = uri_to_vfs_path(uri)?;
+    let path = world.vfs_path_for_uri(uri)?;
     let file = db.source_file(&path)?;
     let line_index = world.line_index(uri)?;
-    let entry = world.workspace().entry_module()?;
+    let current_module = module_id_for_uri(world, db, uri)?;
     let module = parser::parse_file_to_hir(db, file).module(db);
-    let env = nameres::module_env(db, entry);
+    let env = nameres::module_env(db, current_module);
     let scope = hir_nameres::item_scope_facts(db, module);
     let item_facts = hir_nameres::resolve_item_type_facts_with_imports(db, module, &scope, &env);
 

@@ -13,25 +13,25 @@ use hir::{
 use hir_ty::{InferResultExt, InferenceResult};
 use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, Range, Url};
 
-use crate::state::{WorldState, uri_to_vfs_path};
+use crate::{resolve::module_id_for_uri, state::WorldState};
 
 /// Computes inferred-type inlay hints for local bindings in a source range.
 pub fn handle_inlay_hints(world: &WorldState, uri: &Url, range: Range) -> Option<Vec<InlayHint>> {
     let db = world.db();
-    let path = uri_to_vfs_path(uri)?;
+    let path = world.vfs_path_for_uri(uri)?;
     let file = db.source_file(&path)?;
     let line_index = world.line_index(uri)?;
     let range_start = line_index.position_to_byte(range.start)?;
     let range_end = line_index.position_to_byte(range.end)?;
-    let entry = world.workspace().entry_module()?;
+    let current_module = module_id_for_uri(world, db, uri)?;
     let module = parser::parse_file_to_hir(db, file).module(db);
-    let env = nameres::module_env(db, entry);
+    let env = nameres::module_env(db, current_module);
     let scope = hir_nameres::item_scope_facts(db, module);
     let item_facts = hir_nameres::resolve_item_type_facts_with_imports(db, module, &scope, &env);
 
     let mut hints = Vec::new();
     for owner in function_bodies(db, module) {
-        let inferred = infer_function_body(db, module, entry, &env, &item_facts, &owner);
+        let inferred = infer_function_body(db, module, current_module, &env, &item_facts, &owner);
         LetHintCollector {
             db,
             file,
