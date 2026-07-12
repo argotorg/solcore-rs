@@ -4,10 +4,12 @@
 //! this module intentionally does not implement `Content-Length` framing.
 
 use lsp_types::{
-    CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentHighlightParams, DocumentSymbolParams, GotoDefinitionParams,
-    HoverParams, InlayHintParams, ReferenceParams, RenameParams, SemanticTokensParams,
-    SignatureHelpParams, TextDocumentPositionParams, WorkspaceSymbolParams,
+    CodeActionParams, CompletionParams, DidChangeTextDocumentParams,
+    DidChangeWorkspaceFoldersParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DocumentFormattingParams, DocumentHighlightParams, DocumentSymbolParams, FoldingRangeParams,
+    GotoDefinitionParams, HoverParams, InitializeParams, InlayHintParams, ReferenceParams,
+    RenameParams, SelectionRangeParams, SemanticTokensParams, SignatureHelpParams,
+    TextDocumentPositionParams, WorkspaceSymbolParams,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
@@ -73,20 +75,16 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         .unwrap_or(Value::Null);
 
     match method {
-        "initialize" => id
-            .map(|id| {
-                vec![result_response(
-                    id,
-                    crate::capabilities::initialize_result(),
-                )]
-            })
-            .unwrap_or_default(),
+        "initialize" => handle_initialize(world, id, params),
         "initialized" | "exit" => Vec::new(),
         "shutdown" => null_response_or_empty(id),
         method if method.starts_with("$/") => Vec::new(),
         "textDocument/didOpen" => handle_did_open(world, id, params),
         "textDocument/didChange" => handle_did_change(world, id, params),
         "textDocument/didClose" => handle_did_close(world, id, params),
+        "workspace/didChangeWorkspaceFolders" => {
+            handle_did_change_workspace_folders(world, id, params)
+        }
         "textDocument/completion" => handle_completion_request(world, id, params),
         "textDocument/hover" => handle_hover_request(world, id, params),
         "textDocument/signatureHelp" => handle_signature_help_request(world, id, params),
@@ -96,6 +94,10 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         "textDocument/prepareRename" => handle_prepare_rename_request(world, id, params),
         "textDocument/documentHighlight" => handle_document_highlight_request(world, id, params),
         "textDocument/documentSymbol" => handle_document_symbol_request(world, id, params),
+        "textDocument/codeAction" => handle_code_action_request(world, id, params),
+        "textDocument/formatting" => handle_formatting_request(world, id, params),
+        "textDocument/foldingRange" => handle_folding_range_request(world, id, params),
+        "textDocument/selectionRange" => handle_selection_range_request(world, id, params),
         "textDocument/semanticTokens/full" => {
             handle_semantic_tokens_full_request(world, id, params)
         }
@@ -103,6 +105,24 @@ pub(crate) fn dispatch(world: &mut WorldState, message: &str) -> Vec<String> {
         "workspace/symbol" => handle_workspace_symbol_request(world, id, params),
         _ => error_or_empty(id, METHOD_NOT_FOUND, "Method not found"),
     }
+}
+
+fn handle_initialize(world: &mut WorldState, id: Option<Value>, params: Value) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<InitializeParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+    let roots = initial_workspace_roots(&params)
+        .into_iter()
+        .map(|root| (root, Vec::new()));
+    world.load_workspace_roots(roots);
+    vec![result_response(
+        id,
+        crate::capabilities::initialize_result(),
+    )]
 }
 
 fn request_id(value: &Value) -> Option<Value> {
@@ -151,13 +171,41 @@ fn handle_did_close(world: &mut WorldState, id: Option<Value>, params: Value) ->
     };
 
     let uri = params.text_document.uri;
+    let belongs_to_workspace = world.is_uri_in_workspace(&uri);
     world.close_document(&uri);
-    if uri.scheme() != "file" {
+    if !belongs_to_workspace {
         world.remove_workspace_document(&uri);
     }
 
     let mut outgoing = null_response_or_empty(id);
     outgoing.push(publish_diagnostics(uri, Vec::new()));
+    outgoing.extend(publish_open_document_diagnostics(world));
+    outgoing
+}
+
+fn handle_did_change_workspace_folders(
+    world: &mut WorldState,
+    id: Option<Value>,
+    params: Value,
+) -> Vec<String> {
+    let params = match deserialize_params::<DidChangeWorkspaceFoldersParams>(params) {
+        Ok(params) => params,
+        Err(_) => return error_or_empty(id, INVALID_PARAMS, "Invalid params"),
+    };
+    let removed = params.event.removed.into_iter().map(|folder| folder.uri);
+    let added = params
+        .event
+        .added
+        .into_iter()
+        .map(|folder| (folder.uri, Vec::new()));
+    let (_, discarded) = world.update_workspace_roots(removed, added);
+
+    let mut outgoing = null_response_or_empty(id);
+    outgoing.extend(
+        discarded
+            .into_iter()
+            .map(|uri| publish_diagnostics(uri, Vec::new())),
+    );
     outgoing.extend(publish_open_document_diagnostics(world));
     outgoing
 }
@@ -331,6 +379,83 @@ fn handle_document_symbol_request(
     )]
 }
 
+fn handle_code_action_request(world: &WorldState, id: Option<Value>, params: Value) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<CodeActionParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    vec![result_response(
+        id,
+        crate::code_actions::handle_code_action(
+            world,
+            &params.text_document.uri,
+            params.range,
+            &params.context,
+        ),
+    )]
+}
+
+fn handle_formatting_request(world: &WorldState, id: Option<Value>, params: Value) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<DocumentFormattingParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    vec![result_response(
+        id,
+        crate::formatting::handle_formatting(world, &params.text_document.uri, &params.options),
+    )]
+}
+
+fn handle_folding_range_request(
+    world: &WorldState,
+    id: Option<Value>,
+    params: Value,
+) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<FoldingRangeParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    vec![result_response(
+        id,
+        crate::folding::handle_folding_range(world, &params.text_document.uri),
+    )]
+}
+
+fn handle_selection_range_request(
+    world: &WorldState,
+    id: Option<Value>,
+    params: Value,
+) -> Vec<String> {
+    let Some(id) = id else {
+        return Vec::new();
+    };
+    let params = match deserialize_params::<SelectionRangeParams>(params) {
+        Ok(params) => params,
+        Err(_) => return vec![error_response(id, INVALID_PARAMS, "Invalid params")],
+    };
+
+    vec![result_response(
+        id,
+        crate::selection_range::handle_selection_range(
+            world,
+            &params.text_document.uri,
+            &params.positions,
+        ),
+    )]
+}
+
 fn handle_semantic_tokens_full_request(
     world: &WorldState,
     id: Option<Value>,
@@ -384,6 +509,16 @@ fn handle_workspace_symbol_request(
         id,
         crate::workspace_symbols::handle_workspace_symbol(world, &params.query),
     )]
+}
+
+#[allow(deprecated)]
+fn initial_workspace_roots(params: &InitializeParams) -> Vec<lsp_types::Url> {
+    params
+        .workspace_folders
+        .as_ref()
+        .filter(|folders| !folders.is_empty())
+        .map(|folders| folders.iter().map(|folder| folder.uri.clone()).collect())
+        .unwrap_or_else(|| params.root_uri.clone().into_iter().collect())
 }
 
 fn deserialize_params<T: DeserializeOwned>(params: Value) -> Result<T, serde_json::Error> {
@@ -456,7 +591,7 @@ mod tests {
         let mut world = WorldState::new();
         let outgoing = dispatch(
             &mut world,
-            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}"#,
         );
 
         assert_eq!(outgoing.len(), 1);
@@ -468,6 +603,59 @@ mod tests {
             serde_json::to_value(crate::capabilities::initialize_result())
                 .expect("initialize result serializes")
         );
+    }
+
+    #[test]
+    fn initialize_and_workspace_folder_changes_configure_multiple_roots() {
+        let mut world = WorldState::new();
+        let left = "file:///workspace/left/";
+        let right = "file:///workspace/right/";
+        let _ = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {},
+                    "workspaceFolders": [{ "uri": left, "name": "left" }]
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(world.workspace_root_count(), 1);
+
+        let _ = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWorkspaceFolders",
+                "params": {
+                    "event": {
+                        "added": [{ "uri": right, "name": "right" }],
+                        "removed": []
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(world.workspace_root_count(), 2);
+
+        let _ = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWorkspaceFolders",
+                "params": {
+                    "event": {
+                        "added": [],
+                        "removed": [{ "uri": left, "name": "left" }]
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(world.workspace_root_count(), 1);
     }
 
     #[test]
@@ -782,6 +970,112 @@ mod tests {
     }
 
     #[test]
+    fn code_action_formatting_folding_and_selection_requests_return_results() {
+        let mut world = WorldState::new();
+        let source = "function value() -> word { return 1; }\nfunction main() -> word {\n/* 😀 */ return vaue();\n}\n";
+        let opened = dispatch(&mut world, &did_open_message(source));
+        let notification = diagnostic_notification_for_uri(&opened, URI);
+        let diagnostic = notification["params"]["diagnostics"]
+            .as_array()
+            .and_then(|diagnostics| diagnostics.first())
+            .cloned()
+            .expect("published diagnostic");
+        let range = diagnostic["range"].clone();
+
+        let actions = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "actions-1",
+                "method": "textDocument/codeAction",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "range": range,
+                    "context": { "diagnostics": [diagnostic], "only": ["quickfix"] }
+                }
+            })
+            .to_string(),
+        );
+        let actions = parse_message(&actions[0]);
+        let actions = actions["result"].as_array().expect("code action array");
+        assert_eq!(actions.len(), 1);
+        let action = &actions[0];
+        assert_eq!(action["title"], "Replace with `value`");
+        assert_eq!(action["kind"], "quickfix");
+        assert_eq!(action["isPreferred"], false);
+        assert_eq!(
+            action["diagnostics"]
+                .as_array()
+                .and_then(|diagnostics| diagnostics.first()),
+            Some(&diagnostic)
+        );
+        let edit = &action["edit"]["changes"][URI][0];
+        assert_eq!(edit["newText"], "value");
+        assert_eq!(
+            edit["range"],
+            serde_json::json!({
+                "start": { "line": 2, "character": 16 },
+                "end": { "line": 2, "character": 20 }
+            })
+        );
+
+        let formatting = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "format-1",
+                "method": "textDocument/formatting",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "options": { "tabSize": 2, "insertSpaces": true }
+                }
+            })
+            .to_string(),
+        );
+        let formatting = parse_message(&formatting[0]);
+        assert_eq!(
+            formatting["result"].as_array().expect("format edits").len(),
+            1
+        );
+
+        let folding = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "folding-1",
+                "method": "textDocument/foldingRange",
+                "params": { "textDocument": { "uri": URI } }
+            })
+            .to_string(),
+        );
+        let folding = parse_message(&folding[0]);
+        assert!(
+            !folding["result"]
+                .as_array()
+                .expect("folding ranges")
+                .is_empty()
+        );
+
+        let selection = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "selection-1",
+                "method": "textDocument/selectionRange",
+                "params": {
+                    "textDocument": { "uri": URI },
+                    "positions": [{ "line": 2, "character": 9 }]
+                }
+            })
+            .to_string(),
+        );
+        let selection = parse_message(&selection[0]);
+        let ranges = selection["result"].as_array().expect("selection ranges");
+        assert_eq!(ranges.len(), 1);
+        assert!(ranges[0]["parent"].is_object());
+    }
+
+    #[test]
     fn closing_untitled_document_removes_it_from_workspace_symbols() {
         let mut world = WorldState::new();
         let uri = "untitled:Untitled-1";
@@ -815,6 +1109,62 @@ mod tests {
                 .expect("symbol array")
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn closing_file_detached_from_removed_workspace_discards_it() {
+        let mut world = WorldState::new();
+        let root = "file:///main/";
+        let uri = "file:///main/ghost.solc";
+        let _ = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "capabilities": {},
+                    "workspaceFolders": [{ "uri": root, "name": "left" }]
+                }
+            })
+            .to_string(),
+        );
+        let _ = dispatch(
+            &mut world,
+            &did_open_uri_message(uri, "function ghost() -> word { return 42; }\n"),
+        );
+        let _ = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "workspace/didChangeWorkspaceFolders",
+                "params": {
+                    "event": {
+                        "added": [],
+                        "removed": [{ "uri": root, "name": "left" }]
+                    }
+                }
+            })
+            .to_string(),
+        );
+        let _ = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didClose",
+                "params": { "textDocument": { "uri": uri } }
+            })
+            .to_string(),
+        );
+
+        assert!(
+            world
+                .line_index(&lsp_types::Url::parse(uri).expect("uri"))
+                .is_none()
+        );
+        let symbols = crate::workspace_symbols::handle_workspace_symbol(&world, "ghost")
+            .expect("workspace symbols");
+        assert!(symbols.is_empty());
     }
 
     #[test]

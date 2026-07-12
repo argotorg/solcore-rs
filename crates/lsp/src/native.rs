@@ -9,16 +9,18 @@ use std::{
 };
 
 use lsp_types::{
-    CompletionParams, CompletionResponse, Diagnostic, DidChangeTextDocumentParams,
-    DidChangeWatchedFilesParams, DidChangeWatchedFilesRegistrationOptions,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentHighlight,
-    DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse, FileChangeType,
-    FileSystemWatcher, GlobPattern, GotoDefinitionParams, GotoDefinitionResponse, Hover,
-    HoverParams, InitializeParams, InitializeResult, InitializedParams, InlayHint, InlayHintParams,
-    Location, MessageType, PrepareRenameResponse, ReferenceParams, Registration, RenameParams,
-    SemanticTokensParams, SemanticTokensResult, SignatureHelp, SignatureHelpParams,
-    SymbolInformation, TextDocumentPositionParams, Url, WatchKind, WorkspaceEdit,
-    WorkspaceSymbolParams,
+    CodeActionParams, CodeActionResponse, CompletionParams, CompletionResponse, Diagnostic,
+    DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    DidChangeWatchedFilesRegistrationOptions, DidChangeWorkspaceFoldersParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentFormattingParams,
+    DocumentHighlight, DocumentHighlightParams, DocumentSymbolParams, DocumentSymbolResponse,
+    FileChangeType, FileSystemWatcher, FoldingRange, FoldingRangeParams, GlobPattern,
+    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverParams, InitializeParams,
+    InitializeResult, InitializedParams, InlayHint, InlayHintParams, Location, MessageType,
+    PrepareRenameResponse, ReferenceParams, Registration, RenameParams, SelectionRange,
+    SelectionRangeParams, SemanticTokensParams, SemanticTokensResult, SignatureHelp,
+    SignatureHelpParams, SymbolInformation, TextDocumentPositionParams, TextEdit, Url, WatchKind,
+    WorkspaceEdit, WorkspaceSymbolParams,
 };
 use tokio::sync::Mutex;
 use tower_lsp::{Client, LanguageServer, LspService, Server, jsonrpc};
@@ -56,12 +58,15 @@ impl LanguageServer for Backend {
                 .unwrap_or(false),
             Ordering::Relaxed,
         );
-        if let Some(root) = initial_workspace_root(&params) {
-            let files = read_workspace_documents(&root);
-            self.world
-                .lock()
-                .await
-                .load_workspace_documents(root, files);
+        let roots = initial_workspace_roots(&params)
+            .into_iter()
+            .map(|root| {
+                let files = read_workspace_documents(&root);
+                (root, files)
+            })
+            .collect::<Vec<_>>();
+        if !roots.is_empty() {
+            self.world.lock().await.load_workspace_roots(roots);
         }
         Ok(crate::capabilities::initialize_result())
     }
@@ -145,12 +150,13 @@ impl LanguageServer for Backend {
 
         let diagnostics = {
             let mut world = self.world.lock().await;
+            let belongs_to_workspace = world.is_uri_in_workspace(&uri);
             world.close_document(&uri);
-            match disk_text {
-                Some(text) => {
+            match (belongs_to_workspace, disk_text) {
+                (true, Some(text)) => {
                     world.set_workspace_document(uri.clone(), text);
                 }
-                None => {
+                (false, _) | (true, None) => {
                     world.remove_workspace_document(&uri);
                 }
             }
@@ -159,6 +165,49 @@ impl LanguageServer for Backend {
 
         self.client.publish_diagnostics(uri, vec![], None).await;
         publish_diagnostics(&self.client, diagnostics).await;
+    }
+
+    async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        let _update = self.document_updates.lock().await;
+        let removed = params
+            .event
+            .removed
+            .into_iter()
+            .map(|folder| folder.uri)
+            .collect::<Vec<_>>();
+        let added = params
+            .event
+            .added
+            .into_iter()
+            .map(|folder| {
+                let files = read_workspace_documents(&folder.uri);
+                (folder.uri, files)
+            })
+            .collect::<Vec<_>>();
+
+        let (diagnostics, discarded, root_count, file_count) = {
+            let mut world = self.world.lock().await;
+            let (_, discarded) = world.update_workspace_roots(removed, added);
+            (
+                diagnostics_with_versions(&world, None),
+                discarded,
+                world.workspace_root_count(),
+                world.workspace_document_uris().len(),
+            )
+        };
+
+        for uri in discarded {
+            self.client.publish_diagnostics(uri, Vec::new(), None).await;
+        }
+        publish_diagnostics(&self.client, diagnostics).await;
+        self.client
+            .log_message(
+                MessageType::INFO,
+                format!(
+                    "workspace folders updated ({root_count} roots, {file_count} files loaded)"
+                ),
+            )
+            .await;
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
@@ -231,6 +280,59 @@ impl LanguageServer for Backend {
         let world = self.world.lock().await;
 
         Ok(crate::symbols::handle_document_symbol(&world, &uri))
+    }
+
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> jsonrpc::Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+        let world = self.world.lock().await;
+
+        Ok(crate::code_actions::handle_code_action(
+            &world,
+            &uri,
+            params.range,
+            &params.context,
+        ))
+    }
+
+    async fn formatting(
+        &self,
+        params: DocumentFormattingParams,
+    ) -> jsonrpc::Result<Option<Vec<TextEdit>>> {
+        let uri = params.text_document.uri;
+        let world = self.world.lock().await;
+
+        Ok(crate::formatting::handle_formatting(
+            &world,
+            &uri,
+            &params.options,
+        ))
+    }
+
+    async fn folding_range(
+        &self,
+        params: FoldingRangeParams,
+    ) -> jsonrpc::Result<Option<Vec<FoldingRange>>> {
+        let uri = params.text_document.uri;
+        let world = self.world.lock().await;
+
+        Ok(crate::folding::handle_folding_range(&world, &uri))
+    }
+
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> jsonrpc::Result<Option<Vec<SelectionRange>>> {
+        let uri = params.text_document.uri;
+        let world = self.world.lock().await;
+
+        Ok(crate::selection_range::handle_selection_range(
+            &world,
+            &uri,
+            &params.positions,
+        ))
     }
 
     async fn references(&self, params: ReferenceParams) -> jsonrpc::Result<Option<Vec<Location>>> {
@@ -353,19 +455,30 @@ async fn publish_diagnostics(client: &Client, diagnostics: DiagnosticsBatch) {
 }
 
 #[allow(deprecated)]
-fn initial_workspace_root(params: &InitializeParams) -> Option<Url> {
-    params
+fn initial_workspace_roots(params: &InitializeParams) -> Vec<Url> {
+    let workspace_folders = params
         .workspace_folders
         .as_ref()
-        .and_then(|folders| folders.first())
-        .map(|folder| folder.uri.clone())
-        .or_else(|| params.root_uri.clone())
-        .or_else(|| {
-            params
-                .root_path
-                .as_ref()
-                .and_then(|path| Url::from_directory_path(path).ok())
+        .map(|folders| {
+            folders
+                .iter()
+                .map(|folder| folder.uri.clone())
+                .collect::<Vec<_>>()
         })
+        .filter(|folders| !folders.is_empty());
+    workspace_folders.unwrap_or_else(|| {
+        params
+            .root_uri
+            .clone()
+            .or_else(|| {
+                params
+                    .root_path
+                    .as_ref()
+                    .and_then(|path| Url::from_directory_path(path).ok())
+            })
+            .into_iter()
+            .collect()
+    })
 }
 
 fn watched_files_registration() -> Registration {
@@ -460,4 +573,47 @@ pub async fn run_stdio() {
     let stdout = tokio::io::stdout();
     let (service, socket) = LspService::new(Backend::new);
     Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lsp_types::WorkspaceFolder;
+
+    #[allow(deprecated)]
+    #[test]
+    fn initialize_prefers_every_workspace_folder_over_legacy_root() {
+        let left = Url::parse("file:///workspace/left").expect("left root");
+        let right = Url::parse("file:///workspace/right").expect("right root");
+        let legacy = Url::parse("file:///workspace/legacy").expect("legacy root");
+        let params = InitializeParams {
+            root_uri: Some(legacy),
+            workspace_folders: Some(vec![
+                WorkspaceFolder {
+                    uri: left.clone(),
+                    name: "left".to_owned(),
+                },
+                WorkspaceFolder {
+                    uri: right.clone(),
+                    name: "right".to_owned(),
+                },
+            ]),
+            ..InitializeParams::default()
+        };
+
+        assert_eq!(initial_workspace_roots(&params), vec![left, right]);
+    }
+
+    #[allow(deprecated)]
+    #[test]
+    fn initialize_falls_back_to_root_uri_for_empty_workspace_folders() {
+        let root = Url::parse("file:///workspace/project").expect("root uri");
+        let params = InitializeParams {
+            root_uri: Some(root.clone()),
+            workspace_folders: Some(Vec::new()),
+            ..InitializeParams::default()
+        };
+
+        assert_eq!(initial_workspace_roots(&params), vec![root]);
+    }
 }

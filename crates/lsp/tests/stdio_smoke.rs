@@ -27,12 +27,16 @@ function double(x: word) -> word {
 
 export { double };
 ";
+const SECONDARY_SOURCE: &str = "function secondaryValue() -> word { return 2; }\n";
 
 struct TestWorkspace {
     root: PathBuf,
     root_uri: Url,
     main_uri: Url,
     math_uri: Url,
+    secondary_root: PathBuf,
+    secondary_root_uri: Url,
+    secondary_uri: Url,
 }
 
 impl TestWorkspace {
@@ -50,11 +54,22 @@ impl TestWorkspace {
         let math = root.join("math.solc");
         fs::write(&main, MAIN_SOURCE).expect("write main source");
         fs::write(&math, MATH_SOURCE).expect("write math source");
+        let secondary_root = std::env::temp_dir().join(format!(
+            "solcore-lsp-stdio-smoke-secondary-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&secondary_root).expect("create secondary workspace");
+        let secondary = secondary_root.join("secondary.solc");
+        fs::write(&secondary, SECONDARY_SOURCE).expect("write secondary source");
 
         Self {
             root_uri: Url::from_directory_path(&root).expect("workspace root URI"),
             main_uri: Url::from_file_path(main).expect("main URI"),
             math_uri: Url::from_file_path(math).expect("math URI"),
+            secondary_root_uri: Url::from_directory_path(&secondary_root)
+                .expect("secondary workspace root URI"),
+            secondary_uri: Url::from_file_path(secondary).expect("secondary URI"),
+            secondary_root,
             root,
         }
     }
@@ -63,6 +78,7 @@ impl TestWorkspace {
 impl Drop for TestWorkspace {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
+        let _ = fs::remove_dir_all(&self.secondary_root);
     }
 }
 
@@ -123,6 +139,10 @@ fn run_lsp_smoke(
             "method": "initialize",
             "params": {
                 "rootUri": workspace.root_uri,
+                "workspaceFolders": [
+                    { "uri": workspace.root_uri, "name": "primary" },
+                    { "uri": workspace.secondary_root_uri, "name": "secondary" }
+                ],
                 "capabilities": {}
             }
         }),
@@ -185,6 +205,72 @@ fn run_lsp_smoke(
         return Err(format!("expected an error diagnostic, got: {diagnostics}"));
     }
 
+    let published_diagnostic = diagnostics
+        .pointer("/params/diagnostics")
+        .and_then(Value::as_array)
+        .and_then(|diagnostics| diagnostics.first())
+        .cloned()
+        .ok_or_else(|| format!("missing published diagnostic: {diagnostics}"))?;
+    let diagnostic_range = published_diagnostic
+        .get("range")
+        .cloned()
+        .ok_or_else(|| format!("published diagnostic had no range: {published_diagnostic}"))?;
+    let code_actions = request_result(
+        stdin,
+        messages_rx,
+        3,
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": workspace.main_uri },
+            "range": diagnostic_range,
+            "context": { "diagnostics": [published_diagnostic] }
+        }),
+    )?;
+    if !code_actions.is_array() {
+        return Err(format!(
+            "code action result was not an array: {code_actions}"
+        ));
+    }
+
+    let formatting = request_result(
+        stdin,
+        messages_rx,
+        4,
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": workspace.main_uri },
+            "options": { "tabSize": 2, "insertSpaces": true }
+        }),
+    )?;
+    if !formatting.is_array() {
+        return Err(format!("formatting result was not an array: {formatting}"));
+    }
+
+    let folding = request_result(
+        stdin,
+        messages_rx,
+        5,
+        "textDocument/foldingRange",
+        json!({ "textDocument": { "uri": workspace.main_uri } }),
+    )?;
+    if folding.as_array().is_none_or(|ranges| ranges.is_empty()) {
+        return Err(format!("expected folding ranges, got: {folding}"));
+    }
+
+    let selection = request_result(
+        stdin,
+        messages_rx,
+        6,
+        "textDocument/selectionRange",
+        json!({
+            "textDocument": { "uri": workspace.main_uri },
+            "positions": [{ "line": 3, "character": 10 }]
+        }),
+    )?;
+    if selection.as_array().is_none_or(|ranges| ranges.len() != 1) {
+        return Err(format!("expected one selection range, got: {selection}"));
+    }
+
     send_message(
         stdin,
         &json!({
@@ -209,6 +295,54 @@ fn run_lsp_smoke(
             workspace.math_uri
         ));
     }
+
+    assert_workspace_symbol(
+        stdin,
+        messages_rx,
+        10,
+        "secondaryValue",
+        Some(&workspace.secondary_uri),
+    )?;
+    send_message(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": "workspace/didChangeWorkspaceFolders",
+            "params": {
+                "event": {
+                    "added": [],
+                    "removed": [{
+                        "uri": workspace.secondary_root_uri,
+                        "name": "secondary"
+                    }]
+                }
+            }
+        }),
+    )?;
+    assert_workspace_symbol(stdin, messages_rx, 11, "secondaryValue", None)?;
+    send_message(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": "workspace/didChangeWorkspaceFolders",
+            "params": {
+                "event": {
+                    "added": [{
+                        "uri": workspace.secondary_root_uri,
+                        "name": "secondary"
+                    }],
+                    "removed": []
+                }
+            }
+        }),
+    )?;
+    assert_workspace_symbol(
+        stdin,
+        messages_rx,
+        12,
+        "secondaryValue",
+        Some(&workspace.secondary_uri),
+    )?;
 
     fs::remove_file(workspace.root.join("math.solc"))
         .map_err(|error| format!("failed to remove watched math.solc: {error}"))?;
@@ -252,6 +386,73 @@ fn run_lsp_smoke(
     }
 
     Ok(())
+}
+
+fn assert_workspace_symbol(
+    stdin: &mut ChildStdin,
+    messages_rx: &mpsc::Receiver<Value>,
+    id: i64,
+    query: &str,
+    expected_uri: Option<&Url>,
+) -> Result<(), String> {
+    send_message(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "workspace/symbol",
+            "params": { "query": query }
+        }),
+    )?;
+    let response = recv_until(messages_rx, |message| {
+        message.get("id").and_then(Value::as_i64) == Some(id)
+    })?;
+    let symbols = response
+        .get("result")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("workspace symbol response was not an array: {response}"))?;
+    let found = symbols.iter().any(|symbol| {
+        symbol.get("name").and_then(Value::as_str) == Some(query)
+            && expected_uri.is_some_and(|uri| {
+                symbol.pointer("/location/uri").and_then(Value::as_str) == Some(uri.as_str())
+            })
+    });
+    if expected_uri.is_some() != found {
+        return Err(format!(
+            "unexpected workspace symbol result for {query:?}, expected URI {expected_uri:?}: {response}"
+        ));
+    }
+    if expected_uri.is_none() && !symbols.is_empty() {
+        return Err(format!(
+            "expected no workspace symbols for {query:?}, got: {response}"
+        ));
+    }
+    Ok(())
+}
+
+fn request_result(
+    stdin: &mut ChildStdin,
+    messages_rx: &mpsc::Receiver<Value>,
+    id: i64,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    send_message(
+        stdin,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params
+        }),
+    )?;
+    let response = recv_until(messages_rx, |message| {
+        message.get("id").and_then(Value::as_i64) == Some(id)
+    })?;
+    response
+        .get("result")
+        .cloned()
+        .ok_or_else(|| format!("{method} response had no result: {response}"))
 }
 
 fn shutdown_child(

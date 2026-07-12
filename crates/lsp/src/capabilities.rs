@@ -1,10 +1,12 @@
 //! Static LSP capability advertisement.
 
 use lsp_types::{
-    CompletionOptions, HoverProviderCapability, InitializeResult, OneOf, RenameOptions,
-    SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-    SemanticTokensServerCapabilities, ServerCapabilities, ServerInfo, SignatureHelpOptions,
-    TextDocumentSyncCapability, TextDocumentSyncKind,
+    CodeActionKind, CodeActionOptions, CodeActionProviderCapability, CompletionOptions,
+    FoldingRangeProviderCapability, HoverProviderCapability, InitializeResult, OneOf,
+    RenameOptions, SelectionRangeProviderCapability, SemanticTokensFullOptions,
+    SemanticTokensLegend, SemanticTokensOptions, SemanticTokensServerCapabilities,
+    ServerCapabilities, ServerInfo, SignatureHelpOptions, TextDocumentSyncCapability,
+    TextDocumentSyncKind, WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
 };
 
 /// Returns the server capabilities for the transport layer's initialize reply.
@@ -31,6 +33,14 @@ pub fn server_capabilities() -> ServerCapabilities {
         })),
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            resolve_provider: Some(false),
+            ..CodeActionOptions::default()
+        })),
+        document_formatting_provider: Some(OneOf::Left(true)),
+        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+        selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
         semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
             SemanticTokensOptions {
                 work_done_progress_options: Default::default(),
@@ -43,6 +53,13 @@ pub fn server_capabilities() -> ServerCapabilities {
             },
         )),
         inlay_hint_provider: Some(OneOf::Left(true)),
+        workspace: Some(WorkspaceServerCapabilities {
+            workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                supported: Some(true),
+                change_notifications: Some(OneOf::Left(true)),
+            }),
+            file_operations: None,
+        }),
         ..ServerCapabilities::default()
     }
 }
@@ -110,6 +127,26 @@ mod tests {
             Some(OneOf::Left(true))
         );
         assert_eq!(
+            capabilities.code_action_provider,
+            Some(CodeActionProviderCapability::Options(CodeActionOptions {
+                code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+                resolve_provider: Some(false),
+                ..CodeActionOptions::default()
+            }))
+        );
+        assert_eq!(
+            capabilities.document_formatting_provider,
+            Some(OneOf::Left(true))
+        );
+        assert_eq!(
+            capabilities.folding_range_provider,
+            Some(FoldingRangeProviderCapability::Simple(true))
+        );
+        assert_eq!(
+            capabilities.selection_range_provider,
+            Some(SelectionRangeProviderCapability::Simple(true))
+        );
+        assert_eq!(
             capabilities.semantic_tokens_provider,
             Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
                 SemanticTokensOptions {
@@ -124,5 +161,15 @@ mod tests {
             ))
         );
         assert_eq!(capabilities.inlay_hint_provider, Some(OneOf::Left(true)));
+        assert_eq!(
+            capabilities.workspace,
+            Some(WorkspaceServerCapabilities {
+                workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                    supported: Some(true),
+                    change_notifications: Some(OneOf::Left(true)),
+                }),
+                file_operations: None,
+            })
+        );
     }
 }
