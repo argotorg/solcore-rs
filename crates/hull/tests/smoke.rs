@@ -1016,7 +1016,7 @@ contract C {
   x: word;
 
   function f(flag: bool) -> word {
-    if (flag) {
+    if (flag && true) {
       let x: word = 7;
     }
     return x;
@@ -1039,6 +1039,19 @@ contract C {
         ],
     );
     assert!(!main.contains("return sload(0)"), "{main}\n{hull}");
+
+    let and = hull_function(&hull, "std_and_");
+    assert_contains_in_order(
+        "match binder shadowing",
+        and,
+        &[
+            "let $match_bind",
+            "$match_bind",
+            ":= y",
+            "let y",
+            "y := $match_bind",
+        ],
+    );
 }
 
 #[test]

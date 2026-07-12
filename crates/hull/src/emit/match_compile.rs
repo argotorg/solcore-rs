@@ -523,6 +523,26 @@ impl<'db> Emitter<'db> {
                 let mut materialized = Vec::new();
                 for (name, occurrence) in bindings {
                     if let Some(expr) = occurrences.get(occurrence).cloned() {
+                        let rhs = if super::emitter::expr_reads_var(&expr, name) {
+                            let temp = this.fresh_temp("match_bind");
+                            materialized.push(Stmt {
+                                span,
+                                kind: StmtKind::Let {
+                                    name: temp.clone().into(),
+                                    ty: expr.ty.clone(),
+                                },
+                            });
+                            materialized.push(Stmt {
+                                span,
+                                kind: StmtKind::Assign {
+                                    lhs: Expr::var(span, temp.clone(), expr.ty.clone()),
+                                    rhs: expr.clone(),
+                                },
+                            });
+                            Expr::var(span, temp, expr.ty.clone())
+                        } else {
+                            expr.clone()
+                        };
                         materialized.push(Stmt {
                             span,
                             kind: StmtKind::Let {
@@ -534,7 +554,7 @@ impl<'db> Emitter<'db> {
                             span,
                             kind: StmtKind::Assign {
                                 lhs: Expr::var(span, name.clone(), expr.ty.clone()),
-                                rhs: expr.clone(),
+                                rhs,
                             },
                         });
                         this.bind_expr(name.clone(), Expr::var(span, name.clone(), expr.ty));

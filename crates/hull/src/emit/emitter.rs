@@ -967,7 +967,7 @@ impl<'db> Emitter<'db> {
     }
 }
 
-fn expr_reads_var(expr: &Expr<'_>, expected: &str) -> bool {
+pub(super) fn expr_reads_var(expr: &Expr<'_>, expected: &str) -> bool {
     match &expr.kind {
         ExprKind::Var(name) => name.as_str() == expected,
         ExprKind::Pair(lhs, rhs) => expr_reads_var(lhs, expected) || expr_reads_var(rhs, expected),
