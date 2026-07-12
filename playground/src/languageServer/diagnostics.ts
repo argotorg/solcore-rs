@@ -3,7 +3,7 @@ import { DiagnosticSeverity, type LspDiagnostic, type PublishDiagnosticsParams }
 import type { LspClient } from "./lspClient";
 import { fromLspRange } from "./conversions";
 
-const LSP_MARKER_OWNER = "solcore-lsp";
+export const LSP_MARKER_OWNER = "solcore-lsp";
 
 function markerSeverity(
   monaco: typeof Monaco,
@@ -41,6 +41,17 @@ function diagnosticToMarker(
     message: diagnostic.message,
     code: markerCode(diagnostic.code),
     source: diagnostic.source,
+    relatedInformation: diagnostic.relatedInformation?.map((information) => {
+      const relatedRange = fromLspRange(monaco, information.location.range);
+      return {
+        resource: monaco.Uri.parse(information.location.uri),
+        message: information.message,
+        startLineNumber: relatedRange.startLineNumber,
+        startColumn: relatedRange.startColumn,
+        endLineNumber: relatedRange.endLineNumber,
+        endColumn: relatedRange.endColumn,
+      };
+    }),
   };
 }
 

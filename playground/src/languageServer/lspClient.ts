@@ -16,6 +16,7 @@ interface PendingRequest<T = unknown> {
 type NotificationHandler = (params: any) => void;
 
 const SERVER_REQUEST_NOT_SUPPORTED = -32601;
+const PLAYGROUND_WORKSPACE_URI = "file:///main";
 
 function createAbortError(message: string): Error {
   return new DOMException(message, "AbortError");
@@ -70,11 +71,31 @@ export class LspClient {
       clientInfo: {
         name: "solcore-playground",
       },
-      rootUri: "file:///main",
+      rootUri: PLAYGROUND_WORKSPACE_URI,
       capabilities: {
         textDocument: {
           publishDiagnostics: {
             relatedInformation: true,
+          },
+          codeAction: {
+            dynamicRegistration: false,
+            codeActionLiteralSupport: {
+              codeActionKind: {
+                valueSet: ["quickfix"],
+              },
+            },
+            isPreferredSupport: true,
+            disabledSupport: true,
+          },
+          formatting: {
+            dynamicRegistration: false,
+          },
+          foldingRange: {
+            dynamicRegistration: false,
+            lineFoldingOnly: true,
+          },
+          selectionRange: {
+            dynamicRegistration: false,
           },
           synchronization: {
             dynamicRegistration: false,
@@ -82,13 +103,18 @@ export class LspClient {
           },
         },
         workspace: {
-          workspaceFolders: false,
+          workspaceFolders: true,
         },
         general: {
           positionEncodings: ["utf-16"],
         },
       },
-      workspaceFolders: null,
+      workspaceFolders: [
+        {
+          uri: PLAYGROUND_WORKSPACE_URI,
+          name: "main",
+        },
+      ],
     }).then(() => {
       this.notify("initialized", {});
     });
