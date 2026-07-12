@@ -70,24 +70,54 @@ pub fn plan_import_edit<'db>(
             continue;
         };
 
-        // Adding another selector with the same local name would be ambiguous.
-        // A source name already imported under an alias cannot be duplicated in
-        // this selector either, but a separate import remains valid.
-        if names.iter().any(|selected| {
-            selected
-                .alias
-                .as_ref()
-                .is_some_and(|alias| alias.atom().text(db) == public_name)
-        }) {
-            return None;
-        }
-        if names.iter().any(|selected| {
-            selected.name.atom().text(db) == public_name && selected.alias.is_none()
-        }) {
+        let source_is_hidden = |selected: &hir::ast::item::SelectedName<'db>| {
+            import
+                .hiding(db)
+                .iter()
+                .any(|hidden| hidden.name.atom().text(db) == selected.name.atom().text(db))
+        };
+
+        // Adding another selector with the same active local name would be
+        // ambiguous. Hidden selections bind nothing, so they neither suppress
+        // the quick fix nor make the new selector ambiguous.
+        if names
+            .iter()
+            .filter(|selected| !source_is_hidden(selected))
+            .any(|selected| {
+                selected
+                    .alias
+                    .as_ref()
+                    .is_some_and(|alias| alias.atom().text(db) == public_name)
+            })
+        {
             return None;
         }
         if names
             .iter()
+            .filter(|selected| !source_is_hidden(selected))
+            .any(|selected| {
+                selected.name.atom().text(db) == public_name && selected.alias.is_none()
+            })
+        {
+            return None;
+        }
+
+        // Keep an import containing a hidden spelling that would otherwise
+        // collide untouched. A clean declaration is easier to reason about
+        // than changing the meaning of an existing `hiding` clause.
+        if names.iter().any(|selected| {
+            source_is_hidden(selected)
+                && (selected.name.atom().text(db) == public_name
+                    || selected
+                        .alias
+                        .as_ref()
+                        .is_some_and(|alias| alias.atom().text(db) == public_name))
+        }) {
+            continue;
+        }
+        if names
+            .iter()
+            .filter(|selected| !source_is_hidden(selected))
             .any(|selected| selected.name.atom().text(db) == public_name)
             || import
                 .hiding(db)
@@ -113,6 +143,55 @@ pub fn plan_import_edit<'db>(
         &imports,
         target_import_path,
         public_name,
+    )
+}
+
+/// Plans a deterministic plain module import such as `import lib.math;`.
+///
+/// Plain imports are never merged with selective, wildcard, aliased, or
+/// hiding imports. An identical plain import already present in the source
+/// needs no edit. Validation, stale-source rejection, and insertion placement
+/// are shared with [`plan_import_edit`].
+pub fn plan_module_import_edit<'db>(
+    db: &'db dyn parser::Db,
+    source: &str,
+    parsed: parser::ParseHirOutput<'db>,
+    target_import_path: &str,
+) -> Option<ImportEdit> {
+    let source_len = u32::try_from(source.len()).ok()?;
+    if !is_valid_import_path(target_import_path) || !parsed.diagnostics(db).is_empty() {
+        return None;
+    }
+
+    let module = parsed.module(db);
+    if !metadata_matches_source(db, module, source, source_len) {
+        return None;
+    }
+
+    let imports = module
+        .items(db)
+        .iter()
+        .filter_map(|item| match item {
+            Item::Import(import) => Some(*import),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if imports.iter().copied().any(|import| {
+        import_path_text(db, import).as_deref() == Some(target_import_path)
+            && import.selector(db).is_none()
+            && import.alias_elem(db).is_none()
+            && import.hiding(db).is_empty()
+    }) {
+        return None;
+    }
+
+    plan_new_import_declaration(
+        db,
+        source,
+        module,
+        &imports,
+        &format!("import {target_import_path};"),
     )
 }
 
@@ -249,11 +328,21 @@ fn plan_new_import(
     public_name: &str,
 ) -> Option<ImportEdit> {
     let declaration = format!("import {target_import_path}.{{{public_name}}};");
+    plan_new_import_declaration(db, source, module, imports, &declaration)
+}
+
+fn plan_new_import_declaration(
+    db: &dyn parser::Db,
+    source: &str,
+    module: Module<'_>,
+    imports: &[Import<'_>],
+    declaration: &str,
+) -> Option<ImportEdit> {
     let line_ending = preferred_line_ending(source);
 
     if let Some(last_import) = imports.last() {
         let end = absolute_span_end(db, last_import.span(db), source.len())?;
-        return insert_after_declaration_line(source, end, &declaration, line_ending);
+        return insert_after_declaration_line(source, end, declaration, line_ending);
     }
 
     let mut last_leading_pragma = None;
@@ -267,11 +356,11 @@ fn plan_new_import(
     }
     if let Some(pragma) = last_leading_pragma {
         let end = absolute_span_end(db, pragma.span(db), source.len())?;
-        return insert_after_declaration_line(source, end, &declaration, line_ending);
+        return insert_after_declaration_line(source, end, declaration, line_ending);
     }
 
     if let Some(comment_end) = leading_header_comment_end(source) {
-        return insert_after_declaration_line(source, comment_end, &declaration, line_ending);
+        return insert_after_declaration_line(source, comment_end, declaration, line_ending);
     }
 
     Some(insertion(0, format!("{declaration}{line_ending}")))
@@ -450,6 +539,17 @@ mod tests {
         plan_import_edit(db, source, parsed, target, name)
     }
 
+    fn plan_module(source: &str, target: &str) -> Option<ImportEdit> {
+        let mut world = WorldState::new();
+        let uri = Url::parse("file:///main/main.solc").expect("uri");
+        assert!(world.open_document(uri.clone(), source.to_owned()));
+        let db = world.db();
+        let path = world.vfs_path_for_uri(&uri).expect("VFS path");
+        let file = db.source_file(&path).expect("source file");
+        let parsed = parser::parse_file_to_hir(db, file);
+        plan_module_import_edit(db, source, parsed, target)
+    }
+
     fn apply(source: &str, edit: &ImportEdit) -> String {
         let start = edit.start as usize;
         let end = edit.end as usize;
@@ -530,6 +630,34 @@ mod tests {
             apply(source, &edit),
             "import lib.{old} hiding {value};\nimport lib.{value};\nfunction main() { value; }\n"
         );
+    }
+
+    #[test]
+    fn hidden_selected_name_does_not_suppress_a_clean_import() {
+        let source = "import lib.{Option} hiding {Option};\nfunction main() { Option; }\n";
+        let edit = plan(source, "lib", "Option").expect("edit");
+
+        assert_eq!(
+            apply(source, &edit),
+            "import lib.{Option} hiding {Option};\nimport lib.{Option};\nfunction main() { Option; }\n"
+        );
+    }
+
+    #[test]
+    fn hidden_aliased_source_does_not_create_a_local_name_collision() {
+        let source = "import lib.{Other as Option} hiding {Other};\nfunction main() { Option; }\n";
+        let edit = plan(source, "lib", "Option").expect("edit");
+
+        assert_eq!(
+            apply(source, &edit),
+            "import lib.{Other as Option} hiding {Other};\nimport lib.{Option};\nfunction main() { Option; }\n"
+        );
+    }
+
+    #[test]
+    fn active_alias_still_suppresses_an_ambiguous_selective_import() {
+        let source = "import lib.{Other as Option};\nfunction main() { Option; }\n";
+        assert_eq!(plan(source, "lib", "Option"), None);
     }
 
     #[test]
@@ -645,6 +773,84 @@ mod tests {
         assert_eq!(
             apply(source, &edit),
             "import @dep.util.{value};\nfunction main() { value; }\n"
+        );
+    }
+
+    #[test]
+    fn plans_a_plain_module_import() {
+        let source = "function main() { lib.value; }\n";
+        let edit = plan_module(source, "lib.math").expect("edit");
+
+        assert_eq!(
+            apply(source, &edit),
+            "import lib.math;\nfunction main() { lib.value; }\n"
+        );
+    }
+
+    #[test]
+    fn identical_plain_module_import_needs_no_edit() {
+        let source = "import lib.math; // already imported\nfunction main() { lib.value; }\n";
+        assert_eq!(plan_module(source, "lib.math"), None);
+    }
+
+    #[test]
+    fn selected_wildcard_and_aliased_imports_do_not_count_as_plain() {
+        for existing in [
+            "import lib.math.{value};",
+            "import lib.math.{other} hiding {other};",
+            "import lib.math.{*};",
+            "import lib.math as Math;",
+        ] {
+            let source = format!("{existing}\nfunction main() {{ lib.value; }}\n");
+            let edit =
+                plan_module(&source, "lib.math").unwrap_or_else(|| panic!("edit for {existing}"));
+            assert_eq!(
+                apply(&source, &edit),
+                format!("{existing}\nimport lib.math;\nfunction main() {{ lib.value; }}\n")
+            );
+        }
+    }
+
+    #[test]
+    fn plain_module_import_preserves_crlf_after_nested_trailing_comment() {
+        let source = "import first; /* outer\r\n  /* inner */\r\n  still outer */\r\n\r\nfunction main() { lib.value; }\r\n";
+        let edit = plan_module(source, "lib.math").expect("edit");
+
+        assert_eq!(
+            apply(source, &edit),
+            "import first; /* outer\r\n  /* inner */\r\n  still outer */\r\nimport lib.math;\r\n\r\nfunction main() { lib.value; }\r\n"
+        );
+    }
+
+    #[test]
+    fn plain_module_import_follows_nested_header_comments() {
+        let source =
+            "/* license /* generated detail */ remains */\n\nfunction main() { lib.value; }\n";
+        let edit = plan_module(source, "@dep.math").expect("edit");
+
+        assert_eq!(
+            apply(source, &edit),
+            "/* license /* generated detail */ remains */\nimport @dep.math;\n\nfunction main() { lib.value; }\n"
+        );
+    }
+
+    #[test]
+    fn plain_module_import_rejects_invalid_paths_and_stale_metadata() {
+        let source = "function main() { lib.value; }\n";
+        assert_eq!(plan_module(source, "lib; export secret"), None);
+        assert_eq!(plan_module(source, ""), None);
+
+        let mut world = WorldState::new();
+        let uri = Url::parse("file:///main/main.solc").expect("uri");
+        assert!(world.open_document(uri.clone(), source.to_owned()));
+        let db = world.db();
+        let path = world.vfs_path_for_uri(&uri).expect("VFS path");
+        let file = db.source_file(&path).expect("source file");
+        let parsed = parser::parse_file_to_hir(db, file);
+
+        assert_eq!(
+            plan_module_import_edit(db, "function main() {}\n", parsed, "lib.math"),
+            None
         );
     }
 
