@@ -16,8 +16,8 @@ use lsp_types::{
 };
 
 use crate::{
-    resolve::function_owning_offset,
-    state::{WorldState, uri_to_vfs_path},
+    resolve::{function_owning_offset, module_id_for_uri},
+    state::WorldState,
 };
 
 /// Computes signature help for the nearest call argument list at a source
@@ -28,13 +28,13 @@ pub fn handle_signature_help(
     position: Position,
 ) -> Option<SignatureHelp> {
     let db = world.db();
-    let path = uri_to_vfs_path(uri)?;
+    let path = world.vfs_path_for_uri(uri)?;
     let file = db.source_file(&path)?;
     let line_index = world.line_index(uri)?;
     let offset = line_index.position_to_byte(position)?;
-    let entry = world.workspace().entry_module()?;
+    let current_module = module_id_for_uri(world, db, uri)?;
     let module = parser::parse_file_to_hir(db, file).module(db);
-    let env = nameres::module_env(db, entry);
+    let env = nameres::module_env(db, current_module);
 
     let owner = function_owning_offset(db, module, file, offset)?;
     let body_map = body_resolution_map(
@@ -48,7 +48,7 @@ pub fn handle_signature_help(
     );
     let call = enclosing_call(db, owner.root_body, file, offset, line_index.text())?;
     let resolution = expr_resolution(&body_map, call.body, call.callee)?;
-    let mut signature = callable_signature(db, entry, resolution)?;
+    let mut signature = callable_signature(db, resolution)?;
     let active_parameter = if signature.parameters.is_empty() {
         0
     } else {
@@ -260,7 +260,6 @@ fn expr_resolution<'db>(
 
 fn callable_signature<'db>(
     db: &'db dyn hir_ty::Db,
-    entry: nameres::ModuleId<'db>,
     resolution: Resolution<'db>,
 ) -> Option<CallableSignature> {
     match resolution {
@@ -271,17 +270,21 @@ fn callable_signature<'db>(
             let function = function_for_def(db, def)?;
             let name = function.sig(db).name.atom().text(db).to_owned();
             let names = function_param_names(db, function);
-            let scheme = hir_ty::infer::function_scheme(db, entry, def)?;
+            let defining_module = nameres::module_id_for_source_file(db, def.file(db))?;
+            let scheme = hir_ty::infer::function_scheme(db, defining_module, def)?;
             signature_from_scheme(db, &name, &names, scheme)
         }
         Resolution::Ctor { ty, index } => {
             let ctor = adt_ctor_for_def(db, ty, index.as_usize())?;
             let name = ctor.name.atom().text(db).to_owned();
-            let scheme = hir_ty::infer::adt_ctor_scheme(db, entry, ty, index)?;
+            let defining_module = nameres::module_id_for_source_file(db, ty.file(db))?;
+            let scheme = hir_ty::infer::adt_ctor_scheme(db, defining_module, ty, index)?;
             signature_from_scheme(db, &name, &[], scheme)
         }
         Resolution::ClassMethod { class, name } => {
-            let scheme = hir_ty::infer::class_method_scheme(db, entry, class, name.clone())?;
+            let defining_module = nameres::module_id_for_source_file(db, class.file(db))?;
+            let scheme =
+                hir_ty::infer::class_method_scheme(db, defining_module, class, name.clone())?;
             signature_from_scheme(db, &name, &[], scheme)
         }
         Resolution::Builtin(kind) => {
@@ -533,5 +536,64 @@ mod tests {
             "expected return type in label, got {}",
             signature.label
         );
+    }
+
+    #[test]
+    fn signature_help_uses_requested_module_when_unrelated_document_opened_first() {
+        let unrelated = "function unrelated() -> word { return 0; }\n";
+        let main = "function combine(a: word, b: word) -> word { return a; }\n\nfunction main() -> word {\n  return combine(1, 2);\n}\n";
+        let unrelated_uri = Url::parse("file:///main/unrelated.solc").expect("unrelated uri");
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let mut world = WorldState::new();
+        assert!(world.open_document(unrelated_uri, unrelated.to_owned()));
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        let comma_offset = main.find(", 2").expect("comma") as u32 + 1;
+        let position = world
+            .line_index(&main_uri)
+            .expect("line index")
+            .byte_to_position(comma_offset);
+
+        let help =
+            handle_signature_help(&world, &main_uri, position).expect("signature help response");
+        let signature = &help.signatures[0];
+
+        assert_eq!(help.active_parameter, Some(1));
+        assert!(
+            signature.label.contains("combine("),
+            "expected imported function signature, got {}",
+            signature.label
+        );
+        assert!(signature.label.contains("a: word"));
+        assert!(signature.label.contains("b: word"));
+    }
+
+    #[test]
+    fn signature_help_resolves_imported_function_in_defining_module() {
+        let unrelated = "function unrelated() -> word { return 0; }\n";
+        let math =
+            "function combine(a: word, b: word) -> word { return a; }\n\nexport { combine };\n";
+        let main =
+            "import math.{combine};\n\nfunction main() -> word {\n  return combine(1, 2);\n}\n";
+        let unrelated_uri = Url::parse("file:///main/unrelated.solc").expect("unrelated uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let mut world = WorldState::new();
+        assert!(world.open_document(unrelated_uri, unrelated.to_owned()));
+        assert!(world.open_document(math_uri, math.to_owned()));
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        let comma_offset = main.find(", 2").expect("comma") as u32 + 1;
+        let position = world
+            .line_index(&main_uri)
+            .expect("line index")
+            .byte_to_position(comma_offset);
+
+        let help =
+            handle_signature_help(&world, &main_uri, position).expect("signature help response");
+        let signature = &help.signatures[0];
+
+        assert_eq!(help.active_parameter, Some(1));
+        assert!(signature.label.contains("combine("));
+        assert!(signature.label.contains("a: word"));
+        assert!(signature.label.contains("b: word"));
     }
 }
