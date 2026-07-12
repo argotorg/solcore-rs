@@ -12,6 +12,7 @@ pub mod document_highlight;
 pub mod folding;
 pub mod formatting;
 pub mod hover;
+mod import_edits;
 pub mod inlay_hints;
 pub mod line_index;
 #[cfg(feature = "native")]
