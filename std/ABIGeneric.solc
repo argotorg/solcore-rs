@@ -9,6 +9,7 @@ export {
 
 import std.{*};
 import std.opcodes.{mstore};
+import std.Generic.{*};
 
 function maxWord(a : word, b : word) -> word {
     match gtWord(a, b) {
@@ -75,6 +76,28 @@ instance ABIDecoder(sum(f, g), reader) : ABIDecode(sum(f, g)) {
                 return inr(ABIDecode.decode(dec_g, headOffset + 32));
             }
         }
+    }
+}
+
+// ─── Default bridges: ABIAttribs and ABIEncode via Generic ───────────────
+// Any type 'a' with Generic(rep) inherits its ABI layout from rep.
+
+forall a rep . a:Generic(rep), rep:ABIAttribs =>
+default instance a : ABIAttribs {
+    function headSize(ty : Proxy(a)) -> word {
+        let prx : Proxy(rep);
+        return ABIAttribs.headSize(prx);
+    }
+    function isStatic(ty : Proxy(a)) -> bool {
+        let prx : Proxy(rep);
+        return ABIAttribs.isStatic(prx);
+    }
+}
+
+forall a rep . a:Generic(rep), rep:ABIAttribs, rep:ABIEncode =>
+default instance a : ABIEncode {
+    function encodeInto(x : a, basePtr : word, offset : word, tail : word) -> word {
+        return ABIEncode.encodeInto(Generic.from(x), basePtr, offset, tail);
     }
 }
 

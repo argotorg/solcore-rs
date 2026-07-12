@@ -1,7 +1,6 @@
-import std.opcodes.{add, sub, mul, div, mod, addmod as addmod_, mulmod as mulmod_, and as and_, or as or_, xor as xor_, shl, shr, eq, not as not_, gt as gt_, iszero, keccak256, mstore, mload, mcopy, sstore, sload, gas, calldatasize, calldataload, calldatacopy, returndatasize, returndatacopy, log1 as log1_, call, staticcall, revert as revert_, invalid};
+import std.opcodes.{add, sub, mul, div, mod, addmod as addmod_, mulmod as mulmod_, and as and_, or as or_, xor as xor_, shl, shr, eq, not as not_, gt as gt_, iszero, keccak256, mstore, mload, mcopy, sstore, sload, gas, calldataload, calldatacopy, returndatasize, returndatacopy, log1 as log1_, call, staticcall, revert as revert_, invalid};
 
-pragma no-patterson-condition ABIAttribs, ABIDecode, ABIEncode, Generic, Num;
-pragma no-bounded-variable-condition ABIAttribs, ABIDecode, ABIEncode, Generic;
+pragma no-patterson-condition ABIEncode, Num;
 pragma no-coverage-condition ABIDecode, MemoryType;
 
 export {
@@ -16,7 +15,6 @@ export {
   BitOr,
   BitXor,
   Bounded,
-  BoundedMemoryWordReader(*),
   CalldataWordReader(*),
   CanStore,
   ContractStorage(*),
@@ -24,7 +22,6 @@ export {
   DynArray,
   Error(*),
   Eq,
-  Generic,
   HasWordReader,
   IndexAccess,
   LVA,
@@ -984,35 +981,6 @@ instance MemoryWordReader:WordReader {
     }
 }
 
-// A memory reader for untrusted ABI input. `remaining` is reduced by every
-// advance, so reads and copies cannot escape the creation-code argument suffix.
-data BoundedMemoryWordReader = BoundedMemoryWordReader(word, word);
-instance BoundedMemoryWordReader:WordReader {
-    function read(reader:BoundedMemoryWordReader) -> word {
-        match reader {
-        | BoundedMemoryWordReader(ptr, remaining) =>
-            require(remaining >= 32, Error(0x08638556)); // ABIInputTruncated()
-            return mload(ptr);
-        }
-    }
-    function advance(reader:BoundedMemoryWordReader, offset:word) -> BoundedMemoryWordReader {
-        match reader {
-        | BoundedMemoryWordReader(ptr, remaining) =>
-            require(offset <= remaining, Error(0x08638556)); // ABIInputTruncated()
-            let next = ptr + offset;
-            require(next >= ptr, Error(0x08638556)); // ABIInputTruncated()
-            return BoundedMemoryWordReader(next, remaining - offset);
-        }
-    }
-    function copyToMem(reader:BoundedMemoryWordReader, dst:word, cnt:word) -> () {
-        match reader {
-        | BoundedMemoryWordReader(ptr, remaining) =>
-            require(cnt <= remaining, Error(0x08638556)); // ABIInputTruncated()
-            mcopy(dst, ptr, cnt);
-        }
-    }
-}
-
 // WordReader for calldata
 data CalldataWordReader = CalldataWordReader(word);
 
@@ -1028,26 +996,17 @@ instance CalldataWordReader : Typedef(word) {
 instance CalldataWordReader:WordReader {
     function read(reader:CalldataWordReader) -> word {
         match reader {
-          | CalldataWordReader(ptr) =>
-            let end = calldatasize();
-            require(end >= ptr && (end - ptr) >= 32, Error(0x08638556)); // ABIInputTruncated()
-            return calldataload(ptr);
+          | CalldataWordReader(ptr) => return calldataload(ptr);
         }
     }
     function advance(reader:CalldataWordReader, offset:word) -> CalldataWordReader {
         match reader {
-        | CalldataWordReader(ptr) =>
-            let end = calldatasize();
-            require(end >= ptr && offset <= (end - ptr), Error(0x08638556)); // ABIInputTruncated()
-            return CalldataWordReader(ptr + offset);
+        | CalldataWordReader(ptr) => return CalldataWordReader(ptr + offset);
         }
     }
     function copyToMem(reader:CalldataWordReader, dst:word, cnt: word) -> () {
         match reader {
-        | CalldataWordReader(ptr) =>
-            let end = calldatasize();
-            require(end >= ptr && cnt <= (end - ptr), Error(0x08638556)); // ABIInputTruncated()
-            calldatacopy(dst, ptr, cnt);
+        | CalldataWordReader(ptr) => calldatacopy(dst, ptr, cnt);
         }
     }
 }
@@ -1063,14 +1022,6 @@ forall self reader . class self:HasWordReader(reader) {
 instance memory(bytes):HasWordReader(MemoryWordReader) {
     function getWordReader(x:memory(bytes)) -> MemoryWordReader {
         return MemoryWordReader(Typedef.rep(x));
-    }
-}
-
-instance slice(memory(bytes)):HasWordReader(BoundedMemoryWordReader) {
-    function getWordReader(x:slice(memory(bytes))) -> BoundedMemoryWordReader {
-        match x {
-        | slice(ptr, length) => return BoundedMemoryWordReader(Typedef.rep(ptr), length);
-        }
     }
 }
 
@@ -1130,15 +1081,6 @@ forall ty deref . ty:MemoryType(deref), deref:ABIEncode => instance memory(ty):A
 // encoding / decoding.
 data ABITuple(tuple) = ABITuple(tuple);
 
-// MPTC: isomorphism between a user type and its SOP representation. Generic is
-// part of the prelude because constructor/deployment overlay code must be able
-// to decode user ADTs without requiring a source-level std.dispatch import.
-forall a rep.
-class a : Generic(rep) {
-    function from(x : a) -> rep;
-    function to(x : rep) -> a;
-}
-
 forall t . instance ABITuple(t):Typedef(t) {
     function abs(t: t) -> ABITuple(t) {
         return ABITuple(t);
@@ -1161,13 +1103,15 @@ forall self . class self:ABIAttribs {
     function isStatic(ty:Proxy(self)) -> bool;
 }
 
+forall t.
+default instance t:ABIAttribs {
+    function headSize(ty : Proxy(t)) -> word { return 32; }
+    function isStatic(ty : Proxy(t)) -> bool { return true; }
+}
+
 instance ():ABIAttribs {
     function headSize(ty : Proxy(())) -> word { return 0; }
     function isStatic(ty : Proxy(())) -> bool { return true; }
-}
-instance word:ABIAttribs {
-    function headSize(ty : Proxy(word)) -> word { return 32; }
-    function isStatic(ty : Proxy(word)) -> bool { return true; }
 }
 instance uint256:ABIAttribs {
     function headSize(ty : Proxy(uint256)) -> word { return 32; }
@@ -1177,25 +1121,9 @@ instance address:ABIAttribs {
     function headSize(ty : Proxy(address)) -> word { return 32; }
     function isStatic(ty : Proxy(address)) -> bool { return true; }
 }
-instance bytes32:ABIAttribs {
-    function headSize(ty : Proxy(bytes32)) -> word { return 32; }
-    function isStatic(ty : Proxy(bytes32)) -> bool { return true; }
-}
-instance bytes4:ABIAttribs {
-    function headSize(ty : Proxy(bytes4)) -> word { return 32; }
-    function isStatic(ty : Proxy(bytes4)) -> bool { return true; }
-}
-instance bool:ABIAttribs {
-    function headSize(ty : Proxy(bool)) -> word { return 32; }
-    function isStatic(ty : Proxy(bool)) -> bool { return true; }
-}
 forall t . instance DynArray(t):ABIAttribs {
     function headSize(ty : Proxy(DynArray(t))) -> word { return 32; }
     function isStatic(ty : Proxy(DynArray(t))) -> bool { return false; }
-}
-instance bytes:ABIAttribs {
-    function headSize(ty: Proxy(bytes)) -> word { return 32; }
-    function isStatic(ty : Proxy(bytes)) -> bool { return false; }
 }
 instance string:ABIAttribs {
     function headSize(ty: Proxy(string)) -> word { return 32; }
@@ -1215,21 +1143,6 @@ forall a b . a:ABIAttribs, b:ABIAttribs => instance (a,b):ABIAttribs {
         let pa : Proxy(a);
         let pb : Proxy(b);
         return and(ABIAttribs.isStatic(pa), ABIAttribs.isStatic(pb));
-    }
-}
-
-// User ADTs inherit their canonical ABI layout from the automatically derived
-// Generic product representation. Concrete ABIAttribs instances remain more
-// specific than this default bridge.
-forall a rep . a:Generic(rep), rep:ABIAttribs =>
-default instance a : ABIAttribs {
-    function headSize(ty : Proxy(a)) -> word {
-        let prx : Proxy(ABITuple(rep));
-        return ABIAttribs.headSize(prx);
-    }
-    function isStatic(ty : Proxy(a)) -> bool {
-        let prx : Proxy(ABITuple(rep));
-        return ABIAttribs.isStatic(prx);
     }
 }
 
@@ -1296,13 +1209,6 @@ instance uint256:ABIEncode {
     function encodeInto(x:uint256, basePtr:word, offset:word, tail:word) -> word {
         let repx : word = Typedef.rep(x);
         mstore(basePtr + offset, repx);
-        return tail;
-    }
-}
-
-instance word:ABIEncode {
-    function encodeInto(x:word, basePtr:word, offset:word, tail:word) -> word {
-        mstore(basePtr + offset, x);
         return tail;
     }
 }
@@ -1379,14 +1285,6 @@ forall a b . a:ABIAttribs, a:ABIEncode, b:ABIEncode => instance (a,b):ABIEncode 
     }
 }
 
-forall a rep . a:Generic(rep), rep:ABIAttribs, rep:ABIEncode =>
-default instance a : ABIEncode {
-    function encodeInto(x : a, basePtr : word, offset : word, tail : word) -> word {
-        let tuple : ABITuple(rep) = ABITuple(Generic.from(x)) : ABITuple(rep);
-        return ABIEncode.encodeInto(tuple, basePtr, offset, tail);
-    }
-}
-
 
 // abi encoding for an ABITuple of encodable types
 // TODO: is this correct?
@@ -1395,18 +1293,18 @@ forall tuple . tuple:ABIEncode, tuple:ABIAttribs => instance ABITuple(tuple):ABI
         let prx : Proxy(tuple);
         match ABIAttribs.isStatic(prx) {
         // if the tuple contains only static elements then we encode it in the head
-        | true => return ABIEncode.encodeInto(Typedef.rep(x) : tuple, basePtr, offset, tail);
+        | true => return ABIEncode.encodeInto(Typedef.rep(x), basePtr, offset, tail);
         // if the tuple contains dynamically sized elements then we store a
         // pointer in the head, and encode the tuple into the tail
         | false =>
-            // Store the tuple payload offset in this value's head slot.
-            mstore(basePtr + offset, tail - basePtr);
+            // store the length of the head in basePtr
+            mstore(basePtr, tail - basePtr);
 
             // encode the underlying tuple into the tail
             let headSize = ABIAttribs.headSize(Proxy : Proxy(tuple));
             basePtr = tail;
             tail = tail + headSize;
-            return ABIEncode.encodeInto(Typedef.rep(x) : tuple, basePtr, 0, tail);
+            return ABIEncode.encodeInto(Typedef.rep(x), basePtr, 0, tail);
         }
     }
 }
@@ -1456,26 +1354,10 @@ forall reader . reader:WordReader => instance ABIDecoder(uint256, reader):ABIDec
     }
 }
 
-// `word` has the same ABI representation as uint256, without a typedef wrapper.
-forall reader . reader:WordReader => instance ABIDecoder(word, reader):ABIDecode(word) {
-    function decode(ptr:ABIDecoder(word, reader), currentHeadOffset:word) -> word {
-        return WordReader.read(WordReader.advance(ptr, currentHeadOffset));
-    }
-}
-
 // ABI Decoding for bytes32
 forall reader . reader:WordReader => instance ABIDecoder(bytes32, reader):ABIDecode(bytes32) {
     function decode(ptr:ABIDecoder(bytes32, reader), currentHeadOffset:word) -> bytes32 {
         return Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset))) : bytes32;
-    }
-}
-
-// ABI Decoding for bool
-forall reader . reader:WordReader => instance ABIDecoder(bool, reader):ABIDecode(bool) {
-    function decode(ptr:ABIDecoder(bool, reader), currentHeadOffset:word) -> bool {
-        let raw = WordReader.read(WordReader.advance(ptr, currentHeadOffset));
-        require(raw <= 1, Error(0x0557dbbf)); // DirtyHigherBitsForBool()
-        return tobool(raw);
     }
 }
 
@@ -1501,18 +1383,11 @@ function decodeBytesLike(ptr:ABIDecoder(memory(a), reader), currentHeadOffset:wo
         let headRdr = WordReader.advance(ptr, currentHeadOffset);
         let tailPtr : word = WordReader.read(headRdr);
 
-        require(and_(tailPtr, 31) == 0, Error(0x08638556)); // ABIInputTruncated()
-        let valueHeadEnd = currentHeadOffset + 32;
-        require(valueHeadEnd >= currentHeadOffset, Error(0x08638556)); // ABIInputTruncated()
-        require(tailPtr >= valueHeadEnd, Error(0x08638556)); // ABIInputTruncated()
-
         let src = WordReader.advance(ptr, tailPtr);
         let srcRdr = getReader(src);
         let length = WordReader.read(src);
         let total = length + 32;
-        require(total >= length, Error(0x08638556)); // ABIInputTruncated()
         let rounded = round_up_to_mul_of_32(total);
-        require(rounded >= total, Error(0x08638556)); // ABIInputTruncated()
         let resultPtr : word = allocate_memory(rounded);
         WordReader.copyToMem(srcRdr, resultPtr, total);
         return memory(resultPtr);
@@ -1553,47 +1428,17 @@ forall a b a_decoded b_decoded reader . reader:WordReader, ABIDecoder(b,reader):
     }
 }
 
-forall a rep reader .
-    a : Generic(rep),
-    reader : WordReader,
-    ABIDecoder(ABITuple(rep), reader) : ABIDecode(rep) =>
-default instance ABIDecoder(a, reader) : ABIDecode(a) {
-    function decode(ptr : ABIDecoder(a, reader), headOffset : word) -> a {
-        match ptr {
-        | ABIDecoder(rdr) =>
-            let rep_ptr : ABIDecoder(ABITuple(rep), reader) =
-                ABIDecoder(rdr) : ABIDecoder(ABITuple(rep), reader);
-            return Generic.to(ABIDecode.decode(rep_ptr, headOffset));
-        }
-    }
-}
-
-forall reader tuple tuple_decoded . reader:WordReader, ABIDecoder(tuple, reader):ABIDecode(tuple_decoded), tuple:ABIAttribs =>
+forall reader tuple tuple_decoded . reader:WordReader, tuple:ABIDecode(tuple_decoded), tuple:ABIAttribs =>
     instance ABIDecoder(ABITuple(tuple), reader):ABIDecode(tuple_decoded)
 {
     function decode(ptr:ABIDecoder(ABITuple(tuple), reader), currentHeadOffset:word) -> tuple_decoded {
         let prx : Proxy(tuple);
-        match ptr {
-        | ABIDecoder(rdr) =>
-            let decoder : ABIDecoder(tuple, reader) =
-                ABIDecoder(rdr) : ABIDecoder(tuple, reader);
-            match ABIAttribs.isStatic(prx) {
-            | true => return ABIDecode.decode(decoder, currentHeadOffset);
-            | false =>
-                let tailPtr = WordReader.read(WordReader.advance(rdr, currentHeadOffset));
-                require(and_(tailPtr, 31) == 0, Error(0x08638556)); // ABIInputTruncated()
-                // `tailPtr` is relative to the enclosing ABI tuple. The
-                // wrapped product's own head can be wider than this value's
-                // single offset slot, so using its headSize here rejects a
-                // valid dynamic ADT in the first outer slot.
-                let valueHeadEnd = currentHeadOffset + 32;
-                require(valueHeadEnd >= currentHeadOffset, Error(0x08638556)); // ABIInputTruncated()
-                require(tailPtr >= valueHeadEnd, Error(0x08638556)); // ABIInputTruncated()
-                let tailDecoder : ABIDecoder(tuple, reader) =
-                    ABIDecoder(WordReader.advance(rdr, tailPtr)) : ABIDecoder(tuple, reader);
-                return ABIDecode.decode(tailDecoder, 0);
-            }
-        }
+        match ABIAttribs.isStatic(prx) {
+        | true => return ABIDecode.decode(WordReader.advance(ptr, currentHeadOffset), 0);
+        | false =>
+            let tailPtr = WordReader.read(ptr);
+            return ABIDecode.decode(WordReader.advance(ptr, tailPtr), 0);
+       }
     }
 }
 
