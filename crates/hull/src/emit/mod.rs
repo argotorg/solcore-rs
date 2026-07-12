@@ -53,9 +53,7 @@ use layout::{
     bool_expr, hull_ty_word_slots, product_expr, product_field_exprs, sem_product_fields,
     sem_ty_needs_untyped_word_default, sum_right_ty,
 };
-use match_compile::{
-    AdtLayout, CtorLayout, constructor_name_matches, encode_constructor, wrap_lit_text,
-};
+use match_compile::{AdtLayout, CtorLayout, constructor_index, encode_constructor, wrap_lit_text};
 use reachability::deployment_closure;
 use storage::StorageFieldKind;
 

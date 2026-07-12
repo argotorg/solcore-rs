@@ -833,6 +833,33 @@ contract C {
     }
 }
 
+#[test]
+fn nested_pair_tail_binding_preserves_the_tail_product() {
+    let yul = render_source(
+        "nested_pair_tail_binding",
+        r#"
+forall a b . function nestedSnd(p: (a, b)) -> b {
+  assembly { mstore(0, 0) }
+  match p {
+    | (_, tail) => return tail;
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let x: word;
+    assembly { x := sload(0) }
+    let tail = nestedSnd((x, (x, x)));
+    match tail {
+      | (head, _) => return head;
+    }
+  }
+}
+"#,
+    );
+    assert!(yul.contains("nestedSnd"), "{yul}");
+}
+
 fn render_source(name: &str, src: &str) -> String {
     let (db, output) = specialize_src(name, src);
     render_output(db, output)

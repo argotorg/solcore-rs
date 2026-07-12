@@ -913,6 +913,88 @@ contract StaleCall {
 }
 
 #[test]
+fn audit_p0_match_scrutinees_are_materialized_exactly_once_even_for_default_bindings() {
+    for (name, arms) in [
+        (
+            "match_call_default_binding",
+            "| 0 => return 0; | n => return n;",
+        ),
+        ("match_call_wildcard", "| _ => return 7;"),
+    ] {
+        let hull = pretty_src_hull(
+            name,
+            &format!(
+                r#"
+function read(x: word) -> word {{
+  let value: word;
+  assembly {{ value := sload(x) }}
+  return value;
+}}
+
+contract C {{
+  public function main() -> word {{
+    match read(0) {{ {arms} }}
+  }}
+}}
+"#
+            ),
+        );
+        let main = hull_function(&hull, "_main_");
+        assert_eq!(main.matches("_read_").count(), 1, "{name}: {main}\n{hull}");
+        assert!(main.contains("$match_scrutinee"), "{name}: {main}\n{hull}");
+    }
+}
+
+#[test]
+fn audit_p0_shadowing_let_materializes_its_initializer_before_declaration() {
+    let hull = pretty_src_hull(
+        "shadowing_let_initializer",
+        r#"
+contract C {
+  balance: word;
+
+  public function main() -> word {
+    let balance: word = balance;
+    return balance;
+  }
+}
+"#,
+    );
+    let main = hull_function(&hull, "_main_");
+    assert_contains_in_order(
+        "shadowing let initializer",
+        main,
+        &[
+            "$let_init",
+            "sload(0)",
+            "let balance",
+            "balance := $let_init",
+            "return balance",
+        ],
+    );
+}
+
+#[test]
+fn audit_p0_for_initializer_let_remains_visible_after_the_loop() {
+    let hull = pretty_src_hull(
+        "for_initializer_scope",
+        r#"
+contract C {
+  i: word;
+
+  public function main() -> word {
+    for (let i: word; false; ) {}
+    return i;
+  }
+}
+"#,
+    );
+    let main = hull_function(&hull, "_main_");
+    assert_contains_in_order("for initializer scope", main, &["let i", "for", "return i"]);
+    assert!(!main.contains("return sload"), "{main}\n{hull}");
+}
+
+#[test]
 fn evaluator_invalidates_residual_assembly_branch_assignments() {
     let if_hull = pretty_src_hull_with_std(
         "eval_if_asm_assignment",

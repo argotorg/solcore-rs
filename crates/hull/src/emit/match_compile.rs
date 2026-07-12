@@ -197,10 +197,35 @@ impl<'db> Emitter<'db> {
             }];
         }
 
-        let scrutinee_exprs = scrutinees
-            .iter()
-            .map(|scrutinee| self.emit_expr(scrutinee))
-            .collect::<Vec<_>>();
+        let mut materialized_scrutinees = Vec::new();
+        let mut scrutinee_exprs = Vec::with_capacity(scrutinees.len());
+        for scrutinee in scrutinees {
+            let expr = self.emit_expr(scrutinee);
+            if matches!(
+                &expr.kind,
+                ExprKind::Word(_) | ExprKind::Bool(_) | ExprKind::Unit | ExprKind::Var(_)
+            ) {
+                scrutinee_exprs.push(expr);
+                continue;
+            }
+            let temp = self.fresh_temp("match_scrutinee");
+            let ty = expr.ty.clone();
+            materialized_scrutinees.push(Stmt {
+                span: scrutinee.span,
+                kind: StmtKind::Let {
+                    name: temp.clone().into(),
+                    ty: ty.clone(),
+                },
+            });
+            materialized_scrutinees.push(Stmt {
+                span: scrutinee.span,
+                kind: StmtKind::Assign {
+                    lhs: Expr::var(scrutinee.span, temp.clone(), ty.clone()),
+                    rhs: expr,
+                },
+            });
+            scrutinee_exprs.push(Expr::var(scrutinee.span, temp, ty));
+        }
         let columns = scrutinees
             .iter()
             .enumerate()
@@ -247,7 +272,8 @@ impl<'db> Emitter<'db> {
             .map(|(column, expr)| (column.occurrence.clone(), expr))
             .collect::<BTreeMap<_, _>>();
         let tree = self.compile_match_matrix(span, MatchMatrix::new(columns, rows));
-        self.tree_to_body(span, &mut occurrences, &tree)
+        materialized_scrutinees.extend(self.tree_to_body(span, &mut occurrences, &tree));
+        materialized_scrutinees
     }
 
     fn compile_match_matrix(
@@ -317,7 +343,7 @@ impl<'db> Emitter<'db> {
         let tuple_fields = first_col
             .iter()
             .any(|pat| matches!(pat, MatrixPat::Tuple { .. }))
-            .then(|| sem_product_fields(self.db, test.ty));
+            .then(|| sem_product_fields_shallow(self.db, test.ty));
         let single_ctor_layout = self
             .adt_layout_for_sem_ty(test.ty, test.span)
             .filter(|layout| layout.ctors.len() == 1);
@@ -714,7 +740,7 @@ fn matrix_pat<'db>(db: &'db dyn hir_ty::Db, pat: &MonoPat<'db>) -> MatrixPat {
             if ctor.is_builtin_ctor(db, MonoBuiltinCtor::Pair) && args.len() == 2 =>
         {
             MatrixPat::Tuple {
-                elems: matrix_pair_pat_elems(db, args),
+                elems: args.iter().map(|pat| matrix_pat(db, pat)).collect(),
             }
         }
         MonoPatKind::Con { ctor, args } => MatrixPat::Con {
@@ -729,28 +755,18 @@ fn matrix_pat<'db>(db: &'db dyn hir_ty::Db, pat: &MonoPat<'db>) -> MatrixPat {
     }
 }
 
-fn matrix_pair_pat_elems<'db>(db: &'db dyn hir_ty::Db, args: &[MonoPat<'db>]) -> Vec<MatrixPat> {
-    let mut elems = vec![matrix_pat(db, &args[0])];
-    push_matrix_pair_tail(db, &args[1], &mut elems);
-    elems
-}
-
-fn push_matrix_pair_tail<'db>(
-    db: &'db dyn hir_ty::Db,
-    pat: &MonoPat<'db>,
-    out: &mut Vec<MatrixPat>,
-) {
-    match &pat.kind {
-        MonoPatKind::Con { ctor, args }
-            if ctor.is_builtin_ctor(db, MonoBuiltinCtor::Unit) && args.is_empty() => {}
-        MonoPatKind::Con { ctor, args }
-            if ctor.is_builtin_ctor(db, MonoBuiltinCtor::Pair) && args.len() == 2 =>
-        {
-            out.push(matrix_pat(db, &args[0]));
-            push_matrix_pair_tail(db, &args[1], out);
-        }
-        MonoPatKind::Tuple(elems) => out.extend(elems.iter().map(|pat| matrix_pat(db, pat))),
-        _ => out.push(matrix_pat(db, pat)),
+fn sem_product_fields_shallow<'db>(db: &'db dyn hir_ty::Db, ty: SemTy<'db>) -> Vec<SemTy<'db>> {
+    match ty.kind(db) {
+        SemTyKind::Tuple(elems) => elems.to_vec(),
+        SemTyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Unit),
+            args,
+        } if args.is_empty() => Vec::new(),
+        SemTyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+            args,
+        } if args.len() == 2 => args.to_vec(),
+        _ => vec![ty],
     }
 }
 
@@ -838,21 +854,14 @@ fn project_constructor_rows<'db>(
             MatrixPat::Con {
                 ctor: name, args, ..
             } => {
-                let matching_branches = head_ctors
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(branch, index)| {
-                        constructor_name_matches(&name, &layout.name, &layout.ctors[*index].name)
-                            .then_some(branch)
-                    })
-                    .collect::<Vec<_>>();
-                let Some((&last_branch, prefix_branches)) = matching_branches.split_last() else {
+                let Some(index) = constructor_index(layout, &name) else {
                     continue;
                 };
-                for branch in prefix_branches {
-                    branch_rows[*branch].push(row_with_pats(row_rest.clone(), args.clone()));
-                }
-                branch_rows[last_branch].push(row_with_pats(row_rest, args));
+                let Some(branch) = head_ctors.iter().position(|candidate| *candidate == index)
+                else {
+                    continue;
+                };
+                branch_rows[branch].push(row_with_pats(row_rest, args));
             }
             MatrixPat::Var { name, .. } => {
                 push_constructor_var_rows(
@@ -1015,11 +1024,7 @@ fn head_constructor_indices<'db>(
         let MatrixPat::Con { ctor, .. } = pat else {
             continue;
         };
-        let Some(index) = layout
-            .ctors
-            .iter()
-            .position(|candidate| constructor_name_matches(ctor, &layout.name, &candidate.name))
-        else {
+        let Some(index) = constructor_index(layout, ctor) else {
             continue;
         };
         if !out.contains(&index) {
@@ -1200,6 +1205,39 @@ pub(super) fn constructor_name_matches(actual: &str, adt: &str, ctor: &str) -> b
     actual == ctor || actual == format!("{adt}_{ctor}") || actual.ends_with(&format!("_{ctor}"))
 }
 
+pub(super) fn constructor_index(layout: &AdtLayout<'_>, actual: &str) -> Option<usize> {
+    let names = layout
+        .ctors
+        .iter()
+        .map(|ctor| ctor.name.as_str())
+        .collect::<Vec<_>>();
+    constructor_index_from_names(actual, &layout.name, &names)
+}
+
+fn constructor_index_from_names(actual: &str, adt: &str, ctors: &[&str]) -> Option<usize> {
+    ctors
+        .iter()
+        .position(|ctor| actual == *ctor || actual == format!("{adt}_{ctor}"))
+        .or_else(|| {
+            ctors
+                .iter()
+                .position(|ctor| actual.ends_with(&format!("_{ctor}")))
+        })
+}
+
 fn source_constructor_comment(name: &str) -> String {
     name.rsplit('_').next().unwrap_or(name).to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::constructor_index_from_names;
+
+    #[test]
+    fn constructor_lookup_prefers_full_names_over_suffixes() {
+        assert_eq!(
+            constructor_index_from_names("T_B_A", "T", &["A", "B_A"]),
+            Some(1)
+        );
+    }
 }

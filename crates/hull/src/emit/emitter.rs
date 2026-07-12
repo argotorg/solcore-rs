@@ -123,20 +123,52 @@ impl<'db> Emitter<'db> {
                     }
                     None => self.hull_ty(id.ty.ty(), stmt.span),
                 };
-                let mut out = vec![Stmt {
-                    span: stmt.span,
-                    kind: StmtKind::Let {
-                        name: id.name.clone().into(),
-                        ty: declared.clone(),
-                    },
-                }];
+                let mut out = Vec::new();
                 if let Some(init) = init {
+                    // The initializer is resolved in the pre-binder scope. Materialize it
+                    // before declaring the source name so downstream name-based lowering
+                    // cannot capture a same-named outer local or storage field.
                     let rhs = self.emit_expr(init);
+                    let captured_init = expr_reads_var(&rhs, &id.name).then(|| {
+                        let temp = self.fresh_temp("let_init");
+                        out.push(Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Let {
+                                name: temp.clone().into(),
+                                ty: declared.clone(),
+                            },
+                        });
+                        out.push(Stmt {
+                            span: stmt.span,
+                            kind: StmtKind::Assign {
+                                lhs: Expr::var(stmt.span, temp.clone(), declared.clone()),
+                                rhs: rhs.clone(),
+                            },
+                        });
+                        temp
+                    });
+                    out.push(Stmt {
+                        span: stmt.span,
+                        kind: StmtKind::Let {
+                            name: id.name.clone().into(),
+                            ty: declared.clone(),
+                        },
+                    });
                     out.push(Stmt {
                         span: stmt.span,
                         kind: StmtKind::Assign {
                             lhs: Expr::var(stmt.span, id.name.clone(), declared.clone()),
-                            rhs,
+                            rhs: captured_init
+                                .map(|temp| Expr::var(stmt.span, temp, declared.clone()))
+                                .unwrap_or(rhs),
+                        },
+                    });
+                } else {
+                    out.push(Stmt {
+                        span: stmt.span,
+                        kind: StmtKind::Let {
+                            name: id.name.clone().into(),
+                            ty: declared.clone(),
                         },
                     });
                 }
@@ -223,15 +255,22 @@ impl<'db> Emitter<'db> {
                 post,
                 body,
             } => {
-                vec![Stmt {
+                // HIR deliberately gives `for` no lexical scope: a let in the
+                // initializer remains visible in the condition, post/body, and
+                // after the loop. Hoist the initializer to preserve that model
+                // in Hull and both backends.
+                let mut out = self.emit_stmts(init);
+                let loop_stmt = Stmt {
                     span: stmt.span,
                     kind: StmtKind::For {
-                        init: self.with_scope(|this| this.emit_stmts(init)),
+                        init: Vec::new(),
                         cond: self.emit_expr(cond),
                         post: self.with_scope(|this| this.emit_stmts(post)),
                         body: self.with_scope(|this| this.emit_stmts(body)),
                     },
-                }]
+                };
+                out.push(loop_stmt);
+                out
             }
             MonoStmtKind::Break => vec![Stmt {
                 span: stmt.span,
@@ -626,11 +665,7 @@ impl<'db> Emitter<'db> {
                 },
             };
         };
-        let Some(index) = layout
-            .ctors
-            .iter()
-            .position(|ctor| constructor_name_matches(ctor_name, &layout.name, &ctor.name))
-        else {
+        let Some(index) = constructor_index(&layout, ctor_name) else {
             self.push(
                 expr.span,
                 EmitDiagnosticKind::MissingConstructor {
@@ -819,6 +854,12 @@ impl<'db> Emitter<'db> {
         name
     }
 
+    pub(super) fn fresh_temp(&mut self, purpose: &str) -> String {
+        let name = format!("${purpose}{}", self.fresh);
+        self.fresh += 1;
+        name
+    }
+
     pub(super) fn bind_expr(&mut self, name: String, expr: Expr<'db>) {
         self.scopes.last_mut().insert(name, expr);
     }
@@ -839,6 +880,30 @@ impl<'db> Emitter<'db> {
 
     pub(super) fn push(&mut self, span: Span<'db>, kind: EmitDiagnosticKind) {
         self.diagnostics.push(EmitDiagnostic { span, kind });
+    }
+}
+
+fn expr_reads_var(expr: &Expr<'_>, expected: &str) -> bool {
+    match &expr.kind {
+        ExprKind::Var(name) => name.as_str() == expected,
+        ExprKind::Pair(lhs, rhs) => expr_reads_var(lhs, expected) || expr_reads_var(rhs, expected),
+        ExprKind::Fst(expr)
+        | ExprKind::Snd(expr)
+        | ExprKind::Inl { value: expr, .. }
+        | ExprKind::Inr { value: expr, .. }
+        | ExprKind::InK { value: expr, .. } => expr_reads_var(expr, expected),
+        ExprKind::Call { args, .. } => args.iter().any(|arg| expr_reads_var(arg, expected)),
+        ExprKind::If {
+            cond,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            expr_reads_var(cond, expected)
+                || expr_reads_var(then_expr, expected)
+                || expr_reads_var(else_expr, expected)
+        }
+        ExprKind::Word(_) | ExprKind::Bool(_) | ExprKind::Unit => false,
     }
 }
 
