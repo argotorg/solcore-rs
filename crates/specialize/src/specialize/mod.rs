@@ -12,6 +12,7 @@ use hir::{
         Ident,
         function::{
             BinOp, Expr, ExprKind, FuncBody, FuncParam, MatchArm, Pat, PatKind, Stmt, StmtKind,
+            UnOp,
         },
         item::{
             AdtDef, ContractItem, FuncKind, FunctionDef, Import, ImportSelector, InstanceDef, Item,

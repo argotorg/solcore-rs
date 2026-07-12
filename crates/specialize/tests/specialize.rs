@@ -1429,6 +1429,55 @@ contract C {
 }
 "#;
 
+const OPERATOR_CUSTOM_MUL: &str = r#"
+import std.{*};
+
+data Weird = Weird(word);
+
+instance Weird:Mul {
+  function mul(x:Weird, y:Weird) -> Weird {
+    return Weird(99);
+  }
+}
+
+contract C {
+  public function main() -> word {
+    let result : Weird = Weird(2) * Weird(3);
+    match result { | Weird(value) => return value; }
+  }
+}
+"#;
+
+const OPERATOR_CUSTOM_EQ: &str = r#"
+import std.{*};
+
+data Weird = Weird(word);
+
+instance Weird:Eq {
+  function eq(x:Weird, y:Weird) -> bool {
+    return false;
+  }
+}
+
+contract C {
+  public function main() -> word {
+    if (Weird(1) == Weird(1)) { return 0; } else { return 99; }
+  }
+}
+"#;
+
+const OPERATOR_VISIBLE_BOOL_FUNCTIONS: &str = r#"
+function and(x:bool, y:bool) -> bool { return false; }
+function or(x:bool, y:bool) -> bool { return false; }
+function not(x:bool) -> bool { return true; }
+
+contract C {
+  public function main() -> word {
+    if ((true && true) || !true) { return 0; } else { return 99; }
+  }
+}
+"#;
+
 const OPERATOR_WORD_ADD: &str = r#"
 import std.{*};
 
@@ -1445,6 +1494,8 @@ fn overloaded_binary_operators_specialize_through_instances() {
         ("custom uint Add", OPERATOR_CUSTOM_UINT_ADD, "42"),
         ("meters Add", OPERATOR_METERS_ADD, "3"),
         ("meters Ord", OPERATOR_METERS_ORD, "42"),
+        ("custom Mul", OPERATOR_CUSTOM_MUL, "99"),
+        ("custom Eq", OPERATOR_CUSTOM_EQ, "99"),
         ("word Add", OPERATOR_WORD_ADD, "3"),
     ] {
         let output = specialize_src_with_std(src);
@@ -1455,6 +1506,14 @@ fn overloaded_binary_operators_specialize_through_instances() {
             "{label}"
         );
     }
+
+    let (_db, output) = specialize_src(OPERATOR_VISIBLE_BOOL_FUNCTIONS);
+    assert_eq!(output.diagnostics, Vec::new(), "visible boolean functions");
+    assert_eq!(
+        main_return_number(&output),
+        Some("99".to_owned()),
+        "visible boolean functions"
+    );
 }
 
 #[test]

@@ -890,6 +890,7 @@ fn builtin_funs<'db>(span: Span<'db>) -> BTreeMap<String, FunSig<'db>> {
         "keccak256",
         "primAddWord",
         "subWord",
+        "mulWord",
         "bxorWord",
         "bandWord",
         "borWord",

@@ -2098,7 +2098,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 self.fb
                     .insert_inst(Sub::new(self.module.inst_set(), lhs, rhs), Type::I256)
             }
-            "mul" | "integerMul" => {
+            "mul" | "mulWord" | "integerMul" => {
                 let (lhs, rhs) = binary(args)?;
                 self.fb
                     .insert_inst(Mul::new(self.module.inst_set(), lhs, rhs), Type::I256)
@@ -2224,6 +2224,7 @@ fn is_primitive_name(name: &str) -> bool {
             | "subWord"
             | "integerSub"
             | "mul"
+            | "mulWord"
             | "integerMul"
             | "div"
             | "sdiv"

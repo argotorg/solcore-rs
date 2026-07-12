@@ -108,6 +108,7 @@ pub enum MonoIntrinsic {
     PrimAddWord,
     PrimEqWord,
     SubWord,
+    MulWord,
     GtWord,
     BxorWord,
     BandWord,

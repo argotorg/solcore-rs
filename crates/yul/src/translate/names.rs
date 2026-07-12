@@ -67,7 +67,7 @@ pub(super) fn lower_callee(callee: &str, user_functions: &BTreeSet<String>) -> L
     let name = match callee {
         "primAddWord" | "integerAdd" => "add",
         "subWord" | "integerSub" => "sub",
-        "integerMul" => "mul",
+        "mulWord" | "integerMul" => "mul",
         "primEqWord" | "integerEq" => "eq",
         "gtWord" => "gt",
         "integerLt" => "lt",

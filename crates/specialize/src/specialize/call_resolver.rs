@@ -3,8 +3,19 @@ use super::*;
 impl<'a, 'db> BodyCtx<'a, 'db> {
     pub(super) fn bin_op_expr(&mut self, expr: BinOpExpr<'db>) -> Option<MonoExprKind<'db>> {
         match expr.op {
-            BinOp::Add | BinOp::Sub | BinOp::Gt => self.overloaded_bin_op_expr(expr),
-            BinOp::Lt | BinOp::LtEq | BinOp::GtEq => self.operator_function_bin_op_expr(expr),
+            BinOp::Add
+            | BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Mod
+            | BinOp::BitAnd
+            | BinOp::BitXor
+            | BinOp::BitOr
+            | BinOp::Eq
+            | BinOp::Gt => self.overloaded_bin_op_expr(expr),
+            BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::GtEq | BinOp::And | BinOp::Or => {
+                self.operator_function_bin_op_expr(expr)
+            }
             _ => Some(MonoExprKind::BinOp {
                 lhs: Box::new(self.expr(expr.lhs)?),
                 op: expr.op,
@@ -67,10 +78,6 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             });
         };
 
-        let args = match expr.op {
-            BinOp::Add | BinOp::Sub | BinOp::Gt => vec![lhs_expr, rhs_expr],
-            _ => unreachable!("filtered by overloaded_operator_method"),
-        };
         Some(MonoExprKind::Call {
             callee: MonoId {
                 name,
@@ -78,7 +85,77 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 span: expr.span,
             },
             origin: MonoCallOrigin::ByName,
-            args,
+            args: vec![lhs_expr, rhs_expr],
+        })
+    }
+
+    pub(super) fn un_op_expr(
+        &mut self,
+        _expr_id: Id<Expr<'db>>,
+        op: UnOp,
+        operand: Id<Expr<'db>>,
+        result_ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExprKind<'db>> {
+        let operand = self.expr(operand)?;
+        let fallback = || MonoExprKind::UnaryOp {
+            op,
+            expr: Box::new(operand.clone()),
+        };
+        let UnOp::Not = op else {
+            return Some(fallback());
+        };
+        let callee_ty = Ty::function(self.driver.db, vec![operand.ty.ty()], result_ty);
+        let mono_callee_ty = self.driver.mono_ty(callee_ty, "operator callee", span)?;
+        let Some(resolution) = self.lookup_operator_function("not") else {
+            self.driver.diagnostics.push(SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::MissingResolution {
+                    context: "operator not".to_owned(),
+                },
+                span: Some(span),
+            });
+            return Some(fallback());
+        };
+
+        let (name, origin) = match resolution {
+            hir_nameres::Resolution::Def {
+                def,
+                kind: hir_nameres::DefResolutionKind::Function,
+            } => {
+                let origin = self.driver.call_origin_for_def(def);
+                let name = if matches!(origin, MonoCallOrigin::Builtin(_)) {
+                    def.name(self.driver.db)
+                        .unwrap_or_else(|| format!("{:?}", def.kind(self.driver.db)))
+                } else {
+                    self.specialize_direct_function(def, callee_ty, span)
+                };
+                (name, origin)
+            }
+            hir_nameres::Resolution::Builtin(kind) => (
+                builtin_name(kind).to_owned(),
+                builtin_intrinsic(kind)
+                    .map(MonoCallOrigin::Builtin)
+                    .unwrap_or(MonoCallOrigin::ByName),
+            ),
+            _ => {
+                self.driver.diagnostics.push(SpecializeDiagnostic {
+                    kind: SpecializeDiagnosticKind::MissingResolution {
+                        context: "operator not".to_owned(),
+                    },
+                    span: Some(span),
+                });
+                return Some(fallback());
+            }
+        };
+
+        Some(MonoExprKind::Call {
+            callee: MonoId {
+                name,
+                ty: mono_callee_ty,
+                span,
+            },
+            origin,
+            args: vec![operand],
         })
     }
 

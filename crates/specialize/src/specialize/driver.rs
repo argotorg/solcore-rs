@@ -862,6 +862,7 @@ impl<'db> Driver<'db> {
         match def.name(self.db).as_deref()? {
             "addWord" => Some(MonoIntrinsic::PrimAddWord),
             "subWord" => Some(MonoIntrinsic::SubWord),
+            "mulWord" => Some(MonoIntrinsic::MulWord),
             "gtWord" => Some(MonoIntrinsic::GtWord),
             "bxorWord" => Some(MonoIntrinsic::BxorWord),
             "bandWord" => Some(MonoIntrinsic::BandWord),

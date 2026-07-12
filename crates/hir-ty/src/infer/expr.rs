@@ -131,7 +131,9 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(body, *expr, annot.clone(), expr_ty);
                 annot
             }
-            ExprKind::UnaryOp { op, expr } => self.infer_un_op(body, *op.atom(), *expr),
+            ExprKind::UnaryOp { op, expr } => {
+                self.infer_un_op(body, expr_id, *op.atom(), *expr, expected.clone())
+            }
             ExprKind::If {
                 cond,
                 then_expr,
@@ -907,11 +909,28 @@ impl<'db> InferCtx<'db> {
             BinOp::BitOr => self.infer_operator_call_expected(
                 body, expr, lhs_expr, rhs_expr, "BitOr", "bor", expected,
             ),
-            BinOp::Eq | BinOp::NotEq => {
-                let lhs = self.infer_expr(body, lhs_expr);
-                let rhs = self.infer_expr(body, rhs_expr);
-                self.unify_expr(body, rhs_expr, lhs, rhs);
-                self.bool()
+            BinOp::Eq => {
+                let bool_ty = self.bool();
+                self.infer_operator_call_expected(
+                    body,
+                    expr,
+                    lhs_expr,
+                    rhs_expr,
+                    "Eq",
+                    "eq",
+                    Some(bool_ty),
+                )
+            }
+            BinOp::NotEq => {
+                let bool_ty = self.bool();
+                self.infer_operator_function_call_expected(
+                    body,
+                    expr,
+                    lhs_expr,
+                    rhs_expr,
+                    "ne",
+                    Some(bool_ty),
+                )
             }
             BinOp::Lt => {
                 let bool_ty = self.bool();
@@ -959,12 +978,15 @@ impl<'db> InferCtx<'db> {
                 )
             }
             BinOp::And | BinOp::Or => {
-                let lhs = self.infer_expr(body, lhs_expr);
-                let rhs = self.infer_expr(body, rhs_expr);
                 let bool_ty = self.bool();
-                self.unify_expr(body, lhs_expr, lhs, bool_ty.clone());
-                self.unify_expr(body, rhs_expr, rhs, bool_ty);
-                self.bool()
+                self.infer_operator_function_call_expected(
+                    body,
+                    expr,
+                    lhs_expr,
+                    rhs_expr,
+                    if op == BinOp::And { "and" } else { "or" },
+                    Some(bool_ty),
+                )
             }
             BinOp::Error => InferTy::Error,
         }
@@ -1092,6 +1114,56 @@ impl<'db> InferCtx<'db> {
         )
     }
 
+    fn infer_operator_unary_function_call_expected(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        arg: Id<Expr<'db>>,
+        name: &str,
+        expected: Option<InferTy<'db>>,
+    ) -> InferTy<'db> {
+        let Some(resolution) = self.lookup_operator_function(name) else {
+            self.infer_expr(body, arg);
+            self.emit_expr_error(
+                body,
+                expr,
+                TypeckDiagnostic::UnsatisfiedConstraint {
+                    span: self.expr_label_span(body, expr),
+                    pred: format!("operator {name}"),
+                },
+            );
+            return InferTy::Error;
+        };
+
+        let callee = self.call_site_callee(&resolution);
+        let source = self.call_site_source(body, expr, expr, &resolution);
+        let callee_ty = self.infer_resolution_with_source(
+            body,
+            expr,
+            resolution,
+            source,
+            ValuePosition::Callee,
+        );
+        let normalized = self.normalize_aliases(callee_ty.clone());
+        let resolved = self.engine.resolve(normalized);
+        let params = match resolved {
+            InferTy::Function { params, .. } => Some(params),
+            _ => None,
+        };
+        self.infer_direct_call(
+            body,
+            DirectCallSite {
+                call_expr: expr,
+                callee_expr: expr,
+                callee,
+            },
+            callee_ty,
+            params,
+            &[arg],
+            expected,
+        )
+    }
+
     fn lookup_operator_class_method(
         &self,
         class_name: &str,
@@ -1187,15 +1259,22 @@ impl<'db> InferCtx<'db> {
         args.is_empty() && matches!(def.name(self.db).as_deref(), Some("uint") | Some("uint256"))
     }
 
-    fn infer_un_op(&mut self, body: FuncBody<'db>, op: UnOp, expr: Id<Expr<'db>>) -> InferTy<'db> {
-        let expr_id = expr;
-        let expr = self.infer_expr(body, expr_id);
+    fn infer_un_op(
+        &mut self,
+        body: FuncBody<'db>,
+        operator_expr: Id<Expr<'db>>,
+        op: UnOp,
+        operand: Id<Expr<'db>>,
+        expected: Option<InferTy<'db>>,
+    ) -> InferTy<'db> {
         match op {
-            UnOp::Not => {
-                let bool_ty = self.bool();
-                self.unify_expr(body, expr_id, expr, bool_ty.clone());
-                bool_ty
-            }
+            UnOp::Not => self.infer_operator_unary_function_call_expected(
+                body,
+                operator_expr,
+                operand,
+                "not",
+                expected,
+            ),
             UnOp::Error => InferTy::Error,
         }
     }

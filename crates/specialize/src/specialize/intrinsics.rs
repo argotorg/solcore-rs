@@ -38,6 +38,13 @@ pub(super) fn overloaded_operator_method(op: BinOp) -> Option<(&'static str, &'s
     match op {
         BinOp::Add => Some(("Add", "add")),
         BinOp::Sub => Some(("Sub", "sub")),
+        BinOp::Mul => Some(("Mul", "mul")),
+        BinOp::Div => Some(("Div", "div")),
+        BinOp::Mod => Some(("Mod", "mod")),
+        BinOp::BitAnd => Some(("BitAnd", "band")),
+        BinOp::BitXor => Some(("BitXor", "bxor")),
+        BinOp::BitOr => Some(("BitOr", "bor")),
+        BinOp::Eq => Some(("Eq", "eq")),
         BinOp::Gt => Some(("Ord", "gt")),
         _ => None,
     }
@@ -46,8 +53,11 @@ pub(super) fn overloaded_operator_method(op: BinOp) -> Option<(&'static str, &'s
 pub(super) fn plain_operator_function(op: BinOp) -> Option<&'static str> {
     match op {
         BinOp::Lt => Some("lt"),
+        BinOp::NotEq => Some("ne"),
         BinOp::LtEq => Some("le"),
         BinOp::GtEq => Some("ge"),
+        BinOp::And => Some("and"),
+        BinOp::Or => Some("or"),
         _ => None,
     }
 }

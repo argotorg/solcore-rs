@@ -1338,6 +1338,13 @@ impl<'db> Evaluator<'db> {
                 ty,
                 span,
             ),
+            (MonoIntrinsic::MulWord, [lhs, rhs]) => self.eval_word_binary(
+                WordBinaryOp::Mul,
+                known_int(lhs)?,
+                known_int(rhs)?,
+                ty,
+                span,
+            ),
             (MonoIntrinsic::GtWord, [lhs, rhs]) => {
                 self.eval_word_binary(WordBinaryOp::Gt, known_int(lhs)?, known_int(rhs)?, ty, span)
             }
@@ -1457,6 +1464,7 @@ impl<'db> Evaluator<'db> {
         let expr = match op {
             WordBinaryOp::Add => int_expr(lhs.add(&rhs).mod_word(), ty, span),
             WordBinaryOp::Sub => int_expr(lhs.sub(&rhs).mod_word(), ty, span),
+            WordBinaryOp::Mul => int_expr(lhs.mul(&rhs).mod_word(), ty, span),
             WordBinaryOp::Gt => bool_expr(lhs.mod_word() > rhs.mod_word(), ty, span),
             WordBinaryOp::BitXor => int_expr(bitxor_word(&lhs, &rhs), ty, span),
             WordBinaryOp::BitAnd => int_expr(bitand_word(&lhs, &rhs), ty, span),
@@ -2052,6 +2060,7 @@ impl<'db> Evaluator<'db> {
 enum WordBinaryOp {
     Add,
     Sub,
+    Mul,
     Gt,
     BitXor,
     BitAnd,

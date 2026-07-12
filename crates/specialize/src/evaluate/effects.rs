@@ -49,6 +49,7 @@ pub(super) fn intrinsic_is_pure(intrinsic: MonoIntrinsic) -> bool {
         MonoIntrinsic::PrimAddWord
             | MonoIntrinsic::PrimEqWord
             | MonoIntrinsic::SubWord
+            | MonoIntrinsic::MulWord
             | MonoIntrinsic::GtWord
             | MonoIntrinsic::BxorWord
             | MonoIntrinsic::BandWord

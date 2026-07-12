@@ -279,10 +279,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 result_ty: ty,
                 span: expr.span,
             })?,
-            ExprKind::UnaryOp { op, expr } => MonoExprKind::UnaryOp {
-                op: *op.atom(),
-                expr: Box::new(self.expr(*expr)?),
-            },
+            ExprKind::UnaryOp { op, expr: operand } => {
+                self.un_op_expr(expr_id, *op.atom(), *operand, ty, expr.span)?
+            }
             ExprKind::Index { base, index } => {
                 if self.is_storage_index_expr(*base) {
                     MonoExprKind::StorageIndex {

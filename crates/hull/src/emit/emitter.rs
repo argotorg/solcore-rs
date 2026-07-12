@@ -919,6 +919,7 @@ fn intrinsic_name(intrinsic: MonoIntrinsic) -> &'static str {
         MonoIntrinsic::PrimAddWord => "primAddWord",
         MonoIntrinsic::PrimEqWord => "primEqWord",
         MonoIntrinsic::SubWord => "subWord",
+        MonoIntrinsic::MulWord => "mulWord",
         MonoIntrinsic::GtWord => "gtWord",
         MonoIntrinsic::BxorWord => "bxorWord",
         MonoIntrinsic::BandWord => "bandWord",
