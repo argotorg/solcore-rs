@@ -146,6 +146,63 @@ pub fn plan_import_edit<'db>(
     )
 }
 
+/// Plans an import that exposes every public name from `target_import_path`.
+///
+/// When a selective import for the same target already exists, `*` is appended
+/// to its selector. The parser treats a selector containing `*` as a wildcard,
+/// which preserves comments and formatting inside the existing declaration.
+/// Otherwise a new `import path.{*};` declaration is inserted.
+pub fn plan_wildcard_import_edit<'db>(
+    db: &'db dyn parser::Db,
+    source: &str,
+    parsed: parser::ParseHirOutput<'db>,
+    target_import_path: &str,
+) -> Option<ImportEdit> {
+    let source_len = u32::try_from(source.len()).ok()?;
+    if !is_valid_import_path(target_import_path) || !parsed.diagnostics(db).is_empty() {
+        return None;
+    }
+
+    let module = parsed.module(db);
+    if !metadata_matches_source(db, module, source, source_len) {
+        return None;
+    }
+
+    let imports = module
+        .items(db)
+        .iter()
+        .filter_map(|item| match item {
+            Item::Import(import) => Some(*import),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    for import in imports
+        .iter()
+        .copied()
+        .filter(|import| import_path_text(db, *import).as_deref() == Some(target_import_path))
+    {
+        match import.selector(db) {
+            Some(ImportSelector::Wildcard) => return None,
+            Some(ImportSelector::Names(names))
+                if import.alias_elem(db).is_none() && import.hiding(db).is_empty() =>
+            {
+                let offset = selector_append_offset(db, source, import, names)?;
+                return Some(insertion(offset, ", *".to_owned()));
+            }
+            _ => {}
+        }
+    }
+
+    plan_new_import_declaration(
+        db,
+        source,
+        module,
+        &imports,
+        &format!("import {target_import_path}.{{*}};"),
+    )
+}
+
 /// Plans a deterministic plain module import such as `import lib.math;`.
 ///
 /// Plain imports are never merged with selective, wildcard, aliased, or
@@ -550,6 +607,17 @@ mod tests {
         plan_module_import_edit(db, source, parsed, target)
     }
 
+    fn plan_wildcard(source: &str, target: &str) -> Option<ImportEdit> {
+        let mut world = WorldState::new();
+        let uri = Url::parse("file:///main/main.solc").expect("uri");
+        assert!(world.open_document(uri.clone(), source.to_owned()));
+        let db = world.db();
+        let path = world.vfs_path_for_uri(&uri).expect("VFS path");
+        let file = db.source_file(&path).expect("source file");
+        let parsed = parser::parse_file_to_hir(db, file);
+        plan_wildcard_import_edit(db, source, parsed, target)
+    }
+
     fn apply(source: &str, edit: &ImportEdit) -> String {
         let start = edit.start as usize;
         let end = edit.end as usize;
@@ -567,6 +635,34 @@ mod tests {
             apply(source, &edit),
             "import lib.math.{old, value};\nfunction main() { value; }\n"
         );
+    }
+
+    #[test]
+    fn wildcard_upgrade_preserves_an_existing_selective_import() {
+        let source = "import std.dispatch.{NonPayable, SigString};\nfunction main() {}\n";
+        let edit = plan_wildcard(source, "std.dispatch").expect("edit");
+
+        assert_eq!(
+            apply(source, &edit),
+            "import std.dispatch.{NonPayable, SigString, *};\nfunction main() {}\n"
+        );
+    }
+
+    #[test]
+    fn wildcard_import_is_inserted_when_target_is_not_selected() {
+        let source = "import std.{*};\nfunction main() {}\n";
+        let edit = plan_wildcard(source, "std.dispatch").expect("edit");
+
+        assert_eq!(
+            apply(source, &edit),
+            "import std.{*};\nimport std.dispatch.{*};\nfunction main() {}\n"
+        );
+    }
+
+    #[test]
+    fn existing_wildcard_import_needs_no_edit() {
+        let source = "import std.dispatch.{*};\nfunction main() {}\n";
+        assert_eq!(plan_wildcard(source, "std.dispatch"), None);
     }
 
     #[test]

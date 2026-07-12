@@ -18,7 +18,7 @@ use vfs::{DiagnosticSuggestion, DiagnosticTextEdit, SuggestionApplicability};
 
 use crate::{
     diagnostics::{compute_vfs_diagnostics, to_lsp_diagnostic},
-    import_edits::{plan_import_edit, plan_module_import_edit},
+    import_edits::{plan_import_edit, plan_module_import_edit, plan_wildcard_import_edit},
     resolve::module_id_for_uri,
     state::WorldState,
 };
@@ -155,6 +155,16 @@ fn auto_import_suggestions<'db>(
                 nameres::auto_import_candidates(db, current_module, &name, namespace),
                 &mut planned,
             );
+            if namespace == nameres::Namespace::Term {
+                extend_constructor_wildcard_imports(
+                    db,
+                    current_module,
+                    source,
+                    parsed,
+                    &name,
+                    &mut planned,
+                );
+            }
         }
         MissingImport::QualifiedConstructor {
             type_name,
@@ -174,6 +184,18 @@ fn auto_import_suggestions<'db>(
             );
         }
         MissingImport::QualifiedAccess { qualifier, member } => {
+            extend_symbol_imports(
+                db,
+                source,
+                parsed,
+                nameres::auto_import_candidates(
+                    db,
+                    current_module,
+                    &qualifier,
+                    nameres::Namespace::Class,
+                ),
+                &mut planned,
+            );
             extend_symbol_imports(
                 db,
                 source,
@@ -262,6 +284,29 @@ fn extend_symbol_imports<'db>(
     }
 }
 
+fn extend_constructor_wildcard_imports<'db>(
+    db: &'db vfs::AnalysisHost,
+    current_module: nameres::ModuleId<'db>,
+    source: &str,
+    parsed: parser::ParseHirOutput<'db>,
+    name: &str,
+    planned: &mut Vec<PlannedImport>,
+) {
+    for candidate in nameres::auto_import_constructor_candidates(db, current_module, name, name) {
+        if planned.len() == MAX_AUTO_IMPORT_CANDIDATES {
+            return;
+        }
+        let Some(edit) = plan_wildcard_import_edit(db, source, parsed, &candidate.import_path)
+        else {
+            continue;
+        };
+        planned.push(PlannedImport {
+            title: format!("Import all from `{}`", candidate.import_path),
+            edit,
+        });
+    }
+}
+
 fn extend_module_imports<'db>(
     db: &'db vfs::AnalysisHost,
     current_module: nameres::ModuleId<'db>,
@@ -301,8 +346,9 @@ fn missing_import_for_diagnostic<'db>(
     nameres::module_diagnostics(db, module)
         .iter()
         .chain(hir_ty::infer::module_typeck_diagnostics(db, module).iter())
-        .find_map(|candidate| {
-            let AnyDiagnostic::Nameres(candidate) = candidate else {
+        .find_map(|any_diagnostic| {
+            let rendered_message = any_diagnostic.lower(db).message;
+            let AnyDiagnostic::Nameres(candidate) = any_diagnostic else {
                 return None;
             };
             let (missing, span, code) = match candidate {
@@ -376,8 +422,10 @@ fn missing_import_for_diagnostic<'db>(
                 ),
                 _ => return None,
             };
-            (diagnostic.code.as_deref() == Some(code) && diagnostic_span_matches(db, span, primary))
-                .then_some(missing)
+            (diagnostic.code.as_deref() == Some(code)
+                && diagnostic.message == rendered_message
+                && diagnostic_span_matches(db, span, primary))
+            .then_some(missing)
         })
 }
 
@@ -1199,6 +1247,71 @@ contract C {
             let action = action(&actions);
             assert_eq!(action.title, expected_title);
             assert_eq!(action.is_preferred, Some(true));
+        }
+    }
+
+    #[test]
+    fn generated_dispatch_missing_terms_have_auto_import_candidates() {
+        let source = r#"import std.{*};
+import std.opcodes.{address as address_};
+import std.dispatch.{NonPayable, SigString};
+
+contract C {
+  constructor() {}
+  public function nothing() -> () {}
+}
+"#;
+        let (world, uri) = world_with_main(source);
+        let diagnostics = compute_diagnostics(&world, &uri)
+            .into_iter()
+            .filter(|diagnostic| {
+                diagnostic.code
+                    == Some(NumberOrString::String(
+                        hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME.to_owned(),
+                    ))
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !diagnostics.is_empty(),
+            "expected generated term diagnostics"
+        );
+
+        for (message, expected_title) in [
+            ("undefined name: Contract", "Import all from `std.dispatch`"),
+            ("undefined name: Fallback", "Import all from `std.dispatch`"),
+            ("undefined name: Method", "Import all from `std.dispatch`"),
+            (
+                "undefined name: RunContract",
+                "Import `RunContract` from `std.dispatch`",
+            ),
+            (
+                "undefined name: fallback_default_implementation",
+                "Import `fallback_default_implementation` from `std.dispatch`",
+            ),
+        ] {
+            let diagnostic = diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.message.starts_with(message))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing diagnostic `{message}` in {:?}",
+                        diagnostics
+                            .iter()
+                            .map(|diagnostic| diagnostic.message.as_str())
+                            .collect::<Vec<_>>()
+                    )
+                })
+                .clone();
+            let actions =
+                handle_code_action(&world, &uri, diagnostic.range, &context(diagnostic.clone()))
+                    .expect("code actions");
+            assert!(
+                actions.iter().any(|action| matches!(
+                    action,
+                    CodeActionOrCommand::CodeAction(action) if action.title == expected_title
+                )),
+                "missing `{expected_title}` for {message}: {actions:#?}"
+            );
         }
     }
 
