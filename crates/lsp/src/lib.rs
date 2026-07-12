@@ -1,8 +1,7 @@
 //! WASM-clean Language Server Protocol core for Solcore.
 //!
-//! This crate contains only transport-independent state, position mapping,
-//! diagnostics lowering, and static capabilities. Native `tower-lsp` and WASM
-//! bindings are layered on top in later crates/tasks.
+//! Transport-independent state and request handlers are shared by the native
+//! `tower-lsp` stdio server and the browser Web Worker binding.
 
 pub mod capabilities;
 pub mod completion;

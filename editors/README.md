@@ -25,9 +25,15 @@ Every editor integration can start the same stdio server. By default they use
 `solcore-lsp` on `PATH`. VS Code and Neovim also expose editor-specific command
 overrides for local development.
 
-The server currently supports diagnostics, completion, hover, go-to-definition,
-references, document highlights, rename with prepare-rename, signature help,
-document/workspace symbols, semantic tokens, and inlay hints.
+On initialization, the native server indexes `.solc` files below the workspace
+root. Real editor file URIs are mapped into the compiler VFS, and watched file
+changes keep unopened import targets and workspace symbols up to date.
+
+The server currently supports diagnostics, scope and qualified-member
+completion, signature/type hover with source documentation, go-to-definition
+for values/types/predicates/constructors/import modules, references, document
+highlights, rename with prepare-rename, signature help, document/workspace
+symbols, semantic tokens, and inlay hints.
 
 ## Packages
 
