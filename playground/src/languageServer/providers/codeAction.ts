@@ -181,11 +181,12 @@ function appendTextEdits(
   }
 }
 
-function currentModelVersion(
+function requestedModelVersion(
   monaco: typeof Monaco,
+  modelVersions: ReadonlyMap<string, number>,
   uri: string,
 ): number | undefined {
-  return monaco.editor.getModel(monaco.Uri.parse(uri))?.getVersionId();
+  return modelVersions.get(monaco.Uri.parse(uri).toString());
 }
 
 function markerIntersectsRange(
@@ -206,6 +207,7 @@ function markerIntersectsRange(
 function fromLspWorkspaceEdit(
   monaco: typeof Monaco,
   workspaceEdit: LspWorkspaceEdit,
+  modelVersions: ReadonlyMap<string, number>,
 ): Monaco.languages.WorkspaceEdit | undefined {
   // The LSP representation requires clients to choose one representation. Do
   // not risk applying the same edit twice if a malformed response contains both.
@@ -221,7 +223,7 @@ function fromLspWorkspaceEdit(
         edits,
         uri,
         textEdits,
-        currentModelVersion(monaco, uri),
+        requestedModelVersion(monaco, modelVersions, uri),
       );
     }
   }
@@ -244,7 +246,11 @@ function fromLspWorkspaceEdit(
         edits,
         change.textDocument.uri,
         change.edits,
-        currentModelVersion(monaco, change.textDocument.uri),
+        requestedModelVersion(
+          monaco,
+          modelVersions,
+          change.textDocument.uri,
+        ),
       );
     }
   }
@@ -267,9 +273,10 @@ function fromLspCommand(command: LspCommand): Monaco.languages.Command {
 function fromLspCodeAction(
   monaco: typeof Monaco,
   action: LspCodeAction,
+  modelVersions: ReadonlyMap<string, number>,
 ): Monaco.languages.CodeAction | null {
   const edit = action.edit
-    ? fromLspWorkspaceEdit(monaco, action.edit)
+    ? fromLspWorkspaceEdit(monaco, action.edit, modelVersions)
     : undefined;
   if (action.edit && !edit) {
     return null;
@@ -301,6 +308,17 @@ export function registerCodeAction(
         }
 
         try {
+          // Bind every returned workspace edit to the model versions for which
+          // the request was made. If Monaco does not cancel a request while a
+          // model changes, its version guard will still reject the stale edit.
+          const modelVersions = new Map<string, number>(
+            monaco.editor
+              .getModels()
+              .map((openModel) => [
+                openModel.uri.toString(),
+                openModel.getVersionId(),
+              ] as const),
+          );
           // Monaco's standalone adapter includes markers from every owner in
           // the provider context. Query only diagnostics published by the LSP
           // so compiler-result markers cannot interfere with stale checks.
@@ -342,7 +360,7 @@ export function registerCodeAction(
               ];
             }
 
-            const action = fromLspCodeAction(monaco, item);
+            const action = fromLspCodeAction(monaco, item, modelVersions);
             return action ? [action] : [];
           });
 
