@@ -1131,6 +1131,67 @@ mod tests {
     }
 
     #[test]
+    fn qualified_import_code_actions_round_trip_over_wasm_dispatch() {
+        let cases = [
+            (
+                "data Option = None | Some(word);\nexport { Option(*) };\n",
+                "function main() -> word { let option = Option.Some(1); return 1; }\n",
+                "Import `Option` from `lib.math`",
+                "import lib.math.{Option};\n",
+            ),
+            (
+                "function value() -> word { return 1; }\nexport { value };\n",
+                "function main() -> word { return math.value(); }\n",
+                "Import module `math` from `lib.math`",
+                "import lib.math;\n",
+            ),
+        ];
+
+        for (provider, main, expected_title, expected_edit) in cases {
+            let mut world = WorldState::new();
+            let _ = dispatch(&mut world, &did_open_uri_message(MATH_URI, provider));
+            let opened = dispatch(&mut world, &did_open_uri_message(URI, main));
+            let notification = diagnostic_notification_for_uri(&opened, URI);
+            let diagnostic = notification["params"]["diagnostics"]
+                .as_array()
+                .and_then(|diagnostics| {
+                    diagnostics.iter().find(|diagnostic| {
+                        diagnostic["code"] == hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME
+                    })
+                })
+                .cloned()
+                .expect("qualified undefined-name diagnostic");
+
+            let response = dispatch(
+                &mut world,
+                &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": "qualified-missing-import",
+                    "method": "textDocument/codeAction",
+                    "params": {
+                        "textDocument": { "uri": URI },
+                        "range": diagnostic["range"],
+                        "context": { "diagnostics": [diagnostic], "only": ["quickfix"] }
+                    }
+                })
+                .to_string(),
+            );
+            let response = parse_message(&response[0]);
+            let actions = response["result"]
+                .as_array()
+                .expect("code action result array");
+
+            assert_eq!(actions.len(), 1, "expected one action: {response:#?}");
+            assert_eq!(actions[0]["title"], expected_title);
+            assert_eq!(actions[0]["isPreferred"], true);
+            assert_eq!(
+                actions[0]["edit"]["changes"][URI][0]["newText"],
+                expected_edit
+            );
+        }
+    }
+
+    #[test]
     fn standard_library_missing_import_round_trips_over_wasm_dispatch() {
         let mut world = WorldState::new();
         let source = "function main() -> word { assert(true); return 1; }\n";

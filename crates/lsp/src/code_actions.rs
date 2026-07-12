@@ -18,7 +18,7 @@ use vfs::{DiagnosticSuggestion, DiagnosticTextEdit, SuggestionApplicability};
 
 use crate::{
     diagnostics::{compute_vfs_diagnostics, to_lsp_diagnostic},
-    import_edits::plan_import_edit,
+    import_edits::{plan_import_edit, plan_module_import_edit},
     resolve::module_id_for_uri,
     state::WorldState,
 };
@@ -101,9 +101,29 @@ pub fn handle_code_action(
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct MissingImport {
-    name: String,
-    namespace: nameres::Namespace,
+enum MissingImport {
+    Name {
+        name: String,
+        namespace: nameres::Namespace,
+    },
+    QualifiedConstructor {
+        type_name: String,
+        constructor_name: String,
+    },
+    QualifiedAccess {
+        qualifier: String,
+        member: String,
+    },
+    ModuleMember {
+        qualifier: String,
+        member: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlannedImport {
+    title: String,
+    edit: crate::import_edits::ImportEdit,
 }
 
 fn auto_import_suggestions<'db>(
@@ -114,9 +134,6 @@ fn auto_import_suggestions<'db>(
     let Some(missing) = missing_import_for_diagnostic(db, current_module, diagnostic) else {
         return Vec::new();
     };
-    if !parser::is_valid_identifier(&missing.name) {
-        return Vec::new();
-    }
 
     let Some(file) = db.module_file(current_module) else {
         return Vec::new();
@@ -126,9 +143,106 @@ fn auto_import_suggestions<'db>(
     };
     let parsed = parser::parse_file_to_hir(db, file);
     let mut planned = Vec::new();
-    let candidates =
-        nameres::auto_import_candidates(db, current_module, &missing.name, missing.namespace);
+    match missing {
+        MissingImport::Name { name, namespace } => {
+            if !parser::is_valid_identifier(&name) {
+                return Vec::new();
+            }
+            extend_symbol_imports(
+                db,
+                source,
+                parsed,
+                nameres::auto_import_candidates(db, current_module, &name, namespace),
+                &mut planned,
+            );
+        }
+        MissingImport::QualifiedConstructor {
+            type_name,
+            constructor_name,
+        } => {
+            extend_symbol_imports(
+                db,
+                source,
+                parsed,
+                nameres::auto_import_constructor_candidates(
+                    db,
+                    current_module,
+                    &type_name,
+                    &constructor_name,
+                ),
+                &mut planned,
+            );
+        }
+        MissingImport::QualifiedAccess { qualifier, member } => {
+            extend_symbol_imports(
+                db,
+                source,
+                parsed,
+                nameres::auto_import_constructor_candidates(
+                    db,
+                    current_module,
+                    &qualifier,
+                    &member,
+                ),
+                &mut planned,
+            );
+            extend_module_imports(
+                db,
+                current_module,
+                source,
+                parsed,
+                &qualifier,
+                &member,
+                &mut planned,
+            );
+        }
+        MissingImport::ModuleMember { qualifier, member } => {
+            extend_module_imports(
+                db,
+                current_module,
+                source,
+                parsed,
+                &qualifier,
+                &member,
+                &mut planned,
+            );
+        }
+    }
+
+    let machine_applicable = planned.len() == 1 && diagnostic.suggestions.is_empty();
+    let file_url = file.url(db).as_str().to_owned();
+    planned
+        .into_iter()
+        .map(|planned| DiagnosticSuggestion {
+            title: planned.title,
+            applicability: if machine_applicable {
+                SuggestionApplicability::MachineApplicable
+            } else {
+                SuggestionApplicability::MaybeIncorrect
+            },
+            edits: vec![DiagnosticTextEdit {
+                range: vfs::DiagRange {
+                    file_url: file_url.clone(),
+                    start: planned.edit.start,
+                    end: planned.edit.end,
+                },
+                replacement: planned.edit.replacement,
+            }],
+        })
+        .collect()
+}
+
+fn extend_symbol_imports<'db>(
+    db: &'db vfs::AnalysisHost,
+    source: &str,
+    parsed: parser::ParseHirOutput<'db>,
+    candidates: Vec<nameres::AutoImportCandidate<'db>>,
+    planned: &mut Vec<PlannedImport>,
+) {
     for candidate in candidates {
+        if planned.len() == MAX_AUTO_IMPORT_CANDIDATES {
+            return;
+        }
         let Some(edit) = plan_import_edit(
             db,
             source,
@@ -138,36 +252,40 @@ fn auto_import_suggestions<'db>(
         ) else {
             continue;
         };
-        planned.push((candidate, edit));
-        if planned.len() == MAX_AUTO_IMPORT_CANDIDATES {
-            break;
-        }
-    }
-
-    let machine_applicable = planned.len() == 1 && diagnostic.suggestions.is_empty();
-    let file_url = file.url(db).as_str().to_owned();
-    planned
-        .into_iter()
-        .map(|(candidate, edit)| DiagnosticSuggestion {
+        planned.push(PlannedImport {
             title: format!(
                 "Import `{}` from `{}`",
                 candidate.public_name, candidate.import_path
             ),
-            applicability: if machine_applicable {
-                SuggestionApplicability::MachineApplicable
-            } else {
-                SuggestionApplicability::MaybeIncorrect
-            },
-            edits: vec![DiagnosticTextEdit {
-                range: vfs::DiagRange {
-                    file_url: file_url.clone(),
-                    start: edit.start,
-                    end: edit.end,
-                },
-                replacement: edit.replacement,
-            }],
-        })
-        .collect()
+            edit,
+        });
+    }
+}
+
+fn extend_module_imports<'db>(
+    db: &'db vfs::AnalysisHost,
+    current_module: nameres::ModuleId<'db>,
+    source: &str,
+    parsed: parser::ParseHirOutput<'db>,
+    qualifier: &str,
+    member: &str,
+    planned: &mut Vec<PlannedImport>,
+) {
+    for candidate in nameres::auto_import_module_candidates(db, current_module, qualifier, member) {
+        if planned.len() == MAX_AUTO_IMPORT_CANDIDATES {
+            return;
+        }
+        let Some(edit) = plan_module_import_edit(db, source, parsed, &candidate.import_path) else {
+            continue;
+        };
+        planned.push(PlannedImport {
+            title: format!(
+                "Import module `{}` from `{}`",
+                candidate.qualifier, candidate.import_path
+            ),
+            edit,
+        });
+    }
 }
 
 fn missing_import_for_diagnostic<'db>(
@@ -182,38 +300,94 @@ fn missing_import_for_diagnostic<'db>(
             let AnyDiagnostic::Nameres(candidate) = candidate else {
                 return None;
             };
-            let (name, namespace, span, code) = match candidate {
+            let (missing, span, code) = match candidate {
                 NameresDiagnostic::UndefinedName {
                     name,
                     span,
                     kind: UndefinedNameKind::Term,
                     ..
                 } => (
-                    name,
-                    nameres::Namespace::Term,
+                    MissingImport::Name {
+                        name: name.clone(),
+                        namespace: nameres::Namespace::Term,
+                    },
                     span,
                     hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME,
                 ),
+                NameresDiagnostic::UndefinedName {
+                    span,
+                    kind: UndefinedNameKind::ModuleQualifier { access_path },
+                    ..
+                } => {
+                    let (qualifier, member) = qualified_path_segments(access_path)?;
+                    (
+                        MissingImport::QualifiedAccess { qualifier, member },
+                        span,
+                        hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME,
+                    )
+                }
+                NameresDiagnostic::UndefinedName {
+                    span,
+                    kind: UndefinedNameKind::ModuleMember { access_path },
+                    ..
+                } => {
+                    let (qualifier, member) = qualified_path_segments(access_path)?;
+                    (
+                        MissingImport::ModuleMember { qualifier, member },
+                        span,
+                        hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME,
+                    )
+                }
+                NameresDiagnostic::UndefinedName {
+                    span,
+                    kind: UndefinedNameKind::QualifiedConstructor { access_path },
+                    ..
+                } => {
+                    let (type_name, constructor_name) = qualified_path_segments(access_path)?;
+                    (
+                        MissingImport::QualifiedConstructor {
+                            type_name,
+                            constructor_name,
+                        },
+                        span,
+                        hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME,
+                    )
+                }
                 NameresDiagnostic::UndefinedTypeConstructor { name, span, .. } => (
-                    name,
-                    nameres::Namespace::Type,
+                    MissingImport::Name {
+                        name: name.clone(),
+                        namespace: nameres::Namespace::Type,
+                    },
                     span,
                     hir::diag::DiagnosticCode::NAMERES_UNDEFINED_TYPE_CONSTRUCTOR,
                 ),
                 NameresDiagnostic::UndefinedClass { name, span } => (
-                    name,
-                    nameres::Namespace::Class,
+                    MissingImport::Name {
+                        name: name.clone(),
+                        namespace: nameres::Namespace::Class,
+                    },
                     span,
                     hir::diag::DiagnosticCode::NAMERES_UNDEFINED_CLASS,
                 ),
                 _ => return None,
             };
             (diagnostic.code.as_deref() == Some(code) && diagnostic_span_matches(db, span, primary))
-                .then(|| MissingImport {
-                    name: name.clone(),
-                    namespace,
-                })
+                .then_some(missing)
         })
+}
+
+fn qualified_path_segments(access_path: &str) -> Option<(String, String)> {
+    let mut segments = access_path.split('.');
+    let qualifier = segments.next()?;
+    let member = segments.next()?;
+    if segments.next().is_some()
+        || !parser::is_valid_identifier(qualifier)
+        || !parser::is_valid_identifier(member)
+    {
+        return None;
+    }
+
+    Some((qualifier.to_owned(), member.to_owned()))
 }
 
 fn diagnostic_span_matches(
@@ -511,7 +685,7 @@ mod tests {
 
         assert_eq!(
             missing_import_for_diagnostic(db, module, &diagnostic),
-            Some(MissingImport {
+            Some(MissingImport::Name {
                 name: "missing".to_owned(),
                 namespace: nameres::Namespace::Term,
             })
@@ -993,7 +1167,7 @@ mod tests {
     }
 
     #[test]
-    fn member_and_module_qualifier_errors_do_not_offer_term_imports() {
+    fn resolved_member_errors_do_not_offer_term_imports() {
         let field_main =
             "data Local = Present;\nfunction main() -> word { return Local.missing; }\n";
         let exported_missing = "function missing() -> word { return 1; }\nexport { missing };\n";
@@ -1014,29 +1188,278 @@ mod tests {
             ),
             Some(Vec::new())
         );
+    }
 
-        let qualifier_main = "function main() -> word { return math.value(); }\n";
-        let mut qualifier_world = WorldState::new();
-        let qualifier_uri = Url::parse("file:///main/main.solc").expect("main uri");
-        assert!(qualifier_world.open_document(qualifier_uri.clone(), qualifier_main.to_owned()));
-        assert!(qualifier_world.open_document(
-            Url::parse("file:///main/symbols.solc").expect("symbols uri"),
-            "function math() -> word { return 1; }\nexport { math };\n".to_owned()
+    #[test]
+    fn resolved_module_member_does_not_offer_a_constructor_import() {
+        let main = "import lib.foo as Math;\nfunction main() -> word { return Math.Value(1); }\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(
+            Url::parse("file:///main/foo.solc").expect("foo uri"),
+            "function other() -> word { return 0; }\nexport { other };\n".to_owned()
         ));
-        assert!(qualifier_world.open_document(
-            Url::parse("file:///main/math.solc").expect("math uri"),
-            "function value() -> word { return 1; }\nexport { value };\n".to_owned()
+        assert!(world.open_document(
+            Url::parse("file:///main/model.solc").expect("model uri"),
+            "data Math = Value(word);\nexport { Math(*) };\n".to_owned()
         ));
-        let qualifier_diagnostic = undefined_name_diagnostic(&qualifier_world, &qualifier_uri);
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        let actions = handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic))
+            .expect("code actions");
+        assert!(actions.iter().all(|action| match action {
+            CodeActionOrCommand::CodeAction(action) => !action.title.starts_with("Import "),
+            CodeActionOrCommand::Command(_) => true,
+        }));
+    }
+
+    #[test]
+    fn qualified_constructor_expression_imports_the_visible_type() {
+        let main = "function main() -> word { let option = Option.Some(1); return 1; }\n";
+        let provider = "data Option = None | Some(word);\nexport { Option(*) };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let model_uri = Url::parse("file:///main/model.solc").expect("model uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(model_uri.clone(), provider.to_owned()));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        let actions = handle_code_action(
+            &world,
+            &main_uri,
+            diagnostic.range,
+            &context(diagnostic.clone()),
+        )
+        .expect("constructor code actions");
+        let action = action(&actions);
+
+        assert_eq!(action.title, "Import `Option` from `lib.model`");
+        assert_eq!(action.is_preferred, Some(true));
         assert_eq!(
-            handle_code_action(
-                &qualifier_world,
-                &qualifier_uri,
-                qualifier_diagnostic.range,
-                &context(qualifier_diagnostic),
-            ),
+            action
+                .edit
+                .as_ref()
+                .and_then(|edit| edit.changes.as_ref())
+                .and_then(|changes| changes.get(&main_uri)),
+            Some(&vec![TextEdit {
+                range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+                new_text: "import lib.model.{Option};\n".to_owned(),
+            }])
+        );
+
+        let mut fixed_world = WorldState::new();
+        assert!(fixed_world.open_document(
+            main_uri.clone(),
+            format!("import lib.model.{{Option}};\n{main}"),
+        ));
+        assert!(fixed_world.open_document(model_uri, provider.to_owned()));
+        assert!(compute_diagnostics(&fixed_world, &main_uri).iter().all(
+            |diagnostic| diagnostic.code
+                != Some(NumberOrString::String(
+                    hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME.to_owned()
+                ))
+        ));
+    }
+
+    #[test]
+    fn qualified_constructor_pattern_imports_the_visible_type() {
+        let main = "function main(x: word) -> word {\n  match x {\n  | Option.Some(value) => return value;\n  | _ => return 0;\n  }\n}\n";
+        let provider = "data Option = None | Some(word);\nexport { Option(*) };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let model_uri = Url::parse("file:///main/model.solc").expect("model uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(model_uri, provider.to_owned()));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        let actions = handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic))
+            .expect("pattern constructor code actions");
+
+        assert_eq!(action(&actions).title, "Import `Option` from `lib.model`");
+    }
+
+    #[test]
+    fn resolved_pattern_type_does_not_import_a_conflicting_constructor_owner() {
+        let main = "data Option = None;\nfunction main(x: word) -> word {\n  match x {\n  | Option.Some(value) => return value;\n  | _ => return 0;\n  }\n}\n";
+        let provider = "data Option = None | Some(word);\nexport { Option(*) };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(
+            Url::parse("file:///main/model.solc").expect("model uri"),
+            provider.to_owned()
+        ));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        let actions = handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic))
+            .expect("code actions");
+        assert!(actions.iter().all(|action| match action {
+            CodeActionOrCommand::CodeAction(action) => !action.title.starts_with("Import "),
+            CodeActionOrCommand::Command(_) => true,
+        }));
+    }
+
+    #[test]
+    fn qualified_constructor_import_requires_that_constructor_to_be_exported() {
+        let main = "function main() -> word { let option = Option.Some(1); return 1; }\n";
+        let provider = "data Option = None | Some(word);\nexport { Option(None) };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(
+            Url::parse("file:///main/model.solc").expect("model uri"),
+            provider.to_owned()
+        ));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        assert_eq!(
+            handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic),),
             Some(Vec::new())
         );
+    }
+
+    #[test]
+    fn module_import_requires_an_immediate_term_member() {
+        let main = "function main() -> word { return math.Value; }\n";
+        let provider = "data Value = Value(word);\nexport { Value };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(
+            Url::parse("file:///main/math.solc").expect("math uri"),
+            provider.to_owned()
+        ));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        let actions = handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic))
+            .expect("code actions");
+        assert!(actions.iter().all(|action| match action {
+            CodeActionOrCommand::CodeAction(action) => !action.title.starts_with("Import "),
+            CodeActionOrCommand::Command(_) => true,
+        }));
+    }
+
+    #[test]
+    fn missing_module_qualifier_gets_a_plain_module_import() {
+        let main = "function main() -> word { return math.value(); }\n";
+        let provider = "function value() -> word { return 1; }\nexport { value };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(math_uri.clone(), provider.to_owned()));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        let actions = handle_code_action(
+            &world,
+            &main_uri,
+            diagnostic.range,
+            &context(diagnostic.clone()),
+        )
+        .expect("module code actions");
+        let action = action(&actions);
+
+        assert_eq!(action.title, "Import module `math` from `lib.math`");
+        assert_eq!(action.is_preferred, Some(true));
+        assert_eq!(
+            action
+                .edit
+                .as_ref()
+                .and_then(|edit| edit.changes.as_ref())
+                .and_then(|changes| changes.get(&main_uri)),
+            Some(&vec![TextEdit {
+                range: Range::new(Position::new(0, 0), Position::new(0, 0)),
+                new_text: "import lib.math;\n".to_owned(),
+            }])
+        );
+
+        let mut fixed_world = WorldState::new();
+        assert!(fixed_world.open_document(main_uri.clone(), format!("import lib.math;\n{main}"),));
+        assert!(fixed_world.open_document(math_uri, provider.to_owned()));
+        assert!(compute_diagnostics(&fixed_world, &main_uri).iter().all(
+            |diagnostic| diagnostic.code
+                != Some(NumberOrString::String(
+                    hir::diag::DiagnosticCode::NAMERES_UNDEFINED_NAME.to_owned()
+                ))
+        ));
+    }
+
+    #[test]
+    fn module_import_stays_separate_from_an_existing_selective_import() {
+        let main = "import lib.math.{other};\nfunction main() -> word { return math.value(); }\n";
+        let provider = "function other() -> word { return 0; }\nfunction value() -> word { return 1; }\nexport { other, value };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(
+            Url::parse("file:///main/math.solc").expect("math uri"),
+            provider.to_owned()
+        ));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+        let insertion = main.find('\n').expect("import line end") as u32 + 1;
+        let expected_range = world
+            .line_index(&main_uri)
+            .expect("line index")
+            .range(insertion, insertion);
+
+        let actions = handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic))
+            .expect("module code actions");
+
+        assert_eq!(
+            action(&actions)
+                .edit
+                .as_ref()
+                .and_then(|edit| edit.changes.as_ref())
+                .and_then(|changes| changes.get(&main_uri)),
+            Some(&vec![TextEdit {
+                range: expected_range,
+                new_text: "import lib.math;\n".to_owned(),
+            }])
+        );
+    }
+
+    #[test]
+    fn module_import_does_not_conflict_with_an_unqualified_term() {
+        let main = "import lib.math.{other};\nfunction math() -> word { return 0; }\nfunction main() -> word { return math.value(); }\n";
+        let provider = "function other() -> word { return 0; }\nfunction value() -> word { return 1; }\nexport { other, value };\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(
+            Url::parse("file:///main/math.solc").expect("math uri"),
+            provider.to_owned()
+        ));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        assert_eq!(
+            handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic),),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn module_import_does_not_override_an_existing_path_prefix() {
+        let main = "import lib.math.deep;\nfunction main() -> word { return math.value(); }\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(
+            Url::parse("file:///main/math/deep.solc").expect("deep uri"),
+            "function old() -> word { return 0; }\nexport { old };\n".to_owned()
+        ));
+        assert!(world.open_document(
+            Url::parse("file:///main/other/math.solc").expect("candidate uri"),
+            "function value() -> word { return 1; }\nexport { value };\n".to_owned()
+        ));
+        let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+
+        let actions = handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic))
+            .expect("code actions");
+        assert!(actions.iter().all(|action| match action {
+            CodeActionOrCommand::CodeAction(action) => !action.title.starts_with("Import "),
+            CodeActionOrCommand::Command(_) => true,
+        }));
     }
 
     #[test]
