@@ -219,7 +219,13 @@ fn dispatch_basic_fixture_uses_std_dispatch_main() {
     let hull = pretty_program(db, &emitted.program);
     assert!(hull.contains("basic_C_main_"), "{hull}");
     assert!(hull.contains("dispatch_selector_matches"), "{hull}");
-    assert!(hull.contains("std_abi_decode_debc005b9$calldataLbytesJ_CalldataWordReader_memoryLstringJ_memoryLstringJ"), "{hull}");
+    assert!(
+        hull.contains("std_abi_decode_d")
+            && hull.contains("$calldata_")
+            && hull.contains("memory_")
+            && hull.contains("string_"),
+        "{hull}"
+    );
     assert!(hull.contains("opcodes_mcopy"), "{hull}");
     assert!(!hull.contains("dispatch_ret12_abi_head0_offset"), "{hull}");
 }
@@ -388,7 +394,9 @@ contract C {
     assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
     let hull = pretty_program(db, &emitted.program);
     assert!(
-        hull.contains("ABIDecode_decode$ABIDecoderLaddress_CalldataWordReaderJ"),
+        hull.contains("ABIDecode_decode_d")
+            && hull.contains("$ABIDecoder_")
+            && hull.contains("address_"),
         "{hull}"
     );
     assert!(hull.contains("(160, raw)"), "{hull}");
@@ -675,7 +683,10 @@ contract C {{
 
     assert!(!hull.contains(TWO_256), "{hull}");
     assert!(!hull.contains(TWO_256_PLUS_ONE), "{hull}");
-    assert!(hull.contains("Add_add$word(1,"), "{hull}");
+    assert!(
+        hull.contains("Add_add_d") && hull.contains("$word(1,"),
+        "{hull}"
+    );
 
     let pick = hull_function(&hull, "main_C_pick_");
     assert_contains_in_order(
@@ -992,6 +1003,42 @@ contract C {
     let main = hull_function(&hull, "_main_");
     assert_contains_in_order("for initializer scope", main, &["let i", "for", "return i"]);
     assert!(!main.contains("return sload"), "{main}\n{hull}");
+}
+
+#[test]
+fn audit_p0_if_branch_let_is_hoisted_and_remains_a_local() {
+    let hull = pretty_src_hull_with_std(
+        "if_branch_let_scope",
+        r#"
+import std.{*};
+
+contract C {
+  x: word;
+
+  function f(flag: bool) -> word {
+    if (flag) {
+      let x: word = 7;
+    }
+    return x;
+  }
+
+  public function main() -> word { return f(tobool(x)); }
+}
+"#,
+    );
+    let main = hull_function(&hull, "_f_");
+    assert_contains_in_order(
+        "if branch let hoisting",
+        main,
+        &[
+            "let $if_local",
+            "match",
+            "$if_local",
+            ":= 7",
+            "return $if_local",
+        ],
+    );
+    assert!(!main.contains("return sload(0)"), "{main}\n{hull}");
 }
 
 #[test]

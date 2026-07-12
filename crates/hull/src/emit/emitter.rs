@@ -11,6 +11,16 @@ pub fn emit_module<'db>(
 impl<'db> Emitter<'db> {
     fn new(db: &'db dyn hir_ty::Db, module: &MonoModule<'db>, options: EmitOptions) -> Self {
         let hir_module = parse_file_to_hir(db, module.module.file(db)).module(db);
+        let if_stmt_spans = module
+            .frontend_desugar
+            .bodies
+            .iter()
+            .flat_map(|body| &body.transforms)
+            .filter_map(|transform| match transform {
+                FrontendTransform::IfStmtToMatch { origin, .. } => Some(origin.span),
+                _ => None,
+            })
+            .collect();
         Self {
             db,
             module: hir_module,
@@ -19,6 +29,8 @@ impl<'db> Emitter<'db> {
             scopes: ScopeStack::new_root(BTreeMap::new()),
             function_names: BTreeSet::new(),
             layout_stack: Vec::new(),
+            if_stmt_spans,
+            predeclared_lets: Vec::new(),
             fresh: 0,
         }
     }
@@ -113,16 +125,30 @@ impl<'db> Emitter<'db> {
 
     fn emit_stmt(&mut self, stmt: &MonoStmt<'db>) -> Vec<Stmt<'db>> {
         match &stmt.kind {
-            MonoStmtKind::Let { id, ty, init, .. } => {
-                let declared = match ty {
-                    Some(ty) => self.hull_ty(ty.ty(), stmt.span),
-                    None if init.is_none()
-                        && sem_ty_needs_untyped_word_default(self.db, id.ty.ty()) =>
-                    {
-                        Ty::word(stmt.span)
-                    }
-                    None => self.hull_ty(id.ty.ty(), stmt.span),
-                };
+            MonoStmtKind::Let { id, init, .. } => {
+                let declared = self.declared_let_ty(stmt);
+                if let Some(predeclared) = self
+                    .predeclared_lets
+                    .iter()
+                    .find(|predeclared| predeclared.span == stmt.span)
+                    .cloned()
+                {
+                    // The declaration was hoisted ahead of an `if`. Evaluate the
+                    // initializer before exposing the source name, then assign the
+                    // unique backend local so an outer local or storage field with
+                    // the same spelling remains visible to the initializer.
+                    let rhs = init.as_ref().map(|init| self.emit_expr(init));
+                    let local = Expr::var(id.span, predeclared.backend_name, predeclared.ty);
+                    self.bind_expr(id.name.clone(), local.clone());
+                    return rhs
+                        .map(|rhs| {
+                            vec![Stmt {
+                                span: stmt.span,
+                                kind: StmtKind::Assign { lhs: local, rhs },
+                            }]
+                        })
+                        .unwrap_or_default();
+                }
                 let mut out = Vec::new();
                 if let Some(init) = init {
                     // The initializer is resolved in the pre-binder scope. Materialize it
@@ -234,13 +260,23 @@ impl<'db> Emitter<'db> {
                 rhs,
             } => self.emit_assign_op(stmt.span, lhs, "mod", rhs),
             MonoStmtKind::Match { scrutinees, arms } => {
+                if self.if_stmt_spans.contains(&stmt.span)
+                    && let ([cond], [then_arm, else_arm]) = (scrutinees.as_slice(), arms.as_slice())
+                {
+                    return self.emit_if_stmt(
+                        stmt.span,
+                        cond,
+                        &then_arm.body,
+                        Some(&else_arm.body),
+                    );
+                }
                 self.emit_match(stmt.span, scrutinees, arms)
             }
             MonoStmtKind::If {
                 cond,
                 then_body,
                 else_body,
-            } => vec![self.emit_if_stmt(stmt.span, cond, then_body, else_body.as_deref())],
+            } => self.emit_if_stmt(stmt.span, cond, then_body, else_body.as_deref()),
             MonoStmtKind::Block(body) => vec![Stmt {
                 span: stmt.span,
                 kind: StmtKind::Block(self.with_scope(|this| this.emit_stmts(body))),
@@ -313,20 +349,67 @@ impl<'db> Emitter<'db> {
         }]
     }
 
+    fn declared_let_ty(&mut self, stmt: &MonoStmt<'db>) -> Ty<'db> {
+        let MonoStmtKind::Let { id, ty, init, .. } = &stmt.kind else {
+            unreachable!("declared_let_ty requires a let statement");
+        };
+        match ty {
+            Some(ty) => self.hull_ty(ty.ty(), stmt.span),
+            None if init.is_none() && sem_ty_needs_untyped_word_default(self.db, id.ty.ty()) => {
+                Ty::word(stmt.span)
+            }
+            None => self.hull_ty(id.ty.ty(), stmt.span),
+        }
+    }
+
     fn emit_if_stmt(
         &mut self,
         span: Span<'db>,
         cond: &MonoExpr<'db>,
         then_body: &[MonoStmt<'db>],
         else_body: Option<&[MonoStmt<'db>]>,
-    ) -> Stmt<'db> {
+    ) -> Vec<Stmt<'db>> {
         let target = self.hull_ty(cond.ty.ty(), cond.span);
         let scrutinee = self.emit_expr(cond);
-        let then_stmts = self.with_scope(|this| this.emit_stmts(then_body));
+        let mut leaking_lets = Vec::new();
+        collect_leaking_let_stmts(then_body, &mut leaking_lets);
+        if let Some(else_body) = else_body {
+            collect_leaking_let_stmts(else_body, &mut leaking_lets);
+        }
+
+        let mut out = Vec::new();
+        for let_stmt in leaking_lets {
+            if self
+                .predeclared_lets
+                .iter()
+                .any(|predeclared| predeclared.span == let_stmt.span)
+            {
+                continue;
+            }
+            let ty = self.declared_let_ty(let_stmt);
+            let backend_name = self.fresh_temp("if_local");
+            self.predeclared_lets.push(PredeclaredLet {
+                span: let_stmt.span,
+                backend_name: backend_name.clone(),
+                ty: ty.clone(),
+            });
+            out.push(Stmt {
+                span: let_stmt.span,
+                kind: StmtKind::Let {
+                    name: backend_name.into(),
+                    ty,
+                },
+            });
+        }
+
+        // `if` is not a lexical scope in the source language. Emitting the
+        // branches in source resolution order keeps then-bindings visible to
+        // the else list and leaves both lists' final bindings visible after it.
+        let then_stmts = self.emit_stmts(then_body);
         let else_stmts = else_body
-            .map(|body| self.with_scope(|this| this.emit_stmts(body)))
+            .map(|body| self.emit_stmts(body))
             .unwrap_or_default();
-        Stmt {
+        out.push(Stmt {
             span,
             kind: StmtKind::Match {
                 target,
@@ -352,7 +435,8 @@ impl<'db> Emitter<'db> {
                     },
                 ],
             },
-        }
+        });
+        out
     }
 
     pub(super) fn emit_expr(&mut self, expr: &MonoExpr<'db>) -> Expr<'db> {
@@ -904,6 +988,44 @@ fn expr_reads_var(expr: &Expr<'_>, expected: &str) -> bool {
                 || expr_reads_var(else_expr, expected)
         }
         ExprKind::Word(_) | ExprKind::Bool(_) | ExprKind::Unit => false,
+    }
+}
+
+fn collect_leaking_let_stmts<'a, 'db>(
+    stmts: &'a [MonoStmt<'db>],
+    out: &mut Vec<&'a MonoStmt<'db>>,
+) {
+    for stmt in stmts {
+        match &stmt.kind {
+            MonoStmtKind::Let { .. } => out.push(stmt),
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_leaking_let_stmts(then_body, out);
+                if let Some(else_body) = else_body {
+                    collect_leaking_let_stmts(else_body, out);
+                }
+            }
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                collect_leaking_let_stmts(init, out);
+                collect_leaking_let_stmts(post, out);
+                collect_leaking_let_stmts(body, out);
+            }
+            // Explicit blocks and match alternatives retain lexical scopes.
+            MonoStmtKind::Match { .. }
+            | MonoStmtKind::Block(_)
+            | MonoStmtKind::Return(_)
+            | MonoStmtKind::Expr(_)
+            | MonoStmtKind::Assign { .. }
+            | MonoStmtKind::Assembly(_)
+            | MonoStmtKind::Break
+            | MonoStmtKind::Continue
+            | MonoStmtKind::Error => {}
+        }
     }
 }
 

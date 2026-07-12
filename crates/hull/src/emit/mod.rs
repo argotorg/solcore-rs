@@ -19,7 +19,7 @@ use hir::{
 };
 use hir_ty::{
     BinderEnv, BuiltinTyCtor, Ty as SemTy, TyCtor, TyKind as SemTyKind, TypeLowering,
-    UserTyCtorKind,
+    UserTyCtorKind, contract::FrontendTransform,
 };
 use parser::parse_file_to_hir;
 use specialize::{
@@ -73,5 +73,14 @@ struct Emitter<'db> {
     scopes: ScopeStack<BTreeMap<String, Expr<'db>>>,
     function_names: BTreeSet<String>,
     layout_stack: Vec<(DefId<'db>, Vec<SemTy<'db>>)>,
+    if_stmt_spans: Vec<Span<'db>>,
+    predeclared_lets: Vec<PredeclaredLet<'db>>,
     fresh: usize,
+}
+
+#[derive(Clone)]
+struct PredeclaredLet<'db> {
+    span: Span<'db>,
+    backend_name: String,
+    ty: Ty<'db>,
 }
