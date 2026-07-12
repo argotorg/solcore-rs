@@ -1,7 +1,5 @@
 //! Find-references support over the wasm-clean LSP core.
 
-use std::path::Path;
-
 use hir::{
     anchor::{DefId, resolve_def_location},
     ast::{
@@ -25,8 +23,8 @@ use nameres::Db as _;
 
 use crate::{
     LineIndexExt,
-    resolve::{function_owning_offset, innermost_expr},
-    state::{WorldState, uri_to_vfs_path},
+    resolve::{function_owning_offset, innermost_expr, module_id_for_uri},
+    state::WorldState,
 };
 
 /// Semantic identity used by references, highlights, and future rename support.
@@ -87,11 +85,11 @@ pub fn reference_target_at<'db>(
     position: Position,
 ) -> Option<ReferenceTarget<'db>> {
     let db = world.db();
-    let path = uri_to_vfs_path(uri)?;
+    let path = world.vfs_path_for_uri(uri)?;
     let file = db.source_file(&path)?;
     let line_index = world.line_index(uri)?;
     let offset = line_index.position_to_byte(position)?;
-    let module_id = module_id_for_uri(db, uri)?;
+    let module_id = module_id_for_uri(world, db, uri)?;
     let module = parser::parse_file_to_hir(db, file).module(db);
     let env = nameres::module_env(db, module_id);
 
@@ -137,11 +135,11 @@ pub fn import_export_target_at<'db>(
     position: Position,
 ) -> Option<ReferenceTarget<'db>> {
     let db = world.db();
-    let path = uri_to_vfs_path(uri)?;
+    let path = world.vfs_path_for_uri(uri)?;
     let file = db.source_file(&path)?;
     let line_index = world.line_index(uri)?;
     let offset = line_index.position_to_byte(position)?;
-    let module_id = module_id_for_uri(db, uri)?;
+    let module_id = module_id_for_uri(world, db, uri)?;
     let module = parser::parse_file_to_hir(db, file).module(db);
 
     import_export_target_in_module(db, module, module_id, file, offset)
@@ -215,8 +213,8 @@ fn reference_search_modules<'db>(
         }
     }
 
-    for uri in world.open_document_uris() {
-        if let Some(module) = module_id_for_uri(db, &uri) {
+    for uri in world.workspace_document_uris() {
+        if let Some(module) = module_id_for_uri(world, db, &uri) {
             push_unique_module(&mut modules, module);
         }
     }
@@ -231,19 +229,6 @@ fn push_unique_module<'db>(
     if !modules.contains(&module) {
         modules.push(module);
     }
-}
-
-fn module_id_for_uri<'db>(db: &'db vfs::AnalysisHost, uri: &Url) -> Option<nameres::ModuleId<'db>> {
-    let path = uri_to_vfs_path(uri)?;
-    let tree = db.module_tree();
-    let key = nameres::module_key_for_path(
-        nameres::LibraryId::Main,
-        tree.main_root(db),
-        Path::new(&path),
-    )?;
-    let module = nameres::module_id_from_key(db, &key);
-    db.module_file(module)?;
-    Some(module)
 }
 
 fn import_export_target_in_module<'db>(
@@ -1412,7 +1397,7 @@ fn location_for_span(
     db: &vfs::AnalysisHost,
     span: AbsoluteSpan,
 ) -> Option<Location> {
-    let uri = Url::parse(span.file().url(db).as_str()).ok()?;
+    let uri = world.client_uri_for_vfs_url(span.file().url(db).as_str())?;
     let range = if let Some(line_index) = world.line_index(&uri) {
         line_index.range(span.start().as_u32(), span.end().as_u32())
     } else {

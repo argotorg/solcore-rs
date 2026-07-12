@@ -697,7 +697,8 @@ fn source_file_for_virtual_path(
     let path = path
         .to_str()
         .expect("virtual paths are constructed from UTF-8 strings");
-    let url = Url::parse(&format!("file://{path}")).expect("virtual absolute file URL");
+    let mut url = Url::parse("file:///").expect("file URL base");
+    url.set_path(path);
     SourceFile::builder(url, Some(source))
         .durability(durability)
         .new(db)
@@ -1114,5 +1115,24 @@ mod tests {
             ])
         );
         assert!(STD_FILES.iter().all(|(_, contents)| !contents.is_empty()));
+    }
+
+    #[test]
+    fn virtual_file_urls_encode_special_path_characters() {
+        let mut workspace = Workspace::new();
+        workspace.set_file(
+            "nested/数 学#1.solc",
+            "function value() -> word { return 1; }\n".to_owned(),
+        );
+
+        let file = workspace
+            .db()
+            .source_file("/main/nested/数 学#1.solc")
+            .expect("virtual source file");
+
+        assert_eq!(
+            file.url(workspace.db()).as_str(),
+            "file:///main/nested/%E6%95%B0%20%E5%AD%A6%231.solc"
+        );
     }
 }

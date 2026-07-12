@@ -152,6 +152,9 @@ fn handle_did_close(world: &mut WorldState, id: Option<Value>, params: Value) ->
 
     let uri = params.text_document.uri;
     world.close_document(&uri);
+    if uri.scheme() != "file" {
+        world.remove_workspace_document(&uri);
+    }
 
     let mut outgoing = null_response_or_empty(id);
     outgoing.push(publish_diagnostics(uri, Vec::new()));
@@ -776,6 +779,42 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0]["name"], "target");
         assert_eq!(result[0]["location"]["uri"], URI);
+    }
+
+    #[test]
+    fn closing_untitled_document_removes_it_from_workspace_symbols() {
+        let mut world = WorldState::new();
+        let uri = "untitled:Untitled-1";
+        let source = "function ghost() -> word { return 42; }\n";
+        let _ = dispatch(&mut world, &did_open_uri_message(uri, source));
+
+        let _ = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didClose",
+                "params": { "textDocument": { "uri": uri } }
+            })
+            .to_string(),
+        );
+        let symbols = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "symbols-after-close",
+                "method": "workspace/symbol",
+                "params": { "query": "ghost" }
+            })
+            .to_string(),
+        );
+
+        let response = parse_message(&symbols[0]);
+        assert!(
+            response["result"]
+                .as_array()
+                .expect("symbol array")
+                .is_empty()
+        );
     }
 
     #[test]

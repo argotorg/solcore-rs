@@ -8,18 +8,19 @@ use hir::{
 };
 use lsp_types::{Location, Range, SymbolInformation, SymbolKind, Url};
 
-use crate::state::{WorldState, uri_to_vfs_path};
+use crate::state::WorldState;
 
 const MAX_WORKSPACE_SYMBOLS: usize = 256;
 
-/// Computes flat workspace symbols for all currently open source documents.
+/// Computes flat workspace symbols for every source document loaded in the
+/// workspace.
 pub fn handle_workspace_symbol(world: &WorldState, query: &str) -> Option<Vec<SymbolInformation>> {
     let db = world.db();
     let query = query.to_lowercase();
     let mut symbols = Vec::new();
 
-    for uri in world.open_document_uris() {
-        let Some(path) = uri_to_vfs_path(&uri) else {
+    for uri in world.workspace_document_uris() {
+        let Some(path) = world.vfs_path_for_uri(&uri) else {
             continue;
         };
         let Some(file) = db.source_file(&path) else {
@@ -39,8 +40,7 @@ pub fn handle_workspace_symbol(world: &WorldState, query: &str) -> Option<Vec<Sy
         symbols.retain(|symbol| symbol.name.to_lowercase().contains(&query));
     }
     symbols.sort_by(compare_symbols);
-    // NOTE(codex): Cap workspace/symbol results to keep responses bounded while
-    // the LSP core only searches open in-memory documents.
+    // Keep project-wide responses bounded for large preloaded workspaces.
     symbols.truncate(MAX_WORKSPACE_SYMBOLS);
 
     Some(symbols)
@@ -298,6 +298,39 @@ mod tests {
             &util_uri,
             util_source,
         );
+    }
+
+    #[test]
+    fn query_includes_preloaded_but_unopened_workspace_documents() {
+        let mut world = WorldState::new();
+        let root_path = std::env::temp_dir().join("solcore-lsp-symbol-project");
+        let root = Url::from_directory_path(&root_path).expect("root uri");
+        let main_uri = Url::from_file_path(root_path.join("main.solc")).expect("main uri");
+        let util_uri = Url::from_file_path(root_path.join("util.solc")).expect("util uri");
+        assert_eq!(
+            world.load_workspace_documents(
+                root,
+                [
+                    (
+                        main_uri,
+                        "function main_symbol() -> word { return 1; }\n".to_owned()
+                    ),
+                    (
+                        util_uri.clone(),
+                        "function unopened_symbol() -> word { return 2; }\n".to_owned()
+                    ),
+                ]
+            ),
+            2
+        );
+
+        let symbols =
+            handle_workspace_symbol(&world, "unopened").expect("workspace symbol response");
+
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "unopened_symbol");
+        assert_eq!(symbols[0].location.uri, util_uri);
+        assert!(world.open_document_uris().is_empty());
     }
 
     #[test]

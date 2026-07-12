@@ -13,14 +13,11 @@ use vfs::{
     DiagLabel, DiagRange, Diagnostic as VfsDiagnostic, DiagnosticSeverity as VfsDiagnosticSeverity,
 };
 
-use crate::{
-    line_index::LineIndexExt,
-    state::{WorldState, uri_to_vfs_path, vfs_url_to_client_uri},
-};
+use crate::{line_index::LineIndexExt, state::WorldState};
 
 /// Computes LSP diagnostics for a single open document URI.
 pub fn compute_diagnostics(world: &WorldState, uri: &Url) -> Vec<LspDiagnostic> {
-    let Some(path) = uri_to_vfs_path(uri) else {
+    let Some(path) = world.vfs_path_for_uri(uri) else {
         return Vec::new();
     };
     let Some(line_index) = world.line_index(uri) else {
@@ -37,7 +34,7 @@ pub fn compute_diagnostics(world: &WorldState, uri: &Url) -> Vec<LspDiagnostic> 
 
     diagnostics
         .into_iter()
-        .filter(|diagnostic| diagnostic_belongs_to_uri(diagnostic, uri))
+        .filter(|diagnostic| diagnostic_belongs_to_uri(world, diagnostic, uri))
         .map(|diagnostic| to_lsp_diagnostic(world, line_index, diagnostic))
         .collect()
 }
@@ -68,11 +65,11 @@ fn is_reachable_from_workspace_entry(world: &WorldState, path: &str) -> bool {
         .any(|module| db.module_file(module) == Some(file))
 }
 
-fn diagnostic_belongs_to_uri(diagnostic: &VfsDiagnostic, uri: &Url) -> bool {
+fn diagnostic_belongs_to_uri(world: &WorldState, diagnostic: &VfsDiagnostic, uri: &Url) -> bool {
     diagnostic
         .primary
         .as_ref()
-        .and_then(|primary| vfs_url_to_client_uri(&primary.file_url))
+        .and_then(|primary| world.client_uri_for_vfs_url(&primary.file_url))
         .is_some_and(|primary_uri| primary_uri == *uri)
 }
 
@@ -122,7 +119,7 @@ fn related_information(
 }
 
 fn location_for_range(world: &WorldState, range: &DiagRange) -> Option<(Url, lsp_types::Range)> {
-    let uri = vfs_url_to_client_uri(&range.file_url)?;
+    let uri = world.client_uri_for_vfs_url(&range.file_url)?;
     let line_index = world.line_index(&uri)?;
     Some((uri, line_index.range(range.start, range.end)))
 }

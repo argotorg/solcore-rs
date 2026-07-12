@@ -1372,6 +1372,7 @@ version = "0.1.0"
 dependencies = [
  "line-index",
  "lsp-types",
+ "percent-encoding",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

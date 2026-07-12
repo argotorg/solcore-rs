@@ -6,12 +6,12 @@ use hir::{
 };
 use lsp_types::{DocumentSymbol, DocumentSymbolResponse, Range, SymbolKind, Url};
 
-use crate::state::{WorldState, uri_to_vfs_path};
+use crate::state::WorldState;
 
 /// Computes hierarchical symbols for one open source document.
 pub fn handle_document_symbol(world: &WorldState, uri: &Url) -> Option<DocumentSymbolResponse> {
     let db = world.db();
-    let path = uri_to_vfs_path(uri)?;
+    let path = world.vfs_path_for_uri(uri)?;
     let file = db.source_file(&path)?;
     let line_index = world.line_index(uri)?;
     let module = parser::parse_file_to_hir(db, file).module(db);

@@ -1,5 +1,7 @@
 //! Shared core helpers for source-position semantic lookup.
 
+use std::path::Path;
+
 use hir::{
     anchor::DefId,
     arena::Id,
@@ -10,6 +12,32 @@ use hir::{
     input::SourceFile,
     nameres::{self as hir_nameres, TypeVarBinding},
 };
+use lsp_types::Url;
+use nameres::Db as _;
+
+use crate::state::WorldState;
+
+/// Resolves a client document URI to its logical module in the analysis graph.
+///
+/// LSP requests must use the module that owns the requested document rather
+/// than the workspace's compilation entry. Import visibility is module-local,
+/// and the entry may be an unrelated document that happened to open first.
+pub(crate) fn module_id_for_uri<'db>(
+    world: &WorldState,
+    db: &'db vfs::AnalysisHost,
+    uri: &Url,
+) -> Option<nameres::ModuleId<'db>> {
+    let path = world.vfs_path_for_uri(uri)?;
+    let tree = db.module_tree();
+    let key = nameres::module_key_for_path(
+        nameres::LibraryId::Main,
+        tree.main_root(db),
+        Path::new(&path),
+    )?;
+    let module = nameres::module_id_from_key(db, &key);
+    db.module_file(module)?;
+    Some(module)
+}
 
 /// A function-like body that owns a requested source offset.
 pub(crate) struct FunctionAtOffset<'db> {
