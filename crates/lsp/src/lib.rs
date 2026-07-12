@@ -4,6 +4,7 @@
 //! `tower-lsp` stdio server and the browser Web Worker binding.
 
 pub mod capabilities;
+pub mod code_actions;
 pub mod completion;
 pub mod definition;
 pub mod diagnostics;
@@ -27,6 +28,7 @@ mod wasm;
 pub mod workspace_symbols;
 
 pub use capabilities::{initialize_result, server_capabilities};
+pub use code_actions::handle_code_action;
 pub use completion::handle_completion;
 pub use definition::handle_definition;
 pub use diagnostics::compute_diagnostics;

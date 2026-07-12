@@ -17,10 +17,20 @@ use crate::{line_index::LineIndexExt, state::WorldState};
 
 /// Computes LSP diagnostics for a single open document URI.
 pub fn compute_diagnostics(world: &WorldState, uri: &Url) -> Vec<LspDiagnostic> {
-    let Some(path) = world.vfs_path_for_uri(uri) else {
+    let Some(line_index) = world.line_index(uri) else {
         return Vec::new();
     };
-    let Some(line_index) = world.line_index(uri) else {
+
+    compute_vfs_diagnostics(world, uri)
+        .into_iter()
+        .map(|diagnostic| to_lsp_diagnostic(world, line_index, diagnostic))
+        .collect()
+}
+
+/// Computes compiler diagnostics belonging to one client document while
+/// retaining structured suggestions for code-action conversion.
+pub(crate) fn compute_vfs_diagnostics(world: &WorldState, uri: &Url) -> Vec<VfsDiagnostic> {
+    let Some(path) = world.vfs_path_for_uri(uri) else {
         return Vec::new();
     };
 
@@ -35,7 +45,6 @@ pub fn compute_diagnostics(world: &WorldState, uri: &Url) -> Vec<LspDiagnostic> 
     diagnostics
         .into_iter()
         .filter(|diagnostic| diagnostic_belongs_to_uri(world, diagnostic, uri))
-        .map(|diagnostic| to_lsp_diagnostic(world, line_index, diagnostic))
         .collect()
 }
 
@@ -73,7 +82,7 @@ fn diagnostic_belongs_to_uri(world: &WorldState, diagnostic: &VfsDiagnostic, uri
         .is_some_and(|primary_uri| primary_uri == *uri)
 }
 
-fn to_lsp_diagnostic(
+pub(crate) fn to_lsp_diagnostic(
     world: &WorldState,
     line_index: &LineIndexExt,
     diagnostic: VfsDiagnostic,
