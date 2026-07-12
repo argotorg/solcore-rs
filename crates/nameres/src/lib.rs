@@ -59,7 +59,10 @@ mod scc;
 mod util;
 mod validation;
 
-pub use auto_import::{auto_import_candidates, auto_import_index, source_import_path};
+pub use auto_import::{
+    auto_import_candidates, auto_import_constructor_candidates, auto_import_index,
+    auto_import_module_candidates, source_import_path,
+};
 pub use diagnostics::{
     ModuleDiagnostic, body_diagnostics, module_diagnostics, reachable_diagnostics,
 };
@@ -90,11 +93,11 @@ use item_refs::{
     strip_constructor_visibility, visible_data_ref_with_constructors,
 };
 pub use model::{
-    AutoImportCandidate, ConstructorVisibility, Db, FullResolutionSummary, InstanceImports,
-    Interface, ItemRef, LibraryId, ModuleAlias, ModuleEdge, ModuleEnv, ModuleFileSnapshot,
-    ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleImportSurface, ModuleImports, ModuleKey,
-    ModulePathRef, ModuleTree, Namespace, Origin, ResolvedModulePath, ValidationSummary,
-    VisibleConstructors,
+    AutoImportCandidate, AutoImportModuleCandidate, ConstructorVisibility, Db,
+    FullResolutionSummary, InstanceImports, Interface, ItemRef, LibraryId, ModuleAlias, ModuleEdge,
+    ModuleEnv, ModuleFileSnapshot, ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleImportSurface,
+    ModuleImports, ModuleKey, ModulePathRef, ModuleTree, Namespace, Origin, ResolvedModulePath,
+    ValidationSummary, VisibleConstructors,
 };
 use modes::{BodyDiagnosticPolicy, CtorInclusion, ExportResolutionMode};
 use paths::{module_path_span, path_segments};

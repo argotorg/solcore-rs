@@ -14,10 +14,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use salsa::Setter;
 use solcore_nameres::{
     LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleKey, ModuleTree,
-    Namespace, auto_import_candidates, auto_import_index, module_diagnostics, module_id_from_key,
-    module_imports, module_key_for_path, public_interface, reachable_diagnostics,
-    resolve_module_path_candidate, resolve_reachable_full, source_import_path,
-    strongly_connected_components,
+    Namespace, auto_import_candidates, auto_import_constructor_candidates, auto_import_index,
+    auto_import_module_candidates, module_diagnostics, module_id_from_key, module_imports,
+    module_key_for_path, public_interface, reachable_diagnostics, resolve_module_path_candidate,
+    resolve_reachable_full, source_import_path, strongly_connected_components,
 };
 use url::Url;
 
@@ -229,6 +229,304 @@ fn auto_imports_index_unreachable_public_symbols_and_rank_direct_exports_first()
 }
 
 #[test]
+fn constructor_auto_imports_require_the_requested_constructor_to_be_visible() {
+    let (db, entry) = load_sources([
+        (vec!["main"], "function main() {}"),
+        (
+            vec!["full"],
+            "export { Option(*) }; data Option = None | Some(word);",
+        ),
+        (
+            vec!["opaque"],
+            "export { Option }; data Option = None | Some(word);",
+        ),
+        (
+            vec!["partial"],
+            "export { Option(Some) }; data Option = None | Some(word);",
+        ),
+        (vec!["wrapper"], "export full.{Option(Some)};"),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+
+    let some_paths = auto_import_constructor_candidates(&db, importing, "Option", "Some")
+        .into_iter()
+        .map(|candidate| candidate.import_path)
+        .collect::<Vec<_>>();
+    assert_eq!(some_paths, ["lib.full", "lib.partial", "lib.wrapper"]);
+
+    let none_paths = auto_import_constructor_candidates(&db, importing, "Option", "None")
+        .into_iter()
+        .map(|candidate| candidate.import_path)
+        .collect::<Vec<_>>();
+    assert_eq!(none_paths, ["lib.full"]);
+    assert!(auto_import_constructor_candidates(&db, importing, "Option", "Missing").is_empty());
+    assert!(auto_import_constructor_candidates(&db, importing, "bad.name", "Some").is_empty());
+}
+
+#[test]
+fn module_auto_imports_match_the_default_qualifier_and_public_member() {
+    let (db, entry) = load_sources([
+        (vec!["main"], "function main() {}"),
+        (
+            vec!["one", "math"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+        (
+            vec!["two", "math"],
+            "export { value }; function value() -> word { return 2; }",
+        ),
+        (vec!["aaa", "math"], "export lib.one.math.{value};"),
+        (
+            vec!["private", "math"],
+            "function value() -> word { return 3; }",
+        ),
+        (
+            vec!["broken", "math"],
+            "export { value }; lost(x: word) -> word { return 0; } function value() -> word { return 4; }",
+        ),
+        (
+            vec!["other"],
+            "export { value }; function value() -> word { return 5; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+
+    let candidates = auto_import_module_candidates(&db, importing, "math", "value");
+    let paths = candidates
+        .iter()
+        .map(|candidate| candidate.import_path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, ["lib.one.math", "lib.two.math", "lib.aaa.math"]);
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| { candidate.qualifier == "math" && candidate.member == "value" })
+    );
+    assert!(auto_import_module_candidates(&db, importing, "other", "private").is_empty());
+    assert!(auto_import_module_candidates(&db, importing, "one.math", "value").is_empty());
+}
+
+#[test]
+fn module_auto_imports_require_an_immediate_term_member() {
+    let (db, entry) = load_sources([
+        (vec!["main"], "function main() {}"),
+        (
+            vec!["types", "math"],
+            "export { Value }; data Value = Value(word);",
+        ),
+        (vec!["aliases", "math"], "export lib.target as nested;"),
+        (
+            vec!["target"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+
+    assert!(auto_import_module_candidates(&db, importing, "math", "Value").is_empty());
+    assert!(auto_import_module_candidates(&db, importing, "math", "nested").is_empty());
+}
+
+#[test]
+fn module_auto_imports_do_not_create_duplicate_default_qualifiers() {
+    let (db, entry) = load_sources([
+        (vec!["main"], "import lib.existing.math; function main() {}"),
+        (
+            vec!["existing", "math"],
+            "export { old }; function old() -> word { return 1; }",
+        ),
+        (
+            vec!["candidate", "math"],
+            "export { value }; function value() -> word { return 2; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "import lib.existing as math; function main() {}",
+        ),
+        (
+            vec!["existing"],
+            "export { old }; function old() -> word { return 1; }",
+        ),
+        (
+            vec!["candidate", "math"],
+            "export { value }; function value() -> word { return 2; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+
+    let (db, entry) = load_sources([
+        (vec!["main"], "import lib.math.deep; function main() {}"),
+        (
+            vec!["math", "deep"],
+            "export { old }; function old() -> word { return 1; }",
+        ),
+        (
+            vec!["other", "math"],
+            "export { value }; function value() -> word { return 2; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+}
+
+#[test]
+fn module_auto_imports_do_not_conflict_with_unqualified_bindings() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "function math() -> word { return 0; } function main() {}",
+        ),
+        (
+            vec!["candidate", "math"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+
+    let (db, entry) = load_sources([
+        (vec!["main"], "import lib.names.{math}; function main() {}"),
+        (
+            vec!["names"],
+            "export { math }; function math() -> word { return 0; }",
+        ),
+        (
+            vec!["candidate", "math"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+}
+
+#[test]
+fn module_auto_imports_check_every_generated_prefix_binding() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "function one() -> word { return 0; } function main() {}",
+        ),
+        (
+            vec!["one", "math"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+        (
+            vec!["two", "math"],
+            "export { value }; function value() -> word { return 2; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    let paths = auto_import_module_candidates(&db, importing, "math", "value")
+        .into_iter()
+        .map(|candidate| candidate.import_path)
+        .collect::<Vec<_>>();
+    assert_eq!(paths, ["lib.two.math"]);
+
+    let (db, entry) = load_sources([
+        (vec!["main"], "data one = One; function main() {}"),
+        (
+            vec!["one", "math"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+
+    let (db, entry) = load_sources([
+        (vec!["main"], "import lib.names.{one}; function main() {}"),
+        (
+            vec!["names"],
+            "export { one }; function one() -> word { return 0; }",
+        ),
+        (
+            vec!["one", "math"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+}
+
+#[test]
+fn module_auto_imports_check_contract_local_prefix_bindings() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "contract C {
+                one: word;
+                data two = Two;
+                function three() -> word { return 0; }
+                function main() {}
+            }",
+        ),
+        (
+            vec!["one", "math"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+        (
+            vec!["two", "math"],
+            "export { value }; function value() -> word { return 2; }",
+        ),
+        (
+            vec!["three", "math"],
+            "export { value }; function value() -> word { return 3; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+}
+
+#[test]
+fn module_auto_imports_check_resolved_and_unresolved_plain_import_prefixes() {
+    let (db, entry) = load_sources([
+        (vec!["main"], "import lib.one.deep; function main() {}"),
+        (
+            vec!["one", "deep"],
+            "export { old }; function old() -> word { return 0; }",
+        ),
+        (
+            vec!["one", "math"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+
+    let (db, entry) = load_sources([
+        (vec!["main"], "import lib.missing.deep; function main() {}"),
+        (
+            vec!["missing", "math"],
+            "export { value }; function value() -> word { return 1; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    assert!(auto_import_module_candidates(&db, importing, "math", "value").is_empty());
+}
+
+#[test]
+fn module_auto_imports_allow_a_separate_plain_import_after_a_selective_import() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "import lib.one.math.{other}; function main() {}",
+        ),
+        (
+            vec!["one", "math"],
+            "export { other, value }; function other() -> word { return 0; } function value() -> word { return 1; }",
+        ),
+    ]);
+    let importing = module_id_from_key(&db, &entry);
+    let candidates = auto_import_module_candidates(&db, importing, "math", "value");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].import_path, "lib.one.math");
+}
+
+#[test]
 fn auto_imports_exclude_namespace_blind_selector_collisions_within_one_provider() {
     let (db, entry) = load_sources([
         (vec!["main"], "function main() {}"),
@@ -393,6 +691,11 @@ fn auto_imports_keep_main_workspace_namespaces_isolated() {
     );
     assert!(!candidates[0].import_path.contains("__solcore_workspace__"));
 
+    let module_candidates = auto_import_module_candidates(&db, importing, "util", "wanted");
+    assert_eq!(module_candidates.len(), 1);
+    assert_eq!(module_candidates[0].import_path, "lib.nested.util");
+    assert_eq!(module_candidates[0].provider, candidates[0].provider);
+
     let detached_importing = module_id_from_key(
         &db,
         &ModuleKey {
@@ -518,6 +821,14 @@ fn source_import_paths_use_canonical_library_syntax() {
     );
     assert_eq!(
         auto_import_candidates(&db, modules[0], "external_value", Namespace::Term)[0].import_path,
+        "@pkg.math.api"
+    );
+    assert_eq!(
+        auto_import_module_candidates(&db, modules[0], "list", "std_value")[0].import_path,
+        "std.collections.list"
+    );
+    assert_eq!(
+        auto_import_module_candidates(&db, modules[0], "api", "external_value")[0].import_path,
         "@pkg.math.api"
     );
 }

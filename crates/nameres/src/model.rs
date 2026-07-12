@@ -203,6 +203,24 @@ impl<'db> AutoImportCandidate<'db> {
     }
 }
 
+/// One module that can be brought into scope under its default qualifier.
+///
+/// Unlike [`AutoImportCandidate`], this candidate represents an unselected
+/// module import (`import lib.foo;`). `member` is retained as evidence that the
+/// requested immediate qualified term lookup is present in the provider's
+/// public interface.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
+pub struct AutoImportModuleCandidate<'db> {
+    /// Loaded module named by the generated import.
+    pub provider: ModuleId<'db>,
+    /// Canonical source-level path to use in an import declaration.
+    pub import_path: String,
+    /// Default leaf qualifier introduced by the import.
+    pub qualifier: String,
+    /// Immediate public member that motivated the import.
+    pub member: String,
+}
+
 /// Public or imported item reference.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct ItemRef<'db> {
