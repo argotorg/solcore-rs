@@ -11,3 +11,13 @@ error[SC0001]: parse error: unexpected `return`
   |                        ^^^^^^ unexpected token
   |
   = note: expecting `!`, `(`, `.`, `@`, `if`, or `lam`
+---
+
+error[SC0001]: parse error: unexpected `)`
+ --> /main/main.solc:2:35
+  |
+1 | function g(x: word) -> word { return x; }
+2 | function f() -> word { return g(1,); }
+  |                                   ^ unexpected token
+  |
+  = note: expecting `!`, `(`, `.`, `@`, `if`, or `lam`

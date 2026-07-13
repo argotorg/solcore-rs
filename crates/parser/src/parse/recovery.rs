@@ -176,21 +176,13 @@ fn refine_match_parse_error<'src>(
     )
 }
 
-pub(super) fn suppress_body_cascades(
-    source: &str,
-    mut errors: Vec<ParsedError>,
-) -> Vec<ParsedError> {
+pub(super) fn suppress_body_cascades(mut errors: Vec<ParsedError>) -> Vec<ParsedError> {
     errors.sort_by_key(|error| (error.span.start, error.span.end));
 
     let mut filtered: Vec<ParsedError> = Vec::with_capacity(errors.len());
     for error in errors {
         let should_suppress = filtered.last().is_some_and(|previous| {
-            if span_contains(previous.span, error.span) {
-                return true;
-            }
-            let previous_line = line_index(source, previous.span.start);
-            let current_line = line_index(source, error.span.start);
-            previous_line == current_line
+            span_contains(previous.span, error.span) || spans_overlap(previous.span, error.span)
         });
         if !should_suppress {
             filtered.push(error);

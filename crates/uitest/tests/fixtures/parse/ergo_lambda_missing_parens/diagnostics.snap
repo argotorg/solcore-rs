@@ -12,3 +12,14 @@ error[SC0001]: parse error: unexpected identifier `x`
 3 |     return g(1);
   |
   = note: expecting `(`
+---
+
+error[SC0001]: parse error: unexpected `}`
+ --> /main/main.solc:2:31
+  |
+1 | function f() -> word {
+2 |     let g = lam x { return x; };
+  |                               ^ unexpected token
+3 |     return g(1);
+  |
+  = note: expecting end of input, or statement

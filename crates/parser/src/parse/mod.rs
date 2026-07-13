@@ -390,7 +390,10 @@ pub(crate) fn parse_body_statements<'src>(
         };
     };
 
-    let (tokens, mut errors) = tokenize_with_base(inner_source, inner_start);
+    // The full-source tokenization owns lexer diagnostics. Body re-tokenization
+    // still needs their spans to suppress parser cascades, but returning the
+    // same diagnostics here would duplicate them in `parse_diagnostics`.
+    let (tokens, lex_errors, mut nesting_errors) = tokenize_with_base(inner_source, inner_start);
     let token_snapshot = tokens.clone();
     let token_count = tokens.len();
     let stream = chumsky::input::Stream::from_iter(tokens)
@@ -409,10 +412,13 @@ pub(crate) fn parse_body_statements<'src>(
         tokens = token_count,
         statements = output.as_ref().map_or(0, Vec::len),
         parse_errors = parse_errors.len(),
-        lex_errors = errors.len(),
+        lex_errors = lex_errors.len(),
         "parsed body statements"
     );
-    let lex_error_spans = errors.iter().map(|error| error.span).collect::<Vec<_>>();
+    let lex_error_spans = lex_errors
+        .iter()
+        .map(|error| error.span)
+        .collect::<Vec<_>>();
     let parse_errors = parse_errors
         .into_iter()
         .map(parse_error_from_rich)
@@ -423,11 +429,11 @@ pub(crate) fn parse_body_statements<'src>(
                 .any(|lex_error| lex_error_suppresses_parse_error(source, *lex_error, error.span))
         })
         .collect::<Vec<_>>();
-    errors.extend(suppress_body_cascades(source, parse_errors));
+    nesting_errors.extend(suppress_body_cascades(parse_errors));
 
     ParseOutput {
         output: output.unwrap_or_default(),
-        errors,
+        errors: nesting_errors,
     }
 }
 
@@ -436,8 +442,12 @@ mod tests {
     use chumsky::prelude::*;
 
     use super::{
-        errors::parse_error_from_rich, parse_body_statements, parse_supported_items,
-        tokenize::tokenize, yul::parsed_yul_expr_parser,
+        MAX_SYNTAX_NESTING,
+        errors::parse_error_from_rich,
+        parse_body_statements, parse_supported_items,
+        recovery::suppress_body_cascades,
+        tokenize::{tokenize, tokenize_with_base},
+        yul::parsed_yul_expr_parser,
     };
     use crate::{lexer::Token, types::*};
 
@@ -712,14 +722,6 @@ mod tests {
             parsed
                 .errors
                 .iter()
-                .any(|error| error.message.contains("invalid token `~`")),
-            "missing lexer diagnostic: {:#?}",
-            parsed.errors
-        );
-        assert!(
-            parsed
-                .errors
-                .iter()
                 .any(|error| error.span.start >= source.find("broken").unwrap()),
             "independent statement error was suppressed: {:#?}",
             parsed.errors
@@ -731,16 +733,6 @@ mod tests {
         let source = "{ let value = ~; return 0; }";
         let parsed = parse_body_statements(source, (0..source.len()).into());
 
-        assert_eq!(
-            parsed
-                .errors
-                .iter()
-                .filter(|error| error.message.contains("invalid token `~`"))
-                .count(),
-            1,
-            "missing lexer diagnostic: {:#?}",
-            parsed.errors
-        );
         let semicolon = source.find(';').expect("initializer semicolon");
         assert!(
             parsed
@@ -757,15 +749,9 @@ mod tests {
         let source = "{ let value = 1 § 2; return value; }";
         let parsed = parse_body_statements(source, (0..source.len()).into());
 
-        assert_eq!(
-            parsed.errors.len(),
-            1,
-            "unexpected cascade: {:#?}",
-            parsed.errors
-        );
         assert!(
-            parsed.errors[0].message.contains("invalid token `§`"),
-            "missing lexer diagnostic: {:#?}",
+            parsed.errors.is_empty(),
+            "unexpected cascade: {:#?}",
             parsed.errors
         );
     }
@@ -791,6 +777,78 @@ mod tests {
                 .any(|error| error.span.start == semicolon),
             "the independent next-line parse error was suppressed: {:#?}",
             parsed.errors
+        );
+    }
+
+    #[test]
+    fn body_tokenization_enforces_the_delimiter_nesting_limit_directly() {
+        let mut source = String::new();
+        source.push_str(&"(".repeat(MAX_SYNTAX_NESTING + 1));
+        source.push('0');
+        source.push_str(&")".repeat(MAX_SYNTAX_NESTING + 1));
+
+        let (_tokens, lexer_errors, errors) = tokenize_with_base(&source, 17);
+
+        assert!(lexer_errors.is_empty());
+        assert!(
+            errors.iter().any(|error| error
+                .message
+                .contains("delimiter nesting exceeds the compiler limit")),
+            "missing body-local nesting diagnostic: {:#?}",
+            errors
+        );
+        assert!(errors.iter().all(|error| error.span.start >= 17));
+    }
+
+    #[test]
+    fn direct_body_parse_reports_its_own_nesting_guard() {
+        let mut source = "{".to_owned();
+        source.push_str(&"(".repeat(MAX_SYNTAX_NESTING + 1));
+        source.push('0');
+        source.push_str(&")".repeat(MAX_SYNTAX_NESTING + 1));
+        source.push('}');
+
+        let parsed = parse_body_statements(&source, (0..source.len()).into());
+
+        assert!(
+            parsed.errors.iter().any(|error| error
+                .message
+                .contains("delimiter nesting exceeds the compiler limit")),
+            "missing body-local nesting diagnostic: {:#?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
+    fn independent_same_line_body_errors_are_preserved() {
+        let source = "{ let first = ; let second = ; }";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+        let first = source.find(';').expect("first invalid initializer");
+        let second = source.rfind(';').expect("second invalid initializer");
+
+        assert!(
+            parsed.errors.iter().any(|error| error.span.start == first),
+            "missing first error: {:#?}",
+            parsed.errors
+        );
+        assert!(
+            parsed.errors.iter().any(|error| error.span.start == second),
+            "same-line second error was suppressed: {:#?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
+    fn cascade_filter_preserves_disjoint_same_line_errors() {
+        let errors = suppress_body_cascades(vec![
+            ParsedError::new((10..11).into(), "first independent error"),
+            ParsedError::new((30..31).into(), "second independent error"),
+        ]);
+
+        assert_eq!(
+            errors.len(),
+            2,
+            "disjoint errors were collapsed: {errors:#?}"
         );
     }
 }

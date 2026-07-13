@@ -222,3 +222,43 @@ fn excessive_conditional_nesting_is_rejected_before_recursive_parsing() {
         "expected a conditional nesting diagnostic, got {diagnostics:#?}"
     );
 }
+
+#[test]
+fn body_lexer_diagnostic_is_unique_in_parser_query_results() {
+    let source = "function main() -> word { return §; }\n";
+    let db = TestDb::default();
+    let file = fixture_source_file(&db, "body-invalid-token.solc", source);
+
+    let diagnostics = lower_diagnostics(&db, parse_diagnostics(&db, file));
+
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.message.contains("invalid token `§`"))
+            .count(),
+        1,
+        "duplicate body lexer diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn body_lexer_error_does_not_hide_an_independent_body_parse_error() {
+    let source = "function main() -> word {\n~\nlet broken = ;\nreturn 0;\n}\n";
+    let db = TestDb::default();
+    let file = fixture_source_file(&db, "body-independent-errors.solc", source);
+
+    let diagnostics = lower_diagnostics(&db, parse_diagnostics(&db, file));
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("invalid token `~`")),
+        "missing full-source lexer diagnostic: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("parse error: unexpected `;`")),
+        "independent body parse error was suppressed: {diagnostics:#?}"
+    );
+}

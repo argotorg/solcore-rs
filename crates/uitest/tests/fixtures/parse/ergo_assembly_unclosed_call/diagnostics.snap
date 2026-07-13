@@ -11,3 +11,14 @@ error[SC0001]: parse error: unexpected `(`
   |                 ^ unexpected token
 5 |     }
   |
+---
+
+error[SC0001]: parse error: unexpected `,`
+ --> /main/main.solc:4:19
+  |
+3 |     assembly {
+4 |         r := add(1,
+  |                   ^ unexpected token
+5 |     }
+  |
+  = note: expecting `break`, `continue`, `for`, `function`, `if`, `leave`, `let`, `return`, `switch`, `{`, or assembly expression

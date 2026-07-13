@@ -98,9 +98,15 @@ fn truncate_excessive_nesting(
 pub(super) fn tokenize_with_base<'src>(
     src: &'src str,
     base_offset: usize,
-) -> (Vec<(Token<'src>, LexSpan)>, Vec<ParsedError>) {
-    let (tokens, _, errors) = tokenize_impl(src, base_offset);
-    (tokens, errors)
+) -> (
+    Vec<(Token<'src>, LexSpan)>,
+    Vec<ParsedError>,
+    Vec<ParsedError>,
+) {
+    let (mut tokens, _, lexer_errors) = tokenize_impl(src, base_offset);
+    let mut nesting_errors = Vec::new();
+    truncate_excessive_nesting(&mut tokens, &mut nesting_errors);
+    (tokens, lexer_errors, nesting_errors)
 }
 
 fn tokenize_impl<'src>(
