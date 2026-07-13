@@ -15,9 +15,10 @@ use salsa::Setter;
 use solcore_nameres::{
     LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleGraph, ModuleId, ModuleKey, ModuleTree,
     Namespace, auto_import_candidates, auto_import_constructor_candidates, auto_import_index,
-    auto_import_module_candidates, module_diagnostics, module_id_from_key, module_imports,
-    module_key_for_path, public_interface, reachable_diagnostics, resolve_module_path_candidate,
-    resolve_reachable_full, source_import_path, strongly_connected_components,
+    auto_import_module_candidates, module_diagnostics, module_env, module_id_from_key,
+    module_imports, module_key_for_path, public_interface, reachable_diagnostics,
+    resolve_module_path_candidate, resolve_reachable_full, source_import_path,
+    strongly_connected_components,
 };
 use url::Url;
 
@@ -92,6 +93,17 @@ impl solcore_nameres::Db for TestDb {
             .get(&module.key(self))
             .copied()
     }
+}
+
+#[test]
+fn module_keys_reject_parent_directory_components() {
+    let root = Path::new("workspace");
+    let spelled_with_parent = Path::new("workspace/src/../src/main.solc");
+
+    assert!(
+        module_key_for_path(LibraryId::Main, root, spelled_with_parent).is_none(),
+        "unnormalized parent components must not enter logical module keys"
+    );
 }
 
 #[test]
@@ -1004,6 +1016,45 @@ fn parse_broken_qualified_import_does_not_blame_importer() {
     ));
     let main = module_id_from_key(&db, &entry);
     assert_eq!(module_diagnostic_codes(&db, main), Vec::<String>::new());
+}
+
+#[test]
+fn parse_broken_leaf_does_not_mark_unrelated_module_prefixes_incomplete() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "import lib.a.b.c; import lib.a.x; function main() -> word { return a.missing(); }",
+        ),
+        (
+            vec!["a", "b", "c"],
+            "function value() -> word { let broken = ; return 1; }",
+        ),
+        (vec!["a", "x"], "function other() -> word { return 2; }"),
+    ]);
+    let main = module_id_from_key(&db, &entry);
+    let leaf = module_id_from_key(&db, &module_key(["a", "b", "c"]));
+    let sibling = module_id_from_key(&db, &module_key(["a", "x"]));
+    let env = module_env(&db, main);
+
+    assert_eq!(env.surface.modules.get("c"), Some(&leaf));
+    assert_eq!(env.surface.modules.get("a.b.c"), Some(&leaf));
+    assert!(!env.surface.modules.contains_key("a"));
+    assert!(!env.surface.modules.contains_key("a.b"));
+    assert!(env.surface.module_qualifiers.contains("a"));
+    assert!(env.surface.module_qualifiers.contains("a.b"));
+    assert_eq!(env.surface.modules.get("a.x"), Some(&sibling));
+    assert_eq!(env.surface.module_origins.get("a"), Some(&None));
+    assert_eq!(env.surface.module_origins.get("a.b"), Some(&Some(leaf)));
+    assert!(env.surface.incomplete_modules.contains("c"));
+    assert!(env.surface.incomplete_modules.contains("a.b.c"));
+    assert!(!env.surface.incomplete_modules.contains("a"));
+    assert!(!env.surface.incomplete_modules.contains("a.b"));
+    assert!(
+        module_diagnostic_codes(&db, main)
+            .iter()
+            .any(|code| code == "SC0101"),
+        "undefined prefix member should not be suppressed"
+    );
 }
 
 #[test]

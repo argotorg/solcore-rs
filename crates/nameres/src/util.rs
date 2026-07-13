@@ -212,9 +212,14 @@ pub fn module_key_for_path(library: LibraryId, root: &Path, file_path: &Path) ->
     let rel = file_path.strip_prefix(root).ok()?;
     let mut logical_path = Vec::new();
     for component in rel.with_extension("").components() {
-        let segment = component.as_os_str().to_str()?;
-        if !segment.is_empty() {
-            logical_path.push(segment.to_owned());
+        match component {
+            std::path::Component::Normal(segment) => {
+                logical_path.push(segment.to_str()?.to_owned());
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir
+            | std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => return None,
         }
     }
     (!logical_path.is_empty()).then_some(ModuleKey {

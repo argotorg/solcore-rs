@@ -221,7 +221,7 @@ fn module_bindings_conflict(
     surface.unknown_unqualified_wildcard
         || generated_bindings.iter().any(|name| {
             syntactic_module_bindings.contains(name)
-                || surface.modules.contains_key(name)
+                || surface.module_qualifiers.contains(name)
                 || surface.incomplete_modules.contains(name)
                 || surface.terms.contains_key(name)
                 || surface.types.contains_key(name)

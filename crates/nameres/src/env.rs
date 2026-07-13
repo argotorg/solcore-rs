@@ -145,6 +145,8 @@ impl<'db> ModuleEnvBuilder<'db> {
                     terms: BTreeMap::new(),
                     types: BTreeMap::new(),
                     modules: BTreeMap::new(),
+                    module_qualifiers: BTreeSet::new(),
+                    module_origins: BTreeMap::new(),
                     constructor_leaves: BTreeSet::new(),
                     constructor_visibility: BTreeMap::new(),
                     partial_data: BTreeMap::new(),
@@ -451,13 +453,23 @@ impl<'db> ModuleEnvBuilder<'db> {
 
     fn add_module_binding(&mut self, name: &str, target: ModuleId<'db>, span: Span<'db>) {
         for prefix in module_prefixes(name) {
-            self.env.modules.entry(prefix.clone()).or_insert(target);
+            self.env.module_qualifiers.insert(prefix.clone());
+            self.env
+                .module_origins
+                .entry(prefix.clone())
+                .and_modify(|origin| {
+                    if *origin != Some(target) {
+                        *origin = None;
+                    }
+                })
+                .or_insert(Some(target));
             self.module_binding_spans
                 .entry(prefix.clone())
                 .or_insert(span);
-            if module_has_parse_errors(self.db, target) {
-                self.env.incomplete_modules.insert(prefix.clone());
-            }
+        }
+        self.env.modules.entry(name.to_owned()).or_insert(target);
+        if module_has_parse_errors(self.db, target) {
+            self.env.incomplete_modules.insert(name.to_owned());
         }
     }
 

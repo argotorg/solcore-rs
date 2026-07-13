@@ -140,6 +140,13 @@ fn resolution_target_span<'db>(
             .modules
             .get(&module_ref.name)
             .copied()
+            .or_else(|| {
+                imports
+                    .module_origins
+                    .get(&module_ref.name)
+                    .copied()
+                    .flatten()
+            })
             .and_then(|module| module_start_span(db, module)),
         Resolution::DotCtorDeferred | Resolution::Builtin(_) | Resolution::Err => None,
     }
@@ -684,5 +691,27 @@ function unwrap(value: Choice) -> word {
             assert_eq!(location.uri, bar_uri, "offset {offset}");
             assert_eq!(location.range, expected, "offset {offset}");
         }
+    }
+
+    #[test]
+    fn definition_of_exact_module_qualifier_wins_over_shared_navigation_origin() {
+        let main =
+            "import foo.bar;\nimport foo;\nfunction main() -> word { return foo.value(); }\n";
+        let foo = "export { value };\nfunction value() -> word { return 1; }\n";
+        let bar = "export { value };\nfunction value() -> word { return 2; }\n";
+        let mut world = WorldState::new();
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let foo_uri = Url::parse("file:///main/foo.solc").expect("foo uri");
+        let bar_uri = Url::parse("file:///main/foo/bar.solc").expect("bar uri");
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(foo_uri.clone(), foo.to_owned()));
+        assert!(world.open_document(bar_uri, bar.to_owned()));
+        let foo_index = world.line_index(&foo_uri).expect("foo line index");
+        let qualifier = main.rfind("foo.value").expect("exact module qualifier") as u32;
+
+        let location = scalar_definition(&world, &main_uri, qualifier);
+
+        assert_eq!(location.uri, foo_uri);
+        assert_eq!(location.range, foo_index.range(0, 0));
     }
 }

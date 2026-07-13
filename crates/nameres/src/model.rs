@@ -385,8 +385,17 @@ pub struct ModuleImportSurface<'db> {
     pub terms: BTreeMap<String, hir_nameres::Resolution<'db>>,
     /// Imported type/class names.
     pub types: BTreeMap<String, hir_nameres::Resolution<'db>>,
-    /// Visible module qualifiers.
+    /// Module qualifiers with an exact target module.
     pub modules: BTreeMap<String, ModuleId<'db>>,
+    /// All visible module qualifiers, including existence-only path prefixes.
+    pub module_qualifiers: BTreeSet<String>,
+    /// Direct import target that introduced each visible qualifier, or
+    /// `None` when imports with different targets share that prefix.
+    ///
+    /// A path prefix need not denote a source module of its own, so this map
+    /// is for binding-origin/navigation queries rather than semantic member
+    /// lookup. Exact semantic targets remain in [`Self::modules`].
+    pub module_origins: BTreeMap<String, Option<ModuleId<'db>>>,
     /// Constructor leaf names visible from imported data types.
     pub constructor_leaves: BTreeSet<String>,
     /// Constructor visibility by public data type name.
@@ -430,6 +439,8 @@ impl<'db> ModuleImportSurface<'db> {
             terms: BTreeMap::new(),
             types: BTreeMap::new(),
             modules: BTreeMap::new(),
+            module_qualifiers: BTreeSet::new(),
+            module_origins: BTreeMap::new(),
             constructor_leaves: BTreeSet::new(),
             constructor_visibility: BTreeMap::new(),
             partial_data: BTreeMap::new(),
@@ -482,7 +493,7 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleImportSurface<'db> {
             hir_nameres::Namespace::Type => self.types.get(name).cloned(),
             hir_nameres::Namespace::Term => self.terms.get(name).cloned(),
             hir_nameres::Namespace::Module => self.owner.and_then(|owner| {
-                self.modules.contains_key(name).then(|| {
+                self.module_qualifiers.contains(name).then(|| {
                     hir_nameres::Resolution::Module(hir_nameres::ModuleRef {
                         owner,
                         name: name.to_owned(),
@@ -518,7 +529,7 @@ impl<'db> hir_nameres::ImportedNames<'db> for ModuleImportSurface<'db> {
         match namespace {
             hir_nameres::Namespace::Type => self.types.keys().cloned().collect(),
             hir_nameres::Namespace::Term => self.terms.keys().cloned().collect(),
-            hir_nameres::Namespace::Module => self.modules.keys().cloned().collect(),
+            hir_nameres::Namespace::Module => self.module_qualifiers.iter().cloned().collect(),
             hir_nameres::Namespace::Field => Vec::new(),
         }
     }
