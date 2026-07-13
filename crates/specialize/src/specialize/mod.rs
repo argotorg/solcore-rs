@@ -2,6 +2,7 @@ use std::{
     collections::{VecDeque, hash_map::DefaultHasher},
     fmt,
     hash::{Hash, Hasher},
+    sync::Arc,
 };
 
 use hir::{
@@ -24,22 +25,23 @@ use hir::{
     nameres as hir_nameres,
     span::{Span, Spanned, SpannedElem},
 };
+use hir_ty::infer::ComptimeObligation;
 use hir_ty::{
     AbiParam, AliasNormalizer, BinderEnv, BodyDesugarView, BodyPreTypeckDesugarPlan, BodyTyContext,
     BuiltinClassId, BuiltinTyCtor, CallSiteCallee, CallSiteEvidence, ClassId,
     ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback, Evidence,
-    GeneratedOriginKind, InferResultExt, InferenceResult, LoweredFunction, Pred, PredKind,
-    PreparedModule, ProductShape, Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor,
-    UserTyCtorKind, canonical_goal, contract_dispatch_surface_for_module,
-    contract_overlay_backend_name, derived_generic_instance_plan, derived_generic_plan,
-    frontend_desugar_plan, infer_body, is_contract_deployment_main_def,
-    is_contract_dispatch_main_def, lower_normalized_function_with_inferred_signature,
-    prepare_module, solve, solver::DerivedClauseKind, trait_env_from_module_resolution,
+    GeneratedOriginKind, InferenceResult, LoweredFunction, Pred, PredKind, PreparedModule,
+    ProductShape, Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor, UserTyCtorKind,
+    canonical_goal, contract_dispatch_surface_for_module, contract_overlay_backend_name,
+    derived_generic_instance_plan, derived_generic_plan, frontend_desugar_plan, infer_body,
+    is_contract_deployment_main_def, is_contract_dispatch_main_def,
+    lower_normalized_function_with_inferred_signature, prepare_module, solve,
+    solver::DerivedClauseKind, trait_env_from_module_resolution,
     trait_env_from_module_resolution_and_imports, trait_env_with_givens,
 };
 use nameres::{LibraryId, ModuleId, module_key_for_path, resolve_reachable_full};
 use parser::parse_file_to_hir;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     evaluate::{EvaluateOptions, evaluate_module},
@@ -63,7 +65,7 @@ mod naming;
 mod products;
 mod ty_subst;
 
-use body::{BinOpExpr, BodyCtx};
+use body::{BinOpExpr, BodyCtx, BodyIndex};
 pub use diagnostics::{SpecializeDiagnostic, SpecializeDiagnosticKind};
 use driver::{Driver, FunctionInfo, SpecKey, SyntheticKey};
 use intrinsics::{
@@ -90,6 +92,7 @@ use ty_subst::TySubst;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpecializeOptions {
     pub max_instantiations: usize,
+    /// Maximum nesting for specialization and evaluator inlining.
     pub max_depth: usize,
     pub max_type_nodes: usize,
     pub eval_fuel: usize,

@@ -20,6 +20,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EvaluateOptions {
     pub fuel: usize,
+    pub inline_depth: usize,
 }
 
 pub(crate) fn evaluate_module<'db>(
@@ -27,7 +28,7 @@ pub(crate) fn evaluate_module<'db>(
     mut module: MonoModule<'db>,
     options: EvaluateOptions,
 ) -> (MonoModule<'db>, Vec<SpecializeDiagnostic<'db>>) {
-    let mut evaluator = Evaluator::new(db, &module, options.fuel);
+    let mut evaluator = Evaluator::new(db, &module, options.fuel, options.inline_depth);
     let mut items = Vec::with_capacity(module.items.len());
     for item in module.items {
         match item {

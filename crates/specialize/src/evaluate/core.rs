@@ -7,6 +7,7 @@ use hir::{
     span::Span,
 };
 use hir_ty::{BuiltinTyCtor, Db, TyKind};
+use nameres::{LibraryId, module_key_for_path};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
@@ -53,6 +54,37 @@ struct InlineFrame<'db> {
     comptime: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InlineBudgetExhaustion {
+    TotalWork { limit: usize },
+    InlineDepth { limit: usize },
+}
+
+impl InlineBudgetExhaustion {
+    fn diagnostic_limit(self) -> usize {
+        match self {
+            Self::TotalWork { limit } | Self::InlineDepth { limit } => limit,
+        }
+    }
+}
+
+fn classify_inline_budget_exhaustion(
+    remaining_fuel: usize,
+    fuel_limit: usize,
+    inline_depth: usize,
+    inline_depth_limit: usize,
+) -> Option<InlineBudgetExhaustion> {
+    if remaining_fuel == 0 {
+        return Some(InlineBudgetExhaustion::TotalWork { limit: fuel_limit });
+    }
+    if inline_depth >= inline_depth_limit {
+        return Some(InlineBudgetExhaustion::InlineDepth {
+            limit: inline_depth_limit,
+        });
+    }
+    None
+}
+
 pub(super) struct Evaluator<'db> {
     pub(super) db: &'db dyn Db,
     functions: FxHashMap<String, MonoFunction<'db>>,
@@ -62,6 +94,7 @@ pub(super) struct Evaluator<'db> {
     inline_stack: Vec<InlineFrame<'db>>,
     fuel_limit: usize,
     fuel: usize,
+    inline_depth_limit: usize,
     memory: BTreeMap<BigInt, u8>,
     comptime_mode: bool,
     enforce_comptime: bool,
@@ -101,7 +134,12 @@ impl<'effects, 'db> Visitor<'db> for StmtWriteEffectsCollector<'effects> {
 }
 
 impl<'db> Evaluator<'db> {
-    pub(super) fn new(db: &'db dyn Db, module: &MonoModule<'db>, fuel: usize) -> Self {
+    pub(super) fn new(
+        db: &'db dyn Db,
+        module: &MonoModule<'db>,
+        fuel: usize,
+        inline_depth_limit: usize,
+    ) -> Self {
         let functions = module
             .items
             .iter()
@@ -122,6 +160,7 @@ impl<'db> Evaluator<'db> {
             inline_stack: Vec::new(),
             fuel_limit: fuel,
             fuel,
+            inline_depth_limit,
             memory: BTreeMap::new(),
             comptime_mode: false,
             enforce_comptime: true,
@@ -282,7 +321,14 @@ impl<'db> Evaluator<'db> {
                             kind: MonoExprKind::Tuple(Vec::new()),
                         })),
                     });
-                    return (env, comptime_env, body);
+                    return (
+                        env,
+                        comptime_env,
+                        vec![MonoStmt {
+                            span,
+                            kind: MonoStmtKind::Block(body),
+                        }],
+                    );
                 }
                 if self.enforce_comptime
                     && ret_comptime
@@ -312,7 +358,14 @@ impl<'db> Evaluator<'db> {
                 {
                     let effects = self.stmts_write_effects(&body);
                     self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
-                    return (env, comptime_env, body);
+                    return (
+                        env,
+                        comptime_env,
+                        vec![MonoStmt {
+                            span,
+                            kind: MonoStmtKind::Block(body),
+                        }],
+                    );
                 }
                 self.invalidate_assigned_effects(&effects, &mut env, &mut comptime_env);
                 if self.expr_is_known_value(&expr) {
@@ -1127,11 +1180,12 @@ impl<'db> Evaluator<'db> {
                     self.push_recursion_diagnostic(name.clone(), frame_comptime, None, span);
                     return None;
                 }
-                if self.fuel == 0 {
-                    self.push_fuel_diagnostic(
+                if let Some(exhaustion) = self.inline_budget_exhaustion() {
+                    self.push_inline_limit_diagnostic(
                         name.clone(),
                         self.inline_chain_is_comptime(frame_comptime),
                         span,
+                        exhaustion,
                     );
                     return None;
                 }
@@ -1505,11 +1559,12 @@ impl<'db> Evaluator<'db> {
             self.push_recursion_diagnostic(function_display, frame_comptime, shadowed, span);
             return None;
         }
-        if self.fuel == 0 {
-            self.push_fuel_diagnostic(
+        if let Some(exhaustion) = self.inline_budget_exhaustion() {
+            self.push_inline_limit_diagnostic(
                 function_display,
                 self.inline_chain_is_comptime(frame_comptime),
                 span,
+                exhaustion,
             );
             return None;
         }
@@ -1564,11 +1619,12 @@ impl<'db> Evaluator<'db> {
             self.push_recursion_diagnostic(function_display, frame_comptime, None, span);
             return None;
         }
-        if self.fuel == 0 {
-            self.push_fuel_diagnostic(
+        if let Some(exhaustion) = self.inline_budget_exhaustion() {
+            self.push_inline_limit_diagnostic(
                 function_display,
                 self.inline_chain_is_comptime(frame_comptime),
                 span,
+                exhaustion,
             );
             return None;
         }
@@ -1596,12 +1652,18 @@ impl<'db> Evaluator<'db> {
     }
 
     fn function_is_std_dispatch(&self, function: &MonoFunction<'db>) -> bool {
-        function.source.is_some_and(|def| {
-            def.file(self.db)
-                .url(self.db)
-                .path()
-                .ends_with("std/dispatch.solc")
-        })
+        let Some(path) = function
+            .source
+            .and_then(|def| hir::url_to_file_path(def.file(self.db).url(self.db)))
+        else {
+            return false;
+        };
+        module_key_for_path(
+            LibraryId::Std,
+            self.db.module_tree().std_root(self.db),
+            &path,
+        )
+        .is_some_and(|key| key.logical_path.as_slice() == ["dispatch"])
     }
 
     fn ty_is_unit(&self, ty: hir_ty::Ty<'db>) -> bool {
@@ -1617,6 +1679,15 @@ impl<'db> Evaluator<'db> {
 
     fn inline_chain_is_comptime(&self, current_frame_comptime: bool) -> bool {
         current_frame_comptime || self.inline_stack.iter().any(|frame| frame.comptime)
+    }
+
+    fn inline_budget_exhaustion(&self) -> Option<InlineBudgetExhaustion> {
+        classify_inline_budget_exhaustion(
+            self.fuel,
+            self.fuel_limit,
+            self.inline_stack.len(),
+            self.inline_depth_limit,
+        )
     }
 
     fn has_inline_failure_diagnostic(&self) -> bool {
@@ -1655,20 +1726,24 @@ impl<'db> Evaluator<'db> {
         });
     }
 
-    fn push_fuel_diagnostic(&mut self, function: String, comptime: bool, span: Span<'db>) {
+    fn push_inline_limit_diagnostic(
+        &mut self,
+        function: String,
+        comptime: bool,
+        span: Span<'db>,
+        exhaustion: InlineBudgetExhaustion,
+    ) {
         if self.has_inline_failure_diagnostic() {
             return;
         }
+        // Both limits bound evaluator unfold steps. Keep the established
+        // SC0410/SC0414 fuel diagnostics for compatibility, but report the
+        // limit that actually stopped evaluation: total work or inline depth.
+        let limit = exhaustion.diagnostic_limit();
         let kind = if comptime {
-            SpecializeDiagnosticKind::ComptimeFuelExhausted {
-                function,
-                limit: self.fuel_limit,
-            }
+            SpecializeDiagnosticKind::ComptimeFuelExhausted { function, limit }
         } else {
-            SpecializeDiagnosticKind::ReductionFuelExhausted {
-                function,
-                limit: self.fuel_limit,
-            }
+            SpecializeDiagnosticKind::ReductionFuelExhausted { function, limit }
         };
         self.diagnostics.push(SpecializeDiagnostic {
             kind,
@@ -2067,4 +2142,24 @@ enum WordBinaryOp {
     BitAnd,
     BitOr,
     Eq,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_depth_limit_is_independent_of_total_work_fuel() {
+        let exhaustion = classify_inline_budget_exhaustion(4_096, 4_096, 128, 128);
+
+        assert_eq!(
+            exhaustion,
+            Some(InlineBudgetExhaustion::InlineDepth { limit: 128 })
+        );
+        assert_eq!(exhaustion.unwrap().diagnostic_limit(), 128);
+        assert_eq!(
+            classify_inline_budget_exhaustion(4_096, 4_096, 127, 128),
+            None
+        );
+    }
 }

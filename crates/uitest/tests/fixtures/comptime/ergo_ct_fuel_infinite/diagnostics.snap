@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ergo_ct_fuel_infinite/main.solc
 ---
-error[SC0410]: comptime evaluation fuel exhausted in spin at 256 unfold steps
+error[SC0410]: comptime evaluation fuel exhausted in spin at 128 unfold steps
  --> /main/main.solc:6:10
   |
 5 | function spin(comptime n : integer) -> comptime integer {

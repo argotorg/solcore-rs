@@ -14,6 +14,7 @@ pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> Mono
             _ => None,
         })
         .collect::<BTreeMap<_, _>>();
+    let function_names = functions.keys().cloned().collect::<BTreeSet<_>>();
     let mut used = BTreeSet::new();
     let mut work = module.entry_points.clone();
     while let Some(name) = work.pop() {
@@ -21,7 +22,7 @@ pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> Mono
             continue;
         }
         if let Some(function) = functions.get(&name) {
-            for call in calls_in_stmts(&function.body) {
+            for call in calls_in_stmts(&function.body, &function_names) {
                 if functions.contains_key(&call) && !used.contains(&call) {
                     work.push(call);
                 }
@@ -35,9 +36,10 @@ pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> Mono
     module
 }
 
-fn calls_in_stmts(stmts: &[MonoStmt<'_>]) -> BTreeSet<String> {
+fn calls_in_stmts(stmts: &[MonoStmt<'_>], function_names: &BTreeSet<String>) -> BTreeSet<String> {
     let mut collector = CallCollector {
         calls: BTreeSet::new(),
+        function_names,
     };
     for stmt in stmts {
         collector.visit_stmt(stmt);
@@ -45,11 +47,12 @@ fn calls_in_stmts(stmts: &[MonoStmt<'_>]) -> BTreeSet<String> {
     collector.calls
 }
 
-struct CallCollector {
+struct CallCollector<'functions> {
     calls: BTreeSet<String>,
+    function_names: &'functions BTreeSet<String>,
 }
 
-impl<'db> Visitor<'db> for CallCollector {
+impl<'db> Visitor<'db> for CallCollector<'_> {
     fn visit_expr(&mut self, expr: &MonoExpr<'db>) {
         match &expr.kind {
             MonoExprKind::Call { callee, origin, .. } => {
@@ -58,7 +61,9 @@ impl<'db> Visitor<'db> for CallCollector {
                 }
                 walk_expr(self, expr);
             }
-            MonoExprKind::Lambda { .. } => {}
+            MonoExprKind::Var(id) if self.function_names.contains(&id.name) => {
+                self.calls.insert(id.name.clone());
+            }
             _ => walk_expr(self, expr),
         }
     }

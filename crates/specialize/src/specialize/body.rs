@@ -9,8 +9,228 @@ pub(super) struct BodyCtx<'a, 'db> {
     pub(super) pre_typeck_desugar: Vec<BodyPreTypeckDesugarPlan<'db>>,
     pub(super) subst: TySubst<'db>,
     pub(super) depth: usize,
+    pub(super) index: Arc<BodyIndex<'db>>,
     pub(super) lowered_exprs: FxHashMap<Id<Expr<'db>>, MonoExpr<'db>>,
     pub(super) locals: FxHashMap<String, Ty<'db>>,
+}
+
+pub(super) struct BodyIndex<'db> {
+    expr_tys: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Ty<'db>>,
+    pat_tys: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), Ty<'db>>,
+    let_tys: FxHashMap<(FuncBody<'db>, Id<Stmt<'db>>), Ty<'db>>,
+    expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
+    pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
+    call_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), CallSiteEvidence<'db>>,
+    class_method_value_evidence:
+        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, DefId<'db>), Evidence<'db>>,
+    first_builtin_int_evidence: Option<CallSiteEvidence<'db>>,
+    comptime_let_stmts: FxHashSet<(FuncBody<'db>, Id<Stmt<'db>>)>,
+    comptime_obligations: FxHashMap<FuncBody<'db>, Vec<ComptimeObligation<'db>>>,
+}
+
+impl<'db> BodyIndex<'db> {
+    pub(super) fn new(
+        db: &'db dyn hir_ty::Db,
+        result: &InferenceResult<'db>,
+        body_map: &hir_nameres::BodyResolutionMap<'db>,
+    ) -> Self {
+        let mut index = Self {
+            expr_tys: FxHashMap::default(),
+            pat_tys: FxHashMap::default(),
+            let_tys: FxHashMap::default(),
+            expr_resolutions: FxHashMap::default(),
+            pat_resolutions: FxHashMap::default(),
+            call_evidence: FxHashMap::default(),
+            class_method_value_evidence: FxHashMap::default(),
+            first_builtin_int_evidence: None,
+            comptime_let_stmts: FxHashSet::default(),
+            comptime_obligations: FxHashMap::default(),
+        };
+
+        for entry in &result.expr_tys {
+            index
+                .expr_tys
+                .entry((entry.body, entry.expr))
+                .or_insert(entry.ty);
+        }
+        for entry in &result.pat_tys {
+            index
+                .pat_tys
+                .entry((entry.body, entry.pat))
+                .or_insert(entry.ty);
+        }
+        for entry in &result.let_tys {
+            index
+                .let_tys
+                .entry((entry.body, entry.stmt))
+                .or_insert(entry.ty);
+        }
+        for entry in &body_map.exprs {
+            let key = (entry.body, entry.expr);
+            match index.expr_resolutions.get_mut(&key) {
+                Some(current)
+                    if !preferred_expr_resolution(current)
+                        && preferred_expr_resolution(&entry.resolution) =>
+                {
+                    *current = entry.resolution.clone();
+                }
+                Some(_) => {}
+                None => {
+                    index.expr_resolutions.insert(key, entry.resolution.clone());
+                }
+            }
+        }
+        for entry in &body_map.pats {
+            index
+                .pat_resolutions
+                .entry((entry.body, entry.pat))
+                .or_insert_with(|| entry.resolution.clone());
+        }
+        for evidence in &result.call_site_evidence {
+            index
+                .call_evidence
+                .entry((evidence.body, evidence.call_expr, evidence.callee_expr))
+                .or_insert_with(|| evidence.clone());
+            if index.first_builtin_int_evidence.is_none()
+                && matches!(
+                    evidence.callee,
+                    CallSiteCallee::Builtin(hir_nameres::BuiltinKind::ClassMethod(
+                        hir_nameres::BuiltinClassMethod::IntFromInteger
+                    ))
+                )
+            {
+                index.first_builtin_int_evidence = Some(evidence.clone());
+            }
+        }
+        for solved in &result.obligation_evidence {
+            let Some(obligation) = result.obligations.get(solved.obligation) else {
+                continue;
+            };
+            let hir_ty::ObligationSource::ClassMethod { body, expr } = obligation.source else {
+                continue;
+            };
+            let PredKind::InClass {
+                class: ClassId::User(class),
+                ..
+            } = obligation.pred.kind(db)
+            else {
+                continue;
+            };
+            index
+                .class_method_value_evidence
+                .entry((body, expr, *class))
+                .or_insert_with(|| solved.evidence.clone());
+        }
+        for obligation in &result.comptime_obligations {
+            if let ComptimeObligationKind::LetInit { stmt, .. } = &obligation.kind {
+                index.comptime_let_stmts.insert((obligation.body, *stmt));
+            }
+            index
+                .comptime_obligations
+                .entry(obligation.body)
+                .or_default()
+                .push(obligation.clone());
+        }
+        #[cfg(debug_assertions)]
+        index.debug_assert_complete(result, body_map);
+        index
+    }
+
+    /// Keeps the performance property testable without relying on a wall-clock
+    /// threshold: every hot lookup table must be fully materialized, with one
+    /// entry per distinct source key and no fallback scan required.
+    #[cfg(debug_assertions)]
+    fn debug_assert_complete(
+        &self,
+        result: &InferenceResult<'db>,
+        body_map: &hir_nameres::BodyResolutionMap<'db>,
+    ) {
+        let expr_ty_keys = result
+            .expr_tys
+            .iter()
+            .map(|entry| (entry.body, entry.expr))
+            .collect::<FxHashSet<_>>();
+        debug_assert_eq!(self.expr_tys.len(), expr_ty_keys.len());
+        debug_assert!(
+            expr_ty_keys
+                .iter()
+                .all(|key| self.expr_tys.contains_key(key))
+        );
+
+        let pat_ty_keys = result
+            .pat_tys
+            .iter()
+            .map(|entry| (entry.body, entry.pat))
+            .collect::<FxHashSet<_>>();
+        debug_assert_eq!(self.pat_tys.len(), pat_ty_keys.len());
+        debug_assert!(pat_ty_keys.iter().all(|key| self.pat_tys.contains_key(key)));
+
+        let let_ty_keys = result
+            .let_tys
+            .iter()
+            .map(|entry| (entry.body, entry.stmt))
+            .collect::<FxHashSet<_>>();
+        debug_assert_eq!(self.let_tys.len(), let_ty_keys.len());
+        debug_assert!(let_ty_keys.iter().all(|key| self.let_tys.contains_key(key)));
+
+        let expr_resolution_keys = body_map
+            .exprs
+            .iter()
+            .map(|entry| (entry.body, entry.expr))
+            .collect::<FxHashSet<_>>();
+        debug_assert_eq!(self.expr_resolutions.len(), expr_resolution_keys.len());
+        debug_assert!(
+            expr_resolution_keys
+                .iter()
+                .all(|key| self.expr_resolutions.contains_key(key))
+        );
+
+        let pat_resolution_keys = body_map
+            .pats
+            .iter()
+            .map(|entry| (entry.body, entry.pat))
+            .collect::<FxHashSet<_>>();
+        debug_assert_eq!(self.pat_resolutions.len(), pat_resolution_keys.len());
+        debug_assert!(
+            pat_resolution_keys
+                .iter()
+                .all(|key| self.pat_resolutions.contains_key(key))
+        );
+
+        let call_evidence_keys = result
+            .call_site_evidence
+            .iter()
+            .map(|entry| (entry.body, entry.call_expr, entry.callee_expr))
+            .collect::<FxHashSet<_>>();
+        debug_assert_eq!(self.call_evidence.len(), call_evidence_keys.len());
+        debug_assert!(
+            call_evidence_keys
+                .iter()
+                .all(|key| self.call_evidence.contains_key(key))
+        );
+
+        let indexed_comptime_obligations = self
+            .comptime_obligations
+            .values()
+            .map(Vec::len)
+            .sum::<usize>();
+        debug_assert_eq!(
+            indexed_comptime_obligations,
+            result.comptime_obligations.len()
+        );
+    }
+}
+
+fn preferred_expr_resolution(resolution: &hir_nameres::Resolution<'_>) -> bool {
+    matches!(
+        resolution,
+        hir_nameres::Resolution::Def {
+            kind: hir_nameres::DefResolutionKind::Function | hir_nameres::DefResolutionKind::Class,
+            ..
+        } | hir_nameres::Resolution::Builtin(_)
+            | hir_nameres::Resolution::ClassMethod { .. }
+            | hir_nameres::Resolution::Ctor { .. }
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -43,8 +263,10 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     None => None,
                 };
                 let sem_ty = self
-                    .result
-                    .let_ty(self.body, stmt_id)
+                    .index
+                    .let_tys
+                    .get(&(self.body, stmt_id))
+                    .copied()
                     .or_else(|| init.and_then(|expr| self.expr_ty(expr)).or(annotation_ty))
                     .map(|ty| self.subst.apply_ty(self.driver.db, ty))
                     .unwrap_or_else(|| Ty::unknown(self.driver.db));
@@ -230,17 +452,36 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                             args: Vec::new(),
                         },
                         hir_nameres::Resolution::ClassMethod { class, name } => {
-                            MonoExprKind::Var(MonoId {
-                                name: format!(
-                                    "{}_{}",
-                                    class
-                                        .name(self.driver.db)
-                                        .unwrap_or_else(|| "Class".to_owned()),
-                                    name
-                                ),
-                                ty: mono_ty,
-                                span: expr.span,
-                            })
+                            let evidence = self
+                                .class_method_value_evidence(expr_id, class)
+                                .map(|evidence| self.subst.apply_evidence(self.driver.db, evidence))
+                                .or_else(|| {
+                                    self.driver.solve_class_method_pred(
+                                        class,
+                                        &name,
+                                        ty,
+                                        Some(expr.span),
+                                    )
+                                });
+                            if let Some(specialized) = evidence.and_then(|evidence| {
+                                self.driver.resolve_class_method_call(
+                                    &name, evidence, ty, expr.span, self.depth,
+                                )
+                            }) {
+                                MonoExprKind::Var(MonoId {
+                                    name: specialized,
+                                    ty: mono_ty,
+                                    span: expr.span,
+                                })
+                            } else {
+                                self.driver.diagnostics.push(SpecializeDiagnostic {
+                                    kind: SpecializeDiagnosticKind::MissingEvidence {
+                                        context: name,
+                                    },
+                                    span: Some(expr.span),
+                                });
+                                MonoExprKind::Error
+                            }
                         }
                         hir_nameres::Resolution::Def {
                             def,
@@ -462,6 +703,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             pre_typeck_desugar: self.pre_typeck_desugar.clone(),
             subst,
             depth,
+            index: Arc::clone(&self.index),
             lowered_exprs: FxHashMap::default(),
             locals,
         };
@@ -480,8 +722,10 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     fn pat(&mut self, pat_id: Id<Pat<'db>>) -> Option<MonoPat<'db>> {
         let pat = self.body.pats(self.driver.db).get(pat_id);
         let ty = self
-            .result
-            .pat_ty(self.body, pat_id)
+            .index
+            .pat_tys
+            .get(&(self.body, pat_id))
+            .copied()
             .map(|ty| self.subst.apply_ty(self.driver.db, ty))
             .unwrap_or_else(|| Ty::unknown(self.driver.db));
         let mono_ty = self.driver.mono_ty(ty, "pattern", pat.span)?;
@@ -563,7 +807,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     pub(super) fn expr_ty(&self, expr: Id<Expr<'db>>) -> Option<Ty<'db>> {
-        self.result.expr_ty(self.body, expr)
+        self.index.expr_tys.get(&(self.body, expr)).copied()
     }
 
     fn function_value_ty(&mut self, def: DefId<'db>) -> Option<Ty<'db>> {
@@ -611,11 +855,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     fn pat_resolution(&self, pat: Id<Pat<'db>>) -> Option<hir_nameres::Resolution<'db>> {
-        self.body_map
-            .pats
-            .iter()
-            .find(|entry| entry.body == self.body && entry.pat == pat)
-            .map(|entry| entry.resolution.clone())
+        self.index.pat_resolutions.get(&(self.body, pat)).cloned()
     }
 
     fn desugar_view(&self) -> BodyDesugarView<'_, 'db> {
@@ -847,29 +1087,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         &self,
         expr: Id<Expr<'db>>,
     ) -> Option<hir_nameres::Resolution<'db>> {
-        let mut resolutions = self
-            .body_map
-            .exprs
-            .iter()
-            .filter(|entry| entry.body == self.body && entry.expr == expr)
-            .map(|entry| entry.resolution.clone());
-        resolutions
-            .clone()
-            .find(|resolution| {
-                matches!(
-                    resolution,
-                    hir_nameres::Resolution::Def {
-                        kind: hir_nameres::DefResolutionKind::Function,
-                        ..
-                    } | hir_nameres::Resolution::Def {
-                        kind: hir_nameres::DefResolutionKind::Class,
-                        ..
-                    } | hir_nameres::Resolution::Builtin(_)
-                        | hir_nameres::Resolution::ClassMethod { .. }
-                        | hir_nameres::Resolution::Ctor { .. }
-                )
-            })
-            .or_else(|| resolutions.next())
+        self.index.expr_resolutions.get(&(self.body, expr)).cloned()
     }
 
     fn constructor_call_result_ty(&self, callee: Id<Expr<'db>>) -> Option<Ty<'db>> {
@@ -917,14 +1135,20 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         call_expr: Id<Expr<'db>>,
         callee_expr: Id<Expr<'db>>,
     ) -> Option<CallSiteEvidence<'db>> {
-        self.result
-            .call_site_evidence
-            .iter()
-            .find(|evidence| {
-                evidence.body == self.body
-                    && evidence.call_expr == call_expr
-                    && evidence.callee_expr == callee_expr
-            })
+        self.index
+            .call_evidence
+            .get(&(self.body, call_expr, callee_expr))
+            .cloned()
+    }
+
+    fn class_method_value_evidence(
+        &self,
+        expr: Id<Expr<'db>>,
+        class: DefId<'db>,
+    ) -> Option<Evidence<'db>> {
+        self.index
+            .class_method_value_evidence
+            .get(&(self.body, expr, class))
             .cloned()
     }
 
@@ -970,15 +1194,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         span: Span<'db>,
     ) -> Option<CallSiteEvidence<'db>> {
         let _ = span;
-        self.result.call_site_evidence.iter().find_map(|evidence| {
-            matches!(
-                evidence.callee,
-                CallSiteCallee::Builtin(hir_nameres::BuiltinKind::ClassMethod(
-                    hir_nameres::BuiltinClassMethod::IntFromInteger
-                ))
-            )
-            .then_some(evidence.clone())
-        })
+        self.index.first_builtin_int_evidence.clone()
     }
 
     pub(super) fn is_int_from_integer_call(&self, callee: Id<Expr<'db>>) -> bool {
@@ -1012,23 +1228,16 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     fn stmt_has_comptime_let_obligation(&self, stmt: Id<Stmt<'db>>) -> bool {
-        self.result.comptime_obligations.iter().any(|obligation| {
-            obligation.body == self.body
-                && matches!(
-                    obligation.kind,
-                    ComptimeObligationKind::LetInit { stmt: recorded, .. } if recorded == stmt
-                )
-        })
+        self.index.comptime_let_stmts.contains(&(self.body, stmt))
     }
 
     pub(super) fn comptime_obligations(&mut self) -> Option<Vec<MonoComptimeObligation<'db>>> {
         let obligations = self
-            .result
+            .index
             .comptime_obligations
-            .clone()
-            .into_iter()
-            .filter(|obligation| obligation.body == self.body)
-            .collect::<Vec<_>>();
+            .get(&self.body)
+            .cloned()
+            .unwrap_or_default();
         let mut out = Vec::new();
         for obligation in obligations {
             let expr = match self.lowered_exprs.get(&obligation.expr).cloned() {

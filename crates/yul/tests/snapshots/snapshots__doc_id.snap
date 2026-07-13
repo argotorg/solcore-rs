@@ -151,95 +151,111 @@ object "IdDocDeploy" {
         leave
       }
       function usr$doc_id_IdDoc_main_d45c46589() {
-        mstore(0x40, memoryguard(128))
-        let _v20
-        let _v21
-        _v21 := usr$opcodes_calldatasize_dee48adc5()
-        let _v22
-        _v22 := usr$std_ge_df0bec9f4$word(_v21, 4)
-        _v20 := _v22
-        switch _v20
-          case false {
-            /* false */
-          }
-          case true {
-            {
-              /* true */
-              let _v23
-              let _v24
-              _v24 := usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
-              _v23 := _v24
-              switch _v23
-                case false {
-                  /* false */
-                  leave
-                }
-                case true {
-                  {
-                    /* true */
-                    let _v25
-                    let _v26
-                    let _v27
-                    _v25 := false
-                    _v26 := 0xb5988ea3
-                    let _v28
-                    _v28 := usr$opcodes_callvalue_d4847a28f()
-                    let _v29
-                    _v29 := usr$Eq_eq_d6d5d59e2$word(_v28, 0)
-                    usr$std_require_d22809541(_v29, _v25, _v26, _v27)
-                    let _v30
-                    _v30 := usr$opcodes_calldatasize_dee48adc5()
-                    let _v31
-                    _v31 := usr$std_ge_df0bec9f4$word(_v30, 36)
-                    usr$std_require_d22809541(_v31, false, 0x08638556, 911)
-                    let src$ptr_54
-                    src$ptr_54 := 4
-                    let src$args_55
-                    let _v32
-                    _v32 := usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_54)
-                    src$args_55 := _v32
-                    let src$rets_56
-                    let _v33
-                    _v33 := usr$doc_id_IdDoc_id_df22a7aef(src$args_55)
-                    src$rets_56 := _v33
-                    let src$ptr_57
-                    let _v34
-                    _v34 := usr$std_abi_encode_d3b55212b$uint256_d2edb4603(src$rets_56)
-                    src$ptr_57 := _v34
-                    let src$start_58
-                    let _v35
-                    _v35 := usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLbytes_dc4f6af34J_word(src$ptr_57)
-                    src$start_58 := _v35
-                    let src$end_59
-                    let _v36
-                    _v36 := usr$std_get_free_memory_d1dc44c02()
-                    src$end_59 := _v36
-                    let src$retSz_60
-                    let _v37
-                    _v37 := usr$Sub_sub_dd601c728$word(src$end_59, src$start_58)
-                    src$retSz_60 := _v37
-                    return(src$start_58, src$retSz_60)
-                  }
-                }
+        {
+          mstore(0x40, memoryguard(128))
+          let _v20
+          let _v21
+          _v21 := usr$opcodes_calldatasize_dee48adc5()
+          let _v22
+          _v22 := usr$std_ge_df0bec9f4$word(_v21, 4)
+          _v20 := _v22
+          switch _v20
+            case false {
+              /* false */
             }
+            case true {
+              {
+                /* true */
+                {
+                  let _v23
+                  let _v24
+                  _v24 := usr$dispatch_selector_matches_de46e52b9$Method_dcbe49e39LDispatchNameTy_IdDoc_id_d5611abab_NonPayable_da3e44601_uint256_d2edb4603_uint256_d2edb4603_fnLuint256_d2edb4603JRuint256_d2edb4603JJ()
+                  _v23 := _v24
+                  switch _v23
+                    case false {
+                      /* false */
+                      leave
+                    }
+                    case true {
+                      {
+                        /* true */
+                        {
+                          {
+                            let _v25
+                            let _v26
+                            let _v27
+                            _v25 := false
+                            _v26 := 0xb5988ea3
+                            let _v28
+                            _v28 := usr$opcodes_callvalue_d4847a28f()
+                            let _v29
+                            _v29 := usr$Eq_eq_d6d5d59e2$word(_v28, 0)
+                            usr$std_require_d22809541(_v29, _v25, _v26, _v27)
+                          }
+                          {
+                            let _v30
+                            _v30 := usr$opcodes_calldatasize_dee48adc5()
+                            let _v31
+                            _v31 := usr$std_ge_df0bec9f4$word(_v30, 36)
+                            usr$std_require_d22809541(_v31, false, 0x08638556, 911)
+                            let src$ptr_54
+                            src$ptr_54 := 4
+                            let src$args_55
+                            let _v32
+                            _v32 := usr$std_abi_decode_debc005b9$calldata_d8debf069Lbytes_dc4f6af34J_CalldataWordReader_d3137e4ff_uint256_d2edb4603_uint256_d2edb4603(src$ptr_54)
+                            src$args_55 := _v32
+                            let src$rets_56
+                            let _v33
+                            _v33 := usr$doc_id_IdDoc_id_df22a7aef(src$args_55)
+                            src$rets_56 := _v33
+                            let src$ptr_57
+                            let _v34
+                            _v34 := usr$std_abi_encode_d3b55212b$uint256_d2edb4603(src$rets_56)
+                            src$ptr_57 := _v34
+                            let src$start_58
+                            let _v35
+                            _v35 := usr$Typedef_rep_d6e4e5fa6$memory_dda73d3aeLbytes_dc4f6af34J_word(src$ptr_57)
+                            src$start_58 := _v35
+                            let src$end_59
+                            let _v36
+                            _v36 := usr$std_get_free_memory_d1dc44c02()
+                            src$end_59 := _v36
+                            let src$retSz_60
+                            let _v37
+                            _v37 := usr$Sub_sub_dd601c728$word(src$end_59, src$start_58)
+                            src$retSz_60 := _v37
+                            return(src$start_58, src$retSz_60)
+                          }
+                        }
+                      }
+                    }
+                }
+              }
+            }
+          {
+            {
+              let _v38
+              let _v39
+              let _v40
+              _v38 := false
+              _v39 := 0xb5988ea3
+              let _v41
+              _v41 := usr$opcodes_callvalue_d4847a28f()
+              let _v42
+              _v42 := usr$Eq_eq_d6d5d59e2$word(_v41, 0)
+              usr$std_require_d22809541(_v42, _v38, _v39, _v40)
+            }
+            {
+              let _v43
+              let _v44
+              let _v45
+              _v43 := false
+              _v44 := 0x4924aef0
+              usr$std_revertWithError_d94ee902a(_v43, _v44, _v45)
+            }
+            stop()
           }
-        let _v38
-        let _v39
-        let _v40
-        _v38 := false
-        _v39 := 0xb5988ea3
-        let _v41
-        _v41 := usr$opcodes_callvalue_d4847a28f()
-        let _v42
-        _v42 := usr$Eq_eq_d6d5d59e2$word(_v41, 0)
-        usr$std_require_d22809541(_v42, _v38, _v39, _v40)
-        let _v43
-        let _v44
-        let _v45
-        _v43 := false
-        _v44 := 0x4924aef0
-        usr$std_revertWithError_d94ee902a(_v43, _v44, _v45)
-        stop()
+        }
         leave
       }
       function usr$opcodes_calldataload_d37992dc7(src$a_61) -> gen$result_62 {

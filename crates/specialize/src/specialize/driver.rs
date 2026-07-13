@@ -174,6 +174,7 @@ impl<'db> Driver<'db> {
             module,
             EvaluateOptions {
                 fuel: self.options.eval_fuel,
+                inline_depth: self.options.max_depth,
             },
         );
         patch_runtime_dispatch_selectors(&mut module, &self.dispatch_selector_overrides);
@@ -711,6 +712,7 @@ impl<'db> Driver<'db> {
             return;
         };
         let shadowed_top_level = self.shadowed_top_level_function(&info);
+        let index = Arc::new(BodyIndex::new(self.db, &result, &body_map));
         let mut ctx = BodyCtx {
             driver: self,
             info: &info,
@@ -720,6 +722,7 @@ impl<'db> Driver<'db> {
             pre_typeck_desugar,
             subst,
             depth: pending.depth,
+            index,
             lowered_exprs: FxHashMap::default(),
             locals: params
                 .iter()

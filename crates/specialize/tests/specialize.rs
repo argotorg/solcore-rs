@@ -173,6 +173,27 @@ fn function_names(output: &SpecializeOutput<'_>) -> Vec<String> {
     names
 }
 
+#[test]
+fn specializes_large_linear_body_with_indexed_frontend_lookups() {
+    use std::fmt::Write as _;
+
+    let mut source = "function main() -> word {\n  let value0 : word = 0;\n".to_owned();
+    for index in 1..2_000 {
+        writeln!(
+            &mut source,
+            "  let value{index} : word = value{};",
+            index - 1
+        )
+        .unwrap();
+    }
+    writeln!(&mut source, "  return value1999;\n}}").unwrap();
+
+    let (_db, output) = specialize_src(&source);
+
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert!(!function_names(&output).is_empty());
+}
+
 fn specialize_source_at_root(root: &Path, rel_path: &str, src: &str) -> SpecializeOutput<'static> {
     let db = Box::leak(Box::new(TestDb::default()));
     let std_root = PathBuf::from("/std");
@@ -2850,5 +2871,216 @@ contract C {
         )),
         "{:?}",
         output.diagnostics
+    );
+}
+
+#[test]
+fn dead_function_elimination_traces_calls_inside_residual_lambdas() {
+    let (_db, output) = specialize_src(
+        r#"
+data Box(f) = Box(f);
+
+function target(x : word) -> word {
+  let result : word;
+  assembly { result := add(x, 1) }
+  return result;
+}
+
+function main() -> Box(word -> word) {
+  return Box(lam (x : word) -> word { return target(x); });
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert!(
+        function_names(&output)
+            .iter()
+            .any(|name| name.contains("_target_")),
+        "{:?}",
+        output.module
+    );
+}
+
+#[test]
+fn dead_function_elimination_keeps_function_values_nested_in_constructors() {
+    let (_db, output) = specialize_src(
+        r#"
+data Box(f) = Box(f);
+
+function target(x : word) -> word {
+  let result : word;
+  assembly { result := add(x, 1) }
+  return result;
+}
+
+function main() -> Box(word -> word) {
+  return Box(target);
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert!(
+        function_names(&output)
+            .iter()
+            .any(|name| name.contains("_target_")),
+        "{:?}",
+        output.module
+    );
+    assert!(
+        output.module.items.iter().any(|item| matches!(
+            item,
+            MonoItem::Function(function)
+                if function.body.iter().any(|stmt| matches!(
+                    &stmt.kind,
+                    MonoStmtKind::Return(Some(MonoExpr {
+                        kind: MonoExprKind::Con { args, .. },
+                        ..
+                    })) if args.iter().any(|arg| matches!(
+                        &arg.kind,
+                        MonoExprKind::Var(id) if id.name.contains("_target_")
+                    ))
+                ))
+        )),
+        "expected the surviving reference to be a constructor-nested function value: {:?}",
+        output.module
+    );
+}
+
+#[test]
+fn user_path_suffix_does_not_grant_std_dispatch_inlining() {
+    let output = specialize_source_at_root(
+        Path::new("/main"),
+        "mystd/dispatch.solc",
+        r#"
+function clobber(value : word) -> () {
+  let observed : word;
+  assembly { observed := callvalue() }
+  return ();
+}
+
+function main() -> word {
+  clobber(0);
+  return 7;
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert!(
+        function_names(&output)
+            .iter()
+            .any(|name| name.contains("_clobber_")),
+        "{:?}",
+        output.module
+    );
+}
+
+#[test]
+fn std_dispatch_statement_inlining_preserves_lexical_scope() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    let std_root = PathBuf::from("/std");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        std_root.clone(),
+        BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(
+        db,
+        [main_root.as_path(), std_root.as_path()],
+    ));
+    let path = std_root.join("dispatch.solc");
+    let key = module_key_for_path(LibraryId::Std, &std_root, &path).expect("std dispatch key");
+    let file = source_file_at_path(
+        db,
+        &path,
+        r#"
+function clobber() -> () {
+  let x : word = 1;
+  assembly { mstore(x, x) }
+  return ();
+}
+
+function main(x : word) -> word {
+  clobber();
+  return x;
+}
+"#,
+    );
+    db.insert_module_file(key, file);
+    let module = parse_file_to_hir(db, file).module(db);
+    let output = specialize_module(db, module, SpecializeOptions::default());
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let entry = output
+        .module
+        .entry_points
+        .first()
+        .expect("main entry point");
+    let main = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Function(function) if &function.name == entry => Some(function),
+            _ => None,
+        })
+        .expect("specialized main");
+    assert!(
+        main.body.iter().any(|stmt| matches!(
+            &stmt.kind,
+            MonoStmtKind::Block(body)
+                if body.iter().any(|stmt| matches!(
+                    &stmt.kind,
+                    MonoStmtKind::Let { id, .. } if id.name == "x"
+                ))
+        )),
+        "{:?}",
+        main.body
+    );
+}
+
+#[test]
+fn class_method_values_resolve_to_the_specialized_instance_method() {
+    let (_db, output) = specialize_src(
+        r#"
+forall t . class t:Pick {
+  function pick(x : t) -> t;
+}
+
+instance word:Pick {
+  function pick(x : word) -> word {
+    let result : word;
+    assembly { result := add(x, 1) }
+    return result;
+  }
+}
+
+function main(x : word) -> word {
+  let f : word -> word = Pick.pick;
+  return f(x);
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(
+        names
+            .iter()
+            .any(|name| name.contains("Pick_pick_") && name.contains("$word")),
+        "{names:?}"
+    );
+    assert!(
+        !output.module.items.iter().any(|item| matches!(
+            item,
+            MonoItem::Function(function)
+                if function.body.iter().any(stmt_has_closure_dispatch)
+        )),
+        "{:?}",
+        output.module
     );
 }
