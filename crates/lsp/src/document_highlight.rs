@@ -3,21 +3,12 @@
 use lsp_types::{DocumentHighlight, DocumentHighlightKind, Position, Url};
 
 use crate::{
-    analysis::with_analysis_stack,
     references::{collect_reference_locations, reference_target_at},
     state::WorldState,
 };
 
 /// Computes same-document highlights for the symbol at a source position.
 pub fn handle_document_highlight(
-    world: &WorldState,
-    uri: &Url,
-    position: Position,
-) -> Option<Vec<DocumentHighlight>> {
-    with_analysis_stack(|| handle_document_highlight_inner(world, uri, position))
-}
-
-fn handle_document_highlight_inner(
     world: &WorldState,
     uri: &Url,
     position: Position,

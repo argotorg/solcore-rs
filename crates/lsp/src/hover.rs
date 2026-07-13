@@ -1,7 +1,6 @@
 //! Hover support over the wasm-clean LSP core.
 
 use crate::{
-    analysis::with_analysis_stack,
     references::{ReferenceTarget, reference_target_at},
     resolve::{function_owning_offset, innermost_expr, module_id_for_uri},
     state::WorldState,
@@ -28,10 +27,6 @@ use lsp_types::{Hover, HoverContents, MarkedString, Position, Range, Url};
 /// identity as references/rename. Expression inference remains the fallback
 /// for literals and other non-name syntax.
 pub fn handle_hover(world: &WorldState, uri: &Url, position: Position) -> Option<Hover> {
-    with_analysis_stack(|| handle_hover_inner(world, uri, position))
-}
-
-fn handle_hover_inner(world: &WorldState, uri: &Url, position: Position) -> Option<Hover> {
     let db = world.db();
     let path = world.vfs_path_for_uri(uri)?;
     let file = db.source_file(&path)?;

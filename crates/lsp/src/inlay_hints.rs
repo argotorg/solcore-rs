@@ -13,14 +13,10 @@ use hir::{
 use hir_ty::{InferResultExt, InferenceResult};
 use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, Range, Url};
 
-use crate::{analysis::with_analysis_stack, resolve::module_id_for_uri, state::WorldState};
+use crate::{resolve::module_id_for_uri, state::WorldState};
 
 /// Computes inferred-type inlay hints for local bindings in a source range.
 pub fn handle_inlay_hints(world: &WorldState, uri: &Url, range: Range) -> Option<Vec<InlayHint>> {
-    with_analysis_stack(|| handle_inlay_hints_inner(world, uri, range))
-}
-
-fn handle_inlay_hints_inner(world: &WorldState, uri: &Url, range: Range) -> Option<Vec<InlayHint>> {
     let db = world.db();
     let path = world.vfs_path_for_uri(uri)?;
     let file = db.source_file(&path)?;

@@ -9,21 +9,12 @@ use lsp_types::{Location, Position, PrepareRenameResponse, Range, TextEdit, Url,
 
 use crate::{
     LineIndexExt,
-    analysis::with_analysis_stack,
     references::{collect_reference_locations, reference_target_at, target_supports_text_rename},
     state::WorldState,
 };
 
 /// Computes the rename range for the user symbol at a source position.
 pub fn handle_prepare_rename(
-    world: &WorldState,
-    uri: &Url,
-    position: Position,
-) -> Option<PrepareRenameResponse> {
-    with_analysis_stack(|| handle_prepare_rename_inner(world, uri, position))
-}
-
-fn handle_prepare_rename_inner(
     world: &WorldState,
     uri: &Url,
     position: Position,
@@ -47,15 +38,6 @@ fn handle_prepare_rename_inner(
 
 /// Computes a workspace edit that renames the user symbol at a source position.
 pub fn handle_rename(
-    world: &WorldState,
-    uri: &Url,
-    position: Position,
-    new_name: &str,
-) -> Option<WorkspaceEdit> {
-    with_analysis_stack(|| handle_rename_inner(world, uri, position, new_name))
-}
-
-fn handle_rename_inner(
     world: &WorldState,
     uri: &Url,
     position: Position,
