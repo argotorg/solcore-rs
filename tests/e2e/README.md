@@ -22,6 +22,20 @@ only selector ABI types supported by the shared reference std. In particular,
 they do not expose primitive `word` or user ADTs directly; those surfaces lack
 complete dispatch evidence in the current Haskell snapshot.
 
+State-changing calls use `#[send(arguments)]`. A send directive submits a
+transaction, waits for a successful receipt, and preserves its storage changes
+for every directive that follows it in the fixture. It has no result
+expectation because transaction receipts do not expose EVM returndata. Put a
+normal call directive on a later public method to assert the persisted state:
+
+```solcore
+// #[send(41)]
+public function set(value: uint256) { stored = value; }
+
+// #[() -> 41]
+public function readAfterSend() -> uint256 { return stored; }
+```
+
 The outer parentheses delimit the argument or result list; another pair is
 needed for a tuple value. Thus a single composite argument and result use
 double parentheses:

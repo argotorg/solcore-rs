@@ -33,6 +33,7 @@ pub enum FailureKind {
     Solc,
     Codegen,
     Deploy,
+    Transaction,
     Call,
     Decode,
     Mismatch,
@@ -211,6 +212,37 @@ impl EvmHarness {
         decode_eth_call_response(&response)
     }
 
+    /// Submits one state-changing call and waits for a successful receipt.
+    pub fn send(&self, address: &str, calldata: &str) -> Result<(), E2eFailure> {
+        let output = run_command(
+            &self.cast,
+            &[
+                "send",
+                "--rpc-url",
+                self.url(),
+                "--private-key",
+                ANVIL_PRIVATE_KEY,
+                address,
+                calldata,
+                "--json",
+            ],
+            &[],
+            COMMAND_TIMEOUT,
+        )
+        .map_err(|message| E2eFailure::new(FailureKind::Transaction, message))?;
+        if !output.status.success() {
+            return Err(E2eFailure::new(
+                FailureKind::Transaction,
+                format!(
+                    "cast send failed\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                ),
+            ));
+        }
+        require_successful_transaction_receipt(&output.stdout)
+    }
+
     /// Compares raw EVM returndata with a directive expectation without
     /// narrowing 256-bit ABI words to a host integer.
     pub fn assert_return_data(
@@ -224,10 +256,10 @@ impl EvmHarness {
 
     /// Deploys one contract and executes every resolved directive against it.
     ///
-    /// Calls use `eth_call`, so state changes made by one directive do not
-    /// leak into the next directive. The raw JSON-RPC response is inspected so
-    /// revert status and payload checks do not depend on human-readable `cast`
-    /// error messages.
+    /// Ordinary directives use `eth_call`; `#[send(...)]` directives submit a
+    /// transaction whose state is visible to subsequent directives. Raw
+    /// JSON-RPC responses are inspected for call/revert assertions, while send
+    /// directives require a successful mined receipt.
     pub fn execute_deployed_calls(
         &self,
         bytecode: &str,
@@ -247,15 +279,60 @@ impl EvmHarness {
                 index + 1,
                 call.calldata
             );
-            let outcome = self
-                .call_outcome(&address, &call.calldata)
-                .map_err(|error| {
-                    E2eFailure::new(error.kind, format!("{label}: {}", error.message))
-                })?;
-            assert_call_outcome(&label, &call.expected, &outcome)?;
+            match &call.action {
+                ResolvedE2eAction::Call(expected) => {
+                    let outcome = self
+                        .call_outcome(&address, &call.calldata)
+                        .map_err(|error| {
+                            E2eFailure::new(error.kind, format!("{label}: {}", error.message))
+                        })?;
+                    assert_call_outcome(&label, expected, &outcome)?;
+                }
+                ResolvedE2eAction::Send => {
+                    self.send(&address, &call.calldata).map_err(|error| {
+                        E2eFailure::new(error.kind, format!("{label}: {}", error.message))
+                    })?;
+                }
+            }
         }
         Ok(())
     }
+}
+
+fn require_successful_transaction_receipt(stdout: &[u8]) -> Result<(), E2eFailure> {
+    let receipt: serde_json::Value = serde_json::from_slice(stdout).map_err(|error| {
+        E2eFailure::new(
+            FailureKind::Transaction,
+            format!("invalid cast send JSON receipt: {error}"),
+        )
+    })?;
+    let status = receipt.get("status").ok_or_else(|| {
+        E2eFailure::new(
+            FailureKind::Transaction,
+            format!("cast send receipt has no status: {receipt}"),
+        )
+    })?;
+    let succeeded = match status {
+        serde_json::Value::Number(number) => number.as_u64() == Some(1),
+        serde_json::Value::String(quantity) => parse_rpc_quantity(quantity) == Some(1),
+        _ => false,
+    };
+    if succeeded {
+        return Ok(());
+    }
+    Err(E2eFailure::new(
+        FailureKind::Transaction,
+        format!("transaction receipt is not successful: {receipt}"),
+    ))
+}
+
+fn parse_rpc_quantity(quantity: &str) -> Option<u64> {
+    let digits = quantity
+        .strip_prefix("0x")
+        .or_else(|| quantity.strip_prefix("0X"))?;
+    (!digits.is_empty())
+        .then(|| u64::from_str_radix(digits, 16).ok())
+        .flatten()
 }
 
 fn post_json(url: &str, body: &str) -> Result<Vec<u8>, E2eFailure> {
@@ -928,6 +1005,25 @@ mod tests {
         assert_eq!(parse_anvil_port("Listening on 127.0.0.1:8545"), Some(8545));
         assert_eq!(parse_anvil_port("http://localhost:49152"), Some(49152));
         assert_eq!(parse_anvil_port("unrelated"), None);
+    }
+
+    #[test]
+    fn requires_successful_transaction_receipts() {
+        require_successful_transaction_receipt(br#"{"transactionHash":"0xabc","status":"0x1"}"#)
+            .expect("hex success status");
+        require_successful_transaction_receipt(br#"{"transactionHash":"0xabc","status":1}"#)
+            .expect("numeric success status");
+
+        let reverted = require_successful_transaction_receipt(
+            br#"{"transactionHash":"0xabc","status":"0x0"}"#,
+        )
+        .unwrap_err();
+        assert_eq!(reverted.kind, FailureKind::Transaction);
+        assert!(reverted.message.contains("not successful"), "{reverted}");
+
+        let missing =
+            require_successful_transaction_receipt(br#"{"transactionHash":"0xabc"}"#).unwrap_err();
+        assert!(missing.message.contains("no status"), "{missing}");
     }
 
     #[test]

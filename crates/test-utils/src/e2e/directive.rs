@@ -193,11 +193,20 @@ pub enum ExpectedOutcome {
     Revert(Option<Vec<u8>>),
 }
 
+/// Action requested by one source-comment directive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum E2eAction {
+    /// Execute with `eth_call` and compare the returned or reverted data.
+    Call(ExpectedOutcome),
+    /// Submit a state-changing transaction and require a successful receipt.
+    Send,
+}
+
 /// Parsed contents of one `#[...]` source-comment directive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct E2eDirective {
     pub args: Vec<DirectiveValue>,
-    pub expected: ExpectedOutcome,
+    pub action: E2eAction,
 }
 
 /// A backend-neutral, static external-ABI shape.
@@ -242,7 +251,7 @@ pub struct ResolvedE2eCall {
     pub selector: [u8; 4],
     /// Selector plus ABI-encoded arguments, with a `0x` prefix.
     pub calldata: String,
-    pub expected: ResolvedExpectedOutcome,
+    pub action: ResolvedE2eAction,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,11 +260,18 @@ pub enum ResolvedExpectedOutcome {
     Revert(Option<Vec<u8>>),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedE2eAction {
+    Call(ResolvedExpectedOutcome),
+    Send,
+}
+
 impl ResolvedE2eCall {
     pub fn expected_return_data(&self) -> Option<&[u8]> {
-        match &self.expected {
-            ResolvedExpectedOutcome::Return(data) => Some(data),
-            ResolvedExpectedOutcome::Revert(_) => None,
+        match &self.action {
+            ResolvedE2eAction::Call(ResolvedExpectedOutcome::Return(data)) => Some(data),
+            ResolvedE2eAction::Call(ResolvedExpectedOutcome::Revert(_))
+            | ResolvedE2eAction::Send => None,
         }
     }
 }
@@ -341,14 +357,17 @@ pub fn resolve_e2e_directive(
     let signature = signature.into();
     let arguments = encode_abi_values("argument", inputs, &directive.args)
         .map_err(|error| DirectiveError::semantic(format!("{signature}: {}", error.message)))?;
-    let expected = match &directive.expected {
-        ExpectedOutcome::Return(values) => {
+    let action = match &directive.action {
+        E2eAction::Call(ExpectedOutcome::Return(values)) => {
             let bytes = encode_abi_values("result", outputs, values).map_err(|error| {
                 DirectiveError::semantic(format!("{signature}: {}", error.message))
             })?;
-            ResolvedExpectedOutcome::Return(bytes)
+            ResolvedE2eAction::Call(ResolvedExpectedOutcome::Return(bytes))
         }
-        ExpectedOutcome::Revert(payload) => ResolvedExpectedOutcome::Revert(payload.clone()),
+        E2eAction::Call(ExpectedOutcome::Revert(payload)) => {
+            ResolvedE2eAction::Call(ResolvedExpectedOutcome::Revert(payload.clone()))
+        }
+        E2eAction::Send => ResolvedE2eAction::Send,
     };
 
     let mut calldata = Vec::with_capacity(4 + arguments.len());
@@ -358,7 +377,7 @@ pub fn resolve_e2e_directive(
         signature,
         selector,
         calldata: format!("0x{}", encode_hex(&calldata)),
-        expected,
+        action,
     })
 }
 
@@ -516,15 +535,20 @@ impl<'source> DirectiveParser<'source> {
 
     fn parse(mut self) -> Result<E2eDirective, DirectiveError> {
         self.expect("#[")?;
+        let send = self.consume_keyword("send");
         let args = self.parse_value_list()?;
-        self.expect("->")?;
-        let expected = self.parse_expected()?;
+        let action = if send {
+            E2eAction::Send
+        } else {
+            self.expect("->")?;
+            E2eAction::Call(self.parse_expected()?)
+        };
         self.expect("]")?;
         self.skip_whitespace();
         if !self.is_eof() {
             return Err(self.error("unexpected trailing text after directive"));
         }
-        Ok(E2eDirective { args, expected })
+        Ok(E2eDirective { args, action })
     }
 
     fn parse_expected(&mut self) -> Result<ExpectedOutcome, DirectiveError> {
@@ -715,7 +739,7 @@ mod tests {
             parse_e2e_directive(" // #[(0, 1) -> 1] ").unwrap(),
             Some(E2eDirective {
                 args: vec![word(0), word(1)],
-                expected: ExpectedOutcome::Return(vec![word(1)]),
+                action: E2eAction::Call(ExpectedOutcome::Return(vec![word(1)])),
             })
         );
         assert_eq!(
@@ -725,15 +749,46 @@ mod tests {
                     DirectiveValue::Tuple(vec![word(1), word(2)]),
                     DirectiveValue::Bool(true)
                 ],
-                expected: ExpectedOutcome::Return(vec![word(3), DirectiveValue::Bool(false)]),
+                action: E2eAction::Call(ExpectedOutcome::Return(vec![
+                    word(3),
+                    DirectiveValue::Bool(false),
+                ])),
             })
         );
         assert_eq!(
             parse_e2e_directive("#[() -> ()]").unwrap(),
             Some(E2eDirective {
                 args: Vec::new(),
-                expected: ExpectedOutcome::Return(Vec::new()),
+                action: E2eAction::Call(ExpectedOutcome::Return(Vec::new())),
             })
+        );
+    }
+
+    #[test]
+    fn parses_state_changing_send_directives() {
+        assert_eq!(
+            parse_e2e_directive("#[send(1, true)]").unwrap(),
+            Some(E2eDirective {
+                args: vec![word(1), DirectiveValue::Bool(true)],
+                action: E2eAction::Send,
+            })
+        );
+        let error = parse_e2e_directive("#[send(1) -> ()]").unwrap_err();
+        assert!(error.message.contains("expected `]`"), "{error}");
+
+        let directive = parse_e2e_directive("#[send(7)]").unwrap().unwrap();
+        let resolved = resolve_e2e_directive(
+            "set(uint256)",
+            [0x12, 0x34, 0x56, 0x78],
+            &[AbiShape::Word],
+            &[AbiShape::Word],
+            &directive,
+        )
+        .unwrap();
+        assert_eq!(resolved.action, ResolvedE2eAction::Send);
+        assert_eq!(
+            resolved.calldata,
+            format!("0x12345678{}", Word256::from_u128(7).to_hex())
         );
     }
 
@@ -974,14 +1029,16 @@ mod tests {
             parse_e2e_directive("#[() -> revert]").unwrap(),
             Some(E2eDirective {
                 args: Vec::new(),
-                expected: ExpectedOutcome::Revert(None),
+                action: E2eAction::Call(ExpectedOutcome::Revert(None)),
             })
         );
         assert_eq!(
             parse_e2e_directive("#[() -> revert(0xdeadbeef)]").unwrap(),
             Some(E2eDirective {
                 args: Vec::new(),
-                expected: ExpectedOutcome::Revert(Some(vec![0xde, 0xad, 0xbe, 0xef])),
+                action: E2eAction::Call(ExpectedOutcome::Revert(Some(vec![
+                    0xde, 0xad, 0xbe, 0xef,
+                ]))),
             })
         );
     }
