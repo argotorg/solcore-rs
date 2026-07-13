@@ -148,10 +148,9 @@ pub(super) struct ObligationSolveOutput<'db> {
 }
 
 /// Outcome of one attempt at a pending obligation.
-enum ObligationAttempt {
+enum ObligationAttempt<'db> {
     /// Evidence was recorded and the solver substitution (or closure
-    /// unification) advanced the inference state, so deferred goals are
-    /// worth retrying.
+    /// unification) may have advanced the inference state.
     Solved,
     /// Nothing further to do: the obligation was skipped (poisoned or
     /// error-tainted) or a diagnostic was emitted for a goal that can no
@@ -159,7 +158,24 @@ enum ObligationAttempt {
     Settled,
     /// The goal failed but still mentions inference variables; retry after
     /// other obligations make progress.
-    Deferred,
+    Deferred(FxHashMap<TyVid<'db>, InferTy<'db>>),
+}
+
+pub(super) fn deferred_obligations_affected_by<'db>(
+    engine: &mut InferTable<'db>,
+    deferred: &FxHashMap<usize, FxHashMap<TyVid<'db>, InferTy<'db>>>,
+) -> Vec<usize> {
+    let mut affected = deferred
+        .iter()
+        .filter_map(|(index, snapshot)| {
+            snapshot
+                .iter()
+                .any(|(var, previous)| engine.resolve(InferTy::Var(*var)) != *previous)
+                .then_some(*index)
+        })
+        .collect::<Vec<_>>();
+    affected.sort_unstable();
+    affected
 }
 
 fn record_obligation_evidence<'db>(
@@ -239,20 +255,22 @@ impl<'db> InferCtx<'db> {
         let mut diagnostics: Vec<(usize, TypeckDiagnostic)> = Vec::new();
 
         let pending = self.pending.clone();
-        let mut unresolved: Vec<usize> = (0..pending.len()).collect();
+        let mut deferred = FxHashMap::<usize, FxHashMap<TyVid<'db>, InferTy<'db>>>::default();
+        let mut scheduled: Vec<usize> = (0..pending.len()).collect();
 
         // Improvement rounds, mirroring the reference's `toHnfs` fixpoint:
         // solving one obligation can pin goal metavariables of a sibling via
-        // class-argument unification (improvement), so a failure whose
-        // canonicalized goal still mentions inference variables is deferred
-        // and retried after other obligations make progress. Ground goals can
-        // never improve, so their failures are reported immediately. Each
-        // continuing round resolves at least one obligation, bounding the
-        // loop by `pending.len()` rounds.
+        // class-argument unification (improvement). A deferred obligation
+        // records each inference-variable handle and its resolved value, then
+        // is retried only when that snapshot changes. Keeping the original
+        // handles is important: ena may replace their union root, but resolving
+        // an old handle still follows the union to the current representative.
+        // Ground and unchanged goals therefore avoid another normalization,
+        // interning, and solver lookup. Each continuing round resolves at
+        // least one obligation, bounding the loop by `pending.len()` rounds.
         loop {
             let mut progress = false;
-            let mut deferred = Vec::new();
-            for &index in &unresolved {
+            for index in std::mem::take(&mut scheduled) {
                 match self.attempt_obligation(
                     trait_env,
                     index,
@@ -262,16 +280,29 @@ impl<'db> InferCtx<'db> {
                     &mut call_site_evidence,
                     &mut diagnostics,
                 ) {
-                    ObligationAttempt::Solved => progress = true,
-                    ObligationAttempt::Settled => {}
-                    ObligationAttempt::Deferred => deferred.push(index),
+                    ObligationAttempt::Solved => {
+                        deferred.remove(&index);
+                        progress = true;
+                    }
+                    ObligationAttempt::Settled => {
+                        deferred.remove(&index);
+                    }
+                    ObligationAttempt::Deferred(dependencies) => {
+                        deferred.insert(index, dependencies);
+                    }
                 }
             }
-            unresolved = deferred;
-            if !progress || unresolved.is_empty() {
+            if !progress || deferred.is_empty() {
+                break;
+            }
+            scheduled = deferred_obligations_affected_by(&mut self.engine, &deferred);
+            if scheduled.is_empty() {
                 break;
             }
         }
+
+        let mut unresolved = deferred.into_keys().collect::<Vec<_>>();
+        unresolved.sort_unstable();
 
         self.default_integer_literals_with_non_int_obligations(&pending, &unresolved);
 
@@ -364,7 +395,7 @@ impl<'db> InferCtx<'db> {
         evidence: &mut Vec<ObligationEvidence<'db>>,
         call_site_evidence: &mut Vec<CallSiteEvidence<'db>>,
         diagnostics: &mut Vec<(usize, TypeckDiagnostic)>,
-    ) -> ObligationAttempt {
+    ) -> ObligationAttempt<'db> {
         // Re-checked on every attempt: poisoning can grow as other
         // obligations unify error types into this obligation's source.
         if self.obligation_source_poisoned(&pending.source)
@@ -374,7 +405,8 @@ impl<'db> InferCtx<'db> {
         }
         if self.open_integer_obligation(pending) {
             return if defer_unsolved {
-                ObligationAttempt::Deferred
+                let vars = self.pending_obligation_infer_vars(pending);
+                ObligationAttempt::Deferred(self.snapshot_infer_vars(vars))
             } else {
                 ObligationAttempt::Settled
             };
@@ -391,6 +423,7 @@ impl<'db> InferCtx<'db> {
             return ObligationAttempt::Settled;
         }
         let can_improve = defer_unsolved && !pred.allowed_vars.is_empty();
+        let dependencies = self.snapshot_infer_vars(pred.goal_vars.values().copied());
         let span = self.obligation_source_label_span(&pending.source);
         let report = solve_report(
             self.db,
@@ -399,7 +432,7 @@ impl<'db> InferCtx<'db> {
         );
         if report.exhausted {
             if can_improve {
-                return ObligationAttempt::Deferred;
+                return ObligationAttempt::Deferred(dependencies);
             }
             let pred_text = self.display_pred(pred.pred);
             diagnostics.push((
@@ -419,7 +452,7 @@ impl<'db> InferCtx<'db> {
                 if !solver_answer_is_closed_over_goal(self.db, pred.pred, trait_env, &subst, &proof)
                 {
                     if can_improve {
-                        return ObligationAttempt::Deferred;
+                        return ObligationAttempt::Deferred(dependencies);
                     }
                     let pred_text = self.display_pred(pred.pred);
                     diagnostics.push((
@@ -441,7 +474,7 @@ impl<'db> InferCtx<'db> {
             }
             Solution::Ambiguous { candidates } => {
                 if can_improve {
-                    return ObligationAttempt::Deferred;
+                    return ObligationAttempt::Deferred(dependencies);
                 }
                 let pred_text = self.display_pred(pred.pred);
                 diagnostics.push((
@@ -456,7 +489,7 @@ impl<'db> InferCtx<'db> {
             }
             Solution::NoSolution => {
                 if can_improve {
-                    return ObligationAttempt::Deferred;
+                    return ObligationAttempt::Deferred(dependencies);
                 }
                 if !pred.allowed_vars.is_empty() {
                     if !self.reported_ambiguous_constraint {
@@ -519,6 +552,27 @@ impl<'db> InferCtx<'db> {
             pred,
             sub_evidence: Vec::new(),
         })
+    }
+
+    fn pending_obligation_infer_vars(
+        &mut self,
+        pending: &PendingObligation<'db>,
+    ) -> FxHashSet<TyVid<'db>> {
+        let mut vars = FxHashSet::default();
+        self.collect_infer_vars(pending.main.clone(), &mut vars);
+        for arg in &pending.args {
+            self.collect_infer_vars(arg.clone(), &mut vars);
+        }
+        vars
+    }
+
+    fn snapshot_infer_vars(
+        &mut self,
+        vars: impl IntoIterator<Item = TyVid<'db>>,
+    ) -> FxHashMap<TyVid<'db>, InferTy<'db>> {
+        vars.into_iter()
+            .map(|var| (var, self.engine.resolve(InferTy::Var(var))))
+            .collect()
     }
 
     fn classify_no_solution(

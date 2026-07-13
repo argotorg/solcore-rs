@@ -416,6 +416,61 @@ fn obligation_canonicalization_keeps_rigid_and_goal_variables_disjoint() {
     assert_eq!(canonicalizer.allowed_vars(), vec![1]);
 }
 
+#[test]
+fn deferred_dependency_snapshots_follow_union_roots() {
+    let db = TestDb::default();
+    let mut engine = InferTable::new(&db);
+    let first = engine.fresh_vid();
+    let second = engine.fresh_vid();
+    let unrelated = engine.fresh_vid();
+    let first_before = engine.resolve(InferTy::Var(first));
+    let second_before = engine.resolve(InferTy::Var(second));
+    let unrelated_before = engine.resolve(InferTy::Var(unrelated));
+
+    engine
+        .unify(InferTy::Var(first), InferTy::Var(second))
+        .unwrap();
+    let InferTy::Var(current_root) = engine.resolve(InferTy::Var(first)) else {
+        panic!("union of two open inference variables must remain open");
+    };
+    let stale_root = if current_root == first { second } else { first };
+    let stale_before = if stale_root == first {
+        first_before.clone()
+    } else {
+        second_before.clone()
+    };
+    let current_before = if current_root == first {
+        first_before
+    } else {
+        second_before
+    };
+    assert_ne!(stale_root, current_root);
+
+    // Do not inspect the snapshots between the union and the later binding.
+    // A dirty-root set containing only `current_root` would miss the snapshot
+    // keyed by `stale_root`, even though resolving that old handle follows the
+    // union and observes the concrete value.
+    engine
+        .unify(
+            InferTy::Var(current_root),
+            InferTy::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
+                args: Vec::new(),
+            },
+        )
+        .unwrap();
+    let deferred = FxHashMap::from_iter([
+        (0, FxHashMap::from_iter([(stale_root, stale_before)])),
+        (1, FxHashMap::from_iter([(current_root, current_before)])),
+        (2, FxHashMap::from_iter([(unrelated, unrelated_before)])),
+    ]);
+
+    assert_eq!(
+        deferred_obligations_affected_by(&mut engine, &deferred),
+        vec![0, 1]
+    );
+}
+
 fn function_info_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> FunctionInfo<'db> {
     function_infos(db, module)
         .into_iter()
