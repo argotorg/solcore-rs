@@ -16,6 +16,7 @@ use hir::{
 use lsp_types::{CompletionItem, CompletionItemKind, CompletionResponse, Position, Url};
 
 use crate::{
+    analysis::with_analysis_stack,
     resolve::{function_owning_offset, module_id_for_uri},
     state::WorldState,
 };
@@ -56,6 +57,14 @@ const KEYWORDS: &[&str] = &[
 
 /// Computes completion items at a source position.
 pub fn handle_completion(
+    world: &WorldState,
+    uri: &Url,
+    position: Position,
+) -> Option<CompletionResponse> {
+    with_analysis_stack(|| handle_completion_inner(world, uri, position))
+}
+
+fn handle_completion_inner(
     world: &WorldState,
     uri: &Url,
     position: Position,

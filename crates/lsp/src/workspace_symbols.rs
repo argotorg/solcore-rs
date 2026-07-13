@@ -8,13 +8,20 @@ use hir::{
 };
 use lsp_types::{Location, Range, SymbolInformation, SymbolKind, Url};
 
-use crate::state::WorldState;
+use crate::{analysis::with_analysis_stack, state::WorldState};
 
 const MAX_WORKSPACE_SYMBOLS: usize = 256;
 
 /// Computes flat workspace symbols for every source document loaded in the
 /// workspace.
 pub fn handle_workspace_symbol(world: &WorldState, query: &str) -> Option<Vec<SymbolInformation>> {
+    with_analysis_stack(|| handle_workspace_symbol_inner(world, query))
+}
+
+fn handle_workspace_symbol_inner(
+    world: &WorldState,
+    query: &str,
+) -> Option<Vec<SymbolInformation>> {
     let db = world.db();
     let query = query.to_lowercase();
     let mut symbols = Vec::new();

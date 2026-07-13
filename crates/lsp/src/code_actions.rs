@@ -617,20 +617,9 @@ mod tests {
     use lsp_types::{CodeActionContext, NumberOrString};
 
     use super::*;
-    use crate::diagnostics::compute_diagnostics;
+    use crate::{analysis::on_test_stack, diagnostics::compute_diagnostics};
 
     const WINDOWS_TEST_STACK_SIZE: usize = 1024 * 1024;
-
-    fn on_windows_sized_stack(test: fn()) {
-        let result = std::thread::Builder::new()
-            .stack_size(WINDOWS_TEST_STACK_SIZE)
-            .spawn(test)
-            .expect("spawn Windows-sized LSP test stack")
-            .join();
-        if let Err(payload) = result {
-            std::panic::resume_unwind(payload);
-        }
-    }
 
     fn world_with_main(source: &str) -> (WorldState, Url) {
         let mut world = WorldState::new();
@@ -1153,7 +1142,10 @@ mod tests {
 
     #[test]
     fn auto_import_extends_an_existing_selective_import() {
-        on_windows_sized_stack(auto_import_extends_an_existing_selective_import_inner);
+        on_test_stack(
+            WINDOWS_TEST_STACK_SIZE,
+            auto_import_extends_an_existing_selective_import_inner,
+        );
     }
 
     fn auto_import_extends_an_existing_selective_import_inner() {
@@ -1640,7 +1632,10 @@ contract C {
 
     #[test]
     fn auto_import_candidates_stay_inside_the_current_workspace_root() {
-        on_windows_sized_stack(auto_import_candidates_stay_inside_the_current_workspace_root_inner);
+        on_test_stack(
+            WINDOWS_TEST_STACK_SIZE,
+            auto_import_candidates_stay_inside_the_current_workspace_root_inner,
+        );
     }
 
     fn auto_import_candidates_stay_inside_the_current_workspace_root_inner() {

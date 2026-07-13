@@ -9,11 +9,15 @@ use std::{cmp::Reverse, collections::HashSet};
 use hir::{ast::item::Item, span::Spanned};
 use lsp_types::{FoldingRange, FoldingRangeKind, Position, Url};
 
-use crate::{line_index::LineIndexExt, state::WorldState};
+use crate::{analysis::with_analysis_stack, line_index::LineIndexExt, state::WorldState};
 
 /// Computes deterministic folding ranges for any document known to the LSP
 /// workspace.
 pub fn handle_folding_range(world: &WorldState, uri: &Url) -> Option<Vec<FoldingRange>> {
+    with_analysis_stack(|| handle_folding_range_inner(world, uri))
+}
+
+fn handle_folding_range_inner(world: &WorldState, uri: &Url) -> Option<Vec<FoldingRange>> {
     let line_index = world.line_index(uri)?;
     let source = line_index.text();
     let _source_len = u32::try_from(source.len()).ok()?;

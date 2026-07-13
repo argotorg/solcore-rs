@@ -19,7 +19,7 @@ use lsp_types::{
     Url,
 };
 
-use crate::{resolve::module_id_for_uri, state::WorldState};
+use crate::{analysis::with_analysis_stack, resolve::module_id_for_uri, state::WorldState};
 
 /// Semantic token types advertised by the server and used by the encoder.
 pub const TOKEN_TYPES: &[SemanticTokenType] = &[
@@ -45,6 +45,13 @@ pub const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
 
 /// Computes full-document semantic tokens for one open source document.
 pub fn handle_semantic_tokens_full(world: &WorldState, uri: &Url) -> Option<SemanticTokensResult> {
+    with_analysis_stack(|| handle_semantic_tokens_full_inner(world, uri))
+}
+
+fn handle_semantic_tokens_full_inner(
+    world: &WorldState,
+    uri: &Url,
+) -> Option<SemanticTokensResult> {
     let db = world.db();
     let path = world.vfs_path_for_uri(uri)?;
     let file = db.source_file(&path)?;

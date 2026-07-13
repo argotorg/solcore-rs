@@ -25,6 +25,7 @@ use nameres::Db as _;
 
 use crate::{
     LineIndexExt,
+    analysis::with_analysis_stack,
     resolve::{function_owning_offset, innermost_expr, module_id_for_uri},
     state::WorldState,
 };
@@ -82,6 +83,15 @@ struct FunctionContext<'db> {
 
 /// Computes all reference locations for the symbol at a source position.
 pub fn handle_references(
+    world: &WorldState,
+    uri: &Url,
+    position: Position,
+    include_declaration: bool,
+) -> Option<Vec<Location>> {
+    with_analysis_stack(|| handle_references_inner(world, uri, position, include_declaration))
+}
+
+fn handle_references_inner(
     world: &WorldState,
     uri: &Url,
     position: Position,
@@ -2203,6 +2213,9 @@ mod tests {
     use lsp_types::Range;
 
     use super::*;
+    use crate::analysis::on_test_stack;
+
+    const CONSTRAINED_ANALYSIS_TEST_STACK_SIZE: usize = 128 * 1024;
 
     fn world_with_main(source: &str) -> (WorldState, Url) {
         let mut world = WorldState::new();
@@ -2330,6 +2343,13 @@ function caller() -> word {
 
     #[test]
     fn selected_import_alias_references_do_not_rename_the_source_symbol() {
+        on_test_stack(
+            CONSTRAINED_ANALYSIS_TEST_STACK_SIZE,
+            selected_import_alias_references_do_not_rename_the_source_symbol_inner,
+        );
+    }
+
+    fn selected_import_alias_references_do_not_rename_the_source_symbol_inner() {
         let main =
             "import math.{double as twice};\nfunction main() -> word { return twice(21); }\n";
         let math = "function double(x: word) -> word { return x; }\nexport { double };\n";

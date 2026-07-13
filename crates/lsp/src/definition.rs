@@ -13,6 +13,7 @@ use hir::{
 use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
 
 use crate::{
+    analysis::with_analysis_stack,
     references::{import_export_target_at, reference_target_at, target_declaration_span},
     resolve::{function_owning_offset, innermost_expr, module_id_for_uri},
     state::WorldState,
@@ -20,6 +21,14 @@ use crate::{
 
 /// Computes the target definition location for the symbol at a source position.
 pub fn handle_definition(
+    world: &WorldState,
+    uri: &Url,
+    position: Position,
+) -> Option<GotoDefinitionResponse> {
+    with_analysis_stack(|| handle_definition_inner(world, uri, position))
+}
+
+fn handle_definition_inner(
     world: &WorldState,
     uri: &Url,
     position: Position,

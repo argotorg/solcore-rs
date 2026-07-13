@@ -17,6 +17,7 @@ use hir::{
 use lsp_types::{Position, SelectionRange, Url};
 
 use crate::{
+    analysis::with_analysis_stack,
     folding::{ByteRange, scan_source},
     state::WorldState,
 };
@@ -28,6 +29,14 @@ use crate::{
 /// position invalidates the request and returns `None` rather than returning a
 /// shorter, misaligned result array.
 pub fn handle_selection_range(
+    world: &WorldState,
+    uri: &Url,
+    positions: &[Position],
+) -> Option<Vec<SelectionRange>> {
+    with_analysis_stack(|| handle_selection_range_inner(world, uri, positions))
+}
+
+fn handle_selection_range_inner(
     world: &WorldState,
     uri: &Url,
     positions: &[Position],

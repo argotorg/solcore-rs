@@ -16,6 +16,7 @@ use lsp_types::{
 };
 
 use crate::{
+    analysis::with_analysis_stack,
     resolve::{function_owning_offset, module_id_for_uri},
     state::WorldState,
 };
@@ -23,6 +24,14 @@ use crate::{
 /// Computes signature help for the nearest call argument list at a source
 /// position.
 pub fn handle_signature_help(
+    world: &WorldState,
+    uri: &Url,
+    position: Position,
+) -> Option<SignatureHelp> {
+    with_analysis_stack(|| handle_signature_help_inner(world, uri, position))
+}
+
+fn handle_signature_help_inner(
     world: &WorldState,
     uri: &Url,
     position: Position,
