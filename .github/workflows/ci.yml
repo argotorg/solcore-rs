@@ -82,7 +82,7 @@ jobs:
   wasm-build:
     name: Wasm build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -96,11 +96,36 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Build solcore-wasm
-        run: cargo build --target wasm32-unknown-unknown -p solcore-wasm --locked
+      - name: Install Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            playground/package-lock.json
+            editors/vscode-solcore/package-lock.json
 
-      - name: Build solcore-lsp
-        run: cargo build --target wasm32-unknown-unknown -p solcore-lsp --features wasm --locked
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --version 0.13.1 --locked
+
+      - name: Install playground dependencies
+        working-directory: playground
+        run: npm ci
+
+      - name: Test playground language providers
+        working-directory: playground
+        run: npm run test:unit
+
+      - name: Build release playground
+        working-directory: playground
+        run: npm run build
+
+      - name: Validate VS Code extension package
+        working-directory: editors/vscode-solcore
+        run: |
+          npm ci
+          node --check extension.js
+          npm pack --dry-run
 
   test:
     name: Test
@@ -161,8 +186,16 @@ jobs:
           anvil --version
           cast --version
 
+      - name: Compile Yul regression corpus with solc
+        run: >-
+          cargo test --profile e2e -p solcore-yul --test snapshots --locked
+          solc_strict_assembly_compiles_snapshots_and_repros_when_present --
+          --nocapture
+
       - name: Run E2E tests
-        run: cargo test -p solcore-yul -p solcore-sonatina --test e2e --locked -- --nocapture --test-threads=1
+        run: >-
+          cargo test --profile e2e -p solcore-yul -p solcore-sonatina
+          --test e2e --locked -- --nocapture --test-threads=1
 
   docs:
     name: Docs

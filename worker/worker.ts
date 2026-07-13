@@ -1,4 +1,4 @@
-import init, { SolcoreLsp } from "../pkg/solcore_lsp.js";
+import init, { SolcoreLsp } from "../crates/lsp/pkg/solcore_lsp.js";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
