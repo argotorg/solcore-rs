@@ -7,6 +7,10 @@
 
 use hir::{anchor::DefId, nameres::CtorIndex};
 
+// Keep usefulness checking bounded in editor and CI paths. This is shared by
+// every arm check and the final exhaustiveness query for one match.
+const DEFAULT_USEFULNESS_BUDGET: usize = 16_384;
+
 /// Constructor head used by coverage analysis.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum CoverageCtor<'db> {
@@ -102,12 +106,26 @@ where
     Ty: Clone,
     O: ConstructorOracle<'db, Ty>,
 {
+    analyze_with_budget(oracle, tys, rows, DEFAULT_USEFULNESS_BUDGET)
+}
+
+fn analyze_with_budget<'db, Ty, O>(
+    oracle: &mut O,
+    tys: &[Ty],
+    rows: &[Vec<CoveragePat<'db>>],
+    max_steps: usize,
+) -> CoverageAnalysis<'db>
+where
+    Ty: Clone,
+    O: ConstructorOracle<'db, Ty>,
+{
     let mut previous = Vec::with_capacity(rows.len());
     let mut unreachable = Vec::new();
+    let mut budget = UsefulnessBudget::new(max_steps);
 
     for (index, row) in rows.iter().enumerate() {
         if matches!(
-            usefulness_witness(oracle, tys, &previous, row),
+            usefulness_witness(oracle, tys, &previous, row, &mut budget),
             Usefulness::Useless
         ) {
             unreachable.push(index);
@@ -116,7 +134,7 @@ where
     }
 
     let wildcard_row = vec![CoveragePat::Wild; tys.len()];
-    let missing = match usefulness_witness(oracle, tys, rows, &wildcard_row) {
+    let missing = match usefulness_witness(oracle, tys, rows, &wildcard_row, &mut budget) {
         Usefulness::Useful(witness) => Some(witness),
         Usefulness::Useless | Usefulness::Unknown => None,
     };
@@ -127,11 +145,30 @@ where
     }
 }
 
+struct UsefulnessBudget {
+    remaining: usize,
+}
+
+impl UsefulnessBudget {
+    fn new(remaining: usize) -> Self {
+        Self { remaining }
+    }
+
+    fn enter(&mut self) -> bool {
+        let Some(remaining) = self.remaining.checked_sub(1) else {
+            return false;
+        };
+        self.remaining = remaining;
+        true
+    }
+}
+
 fn usefulness_witness<'db, Ty, O>(
     oracle: &mut O,
     tys: &[Ty],
     matrix: &[Vec<CoveragePat<'db>>],
     query: &[CoveragePat<'db>],
+    budget: &mut UsefulnessBudget,
 ) -> Usefulness<'db>
 where
     Ty: Clone,
@@ -140,7 +177,7 @@ where
     if query.len() != tys.len() || matrix.iter().any(|row| row.len() != tys.len()) {
         return Usefulness::Unknown;
     }
-    usefulness_rec(oracle, tys, matrix, query)
+    usefulness_rec(oracle, tys, matrix, query, budget)
 }
 
 fn usefulness_rec<'db, Ty, O>(
@@ -148,11 +185,15 @@ fn usefulness_rec<'db, Ty, O>(
     tys: &[Ty],
     matrix: &[Vec<CoveragePat<'db>>],
     query: &[CoveragePat<'db>],
+    budget: &mut UsefulnessBudget,
 ) -> Usefulness<'db>
 where
     Ty: Clone,
     O: ConstructorOracle<'db, Ty>,
 {
+    if !budget.enter() {
+        return Usefulness::Unknown;
+    }
     if matrix.is_empty() {
         return Usefulness::Useful(witness_from_query(query));
     }
@@ -183,22 +224,32 @@ where
             recompose_ctor(
                 ctor.clone(),
                 fields.len(),
-                usefulness_rec(oracle, &next_tys, &specialized, &next_query),
+                usefulness_rec(oracle, &next_tys, &specialized, &next_query, budget),
             )
         }
         CoveragePat::Literal(value) => {
             let specialized = specialize_literal_matrix(value, matrix);
-            prepend_wild(usefulness_rec(oracle, rest_tys, &specialized, rest_query))
+            prepend_wild(usefulness_rec(
+                oracle,
+                rest_tys,
+                &specialized,
+                rest_query,
+                budget,
+            ))
         }
         CoveragePat::Opaque => {
             let default = default_matrix(matrix);
-            prepend_wild(usefulness_rec(oracle, rest_tys, &default, rest_query))
+            prepend_wild(usefulness_rec(
+                oracle, rest_tys, &default, rest_query, budget,
+            ))
         }
         CoveragePat::Wild => {
             let seen = root_ctors(matrix);
             if seen.is_empty() {
                 let default = default_matrix(matrix);
-                return prepend_wild(usefulness_rec(oracle, rest_tys, &default, rest_query));
+                return prepend_wild(usefulness_rec(
+                    oracle, rest_tys, &default, rest_query, budget,
+                ));
             }
 
             let Some(ctors) = oracle.constructors(head_ty.clone()) else {
@@ -224,7 +275,7 @@ where
                 match recompose_ctor(
                     ctor,
                     field_count,
-                    usefulness_rec(oracle, &next_tys, &specialized, &next_query),
+                    usefulness_rec(oracle, &next_tys, &specialized, &next_query, budget),
                 ) {
                     Usefulness::Useful(witness) => return Usefulness::Useful(witness),
                     Usefulness::Unknown => saw_unknown = true,
@@ -481,6 +532,26 @@ mod tests {
                 vec![WitnessPat::Ctor(false_ctor(), Vec::new()), WitnessPat::Wild],
             )])
         );
+        assert!(analysis.unreachable.is_empty());
+    }
+
+    #[test]
+    fn wide_diagonal_matrix_stops_at_budget_without_false_diagnostics() {
+        let width = 30;
+        let tys = vec![TestTy::Bool; width];
+        let mut rows = (0..width)
+            .map(|column| {
+                let mut row = vec![CoveragePat::Wild; width];
+                row[column] = true_pat();
+                row
+            })
+            .collect::<Vec<_>>();
+        rows.push(vec![false_pat(); width]);
+
+        let mut oracle = TestOracle;
+        let analysis = analyze_with_budget(&mut oracle, &tys, &rows, 512);
+
+        assert_eq!(analysis.missing, None);
         assert!(analysis.unreachable.is_empty());
     }
 }

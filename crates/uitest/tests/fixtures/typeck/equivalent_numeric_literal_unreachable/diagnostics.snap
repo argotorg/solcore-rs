@@ -1,0 +1,25 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/equivalent_numeric_literal_unreachable/main.solc
+---
+warning[SC0303]: unreachable match arm
+ --> /main/main.solc:4:3
+  |
+3 |   | 0x0A => return 0;
+4 |   | 10 => return 1;
+  |   ^^^^^^^^^^^^^^^^^ this arm is unreachable
+5 |   | _ => return 2;
+  |
+  = note: this arm is covered by previous match arms
+---
+
+warning[SC0303]: unreachable match arm
+  --> /main/main.solc:12:3
+   |
+11 |   | 0 => return 0;
+12 |   | 115792089237316195423570985008687907853269984665640564039457584007913129639936 => return 1;
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this arm is unreachable
+13 |   | _ => return 2;
+   |
+   = note: this arm is covered by previous match arms

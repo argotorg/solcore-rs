@@ -416,6 +416,25 @@ impl<'db> InferCtx<'db> {
                 subst,
                 evidence: proof,
             } => {
+                if !solver_answer_is_closed_over_goal(self.db, pred.pred, trait_env, &subst, &proof)
+                {
+                    if can_improve {
+                        return ObligationAttempt::Deferred;
+                    }
+                    let pred_text = self.display_pred(pred.pred);
+                    diagnostics.push((
+                        index,
+                        TypeckDiagnostic::AmbiguousConstraint {
+                            span,
+                            pred: pred_text,
+                            candidates: vec![
+                                "the matching proof leaves existential type variables unresolved"
+                                    .to_owned(),
+                            ],
+                        },
+                    ));
+                    return ObligationAttempt::Settled;
+                }
                 self.apply_solver_substitution(&pred.goal_vars, &subst);
                 record_obligation_evidence(index, pending, proof, evidence, call_site_evidence);
                 ObligationAttempt::Solved
@@ -837,4 +856,26 @@ impl<'db> InferCtx<'db> {
             InferTy::Error | InferTy::Unknown | InferTy::BoundVar(_) => {}
         }
     }
+}
+
+fn solver_answer_is_closed_over_goal<'db>(
+    db: &'db dyn Db,
+    goal: Pred<'db>,
+    trait_env: TraitEnvId<'db>,
+    subst: &Substitution<'db>,
+    evidence: &Evidence<'db>,
+) -> bool {
+    let mut goal_vars = FxHashSet::default();
+    collect_pred_vars(db, goal, &mut goal_vars);
+    for given in trait_env.local_givens(db) {
+        collect_pred_vars(db, *given, &mut goal_vars);
+    }
+
+    let mut answer_vars = FxHashSet::default();
+    for (_, ty) in &subst.values {
+        collect_ty_vars(db, *ty, &mut answer_vars);
+    }
+    collect_evidence_vars(db, evidence, &mut answer_vars);
+
+    answer_vars.is_subset(&goal_vars)
 }

@@ -7,6 +7,7 @@ edition.workspace = true
 ena = { workspace = true }
 hir = { workspace = true }
 nameres = { workspace = true }
+num-bigint = { workspace = true }
 parser = { workspace = true }
 rustc-hash = { workspace = true }
 salsa = { workspace = true }
@@ -14,5 +15,6 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 dir-test = "0.4.1"
+proptest = { workspace = true }
 solcore-test-utils = { path = "../test-utils" }
 url = { workspace = true }

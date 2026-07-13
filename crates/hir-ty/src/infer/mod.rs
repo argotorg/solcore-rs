@@ -40,8 +40,8 @@ use crate::{
         self, BuiltinCoverageCtor, ConstructorOracle, CoverageCtor, CoveragePat, WitnessPat,
     },
     solver::{
-        DerivedClauseKind, Evidence, Solution, Substitution, TraitEnvId,
-        instance_soundness_diagnostics, solve_report,
+        DerivedClauseKind, Evidence, Solution, Substitution, TraitEnvId, collect_evidence_vars,
+        collect_pred_vars, collect_ty_vars, instance_soundness_diagnostics, solve_report,
     },
     trait_env_with_givens, type_alias_normalization_errors,
 };

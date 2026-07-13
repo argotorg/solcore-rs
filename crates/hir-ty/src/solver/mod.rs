@@ -93,10 +93,10 @@ pub use env::{
 use evidence::{apply_evidence, clause_evidence, solution_from_answers};
 use instance_facts::{InstanceFact, module_instance_facts};
 use r#match::{
-    InstantiatedClause, MatchSubst, collect_evidence_vars, collect_pred_vars, collect_ty_vars,
-    head_can_unify, instantiate_clause, match_head, max_pred_var, offset_pred_vars, ty_equal,
-    unify_ty,
+    InstantiatedClause, MatchSubst, head_can_unify, instantiate_clause, match_head, max_pred_var,
+    offset_pred_vars, ty_equal, unify_ty,
 };
+pub(crate) use r#match::{collect_evidence_vars, collect_pred_vars, collect_ty_vars};
 use module_lookup::{
     ident_text, module_for_def, scope_resolution_for_module_id, type_var_bindings, unique_modules,
     unique_preds, visible_class_modules,

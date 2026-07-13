@@ -1,4 +1,5 @@
 use super::*;
+use num_bigint::BigUint;
 
 impl<'db> InferCtx<'db> {
     pub(super) fn ensure_visible_pattern_coverage(
@@ -161,7 +162,7 @@ impl<'db> InferCtx<'db> {
                     .or(Some(CoveragePat::Wild))
             }
             PatKind::Lit(LitKind::Error) => None,
-            PatKind::Lit(lit) => Some(CoveragePat::Literal(Self::coverage_lit_key(&lit))),
+            PatKind::Lit(lit) => Some(self.coverage_lit_pat(&lit, expected)),
             PatKind::ComptimeLabel { .. } => Some(CoveragePat::Opaque),
             PatKind::Tuple { elems } => {
                 let expected = self.coverage_ty(expected);
@@ -551,14 +552,92 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn coverage_lit_key(lit: &LitKind) -> String {
+    fn coverage_lit_pat(&mut self, lit: &LitKind, expected: InferTy<'db>) -> CoveragePat<'db> {
         match lit {
-            LitKind::Number(value) => format!("number:{value}"),
-            LitKind::Hex(value) => format!("hex:{value}"),
-            LitKind::String(value) => format!("string:{value}"),
-            LitKind::Error => "error".to_owned(),
+            LitKind::Number(value) => self.numeric_coverage_lit_pat(value, 10, expected),
+            LitKind::Hex(value) => self.numeric_coverage_lit_pat(
+                value
+                    .strip_prefix("0x")
+                    .or_else(|| value.strip_prefix("0X"))
+                    .unwrap_or(value),
+                16,
+                expected,
+            ),
+            LitKind::String(value) => CoveragePat::Literal(format!("string:{value}")),
+            LitKind::Error => CoveragePat::Opaque,
         }
     }
+
+    fn numeric_coverage_lit_pat(
+        &mut self,
+        digits: &str,
+        radix: u32,
+        expected: InferTy<'db>,
+    ) -> CoveragePat<'db> {
+        let expected = self.coverage_ty(expected);
+        let canonical = match expected {
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Word),
+                args,
+            } if args.is_empty() => {
+                canonical_word_unsigned_integer(digits, radix).map(|value| format!("word:{value}"))
+            }
+            InferTy::Named {
+                ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Integer),
+                args,
+            } if args.is_empty() => canonical_exact_unsigned_integer(digits, radix)
+                .map(|value| format!("integer:{value}")),
+            _ => None,
+        };
+        CoveragePat::Literal(canonical.unwrap_or_else(|| raw_numeric_literal_key(digits, radix)))
+    }
+}
+
+/// Keeps duplicate detection for an identical source spelling when earlier
+/// errors leave the expected type unavailable, or when programmatically
+/// constructed malformed HIR cannot be normalized. The radix is part of the
+/// key, so this fallback never guesses that distinct representations have the
+/// same value.
+fn raw_numeric_literal_key(digits: &str, radix: u32) -> String {
+    format!("raw:{radix}:{digits}")
+}
+
+/// Converts an unsigned integer to its canonical 256-bit word value.
+/// HIR literals originate in the lexer, but returning `None` keeps this helper
+/// total for programmatically constructed HIR as well. Fixed limbs match
+/// backend word wrapping and keep work linear in the source spelling length.
+fn canonical_word_unsigned_integer(digits: &str, radix: u32) -> Option<String> {
+    if digits.is_empty() || !(2..=16).contains(&radix) {
+        return None;
+    }
+
+    let mut limbs = [0u32; 8];
+    for ch in digits.chars() {
+        let digit = ch.to_digit(radix)?;
+        let mut carry = u64::from(digit);
+        for limb in &mut limbs {
+            let value = u64::from(*limb) * u64::from(radix) + carry;
+            *limb = value as u32;
+            carry = value >> 32;
+        }
+        let _ = carry;
+    }
+
+    let Some(high_index) = limbs.iter().rposition(|limb| *limb != 0) else {
+        return Some("0".to_owned());
+    };
+    let mut canonical = format!("{:x}", limbs[high_index]);
+    for limb in limbs[..high_index].iter().rev() {
+        canonical.push_str(&format!("{limb:08x}"));
+    }
+    Some(canonical)
+}
+
+fn canonical_exact_unsigned_integer(digits: &str, radix: u32) -> Option<String> {
+    if digits.is_empty() || !(2..=16).contains(&radix) {
+        return None;
+    }
+    BigUint::parse_bytes(digits.as_bytes(), radix).map(|value| value.to_str_radix(16))
 }
 
 impl<'db> ConstructorOracle<'db, InferTy<'db>> for InferCtx<'db> {
@@ -568,5 +647,56 @@ impl<'db> ConstructorOracle<'db, InferTy<'db>> for InferCtx<'db> {
 
     fn fields(&mut self, ctor: &CoverageCtor<'db>, ty: InferTy<'db>) -> Option<Vec<InferTy<'db>>> {
         self.field_tys_for_ctor(ctor, ty)
+    }
+}
+
+#[cfg(test)]
+mod literal_key_tests {
+    use num_bigint::BigUint;
+
+    use super::{
+        canonical_exact_unsigned_integer, canonical_word_unsigned_integer, raw_numeric_literal_key,
+    };
+
+    #[test]
+    fn numeric_literal_canonicalization_is_radix_and_width_independent() {
+        const TWO_256: &str =
+            "115792089237316195423570985008687907853269984665640564039457584007913129639936";
+        assert_eq!(
+            canonical_word_unsigned_integer("00010", 10),
+            canonical_word_unsigned_integer("000A", 16)
+        );
+        assert_eq!(
+            canonical_word_unsigned_integer("340282366920938463463374607431768211455", 10),
+            Some("ffffffffffffffffffffffffffffffff".to_owned())
+        );
+        assert_eq!(
+            canonical_word_unsigned_integer(TWO_256, 10),
+            canonical_word_unsigned_integer("0", 16)
+        );
+        assert_eq!(
+            canonical_exact_unsigned_integer("00010", 10),
+            canonical_exact_unsigned_integer("000A", 16)
+        );
+        assert_ne!(
+            canonical_exact_unsigned_integer(TWO_256, 10),
+            canonical_exact_unsigned_integer("0", 16)
+        );
+        let wide = BigUint::from(1u8) << 8_192usize;
+        let wide_decimal = wide.to_str_radix(10);
+        let wide_hex = wide.to_str_radix(16);
+        assert_eq!(
+            canonical_exact_unsigned_integer(&wide_decimal, 10),
+            canonical_exact_unsigned_integer(&wide_hex, 16)
+        );
+        assert_eq!(raw_numeric_literal_key("0010", 10), "raw:10:0010");
+        assert_ne!(
+            raw_numeric_literal_key("0010", 10),
+            raw_numeric_literal_key("10", 10)
+        );
+        assert_ne!(
+            raw_numeric_literal_key("10", 10),
+            raw_numeric_literal_key("a", 16)
+        );
     }
 }

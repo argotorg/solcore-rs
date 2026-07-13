@@ -634,7 +634,7 @@ fn occurs_in_ty<'db>(db: &'db dyn Db, var: u32, ty: Ty<'db>) -> bool {
     }
 }
 
-pub(super) fn collect_pred_vars<'db>(db: &'db dyn Db, pred: Pred<'db>, vars: &mut FxHashSet<u32>) {
+pub(crate) fn collect_pred_vars<'db>(db: &'db dyn Db, pred: Pred<'db>, vars: &mut FxHashSet<u32>) {
     match pred.kind(db) {
         PredKind::InClass { main, args, .. } => {
             collect_ty_vars(db, *main, vars);
@@ -650,7 +650,7 @@ pub(super) fn collect_pred_vars<'db>(db: &'db dyn Db, pred: Pred<'db>, vars: &mu
     }
 }
 
-pub(super) fn collect_evidence_vars<'db>(
+pub(crate) fn collect_evidence_vars<'db>(
     db: &'db dyn Db,
     evidence: &Evidence<'db>,
     vars: &mut FxHashSet<u32>,
@@ -682,7 +682,7 @@ pub(super) fn collect_evidence_vars<'db>(
     }
 }
 
-pub(super) fn collect_ty_vars<'db>(db: &'db dyn Db, ty: Ty<'db>, vars: &mut FxHashSet<u32>) {
+pub(crate) fn collect_ty_vars<'db>(db: &'db dyn Db, ty: Ty<'db>, vars: &mut FxHashSet<u32>) {
     match ty.kind(db) {
         TyKind::BoundVar(var) => {
             vars.insert(var.index);
