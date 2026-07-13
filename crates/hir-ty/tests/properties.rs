@@ -31,6 +31,27 @@ fn generated_program(literal: u64, depth: usize, result_kind: u8) -> String {
     source
 }
 
+#[test]
+fn frontend_test_db_invalidates_a_query_started_before_file_seeding() {
+    let mut db = TestDb::default();
+    let key = nameres::ModuleKey {
+        library: nameres::LibraryId::Main,
+        logical_path: vec!["main".to_owned()],
+    };
+    {
+        let module = nameres::module_id_from_key(&db, &key);
+        assert!(nameres::module_diagnostics(&db, module).is_empty());
+    }
+
+    let loaded = load_main_source(&mut db, "function main( {\n");
+    assert_eq!(loaded, key);
+    let module = nameres::module_id_from_key(&db, &key);
+    assert!(
+        !nameres::module_diagnostics(&db, module).is_empty(),
+        "the pre-seed empty result must be invalidated when the file snapshot changes"
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 

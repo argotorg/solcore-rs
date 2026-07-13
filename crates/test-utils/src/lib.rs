@@ -39,12 +39,40 @@ pub trait FrontendTestDb: hir::Db + parser::Db + nameres::Db + Sized {
 macro_rules! define_frontend_test_db {
     ($name:ident, $typeck_crate:ident) => {
         #[salsa::db]
-        #[derive(Clone, Default)]
+        #[derive(Clone)]
         struct $name {
             storage: $crate::reexports::salsa::Storage<Self>,
             module_tree: Option<$crate::reexports::nameres::ModuleTree>,
             module_fs_snapshot: Option<$crate::reexports::nameres::ModuleFsSnapshot>,
             module_file_snapshot: Option<$crate::reexports::nameres::ModuleFileSnapshot>,
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                let mut db = Self {
+                    storage: $crate::reexports::salsa::Storage::default(),
+                    module_tree: None,
+                    module_fs_snapshot: None,
+                    module_file_snapshot: None,
+                };
+                db.module_tree = Some($crate::reexports::nameres::ModuleTree::new(
+                    &db,
+                    std::path::PathBuf::from("/main"),
+                    std::path::PathBuf::from("/std"),
+                    std::collections::BTreeMap::new(),
+                ));
+                db.module_fs_snapshot = Some($crate::reexports::nameres::ModuleFsSnapshot::new(
+                    &db,
+                    std::collections::BTreeSet::new(),
+                    std::collections::BTreeMap::new(),
+                ));
+                db.module_file_snapshot =
+                    Some($crate::reexports::nameres::ModuleFileSnapshot::new(
+                        &db,
+                        std::collections::BTreeMap::new(),
+                    ));
+                db
+            }
         }
 
         #[salsa::db]
@@ -66,33 +94,18 @@ macro_rules! define_frontend_test_db {
         #[salsa::db]
         impl $crate::reexports::nameres::Db for $name {
             fn module_tree(&self) -> $crate::reexports::nameres::ModuleTree {
-                self.module_tree.unwrap_or_else(|| {
-                    $crate::reexports::nameres::ModuleTree::new(
-                        self,
-                        std::path::PathBuf::from("/main"),
-                        std::path::PathBuf::from("/std"),
-                        std::collections::BTreeMap::new(),
-                    )
-                })
+                self.module_tree
+                    .expect("frontend test database module tree is initialized")
             }
 
             fn module_fs_snapshot(&self) -> $crate::reexports::nameres::ModuleFsSnapshot {
-                self.module_fs_snapshot.unwrap_or_else(|| {
-                    $crate::reexports::nameres::ModuleFsSnapshot::new(
-                        self,
-                        std::collections::BTreeSet::new(),
-                        std::collections::BTreeMap::new(),
-                    )
-                })
+                self.module_fs_snapshot
+                    .expect("frontend test database filesystem snapshot is initialized")
             }
 
             fn module_file_snapshot(&self) -> $crate::reexports::nameres::ModuleFileSnapshot {
-                self.module_file_snapshot.unwrap_or_else(|| {
-                    $crate::reexports::nameres::ModuleFileSnapshot::new(
-                        self,
-                        std::collections::BTreeMap::new(),
-                    )
-                })
+                self.module_file_snapshot
+                    .expect("frontend test database file snapshot is initialized")
             }
 
             fn module_file<'db>(
@@ -111,14 +124,40 @@ macro_rules! define_frontend_test_db {
 
         impl $crate::FrontendTestDb for $name {
             fn set_module_tree(&mut self, tree: $crate::reexports::nameres::ModuleTree) {
-                self.module_tree = Some(tree);
+                use $crate::reexports::salsa::Setter as _;
+                let main_root = tree.main_root(self).clone();
+                let std_root = tree.std_root(self).clone();
+                let external_roots = tree.external_roots(self).clone();
+                let current = self
+                    .module_tree
+                    .expect("frontend test database module tree is initialized");
+                if current.main_root(self) != &main_root {
+                    current.set_main_root(self).to(main_root);
+                }
+                if current.std_root(self) != &std_root {
+                    current.set_std_root(self).to(std_root);
+                }
+                if current.external_roots(self) != &external_roots {
+                    current.set_external_roots(self).to(external_roots);
+                }
             }
 
             fn set_module_fs_snapshot(
                 &mut self,
                 snapshot: $crate::reexports::nameres::ModuleFsSnapshot,
             ) {
-                self.module_fs_snapshot = Some(snapshot);
+                use $crate::reexports::salsa::Setter as _;
+                let existing_files = snapshot.existing_files(self).clone();
+                let sibling_stems = snapshot.sibling_stems(self).clone();
+                let current = self
+                    .module_fs_snapshot
+                    .expect("frontend test database filesystem snapshot is initialized");
+                if current.existing_files(self) != &existing_files {
+                    current.set_existing_files(self).to(existing_files);
+                }
+                if current.sibling_stems(self) != &sibling_stems {
+                    current.set_sibling_stems(self).to(sibling_stems);
+                }
             }
 
             fn insert_module_file(
@@ -127,25 +166,21 @@ macro_rules! define_frontend_test_db {
                 file: $crate::reexports::hir::input::SourceFile,
             ) {
                 use $crate::reexports::salsa::Setter as _;
-                let mut files = self
+                let snapshot = self
                     .module_file_snapshot
-                    .map(|snapshot| snapshot.files(self).clone())
-                    .unwrap_or_default();
+                    .expect("frontend test database file snapshot is initialized");
+                let mut files = snapshot.files(self).clone();
                 if files.insert(key, file) == Some(file) {
                     return;
                 }
-                if let Some(snapshot) = self.module_file_snapshot {
-                    snapshot.set_files(self).to(files);
-                } else {
-                    self.module_file_snapshot = Some(
-                        $crate::reexports::nameres::ModuleFileSnapshot::new(self, files),
-                    );
-                }
+                snapshot.set_files(self).to(files);
             }
 
             fn contains_module_file(&self, key: &$crate::reexports::nameres::ModuleKey) -> bool {
                 self.module_file_snapshot
-                    .is_some_and(|snapshot| snapshot.files(self).contains_key(key))
+                    .expect("frontend test database file snapshot is initialized")
+                    .files(self)
+                    .contains_key(key)
             }
 
             fn module_file_for_key(
@@ -153,7 +188,10 @@ macro_rules! define_frontend_test_db {
                 key: &$crate::reexports::nameres::ModuleKey,
             ) -> Option<$crate::reexports::hir::input::SourceFile> {
                 self.module_file_snapshot
-                    .and_then(|snapshot| snapshot.files(self).get(key).copied())
+                    .expect("frontend test database file snapshot is initialized")
+                    .files(self)
+                    .get(key)
+                    .copied()
             }
         }
     };

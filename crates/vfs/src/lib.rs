@@ -76,6 +76,7 @@ pub struct AnalysisHost {
     module_file_snapshot: Option<ModuleFileSnapshot>,
     module_files: BTreeMap<ModuleKey, SourceFile>,
     files: FxHashMap<PathBuf, SourceFile>,
+    tombstones: FxHashMap<PathBuf, SourceFile>,
 }
 
 impl AnalysisHost {
@@ -92,6 +93,7 @@ impl AnalysisHost {
             module_file_snapshot: None,
             module_files: BTreeMap::new(),
             files: FxHashMap::default(),
+            tombstones: FxHashMap::default(),
         };
         host.initialize_roots(BTreeMap::new());
         host.module_file_snapshot = Some(ModuleFileSnapshot::new(&host, BTreeMap::new()));
@@ -226,6 +228,12 @@ impl AnalysisHost {
                     .to(Some(contents));
             }
             (file, false)
+        } else if let Some(file) = self.tombstones.remove(&path) {
+            file.set_content(self)
+                .with_durability(durability)
+                .to(Some(contents));
+            self.files.insert(path.clone(), file);
+            (file, true)
         } else {
             let file = source_file_for_virtual_path(self, &path, contents, durability);
             self.files.insert(path.clone(), file);
@@ -246,6 +254,7 @@ impl AnalysisHost {
         let removed_file = self.files.remove(&path);
         let file_set_changed = if let Some(file) = removed_file {
             file.set_content(self).to(None);
+            self.tombstones.insert(path.clone(), file);
             true
         } else {
             false
@@ -1183,6 +1192,24 @@ mod tests {
     }
 
     #[test]
+    fn removed_virtual_file_is_revived_with_the_same_salsa_identity() {
+        let source = "function main() -> word { return 1; }\n";
+        let mut host = AnalysisHost::new();
+        let path = main_path("main.solc");
+        let original = host.set_virtual_file(path.clone(), source.to_owned());
+        let _ = parser::parse_file_to_hir(&host, original);
+
+        host.remove_virtual_file(path.clone());
+        assert!(host.source_file(&path).is_none());
+        assert!(original.content(&host).is_none());
+
+        let revived = host.set_virtual_file(path.clone(), source.to_owned());
+        assert_eq!(revived, original);
+        assert_eq!(revived.content(&host).as_deref(), Some(source));
+        assert!(!host.tombstones.contains_key(&path));
+    }
+
+    #[test]
     fn identical_virtual_and_workspace_updates_do_not_reexecute_queries() {
         let source = "function main() -> word { return 1; }\n";
         let (mut host, executed) = host_with_execution_log();
@@ -1330,5 +1357,29 @@ mod tests {
             file.url(workspace.db()).as_str(),
             "file:///main/nested/%E6%95%B0%20%E5%AD%A6%231.solc"
         );
+    }
+
+    #[test]
+    #[ignore = "pathology workload run by scripts/check-compile-performance.sh"]
+    fn incremental_diagnostics_scaling_workload() {
+        fn source(revision: usize) -> String {
+            let mut source = String::new();
+            for index in 0..256 {
+                source.push_str(&format!(
+                    "function value{index}(x: word) -> word {{ return x; }}\n"
+                ));
+            }
+            source.push_str(&format!(
+                "function main() -> word {{ return value255({revision}); }}\n"
+            ));
+            source
+        }
+
+        let mut workspace = workspace_with_main(&source(0));
+        assert!(workspace.diagnostics().is_empty());
+        for revision in 1..=64 {
+            workspace.set_file("main.solc", source(revision));
+            assert!(workspace.diagnostics().is_empty(), "revision {revision}");
+        }
     }
 }
