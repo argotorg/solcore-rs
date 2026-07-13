@@ -485,6 +485,88 @@ contract C {
 }
 
 #[test]
+fn same_named_adts_in_different_modules_get_distinct_generic_symbols() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        PathBuf::from("/std"),
+        BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(db, [main_root.as_path()]));
+
+    let modules = [
+        (
+            "common.solc",
+            r#"
+export { id };
+forall a . function id(x:a) -> a { return x; }
+"#,
+        ),
+        (
+            "left.solc",
+            r#"
+import common.{id};
+export { left };
+data Foo = Foo(word);
+function left(x:word) -> word {
+  let value : Foo = id(Foo(x));
+  match value { | Foo(result) => return result; }
+}
+"#,
+        ),
+        (
+            "right.solc",
+            r#"
+import common.{id};
+export { right };
+data Foo = Foo(word);
+function right(x:word) -> word {
+  let value : Foo = id(Foo(x));
+  match value { | Foo(result) => return result; }
+}
+"#,
+        ),
+        (
+            "main.solc",
+            r#"
+import left.{left};
+import right.{right};
+contract C {
+  public function main(x:word) -> word {
+    let unused = right(x);
+    return left(x);
+  }
+}
+"#,
+        ),
+    ];
+
+    let mut main_file = None;
+    for (name, src) in modules {
+        let path = main_root.join(name);
+        let file = source_file_at_path(db, &path, src);
+        let key = module_key_for_path(LibraryId::Main, &main_root, &path).unwrap();
+        db.insert_module_file(key, file);
+        if name == "main.solc" {
+            main_file = Some(file);
+        }
+    }
+
+    let module = parse_file_to_hir(db, main_file.expect("main module")).module(db);
+    let output = specialize_module(db, module, SpecializeOptions::default());
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let generic_names = function_names(&output)
+        .into_iter()
+        .filter(|name| name.contains("common_id_") && name.contains("$Foo_"))
+        .collect::<Vec<_>>();
+    assert_eq!(generic_names.len(), 2, "{generic_names:?}");
+    assert_ne!(generic_names[0], generic_names[1], "{generic_names:?}");
+}
+
+#[test]
 fn derived_generic_specialization_uses_the_imported_adt_definition_module() {
     let db = Box::leak(Box::new(TestDb::default()));
     let main_root = PathBuf::from("/main");
@@ -1514,6 +1596,96 @@ fn overloaded_binary_operators_specialize_through_instances() {
         Some("99".to_owned()),
         "visible boolean functions"
     );
+}
+
+#[test]
+fn every_audited_operator_uses_its_selected_semantics() {
+    for (label, class, method, operator, expected) in [
+        ("Div", "Div", "div", "/", "91"),
+        ("Mod", "Mod", "mod", "%", "92"),
+        ("BitAnd", "BitAnd", "band", "&", "93"),
+        ("BitXor", "BitXor", "bxor", "^", "94"),
+        ("BitOr", "BitOr", "bor", "|", "95"),
+    ] {
+        let src = format!(
+            r#"
+import std.{{*}};
+data Weird = Weird(word);
+instance Weird:{class} {{
+  function {method}(x:Weird, y:Weird) -> Weird {{ return Weird({expected}); }}
+}}
+contract C {{
+  public function main() -> word {{
+    let result : Weird = Weird(8) {operator} Weird(3);
+    match result {{ | Weird(value) => return value; }}
+  }}
+}}
+"#
+        );
+        let output = specialize_src_with_std(&src);
+        assert_eq!(output.diagnostics, Vec::new(), "{label}");
+        assert_eq!(
+            main_return_number(&output),
+            Some(expected.to_owned()),
+            "{label}"
+        );
+    }
+
+    let not_eq = specialize_src_with_std(
+        r#"
+import std.{*};
+data Weird = Weird(word);
+instance Weird:Eq {
+  function eq(x:Weird, y:Weird) -> bool { return true; }
+}
+contract C {
+  public function main() -> word {
+    if (Weird(1) != Weird(2)) { return 0; } else { return 96; }
+  }
+}
+"#,
+    );
+    assert_eq!(not_eq.diagnostics, Vec::new(), "NotEq");
+    assert_eq!(main_return_number(&not_eq), Some("96".to_owned()), "NotEq");
+
+    for (label, definition, expression, expected) in [
+        (
+            "And",
+            "function and(x:bool, y:bool) -> bool { return false; }",
+            "true && true",
+            "0",
+        ),
+        (
+            "Or",
+            "function or(x:bool, y:bool) -> bool { return false; }",
+            "false || true",
+            "0",
+        ),
+        (
+            "Not",
+            "function not(x:bool) -> bool { return true; }",
+            "!true",
+            "97",
+        ),
+    ] {
+        let src = format!(
+            r#"
+{definition}
+contract C {{
+  public function main() -> word {{
+    if ({expression}) {{ return 97; }} else {{ return 0; }}
+  }}
+}}
+"#
+        );
+        let (_db, output) = specialize_src(&src);
+        assert_eq!(output.diagnostics, Vec::new(), "{label}");
+        assert_eq!(
+            main_return_number(&output),
+            Some(expected.to_owned()),
+            "{label}"
+        );
+    }
 }
 
 #[test]
