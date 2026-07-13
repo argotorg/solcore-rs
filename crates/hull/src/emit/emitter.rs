@@ -61,6 +61,12 @@ impl<'db> Emitter<'db> {
         let program = if contracts.is_empty() {
             Program {
                 span,
+                entry_points: module
+                    .entry_points
+                    .iter()
+                    .cloned()
+                    .map(Into::into)
+                    .collect(),
                 functions: functions.into_values().collect(),
                 objects: Vec::new(),
             }
@@ -72,6 +78,7 @@ impl<'db> Emitter<'db> {
                 .collect();
             Program {
                 span,
+                entry_points: Vec::new(),
                 functions: Vec::new(),
                 objects,
             }

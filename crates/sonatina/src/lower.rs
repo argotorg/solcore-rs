@@ -239,7 +239,7 @@ impl<'db> Translator<'db> {
                 .map(|arg| self.lower_ty(&arg.ty))
                 .collect::<Result<Vec<_>, _>>()?;
             let ret = self.lower_ty(&function.ret)?;
-            let symbol = symbol(scope, function.name.as_str());
+            let symbol = function_symbol(scope, function.name.as_str());
             let signature = if ret == Type::Unit {
                 Signature::new_unit(&symbol, Linkage::Private, &args)
             } else {
@@ -253,7 +253,7 @@ impl<'db> Translator<'db> {
             self.function_returns
                 .insert(key(scope, function.name.as_str()), function.ret.clone());
         }
-        let entry_symbol = symbol(scope, "entry");
+        let entry_symbol = entry_symbol(scope);
         let entry = self
             .builder
             .declare_function(Signature::new_unit(&entry_symbol, Linkage::Public, &[]))
@@ -2350,8 +2350,30 @@ fn key(scope: &str, name: &str) -> String {
     format!("{scope}::{name}")
 }
 
-fn symbol(scope: &str, name: &str) -> String {
-    format!("{}_{}", sanitize(scope), sanitize(name))
+fn function_symbol(scope: &str, name: &str) -> String {
+    format!(
+        "solcore_fn_{}_{}",
+        encode_symbol_component(scope),
+        encode_symbol_component(name)
+    )
+}
+
+fn entry_symbol(scope: &str) -> String {
+    format!("solcore_entry_{}", encode_symbol_component(scope))
+}
+
+fn encode_symbol_component(source: &str) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = format!("{}_", source.len());
+    for byte in source.bytes() {
+        if byte.is_ascii_alphanumeric() {
+            out.push(char::from(byte));
+        } else {
+            write!(&mut out, "_{byte:02x}").expect("writing to String cannot fail");
+        }
+    }
+    out
 }
 
 fn sanitize(source: &str) -> String {

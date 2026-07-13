@@ -385,6 +385,7 @@ fn contract_program(
     };
     Ok(Program {
         span: program.span,
+        entry_points: Vec::new(),
         functions: Vec::new(),
         objects: vec![object],
     })

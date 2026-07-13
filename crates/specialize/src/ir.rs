@@ -142,6 +142,8 @@ pub enum MonoCallOrigin<'db> {
 pub struct MonoModule<'db> {
     pub module: DefId<'db>,
     pub frontend_desugar: FrontendDesugarPlan<'db>,
+    /// Specialized function names that form this compilation unit's external roots.
+    pub entry_points: Vec<String>,
     pub items: Vec<MonoItem<'db>>,
 }
 

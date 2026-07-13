@@ -49,6 +49,7 @@ fn identity_function_snapshot() {
     let word = Ty::word(sp);
     let program = Program {
         span: sp,
+        entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
             name: "id".into(),
@@ -82,6 +83,7 @@ fn maybe_option_snapshot() {
     let alt_ty = Ty::word(sp);
     let program = Program {
         span: sp,
+        entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
             name: "maybe$Word".into(),
@@ -196,6 +198,7 @@ fn color_enum_snapshot() {
     let tail = Ty::sum(sp, Ty::unit(sp), Ty::unit(sp));
     let program = Program {
         span: sp,
+        entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
             name: "fromEnum".into(),
@@ -371,6 +374,7 @@ fn add1_contract_object_snapshot() {
     };
     let program = Program {
         span: sp,
+        entry_points: Vec::new(),
         functions: Vec::new(),
         objects: vec![Object {
             span: sp,
@@ -426,6 +430,7 @@ fn for_condition_must_be_bool_like() {
     let sp = test_span(&db);
     let program = Program {
         span: sp,
+        entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
             name: "main".into(),
@@ -461,6 +466,7 @@ fn assembly_checker_rejects_bad_assignments_and_usr_call_arity() {
     let bool_sum = Ty::sum(sp, Ty::unit(sp), Ty::unit(sp));
     let program = Program {
         span: sp,
+        entry_points: Vec::new(),
         functions: vec![
             Function {
                 span: sp,
@@ -578,6 +584,7 @@ fn assembly_checker_rejects_multi_return_arity_mismatch() {
     let word = Ty::word(sp);
     let program = Program {
         span: sp,
+        entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
             name: "main".into(),
@@ -657,6 +664,7 @@ fn terminal_yul_return_satisfies_terminator_analysis() {
     let sp = test_span(&db);
     let program = Program {
         span: sp,
+        entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
             name: "main".into(),
@@ -684,6 +692,7 @@ fn expression_type_annotations_must_match_inferred_type() {
     let word = Ty::word(sp);
     let program = Program {
         span: sp,
+        entry_points: Vec::new(),
         functions: vec![Function {
             span: sp,
             name: "main".into(),

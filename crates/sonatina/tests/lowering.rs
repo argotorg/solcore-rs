@@ -60,6 +60,7 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
     let sum = Ty::sum(span, Ty::unit(span), pair.clone());
     let program = Program {
         span,
+        entry_points: Vec::new(),
         functions: vec![
             Function {
                 span,
@@ -126,6 +127,41 @@ fn lowers_word_bool_and_structural_aggregates_to_verified_ir() {
 }
 
 #[test]
+fn hull_function_symbols_are_injective_and_separate_from_section_entries() {
+    let db = TestDb::default();
+    let span = test_span(&db);
+    let unit = Ty::unit(span);
+    let function = |name: &'static str| Function {
+        span,
+        name: name.into(),
+        args: Vec::new(),
+        ret: unit.clone(),
+        body: vec![Stmt {
+            span,
+            kind: StmtKind::Return(Expr::unit(span)),
+        }],
+    };
+    let program = Program {
+        span,
+        entry_points: Vec::new(),
+        functions: vec![function("foo$bar"), function("foo_bar"), function("entry")],
+        objects: Vec::new(),
+    };
+
+    let ir = render_hull_program(&db, &program).expect("collision-free Sonatina lowering");
+    assert!(
+        ir.contains("solcore_fn_12_root_2eruntime_7_foo_24bar"),
+        "{ir}"
+    );
+    assert!(
+        ir.contains("solcore_fn_12_root_2eruntime_7_foo_5fbar"),
+        "{ir}"
+    );
+    assert!(ir.contains("solcore_fn_12_root_2eruntime_5_entry"), "{ir}");
+    assert!(ir.contains("solcore_entry_12_root_2eruntime"), "{ir}");
+}
+
+#[test]
 fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
     let db = TestDb::default();
     let span = test_span(&db);
@@ -158,6 +194,7 @@ fn lowers_direct_nary_injections_matches_and_terminal_builtins() {
     };
     let program = Program {
         span,
+        entry_points: Vec::new(),
         functions: vec![
             Function {
                 span,

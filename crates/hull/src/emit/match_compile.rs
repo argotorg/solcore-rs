@@ -1079,21 +1079,8 @@ fn hull_lit_pat(lit: &LitKind) -> PatKind {
 
 fn wrap_word_lit_kind(lit: &LitKind) -> LitKind {
     match lit {
-        LitKind::Number(value) => {
-            let wrapped = wrap_lit_text(value);
-            if wrapped == value.as_str() {
-                lit.clone()
-            } else {
-                LitKind::Number(wrapped)
-            }
-        }
-        LitKind::Hex(value) => {
-            let wrapped = wrap_lit_text(value);
-            if wrapped == value.as_str() {
-                lit.clone()
-            } else {
-                LitKind::Number(wrapped)
-            }
+        LitKind::Number(value) | LitKind::Hex(value) => {
+            LitKind::Number(canonical_word_literal(value).unwrap_or_else(|_| wrap_lit_text(value)))
         }
         LitKind::String(_) | LitKind::Error => lit.clone(),
     }

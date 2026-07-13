@@ -1,34 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ir::{
-    MonoCallOrigin, MonoEntry, MonoExpr, MonoExprKind, MonoItem, MonoModule, MonoPat, MonoStmt,
+    MonoCallOrigin, MonoExpr, MonoExprKind, MonoItem, MonoModule, MonoPat, MonoStmt,
     visit::{Visitor, walk_expr},
 };
 
 pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> MonoModule<'db> {
-    let mut roots = BTreeSet::new();
-    for item in &module.items {
-        if let MonoItem::Contract(contract) = item {
-            for entry in &contract.entries {
-                let specialized = match entry {
-                    MonoEntry::SelectorMethod { specialized, .. }
-                    | MonoEntry::DeploymentMain { specialized, .. }
-                    | MonoEntry::Fallback { specialized, .. }
-                    | MonoEntry::RuntimeMain { specialized, .. } => specialized,
-                };
-                roots.insert(specialized.clone());
-            }
-        }
-    }
-    if roots.is_empty() {
-        for item in &module.items {
-            if let MonoItem::Function(function) = item
-                && function.name == "main"
-            {
-                roots.insert(function.name.clone());
-            }
-        }
-    }
     let functions = module
         .items
         .iter()
@@ -38,7 +15,7 @@ pub(super) fn eliminate_dead_functions<'db>(mut module: MonoModule<'db>) -> Mono
         })
         .collect::<BTreeMap<_, _>>();
     let mut used = BTreeSet::new();
-    let mut work = roots.into_iter().collect::<Vec<_>>();
+    let mut work = module.entry_points.clone();
     while let Some(name) = work.pop() {
         if !used.insert(name.clone()) {
             continue;

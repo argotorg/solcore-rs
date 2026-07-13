@@ -7,10 +7,11 @@ object "OutputDeploy" {
   }
   object "Output" {
     code {
-      function usr$main(src$x_0) -> gen$result_1 {
-        gen$result_1 := src$x_0
+      function usr$main() -> gen$result_0 {
+        gen$result_0 := 42
         leave
       }
+      let _mainresult := usr$main()
       {
         mstore(0, _mainresult)
         return(0, 32)

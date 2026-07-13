@@ -704,6 +704,42 @@ contract C {{
 }
 
 #[test]
+fn value_equal_word_patterns_share_one_canonical_switch_branch() {
+    let hull = pretty_src_hull_with_std(
+        "equal_literal_spellings",
+        r#"
+contract C {
+  function pick(x : word) -> word {
+    match x {
+      | 0x2a => return 111;
+      | 0042 => return 222;
+      | _ => return 333;
+    }
+  }
+
+  function main() -> word {
+    let x : word = 0;
+    assembly { x := calldataload(0) }
+    return pick(x);
+  }
+}
+"#,
+    );
+
+    let pick = hull_function(&hull, "main_C_pick_");
+    assert_eq!(
+        pick.lines()
+            .filter(|line| line.trim_start().starts_with("42 "))
+            .count(),
+        1,
+        "{pick}"
+    );
+    assert!(pick.contains("return 111"), "{pick}");
+    assert!(!pick.contains("return 222"), "{pick}");
+    assert!(pick.contains("return 333"), "{pick}");
+}
+
+#[test]
 fn evaluator_does_not_fold_past_unknown_return() {
     let hull = pretty_src_hull_with_std(
         "eval_return_unknown_abort",
@@ -881,7 +917,8 @@ contract StorageIndexCompound {
         compound_main,
         &[
             "storage_store_storage_index_slot_3 := __solcore_storage_hash2(1, main_StorageIndexCompound_next_",
-            "storage_store_storage_index_4 := add(sload(storage_store_storage_index_slot_3), main_StorageIndexCompound_next_",
+            "storage_store_storage_index_4 := Add_add_",
+            "(sload(storage_store_storage_index_slot_3), main_StorageIndexCompound_next_",
             "sstore(storage_store_storage_index_slot_3, storage_store_storage_index_4)",
         ],
     );

@@ -50,7 +50,36 @@ impl<'db> Translator<'db> {
         program: &HullProgram<'db>,
     ) -> Result<Program, TranslationError> {
         if program.objects.is_empty() {
+            let [entry] = program.entry_points.as_slice() else {
+                return Err(TranslationError::new(format!(
+                    "object-less Hull program must have exactly one entry point, found {}",
+                    program.entry_points.len()
+                )));
+            };
+            let entry_function = program
+                .functions
+                .iter()
+                .find(|function| function.name == *entry)
+                .ok_or_else(|| {
+                    TranslationError::new(format!(
+                        "object-less Hull entry `{entry}` has no function body"
+                    ))
+                })?;
+            if !entry_function.args.is_empty() {
+                return Err(TranslationError::new(format!(
+                    "object-less Hull entry `{entry}` must not take arguments"
+                )));
+            }
+            if size_of_ty(&entry_function.ret)? != 1 {
+                return Err(TranslationError::new(format!(
+                    "object-less Hull entry `{entry}` must return exactly one stack word"
+                )));
+            }
             let mut code = self.translate_code_parts(&program.functions, &[])?;
+            code.stmts.push(Stmt::Let {
+                names: vec!["_mainresult".into()],
+                init: Some(Expr::call(yul_fun_name(entry.as_str()), Vec::new())),
+            });
             code.stmts.extend(main_result_return_block());
             return Ok(Program::single_object(Object {
                 name: "OutputDeploy".into(),

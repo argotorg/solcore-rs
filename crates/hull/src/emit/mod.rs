@@ -34,7 +34,7 @@ use crate::{
         StmtKind, Ty, TyKind,
     },
     scope_stack::ScopeStack,
-    word::wrap_word_literal,
+    word::{canonical_word_literal, wrap_word_literal},
 };
 
 mod contract;

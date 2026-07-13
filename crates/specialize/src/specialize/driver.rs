@@ -134,6 +134,10 @@ impl<'db> Driver<'db> {
 
     pub(super) fn run(&mut self) -> SpecializeOutput<'db> {
         let (contracts, roots) = self.collect_roots();
+        let root_names = roots
+            .iter()
+            .map(|root| root.base_name.clone())
+            .collect::<Vec<_>>();
         for root in roots {
             self.enqueue(root, 0);
         }
@@ -162,6 +166,7 @@ impl<'db> Driver<'db> {
         let module = MonoModule {
             module: self.module.def_id_value(self.db),
             frontend_desugar: frontend_desugar_plan(self.db, self.module),
+            entry_points: root_names,
             items,
         };
         let (mut module, mut eval_diagnostics) = evaluate_module(

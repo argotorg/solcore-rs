@@ -101,7 +101,10 @@ impl Default for SpecializeOptions {
             max_instantiations: 2048,
             max_depth: 128,
             max_type_nodes: 4096,
-            eval_fuel: 256,
+            // This is a per-emitted-function work budget. It must accommodate
+            // the canonical std dispatch pipeline while still bounding
+            // exponential pure-call fan-out.
+            eval_fuel: 4096,
         }
     }
 }

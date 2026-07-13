@@ -2050,6 +2050,18 @@ fn assignment_lhs_root_is_not_substituted() {
 fn compound_assignment_invalidates_lhs_root() {
     let (_db, output) = specialize_src(
         r#"
+forall t . class t:Add {
+  function add(l:t, r:t) -> t;
+}
+
+instance word:Add {
+  function add(l:word, r:word) -> word {
+    let result : word;
+    assembly { result := sload(0) }
+    return result;
+  }
+}
+
 contract C {
   public function main() -> word {
     let x : word = 1;
@@ -2780,4 +2792,63 @@ contract C {
         })
     });
     assert!(cond_is_residual, "{:?}", output.module);
+}
+
+#[test]
+fn non_contract_main_survives_dead_function_elimination_after_name_mangling() {
+    let (_db, output) = specialize_src(
+        r#"
+function answer() -> word { return 42; }
+function main() -> word { return answer(); }
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(
+        main_return_number(&output).as_deref(),
+        Some("42"),
+        "{:?}",
+        output.module
+    );
+    assert!(
+        function_names(&output)
+            .iter()
+            .any(|name| name.contains("_main_d")),
+        "{:?}",
+        output.module
+    );
+}
+
+#[test]
+fn evaluator_fuel_bounds_total_inline_fanout_work() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let module = parse_module(
+        db,
+        r#"
+function g2() -> word { return 1; }
+function g1() -> word { return g2() + g2(); }
+function g0() -> word { return g1() + g1(); }
+
+contract C {
+  function main() -> word { return g0(); }
+}
+"#,
+    );
+    let output = specialize_module(
+        db,
+        module,
+        SpecializeOptions {
+            eval_fuel: 3,
+            ..SpecializeOptions::default()
+        },
+    );
+
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic.kind,
+            SpecializeDiagnosticKind::ReductionFuelExhausted { limit: 3, .. }
+        )),
+        "{:?}",
+        output.diagnostics
+    );
 }

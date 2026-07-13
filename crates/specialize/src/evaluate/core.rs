@@ -129,6 +129,10 @@ impl<'db> Evaluator<'db> {
     }
 
     pub(super) fn eval_function(&mut self, mut function: MonoFunction<'db>) -> MonoFunction<'db> {
+        // Bound total unfolding work for each emitted function. The counter is
+        // monotone while that function is evaluated, so sibling calls cannot
+        // repeatedly reclaim the same budget.
+        self.fuel = self.fuel_limit;
         self.memory.clear();
         let type_reg = build_type_reg(&function.params, &function.body);
         let ret_comptime = ty_is_comptime(self.db, function.ret.ty());
@@ -1151,7 +1155,6 @@ impl<'db> Evaluator<'db> {
                 let result = self.eval_fun_body(&type_reg, env, comptime_env, body.clone());
                 let frame = self.inline_stack.pop();
                 debug_assert!(frame.is_some_and(|frame| frame.name.starts_with("lambda:")));
-                self.fuel += 1;
                 match result {
                     FoldOutcome::ReturnedKnown(expr) => Some(expr),
                     FoldOutcome::ReturnedUnknownAbort | FoldOutcome::FellThroughContinue(_, _) => {
@@ -1530,7 +1533,6 @@ impl<'db> Evaluator<'db> {
         let result = self.eval_fun_body(&type_reg, env, comptime_env, function.body);
         let frame = self.inline_stack.pop();
         debug_assert!(frame.is_some_and(|frame| frame.name == name));
-        self.fuel += 1;
         match result {
             FoldOutcome::ReturnedKnown(expr) => Some(expr),
             FoldOutcome::ReturnedUnknownAbort | FoldOutcome::FellThroughContinue(_, _) => None,
@@ -1586,7 +1588,6 @@ impl<'db> Evaluator<'db> {
         let (_, _, body) = self.eval_stmts(&type_reg, env, comptime_env, function.body, false);
         let frame = self.inline_stack.pop();
         debug_assert!(frame.is_some_and(|frame| frame.name == callee.name));
-        self.fuel += 1;
         Some(body)
     }
 

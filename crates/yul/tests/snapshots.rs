@@ -204,6 +204,7 @@ fn ink_binary_sum_preserves_nested_layout_snapshot() {
     );
     let program = HullProgram {
         span: sp,
+        entry_points: Vec::new(),
         functions: Vec::new(),
         objects: vec![HullObject {
             span: sp,
@@ -249,6 +250,7 @@ fn if_expression_branches_are_lowered_inside_switch_snapshot() {
     let bool_ty = HullTy::bool(sp);
     let program = HullProgram {
         span: sp,
+        entry_points: Vec::new(),
         functions: Vec::new(),
         objects: vec![HullObject {
             span: sp,
@@ -339,6 +341,7 @@ fn word_literals_wrap_to_256_bits_in_yul_expressions_and_patterns() {
     let word = HullTy::word(sp);
     let program = HullProgram {
         span: sp,
+        entry_points: Vec::new(),
         functions: Vec::new(),
         objects: vec![HullObject {
             span: sp,
@@ -451,6 +454,7 @@ fn copy_locs_rejects_arity_mismatch() {
     );
     let program = HullProgram {
         span: sp,
+        entry_points: Vec::new(),
         functions: Vec::new(),
         objects: vec![HullObject {
             span: sp,
@@ -617,18 +621,15 @@ fn top_level_no_object_hull_wraps_like_assemble_hs_snapshot() {
     let word = HullTy::word(sp);
     let program = HullProgram {
         span: sp,
+        entry_points: vec!["main".into()],
         functions: vec![HullFunction {
             span: sp,
             name: "main".into(),
-            args: vec![HullArg {
-                span: sp,
-                name: "x".into(),
-                ty: word.clone(),
-            }],
+            args: Vec::new(),
             ret: word.clone(),
             body: vec![HullStmt {
                 span: sp,
-                kind: HullStmtKind::Return(HullExpr::var(sp, "x", word)),
+                kind: HullStmtKind::Return(HullExpr::word(sp, "42")),
             }],
         }],
         objects: Vec::new(),
@@ -639,6 +640,56 @@ fn top_level_no_object_hull_wraps_like_assemble_hs_snapshot() {
         "top_level_no_object_hull_wraps_like_assemble_hs",
         solcore_yul::render_hull_program(&db, &program).expect("Yul translation")
     );
+}
+
+#[test]
+fn object_less_source_calls_its_mangled_main_before_returning() {
+    let yul = render_source(
+        "object_less_main",
+        r#"
+function main() -> word { return 42; }
+"#,
+    );
+
+    assert!(
+        yul.lines()
+            .any(|line| { line.contains("let _mainresult := usr$") && line.contains("_main_d") }),
+        "{yul}"
+    );
+    assert!(yul.contains("mstore(0, _mainresult)"), "{yul}");
+}
+
+#[test]
+fn value_equal_literal_spellings_emit_one_yul_case() {
+    let yul = render_source(
+        "equal_literal_spellings",
+        r#"
+contract C {
+  function pick(x : word) -> word {
+    match x {
+      | 0x2a => return 111;
+      | 0042 => return 222;
+      | _ => return 333;
+    }
+  }
+
+  function main() -> word {
+    let x : word = 0;
+    assembly { x := calldataload(0) }
+    return pick(x);
+  }
+}
+"#,
+    );
+
+    assert_eq!(
+        yul.lines()
+            .filter(|line| line.trim() == "case 42 {")
+            .count(),
+        1,
+        "{yul}"
+    );
+    assert!(!yul.contains("case 0x2a"), "{yul}");
 }
 
 #[test]

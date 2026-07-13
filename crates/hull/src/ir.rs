@@ -36,6 +36,8 @@ pub type Name = HullName;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program<'db> {
     pub span: Span<'db>,
+    /// Top-level functions that may be invoked as object-less program entries.
+    pub entry_points: Vec<Name>,
     pub functions: Vec<Function<'db>>,
     pub objects: Vec<Object<'db>>,
 }

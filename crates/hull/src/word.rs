@@ -26,6 +26,20 @@ impl fmt::Display for WordLiteralError {
 impl std::error::Error for WordLiteralError {}
 
 pub fn wrap_word_literal(value: &str) -> Result<String, WordLiteralError> {
+    let word = parse_word_literal(value)?;
+    if word.overflow {
+        Ok(word.to_decimal_string())
+    } else {
+        Ok(value.to_owned())
+    }
+}
+
+/// Returns the decimal spelling of a word literal's value modulo 2^256.
+pub(crate) fn canonical_word_literal(value: &str) -> Result<String, WordLiteralError> {
+    Ok(parse_word_literal(value)?.to_decimal_string())
+}
+
+fn parse_word_literal(value: &str) -> Result<Word256, WordLiteralError> {
     let (digits, radix) = if let Some(digits) = value
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
@@ -50,12 +64,7 @@ pub fn wrap_word_literal(value: &str) -> Result<String, WordLiteralError> {
         let digit = ch.to_digit(radix).expect("literal digit was validated");
         word.mul_add_small(radix, digit);
     }
-
-    if word.overflow {
-        Ok(word.to_decimal_string())
-    } else {
-        Ok(value.to_owned())
-    }
+    Ok(word)
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -104,7 +113,7 @@ fn div_rem_small(limbs: &mut [u32; 8], divisor: u32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_word_literal;
+    use super::{canonical_word_literal, wrap_word_literal};
 
     const TWO_256: &str =
         "115792089237316195423570985008687907853269984665640564039457584007913129639936";
@@ -129,5 +138,12 @@ mod tests {
         assert_eq!(wrap_word_literal("42").unwrap(), "42");
         assert_eq!(wrap_word_literal("0042").unwrap(), "0042");
         assert_eq!(wrap_word_literal("0X2a").unwrap(), "0X2a");
+    }
+
+    #[test]
+    fn canonicalizes_equal_spellings_to_the_same_decimal_word() {
+        assert_eq!(canonical_word_literal("0x10").unwrap(), "16");
+        assert_eq!(canonical_word_literal("0016").unwrap(), "16");
+        assert_eq!(canonical_word_literal(TWO_256_PLUS_ONE).unwrap(), "1");
     }
 }
