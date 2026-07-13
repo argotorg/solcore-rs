@@ -88,11 +88,12 @@ pub fn handle_references(
     include_declaration: bool,
 ) -> Option<Vec<Location>> {
     let target = reference_target_at(world, uri, position)?;
-    Some(collect_reference_locations(
-        world,
-        &target,
-        include_declaration,
-    ))
+    Some(
+        collect_reference_locations(world, &target, include_declaration)
+            .into_iter()
+            .filter(|location| world.line_index(&location.uri).is_some())
+            .collect(),
+    )
 }
 
 /// Resolves the symbol under `position` to a reusable semantic reference
@@ -2272,6 +2273,27 @@ function caller() -> word {
             ranges_for_uri(&references, &uri),
             vec![line_index.range(call, call + "target".len() as u32)]
         );
+    }
+
+    #[test]
+    fn std_references_exclude_the_unopenable_embedded_declaration() {
+        let source = "import std.{addWord};\nfunction main() -> word { return addWord(1, 2); }\n";
+        let (world, uri) = world_with_main(source);
+        let line_index = world.line_index(&uri).expect("line index");
+        let import = source.find("addWord").expect("import") as u32;
+        let call = source.rfind("addWord").expect("call") as u32;
+
+        let references = handle_references(&world, &uri, line_index.byte_to_position(call), true)
+            .expect("references");
+
+        assert_eq!(
+            ranges_for_uri(&references, &uri),
+            vec![
+                line_index.range(import, import + "addWord".len() as u32),
+                line_index.range(call, call + "addWord".len() as u32),
+            ]
+        );
+        assert!(references.iter().all(|location| location.uri == uri));
     }
 
     #[test]

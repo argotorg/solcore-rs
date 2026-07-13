@@ -126,18 +126,28 @@ impl LanguageServer for Backend {
         publish_diagnostics(&self.client, diagnostics).await;
     }
 
-    async fn did_change(&self, mut params: DidChangeTextDocumentParams) {
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let _update = self.document_updates.lock().await;
         let uri = params.text_document.uri;
         let version = params.text_document.version;
-        let Some(change) = params.content_changes.pop() else {
+        if params.content_changes.is_empty() {
             return;
-        };
+        }
 
         let diagnostics = {
             let mut world = self.world.lock().await;
-            world.change_document(&uri, change.text);
-            diagnostics_with_versions(&world, Some((&uri, version)))
+            world
+                .apply_document_changes(&uri, params.content_changes)
+                .then(|| diagnostics_with_versions(&world, Some((&uri, version))))
+        };
+        let Some(diagnostics) = diagnostics else {
+            self.client
+                .log_message(
+                    MessageType::ERROR,
+                    format!("ignored invalid content change for {uri}"),
+                )
+                .await;
+            return;
         };
 
         publish_diagnostics(&self.client, diagnostics).await;

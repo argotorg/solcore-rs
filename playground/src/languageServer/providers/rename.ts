@@ -3,6 +3,7 @@ import { SOLCORE_LANGUAGE_ID } from "../../monaco/solc-language";
 import { fromLspRange, toLspPosition } from "../conversions";
 import type { LspClient } from "../lspClient";
 import type { LspRange } from "../protocol";
+import { workspaceEditTargetsAreCurrent } from "./workspaceEdit.js";
 
 interface LspTextEdit {
   range: LspRange;
@@ -46,7 +47,16 @@ function rejectRenameLocation(
 function applyWorkspaceEdit(
   monaco: typeof Monaco,
   changes: Record<string, LspTextEdit[]>,
+  expectedVersions: ReadonlyMap<string, number>,
 ): boolean {
+  if (
+    !workspaceEditTargetsAreCurrent(changes, expectedVersions, (uri) =>
+      monaco.editor.getModel(monaco.Uri.parse(uri)),
+    )
+  ) {
+    return false;
+  }
+
   let appliedAny = false;
 
   for (const [uri, textEdits] of Object.entries(changes)) {
@@ -78,6 +88,11 @@ export function registerRename(
   return monaco.languages.registerRenameProvider(SOLCORE_LANGUAGE_ID, {
     async provideRenameEdits(model, position, newName) {
       try {
+        const expectedVersions = new Map<string, number>(
+          monaco.editor
+            .getModels()
+            .map((current) => [current.uri.toString(), current.getVersionId()]),
+        );
         const result = await client.request<LspWorkspaceEdit | null>(
           "textDocument/rename",
           {
@@ -93,7 +108,9 @@ export function registerRename(
           return null;
         }
 
-        return applyWorkspaceEdit(monaco, result.changes) ? { edits: [] } : null;
+        return applyWorkspaceEdit(monaco, result.changes, expectedVersions)
+          ? { edits: [] }
+          : null;
       } catch {
         return null;
       }

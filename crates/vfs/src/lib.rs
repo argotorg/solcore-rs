@@ -156,6 +156,9 @@ impl AnalysisHost {
     }
 
     fn register_module_file(&mut self, path: &Path, file: SourceFile) -> bool {
+        if !is_solcore_module_path(path) {
+            return false;
+        }
         if let Some(key) = self.module_key_for_virtual_path(path) {
             return self.set_module_file(key, file);
         }
@@ -240,15 +243,19 @@ impl AnalysisHost {
 
     fn remove_virtual_file_deferred(&mut self, path: PathBuf) -> FileChanges {
         let path = normalize_absolute_path(path);
-        let file_set_changed = if let Some(file) = self.files.remove(&path) {
+        let removed_file = self.files.remove(&path);
+        let file_set_changed = if let Some(file) = removed_file {
             file.set_content(self).to(None);
             true
         } else {
             false
         };
-        let module_files_changed = self
-            .module_key_for_virtual_path(&path)
-            .is_some_and(|key| self.remove_module_file(&key));
+        let module_files_changed = removed_file.is_some_and(|file| {
+            is_solcore_module_path(&path)
+                && self.module_key_for_virtual_path(&path).is_some_and(|key| {
+                    self.module_files.get(&key) == Some(&file) && self.remove_module_file(&key)
+                })
+        });
         FileChanges {
             file_set_changed,
             module_files_changed,
@@ -822,6 +829,10 @@ fn module_fs_snapshot_from_paths<'a>(
     (existing_files, sibling_stems)
 }
 
+fn is_solcore_module_path(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()) == Some("solc")
+}
+
 fn normalize_absolute_path(path: PathBuf) -> PathBuf {
     if path.is_absolute() {
         path
@@ -1077,6 +1088,27 @@ mod tests {
         assert!(workspace.diagnostics().is_empty());
         assert!(workspace.entry_module().is_some());
         assert_eq!(messages(&workspace), raw_messages(&workspace));
+    }
+
+    #[test]
+    fn non_solcore_twin_never_replaces_or_unregisters_a_module() {
+        let mut workspace = Workspace::new();
+        workspace.set_file(
+            "foo.solc",
+            "function value() -> word { return 1; }\nexport { value };\n".to_owned(),
+        );
+        workspace.set_file(
+            "main.solc",
+            "import foo.{value};\nfunction main() -> word { return value(); }\n".to_owned(),
+        );
+        workspace.set_entry("main.solc");
+        assert!(workspace.diagnostics().is_empty());
+
+        workspace.set_file("foo.txt", "not solcore source".to_owned());
+        assert!(workspace.diagnostics().is_empty());
+
+        workspace.remove_file("foo.txt");
+        assert!(workspace.diagnostics().is_empty());
     }
 
     #[test]

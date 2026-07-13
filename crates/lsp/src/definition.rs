@@ -13,7 +13,6 @@ use hir::{
 use lsp_types::{GotoDefinitionResponse, Location, Position, Url};
 
 use crate::{
-    LineIndexExt,
     references::{import_export_target_at, reference_target_at, target_declaration_span},
     resolve::{function_owning_offset, innermost_expr, module_id_for_uri},
     state::WorldState,
@@ -471,12 +470,8 @@ fn location_for_span(
     span: AbsoluteSpan,
 ) -> Option<Location> {
     let uri = world.client_uri_for_vfs_url(span.file().url(db).as_str())?;
-    let range = if let Some(line_index) = world.line_index(&uri) {
-        line_index.range(span.start().as_u32(), span.end().as_u32())
-    } else {
-        let text = span.file().content(db).as_deref()?;
-        LineIndexExt::new(text).range(span.start().as_u32(), span.end().as_u32())
-    };
+    let line_index = world.line_index(&uri)?;
+    let range = line_index.range(span.start().as_u32(), span.end().as_u32());
 
     Some(Location { uri, range })
 }
@@ -566,6 +561,19 @@ mod tests {
         assert_eq!(
             location.range,
             math_index.range(declaration, declaration + "double".len() as u32)
+        );
+    }
+
+    #[test]
+    fn definition_in_embedded_std_is_not_returned_as_an_unopenable_uri() {
+        let source = "import std.{addWord};\nfunction main() -> word { return addWord(1, 2); }\n";
+        let (world, uri) = world_with_main(source);
+        let line_index = world.line_index(&uri).expect("line index");
+        let call = source.rfind("addWord").expect("call") as u32;
+
+        assert_eq!(
+            handle_definition(&world, &uri, line_index.byte_to_position(call)),
+            None
         );
     }
 

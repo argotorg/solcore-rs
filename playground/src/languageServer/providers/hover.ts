@@ -3,34 +3,14 @@ import { SOLCORE_LANGUAGE_ID } from "../../monaco/solc-language";
 import { fromLspRange, toLspPosition } from "../conversions";
 import type { LspClient } from "../lspClient";
 import type { LspRange } from "../protocol";
-
-interface LspMarkupContent {
-  kind: string;
-  value: string;
-}
-
-interface LspMarkedString {
-  language: string;
-  value: string;
-}
-
-type LspHoverContent = LspMarkedString | LspMarkupContent | string;
+import {
+  markdownForHoverContents,
+  type LspHoverContent,
+} from "./hoverContent.js";
 
 interface LspHover {
-  contents: LspHoverContent;
+  contents: LspHoverContent | LspHoverContent[];
   range?: LspRange;
-}
-
-function markdownForContent(content: LspHoverContent): Monaco.IMarkdownString {
-  if (typeof content === "string") {
-    return { value: content };
-  }
-
-  if ("language" in content) {
-    return { value: `\`\`\`${content.language}\n${content.value}\n\`\`\`` };
-  }
-
-  return { value: content.value };
 }
 
 export function registerHover(
@@ -52,7 +32,7 @@ export function registerHover(
         }
 
         return {
-          contents: [markdownForContent(result.contents)],
+          contents: markdownForHoverContents(result.contents),
           range: result.range ? fromLspRange(monaco, result.range) : undefined,
         };
       } catch {

@@ -147,17 +147,19 @@ fn handle_did_open(world: &mut WorldState, id: Option<Value>, params: Value) -> 
 }
 
 fn handle_did_change(world: &mut WorldState, id: Option<Value>, params: Value) -> Vec<String> {
-    let mut params = match deserialize_params::<DidChangeTextDocumentParams>(params) {
+    let params = match deserialize_params::<DidChangeTextDocumentParams>(params) {
         Ok(params) => params,
         Err(_) => return error_or_empty(id, INVALID_PARAMS, "Invalid params"),
     };
 
     let uri = params.text_document.uri;
-    let Some(change) = params.content_changes.pop() else {
+    if params.content_changes.is_empty() {
         return null_response_or_empty(id);
-    };
+    }
 
-    world.change_document(&uri, change.text);
+    if !world.apply_document_changes(&uri, params.content_changes) {
+        return error_or_empty(id, INVALID_PARAMS, "Invalid content change");
+    }
 
     let mut outgoing = null_response_or_empty(id);
     outgoing.extend(publish_open_document_diagnostics(world));
@@ -171,11 +173,8 @@ fn handle_did_close(world: &mut WorldState, id: Option<Value>, params: Value) ->
     };
 
     let uri = params.text_document.uri;
-    let belongs_to_workspace = world.is_uri_in_workspace(&uri);
     world.close_document(&uri);
-    if !belongs_to_workspace {
-        world.remove_workspace_document(&uri);
-    }
+    world.remove_workspace_document(&uri);
 
     let mut outgoing = null_response_or_empty(id);
     outgoing.push(publish_diagnostics(uri, Vec::new()));
@@ -1270,6 +1269,42 @@ mod tests {
                 .as_array()
                 .expect("symbol array")
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn closing_workspace_document_removes_it_from_workspace_symbols() {
+        let mut world = WorldState::new();
+        let uri = "file:///main/ghost.solc";
+        let source = "function ghost() -> word { return 42; }\n";
+        let _ = dispatch(&mut world, &did_open_uri_message(uri, source));
+
+        let _ = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "textDocument/didClose",
+                "params": { "textDocument": { "uri": uri } }
+            })
+            .to_string(),
+        );
+        let symbols = dispatch(
+            &mut world,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": "workspace-symbols-after-close",
+                "method": "workspace/symbol",
+                "params": { "query": "ghost" }
+            })
+            .to_string(),
+        );
+
+        let response = parse_message(&symbols[0]);
+        assert_eq!(response["result"], serde_json::json!([]));
+        assert!(
+            !world
+                .workspace_document_uris()
+                .contains(&lsp_types::Url::parse(uri).expect("workspace uri"))
         );
     }
 

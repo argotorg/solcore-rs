@@ -9,7 +9,7 @@ use std::{
     path::Path,
 };
 
-use lsp_types::Url;
+use lsp_types::{TextDocumentContentChangeEvent, Url};
 use percent_encoding::percent_decode_str;
 use vfs::{AnalysisHost, Workspace, WorkspaceFileChange};
 
@@ -251,6 +251,48 @@ impl WorldState {
             .insert(uri.clone(), DocumentState::new(new_text));
         self.open_documents.insert(uri.clone());
         true
+    }
+
+    /// Applies an LSP content-change batch in protocol order.
+    ///
+    /// Full-document and ranged changes may be mixed. The update is atomic:
+    /// an invalid range leaves the current document unchanged.
+    pub fn apply_document_changes(
+        &mut self,
+        uri: &Url,
+        changes: Vec<TextDocumentContentChangeEvent>,
+    ) -> bool {
+        let Some(mut text) = self.document_text(uri).map(str::to_owned) else {
+            return false;
+        };
+
+        for change in changes {
+            let Some(range) = change.range else {
+                text = change.text;
+                continue;
+            };
+            let line_index = LineIndexExt::new(&text);
+            let Some(start) = line_index.position_to_byte(range.start) else {
+                return false;
+            };
+            let Some(end) = line_index.position_to_byte(range.end) else {
+                return false;
+            };
+            if start > end {
+                return false;
+            }
+            let Some(replaced) = text.get(start as usize..end as usize) else {
+                return false;
+            };
+            if change.range_length.is_some_and(|range_length| {
+                replaced.encode_utf16().count() != range_length as usize
+            }) {
+                return false;
+            }
+            text.replace_range(start as usize..end as usize, &change.text);
+        }
+
+        self.change_document(uri, text)
     }
 
     /// Closes a document in the LSP layer.
@@ -714,6 +756,42 @@ mod tests {
         world.close_document(&uri);
         assert_eq!(world.document_text(&uri), None);
         assert!(world.line_index(&uri).is_some());
+    }
+
+    #[test]
+    fn content_change_batches_apply_utf16_ranges_in_order_atomically() {
+        use lsp_types::{Position, Range};
+
+        let mut world = WorldState::new();
+        let uri = Url::parse("file:///main/main.solc").expect("uri");
+        assert!(world.open_document(uri.clone(), "a😀c\n".to_owned()));
+
+        assert!(world.apply_document_changes(
+            &uri,
+            vec![
+                TextDocumentContentChangeEvent {
+                    range: Some(Range::new(Position::new(0, 1), Position::new(0, 3))),
+                    range_length: Some(2),
+                    text: "β".to_owned(),
+                },
+                TextDocumentContentChangeEvent {
+                    range: Some(Range::new(Position::new(0, 2), Position::new(0, 2))),
+                    range_length: Some(0),
+                    text: "!".to_owned(),
+                },
+            ],
+        ));
+        assert_eq!(world.document_text(&uri), Some("aβ!c\n"));
+
+        assert!(!world.apply_document_changes(
+            &uri,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(Range::new(Position::new(99, 0), Position::new(99, 1))),
+                range_length: None,
+                text: "corrupt".to_owned(),
+            }],
+        ));
+        assert_eq!(world.document_text(&uri), Some("aβ!c\n"));
     }
 
     #[test]
