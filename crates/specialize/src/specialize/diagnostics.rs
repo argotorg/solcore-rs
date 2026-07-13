@@ -149,9 +149,21 @@ impl SpecializeDiagnosticKind<'_> {
                     .to_owned(),
                 "help: add a type annotation that fixes the concrete type".to_owned(),
             ],
+            Self::InstantiationFuelExhausted { .. } => vec![
+                "help: reduce the number of specializations or raise --pe-max-instantiations when using solcore-driver"
+                    .to_owned(),
+            ],
+            Self::InstantiationDepthExceeded { .. } => vec![
+                "help: simplify the specialization chain or raise --pe-depth when using solcore-driver"
+                    .to_owned(),
+            ],
+            Self::TypeSizeExceeded { .. } => vec![
+                "help: simplify the specialized type or raise --pe-max-type-nodes when using solcore-driver"
+                    .to_owned(),
+            ],
             Self::ComptimeFuelExhausted { .. } => vec![
                 "comptime evaluation did not finish before the fuel limit was reached".to_owned(),
-                "help: make the comptime recursion reach a base case or reduce the compile-time work"
+                "help: make the comptime recursion reach a base case, reduce the compile-time work, or raise --pe-fuel/--pe-depth when using solcore-driver"
                     .to_owned(),
             ],
             Self::ComptimeRecursion { .. } => vec![
@@ -177,7 +189,7 @@ impl SpecializeDiagnosticKind<'_> {
             }
             Self::ReductionFuelExhausted { .. } => vec![
                 "pure-call reduction did not finish before the depth limit was reached".to_owned(),
-                "help: add a base case, guard recursion behind a runtime condition, or reduce the compile-time work"
+                "help: add a base case, guard recursion behind a runtime condition, reduce the compile-time work, or raise --pe-fuel/--pe-depth when using solcore-driver"
                     .to_owned(),
             ],
             Self::IntegerErasure { .. } => vec![

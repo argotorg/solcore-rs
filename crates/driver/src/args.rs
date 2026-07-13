@@ -46,6 +46,8 @@ pub(crate) struct Args {
     pub(crate) emit_sonatina: Option<EmitTarget>,
     /// Optional top-level Yul object selection for strict-assembly output.
     pub(crate) emit_yul_object: Option<String>,
+    /// Resource limits used by monomorphization and partial evaluation.
+    pub(crate) specialize_options: specialize::SpecializeOptions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,8 +106,84 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
     let mut emit_yul = None;
     let mut emit_sonatina = None;
     let mut emit_yul_object = None;
+    let mut specialize_options = specialize::SpecializeOptions::default();
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
+        if arg.to_str().is_none() {
+            if let Some(value) = strip_os_prefix(&arg, "--file=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--file= requires FILE".to_owned());
+                }
+                set_input(&mut input, PathBuf::from(value))?;
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--emit-hull=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--emit-hull= requires FILE".to_owned());
+                }
+                emit_hull = Some(EmitTarget::File(PathBuf::from(value)));
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--emit-yul=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--emit-yul= requires FILE".to_owned());
+                }
+                emit_yul = Some(EmitTarget::File(PathBuf::from(value)));
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--emit-sonatina=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--emit-sonatina= requires FILE".to_owned());
+                }
+                emit_sonatina = Some(EmitTarget::File(PathBuf::from(value)));
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--root=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--root= requires DIR".to_owned());
+                }
+                main_root = Some(PathBuf::from(value));
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--std-root=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--std-root= requires DIR".to_owned());
+                }
+                std_root = Some(PathBuf::from(value));
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--include=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--include= requires DIR".to_owned());
+                }
+                std_root = Some(PathBuf::from(value));
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--output-dir=") {
+                if value.as_os_str().is_empty() {
+                    return Err("--output-dir= requires DIR".to_owned());
+                }
+                output_dir = Some(PathBuf::from(value));
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--external-lib=") {
+                external_roots.push(parse_external_root(value)?);
+                continue;
+            }
+            if let Some(value) = strip_os_prefix(&arg, "--lib=") {
+                external_roots.push(parse_external_root(value)?);
+                continue;
+            }
+            if os_arg_starts_with(&arg, "-") {
+                return Err(format!(
+                    "unknown non-UTF-8 option `{}`",
+                    arg.to_string_lossy()
+                ));
+            }
+            set_input(&mut input, PathBuf::from(arg))?;
+            continue;
+        }
+
         let arg_str = arg.to_str();
         match arg_str {
             Some("-h" | "--help") => return Ok(ParsedArgs::Help),
@@ -164,6 +242,24 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                 let value = next_string_option_value(&mut iter, "--emit-yul-object", "NAME")?;
                 emit_yul_object = Some(value);
             }
+            Some("--pe-fuel") => {
+                let value = next_string_option_value(&mut iter, "--pe-fuel", "N")?;
+                specialize_options.eval_fuel = parse_positive_limit("--pe-fuel", &value)?;
+            }
+            Some("--pe-depth") => {
+                let value = next_string_option_value(&mut iter, "--pe-depth", "N")?;
+                specialize_options.max_depth = parse_positive_limit("--pe-depth", &value)?;
+            }
+            Some("--pe-max-instantiations") => {
+                let value = next_string_option_value(&mut iter, "--pe-max-instantiations", "N")?;
+                specialize_options.max_instantiations =
+                    parse_positive_limit("--pe-max-instantiations", &value)?;
+            }
+            Some("--pe-max-type-nodes") => {
+                let value = next_string_option_value(&mut iter, "--pe-max-type-nodes", "N")?;
+                specialize_options.max_type_nodes =
+                    parse_positive_limit("--pe-max-type-nodes", &value)?;
+            }
             Some(option @ ("--external-lib" | "--lib")) => {
                 let value = next_os_option_value(&mut iter, option, "NAME=PATH")?;
                 external_roots.push(parse_external_root(value)?);
@@ -174,6 +270,26 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
                     return Err("--emit-yul-object= requires NAME".to_owned());
                 }
                 emit_yul_object = Some(value.to_owned());
+            }
+            Some(arg) if arg.starts_with("--pe-fuel=") => {
+                specialize_options.eval_fuel =
+                    parse_positive_limit("--pe-fuel", &arg["--pe-fuel=".len()..])?;
+            }
+            Some(arg) if arg.starts_with("--pe-depth=") => {
+                specialize_options.max_depth =
+                    parse_positive_limit("--pe-depth", &arg["--pe-depth=".len()..])?;
+            }
+            Some(arg) if arg.starts_with("--pe-max-instantiations=") => {
+                specialize_options.max_instantiations = parse_positive_limit(
+                    "--pe-max-instantiations",
+                    &arg["--pe-max-instantiations=".len()..],
+                )?;
+            }
+            Some(arg) if arg.starts_with("--pe-max-type-nodes=") => {
+                specialize_options.max_type_nodes = parse_positive_limit(
+                    "--pe-max-type-nodes",
+                    &arg["--pe-max-type-nodes=".len()..],
+                )?;
             }
             Some(arg) if arg.starts_with("--color=") => {
                 color = parse_color_choice(&arg["--color=".len()..])?;
@@ -255,88 +371,8 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
             Some(arg) if arg.starts_with("--lib=") => {
                 external_roots.push(parse_external_root(OsString::from(&arg["--lib=".len()..]))?);
             }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--file=") =>
-            {
-                if value.as_os_str().is_empty() {
-                    return Err("--file= requires FILE".to_owned());
-                }
-                set_input(&mut input, PathBuf::from(value))?;
-            }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--emit-hull=") =>
-            {
-                if value.as_os_str().is_empty() {
-                    return Err("--emit-hull= requires FILE".to_owned());
-                }
-                emit_hull = Some(EmitTarget::File(PathBuf::from(value)));
-            }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--emit-yul=") =>
-            {
-                if value.as_os_str().is_empty() {
-                    return Err("--emit-yul= requires FILE".to_owned());
-                }
-                emit_yul = Some(EmitTarget::File(PathBuf::from(value)));
-            }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--emit-sonatina=") =>
-            {
-                if value.as_os_str().is_empty() {
-                    return Err("--emit-sonatina= requires FILE".to_owned());
-                }
-                emit_sonatina = Some(EmitTarget::File(PathBuf::from(value)));
-            }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--root=") =>
-            {
-                if value.as_os_str().is_empty() {
-                    return Err("--root= requires DIR".to_owned());
-                }
-                main_root = Some(PathBuf::from(value));
-            }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--std-root=") =>
-            {
-                if value.as_os_str().is_empty() {
-                    return Err("--std-root= requires DIR".to_owned());
-                }
-                std_root = Some(PathBuf::from(value));
-            }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--include=") =>
-            {
-                if value.as_os_str().is_empty() {
-                    return Err("--include= requires DIR".to_owned());
-                }
-                std_root = Some(PathBuf::from(value));
-            }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--output-dir=") =>
-            {
-                if value.as_os_str().is_empty() {
-                    return Err("--output-dir= requires DIR".to_owned());
-                }
-                output_dir = Some(PathBuf::from(value));
-            }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--external-lib=") =>
-            {
-                external_roots.push(parse_external_root(value)?);
-            }
-            _ if arg_str.is_none()
-                && let Some(value) = strip_os_prefix(&arg, "--lib=") =>
-            {
-                external_roots.push(parse_external_root(value)?);
-            }
             Some(arg) if arg.starts_with('-') => {
                 return Err(format!("unknown option `{arg}`"));
-            }
-            _ if os_arg_starts_with(&arg, "-") => {
-                return Err(format!(
-                    "unknown non-UTF-8 option `{}`",
-                    arg.to_string_lossy()
-                ));
             }
             _ => {
                 set_input(&mut input, PathBuf::from(arg))?;
@@ -367,6 +403,7 @@ pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
         emit_yul,
         emit_sonatina,
         emit_yul_object,
+        specialize_options,
     })))
 }
 
@@ -514,6 +551,16 @@ fn parse_diagnostic_width(value: &str) -> Result<usize, String> {
     Ok(width)
 }
 
+fn parse_positive_limit(option: &str, value: &str) -> Result<usize, String> {
+    let limit = value
+        .parse::<usize>()
+        .map_err(|_| format!("{option} requires a positive integer, got `{value}`"))?;
+    if limit == 0 {
+        return Err(format!("{option} requires a positive integer, got `0`"));
+    }
+    Ok(limit)
+}
+
 fn parse_diagnostic_format(value: &str) -> Result<DiagnosticFormat, String> {
     match value {
         "human" => Ok(DiagnosticFormat::Human),
@@ -568,6 +615,10 @@ Options:
   --emit-yul[=FILE]                  Emit Yul strict assembly to stdout or FILE
   --emit-sonatina[=FILE]             Emit Sonatina IR to stdout or FILE
   --emit-yul-object NAME             Select one top-level Yul object for --emit-yul
+  --pe-fuel N                        Set partial-evaluation total work fuel (default: 4096)
+  --pe-depth N                       Set specialization/evaluator depth (default: 128)
+  --pe-max-instantiations N          Set specialization instance limit (default: 2048)
+  --pe-max-type-nodes N              Set specialized type-size limit (default: 4096)
   --color auto|always|never          Configure diagnostic colors (default: auto)
   --unicode auto|always|never        Configure diagnostic Unicode output (default: auto)
   --diagnostic-width N               Set diagnostic output width (default: 100)

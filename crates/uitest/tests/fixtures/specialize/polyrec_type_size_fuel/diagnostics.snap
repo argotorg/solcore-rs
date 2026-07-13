@@ -11,3 +11,4 @@ error[SC0412]: specialization type size exceeded at 4096 type nodes
   |          ^^^^^^^^^^ specialization type size limit reached here
 3 | }
   |
+  = note: help: simplify the specialized type or raise --pe-max-type-nodes when using solcore-driver

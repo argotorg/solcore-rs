@@ -12,4 +12,4 @@ error[SC0410]: comptime evaluation fuel exhausted in spin at 128 unfold steps
 7 | }
   |
   = note: comptime evaluation did not finish before the fuel limit was reached
-  = note: help: make the comptime recursion reach a base case or reduce the compile-time work
+  = note: help: make the comptime recursion reach a base case, reduce the compile-time work, or raise --pe-fuel/--pe-depth when using solcore-driver

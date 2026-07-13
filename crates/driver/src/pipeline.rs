@@ -157,17 +157,24 @@ pub(crate) fn run_compiler() {
             }
         }
         match maybe_emit_backend_outputs(&db, entry_file, &args) {
-            Ok(()) => {}
-            Err(BackendFailure::Diagnostics(mut diagnostics)) => {
+            Ok(mut diagnostics) => {
                 sort_dedup_rendered_diagnostics(&db, &mut diagnostics);
                 apply_warning_policy(&mut diagnostics, args.warning_policy);
-                eprint!("{}", render_diagnostics(&db, &diagnostics, &args));
+                if !diagnostics.is_empty() {
+                    eprint!("{}", render_diagnostics(&db, &diagnostics, &args));
+                }
                 if diagnostics
                     .iter()
                     .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error)
                 {
                     std::process::exit(1);
                 }
+            }
+            Err(BackendFailure::Diagnostics(mut diagnostics)) => {
+                sort_dedup_rendered_diagnostics(&db, &mut diagnostics);
+                apply_warning_policy(&mut diagnostics, args.warning_policy);
+                eprint!("{}", render_diagnostics(&db, &diagnostics, &args));
+                std::process::exit(1);
             }
             Err(BackendFailure::Message(message)) => {
                 eprintln!("{message}");

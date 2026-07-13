@@ -29,6 +29,10 @@ fn cli_prints_help_and_version() {
     assert!(stdout.contains("-o, --output-dir DIR"), "{stdout}");
     assert!(stdout.contains("--abi"), "{stdout}");
     assert!(stdout.contains("--emit-sonatina[=FILE]"), "{stdout}");
+    assert!(stdout.contains("--pe-fuel N"), "{stdout}");
+    assert!(stdout.contains("--pe-depth N"), "{stdout}");
+    assert!(stdout.contains("--pe-max-instantiations N"), "{stdout}");
+    assert!(stdout.contains("--pe-max-type-nodes N"), "{stdout}");
     assert!(stdout.contains("--root DIR"), "{stdout}");
 
     let version = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
@@ -431,6 +435,74 @@ fn cli_uses_explicit_std_root() {
 }
 
 #[test]
+fn cli_rejects_missing_std_root_with_actionable_configuration_help() {
+    let dir = temp_dir("missing-std-root");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    let missing = dir.join("missing-std");
+    fs::write(&input, "function main() -> word { return 0; }\n").expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--std-root")
+        .arg(&missing)
+        .arg(&input)
+        .env_remove("SOLCORE_STD")
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("standard library root"),
+        "stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("does not exist"), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains(&missing.display().to_string()),
+        "stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("--std-root DIR"), "stderr:\n{stderr}");
+    assert!(stderr.contains("SOLCORE_STD"), "stderr:\n{stderr}");
+}
+
+#[test]
+fn cli_normalizes_parent_components_before_deriving_the_entry_module() {
+    let dir = temp_dir("normalized-entry-path");
+    let src = dir.join("src");
+    fs::create_dir_all(&src).expect("create source directory");
+    fs::write(
+        src.join("util.solc"),
+        "export { value }; function value() -> word { return 9; }\n",
+    )
+    .expect("write utility module");
+    let input = src.join("main.solc");
+    fs::write(
+        &input,
+        "import util; function main() -> word { return util.value(); }\n",
+    )
+    .expect("write source");
+    let spelled_with_parent = src.join("..").join("src").join("main.solc");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--root")
+        .arg(&dir)
+        .arg(&spelled_with_parent)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(
+        output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn copied_binary_resolves_std_next_to_current_exe() {
     let dir = temp_dir("copied-binary-std");
     let input_dir = dir.join("src");
@@ -636,6 +708,90 @@ contract C {
 }
 
 #[test]
+fn cli_abi_ignores_reachable_external_library_contracts() {
+    let dir = temp_dir("abi-external-scope");
+    let external = dir.join("external");
+    let output_dir = dir.join("abi");
+    fs::create_dir_all(&external).expect("create external root");
+    fs::write(
+        external.join("token.solc"),
+        "contract ExternalToken { public function main() -> word { return 7; } }\n",
+    )
+    .expect("write external module");
+    let input = dir.join("main.solc");
+    fs::write(
+        &input,
+        "import @pkg.token; contract Local { public function main() -> word { return 1; } }\n",
+    )
+    .expect("write main module");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--abi")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg("--external-lib")
+        .arg(format!("pkg={}", external.display()))
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    assert!(
+        output.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_dir.join("Local.abi").is_file());
+    assert!(!output_dir.join("ExternalToken.abi").exists());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cli_abi_rejects_colliding_local_contract_filenames_before_writing() {
+    let dir = temp_dir("abi-local-collision");
+    let output_dir = dir.join("abi");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    fs::write(
+        dir.join("a.solc"),
+        "contract Token { public function main() -> word { return 1; } }\n",
+    )
+    .expect("write first module");
+    fs::write(
+        dir.join("b.solc"),
+        "contract Token { public function main() -> word { return 2; } }\n",
+    )
+    .expect("write second module");
+    let input = dir.join("main.solc");
+    fs::write(
+        &input,
+        "import a; import b; function main() -> word { return 0; }\n",
+    )
+    .expect("write main module");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--abi")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cannot emit `Token.abi`"),
+        "stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("both"), "stderr:\n{stderr}");
+    assert!(stderr.contains("`a`"), "stderr:\n{stderr}");
+    assert!(stderr.contains("`b`"), "stderr:\n{stderr}");
+    assert!(!output_dir.join("Token.abi").exists());
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn cli_renders_backend_diagnostics_with_stable_codes() {
     let dir = temp_dir("backend-diagnostic");
     fs::create_dir_all(&dir).expect("create temp dir");
@@ -671,6 +827,63 @@ contract C {
     );
     assert!(!stderr.contains("UnsupportedType {"), "stderr:\n{stderr}");
     assert!(!stderr.contains("HULL-EMIT"), "stderr:\n{stderr}");
+}
+
+#[test]
+fn cli_partial_evaluation_fuel_is_configurable() {
+    let dir = temp_dir("configurable-pe-fuel");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    fs::write(
+        &input,
+        r#"
+import std.{*};
+function g2() -> word { return 1; }
+function g1() -> word { return g2() + g2(); }
+function g0() -> word { return g1() + g1(); }
+contract C { function main() -> word { return g0(); } }
+"#,
+    )
+    .expect("write source");
+
+    let exhausted = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--pe-fuel=3")
+        .arg("--emit-hull")
+        .arg("--color=never")
+        .arg(&input)
+        .output()
+        .expect("run low-fuel driver");
+    assert_eq!(exhausted.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&exhausted.stderr);
+    assert!(stderr.contains("fuel exhausted"), "stderr:\n{stderr}");
+    assert!(stderr.contains("--pe-fuel"), "stderr:\n{stderr}");
+
+    let enough = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--pe-fuel=64")
+        .arg("--emit-hull")
+        .arg(&input)
+        .output()
+        .expect("run higher-fuel driver");
+    assert!(
+        enough.status.success(),
+        "driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&enough.stdout),
+        String::from_utf8_lossy(&enough.stderr)
+    );
+
+    let invalid = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--pe-depth=0")
+        .arg(&input)
+        .output()
+        .expect("run invalid resource limit");
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&invalid.stderr).contains("positive integer"),
+        "stderr:\n{}",
+        String::from_utf8_lossy(&invalid.stderr)
+    );
+
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
