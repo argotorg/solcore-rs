@@ -6,7 +6,8 @@
 
 use std::{
     env, fmt,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Write},
+    net::TcpStream,
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::{Arc, Mutex, OnceLock, mpsc},
@@ -99,6 +100,12 @@ pub struct EvmHarness {
     anvil: Anvil,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CallOutcome {
+    Return(String),
+    Revert(Option<Vec<u8>>),
+}
+
 impl EvmHarness {
     /// Starts the shared EVM runtime when execution E2E is enabled.
     ///
@@ -178,24 +185,30 @@ impl EvmHarness {
     }
 
     pub fn call(&self, address: &str, calldata: &str) -> Result<String, E2eFailure> {
-        let output = run_command(
-            &self.cast,
-            &["call", "--rpc-url", self.url(), address, "--data", calldata],
-            &[],
-            COMMAND_TIMEOUT,
-        )
-        .map_err(|message| E2eFailure::new(FailureKind::Call, message))?;
-        if !output.status.success() {
-            return Err(E2eFailure::new(
+        match self.call_outcome(address, calldata)? {
+            CallOutcome::Return(returndata) => Ok(returndata),
+            CallOutcome::Revert(payload) => Err(E2eFailure::new(
                 FailureKind::Call,
                 format!(
-                    "cast call failed\nstdout:\n{}\nstderr:\n{}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
+                    "eth_call reverted{}",
+                    payload
+                        .as_deref()
+                        .map(|data| format!(" with 0x{}", encode_hex(data)))
+                        .unwrap_or_default()
                 ),
-            ));
+            )),
         }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    fn call_outcome(&self, address: &str, calldata: &str) -> Result<CallOutcome, E2eFailure> {
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_call",
+            "params": [{ "to": address, "data": calldata }, "latest"],
+        });
+        let response = post_json(self.url(), &request.to_string())?;
+        decode_eth_call_response(&response)
     }
 
     /// Compares raw EVM returndata with a directive expectation without
@@ -212,9 +225,9 @@ impl EvmHarness {
     /// Deploys one contract and executes every resolved directive against it.
     ///
     /// Calls use `eth_call`, so state changes made by one directive do not
-    /// leak into the next directive. Revert expectations are intentionally
-    /// rejected until the harness has a stable, tool-independent way to
-    /// recover JSON-RPC revert payloads.
+    /// leak into the next directive. The raw JSON-RPC response is inspected so
+    /// revert status and payload checks do not depend on human-readable `cast`
+    /// error messages.
     pub fn execute_deployed_calls(
         &self,
         bytecode: &str,
@@ -226,21 +239,6 @@ impl EvmHarness {
                 "fixture contains no E2E directives",
             ));
         }
-        if let Some((index, call)) = calls
-            .iter()
-            .enumerate()
-            .find(|(_, call)| matches!(call.expected, ResolvedExpectedOutcome::Revert(_)))
-        {
-            return Err(E2eFailure::new(
-                FailureKind::Directive,
-                format!(
-                    "{} directive #{}: revert expectations are not supported by the EVM harness",
-                    call.signature,
-                    index + 1
-                ),
-            ));
-        }
-
         let address = self.deploy(bytecode)?;
         for (index, call) in calls.iter().enumerate() {
             let label = format!(
@@ -249,15 +247,313 @@ impl EvmHarness {
                 index + 1,
                 call.calldata
             );
-            let returndata = self.call(&address, &call.calldata).map_err(|error| {
-                E2eFailure::new(error.kind, format!("{label}: {}", error.message))
-            })?;
-            let ResolvedExpectedOutcome::Return(expected) = &call.expected else {
-                unreachable!("revert calls were rejected above");
-            };
-            self.assert_return_data(&label, expected, &returndata)?;
+            let outcome = self
+                .call_outcome(&address, &call.calldata)
+                .map_err(|error| {
+                    E2eFailure::new(error.kind, format!("{label}: {}", error.message))
+                })?;
+            assert_call_outcome(&label, &call.expected, &outcome)?;
         }
         Ok(())
+    }
+}
+
+fn post_json(url: &str, body: &str) -> Result<Vec<u8>, E2eFailure> {
+    let url = url::Url::parse(url).map_err(|error| {
+        E2eFailure::new(FailureKind::Tooling, format!("invalid Anvil URL: {error}"))
+    })?;
+    if url.scheme() != "http" {
+        return Err(E2eFailure::new(
+            FailureKind::Tooling,
+            format!("unsupported Anvil URL scheme `{}`", url.scheme()),
+        ));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| E2eFailure::new(FailureKind::Tooling, "Anvil URL has no host"))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| E2eFailure::new(FailureKind::Tooling, "Anvil URL has no port"))?;
+    let mut stream = TcpStream::connect((host, port)).map_err(|error| {
+        E2eFailure::new(
+            FailureKind::Call,
+            format!("failed to connect to Anvil JSON-RPC: {error}"),
+        )
+    })?;
+    stream
+        .set_read_timeout(Some(COMMAND_TIMEOUT))
+        .and_then(|()| stream.set_write_timeout(Some(COMMAND_TIMEOUT)))
+        .map_err(|error| {
+            E2eFailure::new(
+                FailureKind::Call,
+                format!("failed to configure Anvil JSON-RPC socket: {error}"),
+            )
+        })?;
+    let mut request_target = if url.path().is_empty() {
+        "/".to_owned()
+    } else {
+        url.path().to_owned()
+    };
+    if let Some(query) = url.query() {
+        request_target.push('?');
+        request_target.push_str(query);
+    }
+    let host_header = match url.host() {
+        Some(url::Host::Ipv6(address)) => format!("[{address}]:{port}"),
+        _ => format!("{host}:{port}"),
+    };
+    // Anvil is a loopback server spawned by this harness. HTTP/1.0 plus
+    // `Connection: close` deliberately constrains response framing to a
+    // fixed-length or close-delimited body; generic/chunked HTTP belongs in a
+    // real HTTP client, not in this test harness.
+    write!(
+        stream,
+        "POST {request_target} HTTP/1.0\r\nHost: {host_header}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .and_then(|()| stream.flush())
+    .map_err(|error| {
+        E2eFailure::new(
+            FailureKind::Call,
+            format!("failed to send Anvil JSON-RPC request: {error}"),
+        )
+    })?;
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).map_err(|error| {
+        E2eFailure::new(
+            FailureKind::Call,
+            format!("failed to read Anvil JSON-RPC response: {error}"),
+        )
+    })?;
+    parse_http_response(response)
+}
+
+fn parse_http_response(response: Vec<u8>) -> Result<Vec<u8>, E2eFailure> {
+    let header_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|position| position + 4)
+        .ok_or_else(|| E2eFailure::new(FailureKind::Call, "malformed HTTP response from Anvil"))?;
+    let headers = std::str::from_utf8(&response[..header_end - 4])
+        .map_err(|_| E2eFailure::new(FailureKind::Call, "non-UTF-8 HTTP headers from Anvil"))?;
+    let mut lines = headers.split("\r\n");
+    let status_line = lines
+        .next()
+        .ok_or_else(|| E2eFailure::new(FailureKind::Call, "missing HTTP status from Anvil"))?;
+    let mut status_fields = status_line.split_ascii_whitespace();
+    let version = status_fields.next().unwrap_or_default();
+    let status = status_fields
+        .next()
+        .and_then(|status| status.parse::<u16>().ok());
+    if !version.starts_with("HTTP/1.") || status.is_none() {
+        return Err(E2eFailure::new(
+            FailureKind::Call,
+            format!("malformed HTTP status from Anvil: `{status_line}`"),
+        ));
+    }
+    if status != Some(200) {
+        return Err(E2eFailure::new(
+            FailureKind::Call,
+            format!("Anvil JSON-RPC returned `{status_line}`"),
+        ));
+    }
+
+    let mut content_length = None;
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or_else(|| {
+            E2eFailure::new(
+                FailureKind::Call,
+                format!("malformed HTTP header from Anvil: `{line}`"),
+            )
+        })?;
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("transfer-encoding") && !value.eq_ignore_ascii_case("identity")
+        {
+            return Err(E2eFailure::new(
+                FailureKind::Call,
+                format!("unsupported Anvil HTTP transfer encoding `{value}`"),
+            ));
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            let parsed = value.parse::<usize>().map_err(|_| {
+                E2eFailure::new(
+                    FailureKind::Call,
+                    format!("invalid Anvil HTTP Content-Length `{value}`"),
+                )
+            })?;
+            if content_length
+                .replace(parsed)
+                .is_some_and(|prior| prior != parsed)
+            {
+                return Err(E2eFailure::new(
+                    FailureKind::Call,
+                    "conflicting Anvil HTTP Content-Length headers",
+                ));
+            }
+        }
+    }
+
+    let body = &response[header_end..];
+    if let Some(expected) = content_length
+        && body.len() != expected
+    {
+        return Err(E2eFailure::new(
+            FailureKind::Call,
+            format!(
+                "truncated Anvil HTTP body: Content-Length is {expected}, received {} bytes",
+                body.len()
+            ),
+        ));
+    }
+    Ok(body.to_vec())
+}
+
+fn decode_eth_call_response(response: &[u8]) -> Result<CallOutcome, E2eFailure> {
+    let response: serde_json::Value = serde_json::from_slice(response).map_err(|error| {
+        E2eFailure::new(
+            FailureKind::Call,
+            format!("invalid Anvil JSON-RPC response: {error}"),
+        )
+    })?;
+    let object = response.as_object().ok_or_else(|| {
+        E2eFailure::new(
+            FailureKind::Call,
+            "Anvil JSON-RPC response is not an object",
+        )
+    })?;
+    if object.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0")
+        || object.get("id").and_then(serde_json::Value::as_u64) != Some(1)
+    {
+        return Err(E2eFailure::new(
+            FailureKind::Call,
+            format!("invalid Anvil JSON-RPC envelope: {response}"),
+        ));
+    }
+
+    match (object.get("result"), object.get("error")) {
+        (Some(result), None) => {
+            let result = result.as_str().ok_or_else(|| {
+                E2eFailure::new(FailureKind::Decode, "eth_call result is not a hex string")
+            })?;
+            decode_rpc_hex(result).map_err(|message| {
+                E2eFailure::new(
+                    FailureKind::Decode,
+                    format!("invalid eth_call result: {message}"),
+                )
+            })?;
+            return Ok(CallOutcome::Return(result.to_owned()));
+        }
+        (None, Some(_)) => {}
+        _ => {
+            return Err(E2eFailure::new(
+                FailureKind::Call,
+                format!(
+                    "Anvil JSON-RPC response must contain exactly one of result or error: {response}"
+                ),
+            ));
+        }
+    }
+
+    let error = object
+        .get("error")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            E2eFailure::new(
+                FailureKind::Call,
+                format!("Anvil JSON-RPC error is not an object: {response}"),
+            )
+        })?;
+    let code = error
+        .get("code")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| E2eFailure::new(FailureKind::Call, "JSON-RPC error has no integer code"))?;
+    let message = error
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            E2eFailure::new(FailureKind::Call, "JSON-RPC error has no string message")
+        })?;
+    let is_revert = code == 3
+        || message
+            .to_ascii_lowercase()
+            .starts_with("execution reverted");
+    if !is_revert {
+        return Err(E2eFailure::new(
+            FailureKind::Call,
+            format!("Anvil JSON-RPC error {code}: {message}"),
+        ));
+    }
+    let payload = find_hex_data(error.get("data"))
+        .transpose()
+        .map_err(|message| {
+            E2eFailure::new(
+                FailureKind::Decode,
+                format!("invalid revert data: {message}"),
+            )
+        })?;
+    Ok(CallOutcome::Revert(payload))
+}
+
+fn find_hex_data(value: Option<&serde_json::Value>) -> Option<Result<Vec<u8>, String>> {
+    match value? {
+        serde_json::Value::String(data) => Some(decode_rpc_hex(data)),
+        serde_json::Value::Object(object) => find_hex_data(object.get("data")),
+        _ => None,
+    }
+}
+
+fn decode_rpc_hex(data: &str) -> Result<Vec<u8>, String> {
+    if !data.starts_with("0x") {
+        return Err("JSON-RPC hex data must start with `0x`".to_owned());
+    }
+    decode_hex_data(data)
+}
+
+fn assert_call_outcome(
+    label: &str,
+    expected: &ResolvedExpectedOutcome,
+    outcome: &CallOutcome,
+) -> Result<(), E2eFailure> {
+    match (expected, outcome) {
+        (ResolvedExpectedOutcome::Return(expected), CallOutcome::Return(returndata)) => {
+            assert_return_data(label, expected, returndata)
+        }
+        (ResolvedExpectedOutcome::Return(_), CallOutcome::Revert(payload)) => Err(E2eFailure::new(
+            FailureKind::Call,
+            format!(
+                "{label}: unexpected revert{}",
+                payload
+                    .as_deref()
+                    .map(|data| format!(" with 0x{}", encode_hex(data)))
+                    .unwrap_or_default()
+            ),
+        )),
+        (ResolvedExpectedOutcome::Revert(None), CallOutcome::Revert(_)) => Ok(()),
+        (ResolvedExpectedOutcome::Revert(Some(expected)), CallOutcome::Revert(Some(actual)))
+            if expected == actual =>
+        {
+            Ok(())
+        }
+        (ResolvedExpectedOutcome::Revert(Some(expected)), CallOutcome::Revert(actual)) => {
+            Err(E2eFailure::new(
+                FailureKind::Mismatch,
+                format!(
+                    "{label}: expected revert payload 0x{}, got {}",
+                    encode_hex(expected),
+                    actual
+                        .as_deref()
+                        .map(|data| format!("0x{}", encode_hex(data)))
+                        .unwrap_or_else(|| "no payload".to_owned())
+                ),
+            ))
+        }
+        (ResolvedExpectedOutcome::Revert(_), CallOutcome::Return(returndata)) => {
+            Err(E2eFailure::new(
+                FailureKind::Mismatch,
+                format!("{label}: expected revert, call returned `{returndata}`"),
+            ))
+        }
     }
 }
 
@@ -632,5 +928,85 @@ mod tests {
         assert_eq!(parse_anvil_port("Listening on 127.0.0.1:8545"), Some(8545));
         assert_eq!(parse_anvil_port("http://localhost:49152"), Some(49152));
         assert_eq!(parse_anvil_port("unrelated"), None);
+    }
+
+    #[test]
+    fn decodes_json_rpc_reverts_and_checks_payloads() {
+        let response = br#"{"jsonrpc":"2.0","id":1,"error":{"code":3,"message":"execution reverted","data":"0xdeadbeef"}}"#;
+        let outcome = decode_eth_call_response(response).expect("revert response");
+        assert_eq!(
+            outcome,
+            CallOutcome::Revert(Some(vec![0xde, 0xad, 0xbe, 0xef]))
+        );
+        assert_call_outcome(
+            "exact revert",
+            &ResolvedExpectedOutcome::Revert(Some(vec![0xde, 0xad, 0xbe, 0xef])),
+            &outcome,
+        )
+        .expect("matching revert");
+        assert_eq!(
+            assert_call_outcome(
+                "wrong payload",
+                &ResolvedExpectedOutcome::Revert(Some(vec![0xca, 0xfe])),
+                &outcome,
+            )
+            .unwrap_err()
+            .kind,
+            FailureKind::Mismatch
+        );
+        assert_eq!(
+            assert_call_outcome(
+                "unexpected success",
+                &ResolvedExpectedOutcome::Revert(None),
+                &CallOutcome::Return("0x".to_owned()),
+            )
+            .unwrap_err()
+            .kind,
+            FailureKind::Mismatch
+        );
+
+        let non_revert = br#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"invalid params","data":"0xdeadbeef"}}"#;
+        let error = decode_eth_call_response(non_revert).unwrap_err();
+        assert_eq!(error.kind, FailureKind::Call);
+        assert!(error.message.contains("invalid params"), "{error}");
+
+        let conflicting = br#"{"jsonrpc":"2.0","id":1,"result":"0x","error":{"code":3,"message":"execution reverted"}}"#;
+        assert!(
+            decode_eth_call_response(conflicting)
+                .unwrap_err()
+                .message
+                .contains("exactly one")
+        );
+    }
+
+    #[test]
+    fn validates_anvil_http_response_framing() {
+        let body = br#"{"jsonrpc":"2.0","id":1,"result":"0x"}"#;
+        let response = [
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )
+            .into_bytes(),
+            body.to_vec(),
+        ]
+        .concat();
+        assert_eq!(parse_http_response(response).unwrap(), body);
+
+        let truncated = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n{}".to_vec();
+        assert!(
+            parse_http_response(truncated)
+                .unwrap_err()
+                .message
+                .contains("truncated")
+        );
+        let chunked =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n{}\r\n0\r\n\r\n".to_vec();
+        assert!(
+            parse_http_response(chunked)
+                .unwrap_err()
+                .message
+                .contains("transfer encoding")
+        );
     }
 }

@@ -6,7 +6,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use hir::{diag::AnyDiagnostic, input::SourceFile};
+use hir::{
+    diag::{AnyDiagnostic, DiagnosticLevel},
+    input::SourceFile,
+};
 use nameres::{
     LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
     module_id_from_key, module_key_for_path, module_path_display, reachable_diagnostics,
@@ -61,7 +64,9 @@ const STD_SOLC_KNOWN_DIVERGENCES: &[StdSolcKnownDivergence] =
 struct RunOutcome {
     unresolved_imports: Vec<String>,
     frontend_diagnostics: Vec<String>,
+    frontend_has_errors: bool,
     typeck_diagnostics: Vec<String>,
+    typeck_has_errors: bool,
     executed: Vec<String>,
 }
 
@@ -303,6 +308,173 @@ fn generated_dispatch_reuses_std_instance_facts_per_module() {
     assert_eq!(per_origin_executions, 0, "{report}");
 }
 
+#[test]
+fn reference_rejected_corpus_stays_rejected() {
+    let repo = repo_root();
+    let corpus_root = repo.join("crates/parser/tests/fixtures/corpus");
+    let verdicts = fs::read_to_string(corpus_root.join("reference-frontend.tsv"))
+        .expect("reference frontend verdict manifest");
+    let known_divergences =
+        fs::read_to_string(corpus_root.join("rust-accepted-reference-failures.tsv"))
+            .expect("Rust/reference reject divergence manifest");
+    let mut divergence_lines = known_divergences.lines();
+    assert_eq!(
+        divergence_lines.next(),
+        Some("# path<TAB>reason"),
+        "invalid Rust/reference divergence manifest header"
+    );
+    let mut known_divergences = BTreeSet::new();
+    for (index, line) in divergence_lines.enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let fields = line.split('\t').collect::<Vec<_>>();
+        assert_eq!(
+            fields.len(),
+            2,
+            "invalid known-divergence row {}: `{line}`",
+            index + 2
+        );
+        let (path, reason) = (fields[0], fields[1]);
+        assert!(
+            !path.is_empty(),
+            "missing divergence path on row {}",
+            index + 2
+        );
+        assert!(
+            !reason.trim().is_empty() && reason.trim() == reason,
+            "invalid divergence reason for `{path}`"
+        );
+        assert!(
+            known_divergences.insert(path.to_owned()),
+            "duplicate known divergence for `{path}`"
+        );
+    }
+
+    let mut reference_failures = BTreeSet::new();
+    let mut reference_timeouts = BTreeSet::new();
+    let mut verdict_paths = BTreeSet::new();
+    let mut accepted = BTreeSet::new();
+    let mut verdict_lines = verdicts.lines();
+    assert_eq!(
+        verdict_lines.next(),
+        Some("path\tstatus\tcode"),
+        "invalid reference verdict manifest header"
+    );
+    for (index, line) in verdict_lines.enumerate() {
+        assert!(
+            !line.is_empty(),
+            "blank reference verdict row {}",
+            index + 2
+        );
+        let fields = line.split('\t').collect::<Vec<_>>();
+        assert_eq!(
+            fields.len(),
+            3,
+            "invalid reference verdict row {}: `{line}`",
+            index + 2
+        );
+        let (path, status) = (fields[0], fields[1]);
+        assert!(
+            !path.is_empty(),
+            "missing reference path on row {}",
+            index + 2
+        );
+        assert!(
+            verdict_paths.insert(path.to_owned()),
+            "duplicate reference verdict for `{path}`"
+        );
+        match status {
+            "pass" => continue,
+            "timeout" => {
+                reference_timeouts.insert(path.to_owned());
+                continue;
+            }
+            "fail" => {}
+            other => panic!("invalid reference status `{other}` for `{path}`"),
+        }
+
+        reference_failures.insert(path.to_owned());
+        let relative = format!("examples/{path}");
+        let entry = corpus_entry(&corpus_root, &relative);
+        assert!(
+            entry
+                .path
+                .starts_with(corpus_root.join("fail/test/examples")),
+            "reference-failed fixture `{path}` is not in the fail corpus: {}",
+            entry.path.display()
+        );
+        let std_root = corpus_root.join("ok/std");
+        let outcome = run_frontend_with_roots(
+            &entry.path,
+            &entry.main_root,
+            &std_root,
+            entry.external_roots,
+        );
+        if !outcome.frontend_has_errors && !outcome.typeck_has_errors {
+            accepted.insert(path.to_owned());
+        }
+    }
+
+    let recorded_rejections = reference_failures
+        .union(&reference_timeouts)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let fail_tree = relative_solc_paths(&corpus_root.join("fail/test/examples"));
+    assert_eq!(
+        recorded_rejections, fail_tree,
+        "reference reject/timeout manifest and fail corpus differ"
+    );
+
+    let stale = known_divergences
+        .difference(&accepted)
+        .cloned()
+        .collect::<Vec<_>>();
+    let unrecorded = accepted
+        .difference(&known_divergences)
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        stale.is_empty() && unrecorded.is_empty(),
+        "reference-rejected corpus parity changed\n  unrecorded accepted files: {unrecorded:#?}\n  stale known divergences: {stale:#?}"
+    );
+}
+
+fn relative_solc_paths(root: &Path) -> BTreeSet<String> {
+    fn walk(root: &Path, directory: &Path, paths: &mut BTreeSet<String>) {
+        let entries = fs::read_dir(directory)
+            .unwrap_or_else(|error| panic!("failed to read {}: {error}", directory.display()));
+        for entry in entries {
+            let entry = entry.unwrap_or_else(|error| {
+                panic!(
+                    "failed to read an entry under {}: {error}",
+                    directory.display()
+                )
+            });
+            let path = entry.path();
+            if path.is_dir() {
+                walk(root, &path, paths);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("solc") {
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("walked path is below corpus root")
+                    .iter()
+                    .map(|component| component.to_str().expect("UTF-8 corpus path"))
+                    .collect::<Vec<_>>()
+                    .join("/");
+                assert!(
+                    paths.insert(relative.clone()),
+                    "duplicate corpus path `{relative}`"
+                );
+            }
+        }
+    }
+
+    let mut paths = BTreeSet::new();
+    walk(root, root, &mut paths);
+    paths
+}
+
 fn corpus_entry(corpus_root: &Path, relative: &str) -> CorpusEntry {
     for status in ["ok", "fail", "known-diagnostic-gaps"] {
         let test_root = corpus_root.join(status).join("test");
@@ -388,7 +560,12 @@ fn run_frontend_with_roots(
     let entry = module_id_from_key(&db, &entry_key);
     let _ = db.take_executed();
     let _ = resolve_reachable_full(&db, entry);
-    let mut frontend_diagnostics = summarize_diagnostics(&db, reachable_diagnostics(&db, entry));
+    let reachable_frontend = reachable_diagnostics(&db, entry);
+    let frontend_has_errors = !unresolved_imports.is_empty()
+        || reachable_frontend
+            .iter()
+            .any(|diagnostic| diagnostic.lower(&db).level == DiagnosticLevel::Error);
+    let mut frontend_diagnostics = summarize_diagnostics(&db, reachable_frontend);
     frontend_diagnostics.extend(
         unresolved_imports
             .iter()
@@ -396,13 +573,19 @@ fn run_frontend_with_roots(
     );
     frontend_diagnostics.sort();
     frontend_diagnostics.dedup();
-    let typeck_diagnostics = summarize_diagnostics(&db, reachable_typeck_diagnostics(&db, entry));
+    let reachable_typeck = reachable_typeck_diagnostics(&db, entry);
+    let typeck_has_errors = reachable_typeck
+        .iter()
+        .any(|diagnostic| diagnostic.lower(&db).level == DiagnosticLevel::Error);
+    let typeck_diagnostics = summarize_diagnostics(&db, reachable_typeck);
     let executed = db.take_executed();
 
     RunOutcome {
         unresolved_imports,
         frontend_diagnostics,
+        frontend_has_errors,
         typeck_diagnostics,
+        typeck_has_errors,
         executed,
     }
 }

@@ -1,0 +1,8 @@
+# path<TAB>reason
+cases/compose_desugared.solc	SC0209 reference exhaustiveness rejection is not reproduced by the Rust match checker
+cases/for-let-post.solc	SC0001 reference frontend rejects this for-loop let form while the Rust grammar accepts it
+cases/match-compiler-undef-asm.solc	SC0299 reference match/assembly definite-assignment rejection is not implemented in the Rust frontend
+cases/super-class-recursive-arg.solc	SC0223 reference solver rejects this recursive superclass argument under the disabled Patterson condition
+cases/tabled-answer-reuse.solc	SC0299 reference tabled-solver failure is accepted by the Rust solver's answer reuse
+cases/tabled-mutual-chain.solc	SC0299 reference tabled-solver failure is accepted by the Rust solver's mutual instance chain handling
+comptime/ct_param_poly_runtime.solc	SC0299 reference rejects a runtime argument passed to a polymorphic comptime parameter before specialization
