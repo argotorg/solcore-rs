@@ -11,12 +11,15 @@ import type {
 interface PendingRequest<T = unknown> {
   resolve: (result: T) => void;
   reject: (reason: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
 }
 
 type NotificationHandler = (params: any) => void;
 
 const SERVER_REQUEST_NOT_SUPPORTED = -32601;
 const PLAYGROUND_WORKSPACE_URI = "file:///main";
+const LSP_REQUEST_TIMEOUT_MS = 30_000;
+const WORKER_BOOT_ERROR = "solcore-lsp/boot-error";
 
 function createAbortError(message: string): Error {
   return new DOMException(message, "AbortError");
@@ -28,6 +31,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isJsonRpcMessage(value: unknown): value is JsonRpcMessage {
   return isRecord(value) && value.jsonrpc === "2.0";
+}
+
+function isWorkerBootError(
+  value: unknown,
+): value is { type: typeof WORKER_BOOT_ERROR; message: string } {
+  return (
+    isRecord(value) &&
+    value.type === WORKER_BOOT_ERROR &&
+    typeof value.message === "string"
+  );
 }
 
 function isResponse(value: JsonRpcMessage): value is JsonRpcResponse {
@@ -56,10 +69,11 @@ export class LspClient {
   private nextId = 1;
   private initializePromise: Promise<void> | null = null;
   private disposed = false;
+  private workerFailure: Error | null = null;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly notificationHandlers = new Map<string, Set<NotificationHandler>>();
 
-  constructor() {
+  constructor(private readonly requestTimeoutMs = LSP_REQUEST_TIMEOUT_MS) {
     this.worker = new LspWorker();
     this.worker.addEventListener("message", this.handleMessage);
     this.worker.addEventListener("error", this.handleWorkerError);
@@ -126,6 +140,9 @@ export class LspClient {
     if (this.disposed) {
       return Promise.reject(createAbortError("LSP client disposed"));
     }
+    if (this.workerFailure) {
+      return Promise.reject(this.workerFailure);
+    }
 
     const id = this.nextId;
     this.nextId += 1;
@@ -138,9 +155,20 @@ export class LspClient {
     };
 
     const promise = new Promise<T>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        if (!this.pending.delete(id)) {
+          return;
+        }
+        reject(
+          new Error(
+            `LSP request '${method}' timed out after ${this.requestTimeoutMs}ms`,
+          ),
+        );
+      }, this.requestTimeoutMs);
       this.pending.set(id, {
         resolve: resolve as (result: unknown) => void,
         reject,
+        timeout,
       });
     });
 
@@ -149,7 +177,7 @@ export class LspClient {
   }
 
   notify(method: string, params: unknown): void {
-    if (this.disposed) {
+    if (this.disposed || this.workerFailure) {
       return;
     }
 
@@ -222,6 +250,7 @@ export class LspClient {
     this.worker.terminate();
 
     for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
       pending.reject(createAbortError("LSP worker terminated"));
     }
     this.pending.clear();
@@ -230,6 +259,10 @@ export class LspClient {
 
   private readonly handleMessage = (event: MessageEvent<unknown>): void => {
     const message = event.data;
+    if (isWorkerBootError(message)) {
+      this.failWorker(new Error(`Solcore LSP worker failed to start: ${message.message}`));
+      return;
+    }
     if (!isJsonRpcMessage(message)) {
       return;
     }
@@ -260,6 +293,7 @@ export class LspClient {
     }
 
     this.pending.delete(response.id);
+    clearTimeout(pending.timeout);
 
     if (response.error) {
       pending.reject(errorFromJsonRpc(response.error));
@@ -297,10 +331,15 @@ export class LspClient {
   }
 
   private readonly handleWorkerError = (event: ErrorEvent): void => {
-    const error = new Error(event.message || "LSP worker failed");
+    this.failWorker(new Error(event.message || "LSP worker failed"));
+  };
+
+  private failWorker(error: Error): void {
+    this.workerFailure = error;
     for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout);
       pending.reject(error);
     }
     this.pending.clear();
-  };
+  }
 }

@@ -42,7 +42,7 @@ VITE_BASE=/solcore-rs/ npm run build
 Rebuild the sibling wasm crates whenever the compiler or LSP changes. Preferred (size-optimized):
 
 ```sh
-npm run build:wasm     # from playground/: compiler wasm + LSP wasm + optional `wasm-opt -Oz`
+npm run build:wasm     # from playground/: compiler wasm + LSP wasm + pinned `wasm-opt -Oz`
 ```
 
 To rebuild only one package:
@@ -61,10 +61,10 @@ wasm-pack build --target web crates/lsp --out-dir pkg --profile wasm-release -- 
 
 That produces `crates/wasm/pkg/` and `crates/lsp/pkg/`. The workspace `[profile.wasm-release]` keeps
 browser builds size-tuned (`strip` + `opt-level = "z"` + fat `lto`); the normal `[profile.release]`
-is instead tuned for native compiler throughput. A final `wasm-opt -Oz` pass (requires
-`brew install binaryen`; wasm-pack's bundled wasm-opt is too old for reference-types) reduces the
-generated package further. `npm run build:wasm` applies it automatically when `wasm-opt` is on
-`PATH` and skips it gracefully otherwise; `vite build` reports the current raw and gzipped asset
+is instead tuned for native compiler throughput. A final `wasm-opt -Oz` pass from the exact
+`binaryen` version in `package-lock.json` reduces the generated package further. `npm run
+build:wasm` applies it automatically after `npm ci`; a missing optimizer is a build error rather
+than silently changing the bundle contents. `vite build` reports the current raw and gzipped asset
 sizes. The Playground imports `init`,
 `compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted
 `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The LSP worker imports

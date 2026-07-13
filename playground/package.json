@@ -8,12 +8,12 @@
     "dev:force": "npm run build:wasm && vite --force",
     "build": "npm run build:wasm && npm run typecheck:worker && tsc --noEmit && vite build",
     "build:wasm": "npm run build:compiler-wasm && npm run build:lsp-wasm",
-    "build:compiler-wasm": "wasm-pack build ../crates/wasm --target web --out-dir pkg --profile wasm-release && (command -v wasm-opt >/dev/null 2>&1 && wasm-opt -Oz --enable-reference-types --enable-bulk-memory ../crates/wasm/pkg/solcore_wasm_bg.wasm -o ../crates/wasm/pkg/solcore_wasm_bg.wasm && echo '[build:compiler-wasm] wasm-opt -Oz applied' || echo '[build:compiler-wasm] wasm-opt not found; skipping extra size pass (brew install binaryen for a smaller bundle)')",
-    "build:lsp-wasm": "wasm-pack build ../crates/lsp --target web --out-dir pkg --profile wasm-release -- --features wasm && (command -v wasm-opt >/dev/null 2>&1 && wasm-opt -Oz --enable-reference-types --enable-bulk-memory ../crates/lsp/pkg/solcore_lsp_bg.wasm -o ../crates/lsp/pkg/solcore_lsp_bg.wasm && echo '[build:lsp-wasm] wasm-opt -Oz applied' || echo '[build:lsp-wasm] wasm-opt not found; skipping extra size pass (brew install binaryen for a smaller bundle)')",
+    "build:compiler-wasm": "wasm-pack build ../crates/wasm --target web --out-dir pkg --profile wasm-release && wasm-opt -Oz --enable-reference-types --enable-bulk-memory --enable-nontrapping-float-to-int ../crates/wasm/pkg/solcore_wasm_bg.wasm -o ../crates/wasm/pkg/solcore_wasm_bg.wasm",
+    "build:lsp-wasm": "wasm-pack build ../crates/lsp --target web --out-dir pkg --profile wasm-release -- --features wasm && wasm-opt -Oz --enable-reference-types --enable-bulk-memory --enable-nontrapping-float-to-int ../crates/lsp/pkg/solcore_lsp_bg.wasm -o ../crates/lsp/pkg/solcore_lsp_bg.wasm",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "typecheck:worker": "tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution Bundler --lib ESNext,WebWorker ../worker/worker.ts",
-    "test:unit": "node --test src/languageServer/providers/*.test.mjs"
+    "test:unit": "node --test src/languageServer/providers/*.test.mjs src/languageServer/*.test.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -33,6 +33,8 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "binaryen": "130.0.0",
+    "esbuild": "0.25.12",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
   }

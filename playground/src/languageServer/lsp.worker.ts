@@ -11,6 +11,7 @@ const workerScope = self as unknown as {
 
 let server: SolcoreLsp | null = null;
 const pending: unknown[] = [];
+const WORKER_BOOT_ERROR = "solcore-lsp/boot-error";
 
 workerScope.addEventListener("message", (event: MessageEvent<unknown>) => {
   if (!server) {
@@ -43,6 +44,12 @@ function handleMessage(data: unknown): void {
   }
 }
 
-void start();
+void start().catch((error: unknown) => {
+  pending.length = 0;
+  workerScope.postMessage({
+    type: WORKER_BOOT_ERROR,
+    message: error instanceof Error ? error.message : String(error),
+  });
+});
 
 export {};

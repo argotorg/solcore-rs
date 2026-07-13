@@ -27,6 +27,10 @@ The extension resolves the server command in this order:
 2. `SOLCORE_LSP_SERVER` environment variable.
 3. `solcore-lsp` on `PATH`.
 
+Changing `solcore.lsp.serverPath` stops the current client and starts the server
+at the new path without requiring a window reload. If startup fails, the
+extension offers to open that setting directly.
+
 ## Development
 
 Run `npm install` in this directory before launching an Extension Development
