@@ -33,6 +33,14 @@ impl DiagnosticPhase {
             DiagnosticPhase::Typeck => "typeck",
         }
     }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "frontend" => Some(Self::Frontend),
+            "typeck" => Some(Self::Typeck),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for DiagnosticPhase {
@@ -64,10 +72,19 @@ const STD_SOLC_KNOWN_DIVERGENCES: &[StdSolcKnownDivergence] =
 struct RunOutcome {
     unresolved_imports: Vec<String>,
     frontend_diagnostics: Vec<String>,
+    frontend_error_diagnostics: Vec<String>,
     frontend_has_errors: bool,
     typeck_diagnostics: Vec<String>,
+    typeck_error_diagnostics: Vec<String>,
     typeck_has_errors: bool,
     executed: Vec<String>,
+}
+
+#[derive(Debug)]
+struct AcceptedCorpusKnownDivergence {
+    phase: DiagnosticPhase,
+    diagnostic_prefix: String,
+    reason: String,
 }
 
 struct CorpusEntry {
@@ -440,6 +457,235 @@ fn reference_rejected_corpus_stays_rejected() {
     );
 }
 
+#[test]
+fn reference_accepted_corpus_passes_the_full_frontend() {
+    solcore_test_utils::run_in_large_stack(reference_accepted_corpus_passes_the_full_frontend_impl);
+}
+
+fn reference_accepted_corpus_passes_the_full_frontend_impl() {
+    let repo = repo_root();
+    let corpus_root = repo.join("crates/parser/tests/fixtures/corpus");
+    let verdicts = fs::read_to_string(corpus_root.join("reference-frontend.tsv"))
+        .expect("reference frontend verdict manifest");
+    let known_divergences =
+        fs::read_to_string(corpus_root.join("rust-rejected-reference-passes.tsv"))
+            .expect("Rust/reference accepted divergence manifest");
+
+    let mut divergence_lines = known_divergences.lines();
+    assert_eq!(
+        divergence_lines.next(),
+        Some("# path<TAB>phase<TAB>diagnostic-prefix<TAB>reason"),
+        "invalid accepted-corpus divergence manifest header"
+    );
+    let mut divergence_keys = BTreeSet::new();
+    let mut divergences = BTreeMap::<String, Vec<AcceptedCorpusKnownDivergence>>::new();
+    for (index, line) in divergence_lines.enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let fields = line.split('\t').collect::<Vec<_>>();
+        assert_eq!(
+            fields.len(),
+            4,
+            "invalid accepted-corpus divergence row {}: `{line}`",
+            index + 2
+        );
+        let (path, phase, diagnostic_prefix, reason) = (fields[0], fields[1], fields[2], fields[3]);
+        let phase = DiagnosticPhase::parse(phase).unwrap_or_else(|| {
+            panic!(
+                "invalid accepted-corpus phase `{phase}` on row {}",
+                index + 2
+            )
+        });
+        assert!(
+            !path.is_empty(),
+            "missing divergence path on row {}",
+            index + 2
+        );
+        assert!(
+            !diagnostic_prefix.trim().is_empty() && diagnostic_prefix.trim() == diagnostic_prefix,
+            "invalid diagnostic prefix for `{path}`"
+        );
+        assert!(
+            !reason.trim().is_empty() && reason.trim() == reason,
+            "invalid divergence reason for `{path}`"
+        );
+        assert!(
+            divergence_keys.insert((path.to_owned(), phase, diagnostic_prefix.to_owned())),
+            "duplicate accepted-corpus divergence for `{path}` ({phase}, {diagnostic_prefix})"
+        );
+        divergences
+            .entry(path.to_owned())
+            .or_default()
+            .push(AcceptedCorpusKnownDivergence {
+                phase,
+                diagnostic_prefix: diagnostic_prefix.to_owned(),
+                reason: reason.to_owned(),
+            });
+    }
+
+    let mut accepted = BTreeSet::new();
+    let mut verdict_lines = verdicts.lines();
+    assert_eq!(
+        verdict_lines.next(),
+        Some("path\tstatus\tcode"),
+        "invalid reference verdict manifest header"
+    );
+    for (index, line) in verdict_lines.enumerate() {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        assert_eq!(
+            fields.len(),
+            3,
+            "invalid reference verdict row {}: `{line}`",
+            index + 2
+        );
+        if fields[1] == "pass" {
+            assert!(
+                accepted.insert(fields[0].to_owned()),
+                "duplicate accepted reference verdict for `{}`",
+                fields[0]
+            );
+        }
+    }
+
+    let accepted_tree = relative_solc_paths(&corpus_root.join("ok/test/examples"));
+    assert_eq!(
+        accepted, accepted_tree,
+        "reference pass manifest and accepted corpus differ"
+    );
+
+    let std_root = corpus_root.join("ok/std");
+    let mut accepted_entries = Vec::<(String, String, CorpusEntry)>::new();
+    for path in &accepted {
+        let relative = format!("examples/{path}");
+        accepted_entries.push((
+            path.clone(),
+            format!("test/{relative}"),
+            corpus_entry(&corpus_root, &relative),
+        ));
+    }
+    for path in relative_solc_paths(&corpus_root.join("ok/test/imports")) {
+        let relative = format!("imports/{path}");
+        accepted_entries.push((
+            relative.clone(),
+            format!("test/{relative}"),
+            corpus_entry(&corpus_root, &relative),
+        ));
+    }
+    for path in relative_solc_paths(&std_root) {
+        accepted_entries.push((
+            format!("std/{path}"),
+            format!("std/{path}"),
+            CorpusEntry {
+                path: std_root.join(&path),
+                main_root: std_root.clone(),
+                external_roots: BTreeMap::new(),
+            },
+        ));
+    }
+
+    let tested_corpus_paths = accepted_entries
+        .iter()
+        .map(|(_, corpus_path, _)| corpus_path.clone())
+        .collect::<BTreeSet<_>>();
+    let accepted_corpus_tree = relative_solc_paths(&corpus_root.join("ok"));
+    assert_eq!(
+        tested_corpus_paths, accepted_corpus_tree,
+        "full-frontend gate and accepted corpus tree differ"
+    );
+    let report_paths = accepted_entries
+        .iter()
+        .map(|(report_path, _, _)| report_path.clone())
+        .collect::<BTreeSet<_>>();
+    let unknown_divergence_paths = divergences
+        .keys()
+        .filter(|path| !report_paths.contains(*path))
+        .cloned()
+        .collect::<Vec<_>>();
+    assert!(
+        unknown_divergence_paths.is_empty(),
+        "accepted-corpus divergence manifest contains non-pass files: {unknown_divergence_paths:#?}"
+    );
+
+    let mut unrecorded = Vec::new();
+    let mut stale = Vec::new();
+    let mut grouped_entries = BTreeMap::<PathBuf, Vec<(String, CorpusEntry)>>::new();
+    for (path, _, entry) in accepted_entries {
+        grouped_entries
+            .entry(entry.main_root.clone())
+            .or_default()
+            .push((path, entry));
+    }
+
+    // Reuse one Salsa database per corpus root. Preloading the entry inputs
+    // keeps the module-file snapshot stable after the first std import graph is
+    // loaded, so this remains a broad regression gate without rechecking std
+    // from scratch for every accepted fixture.
+    for (main_root, entries) in grouped_entries {
+        let external_roots = entries
+            .first()
+            .expect("accepted corpus group is nonempty")
+            .1
+            .external_roots
+            .clone();
+        assert!(
+            entries
+                .iter()
+                .all(|(_, entry)| entry.external_roots == external_roots),
+            "fixtures under {} disagree on external roots",
+            main_root.display()
+        );
+        let mut db = test_db_for_roots(&main_root, &std_root, external_roots);
+        for (_, entry) in &entries {
+            insert_entry_source(&mut db, &entry.path, &main_root);
+        }
+
+        for (path, entry) in entries {
+            let outcome = run_frontend_in_db(&mut db, &entry.path, &main_root);
+            let actual = outcome
+                .frontend_error_diagnostics
+                .iter()
+                .map(|diagnostic| (DiagnosticPhase::Frontend, diagnostic))
+                .chain(
+                    outcome
+                        .typeck_error_diagnostics
+                        .iter()
+                        .map(|diagnostic| (DiagnosticPhase::Typeck, diagnostic)),
+                )
+                .collect::<Vec<_>>();
+            let known = divergences
+                .get(&path)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+
+            for (phase, diagnostic) in &actual {
+                if !known.iter().any(|divergence| {
+                    divergence.phase == *phase
+                        && diagnostic.starts_with(&divergence.diagnostic_prefix)
+                }) {
+                    unrecorded.push(format!("{path}\t{phase}\t{diagnostic}"));
+                }
+            }
+            for divergence in known {
+                if !actual.iter().any(|(phase, diagnostic)| {
+                    *phase == divergence.phase
+                        && diagnostic.starts_with(&divergence.diagnostic_prefix)
+                }) {
+                    stale.push(format!(
+                        "{path}\t{}\t{}\t{}",
+                        divergence.phase, divergence.diagnostic_prefix, divergence.reason
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        unrecorded.is_empty() && stale.is_empty(),
+        "reference-accepted full-frontend parity changed\n  unrecorded errors: {unrecorded:#?}\n  stale known divergences: {stale:#?}"
+    );
+}
+
 fn relative_solc_paths(root: &Path) -> BTreeSet<String> {
     fn walk(root: &Path, directory: &Path, paths: &mut BTreeSet<String>) {
         let entries = fs::read_dir(directory)
@@ -536,6 +782,15 @@ fn run_frontend_with_roots(
     std_root: &Path,
     external_roots: BTreeMap<String, PathBuf>,
 ) -> RunOutcome {
+    let mut db = test_db_for_roots(main_root, std_root, external_roots);
+    run_frontend_in_db(&mut db, path, main_root)
+}
+
+fn test_db_for_roots(
+    main_root: &Path,
+    std_root: &Path,
+    external_roots: BTreeMap<String, PathBuf>,
+) -> TestDb {
     let mut db = TestDb::default();
     db.module_tree = Some(ModuleTree::new(
         &db,
@@ -549,23 +804,38 @@ fn run_frontend_with_roots(
             .chain(std::iter::once(std_root))
             .chain(external_roots.values().map(|path| path.as_path())),
     ));
+    db
+}
 
-    let source = fs::read_to_string(path).expect("fixture source");
+fn insert_entry_source(db: &mut TestDb, path: &Path, main_root: &Path) -> ModuleKey {
     let entry_key = module_key_for_path(LibraryId::Main, main_root, path)
         .expect("entry file is under its main root");
-    let entry_file = source_file_for_path(&db, path, source);
-    db.insert_module_file(entry_key.clone(), entry_file);
+    if !db.module_files.contains_key(&entry_key) {
+        let source = fs::read_to_string(path).expect("fixture source");
+        let entry_file = source_file_for_path(db, path, source);
+        db.insert_module_file(entry_key.clone(), entry_file);
+    }
+    entry_key
+}
 
-    let unresolved_imports = load_reachable_modules(&mut db, entry_key.clone());
-    let entry = module_id_from_key(&db, &entry_key);
+fn run_frontend_in_db(db: &mut TestDb, path: &Path, main_root: &Path) -> RunOutcome {
+    let entry_key = insert_entry_source(db, path, main_root);
+
+    let unresolved_imports = load_reachable_modules(db, entry_key.clone());
+    let entry = module_id_from_key(&*db, &entry_key);
     let _ = db.take_executed();
-    let _ = resolve_reachable_full(&db, entry);
-    let reachable_frontend = reachable_diagnostics(&db, entry);
-    let frontend_has_errors = !unresolved_imports.is_empty()
-        || reachable_frontend
+    let _ = resolve_reachable_full(&*db, entry);
+    let reachable_frontend = reachable_diagnostics(&*db, entry);
+    let mut frontend_error_diagnostics = summarize_error_diagnostics(&*db, reachable_frontend);
+    frontend_error_diagnostics.extend(
+        unresolved_imports
             .iter()
-            .any(|diagnostic| diagnostic.lower(&db).level == DiagnosticLevel::Error);
-    let mut frontend_diagnostics = summarize_diagnostics(&db, reachable_frontend);
+            .map(|unresolved| format!("unresolved-import: {unresolved}")),
+    );
+    frontend_error_diagnostics.sort();
+    frontend_error_diagnostics.dedup();
+    let frontend_has_errors = !frontend_error_diagnostics.is_empty();
+    let mut frontend_diagnostics = summarize_diagnostics(&*db, reachable_frontend);
     frontend_diagnostics.extend(
         unresolved_imports
             .iter()
@@ -573,18 +843,19 @@ fn run_frontend_with_roots(
     );
     frontend_diagnostics.sort();
     frontend_diagnostics.dedup();
-    let reachable_typeck = reachable_typeck_diagnostics(&db, entry);
-    let typeck_has_errors = reachable_typeck
-        .iter()
-        .any(|diagnostic| diagnostic.lower(&db).level == DiagnosticLevel::Error);
-    let typeck_diagnostics = summarize_diagnostics(&db, reachable_typeck);
+    let reachable_typeck = reachable_typeck_diagnostics(&*db, entry);
+    let typeck_error_diagnostics = summarize_error_diagnostics(&*db, reachable_typeck);
+    let typeck_has_errors = !typeck_error_diagnostics.is_empty();
+    let typeck_diagnostics = summarize_diagnostics(&*db, reachable_typeck);
     let executed = db.take_executed();
 
     RunOutcome {
         unresolved_imports,
         frontend_diagnostics,
+        frontend_error_diagnostics,
         frontend_has_errors,
         typeck_diagnostics,
+        typeck_error_diagnostics,
         typeck_has_errors,
         executed,
     }
@@ -708,6 +979,15 @@ fn summarize_diagnostics(db: &dyn hir::Db, diagnostics: &[AnyDiagnostic]) -> Vec
     summaries.sort();
     summaries.dedup();
     summaries
+}
+
+fn summarize_error_diagnostics(db: &dyn hir::Db, diagnostics: &[AnyDiagnostic]) -> Vec<String> {
+    let errors = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.lower(db).level == DiagnosticLevel::Error)
+        .cloned()
+        .collect::<Vec<_>>();
+    summarize_diagnostics(db, &errors)
 }
 #[derive(Default)]
 struct StdSolcTriage {

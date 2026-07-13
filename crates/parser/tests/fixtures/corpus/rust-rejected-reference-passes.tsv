@@ -1,0 +1,87 @@
+# path<TAB>phase<TAB>diagnostic-prefix<TAB>reason
+cases/ListModule.solc	typeck	SC0201: type mismatch: expected pair(a, b), found a	reference accepts applying a pair-domain function as two source arguments; Rust frontend currently models that domain as one tuple argument
+cases/ListModule.solc	typeck	SC0203: call expects 1 argument, but 2 were provided	reference accepts applying a pair-domain function as two source arguments; Rust frontend currently models that domain as one tuple argument
+cases/Pair.solc	typeck	SC0201: type mismatch: expected pair(word, word), found word	reference accepts applying a pair-domain function as two source arguments; Rust frontend currently models that domain as one tuple argument
+cases/Pair.solc	typeck	SC0203: call expects 1 argument, but 2 were provided	reference accepts applying a pair-domain function as two source arguments; Rust frontend currently models that domain as one tuple argument
+cases/Peano.solc	typeck	SC0201: argument type mismatch in call to `natInd`	reference accepts applying pair-domain functions and lambdas as multiple source arguments; Rust frontend currently requires an explicit tuple
+cases/Peano.solc	typeck	SC0201: type mismatch: expected pair(Nat, Nat), found Nat	reference accepts applying pair-domain functions and lambdas as multiple source arguments; Rust frontend currently requires an explicit tuple
+cases/Peano.solc	typeck	SC0203: call expects 1 argument, but 2 were provided	reference accepts applying pair-domain functions and lambdas as multiple source arguments; Rust frontend currently requires an explicit tuple
+cases/Peano.solc	typeck	SC0203: lambda expects 1 argument, but 2 were provided	reference accepts applying pair-domain functions and lambdas as multiple source arguments; Rust frontend currently requires an explicit tuple
+cases/Uncurry.solc	typeck	SC0206: non-callable value of type word	legacy reference accepts invoking a word-typed parameter; Rust frontend deliberately requires a callable type
+cases/bar.solc	typeck	SC0299: ambiguous inferred type	Rust solver does not yet improve the result parameter through this chained multi-parameter class implication
+cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: Contract	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: Fallback	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: Method	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: RunContract	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: fallback_default_implementation	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/field-helper-cxt-collision.solc	typeck	SC0103: undefined type constructor: NonPayable	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/field-helper-cxt-collision.solc	typeck	SC0105: undefined class: SigString	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/ixa.solc	typeck	SC0221: invalid instance member signature for `size`	reference accepts this legacy instance member with a narrowed array signature; Rust frontend enforces the declared class signature
+cases/multi-stmt-var-leaf.solc	typeck	SC0236: contract runtime `main` must not take parameters	reference accepts the legacy parameterized contract main form; Rust frontend reserves runtime main as a zero-argument entrypoint
+cases/pair-bug.solc	typeck	SC0101: undefined name: Contract	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/pair-bug.solc	typeck	SC0101: undefined name: Fallback	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/pair-bug.solc	typeck	SC0101: undefined name: RunContract	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/pair-bug.solc	typeck	SC0101: undefined name: fallback_default_implementation	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/pair-bug.solc	typeck	SC0103: undefined type constructor: NonPayable	legacy contract helper context injected by the reference compiler is not an implicit user-visible binding in the Rust frontend
+cases/rec.solc	typeck	SC0206: non-callable value of type word	legacy reference accepts invoking a word-typed parameter; Rust frontend deliberately requires a callable type
+cases/strange-unbound.solc	frontend	SC0103: undefined type constructor: a	Rust frontend does not yet retain this method-local forall binder inside a class member declaration
+cases/uintdesugared.solc	typeck	SC0211: unknown Yul identifier or function: keccak256	Rust Yul validation does not provide the reference compiler's implicit keccak256 builtin in this legacy fixture
+comptime/integer-lit-pat.solc	typeck	SC0201: type mismatch: expected numeric, found comptime integer	Rust frontend does not yet erase the comptime staging wrapper when checking numeric literal patterns
+comptime/integer-lit-pat.solc	typeck	SC0201: type mismatch: expected numeric, found comptime word	Rust frontend does not yet erase the comptime staging wrapper when checking numeric literal patterns
+dispatch/miniERC20.solc	typeck	SC0201: type mismatch: expected tuple, found memory(string)	Rust contract constructor lowering currently uses nested product arguments where the reference fixture uses a flat three-argument constructor
+dispatch/miniERC20.solc	typeck	SC0203: tuple pattern expects 3 arguments, but 2 were provided	Rust contract constructor lowering currently uses nested product arguments where the reference fixture uses a flat three-argument constructor
+dispatch/miniERC20.solc	typeck	SC0207: cannot satisfy class constraint: Contract(	Rust generated-dispatch solver does not yet close the reference RunContract evidence for this legacy contract surface
+dispatch/weth9.solc	typeck	SC0207: cannot satisfy class constraint: Contract(	Rust generated-dispatch solver does not yet close the reference RunContract evidence for this legacy contract surface
+std/opcodes.solc	typeck	SC0211: unknown Yul identifier or function: keccak256	vendored std declares the complete Yul surface while Rust Yul validation intentionally exposes only its implemented subset
+std/std.solc	typeck	SC0211: unknown Yul identifier or function: keccak256	vendored std declares the complete Yul surface while Rust Yul validation intentionally exposes only its implemented subset
+imports/alias_dup.solc	frontend	SC0116: duplicate import qualifier `M`	intentional negative import fixture for duplicate aliases
+imports/alias_hides_original_fail.solc	frontend	SC0101: undefined name: foo	intentional negative import fixture proving an alias hides the original qualifier
+imports/alias_unqualified_constr_fail.solc	frontend	SC0106: unqualified constructor: True	intentional negative import fixture proving module imports do not open constructors
+imports/alias_unqualified_fun_fail.solc	frontend	SC0101: undefined name: base	intentional negative import fixture proving aliased module imports do not open terms
+imports/alias_unqualified_type_fail.solc	frontend	SC0103: undefined type constructor: Bool	intentional negative import fixture proving aliased module imports do not open types
+imports/amb_main.solc	frontend	SC0120: ambiguous selected import `pick` in term namespace	intentional negative import fixture for ambiguous selected imports
+imports/boolalias_open_fail.solc	frontend	SC0101: undefined name: not	intentional negative import fixture proving an aliased module import is not an open import
+imports/boolalias_open_fail.solc	frontend	SC0103: undefined type constructor: Bool	intentional negative import fixture proving an aliased module import is not an open import
+imports/boolconselect_fail.solc	frontend	SC0106: unqualified constructor: True	intentional negative import fixture proving a selected type import does not expose its constructors
+imports/export_item_dup_fail.solc	frontend	SC0111: duplicate exported item name `pick`	intentional negative import fixture for duplicate item re-exports
+imports/export_module_dup_fail.solc	frontend	SC0112: duplicate exported module name `M`	intentional negative import fixture for duplicate module re-exports
+imports/external_lib_missing_fail.solc	frontend	SC0118: external library root is not configured: @missing	intentional negative import fixture for an unconfigured external library
+imports/external_lib_missing_fail.solc	frontend	unresolved-import: external_lib_missing_fail imports `@missing.math.api`	intentional negative import fixture for an unconfigured external library
+imports/external_lib_missing_fail.solc	typeck	SC0101: undefined name: Contract	unresolved external import intentionally causes generated contract-helper cascades in this negative fixture
+imports/external_lib_missing_fail.solc	typeck	SC0101: undefined name: Fallback	unresolved external import intentionally causes generated contract-helper cascades in this negative fixture
+imports/external_lib_missing_fail.solc	typeck	SC0101: undefined name: Proxy	unresolved external import intentionally causes generated contract-helper cascades in this negative fixture
+imports/external_lib_missing_fail.solc	typeck	SC0101: undefined name: RunContract	unresolved external import intentionally causes generated contract-helper cascades in this negative fixture
+imports/external_lib_missing_fail.solc	typeck	SC0101: undefined name: fallback_default_implementation	unresolved external import intentionally causes generated contract-helper cascades in this negative fixture
+imports/external_lib_missing_fail.solc	typeck	SC0103: undefined type constructor: NonPayable	unresolved external import intentionally causes generated contract-helper cascades in this negative fixture
+imports/external_lib_missing_fail.solc	typeck	SC0103: undefined type constructor: Proxy	unresolved external import intentionally causes generated contract-helper cascades in this negative fixture
+imports/glob_amb_main_fail.solc	frontend	SC0120: ambiguous selected import `shared` in term namespace	intentional negative import fixture for colliding wildcard imports
+imports/glob_import_hiding_unknown_fail.solc	frontend	SC0110: unknown import item `missing`	intentional negative import fixture for hiding an unknown wildcard-imported name
+imports/hidden_ctor_dot_fail.solc	frontend	SC0101: undefined name: Err	intentional negative import fixture proving hidden constructors are unavailable to dot syntax
+imports/hidden_ctor_expr_fail.solc	frontend	SC0101: undefined name: Err	intentional negative import fixture proving hidden constructors are unavailable in expressions
+imports/hidden_ctor_nonexhaustive_fail.solc	typeck	SC0223: pattern match on type with hidden constructors requires a wildcard arm: Token	intentional negative import fixture for exhaustiveness with a partially visible data type
+imports/hidden_ctor_pattern_fail.solc	frontend	SC0101: undefined name: Token.Err	intentional negative import fixture proving hidden constructors are unavailable in patterns
+imports/leak_b.solc	frontend	SC0101: undefined name: fromA	intentional negative import fixture proving private imported terms do not leak through an intermediate module
+imports/leak_main.solc	frontend	SC0101: undefined name: fromA	intentional negative import fixture proving private imported terms do not leak through an intermediate module
+imports/leak_main.solc	frontend	SC0101: undefined name: fromB	intentional negative import fixture proving private imported terms do not leak through an intermediate module
+imports/module_name_shadow.solc	frontend	SC0121: conflicting unqualified name `keep`	intentional negative import fixture for a module qualifier colliding with a selected term
+imports/module_unqualified_constr_fail.solc	frontend	SC0106: unqualified constructor: True	intentional negative import fixture proving module imports do not open constructors
+imports/module_unqualified_fun_fail.solc	frontend	SC0101: undefined name: base	intentional negative import fixture proving module imports do not open terms
+imports/module_unqualified_type_fail.solc	frontend	SC0103: undefined type constructor: Bool	intentional negative import fixture proving module imports do not open types
+imports/opaque_alias_leak_fail.solc	frontend	SC0103: undefined type constructor: T	intentional negative import fixture proving opaque type aliases do not leak through imports
+imports/opaque_alias_qualifier_leak_fail.solc	frontend	SC0103: undefined type constructor: Base.T	intentional negative import fixture proving opaque type aliases do not leak through qualifiers
+imports/opaque_select_direct_leak_fail.solc	frontend	SC0103: undefined type constructor: T	intentional negative import fixture proving opaque type aliases cannot be selected through re-exports
+imports/pragma_scope_main.solc	typeck	SC0212: Coverage condition fails for class:	intentional negative import fixture proving a dependency pragma does not disable checks in its importer
+imports/private_bad_lib.solc	typeck	SC0201: type mismatch: expected word, found bool	intentional negative import fixture containing a type error in a private helper body
+imports/private_bad_main.solc	typeck	SC0201: type mismatch: expected word, found bool	intentional negative import fixture proving reachable private helper bodies are type-checked
+imports/reexport_ctor_expr_hidden_fail.solc	frontend	SC0101: undefined name: Err	intentional negative import fixture proving hidden constructors do not leak through re-exports
+imports/reexport_ctor_hidden_fail.solc	frontend	SC0115: unknown re-exported constructor `Token.Err`	intentional negative import fixture for explicitly re-exporting a hidden constructor
+imports/select_dup_item.solc	frontend	SC0117: duplicate name `keep` in selective import	intentional negative import fixture for duplicate names in one selective import
+imports/select_fail.solc	frontend	SC0101: undefined name: drop	intentional negative import fixture proving unselected terms remain unavailable
+imports/select_hiding_fail.solc	frontend	SC0101: undefined name: drop	intentional negative import fixture proving hidden selected terms remain unavailable
+imports/select_shadow_local.solc	frontend	SC0108: duplicate declaration `keep` in term namespace	intentional negative import fixture for a selected term colliding with a local declaration
+imports/select_unknown.solc	frontend	SC0110: unknown import item `missing`	intentional negative import fixture for an unknown selected item
+imports/strict_open_fail.solc	frontend	SC0101: undefined name: not	intentional negative import fixture proving a strict module import is not an open import
+imports/strict_open_fail.solc	frontend	SC0103: undefined type constructor: Bool	intentional negative import fixture proving a strict module import is not an open import
+imports/symlink_identity_fail.solc	typeck	SC0201: type mismatch: expected Mirror.T, found T	intentional negative import fixture proving equivalent source paths retain distinct module type identities
+imports/symlink_impl/api.solc	frontend	SC0109: import helper: file not found	auxiliary symlink fixture is materialized by the module-system test and is not independently complete in the checked-in corpus
+imports/symlink_impl/api.solc	frontend	unresolved-import: failed to read	auxiliary symlink fixture is materialized by the module-system test and is not independently complete in the checked-in corpus

@@ -99,19 +99,39 @@ where
             })
             .boxed();
 
-        let if_expr = just(Token::If)
+        // Parse a right-nested `else if ...` chain as a flat list of heads.
+        // Recursing through the complete expression grammar once per `else`
+        // gives each level a very large Chumsky stack frame; folding the heads
+        // back into the same AST keeps ordinary else-if chains stack-bounded.
+        let if_head = just(Token::If)
             .ignore_then(expr.clone())
             .then_ignore(then_kw_parser())
             .then(expr.clone())
             .then_ignore(just(Token::Else))
+            .map_with(|(cond, then_expr), e| (e.span(), cond, then_expr))
+            .boxed();
+        let if_expr = if_head
+            .repeated()
+            .at_least(1)
+            .collect::<Vec<_>>()
             .then(expr.clone())
-            .map_with(|((cond, then_expr), else_expr), e| ParsedExpr {
-                span: e.span(),
-                kind: ParsedExprKind::If {
-                    cond: Box::new(cond),
-                    then_expr: Box::new(then_expr),
-                    else_expr: Box::new(else_expr),
-                },
+            .map(|(heads, tail)| {
+                heads.into_iter().rev().fold(
+                    tail,
+                    |else_expr,
+                     (head_span, cond, then_expr): (
+                        LexSpan,
+                        ParsedExpr<'src>,
+                        ParsedExpr<'src>,
+                    )| ParsedExpr {
+                        span: LexSpan::from(head_span.start..else_expr.span.end),
+                        kind: ParsedExprKind::If {
+                            cond: Box::new(cond),
+                            then_expr: Box::new(then_expr),
+                            else_expr: Box::new(else_expr),
+                        },
+                    },
+                )
             })
             .boxed();
 
