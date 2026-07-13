@@ -1,0 +1,152 @@
+---
+source: crates/sonatina/tests/lowering.rs
+expression: ir
+---
+target = "evm-ethereum-osaka"
+
+type @solcore_product_0 = {i256, i256};
+type @solcore_sum_1 = enum {
+    #inl(@solcore_product_0),
+    #inr(i256),
+};
+
+func private %solcore_fn_12_object0_2einit_39_main_5fAggregateContract_5f_5fstart_5fdd9a737e0() {
+    block0:
+        evm_mstore 64.i256 128.i256;
+        v2.i256 = evm_code_size;
+        v3.i256 = sym_size .;
+        v4.i1 = lt v2 v3;
+        v5.i256 = zext v4 i256;
+        v7.i1 = eq v5 0.i256;
+        v8.i1 = is_zero v7;
+        br v8 block1 block2;
+
+    block1:
+        evm_revert 0.i256 0.i256;
+
+    block2:
+        v9.i256 = evm_call_value;
+        v10.i1 = eq v9 0.i256;
+        v11.i1 = is_zero v10;
+        br v11 block3 block4;
+
+    block3:
+        evm_mstore 0.i256 3046674083.i256;
+        evm_revert 28.i256 4.i256;
+
+    block4:
+        v17.i256 = sym_size &AggregateContract;
+        v18.i256 = sym_addr &AggregateContract;
+        v19.i256 = sym_size &AggregateContract;
+        evm_code_copy 0.i256 v18 v19;
+        evm_return 0.i256 v17;
+}
+
+func public %solcore_entry_12_object0_2einit() {
+    block0:
+        call %solcore_fn_12_object0_2einit_39_main_5fAggregateContract_5f_5fstart_5fdd9a737e0;
+        return;
+}
+
+func private %solcore_fn_19_object0_2einner0_2einit_39_main_5fAggregateContract_5fchoose_5fd2b849423(v0.i1, v1.i256, v2.i256) -> @solcore_sum_1 {
+    block0:
+        v4.i1 = eq v0 1.i1;
+        br v4 block2 block3;
+
+    block1:
+        v22.@solcore_product_0 = insert_value undef.@solcore_product_0 0.i256 0.i256;
+        v23.@solcore_product_0 = insert_value v22 1.i256 0.i256;
+        v24.@solcore_sum_1 = enum.make @solcore_sum_1 #inl v23;
+        return v24;
+
+    block2:
+        v11.@solcore_product_0 = insert_value undef.@solcore_product_0 0.i256 v1;
+        v13.@solcore_product_0 = insert_value v11 1.i256 v2;
+        v14.@solcore_sum_1 = enum.make @solcore_sum_1 #inl v13;
+        return v14;
+
+    block3:
+        v16.i1 = eq v0 0.i1;
+        br v16 block4 block5;
+
+    block4:
+        v20.@solcore_sum_1 = enum.make @solcore_sum_1 #inr v2;
+        return v20;
+
+    block5:
+        jump block1;
+}
+
+func private %solcore_fn_19_object0_2einner0_2einit_37_main_5fAggregateContract_5fmain_5fd0c3f2f7f() -> i256 {
+    block0:
+        v0.i1 = call %solcore_fn_19_object0_2einner0_2einit_45_main_5fAggregateContract_5fruntime_5fflag_5fd45392039;
+        v3.@solcore_sum_1 = call %solcore_fn_19_object0_2einner0_2einit_39_main_5fAggregateContract_5fchoose_5fd2b849423 v0 1.i256 42.i256;
+        v4.i256 = call %solcore_fn_19_object0_2einner0_2einit_39_main_5fAggregateContract_5funwrap_5fdf2d4e987 v3;
+        return v4;
+}
+
+func private %solcore_fn_19_object0_2einner0_2einit_45_main_5fAggregateContract_5fruntime_5fflag_5fd45392039() -> i1 {
+    block0:
+        v1.i256 = evm_call_value;
+        v2.i1 = eq v1 0.i256;
+        br v2 block2 block3;
+
+    block1:
+        unreachable;
+
+    block2:
+        return 0.i1;
+
+    block3:
+        jump block4;
+
+    block4:
+        return 1.i1;
+}
+
+func private %solcore_fn_19_object0_2einner0_2einit_39_main_5fAggregateContract_5funwrap_5fdf2d4e987(v0.@solcore_sum_1) -> i256 {
+    block0:
+        v1.i1 = enum.is_variant v0 #inl;
+        br v1 block2 block3;
+
+    block1:
+        return 0.i256;
+
+    block2:
+        enum.assert_variant v0 #inl;
+        v3.@solcore_product_0 = enum.extract v0 #inl 0.i256;
+        v5.@solcore_product_0 = insert_value undef.@solcore_product_0 0.i256 0.i256;
+        v7.@solcore_product_0 = insert_value v5 1.i256 0.i256;
+        v8.i256 = extract_value v3 0.i256;
+        v9.i256 = extract_value v3 1.i256;
+        return v8;
+
+    block3:
+        v10.i1 = enum.is_variant v0 #inr;
+        br v10 block4 block5;
+
+    block4:
+        enum.assert_variant v0 #inr;
+        v11.i256 = enum.extract v0 #inr 0.i256;
+        return v11;
+
+    block5:
+        jump block1;
+}
+
+func public %solcore_entry_19_object0_2einner0_2einit() {
+    block0:
+        v0.i256 = call %solcore_fn_19_object0_2einner0_2einit_37_main_5fAggregateContract_5fmain_5fd0c3f2f7f;
+        return;
+}
+
+
+object @AggregateContractDeploy {
+    section init {
+        entry %solcore_entry_12_object0_2einit;
+        embed .runtime as &AggregateContract;
+    }
+    section runtime {
+        entry %solcore_entry_19_object0_2einner0_2einit;
+    }
+}

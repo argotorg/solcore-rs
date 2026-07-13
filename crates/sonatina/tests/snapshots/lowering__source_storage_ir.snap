@@ -1,0 +1,73 @@
+---
+source: crates/sonatina/tests/lowering.rs
+expression: ir
+---
+target = "evm-ethereum-osaka"
+
+func private %solcore_fn_12_object0_2einit_37_main_5fStorageContract_5f_5fstart_5fd31013ee5() {
+    block0:
+        evm_mstore 64.i256 128.i256;
+        v2.i256 = evm_code_size;
+        v3.i256 = sym_size .;
+        v4.i1 = lt v2 v3;
+        v5.i256 = zext v4 i256;
+        v7.i1 = eq v5 0.i256;
+        v8.i1 = is_zero v7;
+        br v8 block1 block2;
+
+    block1:
+        evm_revert 0.i256 0.i256;
+
+    block2:
+        v9.i256 = evm_call_value;
+        v10.i1 = eq v9 0.i256;
+        v11.i1 = is_zero v10;
+        br v11 block3 block4;
+
+    block3:
+        evm_mstore 0.i256 3046674083.i256;
+        evm_revert 28.i256 4.i256;
+
+    block4:
+        v17.i256 = sym_size &StorageContract;
+        v18.i256 = sym_addr &StorageContract;
+        v19.i256 = sym_size &StorageContract;
+        evm_code_copy 0.i256 v18 v19;
+        evm_return 0.i256 v17;
+}
+
+func public %solcore_entry_12_object0_2einit() {
+    block0:
+        call %solcore_fn_12_object0_2einit_37_main_5fStorageContract_5f_5fstart_5fd31013ee5;
+        return;
+}
+
+func private %solcore_fn_19_object0_2einner0_2einit_35_main_5fStorageContract_5fmain_5fdd00fb0b6() -> i256 {
+    block0:
+        v1.i256 = call %solcore_fn_19_object0_2einner0_2einit_37_main_5fStorageContract_5fupdate_5fd2581ed00 42.i256;
+        return v1;
+}
+
+func private %solcore_fn_19_object0_2einner0_2einit_37_main_5fStorageContract_5fupdate_5fd2581ed00(v0.i256) -> i256 {
+    block0:
+        evm_sstore 0.i256 v0;
+        v2.i256 = evm_sload 0.i256;
+        return v2;
+}
+
+func public %solcore_entry_19_object0_2einner0_2einit() {
+    block0:
+        v0.i256 = call %solcore_fn_19_object0_2einner0_2einit_35_main_5fStorageContract_5fmain_5fdd00fb0b6;
+        return;
+}
+
+
+object @StorageContractDeploy {
+    section init {
+        entry %solcore_entry_12_object0_2einit;
+        embed .runtime as &StorageContract;
+    }
+    section runtime {
+        entry %solcore_entry_19_object0_2einner0_2einit;
+    }
+}

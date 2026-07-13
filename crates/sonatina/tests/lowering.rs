@@ -391,6 +391,7 @@ contract SimpleMain {
     assert!(ir.contains("target = \"evm-ethereum-osaka\""), "{ir}");
     assert!(ir.contains("object @SimpleMainDeploy"), "{ir}");
     assert!(ir.contains("42.i256"), "{ir}");
+    insta::assert_snapshot!("source_main_ir", ir);
 }
 
 #[test]
@@ -437,6 +438,7 @@ contract AggregateContract {
     assert!(ir.contains("enum.make"), "{ir}");
     assert!(ir.contains("enum.extract"), "{ir}");
     assert!(ir.contains(" br ") || ir.contains("\n        br "), "{ir}");
+    insta::assert_snapshot!("source_aggregate_ir", ir);
 }
 
 #[test]
@@ -463,6 +465,30 @@ contract MemoryContract {
     assert!(ir.contains("sym_size &MemoryContract"), "{ir}");
     assert!(ir.contains("evm_mstore "), "{ir}");
     assert!(ir.contains("evm_mload "), "{ir}");
+}
+
+#[test]
+fn contract_storage_load_and_store_lower_to_snapshotted_verified_ir() {
+    let (_, ir) = lower_source(
+        r#"
+contract StorageContract {
+  value: word;
+
+  function update(next: word) -> word {
+    value = next;
+    return value;
+  }
+
+  function main() -> word {
+    return update(42);
+  }
+}
+"#,
+    );
+
+    assert!(ir.contains("evm_sstore "), "{ir}");
+    assert!(ir.contains("evm_sload "), "{ir}");
+    insta::assert_snapshot!("source_storage_ir", ir);
 }
 
 #[test]

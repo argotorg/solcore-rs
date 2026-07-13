@@ -1,0 +1,65 @@
+---
+source: crates/sonatina/tests/lowering.rs
+expression: ir
+---
+target = "evm-ethereum-osaka"
+
+func private %solcore_fn_12_object0_2einit_32_main_5fSimpleMain_5f_5fstart_5fd6da5cf14() {
+    block0:
+        evm_mstore 64.i256 128.i256;
+        v2.i256 = evm_code_size;
+        v3.i256 = sym_size .;
+        v4.i1 = lt v2 v3;
+        v5.i256 = zext v4 i256;
+        v7.i1 = eq v5 0.i256;
+        v8.i1 = is_zero v7;
+        br v8 block1 block2;
+
+    block1:
+        evm_revert 0.i256 0.i256;
+
+    block2:
+        v9.i256 = evm_call_value;
+        v10.i1 = eq v9 0.i256;
+        v11.i1 = is_zero v10;
+        br v11 block3 block4;
+
+    block3:
+        evm_mstore 0.i256 3046674083.i256;
+        evm_revert 28.i256 4.i256;
+
+    block4:
+        v17.i256 = sym_size &SimpleMain;
+        v18.i256 = sym_addr &SimpleMain;
+        v19.i256 = sym_size &SimpleMain;
+        evm_code_copy 0.i256 v18 v19;
+        evm_return 0.i256 v17;
+}
+
+func public %solcore_entry_12_object0_2einit() {
+    block0:
+        call %solcore_fn_12_object0_2einit_32_main_5fSimpleMain_5f_5fstart_5fd6da5cf14;
+        return;
+}
+
+func private %solcore_fn_19_object0_2einner0_2einit_30_main_5fSimpleMain_5fmain_5fda559e35b() -> i256 {
+    block0:
+        return 42.i256;
+}
+
+func public %solcore_entry_19_object0_2einner0_2einit() {
+    block0:
+        v0.i256 = call %solcore_fn_19_object0_2einner0_2einit_30_main_5fSimpleMain_5fmain_5fda559e35b;
+        return;
+}
+
+
+object @SimpleMainDeploy {
+    section init {
+        entry %solcore_entry_12_object0_2einit;
+        embed .runtime as &SimpleMain;
+    }
+    section runtime {
+        entry %solcore_entry_19_object0_2einner0_2einit;
+    }
+}

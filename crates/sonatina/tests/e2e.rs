@@ -27,6 +27,8 @@ use specialize::{
 
 define_frontend_test_db!(TestDb, hir_ty);
 
+type CompiledFixture = (Vec<(OptLevel, Vec<u8>)>, Vec<ResolvedE2eCall>);
+
 #[dir_test(
     dir: "$CARGO_MANIFEST_DIR/../../tests/e2e",
     glob: "**/main.solc"
@@ -41,7 +43,7 @@ fn sonatina_evm_e2e(fixture: Fixture<&str>) {
     }
 
     let path = PathBuf::from(fixture.path());
-    let result = lower_and_compile(&path).and_then(|(creation, calls)| {
+    let result = lower_and_compile(&path).and_then(|(creations, calls)| {
         if e2e_pipeline_only() {
             return Ok(());
         }
@@ -49,7 +51,17 @@ fn sonatina_evm_e2e(fixture: Fixture<&str>) {
             let Some(harness) = harness else {
                 return Ok(());
             };
-            harness.execute_deployed_calls(&encode_hex(&creation), &calls)
+            for (opt_level, creation) in creations {
+                harness
+                    .execute_deployed_calls(&encode_hex(&creation), &calls)
+                    .map_err(|failure| {
+                        E2eFailure::new(
+                            failure.kind,
+                            format!("{opt_level:?} execution failed: {}", failure.message),
+                        )
+                    })?;
+            }
+            Ok(())
         })
     });
 
@@ -61,15 +73,22 @@ fn sonatina_evm_e2e(fixture: Fixture<&str>) {
     });
 }
 
-fn lower_and_compile(path: &Path) -> Result<(Vec<u8>, Vec<ResolvedE2eCall>), E2eFailure> {
+fn lower_and_compile(path: &Path) -> Result<CompiledFixture, E2eFailure> {
     let lowered = lower_fixture(path)?;
-    let creation = compile_creation(lowered.db, &lowered.program)?;
-    Ok((creation, lowered.calls))
+    let creations = [OptLevel::O0, OptLevel::O2]
+        .into_iter()
+        .map(|opt_level| {
+            compile_creation(lowered.db, &lowered.program, opt_level)
+                .map(|creation| (opt_level, creation))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((creations, lowered.calls))
 }
 
 fn compile_creation(
     db: &'static TestDb,
     program: &Program<'static>,
+    opt_level: OptLevel,
 ) -> Result<Vec<u8>, E2eFailure> {
     let module = translate_hull_program(db, program).map_err(|error| {
         pipeline_error(format!(
@@ -78,9 +97,11 @@ fn compile_creation(
         ))
     })?;
     let mut artifacts = EvmCompile::new(module)
-        .with_opt_level(OptLevel::O0)
+        .with_opt_level(opt_level)
         .compile()
-        .map_err(|errors| pipeline_error(format!("Sonatina codegen failed: {errors:?}")))?;
+        .map_err(|errors| {
+            pipeline_error(format!("Sonatina {opt_level:?} codegen failed: {errors:?}"))
+        })?;
     if artifacts.len() != 1 {
         return Err(pipeline_error(format!(
             "expected one Sonatina object artifact, got {} ({})",
