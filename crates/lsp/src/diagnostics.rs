@@ -13,7 +13,7 @@ use vfs::{
     DiagLabel, DiagRange, Diagnostic as VfsDiagnostic, DiagnosticSeverity as VfsDiagnosticSeverity,
 };
 
-use crate::{line_index::LineIndexExt, state::WorldState};
+use crate::{analysis::with_analysis_stack, line_index::LineIndexExt, state::WorldState};
 
 /// Computes LSP diagnostics for a single open document URI.
 pub fn compute_diagnostics(world: &WorldState, uri: &Url) -> Vec<LspDiagnostic> {
@@ -30,6 +30,10 @@ pub fn compute_diagnostics(world: &WorldState, uri: &Url) -> Vec<LspDiagnostic> 
 /// Computes compiler diagnostics belonging to one client document while
 /// retaining structured suggestions for code-action conversion.
 pub(crate) fn compute_vfs_diagnostics(world: &WorldState, uri: &Url) -> Vec<VfsDiagnostic> {
+    with_analysis_stack(|| compute_vfs_diagnostics_inner(world, uri))
+}
+
+fn compute_vfs_diagnostics_inner(world: &WorldState, uri: &Url) -> Vec<VfsDiagnostic> {
     let Some(path) = world.vfs_path_for_uri(uri) else {
         return Vec::new();
     };

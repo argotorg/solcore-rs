@@ -17,6 +17,7 @@ use nameres::Db as _;
 use vfs::{DiagnosticSuggestion, DiagnosticTextEdit, SuggestionApplicability};
 
 use crate::{
+    analysis::with_analysis_stack,
     diagnostics::{compute_vfs_diagnostics, to_lsp_diagnostic},
     import_edits::{plan_import_edit, plan_module_import_edit, plan_wildcard_import_edit},
     resolve::module_id_for_uri,
@@ -31,6 +32,15 @@ const MAX_AUTO_IMPORT_CANDIDATES: usize = 20;
 /// message that Solcore currently publishes. This prevents a stale diagnostic
 /// from applying an edit after the document has changed.
 pub fn handle_code_action(
+    world: &WorldState,
+    uri: &Url,
+    range: Range,
+    context: &CodeActionContext,
+) -> Option<CodeActionResponse> {
+    with_analysis_stack(|| handle_code_action_inner(world, uri, range, context))
+}
+
+fn handle_code_action_inner(
     world: &WorldState,
     uri: &Url,
     range: Range,
@@ -609,6 +619,19 @@ mod tests {
     use super::*;
     use crate::diagnostics::compute_diagnostics;
 
+    const WINDOWS_TEST_STACK_SIZE: usize = 1024 * 1024;
+
+    fn on_windows_sized_stack(test: fn()) {
+        let result = std::thread::Builder::new()
+            .stack_size(WINDOWS_TEST_STACK_SIZE)
+            .spawn(test)
+            .expect("spawn Windows-sized LSP test stack")
+            .join();
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
+    }
+
     fn world_with_main(source: &str) -> (WorldState, Url) {
         let mut world = WorldState::new();
         let uri = Url::parse("file:///main/main.solc").expect("uri");
@@ -1130,6 +1153,10 @@ mod tests {
 
     #[test]
     fn auto_import_extends_an_existing_selective_import() {
+        on_windows_sized_stack(auto_import_extends_an_existing_selective_import_inner);
+    }
+
+    fn auto_import_extends_an_existing_selective_import_inner() {
         let main = "import lib.math.{other};\nfunction main() -> word { return value(); }\n";
         let math = "function other() -> word { return 0; }\nfunction value() -> word { return 1; }\nexport { other, value };\n";
         let mut world = WorldState::new();
@@ -1613,6 +1640,10 @@ contract C {
 
     #[test]
     fn auto_import_candidates_stay_inside_the_current_workspace_root() {
+        on_windows_sized_stack(auto_import_candidates_stay_inside_the_current_workspace_root_inner);
+    }
+
+    fn auto_import_candidates_stay_inside_the_current_workspace_root_inner() {
         let base = std::env::temp_dir().join("solcore-lsp-auto-import-roots");
         let left_path = base.join("left");
         let right_path = base.join("right");

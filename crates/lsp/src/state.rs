@@ -13,7 +13,7 @@ use lsp_types::{TextDocumentContentChangeEvent, Url};
 use percent_encoding::percent_decode_str;
 use vfs::{AnalysisHost, Workspace, WorkspaceFileChange};
 
-use crate::line_index::LineIndexExt;
+use crate::{analysis::with_analysis_stack, line_index::LineIndexExt};
 
 const MULTI_ROOT_NAMESPACE_DIR: &str = "__solcore_workspace__";
 const DETACHED_NAMESPACE_DIR: &str = "__solcore_detached__";
@@ -81,7 +81,7 @@ impl WorldState {
     /// Creates an empty world with the embedded standard library mounted.
     pub fn new() -> Self {
         Self {
-            workspace: Workspace::new(),
+            workspace: with_analysis_stack(Workspace::new),
             documents: HashMap::new(),
             open_documents: HashSet::new(),
             client_to_vfs: HashMap::new(),
@@ -185,7 +185,7 @@ impl WorldState {
             loaded += 1;
         }
 
-        self.workspace.apply_file_changes(changes);
+        with_analysis_stack(|| self.workspace.apply_file_changes(changes));
         loaded
     }
 
@@ -195,7 +195,7 @@ impl WorldState {
         let Some(path) = self.ensure_uri_mapping(&uri) else {
             return false;
         };
-        self.workspace.set_file(&path, text.clone());
+        with_analysis_stack(|| self.workspace.set_file(&path, text.clone()));
         self.documents.insert(uri, DocumentState::new(text));
         true
     }
@@ -212,7 +212,7 @@ impl WorldState {
             self.vfs_to_client.remove(&key);
         }
         self.documents.remove(uri);
-        self.workspace.remove_file(&path);
+        with_analysis_stack(|| self.workspace.remove_file(&path));
         true
     }
 
@@ -224,9 +224,9 @@ impl WorldState {
             return false;
         };
 
-        self.workspace.set_file(&path, text.clone());
+        with_analysis_stack(|| self.workspace.set_file(&path, text.clone()));
         if self.entry_uri.is_none() {
-            self.workspace.set_entry(&path);
+            with_analysis_stack(|| self.workspace.set_entry(&path));
             self.entry_uri = Some(uri.clone());
         }
         self.documents.insert(uri.clone(), DocumentState::new(text));
@@ -242,9 +242,9 @@ impl WorldState {
             return false;
         };
 
-        self.workspace.set_file(&path, new_text.clone());
+        with_analysis_stack(|| self.workspace.set_file(&path, new_text.clone()));
         if self.entry_uri.is_none() {
-            self.workspace.set_entry(&path);
+            with_analysis_stack(|| self.workspace.set_entry(&path));
             self.entry_uri = Some(uri.clone());
         }
         self.documents
@@ -310,7 +310,7 @@ impl WorldState {
             if let Some(entry_uri) = &self.entry_uri
                 && let Some(path) = self.vfs_path_for_uri(entry_uri)
             {
-                self.workspace.set_entry(&path);
+                with_analysis_stack(|| self.workspace.set_entry(&path));
             }
         }
     }
@@ -532,7 +532,7 @@ impl WorldState {
                 contents: text,
             });
         }
-        self.workspace.apply_file_changes(changes);
+        with_analysis_stack(|| self.workspace.apply_file_changes(changes));
         self.refresh_entry();
     }
 
@@ -576,7 +576,7 @@ impl WorldState {
                 .as_ref()
                 .and_then(|uri| self.vfs_path_for_uri(uri))
         {
-            self.workspace.set_entry(&path);
+            with_analysis_stack(|| self.workspace.set_entry(&path));
             return;
         }
 
@@ -591,7 +591,7 @@ impl WorldState {
             .as_ref()
             .and_then(|uri| self.vfs_path_for_uri(uri))
         {
-            self.workspace.set_entry(&path);
+            with_analysis_stack(|| self.workspace.set_entry(&path));
         }
     }
 

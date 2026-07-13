@@ -3,6 +3,7 @@
 //! Transport-independent state and request handlers are shared by the native
 //! `tower-lsp` stdio server and the browser Web Worker binding.
 
+mod analysis;
 pub mod capabilities;
 pub mod code_actions;
 pub mod completion;

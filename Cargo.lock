@@ -1481,6 +1481,7 @@ dependencies = [
  "solcore-nameres",
  "solcore-parser",
  "solcore-vfs",
+ "stacker",
  "tokio",
  "tower-lsp",
  "url",
