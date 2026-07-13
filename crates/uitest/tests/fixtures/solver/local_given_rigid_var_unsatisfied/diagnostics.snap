@@ -3,15 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/local_given_rigid_var_unsatisfied/main.solc
 ---
-error[SC0299]: ambiguous inferred type
- --> /main/main.solc:5:42
+error[SC0207]: cannot satisfy class constraint: word : C
+ --> /main/main.solc:6:10
   |
-4 |
-5 |   forall a . a:C => function bad() -> word {
-  |  __________________________________________^
-6 | |   return C.c(1);
-7 | | }
-  | |_^ ambiguous inferred type
+5 | forall a . a:C => function bad() -> word {
+6 |   return C.c(1);
+  |          ^^^^^^ constraint originates here
+7 | }
   |
-  = note: forall _ . _ : Int => () -> word
-  = help: add a type annotation or a matching instance to fix the ambiguous type variable
+  = note: no visible instance matches `word : C`
+  = help: add a matching instance or strengthen the surrounding type context

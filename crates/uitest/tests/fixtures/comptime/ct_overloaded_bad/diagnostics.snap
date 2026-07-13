@@ -23,6 +23,16 @@ error[SC0406]: missing evidence: add
    |
 ---
 
+error[SC0406]: missing evidence: mul
+  --> /main/main.solc:18:19
+   |
+17 |     }
+18 |     return base + x * factor;
+   |                   ^^^^^^^^^^ class evidence required here
+19 |   }
+   |
+---
+
 error[SC0409]: comptime evaluation failed: comptime let 'a' is bound to a runtime expression
   --> /main/main.solc:24:5
    |

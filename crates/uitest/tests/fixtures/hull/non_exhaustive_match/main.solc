@@ -1,7 +1,7 @@
 data B = A | C;
 
-function choose(x : word) -> B {
-  if (x == 0) {
+function choose(x : bool) -> B {
+  if (x) {
     return B.A;
   }
   return B.C;
@@ -15,7 +15,7 @@ function onlyA(b : B) -> word {
 
 contract C {
   public function main() -> word {
-    let x: word;
+    let x: bool;
     assembly { x := calldataload(0) }
     return onlyA(choose(x));
   }
