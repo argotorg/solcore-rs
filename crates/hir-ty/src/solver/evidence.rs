@@ -76,13 +76,16 @@ pub(super) fn solution_from_answers<'db>(
         return Solution::NoSolution;
     };
 
-    let mut seen_roots = FxHashSet::default();
+    let mut seen_candidates = FxHashSet::default();
     let mut candidates = Vec::new();
     for answer in answers {
         if answer_priority(db, env, &answer) != best_priority {
             continue;
         }
-        if seen_roots.insert(answer_root(db, env, &answer)) {
+        if seen_candidates.insert((
+            answer_root(db, env, &answer),
+            answer.candidate.subst.clone(),
+        )) {
             candidates.push(answer.candidate);
         }
     }

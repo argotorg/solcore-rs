@@ -449,7 +449,7 @@ pub(super) fn select_import_refs<'db>(
             })
             .collect(),
     };
-    selected.retain(|item_ref| !hidden.contains(&item_ref.source_name));
+    selected.retain(|item_ref| !hidden.contains(&item_ref.public_name));
     let selected = unique_import_bindings(selected);
     tracing::trace!(
         target: "nameres::imports",

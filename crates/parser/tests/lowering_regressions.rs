@@ -1,7 +1,7 @@
 use hir::{
     ast::{
         SourceComment, SourceCommentKind,
-        function::{ExprKind, FuncParam, StmtKind},
+        function::{AssignOp, BinOp, ExprKind, FuncParam, StmtKind},
         item::{ContractItem, FunctionDef, Item, Module},
         ty::TypeRefKind,
     },
@@ -721,4 +721,47 @@ fn ternary_expression_lowers_to_conditional_expression() {
         &body.exprs(&db).get(*expr_id).kind,
         ExprKind::If { .. }
     ));
+}
+
+#[test]
+fn compound_assignments_lower_through_binary_operator_calls() {
+    let db = TestDb::default();
+    let (_, module) = parse_module(
+        &db,
+        "compound-assignments",
+        "function f(x: word, y: word) {\n\
+           x += y;\n\
+           x -= y;\n\
+           x ^= y;\n\
+           x &= y;\n\
+           x |= y;\n\
+           x %= y;\n\
+         }",
+    );
+    let function = top_function(&db, module, "f");
+    let body = function.body(&db).expect("body");
+    let expected = [
+        BinOp::Add,
+        BinOp::Sub,
+        BinOp::BitXor,
+        BinOp::BitAnd,
+        BinOp::BitOr,
+        BinOp::Mod,
+    ];
+
+    for (stmt_id, expected_op) in body.top_level_stmts(&db).iter().zip(expected) {
+        let stmt = body.stmts(&db).get(*stmt_id);
+        let StmtKind::Assign {
+            op: AssignOp::Plain,
+            rhs,
+            ..
+        } = &stmt.kind
+        else {
+            panic!("compound assignment should lower to plain assignment");
+        };
+        assert!(matches!(
+            &body.exprs(&db).get(*rhs).kind,
+            ExprKind::BinOp { op, .. } if *op.atom() == expected_op
+        ));
+    }
 }

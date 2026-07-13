@@ -1,4 +1,5 @@
 use chumsky::{input::ValueInput, prelude::*};
+use hir::ast::function;
 
 use super::{
     common::*,
@@ -8,7 +9,8 @@ use super::{
 };
 use crate::{lexer::Token, types::*};
 
-fn assign_op_parser<'src, I>() -> impl Parser<'src, I, ParsedAssignOp, ParserErr<'src>>
+fn assign_op_parser<'src, I>()
+-> impl Parser<'src, I, ParsedSpanned<'src, ParsedAssignOp>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
@@ -20,15 +22,55 @@ where
         .or(just(Token::AmpEq).to(ParsedAssignOp::BitAndEq))
         .or(just(Token::PipeEq).to(ParsedAssignOp::BitOrEq))
         .or(just(Token::PercentEq).to(ParsedAssignOp::ModEq))
+        .map_with(|op, e| ParsedSpanned::new(op, e.span()))
 }
 
 fn assign_stmt_kind<'src>(
     lhs: ParsedExpr<'src>,
-    rhs: Option<(ParsedAssignOp, ParsedExpr<'src>)>,
+    rhs: Option<(ParsedSpanned<'src, ParsedAssignOp>, ParsedExpr<'src>)>,
 ) -> ParsedStmtKind<'src> {
     match rhs {
-        Some((op, rhs)) => ParsedStmtKind::Assign { op, lhs, rhs },
+        Some((op, rhs)) => {
+            // Match the reference frontend: compound assignment is ordinary
+            // assignment whose right-hand side is the corresponding binary
+            // operator expression. This keeps type-class resolution and
+            // backend specialization identical to `lhs = lhs op rhs`.
+            let Some(bin_op) = compound_bin_op(op.elem) else {
+                return ParsedStmtKind::Assign {
+                    op: ParsedAssignOp::Eq,
+                    lhs,
+                    rhs,
+                };
+            };
+            let span = LexSpan::from(lhs.span.start..rhs.span.end);
+            let lhs_read = lhs.clone();
+            let rhs = ParsedExpr {
+                span,
+                kind: ParsedExprKind::BinOp {
+                    lhs: Box::new(lhs_read),
+                    op: ParsedSpanned::new(bin_op, op.span),
+                    rhs: Box::new(rhs),
+                },
+            };
+            ParsedStmtKind::Assign {
+                op: ParsedAssignOp::Eq,
+                lhs,
+                rhs,
+            }
+        }
         None => ParsedStmtKind::Expr(lhs),
+    }
+}
+
+fn compound_bin_op(op: ParsedAssignOp) -> Option<function::BinOp> {
+    match op {
+        ParsedAssignOp::Eq => None,
+        ParsedAssignOp::AddEq => Some(function::BinOp::Add),
+        ParsedAssignOp::SubEq => Some(function::BinOp::Sub),
+        ParsedAssignOp::BitXorEq => Some(function::BinOp::BitXor),
+        ParsedAssignOp::BitAndEq => Some(function::BinOp::BitAnd),
+        ParsedAssignOp::BitOrEq => Some(function::BinOp::BitOr),
+        ParsedAssignOp::ModEq => Some(function::BinOp::Mod),
     }
 }
 

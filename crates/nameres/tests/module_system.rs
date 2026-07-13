@@ -888,6 +888,30 @@ fn reexport_chain_exposes_remote_origin() {
 }
 
 #[test]
+fn glob_hiding_uses_the_renamed_reexport_name() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            "import lib.wrapper.{*} hiding {renamed};\n\
+             function renamed() -> word { return 1; }",
+        ),
+        (
+            vec!["base"],
+            "export { original };\n\
+             function original() -> word { return 0; }",
+        ),
+        (
+            vec!["wrapper"],
+            "import lib.base.{original as renamed};\n\
+             export { renamed };",
+        ),
+    ]);
+
+    let (_, diagnostics) = run(&db, &entry);
+    assert_no_diagnostics(&db, &diagnostics);
+}
+
+#[test]
 fn recursive_export_cycle_reaches_fixed_point() {
     let fixture = fixture_dir("ok/cycle");
     let (db, entry) = load_fixture(&fixture, BTreeMap::new());

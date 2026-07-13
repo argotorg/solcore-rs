@@ -2,6 +2,22 @@ forall t . class t:Add {
   function add(l:t, r:t) -> t;
 }
 
+forall t . class t:Mod {
+  function mod(l:t, r:t) -> t;
+}
+
+forall t . class t:BitAnd {
+  function band(l:t, r:t) -> t;
+}
+
+forall t . class t:BitOr {
+  function bor(l:t, r:t) -> t;
+}
+
+forall t . class t:BitXor {
+  function bxor(l:t, r:t) -> t;
+}
+
 forall t . class t:Ord {
   function gt(l:t, r:t) -> bool;
 }
@@ -13,6 +29,30 @@ forall t . class t:Eq {
 instance word:Add {
   function add(l:word, r:word) -> word {
     return primAddWord(l, r);
+  }
+}
+
+instance word:Mod {
+  function mod(l:word, r:word) -> word {
+    return l;
+  }
+}
+
+instance word:BitAnd {
+  function band(l:word, r:word) -> word {
+    return l;
+  }
+}
+
+instance word:BitOr {
+  function bor(l:word, r:word) -> word {
+    return l;
+  }
+}
+
+instance word:BitXor {
+  function bxor(l:word, r:word) -> word {
+    return l;
   }
 }
 

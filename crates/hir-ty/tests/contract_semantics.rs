@@ -1252,7 +1252,13 @@ fn contract_field_initializers_are_typed() {
 
 #[test]
 fn storage_mapping_compound_assign_requires_numeric_element() {
-    let common = "data mapping(key, value) = mapping(word);\ndata uint256 = uint256(word);\n";
+    let common = "data mapping(key, value) = mapping(word);\n\
+                  data uint256 = uint256(word);\n\
+                  forall t . class t:Add { function add(l:t, r:t) -> t; }\n\
+                  forall t . class t:Sub { function sub(l:t, r:t) -> t; }\n\
+                  instance word:Add { function add(l:word, r:word) -> word { return l; } }\n\
+                  instance word:Sub { function sub(l:word, r:word) -> word { return l; } }\n\
+                  instance uint256:Add { function add(l:uint256, r:uint256) -> uint256 { return l; } }\n";
     let manual_main = "function main() -> () { return (); }";
 
     let ok_word = diagnostics(&format!(
@@ -1272,7 +1278,7 @@ fn storage_mapping_compound_assign_requires_numeric_element() {
     assert!(
         bad_add
             .iter()
-            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0201")),
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0207")),
         "{bad_add:?}"
     );
 
@@ -1282,7 +1288,7 @@ fn storage_mapping_compound_assign_requires_numeric_element() {
     assert!(
         bad_sub
             .iter()
-            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0201")),
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0207")),
         "{bad_sub:?}"
     );
 }

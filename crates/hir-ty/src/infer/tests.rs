@@ -1456,6 +1456,49 @@ instance word:C {}
 }
 
 #[test]
+fn trait_solver_keeps_distinct_substitutions_from_the_same_instance() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+data Pair(a, b) = Pair(a, b);
+
+forall a r . class a:D(r) {}
+forall a . default instance a:D(word) {}
+forall a . default instance a:D(bool) {}
+
+forall a . class a:C {}
+forall a r . a:D(r) => instance Pair(a, r):C {}
+"#,
+    );
+    let module_resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &module_resolution);
+    let goal = adt_ty(
+        &db,
+        module,
+        "Pair",
+        vec![Ty::string(&db), Ty::bound(&db, 0)],
+    );
+
+    let goal = Pred::in_class(&db, class_id(&db, module, "C"), goal, Vec::new());
+    let solution = solve(
+        &db,
+        env,
+        crate::canonical_goal_with_allowed(&db, goal, vec![0]),
+    );
+
+    let Solution::Ambiguous { candidates } = solution else {
+        panic!("expected ambiguous same-instance substitutions, got {solution:?}");
+    };
+    assert_eq!(candidates.len(), 2);
+    let substitutions = candidates
+        .iter()
+        .map(|candidate| candidate.subst.values.clone())
+        .collect::<FxHashSet<_>>();
+    assert_eq!(substitutions.len(), 2);
+}
+
+#[test]
 fn trait_solver_unifies_weak_class_args_across_conditions() {
     let db = TestDb::default();
     let module = parse_module(
