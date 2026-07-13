@@ -171,6 +171,43 @@ fn cli_reports_reachable_missing_external_lib_root() {
 }
 
 #[test]
+fn cli_reports_unreadable_reachable_module_as_io_error() {
+    let dir = temp_dir("invalid-utf8-module");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    let dependency = dir.join("util.solc");
+    fs::write(
+        &input,
+        "import util;\nfunction main() -> word { return 0; }\n",
+    )
+    .expect("write source");
+    fs::write(&dependency, [0xff, 0xfe]).expect("write invalid UTF-8 dependency");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--color=never")
+        .arg("--root")
+        .arg(&dir)
+        .arg(&input)
+        .output()
+        .expect("run driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("failed to read module `util`")
+            && stderr.contains(&dependency.display().to_string())
+            && stderr.contains("valid UTF-8"),
+        "stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("file not found") && !stderr.contains("did you mean"),
+        "stderr should report the I/O cause, not a missing module:\n{stderr}"
+    );
+}
+
+#[test]
 fn cli_accepts_warning_policy_and_diagnostic_rendering_flags() {
     let dir = temp_dir("warning-policy");
     fs::create_dir_all(&dir).expect("create temp dir");

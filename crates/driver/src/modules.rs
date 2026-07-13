@@ -68,23 +68,19 @@ pub(crate) fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) -> Res
                             db.module_files.insert(target_key.clone(), file);
                         }
                         Err(message) => {
-                            tracing::debug!(
-                                target: "driver::modules",
-                                module = %module_key_display(&target_key),
-                                file = %file_path.display(),
-                                error = %message,
-                                "failed to create source file input"
-                            );
+                            return Err(format!(
+                                "failed to load module `{}` from `{}`: {message}",
+                                module_key_display(&target_key),
+                                file_path.display()
+                            ));
                         }
                     },
                     Err(err) => {
-                        tracing::debug!(
-                            target: "driver::modules",
-                            module = %module_key_display(&target_key),
-                            file = %file_path.display(),
-                            error = %err,
-                            "failed to read module source"
-                        );
+                        return Err(format!(
+                            "failed to read module `{}` from `{}`: {err}",
+                            module_key_display(&target_key),
+                            file_path.display()
+                        ));
                     }
                 }
             }

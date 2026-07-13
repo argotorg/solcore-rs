@@ -39,6 +39,11 @@ fn source_file(db: &TestDb, name: &str, content: Option<&str>) -> SourceFile {
     SourceFile::new(db, url, content.map(ToOwned::to_owned))
 }
 
+fn file_source_file(db: &TestDb, path: &str, content: &str) -> SourceFile {
+    let url = url::Url::from_file_path(path).expect("valid absolute file path");
+    SourceFile::new(db, url, Some(content.to_owned()))
+}
+
 fn root_span(file: SourceFile, start: u32, end: u32) -> LabelSpan {
     LabelSpan::new(
         LabelAnchor::Root(file),
@@ -234,4 +239,21 @@ fn render_skips_contentless_def_labels_before_absolute_resolution() {
     assert!(rendered.contains("stale diagnostic"));
     assert!(rendered.contains("note still renders"));
     assert!(!rendered.contains("stale label"));
+}
+
+#[test]
+fn render_decodes_file_urls_in_human_and_short_formats() {
+    let db = TestDb::default();
+    let file = file_source_file(&db, "/tmp/Solcore Project/日本語/main.solc", "missing\n");
+    let diagnostic = Diagnostic::error("undefined name")
+        .with_primary_label_span(root_span(file, 0, 7), Some("not found"));
+
+    let human = diagnostic.render_with(&db, &Renderer::plain());
+    let short = diagnostic.render_short(&db);
+
+    for rendered in [human, short] {
+        assert!(rendered.contains("/tmp/Solcore Project/日本語/main.solc"));
+        assert!(!rendered.contains("%20"));
+        assert!(!rendered.contains("%E6"));
+    }
 }

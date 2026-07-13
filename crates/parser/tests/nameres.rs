@@ -112,6 +112,28 @@ struct ModuleOnlyImports<'db> {
     owner: Module<'db>,
 }
 
+struct UnknownWildcardImports;
+
+impl<'db> ImportedNames<'db> for UnknownWildcardImports {
+    fn imported(
+        &self,
+        _db: &'db dyn hir::Db,
+        _namespace: Namespace,
+        _name: &str,
+    ) -> Option<Resolution<'db>> {
+        None
+    }
+
+    fn may_contain_unknown_unqualified(
+        &self,
+        _db: &'db dyn hir::Db,
+        _namespace: Namespace,
+        _name: &str,
+    ) -> bool {
+        true
+    }
+}
+
 impl<'db> ImportedNames<'db> for ModuleOnlyImports<'db> {
     fn imported(
         &self,
@@ -544,6 +566,40 @@ fn qualified_ctor_class_method_and_dot_ctor_resolve_as_expected() {
         dot_map.exprs.iter().any(|entry| entry.body == dot_body
             && matches!(entry.resolution, Resolution::DotCtorDeferred))
     );
+}
+
+#[test]
+fn definite_same_name_constructor_beats_unknown_wildcard_import() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "data Unit = Unit; function make() -> Unit { return Unit; }",
+    );
+    let function = top_function(&db, module, "make");
+    let body = function.body(&db).expect("body");
+    let scope = item_scope(&db, module);
+    let resolution = resolve_module_with_imports_and_policy(
+        &db,
+        module,
+        scope,
+        &UnknownWildcardImports,
+        NameresDiagnosticPolicy::Emit,
+    );
+    let body_map = resolution
+        .bodies
+        .iter()
+        .find(|map| map.exprs.iter().any(|entry| entry.body == body))
+        .expect("body map");
+    let events = ident_resolutions(&db, body, body_map);
+
+    assert!(
+        events
+            .iter()
+            .any(|(name, resolution)| *name == "Unit"
+                && matches!(resolution, Resolution::Ctor { .. })),
+        "same-name constructor should remain definite: {events:#?}"
+    );
+    assert!(resolution.diagnostics.is_empty());
 }
 
 #[test]

@@ -48,6 +48,38 @@ pub(super) fn span_contains(outer: LexSpan, inner: LexSpan) -> bool {
     outer.start <= inner.start && inner.end <= outer.end
 }
 
+pub(super) fn spans_overlap(lhs: LexSpan, rhs: LexSpan) -> bool {
+    lhs.start < rhs.end && rhs.start < lhs.end
+}
+
+pub(super) fn lex_error_suppresses_parse_error(
+    source: &str,
+    lex_error: LexSpan,
+    parse_error: LexSpan,
+) -> bool {
+    // Dropping an invalid token can make the statement parser report the
+    // beginning of that same source line, rather than the missing token's
+    // position. Treat errors on the affected line as one lexical cascade,
+    // while preserving structural errors on every other line.
+    if line_index(source, lex_error.start) == line_index(source, parse_error.start) {
+        return true;
+    }
+    if spans_overlap(lex_error, parse_error)
+        || (lex_error.start <= parse_error.start && parse_error.start <= lex_error.end)
+    {
+        return true;
+    }
+    if lex_error.end > parse_error.start {
+        return false;
+    }
+    source
+        .get(lex_error.end..parse_error.start)
+        .is_some_and(|gap| {
+            gap.chars()
+                .all(|ch| ch.is_whitespace() && ch != '\n' && ch != '\r')
+        })
+}
+
 fn line_index(source: &str, offset: usize) -> usize {
     source[..offset.min(source.len())]
         .bytes()

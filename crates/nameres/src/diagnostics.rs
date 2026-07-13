@@ -377,14 +377,14 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
 #[tracing::instrument(
     target = "nameres::query",
     level = "debug",
-    skip(db, body, context, env),
+    skip(db, body, context, surface),
     fields(file = field::Empty, def = field::Empty)
 )]
 pub fn body_diagnostics<'db>(
     db: &'db dyn Db,
     body: FuncBody<'db>,
     context: hir_nameres::BodyResolutionContext<'db>,
-    env: ModuleEnv<'db>,
+    surface: ModuleImportSurface<'db>,
     suppress_for_parse_errors: bool,
 ) -> Vec<AnyDiagnostic> {
     record_body_field(db, body);
@@ -393,13 +393,13 @@ pub fn body_diagnostics<'db>(
         db,
         body,
         &context,
-        &env,
+        &surface,
         policy.as_hir_policy(),
     );
     let mut diagnostics = resolution
         .diagnostics
         .into_iter()
-        .filter(|diagnostic| !is_suppressed_unknown_diagnostic(&env, diagnostic))
+        .filter(|diagnostic| !is_suppressed_unknown_diagnostic(&surface, diagnostic))
         .map(AnyDiagnostic::Nameres)
         .collect::<Vec<_>>();
     sort_dedup_query_diagnostics(db, &mut diagnostics);
@@ -407,12 +407,12 @@ pub fn body_diagnostics<'db>(
 }
 
 fn is_suppressed_unknown_diagnostic(
-    env: &ModuleEnv<'_>,
+    surface: &ModuleImportSurface<'_>,
     diagnostic: &hir_nameres::NameresDiagnostic,
 ) -> bool {
     match diagnostic {
         hir_nameres::NameresDiagnostic::UndefinedName { name, .. } => {
-            env.unknown_unqualified_wildcard || env.unknown_unqualified_names.contains(name)
+            surface.unknown_unqualified_wildcard || surface.unknown_unqualified_names.contains(name)
         }
         _ => false,
     }
@@ -519,7 +519,7 @@ impl<'a, 'db> BodyDiagnosticCollector<'a, 'db> {
                 self.db,
                 body,
                 context,
-                self.env.clone(),
+                self.env.import_surface(),
                 self.policy.suppress_for_parse_errors(),
             )
             .iter()

@@ -111,6 +111,7 @@ struct ModuleEnvBuilder<'db> {
     local_terms: FxHashMap<String, Span<'db>>,
     local_types: FxHashMap<String, Span<'db>>,
     imported_terms: FxHashMap<String, Span<'db>>,
+    module_binding_spans: FxHashMap<String, Span<'db>>,
     conflict_diagnostics: FxHashSet<(hir_nameres::Namespace, String)>,
     module_conflict_diagnostics: FxHashSet<String>,
 }
@@ -161,12 +162,21 @@ impl<'db> ModuleEnvBuilder<'db> {
             local_terms,
             local_types,
             imported_terms: FxHashMap::default(),
+            module_binding_spans: FxHashMap::default(),
             conflict_diagnostics: FxHashSet::default(),
             module_conflict_diagnostics: FxHashSet::default(),
         }
     }
 
-    fn finish(self) -> ModuleEnv<'db> {
+    fn finish(mut self) -> ModuleEnv<'db> {
+        let module_bindings = self
+            .module_binding_spans
+            .iter()
+            .map(|(name, span)| (name.clone(), *span))
+            .collect::<Vec<_>>();
+        for (name, span) in module_bindings {
+            self.check_module_name_conflict(&name, span);
+        }
         self.env
     }
 
@@ -442,10 +452,12 @@ impl<'db> ModuleEnvBuilder<'db> {
     fn add_module_binding(&mut self, name: &str, target: ModuleId<'db>, span: Span<'db>) {
         for prefix in module_prefixes(name) {
             self.env.modules.entry(prefix.clone()).or_insert(target);
+            self.module_binding_spans
+                .entry(prefix.clone())
+                .or_insert(span);
             if module_has_parse_errors(self.db, target) {
                 self.env.incomplete_modules.insert(prefix.clone());
             }
-            self.check_module_name_conflict(&prefix, span);
         }
     }
 

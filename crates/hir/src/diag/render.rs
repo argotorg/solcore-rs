@@ -67,7 +67,7 @@ impl Diagnostic {
                 annotations.push(annotation);
             }
 
-            let mut snippet = Snippet::source(content).path(url.path());
+            let mut snippet = Snippet::source(content).path(display_url_path(url));
             for range in merge_ranges(visible_ranges) {
                 snippet = snippet.annotation(AnnotationKind::Visible.span(range));
             }
@@ -111,7 +111,7 @@ impl Diagnostic {
         if let Some(label) = self.primary_label() {
             let absolute = label.span.resolve_to_absolute(db);
             let file = absolute.file();
-            let path = file.url(db).path();
+            let path = display_url_path(file.url(db));
             if let Some(content) = file.content(db) {
                 let (line, column) = line_column_for_offset(content, absolute.start().as_usize());
                 output.push_str(&format!("{path}:{line}:{column}: "));
@@ -130,6 +130,12 @@ impl Diagnostic {
         output.push('\n');
         output
     }
+}
+
+fn display_url_path(url: &url::Url) -> String {
+    crate::url_to_file_path(url)
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| url.as_str().to_owned())
 }
 
 impl DiagnosticLevel {

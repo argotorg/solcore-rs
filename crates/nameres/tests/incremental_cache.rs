@@ -4,12 +4,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use hir::{diag::DiagnosticId, input::SourceFile};
+use hir::{ast::item::Item, diag::DiagnosticId, input::SourceFile, nameres::BodyResolutionContext};
 use parser::parse_file_to_hir;
 use salsa::Setter;
 use solcore_nameres::{
-    LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
-    module_diagnostics, module_id_from_key,
+    LibraryId, ModuleDiagnostic, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey,
+    ModuleTree, body_diagnostics, module_diagnostics, module_env, module_id_from_key,
 };
 
 #[salsa::db]
@@ -146,6 +146,62 @@ fn module_diagnostics_backdates_after_same_module_body_literal_edit() {
             "{executed:#?}"
         );
     }
+}
+
+#[test]
+fn body_diagnostics_key_excludes_module_env_diagnostics() {
+    let (db, file, key) = db_with_main("function main() -> word { return 1; }\n");
+    let module = module_id_from_key(&db, &key);
+    let hir_module = parse_file_to_hir(&db, file).module(&db);
+    let body = hir_module
+        .items(&db)
+        .iter()
+        .find_map(|item| match *item {
+            Item::FunctionDef(function) => function.body(&db),
+            _ => None,
+        })
+        .expect("main body");
+    let context = BodyResolutionContext {
+        module: hir_module,
+        enclosing_contract: None,
+        params: Vec::new(),
+        type_vars: Vec::new(),
+    };
+    let env = module_env(&db, module);
+    let mut diagnostic_only_variant = env.clone();
+    diagnostic_only_variant
+        .diagnostics
+        .push(ModuleDiagnostic::DuplicateExportedItemName {
+            name: "diagnostic-only".to_owned(),
+            span: None,
+        });
+    assert_ne!(env, diagnostic_only_variant);
+    assert_eq!(
+        env.import_surface(),
+        diagnostic_only_variant.import_surface()
+    );
+
+    let _ = db.take_executed();
+    assert!(body_diagnostics(&db, body, context.clone(), env.import_surface(), false).is_empty());
+    let executed = db.take_executed();
+    assert_eq!(query_executions(&executed, "body_diagnostics"), 1);
+
+    assert!(
+        body_diagnostics(
+            &db,
+            body,
+            context,
+            diagnostic_only_variant.import_surface(),
+            false,
+        )
+        .is_empty()
+    );
+    let executed = db.take_executed();
+    assert_eq!(
+        query_executions(&executed, "body_diagnostics"),
+        0,
+        "diagnostic-only ModuleEnv state must not re-key body resolution: {executed:#?}"
+    );
 }
 
 #[test]

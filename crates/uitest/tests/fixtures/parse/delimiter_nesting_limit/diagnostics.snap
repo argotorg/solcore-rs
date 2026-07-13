@@ -3,8 +3,8 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/delimiter_nesting_limit/main.solc
 ---
-error[SC0001]: delimiter nesting exceeds the compiler limit of 512
- --> /main/main.solc:1:548
+error[SC0001]: delimiter nesting exceeds the compiler limit of 128
+ --> /main/main.solc:1:164
   |
 1 | ...((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((...
   |                                                                    ^

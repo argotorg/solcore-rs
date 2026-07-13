@@ -405,6 +405,30 @@ fn module_auto_imports_do_not_conflict_with_unqualified_bindings() {
 }
 
 #[test]
+fn module_qualifier_conflicts_with_selected_term_in_either_import_order() {
+    for imports in [
+        "import util; import other.{util};",
+        "import other.{util}; import util;",
+    ] {
+        let main = format!("{imports} function main() {{}}");
+        let (db, entry) = load_sources([
+            (vec!["main"], main.as_str()),
+            (vec!["util"], "function value() -> word { return 0; }"),
+            (
+                vec!["other"],
+                "export { util }; function util() -> word { return 1; }",
+            ),
+        ]);
+        let module = module_id_from_key(&db, &entry);
+        assert_eq!(
+            module_diagnostic_codes(&db, module),
+            ["SC0121"],
+            "import order should not affect qualifier conflicts: {imports}"
+        );
+    }
+}
+
+#[test]
 fn module_auto_imports_check_every_generated_prefix_binding() {
     let (db, entry) = load_sources([
         (

@@ -426,21 +426,6 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .or_else(|| self.lookup_field(text))
             .or_else(|| self.lookup_qualified_term(text))
             .or_else(|| self.lookup_unqualified_class_method(text))
-            .or_else(|| {
-                if self
-                    .imports
-                    .may_contain_unknown_unqualified(self.db, Namespace::Term, text)
-                {
-                    self.map.diagnostics.push(self.undefined_name_diag(
-                        text,
-                        name.span(self.db),
-                        UndefinedNameKind::Term,
-                    ));
-                    Some(Resolution::Err)
-                } else {
-                    None
-                }
-            })
             .or_else(|| self.same_name_constructor_resolution(text))
             .or_else(|| self.lookup_type(text))
             .or_else(|| self.lookup_module(text))

@@ -21,8 +21,8 @@ use chumsky::prelude::*;
 use errors::parse_error_from_rich;
 use items::top_item_parser;
 use recovery::{
-    refine_body_parse_error, span_contains, suppress_body_cascades, top_level_recovery_message,
-    trace_recovery,
+    lex_error_suppresses_parse_error, refine_body_parse_error, span_contains,
+    suppress_body_cascades, top_level_recovery_message, trace_recovery,
 };
 use stmt::parsed_stmt_parser;
 use tokenize::{tokenize_with_base, tokenize_with_comments};
@@ -72,26 +72,30 @@ pub(crate) fn parse_supported_items<'src>(src: &'src str) -> ParseOutput<ParsedT
         "parsed top-level items"
     );
 
-    let had_token_errors = !errors.is_empty();
-    if !had_token_errors {
-        errors.extend(
-            parse_errors
-                .into_iter()
-                .map(parse_error_from_rich)
-                .filter(|err| {
-                    !recovery_spans
-                        .iter()
-                        .any(|recovery| span_contains(*recovery, err.span))
-                }),
-        );
-    }
-    if !had_token_errors {
-        errors.extend(
-            recovery_spans
-                .into_iter()
-                .map(|span| ParsedError::new(span, top_level_recovery_message(src, span))),
-        );
-    }
+    let lex_error_spans = errors.iter().map(|error| error.span).collect::<Vec<_>>();
+    errors.extend(
+        parse_errors
+            .into_iter()
+            .map(parse_error_from_rich)
+            .filter(|err| {
+                !recovery_spans
+                    .iter()
+                    .any(|recovery| span_contains(*recovery, err.span))
+                    && !lex_error_spans.iter().any(|lex_error| {
+                        lex_error_suppresses_parse_error(src, *lex_error, err.span)
+                    })
+            }),
+    );
+    errors.extend(
+        recovery_spans
+            .into_iter()
+            .filter(|span| {
+                !lex_error_spans
+                    .iter()
+                    .any(|lex_error| lex_error_suppresses_parse_error(src, *lex_error, *span))
+            })
+            .map(|span| ParsedError::new(span, top_level_recovery_message(src, span))),
+    );
 
     ParseOutput { output, errors }
 }
@@ -408,14 +412,18 @@ pub(crate) fn parse_body_statements<'src>(
         lex_errors = errors.len(),
         "parsed body statements"
     );
-    if errors.is_empty() {
-        let parse_errors = parse_errors
-            .into_iter()
-            .map(parse_error_from_rich)
-            .map(|error| refine_body_parse_error(&token_snapshot, error))
-            .collect::<Vec<_>>();
-        errors.extend(suppress_body_cascades(source, parse_errors));
-    }
+    let lex_error_spans = errors.iter().map(|error| error.span).collect::<Vec<_>>();
+    let parse_errors = parse_errors
+        .into_iter()
+        .map(parse_error_from_rich)
+        .map(|error| refine_body_parse_error(&token_snapshot, error))
+        .filter(|error| {
+            !lex_error_spans
+                .iter()
+                .any(|lex_error| lex_error_suppresses_parse_error(source, *lex_error, error.span))
+        })
+        .collect::<Vec<_>>();
+    errors.extend(suppress_body_cascades(source, parse_errors));
 
     ParseOutput {
         output: output.unwrap_or_default(),
@@ -670,6 +678,119 @@ mod tests {
         assert!(
             !parsed.errors.is_empty(),
             "expected parse errors for invalid import"
+        );
+    }
+
+    #[test]
+    fn lexical_error_does_not_hide_independent_top_level_parse_error() {
+        let parsed = parse_supported_items("~\nfunction ok() {}\nfunction broken( { }\n");
+
+        assert!(
+            parsed
+                .errors
+                .iter()
+                .any(|error| error.message.contains("invalid token `~`")),
+            "missing lexer diagnostic: {:#?}",
+            parsed.errors
+        );
+        assert!(
+            parsed.errors.iter().any(|error| {
+                error.message.contains("could not parse top-level item")
+                    || error.message.contains("parse error")
+            }),
+            "independent declaration error was suppressed: {:#?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
+    fn lexical_error_does_not_hide_independent_body_parse_error() {
+        let source = "{\n~\nlet broken = ;\n}";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+
+        assert!(
+            parsed
+                .errors
+                .iter()
+                .any(|error| error.message.contains("invalid token `~`")),
+            "missing lexer diagnostic: {:#?}",
+            parsed.errors
+        );
+        assert!(
+            parsed
+                .errors
+                .iter()
+                .any(|error| error.span.start >= source.find("broken").unwrap()),
+            "independent statement error was suppressed: {:#?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
+    fn lexical_error_suppresses_only_its_adjacent_body_cascade() {
+        let source = "{ let value = ~; return 0; }";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+
+        assert_eq!(
+            parsed
+                .errors
+                .iter()
+                .filter(|error| error.message.contains("invalid token `~`"))
+                .count(),
+            1,
+            "missing lexer diagnostic: {:#?}",
+            parsed.errors
+        );
+        let semicolon = source.find(';').expect("initializer semicolon");
+        assert!(
+            parsed
+                .errors
+                .iter()
+                .all(|error| error.span.start != semicolon),
+            "the removed lexer token should not also report its parser cascade: {:#?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
+    fn lexical_error_suppresses_a_same_line_cascade_reported_before_it() {
+        let source = "{ let value = 1 § 2; return value; }";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+
+        assert_eq!(
+            parsed.errors.len(),
+            1,
+            "unexpected cascade: {:#?}",
+            parsed.errors
+        );
+        assert!(
+            parsed.errors[0].message.contains("invalid token `§`"),
+            "missing lexer diagnostic: {:#?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
+    fn lexical_error_does_not_hide_a_next_line_top_level_error() {
+        let source = "~\n;\n";
+        let parsed = parse_supported_items(source);
+        let semicolon = source.find(';').expect("standalone semicolon");
+
+        assert!(
+            parsed
+                .errors
+                .iter()
+                .any(|error| error.message.contains("invalid token `~`")),
+            "missing lexer diagnostic: {:#?}",
+            parsed.errors
+        );
+        assert!(
+            parsed
+                .errors
+                .iter()
+                .any(|error| error.span.start == semicolon),
+            "the independent next-line parse error was suppressed: {:#?}",
+            parsed.errors
         );
     }
 }
