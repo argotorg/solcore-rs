@@ -477,16 +477,14 @@ impl<'db> Emitter<'db> {
 
         let default = if !include_default {
             None
+        } else if default_rows.is_empty() {
+            self.push(test.span, EmitDiagnosticKind::NonExhaustiveMatch);
+            Some(Box::new(DecisionTree::Fail { span: test.span }))
         } else {
-            if default_rows.is_empty() {
-                self.push(test.span, EmitDiagnosticKind::NonExhaustiveMatch);
-                Some(Box::new(DecisionTree::Fail { span: test.span }))
-            } else {
-                Some(Box::new(self.compile_match_matrix(
-                    span,
-                    MatchMatrix::new(rest, default_rows),
-                )))
-            }
+            Some(Box::new(self.compile_match_matrix(
+                span,
+                MatchMatrix::new(rest, default_rows),
+            )))
         };
 
         DecisionTree::Switch {

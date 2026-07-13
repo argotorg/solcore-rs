@@ -2,6 +2,7 @@
 name = "solcore-lsp"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -31,7 +32,6 @@ percent-encoding = { workspace = true }
 tower-lsp = { version = "0.20", optional = true }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "sync"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
-serde-wasm-bindgen = { version = "0.6", optional = true }
 
 [[bin]]
 name = "solcore-lsp"

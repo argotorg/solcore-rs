@@ -1475,7 +1475,6 @@ dependencies = [
  "lsp-types",
  "percent-encoding",
  "serde",
- "serde-wasm-bindgen",
  "serde_json",
  "solcore-hir",
  "solcore-hir-ty",
@@ -1521,6 +1520,7 @@ name = "solcore-sonatina"
 version = "0.1.0"
 dependencies = [
  "dir-test",
+ "insta",
  "salsa",
  "smallvec",
  "solcore-hir",

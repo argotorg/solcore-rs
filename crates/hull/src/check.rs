@@ -1069,7 +1069,7 @@ fn nth_sum_payload<'db>(target: &Ty<'db>, index: usize) -> Option<Ty<'db>> {
     let mut remaining = index;
     loop {
         match &current.strip_named().kind {
-            TyKind::Sum(lhs, rhs) if remaining == 0 => return Some((**lhs).clone()),
+            TyKind::Sum(lhs, _) if remaining == 0 => return Some((**lhs).clone()),
             TyKind::Sum(_, rhs) => {
                 current = rhs.strip_named();
                 remaining -= 1;

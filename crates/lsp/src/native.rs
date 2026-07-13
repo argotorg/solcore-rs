@@ -1,5 +1,3 @@
-#![cfg(feature = "native")]
-
 //! Native stdio transport for the Solcore language server.
 
 use std::{

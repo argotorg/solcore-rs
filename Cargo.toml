@@ -26,6 +26,7 @@ vfs = { path = "crates/vfs", package = "solcore-vfs" }
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.89.0"
 
 # Native release builds favor compiler throughput. Browser bundles use the
 # separate `wasm-release` profile below so native and wasm builds do not trade
