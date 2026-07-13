@@ -640,6 +640,33 @@ fn recursive_adt_layouts_are_cycle_safe() {
 }
 
 #[test]
+fn unsupported_match_rows_produce_an_explicit_emit_diagnostic() {
+    let (db, output) = specialize_src(
+        "string_literal_match",
+        r#"
+function main(s : string) -> word {
+  match s {
+    | "a" => return 1;
+    | _ => return 2;
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+
+    assert!(
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedMonoConstruct { construct }
+                if construct.contains("string literal match pattern")
+        )),
+        "{:?}",
+        emitted.diagnostics
+    );
+}
+
+#[test]
 fn out_of_range_word_literals_wrap_in_hull_exprs_and_patterns() {
     const TWO_256: &str =
         "115792089237316195423570985008687907853269984665640564039457584007913129639936";

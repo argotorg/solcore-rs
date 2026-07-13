@@ -32,6 +32,7 @@ struct MatchColumn<'db> {
 
 #[derive(Debug, Clone)]
 struct MatchRow<'db> {
+    span: Span<'db>,
     pats: Vec<MatrixPat>,
     bindings: Vec<(String, Occurrence)>,
     body: Vec<MonoStmt<'db>>,
@@ -136,6 +137,7 @@ impl<'db> MatchMatrix<'db> {
     fn into_var_like_leaf(self) -> DecisionTree<'db> {
         let row = self.rows.into_iter().next().expect("row exists");
         let MatchRow {
+            span: _,
             pats,
             mut bindings,
             body,
@@ -248,6 +250,7 @@ impl<'db> Emitter<'db> {
                     return None;
                 }
                 Some(MatchRow {
+                    span: arm.span,
                     pats: arm
                         .pats
                         .iter()
@@ -331,6 +334,13 @@ impl<'db> Emitter<'db> {
         }
 
         drop(first_col);
+        for row in &state.rows {
+            if let Some(pat) = row.pats.first()
+                && !pat.is_var_like()
+            {
+                self.push_discarded_match_pattern(row.span, pat, state.test.ty);
+            }
+        }
         let (rows, columns) = state.into_default();
         self.compile_match_matrix(span, MatchMatrix::new(columns, rows))
     }
@@ -375,6 +385,7 @@ impl<'db> Emitter<'db> {
         next_columns.extend(rest);
         let mut next_rows = Vec::new();
         for row in rows {
+            let row_span = row.span;
             let (first, row_rest) = split_row(row);
             match first {
                 MatrixPat::Tuple { elems, .. } => {
@@ -398,7 +409,11 @@ impl<'db> Emitter<'db> {
                 MatrixPat::Error => {
                     next_rows.push(row_with_wildcards(row_rest, fields.len(), test.span));
                 }
-                MatrixPat::Con { .. } | MatrixPat::Lit { .. } | MatrixPat::ComptimeLabel => {}
+                unsupported @ (MatrixPat::Con { .. }
+                | MatrixPat::Lit { .. }
+                | MatrixPat::ComptimeLabel) => {
+                    self.push_discarded_match_pattern(row_span, &unsupported, test.ty);
+                }
             }
         }
 
@@ -431,6 +446,19 @@ impl<'db> Emitter<'db> {
             );
             return DecisionTree::Fail { span };
         };
+        for row in &rows {
+            let Some(pat) = row.pats.first() else {
+                continue;
+            };
+            let supported = match pat {
+                MatrixPat::Con { ctor, .. } => constructor_index(&layout, ctor).is_some(),
+                MatrixPat::Var { .. } | MatrixPat::Wildcard | MatrixPat::Error => true,
+                MatrixPat::Tuple { .. } | MatrixPat::Lit { .. } | MatrixPat::ComptimeLabel => false,
+            };
+            if !supported {
+                self.push_discarded_match_pattern(row.span, pat, test.ty);
+            }
+        }
         let include_default = head_ctors.len() != layout.ctors.len();
         let (projected_branches, default_rows) =
             project_constructor_rows(&test, &layout, &head_ctors, rows, include_default);
@@ -476,6 +504,21 @@ impl<'db> Emitter<'db> {
         head_lits: Vec<LitKind>,
     ) -> DecisionTree<'db> {
         let MatrixState { test, rest, rows } = state;
+        for row in &rows {
+            let Some(pat) = row.pats.first() else {
+                continue;
+            };
+            let supported = match pat {
+                MatrixPat::Lit { lit } => {
+                    matches!(lit, LitKind::Number(_) | LitKind::Hex(_)) && head_lits.contains(lit)
+                }
+                MatrixPat::Var { .. } | MatrixPat::Wildcard | MatrixPat::Error => true,
+                MatrixPat::Con { .. } | MatrixPat::Tuple { .. } | MatrixPat::ComptimeLabel => false,
+            };
+            if !supported {
+                self.push_discarded_match_pattern(row.span, pat, test.ty);
+            }
+        }
         let (projected_branches, default_rows) = project_atomic_rows(&test, &head_lits, rows);
 
         let mut branches = Vec::new();
@@ -510,6 +553,39 @@ impl<'db> Emitter<'db> {
             .is_some_and(|layout| {
                 constructor_name_matches(ctor, &layout.name, &layout.ctors[0].name)
             })
+    }
+
+    fn push_discarded_match_pattern(
+        &mut self,
+        span: Span<'db>,
+        pat: &MatrixPat,
+        scrutinee_ty: SemTy<'db>,
+    ) {
+        let construct = match pat {
+            MatrixPat::Lit {
+                lit: LitKind::String(literal),
+            } => format!("string literal match pattern `{literal}`"),
+            MatrixPat::Lit { .. } => format!(
+                "literal match pattern incompatible with `{}`",
+                scrutinee_ty.display(self.db)
+            ),
+            MatrixPat::Con { ctor, .. } => format!(
+                "constructor match pattern `{ctor}` incompatible with `{}`",
+                scrutinee_ty.display(self.db)
+            ),
+            MatrixPat::Tuple { .. } => format!(
+                "tuple match pattern incompatible with `{}`",
+                scrutinee_ty.display(self.db)
+            ),
+            MatrixPat::ComptimeLabel => "unevaluated comptime match label".to_owned(),
+            MatrixPat::Wildcard | MatrixPat::Var { .. } | MatrixPat::Error => {
+                "invalid match pattern".to_owned()
+            }
+        };
+        self.push(
+            span,
+            EmitDiagnosticKind::UnsupportedMonoConstruct { construct },
+        );
     }
 
     fn tree_to_body(

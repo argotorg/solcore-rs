@@ -6,7 +6,10 @@ use hir::{
     input::SourceFile,
     span::{AnchorId, Span},
 };
-use hull::{Alt, Arg, Con, Expr, ExprKind, Function, Pat, PatKind, Program, Stmt, StmtKind, Ty};
+use hull::{
+    Alt, Arg, CodeBlock, Con, Expr, ExprKind, Function, Object, Pat, PatKind, Program, Stmt,
+    StmtKind, Ty,
+};
 use nameres::{Db as _, ModuleTree, module_id_from_key};
 use parser::parse_file_to_hir;
 use solcore_sonatina::{render_hull_program, translate_hull_program};
@@ -159,6 +162,115 @@ fn hull_function_symbols_are_injective_and_separate_from_section_entries() {
     );
     assert!(ir.contains("solcore_fn_12_root_2eruntime_5_entry"), "{ir}");
     assert!(ir.contains("solcore_entry_12_root_2eruntime"), "{ir}");
+}
+
+#[test]
+fn aggregate_locals_are_zero_initialized_recursively() {
+    let db = TestDb::default();
+    let span = test_span(&db);
+    let word = Ty::word(span);
+    let pair = Ty::product(span, word.clone(), word.clone());
+    let sum = Ty::sum(span, word.clone(), word.clone());
+    let pair_var = || Expr::var(span, "pair", pair.clone());
+    let program = Program {
+        span,
+        entry_points: Vec::new(),
+        functions: vec![
+            Function {
+                span,
+                name: "main".into(),
+                args: Vec::new(),
+                ret: word.clone(),
+                body: vec![
+                    Stmt {
+                        span,
+                        kind: StmtKind::Let {
+                            name: "pair".into(),
+                            ty: pair.clone(),
+                        },
+                    },
+                    Stmt {
+                        span,
+                        kind: StmtKind::Assign {
+                            lhs: Expr {
+                                span,
+                                ty: word.clone(),
+                                kind: ExprKind::Fst(Box::new(pair_var())),
+                            },
+                            rhs: Expr::word(span, "7"),
+                        },
+                    },
+                    Stmt {
+                        span,
+                        kind: StmtKind::Return(Expr {
+                            span,
+                            ty: word.clone(),
+                            kind: ExprKind::Snd(Box::new(pair_var())),
+                        }),
+                    },
+                ],
+            },
+            Function {
+                span,
+                name: "zero_sum".into(),
+                args: Vec::new(),
+                ret: sum.clone(),
+                body: vec![
+                    Stmt {
+                        span,
+                        kind: StmtKind::Let {
+                            name: "sum".into(),
+                            ty: sum.clone(),
+                        },
+                    },
+                    Stmt {
+                        span,
+                        kind: StmtKind::Return(Expr::var(span, "sum", sum)),
+                    },
+                ],
+            },
+        ],
+        objects: Vec::new(),
+    };
+
+    let ir = render_hull_program(&db, &program).expect("verified aggregate zero lowering");
+    let zero_field_inserts = ir
+        .lines()
+        .filter(|line| line.contains("insert_value") && line.trim_end().ends_with("0.i256;"))
+        .count();
+    assert!(zero_field_inserts >= 2, "{ir}");
+    assert!(ir.contains("enum.make") && ir.contains("0.i256"), "{ir}");
+}
+
+#[test]
+fn all_sibling_and_nested_hull_objects_become_embedded_sections() {
+    let db = TestDb::default();
+    let span = test_span(&db);
+    let object = |name: &'static str, inners| Object {
+        span,
+        name: name.into(),
+        code: CodeBlock {
+            span,
+            stmts: Vec::new(),
+            functions: Vec::new(),
+        },
+        inners,
+    };
+    let grandchild = object("Grandchild", Vec::new());
+    let sibling = object("Sibling", vec![grandchild]);
+    let runtime = object("Runtime", Vec::new());
+    let program = Program {
+        span,
+        entry_points: Vec::new(),
+        functions: Vec::new(),
+        objects: vec![object("Root", vec![runtime, sibling])],
+    };
+
+    let ir = render_hull_program(&db, &program).expect("complete nested object lowering");
+    assert!(ir.contains("embed .runtime as &Runtime"), "{ir}");
+    assert!(ir.contains("as &Sibling"), "{ir}");
+    assert!(ir.contains("as &Grandchild"), "{ir}");
+    assert!(ir.matches("section ").count() >= 4, "{ir}");
 }
 
 #[test]

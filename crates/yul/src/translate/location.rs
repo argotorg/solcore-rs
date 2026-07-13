@@ -287,7 +287,3 @@ pub(super) fn partition_allocs(stmts: Vec<Stmt>) -> (Vec<Stmt>, Vec<Stmt>) {
         .into_iter()
         .partition(|stmt| matches!(stmt, Stmt::Let { init: None, .. }))
 }
-
-pub(super) fn is_unit_loc(loc: &Location) -> bool {
-    matches!(loc, Location::Seq(locs) if locs.is_empty())
-}

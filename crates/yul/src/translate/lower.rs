@@ -12,7 +12,7 @@ use super::{
     asm::AsmScopes,
     location::{
         Location, alloc_loc, con_lit, con_payload, copy_locs, flatten_lhs, flatten_rhs,
-        is_unit_loc, is_word_type, load_loc, lower_in_k_loc, normalize_loc, pad_to_size, pair_locs,
+        is_word_type, load_loc, lower_in_k_loc, normalize_loc, pad_to_size, pair_locs,
         partition_allocs, size_of_loc, size_of_ty, zero_sized_type,
     },
     names::{LoweredCallee, canonical_word_lit, lower_callee, yul_fun_name},
@@ -211,7 +211,7 @@ impl<'db> Translator<'db> {
             StmtKind::Expr(expr) => self.gen_expr(expr).map(|(stmts, _)| stmts),
             StmtKind::Return(expr) => {
                 let (mut out, loc) = self.gen_expr(expr)?;
-                if !is_unit_loc(&loc) {
+                if size_of_loc(&loc) != 0 {
                     let result = self.lookup_var("_result")?;
                     out.extend(copy_locs(&result, &loc)?);
                 }

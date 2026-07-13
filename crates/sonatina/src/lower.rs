@@ -210,19 +210,45 @@ impl<'db> Translator<'db> {
         let init = self.entry(&format!("{scope}.init"))?;
         let mut builder = ObjectBuilder::new(object.name.as_str());
         builder.section("init").entry(init);
-        if let Some(runtime) = object.inners.first() {
-            let runtime_scope = format!("{scope}.inner0.init");
-            let runtime_entry = self.entry(&runtime_scope)?;
-            builder.section("runtime").entry(runtime_entry);
-            builder
-                .section("init")
-                .embed_local("runtime", runtime.name.as_str());
-        } else {
+        if object.inners.is_empty() {
             builder.section("runtime").entry(init);
+        } else {
+            for (index, inner) in object.inners.iter().enumerate() {
+                let inner_scope = format!("{scope}.inner{index}");
+                let section = if index == 0 {
+                    "runtime".to_owned()
+                } else {
+                    object_section_name(&inner_scope)
+                };
+                self.declare_inner_object_sections(&mut builder, inner, &inner_scope, &section)?;
+                builder
+                    .section("init")
+                    .embed_local(section, inner.name.as_str());
+            }
         }
         builder
             .declare(&mut self.builder)
             .map_err(|err| TranslationError::new(format!("failed to declare object: {err}")))
+    }
+
+    fn declare_inner_object_sections(
+        &self,
+        builder: &mut ObjectBuilder,
+        object: &HullObject<'db>,
+        scope: &str,
+        section: &str,
+    ) -> Result<(), TranslationError> {
+        let entry = self.entry(&format!("{scope}.init"))?;
+        builder.section(section).entry(entry);
+        for (index, inner) in object.inners.iter().enumerate() {
+            let inner_scope = format!("{scope}.inner{index}");
+            let inner_section = object_section_name(&inner_scope);
+            self.declare_inner_object_sections(builder, inner, &inner_scope, &inner_section)?;
+            builder
+                .section(section)
+                .embed_local(inner_section, inner.name.as_str());
+        }
+        Ok(())
     }
 
     fn declare_code(
@@ -479,7 +505,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                 self.fb
                     .insert_inst_no_result(Return::new_unit(self.module.inst_set()));
             } else {
-                let value = zero_for_type(&mut self.fb, ret);
+                let value = zero_for_type(&mut self.fb, self.module.inst_set(), ret);
                 self.fb
                     .insert_inst_no_result(Return::new_single(self.module.inst_set(), value));
             }
@@ -516,7 +542,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     ) -> Result<Binding<'db>, TranslationError> {
         let ty = self.module.lower_ty(hull_ty)?;
         let var = self.fb.declare_var(ty);
-        let initial = zero_for_type(&mut self.fb, ty);
+        let initial = zero_for_type(&mut self.fb, self.module.inst_set(), ty);
         self.fb.def_var(var, initial);
         let binding = Binding {
             var,
@@ -812,7 +838,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     ) -> Result<ValueId, TranslationError> {
         let ty = self.module.lower_ty(result_ty)?;
         let result = self.fb.declare_var(ty);
-        let initial = zero_for_type(&mut self.fb, ty);
+        let initial = zero_for_type(&mut self.fb, self.module.inst_set(), ty);
         self.fb.def_var(result, initial);
         let then_block = self.fb.append_block();
         let else_block = self.fb.append_block();
@@ -1193,7 +1219,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
         match self.fb.type_of(value) {
             Type::I1 => Ok(value),
             ty if ty.is_integral() => {
-                let zero = zero_for_type(&mut self.fb, ty);
+                let zero = zero_for_type(&mut self.fb, self.module.inst_set(), ty);
                 let is_zero = self
                     .fb
                     .insert_inst(Eq::new(self.module.inst_set(), value, zero), Type::I1);
@@ -1450,7 +1476,7 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
                     self.fb
                         .insert_inst_no_result(Return::new_unit(self.module.inst_set()));
                 } else {
-                    let value = zero_for_type(&mut self.fb, ret_ty);
+                    let value = zero_for_type(&mut self.fb, self.module.inst_set(), ret_ty);
                     self.fb
                         .insert_inst_no_result(Return::new_single(self.module.inst_set(), value));
                 }
@@ -2204,11 +2230,58 @@ impl<'a, 'db> FunctionLowerer<'a, 'db> {
     }
 }
 
-fn zero_for_type(fb: &mut FunctionBuilder<InstInserter>, ty: Type) -> ValueId {
-    if ty == Type::Unit || ty.is_compound() {
-        fb.make_undef_value(ty)
-    } else {
-        fb.make_imm_value(Immediate::zero(ty))
+fn zero_for_type(
+    fb: &mut FunctionBuilder<InstInserter>,
+    inst_set: &'static EvmInstSet,
+    ty: Type,
+) -> ValueId {
+    if ty == Type::Unit {
+        return fb.make_undef_value(ty);
+    }
+    let Type::Compound(compound_ref) = ty else {
+        return fb.make_imm_value(Immediate::zero(ty));
+    };
+    let Some(compound) = ty.resolve_compound(fb.ctx()) else {
+        return fb.make_undef_value(ty);
+    };
+    match compound {
+        CompoundType::Struct(data) => {
+            let mut value = fb.make_undef_value(ty);
+            for (index, field_ty) in data.fields.into_iter().enumerate() {
+                let field = zero_for_type(fb, inst_set, field_ty);
+                let index = fb.make_imm_value(I256::from(index));
+                value = fb.insert_inst(InsertValue::new(inst_set, value, index, field), ty);
+            }
+            value
+        }
+        CompoundType::Array { elem, len } => {
+            let mut value = fb.make_undef_value(ty);
+            for index in 0..len {
+                let field = zero_for_type(fb, inst_set, elem);
+                let index = fb.make_imm_value(I256::from(index));
+                value = fb.insert_inst(InsertValue::new(inst_set, value, index, field), ty);
+            }
+            value
+        }
+        CompoundType::Enum(data) => {
+            let Some(variant) = data.variants.first() else {
+                return fb.make_undef_value(ty);
+            };
+            let fields = variant
+                .fields
+                .iter()
+                .copied()
+                .map(|field_ty| zero_for_type(fb, inst_set, field_ty))
+                .collect::<SmallVec<[ValueId; 2]>>();
+            fb.insert_inst(
+                EnumMake::new(inst_set, ty, EnumVariantRef::new(compound_ref, 0), fields),
+                ty,
+            )
+        }
+        CompoundType::Ptr(_)
+        | CompoundType::ObjRef(_)
+        | CompoundType::ConstRef(_)
+        | CompoundType::Func { .. } => fb.make_undef_value(ty),
     }
 }
 
@@ -2360,6 +2433,10 @@ fn function_symbol(scope: &str, name: &str) -> String {
 
 fn entry_symbol(scope: &str) -> String {
     format!("solcore_entry_{}", encode_symbol_component(scope))
+}
+
+fn object_section_name(scope: &str) -> String {
+    format!("solcore_object_{}", encode_symbol_component(scope))
 }
 
 fn encode_symbol_component(source: &str) -> String {

@@ -498,6 +498,52 @@ fn copy_locs_rejects_arity_mismatch() {
 }
 
 #[test]
+fn zero_sized_structured_return_needs_no_result_binding() {
+    let db = TestDb::default();
+    let sp = test_span(&db);
+    let unit = HullTy::unit(sp);
+    let zero_sized = HullTy::product(sp, unit.clone(), unit.clone());
+    let program = HullProgram {
+        span: sp,
+        entry_points: Vec::new(),
+        functions: Vec::new(),
+        objects: vec![HullObject {
+            span: sp,
+            name: "ZeroSizedReturn".into(),
+            code: HullCodeBlock {
+                span: sp,
+                functions: vec![HullFunction {
+                    span: sp,
+                    name: "zero".into(),
+                    args: Vec::new(),
+                    ret: zero_sized.clone(),
+                    body: vec![HullStmt {
+                        span: sp,
+                        kind: HullStmtKind::Return(HullExpr {
+                            span: sp,
+                            ty: zero_sized,
+                            kind: HullExprKind::Pair(
+                                Box::new(HullExpr::unit(sp)),
+                                Box::new(HullExpr::unit(sp)),
+                            ),
+                        }),
+                    }],
+                }],
+                stmts: Vec::new(),
+            },
+            inners: Vec::new(),
+        }],
+    };
+
+    assert_eq!(hull::check_program_with_db(&db, &program), Vec::new());
+    let yul = solcore_yul::render_hull_program(&db, &program)
+        .expect("zero-sized structured return lowers without `_result`");
+    let function = yul_function(&yul, "usr$zero");
+    assert!(function.contains("leave"), "{function}");
+    assert!(!function.contains("->"), "{function}");
+}
+
+#[test]
 fn assembly_let_shadowing_does_not_substitute_shadowed_name() {
     let yul = render_source(
         "assembly_let_shadowing",
