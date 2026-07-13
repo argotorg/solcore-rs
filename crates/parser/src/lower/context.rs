@@ -14,6 +14,7 @@ pub(super) struct LoweringCtx<'db, 'a> {
     def_locations: &'a mut Vec<(DefId<'db>, DefLocation)>,
     pub(super) source: &'a str,
     pub(super) parse_errors: &'a mut Vec<ParsedError>,
+    pub(super) expression_nesting: usize,
 }
 
 impl<'db, 'a> LoweringCtx<'db, 'a> {
@@ -34,6 +35,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             def_locations,
             source,
             parse_errors,
+            expression_nesting: 0,
         }
     }
 

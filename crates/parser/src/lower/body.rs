@@ -14,6 +14,11 @@ use super::{
 };
 use crate::{parse::parse_body_statements, types::*};
 
+// Lowering and HIR consumers have substantially larger recursion frames than
+// token parsing. A 128-deep conditional overflowed a native test thread; keep
+// enough headroom for wasm's smaller shadow stack.
+const MAX_EXPRESSION_NESTING: usize = 32;
+
 fn apply_implicit_return(stmts: &mut Vec<ParsedStmt<'_>>) {
     let [stmt] = stmts.as_mut_slice() else {
         return;
@@ -81,8 +86,25 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         expr: ParsedExpr<'_>,
         arenas: &mut BodyArenas<'db>,
     ) -> hir::arena::Id<function::Expr<'db>> {
+        if self.expression_nesting >= MAX_EXPRESSION_NESTING {
+            let span = expr.span;
+            drop_parsed_expr_iteratively(expr);
+            self.parse_errors.push(ParsedError::new(
+                span,
+                format!(
+                    "expression nesting exceeds the compiler limit of {MAX_EXPRESSION_NESTING}"
+                ),
+            ));
+            return arenas.exprs.alloc(function::Expr {
+                span: span_from_absolute(anchor, span, base_start),
+                kind: function::ExprKind::Error,
+            });
+        }
+
+        self.expression_nesting += 1;
         let span = span_from_absolute(anchor, expr.span, base_start);
         let kind = self.lower_expr_kind(anchor, base_start, expr.kind, arenas);
+        self.expression_nesting -= 1;
         arenas.exprs.alloc(function::Expr { span, kind })
     }
 
@@ -511,6 +533,47 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             lowered.push(self.lower_stmt(anchor, body_span.start, stmt, arenas));
         }
         lowered
+    }
+}
+
+fn drop_parsed_expr_iteratively(root: ParsedExpr<'_>) {
+    let mut pending = vec![root];
+    while let Some(expr) = pending.pop() {
+        match expr.kind {
+            ParsedExprKind::DotCtor { args, .. } | ParsedExprKind::Tuple(args) => {
+                pending.extend(args);
+            }
+            ParsedExprKind::BinOp { lhs, rhs, .. } => {
+                pending.push(*lhs);
+                pending.push(*rhs);
+            }
+            ParsedExprKind::Index { base, index } => {
+                pending.push(*base);
+                pending.push(*index);
+            }
+            ParsedExprKind::Call { callee, args } => {
+                pending.push(*callee);
+                pending.extend(args);
+            }
+            ParsedExprKind::Field { base, .. } => pending.push(*base),
+            ParsedExprKind::TypeAnnot { expr, .. } | ParsedExprKind::UnaryOp { expr, .. } => {
+                pending.push(*expr);
+            }
+            ParsedExprKind::If {
+                cond,
+                then_expr,
+                else_expr,
+            } => {
+                pending.push(*cond);
+                pending.push(*then_expr);
+                pending.push(*else_expr);
+            }
+            ParsedExprKind::Lit(_)
+            | ParsedExprKind::Ident(_)
+            | ParsedExprKind::Proxy { .. }
+            | ParsedExprKind::Lambda { .. }
+            | ParsedExprKind::Error => {}
+        }
     }
 }
 

@@ -29,6 +29,12 @@ use tokenize::{tokenize_with_base, tokenize_with_comments};
 
 use crate::types::*;
 
+/// Maximum recursive token-grammar nesting accepted before parsing.
+///
+/// This bounds stack use in lowering and later HIR consumers on every target,
+/// including wasm workers whose stack cannot be enlarged at runtime.
+pub(crate) const MAX_SYNTAX_NESTING: usize = 128;
+
 /// Parses the top-level items currently supported by the front end.
 ///
 /// Invalid top-level spans are represented as `ParsedTopItem::Error` and also

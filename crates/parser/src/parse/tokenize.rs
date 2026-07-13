@@ -1,6 +1,6 @@
 use logos::Logos;
 
-use super::{errors::lex_error, recovery::trace_recovery};
+use super::{MAX_SYNTAX_NESTING, errors::lex_error, recovery::trace_recovery};
 use crate::{
     lexer::{LexedCommentKind, Token},
     types::*,
@@ -26,37 +26,69 @@ pub(super) fn tokenize_with_comments<'src>(
     (tokens, comments, errors)
 }
 
-/// Maximum delimiter nesting depth accepted by the parser.
-///
-/// Recursive descent recurses once per nesting level, so unbounded nesting
-/// exhausts the native stack before any other limit applies; clang enforces
-/// the same guard with a default bracket depth of 256.
-const MAX_DELIMITER_NESTING: usize = 512;
-
 fn truncate_excessive_nesting(
     tokens: &mut Vec<(Token<'_>, LexSpan)>,
     errors: &mut Vec<ParsedError>,
 ) {
     let mut depth = 0usize;
-    for (idx, (token, span)) in tokens.iter().enumerate() {
+    let mut conditional_depth = 0usize;
+    let mut conditional_bases = Vec::new();
+    for (token, span) in tokens.iter() {
         match token {
-            Token::LParen | Token::LBrace | Token::LBracket => {
-                depth += 1;
-                if depth > MAX_DELIMITER_NESTING {
+            Token::If => {
+                conditional_depth += 1;
+                if conditional_depth > MAX_SYNTAX_NESTING {
                     let span = *span;
                     trace_recovery("nesting_limit", span);
                     errors.push(ParsedError::new(
                         span,
                         format!(
-                            "delimiter nesting exceeds the compiler limit of {MAX_DELIMITER_NESTING}"
+                            "conditional expression nesting exceeds the compiler limit of {MAX_SYNTAX_NESTING}"
                         ),
                     ));
-                    tokens.truncate(idx);
+                    tokens.clear();
                     return;
                 }
             }
+            Token::LParen | Token::LBracket => {
+                depth += 1;
+                if depth > MAX_SYNTAX_NESTING {
+                    let span = *span;
+                    trace_recovery("nesting_limit", span);
+                    errors.push(ParsedError::new(
+                        span,
+                        format!(
+                            "delimiter nesting exceeds the compiler limit of {MAX_SYNTAX_NESTING}"
+                        ),
+                    ));
+                    tokens.clear();
+                    return;
+                }
+                conditional_bases.push(conditional_depth);
+            }
+            Token::LBrace => {
+                depth += 1;
+                if depth > MAX_SYNTAX_NESTING {
+                    let span = *span;
+                    trace_recovery("nesting_limit", span);
+                    errors.push(ParsedError::new(
+                        span,
+                        format!(
+                            "delimiter nesting exceeds the compiler limit of {MAX_SYNTAX_NESTING}"
+                        ),
+                    ));
+                    tokens.clear();
+                    return;
+                }
+                conditional_bases.push(0);
+                conditional_depth = 0;
+            }
             Token::RParen | Token::RBrace | Token::RBracket => {
                 depth = depth.saturating_sub(1);
+                conditional_depth = conditional_bases.pop().unwrap_or(0);
+            }
+            Token::Comma | Token::Semi => {
+                conditional_depth = conditional_bases.last().copied().unwrap_or(0);
             }
             _ => {}
         }

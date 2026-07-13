@@ -37,9 +37,7 @@ pub(crate) fn compute_vfs_diagnostics(world: &WorldState, uri: &Url) -> Vec<VfsD
     let diagnostics = if is_reachable_from_workspace_entry(world, &path) {
         world.workspace().diagnostics()
     } else {
-        let mut workspace = world.workspace().clone();
-        workspace.set_entry(&path);
-        workspace.diagnostics()
+        world.workspace().diagnostics_for_entry(&path)
     };
 
     diagnostics
@@ -286,6 +284,62 @@ mod tests {
         assert!(world.open_document(math_uri, math.to_owned()));
         let diagnostics = compute_diagnostics(&world, &main_uri);
         assert_valid_sibling_import(&diagnostics);
+    }
+
+    #[test]
+    fn fallback_diagnostics_does_not_mutate_a_cloned_salsa_database() {
+        use std::{sync::mpsc, time::Duration};
+
+        let mut world = WorldState::new();
+        let entry_uri = Url::parse("file:///main/entry.solc").expect("entry uri");
+        let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
+        let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
+        let shadow_uri = Url::parse("file:///main/math.txt").expect("shadow uri");
+        let entry = "function entry() -> word { return 0; }\n";
+        let main = "import math.{double};\nfunction main() -> word { return double(21); }\n";
+        let math = "function double(x: word) -> word { return x; }\nexport { double };\n";
+
+        assert!(world.open_document(entry_uri, entry.to_owned()));
+        assert!(world.open_document(main_uri.clone(), main.to_owned()));
+        assert!(world.open_document(math_uri, math.to_owned()));
+        assert!(world.open_document(shadow_uri.clone(), "notes".to_owned()));
+        world.close_document(&shadow_uri);
+        assert!(world.remove_workspace_document(&shadow_uri));
+
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let diagnostics = compute_diagnostics(&world, &main_uri);
+            let _ = sender.send(diagnostics);
+        });
+
+        receiver
+            .recv_timeout(Duration::from_secs(5))
+            .expect("alternate-entry diagnostics must not wait for a Salsa clone to drop");
+    }
+
+    #[test]
+    fn excessive_expression_nesting_is_diagnosed_on_a_small_analysis_stack() {
+        let result = std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(|| {
+                let mut source = "function main() -> word { return ".to_owned();
+                source.push_str(&"if true then 0 else ".repeat(130));
+                source.push_str("0; }\n");
+                let (world, uri) = world_with_main(&source);
+
+                let diagnostics = compute_diagnostics(&world, &uri);
+
+                assert!(diagnostics.iter().any(|diagnostic| {
+                    diagnostic
+                        .message
+                        .contains("nesting exceeds the compiler limit")
+                }));
+            })
+            .expect("spawn small-stack analysis")
+            .join();
+        if let Err(payload) = result {
+            std::panic::resume_unwind(payload);
+        }
     }
 
     #[test]

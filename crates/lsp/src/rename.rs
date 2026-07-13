@@ -25,8 +25,9 @@ pub fn handle_prepare_rename(
     }
     let line_index = world.line_index(uri)?;
     let offset = line_index.position_to_byte(position)?;
+    let locations = editable_reference_locations(world, &target)?;
 
-    collect_reference_locations(world, &target, true)
+    locations
         .into_iter()
         .filter(|location| location.uri == *uri)
         .find_map(|location| {
@@ -50,7 +51,7 @@ pub fn handle_rename(
     if !target_supports_text_rename(world, &target) {
         return None;
     }
-    let locations = collect_reference_locations(world, &target, true);
+    let locations = editable_reference_locations(world, &target)?;
     let changes = text_edits_by_uri(locations, new_name)?;
 
     Some(WorkspaceEdit {
@@ -58,6 +59,18 @@ pub fn handle_rename(
         document_changes: None,
         change_annotations: None,
     })
+}
+
+fn editable_reference_locations(
+    world: &WorldState,
+    target: &crate::references::ReferenceTarget,
+) -> Option<Vec<Location>> {
+    let locations = collect_reference_locations(world, target, true);
+    (!locations.is_empty()
+        && locations
+            .iter()
+            .all(|location| world.line_index(&location.uri).is_some()))
+    .then_some(locations)
 }
 
 fn text_edits_by_uri(
@@ -254,6 +267,18 @@ mod tests {
                 math_index.range(export, export + "double".len() as u32),
             ]
         );
+    }
+
+    #[test]
+    fn embedded_std_symbol_is_not_offered_for_rename() {
+        let source = "import std.{addWord};\nfunction main() -> word { return addWord(1, 2); }\n";
+        let (world, uri) = world_with_main(source);
+        let line_index = world.line_index(&uri).expect("line index");
+        let call = source.rfind("addWord").expect("call") as u32;
+        let position = line_index.byte_to_position(call);
+
+        assert_eq!(handle_prepare_rename(&world, &uri, position), None);
+        assert_eq!(handle_rename(&world, &uri, position, "sumWords"), None);
     }
 
     #[test]

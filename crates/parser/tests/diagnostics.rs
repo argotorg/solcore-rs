@@ -186,3 +186,39 @@ fn assert_snapshot_for_fixture(fixture_path: &str, value: &str) {
         insta::assert_snapshot!(fixture_name, value);
     });
 }
+
+#[test]
+fn excessive_expression_nesting_is_diagnosed_before_hir_recursion() {
+    let mut source = "function main() -> word { return ".to_owned();
+    source.push_str(&"!".repeat(40));
+    source.push_str("true; }\n");
+    let db = TestDb::default();
+    let file = fixture_source_file(&db, "deep-expression.solc", &source);
+
+    let diagnostics = lower_diagnostics(&db, parse_diagnostics(&db, file));
+
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("nesting exceeds the compiler limit")),
+        "expected a nesting diagnostic, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn excessive_conditional_nesting_is_rejected_before_recursive_parsing() {
+    let mut source = "function main() -> word { return ".to_owned();
+    source.push_str(&"if true then 0 else ".repeat(130));
+    source.push_str("0; }\n");
+    let db = TestDb::default();
+    let file = fixture_source_file(&db, "deep-conditionals.solc", &source);
+
+    let diagnostics = lower_diagnostics(&db, parse_diagnostics(&db, file));
+
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("conditional expression nesting exceeds the compiler limit")),
+        "expected a conditional nesting diagnostic, got {diagnostics:#?}"
+    );
+}

@@ -69,7 +69,6 @@ pub const STD_FILES: &[(&str, &str)] = &[
 
 /// Concrete Salsa database used by the in-memory analysis host.
 #[salsa::db]
-#[derive(Clone)]
 pub struct AnalysisHost {
     storage: salsa::Storage<Self>,
     module_tree: Option<ModuleTree>,
@@ -330,7 +329,6 @@ impl nameres::Db for AnalysisHost {
 impl hir_ty::Db for AnalysisHost {}
 
 /// High-level in-memory workspace for analysis and editor-style queries.
-#[derive(Clone)]
 pub struct Workspace {
     host: AnalysisHost,
     entry_path: Option<PathBuf>,
@@ -464,7 +462,11 @@ impl Workspace {
     /// `/main`.
     pub fn entry_module(&self) -> Option<ModuleId<'_>> {
         let path = self.entry_path.as_ref()?;
-        let key = self.entry_key()?;
+        self.module_for_main_path(path)
+    }
+
+    fn module_for_main_path(&self, path: &Path) -> Option<ModuleId<'_>> {
+        let key = self.main_key_for_path(path)?;
         self.host
             .module_files
             .contains_key(&key)
@@ -482,6 +484,20 @@ impl Workspace {
         let Some(entry) = self.entry_module() else {
             return Vec::new();
         };
+        self.raw_diagnostics_for_module(entry)
+    }
+
+    /// Returns compiler diagnostics for an alternate `/main` entry without
+    /// mutating the workspace or its Salsa inputs.
+    pub fn raw_diagnostics_for_entry(&self, path: &str) -> Vec<RawDiagnostic> {
+        let path = main_path(path);
+        let Some(entry) = self.module_for_main_path(&path) else {
+            return Vec::new();
+        };
+        self.raw_diagnostics_for_module(entry)
+    }
+
+    fn raw_diagnostics_for_module(&self, entry: ModuleId<'_>) -> Vec<RawDiagnostic> {
         let _ = resolve_reachable_full(&self.host, entry);
         let mut diagnostics = reachable_diagnostics(&self.host, entry)
             .iter()
@@ -504,8 +520,21 @@ impl Workspace {
             .collect()
     }
 
+    /// Returns owned diagnostics for an alternate `/main` entry without
+    /// changing the selected workspace entry.
+    pub fn diagnostics_for_entry(&self, path: &str) -> Vec<Diagnostic> {
+        self.raw_diagnostics_for_entry(path)
+            .into_iter()
+            .map(|diagnostic| Diagnostic::from_hir(&self.host, diagnostic))
+            .collect()
+    }
+
     fn entry_key(&self) -> Option<ModuleKey> {
         let path = self.entry_path.as_ref()?;
+        self.main_key_for_path(path)
+    }
+
+    fn main_key_for_path(&self, path: &Path) -> Option<ModuleKey> {
         let tree = self
             .host
             .module_tree
