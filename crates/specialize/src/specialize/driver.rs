@@ -55,7 +55,6 @@ pub(super) struct InstanceInfo<'db> {
 pub(super) struct ClassInfo<'db> {
     pub(super) module: Module<'db>,
     pub(super) class: hir::ast::item::ClassDef<'db>,
-    pub(super) type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
 }
 
 #[derive(Debug, Clone)]
@@ -334,19 +333,8 @@ impl<'db> Driver<'db> {
                     .insert(adt.def_id_value(self.db), AdtInfo { module, adt });
             }
             Item::ClassDef(class) => {
-                let mut type_vars = inherited.to_vec();
-                type_vars.extend(type_var_bindings(
-                    class.def_id_value(self.db),
-                    class.type_var_elems(self.db),
-                ));
-                self.classes.insert(
-                    class.def_id_value(self.db),
-                    ClassInfo {
-                        module,
-                        class,
-                        type_vars,
-                    },
-                );
+                self.classes
+                    .insert(class.def_id_value(self.db), ClassInfo { module, class });
             }
             Item::TypeAlias(_)
             | Item::Import(_)

@@ -96,8 +96,14 @@ impl<'db> InferCtx<'db> {
                     source: ObligationSource::IntegerLiteralPattern { body, pat },
                 });
                 if let Some(expected) = expected {
-                    if self.is_numeric_or_open(expected.clone()) {
-                        self.unify_pat(body, pat, expected.clone(), ty);
+                    if let Some(numeric_expected) =
+                        self.numeric_literal_pattern_expected(expected.clone())
+                    {
+                        // `comptime` is a staging property of the scrutinee,
+                        // not part of the numeric literal itself. Constrain the
+                        // literal's `Int` variable with the wrapped numeric type
+                        // while retaining the original expected pattern type.
+                        self.unify_pat(body, pat, numeric_expected, ty);
                         expected
                     } else {
                         let actual = self.display_infer_ty(expected.clone());
@@ -120,6 +126,22 @@ impl<'db> InferCtx<'db> {
                 .and_then(|expected| self.expected_string_lit_ty(expected))
                 .unwrap_or_else(|| self.string()),
             LitKind::Error => InferTy::Error,
+        }
+    }
+
+    fn numeric_literal_pattern_expected(&mut self, expected: InferTy<'db>) -> Option<InferTy<'db>> {
+        let expected = self.normalize_aliases(expected);
+        match self.engine.resolve(expected) {
+            InferTy::Comptime(inner) => self.numeric_literal_pattern_expected(*inner),
+            ty @ (InferTy::Error | InferTy::Unknown | InferTy::Var(_)) => Some(ty),
+            ref ty @ InferTy::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::Word | BuiltinTyCtor::Integer),
+                ref args,
+            } if args.is_empty() => Some(ty.clone()),
+            InferTy::Named { .. }
+            | InferTy::Function { .. }
+            | InferTy::Tuple(_)
+            | InferTy::BoundVar(_) => None,
         }
     }
 
@@ -207,6 +229,8 @@ impl<'db> InferCtx<'db> {
                 source.unwrap_or(ObligationSource::Scheme),
             ),
             hir_nameres::Resolution::Ctor { ty, index } => self.instantiate_adt_ctor_value(
+                body,
+                expr,
                 ty,
                 index,
                 source.unwrap_or(ObligationSource::Scheme),
@@ -334,11 +358,14 @@ impl<'db> InferCtx<'db> {
 
     fn instantiate_adt_ctor_value(
         &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
         ty: DefId<'db>,
         index: hir_nameres::CtorIndex,
         source: ObligationSource<'db>,
     ) -> InferTy<'db> {
         let ctor_ty = self.instantiate_adt_ctor(ty, index, source);
+        self.record_phantom_constructor_result(body, expr, ctor_ty.clone());
         match self.engine.resolve(ctor_ty.clone()) {
             InferTy::Function { params, ret } if params.is_empty() => *ret,
             _ => ctor_ty,
@@ -463,6 +490,7 @@ impl<'db> InferCtx<'db> {
         expected: InferTy<'db>,
         callee: Option<CallSiteCallee<'db>>,
     ) -> InferTy<'db> {
+        self.record_phantom_constructor_result(body, expr, ctor_ty.clone());
         match self.engine.resolve(ctor_ty.clone()) {
             InferTy::Function { params, ret } => {
                 if params.len() != args.len() {

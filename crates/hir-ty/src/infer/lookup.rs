@@ -27,7 +27,6 @@ pub(super) struct TypeAliasLookup<'db> {
 
 pub(super) struct ClassLookup<'db> {
     pub(super) class: ClassDef<'db>,
-    pub(super) type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
 }
 
 pub(super) fn find_function_info<'db>(
@@ -212,10 +211,7 @@ pub(super) fn find_class_info<'db>(
         if class.def_id_value(db) != def {
             return None;
         }
-        Some(ClassLookup {
-            class: *class,
-            type_vars: type_var_bindings(class.def_id_value(db), class.type_var_elems(db)),
-        })
+        Some(ClassLookup { class: *class })
     })
 }
 

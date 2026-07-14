@@ -34,7 +34,7 @@ use crate::{
     SourceOrigin, Ty, TyCtor, TyKind, TyScheme, TypeLowering, TypeLoweringDiagnostic,
     UserTyCtorKind,
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
-    builtin_scheme, canonical_goal_with_allowed,
+    builtin_scheme, canonical_goal_with_allowed, class_method_type_vars,
     contract::{module_contract_diagnostics, module_manual_generic_abi_diagnostics},
     coverage::{
         self, BuiltinCoverageCtor, ConstructorOracle, CoverageCtor, CoveragePat, WitnessPat,

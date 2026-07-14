@@ -634,7 +634,8 @@ impl<'db> ComptimeChecker<'db> {
             .methods(self.db)
             .iter()
             .find(|method| ident_text(self.db, &method.name) == name)?;
-        let mut sig = callable_sig_from_func_sig(self.db, method, &class_info.type_vars);
+        let type_vars = class_method_type_vars(self.db, class_info.class, method);
+        let mut sig = callable_sig_from_func_sig(self.db, method, &type_vars);
         let class_name = class.name(self.db).unwrap_or_else(|| "class".to_owned());
         sig.name = format!("{class_name}.{name}");
         Some(sig)
@@ -983,10 +984,22 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         for pred in class.super_preds(self.db) {
             lowerer.lower_pred(*pred);
         }
-        for method in class.methods(self.db) {
-            lowerer.lower_class_method(class, method);
-        }
         self.extend_lowering_diagnostics(&lowerer);
+        for method in class.methods(self.db) {
+            let mut method_type_vars = type_vars.clone();
+            method_type_vars.extend(hir_nameres::type_var_bindings_from(
+                class.def_id_value(self.db),
+                class.type_var_elems(self.db).len() as u32,
+                &method.type_vars,
+            ));
+            let method_lowerer = TypeLowering::from_item_resolutions(
+                self.db,
+                &self.item_resolutions,
+                BinderEnv::from_type_vars(&method_type_vars),
+            );
+            method_lowerer.lower_class_method(class, method);
+            self.extend_lowering_diagnostics(&method_lowerer);
+        }
     }
 
     fn function(

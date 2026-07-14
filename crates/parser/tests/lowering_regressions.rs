@@ -630,13 +630,15 @@ function good() {}";
 }
 
 #[test]
-fn arrow_types_are_right_associative_and_tuple_domains_are_unary() {
+fn arrow_types_preserve_source_arity_and_explicit_tuple_domains() {
     let db = TestDb::default();
     let (_, module) = parse_module(
         &db,
         "arrow-types",
         "type F = word -> word -> bool;
-         type G = (word, bool) -> uint;",
+         type G = (word, bool) -> uint;
+         type H = ((word, bool)) -> uint;
+         type I = () -> uint;",
     );
     let aliases = module
         .items(&db)
@@ -658,11 +660,29 @@ fn arrow_types_are_right_associative_and_tuple_domains_are_unary() {
     let TypeRefKind::Fn { params, .. } = g.kind(&db) else {
         panic!("G should be an arrow type");
     };
+    assert_eq!(params.atom().len(), 2);
+    assert!(
+        params
+            .atom()
+            .iter()
+            .all(|param| !matches!(param.kind(&db), TypeRefKind::Tuple { .. }))
+    );
+
+    let h = aliases[2].ty(&db);
+    let TypeRefKind::Fn { params, .. } = h.kind(&db) else {
+        panic!("H should be an arrow type");
+    };
     assert_eq!(params.atom().len(), 1);
     assert!(matches!(
         params.atom()[0].kind(&db),
         TypeRefKind::Tuple { .. }
     ));
+
+    let i = aliases[3].ty(&db);
+    let TypeRefKind::Fn { params, .. } = i.kind(&db) else {
+        panic!("I should be an arrow type");
+    };
+    assert!(params.atom().is_empty());
 }
 
 #[test]

@@ -73,7 +73,14 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                         }
                         this.pred(def.head(this.db));
                         for method in def.methods(this.db) {
+                            let old_len = this.type_vars.len();
+                            this.type_vars.extend(type_var_bindings_from(
+                                def.def_id_value(this.db),
+                                def.type_var_elems(this.db).len() as u32,
+                                &method.type_vars,
+                            ));
                             this.sig(method);
+                            this.type_vars.truncate(old_len);
                         }
                     },
                 );

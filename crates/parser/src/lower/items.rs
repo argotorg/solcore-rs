@@ -272,6 +272,21 @@ pub(super) fn lower_type_ref<'db>(
             params_span,
             ret,
         } => {
+            // A comma-separated outer domain denotes source parameters, while
+            // another grouping keeps a tuple-valued unary domain:
+            // `(a, b) -> c` versus `((a, b)) -> c`.
+            // Keep the raw parser's unary domain node so the grouping remains
+            // observable until this lowering boundary.
+            let params = match params.len() {
+                1 => match params.into_iter().next().expect("single arrow domain") {
+                    ParsedTy {
+                        kind: ParsedTyKind::Tuple { elems },
+                        ..
+                    } if elems.len() != 1 => elems,
+                    param => vec![param],
+                },
+                _ => params,
+            };
             let params = params
                 .into_iter()
                 .map(|param| lower_type_ref(db, anchor, base_start, param))

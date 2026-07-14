@@ -468,6 +468,25 @@ impl<'db> TypeLowering<'db> {
     }
 }
 
+/// Returns the complete binder environment for a class method signature.
+///
+/// Method-local `forall` variables are indexed after the enclosing class
+/// binders because both are owned by the class definition in name resolution.
+pub fn class_method_type_vars<'db>(
+    db: &'db dyn HirDb,
+    class: ClassDef<'db>,
+    method: &FuncSig<'db>,
+) -> Vec<hir_nameres::TypeVarBinding<'db>> {
+    let owner = class.def_id_value(db);
+    let mut vars = hir_nameres::type_var_bindings(owner, class.type_var_elems(db));
+    vars.extend(hir_nameres::type_var_bindings_from(
+        owner,
+        class.type_var_elems(db).len() as u32,
+        &method.type_vars,
+    ));
+    vars
+}
+
 /// Returns the builtin value scheme for a resolved builtin term or class
 /// method.
 pub fn builtin_scheme<'db>(

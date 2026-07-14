@@ -112,7 +112,7 @@ error[SC0201]: type mismatch: expected numeric, found (word, word)
    = note: found type: (word, word)
 ---
 
-error[SC0201]: type mismatch: expected numeric, found (()) -> word
+error[SC0201]: type mismatch: expected numeric, found () -> word
   --> /main/main.solc:37:10
    |
 36 | function function_ret() -> () -> word {
@@ -121,4 +121,4 @@ error[SC0201]: type mismatch: expected numeric, found (()) -> word
 38 | }
    |
    = note: expected type: numeric
-   = note: found type: (()) -> word
+   = note: found type: () -> word

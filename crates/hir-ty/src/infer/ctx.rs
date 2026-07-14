@@ -37,6 +37,8 @@ pub(super) struct InferCtx<'db> {
     pub(super) partial_data: Vec<(String, Vec<String>)>,
     pub(super) pre_typeck_desugar: Vec<BodyPreTypeckDesugarPlan<'db>>,
     pub(super) closure_sigs: FxHashMap<DefId<'db>, ClosureSig<'db>>,
+    pub(super) phantom_constructor_results:
+        FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), (InferTy<'db>, Vec<TyVid<'db>>)>,
     pub(super) integer_literal_pattern_vars: Vec<TyVid<'db>>,
     pub(super) reported_ambiguous_constraint: bool,
     pub(super) poisoned_exprs: FxHashSet<(FuncBody<'db>, Id<Expr<'db>>)>,
@@ -112,6 +114,7 @@ impl<'db> InferCtx<'db> {
             partial_data: ctx.partial_data,
             pre_typeck_desugar: ctx.pre_typeck_desugar,
             closure_sigs: FxHashMap::default(),
+            phantom_constructor_results: FxHashMap::default(),
             integer_literal_pattern_vars: Vec::new(),
             reported_ambiguous_constraint: false,
             poisoned_exprs: FxHashSet::default(),
@@ -127,6 +130,9 @@ impl<'db> InferCtx<'db> {
             ObligationSolveOutput::default()
         };
         self.default_integer_literal_patterns();
+        if self.diagnostics.is_empty() {
+            self.check_ambiguous_constructor_results();
+        }
         if self.diagnostics.is_empty() {
             self.check_ambiguous_integer_literals();
         }
@@ -288,6 +294,7 @@ impl<'db> InferCtx<'db> {
         let ty = self.normalize_aliases(ty);
         match self.engine.resolve(ty) {
             InferTy::Error | InferTy::Unknown | InferTy::Var(_) => true,
+            InferTy::Comptime(inner) => self.is_numeric_or_open(*inner),
             InferTy::Named {
                 ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Word | crate::BuiltinTyCtor::Integer),
                 args,

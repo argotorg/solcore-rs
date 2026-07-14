@@ -45,7 +45,7 @@ pub use infer::{
 };
 pub use lower::{
     BinderEnv, LoweredAdtCtor, LoweredField, LoweredFunction, LoweredTypeAlias, TypeLowering,
-    TypeLoweringDiagnostic, builtin_scheme,
+    TypeLoweringDiagnostic, builtin_scheme, class_method_type_vars,
 };
 pub use prepare::{
     GeneratedOrigin, GeneratedOriginKind, GeneratedOriginMap, PreparedModule,

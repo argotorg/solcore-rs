@@ -187,10 +187,11 @@ impl<'db> Driver<'db> {
             self.push_missing_module_resolution(span);
             return None;
         };
+        let method_type_vars = hir_ty::class_method_type_vars(self.db, info.class, method_sig);
         let lowerer = TypeLowering::from_item_resolutions(
             self.db,
             &resolution.item_resolutions,
-            BinderEnv::from_type_vars(&info.type_vars),
+            BinderEnv::from_type_vars(&method_type_vars),
         );
         let mut normalizer =
             AliasNormalizer::new(self.db, info.module, &resolution.item_resolutions);

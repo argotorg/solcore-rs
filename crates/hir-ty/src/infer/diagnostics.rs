@@ -933,7 +933,8 @@ pub(super) fn callee_diagnostic_info<'db>(
                 .iter()
                 .find(|method| ident_text(db, &method.name) == name.as_str())?;
             let param_names = function_param_names(db, method);
-            let type_var_names = type_var_names(db, &info.type_vars);
+            let method_type_vars = class_method_type_vars(db, info.class, method);
+            let type_var_names = type_var_names(db, &method_type_vars);
             let scheme = class_method_callee_scheme(db, entry, module, *class, name.clone())?;
             let signature = source_signature_from_func_sig(db, name, method).unwrap_or_else(|| {
                 signature_from_scheme(db, name, &param_names, &type_var_names, scheme)

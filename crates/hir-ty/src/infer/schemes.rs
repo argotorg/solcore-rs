@@ -555,10 +555,11 @@ fn class_method_scheme_in_module<'db>(
         .methods(db)
         .iter()
         .find(|method| ident_text(db, &method.name) == name)?;
+    let type_vars = class_method_type_vars(db, info.class, method);
     let scheme = TypeLowering::from_item_resolutions(
         db,
         item_resolutions,
-        BinderEnv::from_type_vars(&info.type_vars),
+        BinderEnv::from_type_vars(&type_vars),
     )
     .lower_class_method(info.class, method);
     Some(AliasNormalizer::new(db, module, item_resolutions).normalize_scheme(scheme))

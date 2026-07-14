@@ -128,12 +128,24 @@ pub fn type_var_bindings<'db>(
     owner: DefId<'db>,
     vars: &[SpannedElem<'db, Ident<'db>>],
 ) -> Vec<TypeVarBinding<'db>> {
+    type_var_bindings_from(owner, 0, vars)
+}
+
+/// Builds type-variable bindings whose owner-local indexes start at `offset`.
+///
+/// Class method `forall` binders share the class definition as their stable
+/// owner, so their indexes follow the enclosing class binders.
+pub fn type_var_bindings_from<'db>(
+    owner: DefId<'db>,
+    offset: u32,
+    vars: &[SpannedElem<'db, Ident<'db>>],
+) -> Vec<TypeVarBinding<'db>> {
     vars.iter()
         .enumerate()
         .map(|(index, name)| TypeVarBinding {
             owner,
             name: *name,
-            index: index as u32,
+            index: offset + index as u32,
         })
         .collect()
 }

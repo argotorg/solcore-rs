@@ -693,6 +693,7 @@ impl<'db> InferCtx<'db> {
         let ty = self.normalize_aliases(ty);
         match self.engine.resolve(ty) {
             InferTy::Error | InferTy::Unknown | InferTy::Var(_) | InferTy::BoundVar(_) => false,
+            InferTy::Comptime(inner) => self.is_concrete_non_numeric(*inner),
             InferTy::Named {
                 ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Word | crate::BuiltinTyCtor::Integer),
                 args,
@@ -847,6 +848,78 @@ impl<'db> InferCtx<'db> {
                 span: self.body_label_span(self.root_body),
                 scheme,
             });
+    }
+
+    pub(super) fn check_ambiguous_constructor_results(&mut self) {
+        let constructor_results = self
+            .phantom_constructor_results
+            .iter()
+            .map(|(key, value)| (*key, value.clone()))
+            .collect::<Vec<_>>();
+        for ((body, expr), (ty, phantom_vars)) in constructor_results {
+            if self.expr_is_poisoned(body, expr) {
+                continue;
+            }
+            let mut unresolved = phantom_vars
+                .into_iter()
+                .filter_map(|var| match self.engine.resolve(InferTy::Var(var)) {
+                    InferTy::Var(root) => Some(root),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            unresolved.sort_by_key(|var| var.index());
+            unresolved.dedup();
+            if unresolved.is_empty() {
+                continue;
+            }
+
+            let vars = unresolved
+                .into_iter()
+                .map(|var| self.display_infer_ty(InferTy::Var(var)))
+                .collect::<Vec<_>>();
+            let result = self.display_infer_ty(ty);
+            self.diagnostics
+                .push(TypeckDiagnostic::AmbiguousInferredType {
+                    span: self.expr_label_span(body, expr),
+                    scheme: format!(
+                        "constructor result {result} leaves {} unconstrained",
+                        vars.join(", ")
+                    ),
+                });
+            return;
+        }
+    }
+
+    /// Records only constructor result variables that cannot be learned from
+    /// the constructor payload. Normal constructors such as `Box(a) = Box(a)`
+    /// share their result variable with a parameter and therefore do not enter
+    /// the ambiguity check.
+    pub(super) fn record_phantom_constructor_result(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        ctor_ty: InferTy<'db>,
+    ) {
+        let resolved = self.engine.resolve(ctor_ty);
+        let (params, ret) = match resolved {
+            InferTy::Function { params, ret } => (params, *ret),
+            result => (Vec::new(), result),
+        };
+        let mut param_vars = FxHashSet::default();
+        for param in params {
+            self.collect_infer_vars(param, &mut param_vars);
+        }
+        let mut result_vars = FxHashSet::default();
+        self.collect_infer_vars(ret.clone(), &mut result_vars);
+        let mut phantom_vars = result_vars
+            .into_iter()
+            .filter(|var| !param_vars.contains(var))
+            .collect::<Vec<_>>();
+        phantom_vars.sort_by_key(|var| var.index());
+        if !phantom_vars.is_empty() {
+            self.phantom_constructor_results
+                .insert((body, expr), (ret, phantom_vars));
+        }
     }
 
     pub(super) fn default_root_integer_literals(&mut self) {

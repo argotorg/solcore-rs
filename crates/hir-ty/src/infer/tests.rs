@@ -771,6 +771,208 @@ function main() -> word {
 }
 
 #[test]
+fn pair_domains_preserve_source_call_arity_and_explicit_tuple_arguments() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+function call_zero(f : () -> word) -> word {
+  return f();
+}
+
+function call_pair(f : (word, bool) -> word, x : word, y : bool) -> word {
+  return f(x, y);
+}
+
+function call_tuple(f : ((word, bool)) -> word, x : (word, bool)) -> word {
+  return f(x);
+}
+"#,
+    );
+
+    for (name, result) in infer_all_functions_with_solver(&db, module) {
+        assert!(
+            result.diagnostics.is_empty(),
+            "{name}: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn class_method_local_forall_is_lowered_as_a_method_binder() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+forall b.
+class b:IsA {
+  forall a.
+  function ais(p : (a,b)) -> a;
+}
+"#,
+    );
+    let resolution = hir_nameres::resolve_module(&db, module);
+    assert!(resolution.diagnostics.is_empty(), "{resolution:?}");
+    let class = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ClassDef(class) => Some(*class),
+            _ => None,
+        })
+        .expect("class");
+    let method = &class.methods(&db)[0];
+    let method_type_vars = class_method_type_vars(&db, class, method);
+    let scheme = TypeLowering::from_item_resolutions(
+        &db,
+        &resolution.item_resolutions,
+        BinderEnv::from_type_vars(&method_type_vars),
+    )
+    .lower_class_method(class, method);
+
+    assert_eq!(scheme.binder_count(&db), 2);
+    let TyKind::Function { params, ret } = scheme.body(&db).ty(&db).kind(&db) else {
+        panic!("method should lower to a function");
+    };
+    assert_eq!(params.len(), 1);
+    let TyKind::Named {
+        ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
+        args,
+    } = params[0].kind(&db)
+    else {
+        panic!("method parameter should be a pair");
+    };
+    assert!(matches!(args[0].kind(&db), TyKind::BoundVar(var) if var.index == 1));
+    assert!(matches!(args[1].kind(&db), TyKind::BoundVar(var) if var.index == 0));
+    assert!(matches!(ret.kind(&db), TyKind::BoundVar(var) if var.index == 1));
+}
+
+#[test]
+fn method_local_forall_survives_instance_signature_soundness() {
+    let diagnostics = lowered_module_typeck_diagnostics(
+        r#"
+forall b.
+class b:IsA {
+  forall a.
+  function ais(x : a, witness : b) -> a;
+}
+
+instance word:IsA {
+  forall a.
+  function ais(x : a, witness : word) -> a {
+    return x;
+  }
+}
+"#,
+    );
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn comptime_numeric_scrutinees_accept_integer_literal_patterns() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+function classify_word(comptime x : word) -> word {
+  match x {
+  | 0 => return 10;
+  | _ => return 20;
+  }
+}
+
+function classify_integer(comptime x : integer) -> word {
+  match x {
+  | 0 => return 10;
+  | _ => return 20;
+  }
+}
+"#,
+    );
+
+    for (name, result) in infer_all_functions_with_solver(&db, module) {
+        assert!(
+            result.diagnostics.is_empty(),
+            "{name}: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn unconstrained_phantom_constructor_result_is_ambiguous() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+data Foo(a) = Foo(word);
+
+forall a . function read(x : Foo(a)) -> word {
+  return 0;
+}
+
+function main() -> word {
+  return read(Foo(42));
+}
+"#,
+    );
+    let (_, result) = infer_function(&db, module, "main");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(diagnostic, TypeckDiagnostic::AmbiguousInferredType { .. })),
+        "{:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn payload_constrained_constructor_result_is_not_phantom() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+data Box(a) = Box(a);
+
+forall a . function unwrap(x : Box(a)) -> a {
+  match x {
+  | Box(value) => return value;
+  }
+}
+
+function main() -> word {
+  return unwrap(Box(42));
+}
+"#,
+    );
+    let (_, result) = infer_function(&db, module, "main");
+
+    assert_no_typeck(&result);
+}
+
+#[test]
+fn expected_type_constrains_phantom_constructor_result() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+data Foo(a) = Foo(word);
+
+function main() -> Foo(word) {
+  return Foo(42);
+}
+"#,
+    );
+    let (_, result) = infer_function(&db, module, "main");
+
+    assert_no_typeck(&result);
+}
+
+#[test]
 fn storage_word_field_read_loads_as_word_without_context() {
     let db = TestDb::default();
     let module = parse_module(

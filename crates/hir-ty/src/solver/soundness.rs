@@ -507,10 +507,11 @@ fn check_instance_method_signature<'db>(
         return;
     }
 
+    let class_method_type_vars = class_method_type_vars(db, ctx.class_info.class, class_method);
     let class_lowerer = TypeLowering::from_item_resolutions(
         db,
         ctx.item_resolutions,
-        BinderEnv::from_type_vars(&ctx.class_info.type_vars),
+        BinderEnv::from_type_vars(&class_method_type_vars),
     );
     let mut class_normalizer = AliasNormalizer::new(db, ctx.module, ctx.item_resolutions);
     let class_scheme = class_lowerer.lower_class_method(ctx.class_info.class, class_method);
@@ -528,13 +529,25 @@ fn check_instance_method_signature<'db>(
     if !bind_class_head_vars(db, class_head, ctx.instance_head, &mut subst) {
         return;
     }
-    let expected = substitute_bound_vars(db, class_scheme.body(db).ty(db), &subst);
 
     let mut method_type_vars = type_var_bindings(
         instance_method.def_id_value(db),
         &instance_method.sig(db).type_vars,
     );
     let mut inherited = type_var_bindings_for_instance(db, instance_method, ctx.module);
+    let instance_binder_count = inherited.len() as u32;
+    let class_binder_count = ctx.class_info.type_vars.len() as u32;
+    for index in 0..class_method.type_vars.len() as u32 {
+        // Class-local method binders follow class-head binders in the class
+        // scheme. Rebase them onto the instance method's binder space after
+        // substituting the class head with the instance head.
+        subst.insert(
+            class_binder_count + index,
+            Ty::bound(db, instance_binder_count + index),
+        );
+    }
+    let expected = substitute_bound_vars(db, class_scheme.body(db).ty(db), &subst);
+
     inherited.append(&mut method_type_vars);
     let method_lowerer = TypeLowering::from_item_resolutions(
         db,

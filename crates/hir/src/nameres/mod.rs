@@ -69,4 +69,7 @@ use util::{
     collect_constructor_type_candidates, expr_path, ident_text_str, param_name, path_span, qualify,
     record_body_fields, record_module_fields, unique_constructor_type_candidate,
 };
-pub use util::{ident_text, is_direct_call_resolution, param_bindings, type_var_bindings};
+pub use util::{
+    ident_text, is_direct_call_resolution, param_bindings, type_var_bindings,
+    type_var_bindings_from,
+};

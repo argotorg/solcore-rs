@@ -356,6 +356,38 @@ contract C {
 }
 
 #[test]
+fn evidence_replay_preserves_class_method_local_forall_binders() {
+    let (_db, output) = specialize_src(
+        r#"
+forall b . class b:IsA {
+  forall a . function ais(x : a, witness : b) -> a;
+}
+
+instance word:IsA {
+  forall a . function ais(x : a, witness : word) -> a {
+    return x;
+  }
+}
+
+contract C {
+  public function main(x : word) -> word {
+    return IsA.ais(x, 0);
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    let names = function_names(&output);
+    assert!(
+        names
+            .iter()
+            .any(|name| name.contains("ais") && name.contains("$word")),
+        "{names:?}"
+    );
+}
+
+#[test]
 fn evidence_replay_resolves_imported_instance_methods() {
     let db = Box::leak(Box::new(TestDb::default()));
     let main_root = PathBuf::from("/main");
