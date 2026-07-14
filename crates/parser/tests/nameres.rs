@@ -557,6 +557,61 @@ fn qualified_ctor_class_method_and_dot_ctor_resolve_as_expected() {
 }
 
 #[test]
+fn self_qualified_contract_methods_do_not_shadow_same_named_local_adt_constructors() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+contract Option {
+  data Option(a) = None | Some(a);
+
+  function some(x : word) -> Option(word) {
+    return Option.Some(x);
+  }
+
+  function none() -> Option(word) {
+    return Option.None;
+  }
+
+  function read(o : Option(word)) -> word {
+    match o {
+    | Option.Some(x) => return x;
+    | Option.None => return 0;
+    }
+  }
+}
+"#,
+    );
+    assert!(diagnostic_codes(&db, module).is_empty());
+
+    for name in ["some", "none"] {
+        let function = contract_function(&db, module, "Option", name);
+        let body = function.body(&db).expect("body");
+        let map = body_map(&db, module, body);
+        assert!(
+            map.exprs.iter().any(|entry| {
+                entry.body == body && matches!(entry.resolution, Resolution::Ctor { .. })
+            }),
+            "Option.{name} should resolve its qualified constructor expression"
+        );
+    }
+
+    let read = contract_function(&db, module, "Option", "read");
+    let read_body = read.body(&db).expect("body");
+    let read_map = body_map(&db, module, read_body);
+    assert_eq!(
+        read_map
+            .pats
+            .iter()
+            .filter(|entry| {
+                entry.body == read_body && matches!(entry.resolution, Resolution::Ctor { .. })
+            })
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn definite_same_name_constructor_beats_unknown_wildcard_import() {
     let db = TestDb::default();
     let module = parse_module(

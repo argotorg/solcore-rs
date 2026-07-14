@@ -15,7 +15,7 @@ error[SC0207]: cannot satisfy class constraint: Contract(Method(DispatchNameTy_S
   = help: add a matching instance or strengthen the surrounding type context
 ---
 
-error[SC0231]: ABI output cannot be represented in the ABI: Point (manual or excluded Generic representations are not canonical ABI layouts)
+error[SC0231]: ABI output cannot be represented in the ABI: Point (user-defined ADTs are not supported by the canonical external ABI)
  --> /main/main.solc:8:3
   |
 7 | contract Shapes {
@@ -25,7 +25,7 @@ error[SC0231]: ABI output cannot be represented in the ABI: Point (manual or exc
   |
 ---
 
-error[SC0231]: ABI parameter cannot be represented in the ABI: Point (manual or excluded Generic representations are not canonical ABI layouts)
+error[SC0231]: ABI parameter cannot be represented in the ABI: Point (user-defined ADTs are not supported by the canonical external ABI)
  --> /main/main.solc:8:3
   |
 7 | contract Shapes {
@@ -35,7 +35,7 @@ error[SC0231]: ABI parameter cannot be represented in the ABI: Point (manual or 
   |
 ---
 
-error[SC0231]: roundtrip cannot be represented in the ABI: Point (manual or excluded Generic representations are not canonical ABI layouts)
+error[SC0231]: roundtrip cannot be represented in the ABI: Point (user-defined ADTs are not supported by the canonical external ABI)
  --> /main/main.solc:8:3
   |
 7 | contract Shapes {

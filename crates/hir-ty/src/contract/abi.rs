@@ -130,13 +130,7 @@ fn signature_type_string<'db>(
                 return Ok(name);
             }
             reject_structural_std_abi_fallback(db, user, args)?;
-            let fields = user_adt_product_fields(db, user, args, adt_stack)?;
-            let mut parts = Vec::with_capacity(fields.len());
-            for field in fields {
-                parts.push(signature_component_type_string(db, field, adt_stack)?);
-            }
-            adt_stack.pop();
-            Ok(format!("({})", parts.join(",")))
+            Err(unsupported_user_adt_abi_type(db, user, args))
         }
         TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => Err(ty.display(db)),
         TyKind::Named { .. } | TyKind::Function { .. } | TyKind::Comptime(_) => Err(ty.display(db)),
@@ -153,33 +147,6 @@ fn tuple_signature_string<'db>(
         parts.push(signature_type_string(db, elem, adt_stack)?);
     }
     Ok(format!("({})", parts.join(",")))
-}
-
-fn signature_component_type_string<'db>(
-    db: &'db dyn Db,
-    ty: Ty<'db>,
-    adt_stack: &mut Vec<DefId<'db>>,
-) -> Result<String, String> {
-    match ty.kind(db) {
-        TyKind::Tuple(elems) => {
-            let parts = elems
-                .iter()
-                .map(|elem| signature_component_type_string(db, *elem, adt_stack))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(format!("({})", parts.join(",")))
-        }
-        TyKind::Named {
-            ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
-            args,
-        } if args.len() == 2 => {
-            let parts = right_nested_pair_fields(db, ty)
-                .into_iter()
-                .map(|field| signature_component_type_string(db, field, adt_stack))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(format!("({})", parts.join(",")))
-        }
-        _ => signature_type_string(db, ty, adt_stack),
-    }
 }
 
 pub(super) fn abi_params<'db>(
@@ -316,13 +283,7 @@ fn abi_type_of<'db>(
                 return Ok((AbiType::Named(name), Vec::new()));
             }
             reject_structural_std_abi_fallback(db, user, args)?;
-            let fields = user_adt_product_fields(db, user, args, adt_stack)?;
-            let components = fields
-                .into_iter()
-                .map(|field| abi_param(db, String::new(), field, adt_stack))
-                .collect::<Result<Vec<_>, _>>()?;
-            adt_stack.pop();
-            Ok((AbiType::Tuple, components))
+            Err(unsupported_user_adt_abi_type(db, user, args))
         }
         _ => Err(ty.display(db)),
     }
@@ -419,6 +380,18 @@ fn reject_structural_std_abi_fallback<'db>(
         "{} (standard-library type `{name}` has no canonical external ABI evidence)",
         Ty::named(db, TyCtor::User(*user), args.to_vec()).display(db)
     ))
+}
+
+fn unsupported_user_adt_abi_type<'db>(
+    db: &'db dyn Db,
+    user: &UserTyCtor<'db>,
+    args: &[Ty<'db>],
+) -> String {
+    let ty = Ty::named(db, TyCtor::User(*user), args.to_vec());
+    format!(
+        "{} (user-defined ADTs are not supported by the canonical external ABI)",
+        crate::display::display_ty_source(db, ty, &[])
+    )
 }
 
 fn user_adt_product_fields<'db>(
@@ -650,23 +623,6 @@ pub(super) fn abi_type_contains_user_adt<'db>(
     }
 
     visit(db, ty, target, &mut Vec::new())
-}
-
-fn right_nested_pair_fields<'db>(db: &'db dyn Db, mut product: Ty<'db>) -> Vec<Ty<'db>> {
-    let mut fields = Vec::new();
-    while let TyKind::Named {
-        ctor: TyCtor::Builtin(BuiltinTyCtor::Pair),
-        args,
-    } = product.kind(db)
-    {
-        if args.len() != 2 {
-            break;
-        }
-        fields.push(args[0]);
-        product = args[1];
-    }
-    fields.push(product);
-    fields
 }
 
 fn flatten_output_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Vec<Ty<'db>> {

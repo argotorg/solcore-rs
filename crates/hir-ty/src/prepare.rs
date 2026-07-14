@@ -31,7 +31,7 @@ use hir::{
         },
         ty::{PredRef, PredRefKind, TypeRef, TypeRefKind},
     },
-    nameres::ident_text,
+    nameres::{compiler_contract_method_ref, ident_text},
     span::{Span, Spanned, SpannedElem},
 };
 
@@ -1238,7 +1238,11 @@ fn generated_dispatch_main<'db>(
         let args_ty = product_ty(db, method.span, &method.params);
         let args = builder.proxy(args_ty);
         let rets = builder.proxy(method.ret);
-        let implementation = builder.ident(&method.name);
+        // A bare function value shares the contract value namespace with
+        // fields. Use an unspellable HIR-only reference so a method such as
+        // `allowance` cannot resolve to the field, nor can `C.Foo` resolve to a
+        // same-named constructor of a contract-local ADT.
+        let implementation = builder.ident(&compiler_contract_method_ref(&method.name));
         method_values
             .push(builder.call_ident("Method", vec![name, payability, args, rets, implementation]));
     }
@@ -1258,7 +1262,7 @@ fn generated_dispatch_main<'db>(
             let args_ty = product_ty(db, span, &fallback.params);
             let args = builder.proxy(args_ty);
             let rets = builder.proxy(fallback.ret);
-            let implementation = builder.ident(&fallback.name);
+            let implementation = builder.ident(&compiler_contract_method_ref(&fallback.name));
             builder.call_ident("Fallback", vec![payability, args, rets, implementation])
         }
         None => {
@@ -1439,13 +1443,15 @@ impl<'db> BodyBuilder<'db> {
                 let name = spanned_ident(self.db, self.span, one);
                 self.alloc_pat(PatKind::Var(name))
             }
-            [head, tail @ ..] => {
-                let head_name = spanned_ident(self.db, self.span, head);
-                let head = self.alloc_pat(PatKind::Var(head_name));
-                let tail = self.product_pat(tail);
-                self.alloc_pat(PatKind::Tuple {
-                    elems: vec![head, tail],
-                })
+            names => {
+                let elems = names
+                    .iter()
+                    .map(|name| {
+                        let name = spanned_ident(self.db, self.span, name);
+                        self.alloc_pat(PatKind::Var(name))
+                    })
+                    .collect();
+                self.alloc_pat(PatKind::Tuple { elems })
             }
         }
     }

@@ -634,7 +634,7 @@ data memory(t) = memory(word);
 }
 
 #[test]
-fn single_constructor_adt_uses_its_generic_product_as_an_abi_tuple() {
+fn single_constructor_adt_is_rejected_from_the_canonical_abi() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
@@ -649,29 +649,25 @@ contract Shapes {
     let contract = contract_named(&db, module, "Shapes");
     let surface = contract_dispatch_surface(&db, module, contract);
 
-    assert!(surface.diagnostics.is_empty(), "{:?}", surface.diagnostics);
-    let method = &surface.methods[0];
-    assert_eq!(method.signature, "roundtrip((uint256,bool))");
-    assert_eq!(
-        method.selector,
-        solcore_hir_ty::abi_selector(
-            &db,
-            solcore_hir_ty::AbiSignature::new(&db, "roundtrip((uint256,bool))".to_owned())
-        )
+    assert!(
+        surface.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0231")
+                && diagnostic
+                    .message
+                    .contains("user-defined ADTs are not supported by the canonical external ABI")
+        }),
+        "{:?}",
+        surface.diagnostics
     );
-    assert_eq!(method.inputs[0].ty.to_string(), "tuple");
-    assert_eq!(method.inputs[0].components.len(), 2);
-    assert_eq!(method.inputs[0].components[0].ty.to_string(), "uint256");
-    assert_eq!(method.inputs[0].components[1].ty.to_string(), "bool");
-    assert_eq!(method.outputs[0].ty.to_string(), "tuple");
-
-    let abi = contract_abi_json(&db, module, contract).expect("product ADT ABI JSON");
-    assert!(abi.contains("\"type\": \"tuple\""), "{abi}");
-    assert!(abi.contains("\"components\": ["), "{abi}");
+    let method = &surface.methods[0];
+    assert_eq!(method.signature, "roundtrip(<unsupported>)");
+    assert_eq!(method.inputs[0].ty.to_string(), "<unsupported>");
+    assert_eq!(method.outputs[0].ty.to_string(), "<unsupported>");
+    assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
 #[test]
-fn tuple_typed_constructor_field_is_rejected_when_generic_erases_its_boundary() {
+fn tuple_typed_constructor_field_does_not_make_a_user_adt_abi_safe() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
@@ -691,7 +687,7 @@ contract Shapes {
             diagnostic.code.as_deref() == Some("SC0231")
                 && diagnostic
                     .message
-                    .contains("tuple-typed constructor fields")
+                    .contains("user-defined ADTs are not supported")
         }),
         "{:?}",
         surface.diagnostics
@@ -701,7 +697,7 @@ contract Shapes {
 }
 
 #[test]
-fn user_defined_location_name_is_not_treated_as_a_std_location_wrapper() {
+fn user_defined_location_name_does_not_make_an_adt_abi_safe() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
@@ -717,9 +713,18 @@ contract Shapes {
     let contract = contract_named(&db, module, "Shapes");
     let surface = contract_dispatch_surface(&db, module, contract);
 
-    assert!(surface.diagnostics.is_empty(), "{:?}", surface.diagnostics);
-    assert_eq!(surface.methods[0].signature, "roundtrip(((uint256)))");
-    assert!(contract_abi_json(&db, module, contract).is_ok());
+    assert!(
+        surface.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0231")
+                && diagnostic
+                    .message
+                    .contains("user-defined ADTs are not supported")
+        }),
+        "{:?}",
+        surface.diagnostics
+    );
+    assert_eq!(surface.methods[0].signature, "roundtrip(<unsupported>)");
+    assert!(contract_abi_json(&db, module, contract).is_err());
 }
 
 #[test]
@@ -741,7 +746,9 @@ contract Shapes {
     assert!(
         surface.diagnostics.iter().any(|diagnostic| {
             diagnostic.code.as_deref() == Some("SC0231")
-                && diagnostic.message.contains("multi-constructor ADTs")
+                && diagnostic
+                    .message
+                    .contains("user-defined ADTs are not supported")
         }),
         "{:?}",
         surface.diagnostics
@@ -856,7 +863,7 @@ contract C {
 }
 
 #[test]
-fn abi_like_user_type_names_are_lowered_structurally() {
+fn abi_like_user_type_names_are_not_treated_as_canonical_types() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
@@ -870,9 +877,18 @@ contract C {
     );
     let contract = contract_named(&db, module, "C");
     let surface = contract_dispatch_surface(&db, module, contract);
-    assert!(surface.diagnostics.is_empty(), "{:?}", surface.diagnostics);
-    assert_eq!(surface.methods[0].signature, "echo((uint256))");
-    assert_eq!(surface.methods[0].inputs[0].ty.to_string(), "tuple");
+    assert!(
+        surface.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0231")
+                && diagnostic
+                    .message
+                    .contains("user-defined ADTs are not supported")
+        }),
+        "{:?}",
+        surface.diagnostics
+    );
+    assert_eq!(surface.methods[0].signature, "echo(<unsupported>)");
+    assert_eq!(surface.methods[0].inputs[0].ty.to_string(), "<unsupported>");
 }
 
 #[test]

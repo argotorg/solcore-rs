@@ -1,5 +1,20 @@
 use super::*;
 
+const COMPILER_CONTRACT_METHOD_REF_PREFIX: &str = "$solcore$contract-method$";
+
+/// Builds the reserved HIR-only spelling used to refer to a contract method
+/// from compiler-generated bodies.
+///
+/// The lexer cannot produce this identifier from source, so it cannot collide
+/// with a field or with a qualified constructor such as `Contract.Method`.
+pub fn compiler_contract_method_ref(name: &str) -> String {
+    format!("{COMPILER_CONTRACT_METHOD_REF_PREFIX}{name}")
+}
+
+fn compiler_contract_method_name(name: &str) -> Option<&str> {
+    name.strip_prefix(COMPILER_CONTRACT_METHOD_REF_PREFIX)
+}
+
 fn index_from_usize(value: usize) -> u32 {
     u32::try_from(value).expect("name-resolution index exceeds u32::MAX")
 }
@@ -824,7 +839,26 @@ impl<'db> ContractScope<'db> {
     }
 
     pub(super) fn term_resolution(&self, name: &str) -> Option<Resolution<'db>> {
-        self.terms.get(name).map(|entry| entry.resolution.clone())
+        // Constructor terms for a contract-local ADT can already have a key
+        // such as `Option.Some`, even when the enclosing contract is also
+        // named `Option`. Preserve exact source lookup, and recognize the
+        // unspellable compiler-only method reference independently.
+        self.terms
+            .get(name)
+            .or_else(|| {
+                compiler_contract_method_name(name)
+                    .and_then(|method| self.terms.get(method))
+                    .filter(|entry| {
+                        matches!(
+                            entry.resolution,
+                            Resolution::Def {
+                                kind: DefResolutionKind::Function,
+                                ..
+                            }
+                        )
+                    })
+            })
+            .map(|entry| entry.resolution.clone())
     }
 
     pub(super) fn field_resolution(&self, name: &str) -> Option<Resolution<'db>> {

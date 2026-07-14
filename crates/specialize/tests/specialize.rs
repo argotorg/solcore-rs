@@ -1238,14 +1238,14 @@ contract TupleSelector {
 }
 
 #[test]
-fn constructor_overlay_roots_multi_argument_deployment_main() {
+fn constructor_overlay_roots_three_argument_deployment_main() {
     let output = specialize_src_with_std(
         r#"
 import std.{*};
 import std.dispatch.{*};
 
 contract C {
-  constructor(x : uint256, y : uint256) { let z = x; }
+  constructor(x : uint256, y : uint256, z : uint256) { let saved = x; }
   function main() -> () { return (); }
 }
 "#,
@@ -1261,7 +1261,7 @@ contract C {
         })
         .expect("contract");
     assert!(contract.constructor.explicit);
-    assert_eq!(contract.constructor.inputs.len(), 2);
+    assert_eq!(contract.constructor.inputs.len(), 3);
     assert!(
         contract
             .entries
@@ -1279,6 +1279,16 @@ contract C {
             .any(|name| name.contains("copy_arguments_for_constructor")),
         "{names:?}"
     );
+}
+
+#[test]
+fn specializes_reference_constructor_and_dispatch_collision_regressions() {
+    let repo = repo_root();
+    let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch");
+    for fixture in ["miniERC20.solc", "weth9.solc"] {
+        let output = specialize_fixture(&corpus.join(fixture));
+        assert_eq!(output.diagnostics, Vec::new(), "{fixture}");
+    }
 }
 
 #[test]
