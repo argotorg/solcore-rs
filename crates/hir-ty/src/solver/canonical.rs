@@ -1,15 +1,39 @@
 use super::*;
 
+/// One rigid variable carried from the top-level solver context.
+///
+/// `origin` is stable for the lifetime of one tabled-engine run, while
+/// `actual` is that variable's id in the current goal coordinate system.
+/// Keeping both values is essential once nested goals have been
+/// canonicalized: their `actual` ids shift around flex variables, but local
+/// givens are still expressed in the original coordinate system.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) struct RigidVar {
+    origin: u32,
+    actual: u32,
+}
+
+impl RigidVar {
+    pub(super) fn identity(var: u32) -> Self {
+        Self {
+            origin: var,
+            actual: var,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct TableKey<'db> {
     /// Goal predicate with flex variables renamed to `0..flex_count`.
     pub(super) pred: Pred<'db>,
     /// Number of solvable (flex) variables in `pred`.
     pub(super) flex_count: u32,
-    /// Original ids of the flex variables, in canonical order.
-    flex_actuals: Vec<u32>,
-    /// Original ids of the fixed context variables carried into the subgoal.
-    context_actuals: Vec<u32>,
+    /// Stable origins and canonical ids of the rigid context variables.
+    ///
+    /// This mapping participates in equality and hashing. Equal predicate
+    /// shapes whose rigid variables originate from different local givens
+    /// must not share a table entry.
+    rigid_vars: Vec<RigidVar>,
 }
 
 impl<'db> TableKey<'db> {
@@ -18,28 +42,19 @@ impl<'db> TableKey<'db> {
     }
 
     pub(super) fn canonical_context_vars(&self) -> FxHashSet<u32> {
-        let flex_map = self
-            .flex_actuals
-            .iter()
-            .enumerate()
-            .map(|(index, actual)| (*actual, index as u32))
-            .collect::<FxHashMap<_, _>>();
-        self.context_actuals
-            .iter()
-            .map(|actual| {
-                flex_map
-                    .get(actual)
-                    .copied()
-                    .unwrap_or(self.flex_count + *actual)
-            })
-            .collect()
+        self.rigid_vars.iter().map(|var| var.actual).collect()
+    }
+
+    pub(super) fn rigid_vars(&self) -> &[RigidVar] {
+        &self.rigid_vars
     }
 }
 
 #[derive(Clone, Default)]
 pub(super) struct GoalRenaming {
     flex_actuals: Vec<u32>,
-    context_vars: FxHashSet<u32>,
+    /// Canonical rigid id -> caller rigid id.
+    rigid_actuals: FxHashMap<u32, u32>,
     fresh_base: u32,
 }
 
@@ -52,21 +67,12 @@ impl GoalRenaming {
         if key_var < self.flex_count() {
             self.flex_actuals[key_var as usize]
         } else {
-            let actual = key_var - self.flex_count();
-            if self.context_vars.contains(&actual) {
-                actual
-            } else {
-                key_var
-            }
+            self.rigid_actuals.get(&key_var).copied().unwrap_or(key_var)
         }
     }
 
     fn is_context_var(&self, key_var: u32) -> bool {
-        if key_var < self.flex_count() {
-            true
-        } else {
-            self.context_vars.contains(&(key_var - self.flex_count()))
-        }
+        key_var < self.flex_count() || self.rigid_actuals.contains_key(&key_var)
     }
 }
 
@@ -74,67 +80,192 @@ impl GoalRenaming {
 /// `GoalRenaming` that maps the key's canonical variables back to the caller's.
 ///
 /// Solvable variables in `allowed_vars` are renumbered to `0..flex_count` so
-/// that goals equal up to renaming share one table entry; `context_vars` (fixed
-/// by the surrounding body) are preserved and never solved.
+/// that goals equal up to renaming share one table entry; `rigid_vars` tracks
+/// fixed variables by stable origin so nested goals can map local givens into
+/// the same coordinate system.
 pub(super) fn canonicalize_goal<'db>(
     db: &'db dyn Db,
     pred: Pred<'db>,
     allowed_vars: &FxHashSet<u32>,
-    context_vars: &FxHashSet<u32>,
+    rigid_vars: &[RigidVar],
 ) -> (TableKey<'db>, GoalRenaming) {
-    let mut pred_vars = FxHashSet::default();
-    collect_pred_vars(db, pred, &mut pred_vars);
-    let mut flex_actuals = allowed_vars
+    let pred_vars_in_order = pred_vars_in_order(db, pred);
+    let pred_vars = pred_vars_in_order.iter().copied().collect::<FxHashSet<_>>();
+
+    // A caller passes rigid variables in its own coordinate system. Extend
+    // that mapping for any fixed variable first encountered in this goal,
+    // then sort by stable origin. In normal solver use the extension only
+    // happens for top-level rigid variables that do not occur in a local
+    // given; clause-local variables are all present in `allowed_vars`.
+    let mut caller_rigid_vars = rigid_vars.to_vec();
+    let known_rigid_actuals = caller_rigid_vars
+        .iter()
+        .map(|var| var.actual)
+        .collect::<FxHashSet<_>>();
+    let flex_actuals = pred_vars_in_order
         .iter()
         .copied()
-        .filter(|var| pred_vars.contains(var))
+        .filter(|var| allowed_vars.contains(var) && !known_rigid_actuals.contains(var))
         .collect::<Vec<_>>();
-    flex_actuals.sort_unstable();
-    flex_actuals.dedup();
-    let flex_map = flex_actuals
+
+    let flex_actual_set = flex_actuals.iter().copied().collect::<FxHashSet<_>>();
+    let mut new_rigid_actuals = pred_vars
+        .iter()
+        .copied()
+        .filter(|var| !flex_actual_set.contains(var) && !known_rigid_actuals.contains(var))
+        .collect::<Vec<_>>();
+    new_rigid_actuals.sort_unstable();
+    let mut used_origins = caller_rigid_vars
+        .iter()
+        .map(|var| var.origin)
+        .collect::<FxHashSet<_>>();
+    let mut next_origin = used_origins
+        .iter()
+        .copied()
+        .chain(pred_vars.iter().copied())
+        .max()
+        .map_or(0, |var| var + 1);
+    for actual in new_rigid_actuals {
+        let origin = if used_origins.insert(actual) {
+            actual
+        } else {
+            while !used_origins.insert(next_origin) {
+                next_origin += 1;
+            }
+            let origin = next_origin;
+            next_origin += 1;
+            origin
+        };
+        caller_rigid_vars.push(RigidVar { origin, actual });
+    }
+    caller_rigid_vars.sort_unstable_by_key(|var| var.origin);
+
+    // Canonical coordinates are dense and independent of the caller's ids:
+    // flex variables occupy `0..flex_count`, followed by rigid variables in
+    // stable-origin order. This is what makes alpha-equivalent nested goals
+    // hash to the same `TableKey` instead of drifting on every recursion.
+    let flex_count = flex_actuals.len() as u32;
+    let mut var_map = flex_actuals
         .iter()
         .enumerate()
         .map(|(index, actual)| (*actual, index as u32))
         .collect::<FxHashMap<_, _>>();
+    var_map.extend(
+        caller_rigid_vars
+            .iter()
+            .enumerate()
+            .map(|(rank, var)| (var.actual, flex_count + rank as u32)),
+    );
     let canonicalizer = GoalCanonicalizer {
         db,
-        flex_count: flex_actuals.len() as u32,
-        flex_map,
+        flex_count,
+        var_map,
     };
     let canonical_pred = canonicalizer.pred(pred);
-    let mut context_actuals = context_vars.clone();
-    context_actuals.extend(pred_vars.iter().copied());
-    let mut context_actuals = context_actuals.into_iter().collect::<Vec<_>>();
-    context_actuals.sort_unstable();
-    context_actuals.dedup();
-    let fresh_base = context_actuals
+    let canonical_rigid_vars = caller_rigid_vars
         .iter()
-        .copied()
+        .enumerate()
+        .map(|(rank, var)| RigidVar {
+            origin: var.origin,
+            actual: flex_count + rank as u32,
+        })
+        .collect::<Vec<_>>();
+    let rigid_actuals = canonical_rigid_vars
+        .iter()
+        .zip(&caller_rigid_vars)
+        .map(|(canonical, caller)| (canonical.actual, caller.actual))
+        .collect();
+    let fresh_base = caller_rigid_vars
+        .iter()
+        .map(|var| var.actual)
         .chain(allowed_vars.iter().copied())
+        .chain(pred_vars.iter().copied())
         .max()
         .map_or(0, |var| var + 1);
     (
         TableKey {
             pred: canonical_pred,
-            flex_count: flex_actuals.len() as u32,
-            flex_actuals: flex_actuals.clone(),
-            context_actuals: context_actuals.clone(),
+            flex_count,
+            rigid_vars: canonical_rigid_vars,
         },
         GoalRenaming {
             flex_actuals,
-            context_vars: context_actuals.into_iter().collect(),
+            rigid_actuals,
             fresh_base,
         },
     )
 }
 
+/// Collect variables in structural first-occurrence order. Numeric variable
+/// ids are caller-local, so sorting them would give alpha-equivalent goals
+/// different canonical predicates when two callers allocate their fresh
+/// variables in a different order.
+fn pred_vars_in_order<'db>(db: &'db dyn Db, pred: Pred<'db>) -> Vec<u32> {
+    let mut vars = Vec::new();
+    let mut seen = FxHashSet::default();
+    match pred.kind(db) {
+        PredKind::InClass { main, args, .. } => {
+            collect_ty_vars_in_order(db, *main, &mut vars, &mut seen);
+            for arg in args {
+                collect_ty_vars_in_order(db, *arg, &mut vars, &mut seen);
+            }
+        }
+        PredKind::Eq { lhs, rhs } => {
+            collect_ty_vars_in_order(db, *lhs, &mut vars, &mut seen);
+            collect_ty_vars_in_order(db, *rhs, &mut vars, &mut seen);
+        }
+        PredKind::Error => {}
+    }
+    vars
+}
+
+fn collect_ty_vars_in_order<'db>(
+    db: &'db dyn Db,
+    ty: Ty<'db>,
+    vars: &mut Vec<u32>,
+    seen: &mut FxHashSet<u32>,
+) {
+    match ty.kind(db) {
+        TyKind::BoundVar(var) => {
+            if seen.insert(var.index) {
+                vars.push(var.index);
+            }
+        }
+        TyKind::Named { args, .. } => {
+            for arg in args {
+                collect_ty_vars_in_order(db, *arg, vars, seen);
+            }
+        }
+        TyKind::Function { params, ret } => {
+            for param in params {
+                collect_ty_vars_in_order(db, *param, vars, seen);
+            }
+            collect_ty_vars_in_order(db, *ret, vars, seen);
+        }
+        TyKind::Tuple(elems) => {
+            for elem in elems {
+                collect_ty_vars_in_order(db, *elem, vars, seen);
+            }
+        }
+        TyKind::Comptime(inner) => collect_ty_vars_in_order(db, *inner, vars, seen),
+        TyKind::Error | TyKind::Unknown => {}
+    }
+}
+
 struct GoalCanonicalizer<'db> {
     db: &'db dyn Db,
     flex_count: u32,
-    flex_map: FxHashMap<u32, u32>,
+    var_map: FxHashMap<u32, u32>,
 }
 
 impl<'db> GoalCanonicalizer<'db> {
+    fn var(&self, var: u32) -> u32 {
+        self.var_map
+            .get(&var)
+            .copied()
+            .unwrap_or(self.flex_count + var)
+    }
+
     fn pred(&self, pred: Pred<'db>) -> Pred<'db> {
         match pred.kind(self.db) {
             PredKind::InClass { class, main, args } => Pred::in_class(
@@ -150,14 +281,7 @@ impl<'db> GoalCanonicalizer<'db> {
 
     fn ty(&self, ty: Ty<'db>) -> Ty<'db> {
         match ty.kind(self.db) {
-            TyKind::BoundVar(var) => {
-                let index = self
-                    .flex_map
-                    .get(&var.index)
-                    .copied()
-                    .unwrap_or(self.flex_count + var.index);
-                Ty::bound(self.db, index)
-            }
+            TyKind::BoundVar(var) => Ty::bound(self.db, self.var(var.index)),
             TyKind::Named { ctor, args } => Ty::named(
                 self.db,
                 *ctor,
@@ -182,16 +306,19 @@ pub(super) fn canonicalize_local_given<'db>(
     pred: Pred<'db>,
     key: &TableKey<'db>,
 ) -> Pred<'db> {
-    let flex_map = key
-        .flex_actuals
+    // Local givens retain the stable origin ids from the inference context;
+    // map those origins directly to this particular subgoal's canonical rigid
+    // ids. Reusing the flex-variable map here loses the correlation after the
+    // first nested canonicalization.
+    let var_map = key
+        .rigid_vars
         .iter()
-        .enumerate()
-        .map(|(index, actual)| (*actual, index as u32))
+        .map(|var| (var.origin, var.actual))
         .collect::<FxHashMap<_, _>>();
     GoalCanonicalizer {
         db,
         flex_count: key.flex_count,
-        flex_map,
+        var_map,
     }
     .pred(pred)
 }
@@ -202,22 +329,22 @@ pub(super) fn actualize_answer<'db>(
     renaming: &GoalRenaming,
 ) -> Answer<'db> {
     let actualizer = AnswerActualizer::new(db, answer, renaming);
+    let mut values = answer
+        .candidate
+        .subst
+        .values
+        .iter()
+        .filter_map(|(var, ty)| {
+            let var = renaming.actual_var(*var);
+            let ty = actualizer.ty(*ty);
+            (!matches!(ty.kind(db), TyKind::BoundVar(bound) if bound.index == var))
+                .then_some((var, ty))
+        })
+        .collect::<Vec<_>>();
+    values.sort_unstable_by_key(|(var, _)| *var);
     Answer {
         candidate: Candidate {
-            subst: Substitution {
-                values: answer
-                    .candidate
-                    .subst
-                    .values
-                    .iter()
-                    .filter_map(|(var, ty)| {
-                        let var = renaming.actual_var(*var);
-                        let ty = actualizer.ty(*ty);
-                        (!matches!(ty.kind(db), TyKind::BoundVar(bound) if bound.index == var))
-                            .then_some((var, ty))
-                    })
-                    .collect(),
-            },
+            subst: Substitution { values },
             evidence: actualizer.evidence(answer.candidate.evidence.clone()),
         },
         origin: answer.origin.clone(),

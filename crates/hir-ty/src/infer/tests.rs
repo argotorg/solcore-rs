@@ -1315,6 +1315,47 @@ forall a . a:Left, a:Right => instance a:Top {}
 }
 
 #[test]
+fn tabled_solver_shares_alpha_equivalent_flexible_subgoals() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+data Pair(a, b) = Pair(a, b);
+
+forall a . class a:Leaf {}
+forall a . class a:Left {}
+forall a . class a:Right {}
+forall a . class a:Top {}
+
+forall a . instance a:Leaf {}
+
+forall a b c . Pair(b, c):Leaf => instance a:Left {}
+forall a c b . Pair(b, c):Leaf => instance a:Right {}
+forall a . a:Left, a:Right => instance a:Top {}
+"#,
+    );
+    let module_resolution = hir_nameres::resolve_module(&db, module);
+    let env = trait_env(&db, module, &module_resolution);
+
+    let report = solve_class_report(
+        &db,
+        env,
+        class_id(&db, module, "Top"),
+        Ty::word(&db),
+        Vec::new(),
+    );
+
+    assert!(
+        matches!(report.solution, Solution::Unique { .. }),
+        "{report:?}"
+    );
+    assert!(!report.exhausted, "{report:?}");
+    // The Left and Right clauses allocate their two Leaf variables in
+    // opposite numeric order, but both conditions canonicalize to one table.
+    assert_eq!(report.stats.table_size, 4, "{report:?}");
+}
+
+#[test]
 fn tabled_solver_dedups_replayed_identical_answer() {
     let db = TestDb::default();
     let module = parse_module(
@@ -1559,6 +1600,108 @@ forall abs rep . class abs:Typedef(rep) {}
         "{report:?}"
     );
     assert_eq!(report.stats.generator_steps, 1, "{report:?}");
+}
+
+#[test]
+fn trait_solver_preserves_rigid_origin_across_nested_goal_canonicalization() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+data Wrap(a) = Wrap(a);
+
+forall self rep . class self:Foo(rep) {}
+forall self rep . class self:Bar(rep) {}
+
+forall a rep . a:Foo(rep) => instance Wrap(a):Bar(rep) {}
+"#,
+    );
+    let module_resolution = hir_nameres::resolve_module(&db, module);
+    let base_env = trait_env(&db, module, &module_resolution);
+    let foo = class_id(&db, module, "Foo");
+    let bar = class_id(&db, module, "Bar");
+    let rigid = Ty::bound(&db, 0);
+    let result = Ty::bound(&db, 1);
+    let env = trait_env_with_givens(
+        &db,
+        base_env,
+        vec![Pred::in_class(&db, foo, rigid, vec![Ty::word(&db)])],
+    );
+    let goal = Pred::in_class(
+        &db,
+        bar,
+        adt_ty(&db, module, "Wrap", vec![rigid]),
+        vec![result],
+    );
+
+    let report = solve_report(
+        &db,
+        env,
+        crate::canonical_goal_with_allowed(&db, goal, vec![1]),
+    );
+
+    let Solution::Unique {
+        subst,
+        evidence: Evidence::Instance { sub_evidence, .. },
+    } = &report.solution
+    else {
+        panic!("expected improved nested solution, got {report:?}");
+    };
+    assert_eq!(subst.values, vec![(1, Ty::word(&db))]);
+    assert!(matches!(
+        sub_evidence.as_slice(),
+        [Evidence::Builtin { pred }]
+            if matches!(
+                pred.kind(&db),
+                PredKind::InClass { class, main, args }
+                    if *class == foo && *main == rigid && args == &vec![Ty::word(&db)]
+            )
+    ));
+    assert!(!report.exhausted, "{report:?}");
+}
+
+#[test]
+fn inference_improves_multi_parameter_result_through_local_given() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+data Wrap(a) = Wrap(a);
+
+forall self rep . class self:Foo(rep) {}
+forall self rep . class self:Bar(rep) {}
+
+forall a rep . a:Foo(rep) => instance Wrap(a):Bar(rep) {}
+
+forall a rep . Wrap(a):Bar(rep) =>
+function need_bar(x:Wrap(a)) -> () {
+    return ();
+}
+
+forall a . a:Foo(word) =>
+function use_bar(x:Wrap(a)) -> () {
+    need_bar(x);
+    return ();
+}
+"#,
+    );
+    let result = infer_all_functions_with_solver(&db, module)
+        .into_iter()
+        .find_map(|(name, result)| (name == "use_bar").then_some(result))
+        .expect("use_bar inference result");
+
+    assert_no_typeck(&result);
+    assert!(
+        result.call_site_evidence.iter().any(|evidence| {
+            matches!(
+                evidence.callee,
+                CallSiteCallee::Function(def)
+                    if def.name(&db).as_deref() == Some("need_bar")
+            )
+        }),
+        "expected solved need_bar call evidence, got {:?}",
+        result.call_site_evidence
+    );
 }
 
 #[test]

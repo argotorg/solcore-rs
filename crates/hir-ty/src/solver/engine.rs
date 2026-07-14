@@ -11,8 +11,8 @@ pub(super) struct TabledEngine<'db> {
     db: &'db dyn Db,
     env: TraitEnvId<'db>,
     /// Variables fixed by the surrounding checked body; never solved by the
-    /// engine and preserved verbatim across canonicalization.
-    local_context_vars: FxHashSet<u32>,
+    /// engine and tracked by stable origin across canonicalization.
+    local_context_vars: Vec<RigidVar>,
     /// Memo table: one `TableEntry` per canonicalized subgoal.
     table: FxHashMap<TableKey<'db>, TableEntry<'db>>,
     /// Pending generator/consumer work.
@@ -29,6 +29,12 @@ impl<'db> TabledEngine<'db> {
         for pred in env.local_givens(db) {
             collect_pred_vars(db, *pred, &mut local_context_vars);
         }
+        let mut local_context_vars = local_context_vars.into_iter().collect::<Vec<_>>();
+        local_context_vars.sort_unstable();
+        let local_context_vars = local_context_vars
+            .into_iter()
+            .map(RigidVar::identity)
+            .collect();
         Self {
             db,
             env,
@@ -215,6 +221,7 @@ impl<'db> TabledEngine<'db> {
             return;
         }
 
+        let rigid_vars = key.rigid_vars().to_vec();
         self.register_for_next_condition(ConsumerNode {
             parent: key,
             clause: instantiated,
@@ -222,6 +229,7 @@ impl<'db> TabledEngine<'db> {
             sub_evidence: Vec::new(),
             next_condition: 0,
             condition_vars,
+            rigid_vars,
             waiting_renaming: GoalRenaming::default(),
         });
     }
@@ -237,7 +245,7 @@ impl<'db> TabledEngine<'db> {
             self.db,
             condition,
             &consumer.condition_vars,
-            &self.local_context_vars,
+            &consumer.rigid_vars,
         );
         consumer.waiting_renaming = renaming;
         self.ensure_entry(key.clone());
@@ -383,6 +391,8 @@ struct ConsumerNode<'db> {
     /// Index of the condition currently being solved.
     next_condition: usize,
     condition_vars: FxHashSet<u32>,
+    /// Stable rigid origins mapped into the parent subgoal's coordinates.
+    rigid_vars: Vec<RigidVar>,
     /// Maps the current condition subgoal's canonical vars back to this clause.
     waiting_renaming: GoalRenaming,
 }

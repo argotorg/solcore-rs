@@ -59,6 +59,7 @@ use crate::{
     BinderEnv, BuiltinClassId, ClassId, Db, Pred, PredKind, Ty, TyCtor, TyKind, TyScheme,
     TypeLowering, TypeckDiagnostic,
     alias::{AliasError, AliasNormalizer, normalize_pred_aliases},
+    class_method_type_vars,
 };
 
 const DEFAULT_SOLVER_FUEL: usize = 16_384;
@@ -75,7 +76,7 @@ mod module_lookup;
 mod soundness;
 
 use canonical::{
-    GoalRenaming, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
+    GoalRenaming, RigidVar, TableKey, actualize_answer, canonicalize_goal, canonicalize_local_given,
 };
 pub use derived_generic::{
     derived_generic_instance_plan, derived_generic_plan, generic_derivation_diagnostics,
