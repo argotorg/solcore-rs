@@ -1,5 +1,9 @@
 use super::*;
 
+fn index_from_usize(value: usize) -> u32 {
+    u32::try_from(value).expect("name-resolution index exceeds u32::MAX")
+}
+
 /// Name-resolution namespace.
 ///
 /// Type and term are the language namespaces. Field and module are represented
@@ -73,8 +77,13 @@ impl FieldIndex {
         self.0
     }
 
+    /// Creates a field index from a platform-sized index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `v` exceeds `u32::MAX`.
     pub fn from_usize(v: usize) -> Self {
-        Self(v as u32)
+        Self(index_from_usize(v))
     }
 
     pub const fn as_usize(self) -> usize {
@@ -124,8 +133,13 @@ impl ParamIndex {
         self.0
     }
 
+    /// Creates a parameter index from a platform-sized index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `v` exceeds `u32::MAX`.
     pub fn from_usize(v: usize) -> Self {
-        Self(v as u32)
+        Self(index_from_usize(v))
     }
 
     pub const fn as_usize(self) -> usize {
@@ -146,8 +160,13 @@ impl CtorIndex {
         self.0
     }
 
+    /// Creates a constructor index from a platform-sized index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `v` exceeds `u32::MAX`.
     pub fn from_usize(v: usize) -> Self {
-        Self(v as u32)
+        Self(index_from_usize(v))
     }
 
     pub const fn as_usize(self) -> usize {
@@ -891,5 +910,27 @@ impl<'db> ModuleResolutionMap<'db> {
             body.apply_diagnostic_policy(policy);
         }
         self.diagnostics.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CtorIndex, FieldIndex, ParamIndex};
+
+    #[test]
+    fn index_types_preserve_representable_usize_values() {
+        for value in [0, 42, u32::MAX as usize] {
+            assert_eq!(FieldIndex::from_usize(value).as_usize(), value);
+            assert_eq!(ParamIndex::from_usize(value).as_usize(), value);
+            assert_eq!(CtorIndex::from_usize(value).as_usize(), value);
+        }
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn index_types_reject_usize_values_larger_than_u32() {
+        assert!(std::panic::catch_unwind(|| FieldIndex::from_usize(usize::MAX)).is_err());
+        assert!(std::panic::catch_unwind(|| ParamIndex::from_usize(usize::MAX)).is_err());
+        assert!(std::panic::catch_unwind(|| CtorIndex::from_usize(usize::MAX)).is_err());
     }
 }

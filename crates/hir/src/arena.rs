@@ -30,6 +30,13 @@ impl<T> Clone for Id<T> {
 impl<T> Copy for Id<T> {}
 
 impl<T> Id<T> {
+    fn from_usize(raw: usize) -> Self {
+        Self {
+            raw: u32::try_from(raw).expect("arena index exceeds u32::MAX"),
+            _marker: PhantomData,
+        }
+    }
+
     /// Returns the zero-based arena index for this ID.
     ///
     /// This is mainly for diagnostics, iteration, and implementing indexing.
@@ -65,13 +72,10 @@ where
     ///
     /// # Panics
     ///
-    /// The raw index is stored as `u32`; this will wrap if more than
-    /// `u32::MAX` items are allocated, which is outside the expected body size.
+    /// Panics if the next zero-based index exceeds `u32::MAX`. The arena is not
+    /// modified when this check fails.
     pub fn alloc(&mut self, value: T) -> Id<T> {
-        let id = Id {
-            raw: self.items.len() as u32,
-            _marker: PhantomData,
-        };
+        let id = Id::from_usize(self.items.len());
         self.items.push(value);
         id
     }
@@ -106,15 +110,10 @@ where
 
     /// Iterates over allocated IDs and their items in allocation order.
     pub fn iter(&self) -> impl Iterator<Item = (Id<T>, &T)> {
-        self.items.iter().enumerate().map(|(i, v)| {
-            (
-                Id {
-                    raw: i as u32,
-                    _marker: PhantomData,
-                },
-                v,
-            )
-        })
+        self.items
+            .iter()
+            .enumerate()
+            .map(|(index, value)| (Id::from_usize(index), value))
     }
 }
 
@@ -135,5 +134,24 @@ where
 {
     fn index_mut(&mut self, index: Id<T>) -> &mut Self::Output {
         self.get_mut(index)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Id;
+
+    #[test]
+    fn id_preserves_representable_usize_index() {
+        let id = Id::<()>::from_usize(42);
+
+        assert_eq!(id.as_usize(), 42);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    #[should_panic(expected = "arena index exceeds u32::MAX")]
+    fn id_rejects_usize_index_larger_than_u32() {
+        let _ = Id::<()>::from_usize(usize::MAX);
     }
 }
