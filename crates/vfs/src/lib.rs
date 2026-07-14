@@ -12,13 +12,12 @@ use std::{
 };
 
 use hir::{
-    diag::{Applicability as HirApplicability, DiagnosticLevel, sort_dedup_rendered_diagnostics},
+    diag::{Applicability as HirApplicability, DiagnosticLevel},
     input::SourceFile,
 };
 use nameres::{
     LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
-    module_id_from_key, module_key_for_path, reachable_diagnostics, resolve_module_path_candidate,
-    resolve_reachable_full,
+    module_id_from_key, module_key_for_path, resolve_module_path_candidate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use salsa::{Durability, Setter};
@@ -514,18 +513,7 @@ impl Workspace {
     }
 
     fn raw_diagnostics_for_module(&self, entry: ModuleId<'_>) -> Vec<RawDiagnostic> {
-        let _ = resolve_reachable_full(&self.host, entry);
-        let mut diagnostics = reachable_diagnostics(&self.host, entry)
-            .iter()
-            .map(|diagnostic| diagnostic.lower(&self.host))
-            .collect::<Vec<_>>();
-        diagnostics.extend(
-            hir_ty::infer::reachable_typeck_diagnostics(&self.host, entry)
-                .iter()
-                .map(|diagnostic| diagnostic.lower(&self.host)),
-        );
-        sort_dedup_rendered_diagnostics(&self.host, &mut diagnostics);
-        diagnostics
+        hir_ty::collect_frontend_diagnostics(&self.host, entry)
     }
 
     /// Returns diagnostics as a serde-free owned mirror suitable for adapters.
@@ -674,7 +662,17 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    fn from_hir(db: &AnalysisHost, diagnostic: RawDiagnostic) -> Self {
+    /// Converts a lowered HIR diagnostic into this serde-free owned form.
+    ///
+    /// Source spans are resolved against `db` at this adapter boundary, so any
+    /// database implementing [`hir::Db`] can reuse the conversion. `diagnostic`
+    /// and `db` must originate from the same Salsa storage and compatible
+    /// revision so tracked definition anchors can be resolved.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a diagnostic span cannot be resolved against `db`.
+    pub fn from_hir(db: &dyn hir::Db, diagnostic: RawDiagnostic) -> Self {
         let labels = diagnostic
             .labels
             .iter()
@@ -743,7 +741,7 @@ impl From<DiagnosticLevel> for DiagnosticSeverity {
     }
 }
 
-fn range_from_absolute_span(db: &AnalysisHost, span: hir::diag::AbsoluteSpan) -> DiagRange {
+fn range_from_absolute_span(db: &dyn hir::Db, span: hir::diag::AbsoluteSpan) -> DiagRange {
     let file = span.file();
     DiagRange {
         file_url: file.url(db).as_str().to_owned(),
@@ -940,8 +938,8 @@ mod tests {
             module_key_for_path(LibraryId::Main, tree.main_root(&host), &path).expect("entry key");
         load_reachable_modules(&mut host, key.clone());
         let entry = module_id_from_key(&host, &key);
-        let _ = resolve_reachable_full(&host, entry);
-        let mut diagnostics = reachable_diagnostics(&host, entry)
+        let _ = nameres::resolve_reachable_full(&host, entry);
+        let mut diagnostics = nameres::reachable_diagnostics(&host, entry)
             .iter()
             .map(|diagnostic| diagnostic.lower(&host))
             .collect::<Vec<_>>();
@@ -950,7 +948,7 @@ mod tests {
                 .iter()
                 .map(|diagnostic| diagnostic.lower(&host)),
         );
-        sort_dedup_rendered_diagnostics(&host, &mut diagnostics);
+        hir::diag::sort_dedup_rendered_diagnostics(&host, &mut diagnostics);
         diagnostics
             .into_iter()
             .map(|diagnostic| diagnostic.message)

@@ -65,3 +65,26 @@ pub use solver::{
 /// Database contract required by HIR type queries.
 #[salsa::db]
 pub trait Db: nameres::Db {}
+
+/// Collects lowered frontend diagnostics reachable from `entry`.
+///
+/// Full module resolution is forced before name-resolution and type-checking
+/// diagnostics are collected. The result is deterministically sorted and
+/// deduplicated for publication by drivers and analysis hosts.
+pub fn collect_frontend_diagnostics<'db>(
+    db: &'db dyn Db,
+    entry: nameres::ModuleId<'db>,
+) -> Vec<hir::diag::Diagnostic> {
+    let _ = nameres::resolve_reachable_full(db, entry);
+    let mut diagnostics = nameres::reachable_diagnostics(db, entry)
+        .iter()
+        .map(|diagnostic| diagnostic.lower(db))
+        .collect::<Vec<_>>();
+    diagnostics.extend(
+        infer::reachable_typeck_diagnostics(db, entry)
+            .iter()
+            .map(|diagnostic| diagnostic.lower(db)),
+    );
+    hir::diag::sort_dedup_rendered_diagnostics(db, &mut diagnostics);
+    diagnostics
+}
