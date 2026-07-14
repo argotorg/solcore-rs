@@ -1,8 +1,7 @@
 # path<TAB>reason
 cases/compose_desugared.solc	SC0209 reference rejects the explicitly desugared closure because its inferred invoke implementation is not polymorphic enough; Rust accepts it
 cases/for-let-post.solc	SC0001 reference frontend rejects this for-loop let form while the Rust grammar accepts it
-cases/match-compiler-undef-asm.solc	SC0299 reference rejects the unconstrained phantom parameter in Foo(a); Rust does not report the ambiguous constructor result
 cases/super-class-recursive-arg.solc	SC0223 reference legacy solver rejects this recursive superclass argument, while the reference tabled mode and Rust both accept it
 cases/tabled-answer-reuse.solc	SC0299 reference legacy solver reports an ambiguous inferred type, while the reference tabled mode and Rust both accept it
 cases/tabled-mutual-chain.solc	SC0299 reference legacy solver reports an ambiguous inferred type, while the reference tabled mode and Rust both accept it
-comptime/ct_param_poly_runtime.solc	SC0299 reference legacy frontend reports ambiguity; in tabled full-pipeline mode it rejects the runtime argument to the polymorphic comptime parameter, while Rust accepts it
+comptime/ct_param_poly_runtime.solc	SC0299 reference legacy frontend reports ambiguity; both tabled Haskell and Rust reject the runtime argument during their full specialization pipelines, while this frontend-only parity gate intentionally defers that check

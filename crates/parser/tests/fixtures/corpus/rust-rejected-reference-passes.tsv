@@ -1,14 +1,5 @@
 # path<TAB>phase<TAB>diagnostic-prefix<TAB>reason
-cases/ListModule.solc	typeck	SC0201: type mismatch: expected pair(a, b), found a	reference accepts applying a pair-domain function as two source arguments; Rust frontend currently models that domain as one tuple argument
-cases/ListModule.solc	typeck	SC0203: call expects 1 argument, but 2 were provided	reference accepts applying a pair-domain function as two source arguments; Rust frontend currently models that domain as one tuple argument
-cases/Pair.solc	typeck	SC0201: type mismatch: expected pair(word, word), found word	reference accepts applying a pair-domain function as two source arguments; Rust frontend currently models that domain as one tuple argument
-cases/Pair.solc	typeck	SC0203: call expects 1 argument, but 2 were provided	reference accepts applying a pair-domain function as two source arguments; Rust frontend currently models that domain as one tuple argument
-cases/Peano.solc	typeck	SC0201: argument type mismatch in call to `natInd`	reference accepts applying pair-domain functions and lambdas as multiple source arguments; Rust frontend currently requires an explicit tuple
-cases/Peano.solc	typeck	SC0201: type mismatch: expected pair(Nat, Nat), found Nat	reference accepts applying pair-domain functions and lambdas as multiple source arguments; Rust frontend currently requires an explicit tuple
-cases/Peano.solc	typeck	SC0203: call expects 1 argument, but 2 were provided	reference accepts applying pair-domain functions and lambdas as multiple source arguments; Rust frontend currently requires an explicit tuple
-cases/Peano.solc	typeck	SC0203: lambda expects 1 argument, but 2 were provided	reference accepts applying pair-domain functions and lambdas as multiple source arguments; Rust frontend currently requires an explicit tuple
 cases/Uncurry.solc	typeck	SC0206: non-callable value of type word	legacy reference accepts invoking a word-typed parameter; Rust frontend deliberately requires a callable type
-cases/bar.solc	typeck	SC0299: ambiguous inferred type	Rust solver does not yet improve the result parameter through this chained multi-parameter class implication
 cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: Contract	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
 cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: Fallback	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
 cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: Method	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
@@ -24,16 +15,6 @@ cases/pair-bug.solc	typeck	SC0101: undefined name: RunContract	reference verdict
 cases/pair-bug.solc	typeck	SC0101: undefined name: fallback_default_implementation	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
 cases/pair-bug.solc	typeck	SC0103: undefined type constructor: NonPayable	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
 cases/rec.solc	typeck	SC0206: non-callable value of type word	legacy reference accepts invoking a word-typed parameter; Rust frontend deliberately requires a callable type
-cases/strange-unbound.solc	frontend	SC0103: undefined type constructor: a	Rust frontend does not yet retain this method-local forall binder inside a class member declaration
-cases/uintdesugared.solc	typeck	SC0211: unknown Yul identifier or function: keccak256	Rust frontend Yul typing omits the keccak256 signature even though the Rust lowerers and reference builtin table support it
-comptime/integer-lit-pat.solc	typeck	SC0201: type mismatch: expected numeric, found comptime integer	Rust frontend does not yet erase the comptime staging wrapper when checking numeric literal patterns
-comptime/integer-lit-pat.solc	typeck	SC0201: type mismatch: expected numeric, found comptime word	Rust frontend does not yet erase the comptime staging wrapper when checking numeric literal patterns
-dispatch/miniERC20.solc	typeck	SC0201: type mismatch: expected tuple, found memory(string)	Rust contract constructor lowering currently uses nested product arguments where the reference fixture uses a flat three-argument constructor
-dispatch/miniERC20.solc	typeck	SC0203: tuple pattern expects 3 arguments, but 2 were provided	Rust contract constructor lowering currently uses nested product arguments where the reference fixture uses a flat three-argument constructor
-dispatch/miniERC20.solc	typeck	SC0207: cannot satisfy class constraint: Contract(	Rust generated-dispatch solver does not yet close the reference RunContract evidence for this legacy contract surface
-dispatch/weth9.solc	typeck	SC0207: cannot satisfy class constraint: Contract(	Rust generated-dispatch solver does not yet close the reference RunContract evidence for this legacy contract surface
-std/opcodes.solc	typeck	SC0211: unknown Yul identifier or function: keccak256	Rust frontend Yul typing omits the keccak256 signature even though the Rust lowerers and reference builtin table support it
-std/std.solc	typeck	SC0211: unknown Yul identifier or function: keccak256	Rust frontend Yul typing omits the keccak256 signature even though the Rust lowerers and reference builtin table support it
 imports/alias_dup.solc	frontend	SC0116: duplicate import qualifier `M`	intentional negative import fixture for duplicate aliases
 imports/alias_hides_original_fail.solc	frontend	SC0101: undefined name: foo	intentional negative import fixture proving an alias hides the original qualifier
 imports/alias_unqualified_constr_fail.solc	frontend	SC0106: unqualified constructor: True	intentional negative import fixture proving module imports do not open constructors
