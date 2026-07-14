@@ -1,0 +1,18 @@
+[package]
+name = "solcore-compiler"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hir = { workspace = true }
+hir-ty = { workspace = true }
+hull = { path = "../hull", package = "solcore-hull" }
+nameres = { workspace = true }
+parser = { workspace = true }
+specialize = { path = "../specialize", package = "solcore-specialize" }
+
+[dev-dependencies]
+salsa = { workspace = true }
+solcore-test-utils = { path = "../test-utils" }
+url = { workspace = true }

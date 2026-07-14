@@ -1403,6 +1403,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "solcore-compiler"
+version = "0.1.0"
+dependencies = [
+ "salsa",
+ "solcore-hir",
+ "solcore-hir-ty",
+ "solcore-hull",
+ "solcore-nameres",
+ "solcore-parser",
+ "solcore-specialize",
+ "solcore-test-utils",
+ "url",
+]
+
+[[package]]
 name = "solcore-driver"
 version = "0.1.0"
 dependencies = [
@@ -1410,6 +1425,7 @@ dependencies = [
  "libc",
  "rustc-hash",
  "salsa",
+ "solcore-compiler",
  "solcore-hir",
  "solcore-hir-ty",
  "solcore-hull",
@@ -1601,13 +1617,10 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
- "solcore-hir",
- "solcore-hir-ty",
+ "solcore-compiler",
  "solcore-hull",
  "solcore-nameres",
- "solcore-parser",
  "solcore-sonatina",
- "solcore-specialize",
  "solcore-vfs",
  "solcore-yul",
  "wasm-bindgen",

@@ -2,11 +2,7 @@
 
 use std::{collections::BTreeMap, path::Path};
 
-use hir::{
-    ast::item::Item,
-    diag::{AbsoluteSpan, DiagnosticLevel},
-};
-use nameres::{Db as _, LibraryId};
+use nameres::Db as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use vfs::{
@@ -138,22 +134,6 @@ struct FileOutput {
     content: String,
 }
 
-struct AbsoluteDiagnostic {
-    severity: DiagnosticSeverity,
-    code: Option<String>,
-    message: String,
-    primary: Option<DiagRange>,
-    labels: Vec<AbsoluteLabel>,
-    notes: Vec<String>,
-    helps: Vec<String>,
-}
-
-struct AbsoluteLabel {
-    range: DiagRange,
-    message: Option<String>,
-    is_primary: bool,
-}
-
 /// Compiles already-deserialized input. Tests use this native helper directly.
 pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
     let mut workspace = Workspace::new();
@@ -171,7 +151,7 @@ pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
     let mut diagnostics = workspace
         .diagnostics()
         .into_iter()
-        .map(|diagnostic| absolute_from_vfs(diagnostic).into_diag(workspace.db()))
+        .map(|diagnostic| diag_from_vfs(diagnostic, workspace.db()))
         .collect::<Vec<_>>();
 
     if workspace.entry_module().is_none() {
@@ -238,72 +218,64 @@ fn run_backend(
         return;
     };
 
+    // Keep the artifact order and fail-fast behavior aligned with the CLI:
+    // ABI, shared Hull pipeline, Yul, then Sonatina.
+    if options.emit_abi {
+        match render_abi_outputs(db, entry) {
+            Ok(rendered) => *abi_text = rendered,
+            Err(messages) => {
+                diagnostics.extend(
+                    messages
+                        .into_iter()
+                        .map(|message| message_diag(DiagnosticSeverity::Error, message)),
+                );
+                return;
+            }
+        }
+    }
+
     if options.emit_hull || options.emit_yul || options.emit_sonatina {
-        let module = parser::parse_file_to_hir(db, entry_file).module(db);
-        let specialized =
-            specialize::specialize_module(db, module, specialize::SpecializeOptions::default());
-        if !specialized.diagnostics.is_empty() {
-            diagnostics.extend(
-                specialized
-                    .diagnostics
-                    .iter()
-                    .map(|diagnostic| absolute_from_hir(db, diagnostic.lower(db)).into_diag(db)),
-            );
-            return;
-        }
-
-        let emitted = hull::emit_module(db, &specialized.module, hull::EmitOptions::default());
-        if !emitted.diagnostics.is_empty() {
-            diagnostics.extend(
-                emitted
-                    .diagnostics
-                    .iter()
-                    .map(|diagnostic| absolute_from_hir(db, diagnostic.lower(db)).into_diag(db)),
-            );
-            return;
-        }
-
-        let checked = hull::check_program_with_db(db, &emitted.program);
-        if !checked.is_empty() {
-            diagnostics.extend(
-                checked
-                    .iter()
-                    .map(|diagnostic| absolute_from_hir(db, diagnostic.lower(db)).into_diag(db)),
-            );
-            return;
-        }
+        let compiler::CheckedHull {
+            program,
+            diagnostics: backend_diagnostics,
+        } = match compiler::build_checked_hull(db, entry_file, Default::default()) {
+            Ok(checked) => checked,
+            Err(backend_diagnostics) => {
+                diagnostics.extend(backend_diagnostics.into_iter().map(|diagnostic| {
+                    diag_from_vfs(vfs::Diagnostic::from_hir(db, diagnostic), db)
+                }));
+                return;
+            }
+        };
+        diagnostics.extend(
+            backend_diagnostics
+                .into_iter()
+                .map(|diagnostic| diag_from_vfs(vfs::Diagnostic::from_hir(db, diagnostic), db)),
+        );
 
         if options.emit_hull {
-            *hull_text = Some(hull::pretty_program(db, &emitted.program));
+            *hull_text = Some(hull::pretty_program(db, &program));
         }
         if options.emit_yul {
-            match yul::render_hull_program_object(db, &emitted.program, None) {
+            match yul::render_hull_program_object(db, &program, None) {
                 Ok(rendered) => *yul_text = Some(rendered),
                 Err(err) => diagnostics.push(message_diag(
                     DiagnosticSeverity::Error,
                     format!("Yul translation failed:\n  {err}"),
                 )),
             }
+            if diagnostics.iter().any(Diag::is_error) {
+                return;
+            }
         }
         if options.emit_sonatina {
-            match sonatina::render_hull_program(db, &emitted.program) {
+            match sonatina::render_hull_program(db, &program) {
                 Ok(rendered) => *sonatina_text = Some(rendered),
                 Err(err) => diagnostics.push(message_diag(
                     DiagnosticSeverity::Error,
                     format!("Sonatina translation failed:\n  {err}"),
                 )),
             }
-        }
-    }
-
-    if options.emit_abi && !diagnostics.iter().any(Diag::is_error) {
-        match render_abi_outputs(db, entry) {
-            Ok(rendered) => *abi_text = rendered,
-            Err(messages) => diagnostics.extend(
-                messages
-                    .into_iter()
-                    .map(|message| message_diag(DiagnosticSeverity::Error, message)),
-            ),
         }
     }
 }
@@ -318,35 +290,21 @@ fn render_abi_outputs(
     let mut contracts = BTreeMap::<String, Value>::new();
     let mut errors = Vec::new();
 
-    for module_id in nameres::reachable_modules(db, entry) {
-        if matches!(module_id.library(db), LibraryId::Std) {
-            continue;
-        }
-        let Some(file) = db.module_file(module_id) else {
-            continue;
-        };
-        let module = parser::parse_file_to_hir(db, file).module(db);
-        for item in module.items(db) {
-            let Item::ContractDef(contract) = *item else {
-                continue;
-            };
-            let name = contract
-                .def_id_value(db)
-                .name(db)
-                .unwrap_or_else(|| "Contract".to_owned());
-            match hir_ty::contract_abi_json(db, module, contract) {
-                Ok(json) => match serde_json::from_str::<Value>(&json) {
-                    Ok(value) => {
-                        contracts.insert(name, value);
-                    }
-                    Err(err) => errors.push(format!(
-                        "failed to parse ABI JSON for contract `{name}`: {err}"
-                    )),
-                },
-                Err(err) => {
-                    errors.push(format!("failed to render ABI for contract `{name}`: {err}"))
-                }
+    let rendered = compiler::collect_contract_abis(db, entry, compiler::AbiLibraryScope::Main)
+        .map_err(|errors| {
+            errors
+                .into_iter()
+                .map(|error| error.to_string())
+                .collect::<Vec<_>>()
+        })?;
+    for (name, json) in rendered {
+        match serde_json::from_str::<Value>(&json) {
+            Ok(value) => {
+                contracts.insert(name, value);
             }
+            Err(err) => errors.push(format!(
+                "failed to parse ABI JSON for contract `{name}`: {err}"
+            )),
         }
     }
 
@@ -374,93 +332,24 @@ fn render_abi_outputs(
     }
 }
 
-fn absolute_from_vfs(diagnostic: vfs::Diagnostic) -> AbsoluteDiagnostic {
-    AbsoluteDiagnostic {
-        severity: diagnostic.severity,
-        code: diagnostic.code,
-        message: diagnostic.message,
-        primary: diagnostic.primary,
-        labels: diagnostic
-            .labels
-            .into_iter()
-            .map(|label| AbsoluteLabel {
-                range: label.range,
-                message: label.message,
-                is_primary: label.is_primary,
-            })
-            .collect(),
-        notes: diagnostic.notes,
-        helps: diagnostic.helps,
-    }
-}
-
-fn absolute_from_hir(db: &AnalysisHost, diagnostic: hir::diag::Diagnostic) -> AbsoluteDiagnostic {
+fn diag_from_vfs(diagnostic: vfs::Diagnostic, db: &AnalysisHost) -> Diag {
     let labels = diagnostic
         .labels
-        .iter()
-        .map(|label| {
-            let absolute = label.span().resolve_to_absolute(db);
-            AbsoluteLabel {
-                range: range_from_absolute_span(db, absolute),
-                message: label.message().map(str::to_owned),
-                is_primary: label.is_primary(),
-            }
+        .into_iter()
+        .map(|label| Label {
+            range: pos_from_range(db, &label.range),
+            message: label.message,
+            is_primary: label.is_primary,
         })
-        .collect::<Vec<_>>();
-    let primary = labels
-        .iter()
-        .find(|label| label.is_primary)
-        .or_else(|| labels.first())
-        .map(|label| label.range.clone());
-    AbsoluteDiagnostic {
-        severity: severity_from_hir(diagnostic.level),
+        .collect();
+    Diag {
+        severity: severity_name(diagnostic.severity).to_owned(),
         code: diagnostic.code,
         message: diagnostic.message,
-        primary,
+        primary: diagnostic.primary.map(|range| pos_from_range(db, &range)),
         labels,
         notes: diagnostic.notes,
         helps: diagnostic.helps,
-    }
-}
-
-fn range_from_absolute_span(db: &AnalysisHost, span: AbsoluteSpan) -> DiagRange {
-    let file = span.file();
-    DiagRange {
-        file_url: file.url(db).as_str().to_owned(),
-        start: span.start().as_u32(),
-        end: span.end().as_u32(),
-    }
-}
-
-fn severity_from_hir(level: DiagnosticLevel) -> DiagnosticSeverity {
-    match level {
-        DiagnosticLevel::Error => DiagnosticSeverity::Error,
-        DiagnosticLevel::Warning => DiagnosticSeverity::Warning,
-        DiagnosticLevel::Note => DiagnosticSeverity::Note,
-        DiagnosticLevel::Help => DiagnosticSeverity::Help,
-    }
-}
-
-impl AbsoluteDiagnostic {
-    fn into_diag(self, db: &AnalysisHost) -> Diag {
-        let labels = self
-            .labels
-            .into_iter()
-            .map(|label| Label {
-                range: pos_from_range(db, &label.range),
-                message: label.message,
-                is_primary: label.is_primary,
-            })
-            .collect();
-        Diag {
-            severity: severity_name(self.severity).to_owned(),
-            code: self.code,
-            message: self.message,
-            primary: self.primary.map(|range| pos_from_range(db, &range)),
-            labels,
-            notes: self.notes,
-            helps: self.helps,
-        }
     }
 }
 
@@ -689,6 +578,38 @@ mod tests {
     }
 
     #[test]
+    fn combined_artifacts_follow_cli_fail_fast_order() {
+        let result = compile_impl(input(
+            concat!(
+                "contract A { public function main() -> word { return 1; } }\n",
+                "contract B { public function main() -> word { return 2; } }\n",
+            ),
+            Options {
+                emit_hull: false,
+                emit_yul: true,
+                emit_sonatina: true,
+                emit_abi: true,
+            },
+        ));
+
+        assert!(!result.success);
+        assert!(
+            result.abi.is_some(),
+            "ABI is produced before backend rendering"
+        );
+        assert!(result.yul.is_none());
+        assert!(
+            result.sonatina.is_none(),
+            "Sonatina is skipped after Yul fails"
+        );
+        assert!(result.diagnostics.iter().any(|diagnostic| {
+            diagnostic
+                .message
+                .contains("strict-assembly output requires one top-level object")
+        }));
+    }
+
+    #[test]
     fn abi_only_emits_contract_json() {
         let result = compile_impl(input(
             concat!(
@@ -716,6 +637,112 @@ mod tests {
         let parsed = serde_json::from_str::<serde_json::Value>(&abi).expect("valid ABI JSON");
         assert_eq!(parsed[0]["name"], "answer");
         assert_eq!(parsed[0]["type"], "function");
+    }
+
+    #[test]
+    fn abi_name_collision_is_reported_instead_of_overwriting() {
+        let result = compile_impl(CompileInput {
+            files: vec![
+                FileInput {
+                    path: "main.solc".to_owned(),
+                    content: "import a; import b; function main() -> word { return 0; }\n"
+                        .to_owned(),
+                },
+                FileInput {
+                    path: "a.solc".to_owned(),
+                    content: "contract Token { public function main() -> word { return 1; } }\n"
+                        .to_owned(),
+                },
+                FileInput {
+                    path: "b.solc".to_owned(),
+                    content: "contract Token { public function main() -> word { return 2; } }\n"
+                        .to_owned(),
+                },
+            ],
+            entry: "main.solc".to_owned(),
+            options: Options {
+                emit_hull: false,
+                emit_yul: false,
+                emit_sonatina: false,
+                emit_abi: true,
+            },
+        });
+
+        assert!(!result.success);
+        assert!(result.abi.is_none());
+        let message = result
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.is_error())
+            .map(|diagnostic| diagnostic.message.as_str())
+            .expect("ABI collision diagnostic");
+        assert!(message.contains("contract ABI name `Token`"), "{message}");
+        assert!(message.contains("`a`"), "{message}");
+        assert!(message.contains("`b`"), "{message}");
+    }
+
+    #[test]
+    fn abi_library_scope_explicitly_controls_external_contracts() {
+        let mut workspace = Workspace::new();
+        workspace.set_external_file(
+            "pkg",
+            "token.solc",
+            "contract ExternalToken { public function main() -> word { return 7; } }\n".to_owned(),
+        );
+        workspace.set_file(
+            "main.solc",
+            "import @pkg.token; contract Local { public function main() -> word { return 1; } }\n"
+                .to_owned(),
+        );
+        workspace.set_entry("main.solc");
+        assert!(workspace.diagnostics().is_empty());
+        let entry = workspace.entry_module().expect("entry module");
+
+        let main =
+            compiler::collect_contract_abis(workspace.db(), entry, compiler::AbiLibraryScope::Main)
+                .expect("main ABI collection");
+        let non_std = compiler::collect_contract_abis(
+            workspace.db(),
+            entry,
+            compiler::AbiLibraryScope::NonStd,
+        )
+        .expect("non-std ABI collection");
+
+        assert_eq!(
+            main.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["Local"]
+        );
+        assert_eq!(
+            non_std.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["ExternalToken", "Local"]
+        );
+    }
+
+    #[test]
+    fn backend_diagnostic_uses_shared_vfs_conversion() {
+        let result = compile_impl(input(
+            concat!(
+                "import std.{string};\n",
+                "contract Main {\n",
+                "  public function main() -> string { return \"nope\"; }\n",
+                "}\n",
+            ),
+            Options {
+                emit_hull: true,
+                emit_yul: false,
+                emit_sonatina: false,
+                emit_abi: false,
+            },
+        ));
+
+        assert!(!result.success);
+        assert!(result.hull.is_none());
+        let diagnostic = result
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code.as_deref() == Some("SC0421"))
+            .expect("Hull diagnostic");
+        assert!(diagnostic.primary.is_some());
     }
 
     #[test]

@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 annotate-snippets = { workspace = true }
+compiler = { workspace = true }
 libc = "0.2"
 salsa = { workspace = true }
 rustc-hash = { workspace = true }

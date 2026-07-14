@@ -1,15 +1,10 @@
 use std::{
-    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
 
-use hir::{
-    ast::item::Item,
-    diag::{Diagnostic, DiagnosticLevel},
-    input::SourceFile,
-};
-use nameres::{LibraryId, ModuleId};
+use hir::{diag::Diagnostic, input::SourceFile};
+use nameres::ModuleId;
 
 use crate::{
     args::{Args, EmitTarget},
@@ -31,39 +26,43 @@ pub(crate) fn maybe_emit_abi_outputs(
         return Ok(());
     }
 
-    let mut outputs = BTreeMap::<String, (String, String)>::new();
-    for module_id in nameres::reachable_modules(db, entry) {
-        if !matches!(module_id.library(db), LibraryId::Main) {
-            continue;
-        }
-        let Some(file) = db.module_files.get(&module_id.key(db)).copied() else {
-            continue;
-        };
-        let module = parser::parse_file_to_hir(db, file).module(db);
-        for item in module.items(db) {
-            let Item::ContractDef(contract) = *item else {
-                continue;
-            };
-            let name = contract
-                .def_id_value(db)
-                .name(db)
-                .unwrap_or_else(|| "Contract".to_owned());
-            let abi = hir_ty::contract_abi_json(db, module, contract)
-                .map_err(|err| format!("failed to render ABI for contract `{name}`: {err}"))?;
-            let filename = format!("{name}.abi");
-            let module_name = module_id.key(db).logical_path.join(".");
-            if let Some((_, previous_module)) = outputs.get(&filename) {
-                return Err(format!(
-                    "cannot emit `{filename}` for contracts named `{name}` in both `{previous_module}` and `{module_name}`; rename one contract to give each ABI a unique output filename"
-                ));
-            }
-            outputs.insert(filename, (abi, module_name));
-        }
-    }
-    for (filename, (abi, _)) in outputs {
+    let outputs = compiler::collect_contract_abis(db, entry, compiler::AbiLibraryScope::Main)
+        .map_err(|errors| {
+            errors
+                .into_iter()
+                .map(format_abi_collection_error)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
+    for (name, abi) in outputs {
+        let filename = format!("{name}.abi");
         write_output_file(&PathBuf::from(filename), args.output_dir.as_deref(), &abi)?;
     }
     Ok(())
+}
+
+fn format_abi_collection_error(error: compiler::AbiCollectionError) -> String {
+    match error {
+        compiler::AbiCollectionError::MissingModuleSource { module } => format!(
+            "source for reachable module `{}` is unavailable while collecting contract ABIs",
+            module.logical_path.join(".")
+        ),
+        compiler::AbiCollectionError::Render {
+            contract, message, ..
+        } => format!("failed to render ABI for contract `{contract}`: {message}"),
+        compiler::AbiCollectionError::NameCollision {
+            name,
+            first_module,
+            second_module,
+        } => {
+            let filename = format!("{name}.abi");
+            let first_module = first_module.logical_path.join(".");
+            let second_module = second_module.logical_path.join(".");
+            format!(
+                "cannot emit `{filename}` for contracts named `{name}` in both `{first_module}` and `{second_module}`; rename one contract to give each ABI a unique output filename"
+            )
+        }
+    }
 }
 
 pub(crate) fn maybe_emit_backend_outputs(
@@ -91,73 +90,31 @@ pub(crate) fn maybe_emit_backend_outputs(
         )));
     }
 
-    let module = parser::parse_file_to_hir(db, entry_file).module(db);
-    let specialized = specialize::specialize_module(db, module, args.specialize_options);
-    let mut diagnostics = Vec::new();
-    collect_backend_stage_diagnostics(
-        &mut diagnostics,
-        specialized
-            .diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.lower(db))
-            .collect(),
-    )?;
-
-    let emitted = hull::emit_module(db, &specialized.module, hull::EmitOptions::default());
-    collect_backend_stage_diagnostics(
-        &mut diagnostics,
-        emitted
-            .diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.lower(db))
-            .collect(),
-    )?;
-
-    let checked = hull::check_program_with_db(db, &emitted.program);
-    collect_backend_stage_diagnostics(
-        &mut diagnostics,
-        checked
-            .iter()
-            .map(|diagnostic| diagnostic.lower(db))
-            .collect(),
-    )?;
+    let compiler::CheckedHull {
+        program,
+        diagnostics,
+    } = compiler::build_checked_hull(db, entry_file, args.specialize_options)
+        .map_err(BackendFailure::Diagnostics)?;
 
     if let Some(target) = &args.emit_hull {
         write_emit_output(
             target,
             args.output_dir.as_deref(),
-            &hull::pretty_program(db, &emitted.program),
+            &hull::pretty_program(db, &program),
         )?;
     }
     if let Some(target) = &args.emit_yul {
-        let yul =
-            yul::render_hull_program_object(db, &emitted.program, args.emit_yul_object.as_deref())
-                .map_err(|err| {
-                    BackendFailure::Message(format!("Yul translation failed:\n  {err}"))
-                })?;
+        let yul = yul::render_hull_program_object(db, &program, args.emit_yul_object.as_deref())
+            .map_err(|err| BackendFailure::Message(format!("Yul translation failed:\n  {err}")))?;
         write_emit_output(target, args.output_dir.as_deref(), &yul)?;
     }
     if let Some(target) = &args.emit_sonatina {
-        let sonatina = sonatina::render_hull_program(db, &emitted.program).map_err(|err| {
+        let sonatina = sonatina::render_hull_program(db, &program).map_err(|err| {
             BackendFailure::Message(format!("Sonatina translation failed:\n  {err}"))
         })?;
         write_emit_output(target, args.output_dir.as_deref(), &sonatina)?;
     }
     Ok(diagnostics)
-}
-
-fn collect_backend_stage_diagnostics(
-    accumulated: &mut Vec<Diagnostic>,
-    stage: Vec<Diagnostic>,
-) -> Result<(), BackendFailure> {
-    let has_error = stage
-        .iter()
-        .any(|diagnostic| diagnostic.level == DiagnosticLevel::Error);
-    accumulated.extend(stage);
-    if has_error {
-        return Err(BackendFailure::Diagnostics(std::mem::take(accumulated)));
-    }
-    Ok(())
 }
 
 fn write_emit_output(
@@ -195,47 +152,5 @@ fn emit_file_path(path: &Path, output_dir: Option<&Path>) -> PathBuf {
         output_dir.join(path)
     } else {
         path.to_path_buf()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn warning_only_backend_stage_does_not_abort_requested_output() {
-        let mut accumulated = Vec::new();
-
-        collect_backend_stage_diagnostics(
-            &mut accumulated,
-            vec![Diagnostic::warning("backend warning")],
-        )
-        .expect("warning-only stage should continue");
-
-        assert_eq!(accumulated.len(), 1);
-        assert_eq!(accumulated[0].level, DiagnosticLevel::Warning);
-    }
-
-    #[test]
-    fn error_backend_stage_still_aborts_requested_output() {
-        let mut accumulated = Vec::new();
-        collect_backend_stage_diagnostics(
-            &mut accumulated,
-            vec![Diagnostic::warning("earlier backend warning")],
-        )
-        .expect("warning-only stage should continue");
-
-        let result = collect_backend_stage_diagnostics(
-            &mut accumulated,
-            vec![Diagnostic::error("backend error")],
-        );
-
-        let Err(BackendFailure::Diagnostics(diagnostics)) = result else {
-            panic!("error stage should abort output");
-        };
-        assert_eq!(diagnostics.len(), 2);
-        assert_eq!(diagnostics[0].level, DiagnosticLevel::Warning);
-        assert_eq!(diagnostics[1].level, DiagnosticLevel::Error);
-        assert!(accumulated.is_empty());
     }
 }

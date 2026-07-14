@@ -1,10 +1,7 @@
 use std::{collections::BTreeMap, env, ffi::OsString, fs};
 
-use hir::diag::{DiagnosticLevel, sort_dedup_rendered_diagnostics};
-use nameres::{
-    LibraryId, ModuleTree, module_id_from_key, module_key_for_path, reachable_diagnostics,
-    resolve_reachable_full,
-};
+use hir::diag::DiagnosticLevel;
+use nameres::{LibraryId, ModuleTree, module_id_from_key, module_key_for_path};
 
 use crate::{
     args::{ParsedArgs, help_text, parse_args, usage_text},
@@ -130,17 +127,7 @@ pub(crate) fn run_compiler() {
     }
 
     let entry = module_id_from_key(&db, &entry_key);
-    let _ = resolve_reachable_full(&db, entry);
-    let mut diagnostics = reachable_diagnostics(&db, entry)
-        .iter()
-        .map(|diagnostic| diagnostic.lower(&db))
-        .collect::<Vec<_>>();
-    diagnostics.extend(
-        hir_ty::infer::reachable_typeck_diagnostics(&db, entry)
-            .iter()
-            .map(|diagnostic| diagnostic.lower(&db)),
-    );
-    sort_dedup_rendered_diagnostics(&db, &mut diagnostics);
+    let mut diagnostics = compiler::collect_frontend_diagnostics(&db, entry);
     apply_warning_policy(&mut diagnostics, args.warning_policy);
     let has_errors = diagnostics
         .iter()
@@ -158,7 +145,6 @@ pub(crate) fn run_compiler() {
         }
         match maybe_emit_backend_outputs(&db, entry_file, &args) {
             Ok(mut diagnostics) => {
-                sort_dedup_rendered_diagnostics(&db, &mut diagnostics);
                 apply_warning_policy(&mut diagnostics, args.warning_policy);
                 if !diagnostics.is_empty() {
                     eprint!("{}", render_diagnostics(&db, &diagnostics, &args));
@@ -171,7 +157,6 @@ pub(crate) fn run_compiler() {
                 }
             }
             Err(BackendFailure::Diagnostics(mut diagnostics)) => {
-                sort_dedup_rendered_diagnostics(&db, &mut diagnostics);
                 apply_warning_policy(&mut diagnostics, args.warning_policy);
                 eprint!("{}", render_diagnostics(&db, &diagnostics, &args));
                 std::process::exit(1);

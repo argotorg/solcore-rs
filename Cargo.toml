@@ -22,6 +22,7 @@ parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
 nameres = { path = "crates/nameres", package = "solcore-nameres" }
 hir-ty = { path = "crates/hir-ty", package = "solcore-hir-ty" }
+compiler = { path = "crates/compiler", package = "solcore-compiler" }
 vfs = { path = "crates/vfs", package = "solcore-vfs" }
 
 [workspace.package]
