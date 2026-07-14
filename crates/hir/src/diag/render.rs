@@ -133,6 +133,17 @@ impl Diagnostic {
 }
 
 fn display_url_path(url: &url::Url) -> String {
+    // `Url::to_file_path` accepts hostless custom schemes on Unix, but Windows
+    // rejects their drive-less paths. Decode compiler-owned virtual URLs
+    // explicitly so diagnostic output stays platform-independent.
+    if url.scheme() == "memory"
+        && url.host_str().is_none()
+        && url.path().starts_with('/')
+        && let Ok(path) = percent_encoding::percent_decode_str(url.path()).decode_utf8()
+    {
+        return path.into_owned();
+    }
+
     crate::url_to_file_path(url)
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| url.as_str().to_owned())

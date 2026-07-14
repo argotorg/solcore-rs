@@ -257,3 +257,23 @@ fn render_decodes_file_urls_in_human_and_short_formats() {
         assert!(!rendered.contains("%E6"));
     }
 }
+
+#[test]
+fn render_decodes_memory_urls_in_human_and_short_formats() {
+    let db = TestDb::default();
+    let url = url::Url::parse("memory:///Solcore%20Project/%E6%97%A5%E6%9C%AC%E8%AA%9E/main.solc")
+        .expect("valid memory URL");
+    let file = SourceFile::new(&db, url, Some("missing\n".to_owned()));
+    let diagnostic = Diagnostic::error("undefined name")
+        .with_primary_label_span(root_span(file, 0, 7), Some("not found"));
+
+    let human = diagnostic.render_with(&db, &Renderer::plain());
+    let short = diagnostic.render_short(&db);
+
+    for rendered in [human, short] {
+        assert!(rendered.contains("/Solcore Project/日本語/main.solc"));
+        assert!(!rendered.contains("memory:///"));
+        assert!(!rendered.contains("%20"));
+        assert!(!rendered.contains("%E6"));
+    }
+}
