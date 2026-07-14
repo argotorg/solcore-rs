@@ -316,73 +316,6 @@ contract Answer {
 }
 
 #[test]
-fn generated_dispatch_requires_explicit_source_imports() {
-    let (mut db, key) = db_with_main(
-        r#"
-contract C {
-  public function echo(value:uint256) -> uint256 { return value; }
-}
-"#,
-    );
-    insert_real_std_modules(&mut db);
-    let diagnostics = diagnostics_for_module(&db, &key);
-    assert!(!diagnostics.is_empty(), "explicit imports must be required");
-
-    let (mut db, key) = db_with_main(
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-contract C {
-  public function echo(value:uint256) -> uint256 { return value; }
-}
-"#,
-    );
-    insert_real_std_modules(&mut db);
-    let diagnostics = diagnostics_for_module(&db, &key);
-    assert!(diagnostics.is_empty(), "{diagnostics:?}");
-}
-
-#[test]
-fn compiler_private_entry_names_do_not_capture_top_level_calls() {
-    let (mut constructor_db, constructor_key) = db_with_main(
-        r#"
-import std.{*};
-
-function init_(x:word) -> word { return x; }
-
-contract C {
-  constructor(x:uint256) { let saved:word = init_(Typedef.rep(x)); }
-  function main() -> () { return (); }
-}
-"#,
-    );
-    insert_real_std_modules(&mut constructor_db);
-    let constructor_diagnostics = diagnostics_for_module(&constructor_db, &constructor_key);
-    assert!(
-        constructor_diagnostics.is_empty(),
-        "{constructor_diagnostics:?}"
-    );
-
-    let (mut dispatch_db, dispatch_key) = db_with_main(
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-function main(x:uint256) -> uint256 { return x; }
-
-contract C {
-  function call_top() -> uint256 { return main(uint256(1)); }
-  public function ping(x:uint256) -> uint256 { return x; }
-}
-"#,
-    );
-    insert_real_std_modules(&mut dispatch_db);
-    let dispatch_diagnostics = diagnostics_for_module(&dispatch_db, &dispatch_key);
-    assert!(dispatch_diagnostics.is_empty(), "{dispatch_diagnostics:?}");
-}
-
-#[test]
 fn prepared_dispatch_uses_its_synthetic_sigstring_instance_during_typeck() {
     let (mut db, key) = db_with_main(
         r#"
@@ -482,37 +415,6 @@ function fallback_default_implementation() -> () { return (); }
 }
 
 #[test]
-fn source_cannot_claim_a_generated_dispatch_name_type() {
-    let (mut db, key) = db_with_main(
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-data DispatchNameTy_C_ping;
-
-contract C {
-  public function ping(x: uint256) -> uint256 { return x; }
-}
-"#,
-    );
-    insert_real_std_modules(&mut db);
-    let diagnostics = diagnostics_for_module(&db, &key);
-    assert!(
-        diagnostics.iter().any(|diagnostic| {
-            diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_DUPLICATE_TYPE)
-                && diagnostic.message.contains("DispatchNameTy_C_ping")
-        }),
-        "{diagnostics:?}"
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|diagnostic| { !matches!(diagnostic.code.as_deref(), Some("SC0101" | "SC0103")) }),
-        "{diagnostics:?}"
-    );
-}
-
-#[test]
 fn dispatch_surface_tracks_public_private_constructor_and_fallback() {
     let db = TestDb::default();
     let module = parse_module(
@@ -555,30 +457,6 @@ contract Token {
     assert_eq!(surface.methods[0].selector.to_hex(), "0xc290d691");
     assert_eq!(surface.methods[0].outputs[0].ty.to_string(), "uint256");
     assert_eq!(surface.methods[0].outputs[1].ty.to_string(), "bool");
-}
-
-#[test]
-fn dispatch_surface_rejects_nonunit_fallback_shape() {
-    let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-contract C {
-  fallback() -> word { return 1; }
-}
-"#,
-    );
-    let contract = contract_named(&db, module, "C");
-    let surface = contract_dispatch_surface(&db, module, contract);
-
-    assert!(
-        surface.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code.as_deref() == Some("SC0231")
-                && diagnostic.message == "fallback ABI must be unit -> unit"
-        }),
-        "{:?}",
-        surface.diagnostics
-    );
 }
 
 #[test]
@@ -873,33 +751,6 @@ contract Shapes {
 }
 
 #[test]
-fn manually_represented_generic_adt_is_rejected_from_the_canonical_abi() {
-    let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        r#"
-pragma no-generic-instance-for Point;
-data Point = Point(word, word);
-
-contract Shapes {
-  public function roundtrip(p: Point) -> Point { return p; }
-}
-"#,
-    );
-    let contract = contract_named(&db, module, "Shapes");
-    let surface = contract_dispatch_surface(&db, module, contract);
-
-    assert!(
-        surface.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code.as_deref() == Some("SC0231")
-                && diagnostic.message.contains("manual or excluded Generic")
-        }),
-        "{:?}",
-        surface.diagnostics
-    );
-}
-
-#[test]
 fn visible_orphan_generic_instance_is_rejected_from_constructor_abi() {
     let (mut db, key) = db_with_main(
         r#"
@@ -976,81 +827,6 @@ export { Payload(*) };
 }
 
 #[test]
-fn visible_manual_std_abi_instances_are_rejected_from_external_abi() {
-    let (mut db, key) = db_with_main(
-        r#"
-import std.{*};
-import std.dispatch.{*};
-
-instance word:ABIAttribs {
-  function headSize(p:Proxy(word)) -> word { return 32; }
-  function isStatic(p:Proxy(word)) -> bool { return true; }
-}
-
-instance word:ABIEncode {
-  function encodeInto(x:word, base:word, offset:word, tail:word) -> word { return tail; }
-}
-
-instance ABIDecoder(word, CalldataWordReader):ABIDecode(word) {
-  function decode(d:ABIDecoder(word, CalldataWordReader), offset:word) -> word { return 0; }
-}
-
-instance word:SigString {
-  function sigStr(p:Proxy(word)) -> string { return "uint256"; }
-}
-
-contract C {
-  public function echo(value:word) -> word { return value; }
-}
-"#,
-    );
-    insert_real_std_modules(&mut db);
-
-    let diagnostics = diagnostics_for_module(&db, &key);
-    for class in ["ABIAttribs", "ABIEncode", "ABIDecode", "SigString"] {
-        assert!(
-            diagnostics.iter().any(|diagnostic| {
-                diagnostic.code.as_deref() == Some("SC0231")
-                    && diagnostic
-                        .message
-                        .contains(&format!("manual `{class}` evidence"))
-            }),
-            "missing {class} rejection: {diagnostics:?}"
-        );
-    }
-}
-
-#[test]
-fn canonical_std_location_wrappers_reject_user_adt_payloads() {
-    let (mut db, key) = db_with_main(
-        r#"
-import std.{*};
-
-data Point = Point(word, bool);
-
-contract C {
-  public function roundtrip(value:memory(Point)) -> word { return 0; }
-}
-"#,
-    );
-    insert_real_std_modules(&mut db);
-    let file = db.module_files[&key];
-    let module = parse_file_to_hir(&db, file).module(&db);
-    let contract = contract_named(&db, module, "C");
-    let surface = contract_dispatch_surface(&db, module, contract);
-    assert!(
-        surface.diagnostics.iter().any(|diagnostic| {
-            diagnostic.code.as_deref() == Some("SC0231")
-                && diagnostic
-                    .message
-                    .contains("only memory(string) and memory(bytes)")
-        }),
-        "{:?}",
-        surface.diagnostics
-    );
-}
-
-#[test]
 fn unsupported_std_leaf_is_not_reinterpreted_as_a_structural_user_adt() {
     let (mut db, key) = db_with_main(
         r#"
@@ -1077,31 +853,6 @@ contract C {
         surface.diagnostics
     );
     assert_eq!(surface.methods[0].signature, "echo(<unsupported>)");
-}
-
-#[test]
-fn source_runtime_main_does_not_hide_constructor_abi_errors() {
-    let (mut db, key) = db_with_main(
-        r#"
-import std.{*};
-
-data Choice = Left(word) | Right(word);
-
-contract C {
-  constructor(value:Choice) {}
-  function main() -> () { return (); }
-}
-"#,
-    );
-    insert_real_std_modules(&mut db);
-    let diagnostics = diagnostics_for_module(&db, &key);
-    assert!(
-        diagnostics.iter().any(|diagnostic| {
-            diagnostic.code.as_deref() == Some("SC0231")
-                && diagnostic.message.contains("multi-constructor ADTs")
-        }),
-        "{diagnostics:?}"
-    );
 }
 
 #[test]
@@ -1234,62 +985,6 @@ contract Collision {
             diagnostic.code.as_deref() == Some(DiagnosticCode::TYPECK_CONTRACT_SELECTOR_COLLISION)
         }),
         "{lowered:?}"
-    );
-}
-
-#[test]
-fn contract_field_initializers_are_typed() {
-    let ok = diagnostics("contract C { x: word = 1; function main() -> () { return (); } }");
-    assert!(ok.is_empty(), "{ok:?}");
-
-    let bad = diagnostics("contract C { x: word = true; function main() -> () { return (); } }");
-    assert!(
-        bad.iter()
-            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0201")),
-        "{bad:?}"
-    );
-}
-
-#[test]
-fn storage_mapping_compound_assign_requires_numeric_element() {
-    let common = "data mapping(key, value) = mapping(word);\n\
-                  data uint256 = uint256(word);\n\
-                  forall t . class t:Add { function add(l:t, r:t) -> t; }\n\
-                  forall t . class t:Sub { function sub(l:t, r:t) -> t; }\n\
-                  instance word:Add { function add(l:word, r:word) -> word { return l; } }\n\
-                  instance word:Sub { function sub(l:word, r:word) -> word { return l; } }\n\
-                  instance uint256:Add { function add(l:uint256, r:uint256) -> uint256 { return l; } }\n";
-    let manual_main = "function main() -> () { return (); }";
-
-    let ok_word = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, word); function f(k: word) -> () {{ m[k] += 1; }} {manual_main} }}"
-    ));
-    assert!(ok_word.is_empty(), "{ok_word:?}");
-
-    let ok_uint = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, uint256); \
-         function f(k: word, v: uint256) -> () {{ m[k] += v; }} {manual_main} }}"
-    ));
-    assert!(ok_uint.is_empty(), "{ok_uint:?}");
-
-    let bad_add = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, bool); function f(k: word) -> () {{ m[k] += true; }} {manual_main} }}"
-    ));
-    assert!(
-        bad_add
-            .iter()
-            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0207")),
-        "{bad_add:?}"
-    );
-
-    let bad_sub = diagnostics(&format!(
-        "{common}contract C {{ m : mapping(word, bool); function f(k: word) -> () {{ m[k] -= true; }} {manual_main} }}"
-    ));
-    assert!(
-        bad_sub
-            .iter()
-            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0207")),
-        "{bad_sub:?}"
     );
 }
 

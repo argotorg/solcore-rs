@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/clean_undefined_name/main.solc
+---
+error[SC0101]: undefined name: missing
+ --> /main/main.solc:1:36
+  |
+1 | function caller() -> word { return missing; }
+  |                                    ^^^^^^^ unknown name

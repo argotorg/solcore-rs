@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/excessive_conditional_nesting/main.solc
+---
+error[SC0001]: conditional expression nesting exceeds the compiler limit of 128
+   --> /main/main.solc:131:17
+    |
+130 |                 if true then 0 else
+131 |                 if true then 0 else
+    |                 ^^
+132 |                 if true then 0 else
+    |

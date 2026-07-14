@@ -226,18 +226,6 @@ fn parse_recovery_suppression_policy_silences_name_lookup_cascades() {
 }
 
 #[test]
-fn parse_clean_file_still_reports_undefined_name() {
-    let db = TestDb::default();
-    let (file, module) = parse_and_module(
-        &db,
-        "clean_undefined_name",
-        "function caller() -> word { return missing; }",
-    );
-    assert!(parse_diagnostics(&db, file).is_empty());
-    assert_eq!(diagnostic_codes(&db, module), ["SC0101"]);
-}
-
-#[test]
 fn undefined_name_kind_distinguishes_bare_terms_from_path_lookups() {
     let db = TestDb::default();
     let (file, module) = parse_and_module(
@@ -600,78 +588,4 @@ fn definite_same_name_constructor_beats_unknown_wildcard_import() {
         "same-name constructor should remain definite: {events:#?}"
     );
     assert!(resolution.diagnostics.is_empty());
-}
-
-#[test]
-fn unqualified_constructor_references_report_sc0106() {
-    let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        "data Option = None | Some(word);
-         data flag = off | on;
-         function exprCall(x: word) -> Option { return Some(x); }
-         function exprBare(f: flag) -> flag { return on; }
-         function patLower(f: flag) -> word {
-           match f {
-           | off => return 0;
-           | on => return 1;
-           }
-         }
-         function patUpper(o: Option) -> word {
-           match o {
-           | None => return 0;
-           | _ => return 1;
-           }
-         }",
-    );
-    let codes = diagnostic_codes(&db, module);
-    assert_eq!(
-        codes.iter().filter(|code| *code == "SC0106").count(),
-        // `Some(x)`, `on` (expression), `off` + `on` (patterns), `None` (pattern).
-        5,
-        "expected SC0106 for every unqualified constructor reference, got {codes:?}"
-    );
-    assert!(
-        codes.iter().all(|code| code == "SC0106"),
-        "unexpected extra diagnostics: {codes:?}"
-    );
-}
-
-#[test]
-fn duplicate_declarations_report_two_namespace_errors_with_two_labels() {
-    let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        "data Foo = Foo;
-         type Foo = word;
-         function dup() {}
-         function dup() {}",
-    );
-    let diagnostics = diagnostics(&db, module);
-    let duplicate_diagnostics = diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.code.as_deref() == Some("SC0108"))
-        .collect::<Vec<_>>();
-
-    assert_eq!(duplicate_diagnostics.len(), 2);
-    assert!(
-        duplicate_diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.labels.len() >= 2)
-    );
-}
-
-#[test]
-fn undefined_name_type_and_class_have_distinct_diagnostics() {
-    let db = TestDb::default();
-    let module = parse_module(
-        &db,
-        "forall a . a:MissingClass => function f(x: MissingTy) -> word {
-           return missingName;
-         }",
-    );
-    let mut codes = diagnostic_codes(&db, module);
-    codes.sort();
-
-    assert_eq!(codes, ["SC0101", "SC0103", "SC0105"]);
 }

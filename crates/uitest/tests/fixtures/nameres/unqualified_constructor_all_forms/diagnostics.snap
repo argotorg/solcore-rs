@@ -1,0 +1,58 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/unqualified_constructor_all_forms/main.solc
+---
+error[SC0106]: unqualified constructor: Some
+ --> /main/main.solc:4:47
+  |
+3 |
+4 | function exprCall(x: word) -> Option { return Some(x); }
+  |                                               ^^^^ constructor must be qualified
+5 | function exprBare(f: flag) -> flag { return on; }
+  |
+  = help: use `Option.Some`
+---
+
+error[SC0106]: unqualified constructor: on
+ --> /main/main.solc:5:45
+  |
+4 | function exprCall(x: word) -> Option { return Some(x); }
+5 | function exprBare(f: flag) -> flag { return on; }
+  |                                             ^^ constructor must be qualified
+6 |
+  |
+  = help: use `flag.on`
+---
+
+error[SC0106]: unqualified constructor: off
+  --> /main/main.solc:9:5
+   |
+ 8 |   match f {
+ 9 |   | off => return 0;
+   |     ^^^ constructor must be qualified
+10 |   | on => return 1;
+   |
+   = help: use `flag.off`
+---
+
+error[SC0106]: unqualified constructor: on
+  --> /main/main.solc:10:5
+   |
+ 9 |   | off => return 0;
+10 |   | on => return 1;
+   |     ^^ constructor must be qualified
+11 |   }
+   |
+   = help: use `flag.on`
+---
+
+error[SC0106]: unqualified constructor: None
+  --> /main/main.solc:16:5
+   |
+15 |   match o {
+16 |   | None => return 0;
+   |     ^^^^ constructor must be qualified
+17 |   | _ => return 1;
+   |
+   = help: use `Option.None`

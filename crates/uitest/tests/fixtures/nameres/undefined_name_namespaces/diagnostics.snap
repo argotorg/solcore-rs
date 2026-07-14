@@ -1,0 +1,33 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/nameres/undefined_name_namespaces/main.solc
+---
+error[SC0105]: undefined class: MissingClass
+ --> /main/main.solc:1:14
+  |
+1 | forall a . a:MissingClass => function f(x: MissingTy) -> word {
+  |              ^^^^^^^^^^^^ undefined class
+2 |   return missingName;
+3 | }
+  |
+---
+
+error[SC0103]: undefined type constructor: MissingTy
+ --> /main/main.solc:1:44
+  |
+1 | forall a . a:MissingClass => function f(x: MissingTy) -> word {
+  |                                            ^^^^^^^^^ undefined type constructor
+2 |   return missingName;
+3 | }
+  |
+---
+
+error[SC0101]: undefined name: missingName
+ --> /main/main.solc:2:10
+  |
+1 | forall a . a:MissingClass => function f(x: MissingTy) -> word {
+2 |   return missingName;
+  |          ^^^^^^^^^^^ unknown name
+3 | }
+  |

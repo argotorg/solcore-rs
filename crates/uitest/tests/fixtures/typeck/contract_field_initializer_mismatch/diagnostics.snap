@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/contract_field_initializer_mismatch/main.solc
+---
+error[SC0201]: type mismatch: expected word, found bool
+ --> /main/main.solc:2:13
+  |
+1 | contract C {
+2 |   x: word = true;
+  |             ^^^^ expression has mismatched type
+3 |   function main() -> () { return (); }
+  |
+  = note: expected type: word
+  = note: found type: bool

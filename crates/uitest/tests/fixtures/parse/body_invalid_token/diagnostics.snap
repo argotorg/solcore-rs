@@ -1,0 +1,10 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/body_invalid_token/main.solc
+---
+error[SC0001]: invalid token `§`
+ --> /main/main.solc:1:34
+  |
+1 | function main() -> word { return §; }
+  |                                  ^ invalid token

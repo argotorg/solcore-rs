@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/storage_mapping_compound_add_bool/main.solc
+---
+error[SC0207]: cannot satisfy class constraint: bool : Add
+  --> /main/main.solc:22:31
+   |
+21 |   m: mapping(word, bool);
+22 |   function f(k: word) -> () { m[k] += true; }
+   |                               ^^^^^^^^^^^^ constraint originates here
+23 |   function main() -> () { return (); }
+   |
+   = note: no visible instance matches `bool : Add`
+   = help: add a matching instance or strengthen the surrounding type context

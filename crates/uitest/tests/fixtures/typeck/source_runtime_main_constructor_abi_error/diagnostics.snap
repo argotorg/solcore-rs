@@ -1,0 +1,25 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/source_runtime_main_constructor_abi_error/main.solc
+---
+error[SC0207]: cannot satisfy class constraint: ABIDecoder(Choice, MemoryWordReader) : ABIDecode(Choice)
+ --> /main/main.solc:6:3
+  |
+5 | contract C {
+6 |   constructor(value: Choice) {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constraint originates here
+7 |   function main() -> () { return (); }
+  |
+  = note: no visible instance matches `ABIDecoder(Choice, MemoryWordReader) : ABIDecode(Choice)`
+  = help: add a matching instance or strengthen the surrounding type context
+---
+
+error[SC0231]: ABI parameter cannot be represented in the ABI: Choice (multi-constructor ADTs have no canonical ABI representation)
+ --> /main/main.solc:6:3
+  |
+5 | contract C {
+6 |   constructor(value: Choice) {}
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+7 |   function main() -> () { return (); }
+  |

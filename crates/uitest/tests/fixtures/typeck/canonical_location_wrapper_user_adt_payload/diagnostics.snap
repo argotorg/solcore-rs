@@ -1,0 +1,35 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/canonical_location_wrapper_user_adt_payload/main.solc
+---
+error[SC0207]: cannot satisfy class constraint: Contract(Method(DispatchNameTy_C_roundtrip, NonPayable, memory(Point), word, (memory(Point)) -> word), Fallback(NonPayable, (), (), () -> ())) : RunContract
+ --> /main/main.solc:6:10
+  |
+5 |
+6 | contract C {
+  |          ^ constraint originates here
+7 |   public function roundtrip(value: memory(Point)) -> word { return 0; }
+  |
+  = note: no visible instance matches `Contract(Method(DispatchNameTy_C_roundtrip, NonPayable, memory(Point), word, (memory(Point)) -> word), Fallback(NonPayable, (), (), () -> ())) : RunContract`
+  = help: add a matching instance or strengthen the surrounding type context
+---
+
+error[SC0231]: ABI parameter cannot be represented in the ABI: adt:Point (only memory(string) and memory(bytes) have canonical ABI evidence)
+ --> /main/main.solc:7:3
+  |
+6 | contract C {
+7 |   public function roundtrip(value: memory(Point)) -> word { return 0; }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+8 | }
+  |
+---
+
+error[SC0231]: roundtrip cannot be represented in the ABI: adt:Point (only memory(string) and memory(bytes) have canonical ABI evidence)
+ --> /main/main.solc:7:3
+  |
+6 | contract C {
+7 |   public function roundtrip(value: memory(Point)) -> word { return 0; }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+8 | }
+  |
