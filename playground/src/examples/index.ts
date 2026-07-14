@@ -15,14 +15,17 @@ export const examples: PlaygroundExample[] = [
   {
     id: "contract-output",
     name: "Contract output",
-    description: "A small contract that emits non-empty Hull and Yul.",
+    description: "A small contract that emits Hull, Yul, Sonatina IR, and ABI JSON.",
     entry: "main.solc",
     files: [
       {
         path: "main.solc",
-        content: `contract Answer {
-  public function main() -> word {
-    return 42;
+        content: `import std.{*};
+import std.dispatch.{*};
+
+contract Answer {
+  public function main() -> uint256 {
+    return uint256(42);
   }
 }
 `,

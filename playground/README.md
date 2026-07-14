@@ -103,9 +103,9 @@ interface CompileResult {
 }
 ```
 
-The Playground requests Hull, Yul, and Sonatina IR in one compile and exposes each textual output in
-its own tab. Backend fields remain `null` when an output was not requested or compilation stopped
-before that backend ran.
+The Playground requests Hull, Yul, Sonatina IR, and contract ABI JSON in one compile and exposes each
+textual output in its own tab. Backend fields remain `null` when an output was not requested,
+compilation stopped before that backend ran, or (for ABI) the workspace contains no contract.
 
 ## File key contract
 

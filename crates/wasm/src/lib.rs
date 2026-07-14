@@ -628,14 +628,22 @@ mod tests {
     }
 
     #[test]
-    fn clean_program_emits_hull_yul_and_sonatina() {
+    fn clean_program_emits_all_playground_outputs() {
         let result = compile_impl(input(
-            "contract Main {\n  public function main() -> word {\n    return 1;\n  }\n}\n",
+            concat!(
+                "import std.{*};\n",
+                "import std.dispatch.{*};\n",
+                "contract Main {\n",
+                "  public function answer() -> uint256 {\n",
+                "    return uint256(42);\n",
+                "  }\n",
+                "}\n",
+            ),
             Options {
                 emit_hull: true,
                 emit_yul: true,
                 emit_sonatina: true,
-                emit_abi: false,
+                emit_abi: true,
             },
         ));
 
@@ -648,6 +656,12 @@ mod tests {
                 .sonatina
                 .as_deref()
                 .is_some_and(|text| text.contains("target = \"evm-ethereum-osaka\""))
+        );
+        assert!(
+            result
+                .abi
+                .as_deref()
+                .is_some_and(|text| text.contains("\"name\": \"answer\""))
         );
     }
 
@@ -672,6 +686,36 @@ mod tests {
                 .as_deref()
                 .is_some_and(|text| !text.is_empty())
         );
+    }
+
+    #[test]
+    fn abi_only_emits_contract_json() {
+        let result = compile_impl(input(
+            concat!(
+                "import std.{*};\n",
+                "import std.dispatch.{*};\n",
+                "contract Main {\n",
+                "  public function answer() -> uint256 {\n",
+                "    return uint256(42);\n",
+                "  }\n",
+                "}\n",
+            ),
+            Options {
+                emit_hull: false,
+                emit_yul: false,
+                emit_sonatina: false,
+                emit_abi: true,
+            },
+        ));
+
+        assert!(result.success);
+        assert!(result.hull.is_none());
+        assert!(result.yul.is_none());
+        assert!(result.sonatina.is_none());
+        let abi = result.abi.expect("contract ABI output");
+        let parsed = serde_json::from_str::<serde_json::Value>(&abi).expect("valid ABI JSON");
+        assert_eq!(parsed[0]["name"], "answer");
+        assert_eq!(parsed[0]["type"], "function");
     }
 
     #[test]

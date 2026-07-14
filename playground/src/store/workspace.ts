@@ -9,7 +9,7 @@ export interface WorkspaceFile {
   content: string;
 }
 
-export type OutputTab = "hull" | "yul" | "sonatina" | "problems";
+export type OutputTab = "hull" | "yul" | "sonatina" | "abi" | "problems";
 export type ThemeMode = "light" | "dark";
 
 interface WorkspaceOptions {
@@ -269,7 +269,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     emitHull: true,
     emitYul: true,
     emitSonatina: true,
-    emitAbi: false,
+    emitAbi: true,
   },
 
   setContent(path, content) {

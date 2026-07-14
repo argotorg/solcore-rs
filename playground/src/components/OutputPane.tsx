@@ -37,6 +37,7 @@ function outputText(
   hull: string | null,
   yul: string | null,
   sonatina: string | null,
+  abi: string | null,
 ): string {
   if (tab === "hull") {
     return hull ?? "// Hull output will appear here after a successful compile.";
@@ -48,6 +49,10 @@ function outputText(
 
   if (tab === "sonatina") {
     return sonatina ?? "; Sonatina IR output will appear here after a successful compile.";
+  }
+
+  if (tab === "abi") {
+    return abi ?? "// ABI output will appear here after compiling a contract.";
   }
 
   return "";
@@ -96,6 +101,7 @@ export function OutputPane(): JSX.Element {
     result?.hull ?? null,
     result?.yul ?? null,
     result?.sonatina ?? null,
+    result?.abi ?? null,
   );
 
   return (
@@ -127,6 +133,15 @@ export function OutputPane(): JSX.Element {
           onClick={() => setOutputTab("sonatina")}
         >
           Sonatina IR
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={outputTab === "abi"}
+          className={`output-tab ${outputTab === "abi" ? "is-active" : ""}`}
+          onClick={() => setOutputTab("abi")}
+        >
+          ABI
         </button>
         <button
           type="button"
@@ -191,7 +206,7 @@ export function OutputPane(): JSX.Element {
           <Editor
             beforeMount={beforeMount}
             defaultLanguage="plaintext"
-            language="plaintext"
+            language={outputTab === "abi" ? "json" : "plaintext"}
             options={editorOptions}
             theme={monacoThemeFor(theme)}
             value={renderedOutput}
