@@ -344,7 +344,7 @@ impl<'db> InferCtx<'db> {
             },
             "add" | "mul" | "sub" | "div" | "sdiv" | "mod" | "smod" | "exp" | "signextend"
             | "lt" | "gt" | "slt" | "sgt" | "eq" | "and" | "or" | "xor" | "byte" | "shl"
-            | "shr" | "sar" => YulFunctionSig {
+            | "shr" | "sar" | "keccak256" => YulFunctionSig {
                 params: word_params(2),
                 ret: word.clone(),
             },

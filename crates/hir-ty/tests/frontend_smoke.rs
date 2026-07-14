@@ -56,18 +56,7 @@ struct StdSolcKnownDivergence {
     reason: &'static str,
 }
 
-macro_rules! std_known {
-    ($phase:ident, $prefix:literal, $reason:literal) => {
-        StdSolcKnownDivergence {
-            phase: DiagnosticPhase::$phase,
-            diagnostic_prefix: $prefix,
-            reason: $reason,
-        }
-    };
-}
-
-const STD_SOLC_KNOWN_DIVERGENCES: &[StdSolcKnownDivergence] =
-    &[std_known!(Typeck, "SC0211", "needs-std-yul-builtins")];
+const STD_SOLC_KNOWN_DIVERGENCES: &[StdSolcKnownDivergence] = &[];
 
 struct RunOutcome {
     unresolved_imports: Vec<String>,
