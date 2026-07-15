@@ -1,0 +1,38 @@
+[package]
+name = "solcore-fuzz"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.0"
+publish = false
+
+# Keep coverage-fuzzing dependencies out of the normal compiler workspace and
+# CI build. `cargo afl` is invoked with this manifest explicitly.
+[workspace]
+
+[dependencies]
+afl = "=0.18.2"
+compiler = { package = "solcore-compiler", path = "../crates/compiler" }
+hir = { package = "solcore-hir", path = "../crates/hir" }
+parser = { package = "solcore-parser", path = "../crates/parser" }
+salsa = "0.27"
+specialize = { package = "solcore-specialize", path = "../crates/specialize" }
+url = "2.5"
+vfs = { package = "solcore-vfs", path = "../crates/vfs" }
+
+[[bin]]
+name = "parser"
+path = "src/bin/parser.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "frontend"
+path = "src/bin/frontend.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "backend"
+path = "src/bin/backend.rs"
+test = false
+bench = false
