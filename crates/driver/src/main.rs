@@ -12,6 +12,7 @@ mod emit;
 mod modules;
 mod paths;
 mod pipeline;
+mod standard_json;
 mod trace;
 
 use std::{process, thread};

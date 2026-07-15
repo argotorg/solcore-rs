@@ -24,12 +24,16 @@ pub(crate) fn run_compiler() {
     let program = program.to_string_lossy();
     let args = match parse_args(raw_args.collect()) {
         Ok(ParsedArgs::Run(args)) => *args,
+        Ok(ParsedArgs::StandardJson) => {
+            crate::standard_json::run();
+            return;
+        }
         Ok(ParsedArgs::Help) => {
             print!("{}", help_text(program.as_ref()));
             return;
         }
         Ok(ParsedArgs::Version) => {
-            println!("solcore-driver {}", env!("CARGO_PKG_VERSION"));
+            println!("Version: solcore-rs {}", env!("CARGO_PKG_VERSION"));
             return;
         }
         Err(message) => {

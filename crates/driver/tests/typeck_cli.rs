@@ -42,7 +42,7 @@ fn cli_prints_help_and_version() {
     assert!(version.status.success(), "version failed");
     assert_eq!(
         String::from_utf8_lossy(&version.stdout),
-        format!("solcore-driver {}\n", env!("CARGO_PKG_VERSION"))
+        format!("Version: solcore-rs {}\n", env!("CARGO_PKG_VERSION"))
     );
 }
 

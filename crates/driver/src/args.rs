@@ -8,6 +8,7 @@ const DEFAULT_DIAGNOSTIC_WIDTH: usize = 100;
 
 pub(crate) enum ParsedArgs {
     Run(Box<Args>),
+    StandardJson,
     Help,
     Version,
 }
@@ -90,6 +91,13 @@ pub(crate) enum WarningPolicy {
 /// roots via `--external-lib NAME=PATH`, `--external-lib=NAME=PATH`, `--lib`,
 /// or `--lib=`.
 pub(crate) fn parse_args(args: Vec<OsString>) -> Result<ParsedArgs, String> {
+    if args.len() == 1 && args[0] == OsStr::new("--standard-json") {
+        return Ok(ParsedArgs::StandardJson);
+    }
+    if args.iter().any(|arg| arg == OsStr::new("--standard-json")) {
+        return Err("--standard-json must be used without other options".to_owned());
+    }
+
     let mut input = None;
     let mut main_root = None;
     let mut std_root = None;
@@ -626,6 +634,7 @@ Options:
   --warnings default|always|never|deny
                                       Configure compiler warning diagnostics (default: default)
   --trace                            Enable compact compiler tracing
+  --standard-json                    Read Solcore Standard JSON from stdin
   -h, --help                         Show this help text
   -V, --version                      Show version information
 

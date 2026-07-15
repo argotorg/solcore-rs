@@ -21,3 +21,5 @@ sonatina = { path = "../sonatina", package = "solcore-sonatina" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 yul = { path = "../yul", package = "solcore-yul" }
+vfs = { workspace = true }
+serde_json = "1"
