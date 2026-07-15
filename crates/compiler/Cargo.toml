@@ -11,6 +11,7 @@ hull = { path = "../hull", package = "solcore-hull" }
 nameres = { workspace = true }
 parser = { workspace = true }
 specialize = { path = "../specialize", package = "solcore-specialize" }
+tracing = { workspace = true }
 
 [dev-dependencies]
 salsa = { workspace = true }

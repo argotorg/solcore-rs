@@ -1414,6 +1414,7 @@ dependencies = [
  "solcore-parser",
  "solcore-specialize",
  "solcore-test-utils",
+ "tracing",
  "url",
 ]
 

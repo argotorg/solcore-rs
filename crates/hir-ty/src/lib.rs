@@ -71,20 +71,46 @@ pub trait Db: nameres::Db {}
 /// Full module resolution is forced before name-resolution and type-checking
 /// diagnostics are collected. The result is deterministically sorted and
 /// deduplicated for publication by drivers and analysis hosts.
+#[tracing::instrument(
+    target = "hir_ty::frontend",
+    level = "debug",
+    skip_all,
+    fields(entry = %entry.display(db))
+)]
 pub fn collect_frontend_diagnostics<'db>(
     db: &'db dyn Db,
     entry: nameres::ModuleId<'db>,
 ) -> Vec<hir::diag::Diagnostic> {
-    let _ = nameres::resolve_reachable_full(db, entry);
+    let graph = nameres::resolve_reachable_full(db, entry);
     let mut diagnostics = nameres::reachable_diagnostics(db, entry)
         .iter()
         .map(|diagnostic| diagnostic.lower(db))
         .collect::<Vec<_>>();
+    let nameres_diagnostics = diagnostics.len();
     diagnostics.extend(
         infer::reachable_typeck_diagnostics(db, entry)
             .iter()
             .map(|diagnostic| diagnostic.lower(db)),
     );
+    let typeck_diagnostics = diagnostics.len() - nameres_diagnostics;
     hir::diag::sort_dedup_rendered_diagnostics(db, &mut diagnostics);
+    let errors = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.level == hir::diag::DiagnosticLevel::Error)
+        .count();
+    let warnings = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.level == hir::diag::DiagnosticLevel::Warning)
+        .count();
+    tracing::debug!(
+        target: "hir_ty::frontend",
+        modules = graph.modules.len(),
+        nameres_diagnostics,
+        typeck_diagnostics,
+        diagnostics = diagnostics.len(),
+        errors,
+        warnings,
+        "frontend diagnostics collected"
+    );
     diagnostics
 }

@@ -36,47 +36,98 @@ pub struct CheckedHull<'db> {
 ///
 /// Callers must load the entry and all reachable source modules and reject
 /// frontend errors before invoking this backend pipeline.
+#[tracing::instrument(
+    target = "compiler::pipeline",
+    level = "debug",
+    skip_all,
+    fields(
+        file = %source_file_name(db, entry_file),
+        max_instantiations = options.max_instantiations,
+        max_depth = options.max_depth,
+        max_type_nodes = options.max_type_nodes,
+        eval_fuel = options.eval_fuel,
+    )
+)]
 pub fn build_checked_hull<'db>(
     db: &'db dyn hir_ty::Db,
     entry_file: SourceFile,
     options: specialize::SpecializeOptions,
 ) -> Result<CheckedHull<'db>, Vec<Diagnostic>> {
     let module = parser::parse_file_to_hir(db, entry_file).module(db);
-    let specialized = specialize::specialize_module(db, module, options);
+    let specialized = tracing::debug_span!(target: "compiler::pipeline", "specialize")
+        .in_scope(|| specialize::specialize_module(db, module, options));
     let mut diagnostics = Vec::new();
-    if append_stage_diagnostics(
+    let stage_start = diagnostics.len();
+    let has_errors = append_stage_diagnostics(
         &mut diagnostics,
         specialized
             .diagnostics
             .iter()
             .map(|diagnostic| diagnostic.lower(db)),
-    ) {
+    );
+    tracing::debug!(
+        target: "compiler::pipeline",
+        stage = "specialize",
+        mono_items = specialized.module.items.len(),
+        entry_points = specialized.module.entry_points.len(),
+        diagnostics = diagnostics.len() - stage_start,
+        has_errors,
+        "compiler stage completed"
+    );
+    if has_errors {
         normalize_backend_diagnostics(db, &mut diagnostics);
         return Err(diagnostics);
     }
 
-    let emitted = hull::emit_module(db, &specialized.module, hull::EmitOptions::default());
-    if append_stage_diagnostics(
+    let emitted = tracing::debug_span!(target: "compiler::pipeline", "hull_emit")
+        .in_scope(|| hull::emit_module(db, &specialized.module, hull::EmitOptions::default()));
+    let stage_start = diagnostics.len();
+    let has_errors = append_stage_diagnostics(
         &mut diagnostics,
         emitted
             .diagnostics
             .iter()
             .map(|diagnostic| diagnostic.lower(db)),
-    ) {
+    );
+    tracing::debug!(
+        target: "compiler::pipeline",
+        stage = "hull_emit",
+        functions = emitted.program.functions.len(),
+        objects = emitted.program.objects.len(),
+        diagnostics = diagnostics.len() - stage_start,
+        has_errors,
+        "compiler stage completed"
+    );
+    if has_errors {
         normalize_backend_diagnostics(db, &mut diagnostics);
         return Err(diagnostics);
     }
 
-    let checked = hull::check_program_with_db(db, &emitted.program);
-    if append_stage_diagnostics(
+    let checked = tracing::debug_span!(target: "compiler::pipeline", "hull_check")
+        .in_scope(|| hull::check_program_with_db(db, &emitted.program));
+    let stage_start = diagnostics.len();
+    let has_errors = append_stage_diagnostics(
         &mut diagnostics,
         checked.iter().map(|diagnostic| diagnostic.lower(db)),
-    ) {
+    );
+    tracing::debug!(
+        target: "compiler::pipeline",
+        stage = "hull_check",
+        diagnostics = diagnostics.len() - stage_start,
+        has_errors,
+        "compiler stage completed"
+    );
+    if has_errors {
         normalize_backend_diagnostics(db, &mut diagnostics);
         return Err(diagnostics);
     }
 
     normalize_backend_diagnostics(db, &mut diagnostics);
+    tracing::debug!(
+        target: "compiler::pipeline",
+        diagnostics = diagnostics.len(),
+        "backend pipeline completed"
+    );
 
     Ok(CheckedHull {
         program: emitted.program,
@@ -184,6 +235,12 @@ impl Error for AbiCollectionError {}
 /// earlier entry. Collection continues after errors so callers receive every
 /// missing source, render failure, and collision in one result. Callers are
 /// responsible for loading all reachable source modules before collection.
+#[tracing::instrument(
+    target = "compiler::abi",
+    level = "debug",
+    skip_all,
+    fields(entry = %entry.display(db), scope = ?scope)
+)]
 pub fn collect_contract_abis<'db>(
     db: &'db dyn hir_ty::Db,
     entry: ModuleId<'db>,
@@ -193,13 +250,25 @@ pub fn collect_contract_abis<'db>(
     let mut abis = BTreeMap::new();
     let mut owners = BTreeMap::<String, ModuleKey>::new();
     let mut errors = Vec::new();
+    let mut modules_scanned = 0usize;
+    let mut contracts = 0usize;
+    let mut missing_sources = 0usize;
+    let mut render_failures = 0usize;
+    let mut name_collisions = 0usize;
 
     for module_id in nameres::reachable_modules(db, entry) {
         if !scope.includes(module_id.library(db)) {
             continue;
         }
+        modules_scanned += 1;
         let module_key = module_id.key(db);
+        tracing::trace!(
+            target: "compiler::abi",
+            module = %module_id.display(db),
+            "scanning module for contract ABIs"
+        );
         let Some(file) = db.module_file(module_id) else {
+            missing_sources += 1;
             errors.push(AbiCollectionError::MissingModuleSource { module: module_key });
             continue;
         };
@@ -208,6 +277,7 @@ pub fn collect_contract_abis<'db>(
             let Item::ContractDef(contract) = *item else {
                 continue;
             };
+            contracts += 1;
             let name = contract
                 .def_id_value(db)
                 .name(db)
@@ -215,6 +285,7 @@ pub fn collect_contract_abis<'db>(
 
             let collided = match owners.entry(name.clone()) {
                 std::collections::btree_map::Entry::Occupied(owner) => {
+                    name_collisions += 1;
                     errors.push(AbiCollectionError::NameCollision {
                         name: name.clone(),
                         first_module: owner.get().clone(),
@@ -233,15 +304,29 @@ pub fn collect_contract_abis<'db>(
                     abis.insert(name, json);
                 }
                 Ok(_) => {}
-                Err(message) => errors.push(AbiCollectionError::Render {
-                    module: module_key.clone(),
-                    contract: name,
-                    message,
-                }),
+                Err(message) => {
+                    render_failures += 1;
+                    errors.push(AbiCollectionError::Render {
+                        module: module_key.clone(),
+                        contract: name,
+                        message,
+                    });
+                }
             }
         }
     }
 
+    tracing::debug!(
+        target: "compiler::abi",
+        modules_scanned,
+        contracts,
+        outputs = abis.len(),
+        errors = errors.len(),
+        missing_sources,
+        render_failures,
+        name_collisions,
+        "contract ABI collection completed"
+    );
     if errors.is_empty() {
         Ok(abis)
     } else {
@@ -257,6 +342,22 @@ fn display_module_key(key: &ModuleKey) -> String {
         LibraryId::Std => format!("std.{path}"),
         LibraryId::External(name) => format!("@{name}.{path}"),
     }
+}
+
+fn source_file_name(db: &dyn hir::Db, file: SourceFile) -> String {
+    let url = file.url(db);
+    if let Some(mut segments) = url.path_segments()
+        && let Some(last) = segments.next_back()
+        && !last.is_empty()
+    {
+        return last.to_owned();
+    }
+    url.as_str()
+        .rsplit('/')
+        .next()
+        .filter(|tail| !tail.is_empty())
+        .unwrap_or(url.as_str())
+        .to_owned()
 }
 
 #[cfg(test)]
