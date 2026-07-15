@@ -14,10 +14,10 @@ proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 smallvec = "1"
-sonatina-codegen = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
-sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
-sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
-sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "039a9f5" }
+sonatina-codegen = { git = "https://github.com/fe-lang/sonatina", rev = "55ca888" }
+sonatina-ir = { git = "https://github.com/fe-lang/sonatina", rev = "55ca888" }
+sonatina-triple = { git = "https://github.com/fe-lang/sonatina", rev = "55ca888" }
+sonatina-verifier = { git = "https://github.com/fe-lang/sonatina", rev = "55ca888" }
 parser = { path = "crates/parser", package = "solcore-parser" }
 hir = { path = "crates/hir", package = "solcore-hir" }
 nameres = { path = "crates/nameres", package = "solcore-nameres" }
