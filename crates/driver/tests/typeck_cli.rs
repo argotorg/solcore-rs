@@ -60,6 +60,57 @@ fn cli_reports_usage_errors_with_exit_code_2() {
 }
 
 #[test]
+fn cli_trace_reports_pipeline_summaries_without_verbose_intern_events() {
+    let dir = temp_dir("trace-pipeline");
+    let output_dir = dir.join("artifacts");
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let input = dir.join("main.solc");
+    fs::write(
+        &input,
+        "contract C { public function main() -> word { return 42; } }\n",
+    )
+    .expect("write source");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_solcore-driver"))
+        .arg("--trace")
+        .arg("--abi")
+        .arg("--emit-hull=main.hull")
+        .arg("--output-dir")
+        .arg(&output_dir)
+        .arg(&input)
+        .env_remove("RUST_LOG")
+        .output()
+        .expect("run traced driver");
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert!(
+        output.status.success(),
+        "traced driver failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    for summary in [
+        "reachable module loading completed",
+        "frontend diagnostics collected",
+        "contract ABI collection completed",
+        "compiler stage completed",
+        "backend pipeline completed",
+    ] {
+        assert!(stderr.contains(summary), "missing `{summary}`:\n{stderr}");
+    }
+    assert!(
+        !stderr.contains("DidValidateInternedValue"),
+        "default trace should omit high-volume intern validation events:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("salsa::function::execute"),
+        "default trace should not enable Salsa's internal target:\n{stderr}"
+    );
+}
+
+#[test]
 fn cli_prints_typeck_mismatch_diagnostic() {
     let stderr = driver_stderr("mismatch", "function main() -> word { return true; }\n");
 

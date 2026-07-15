@@ -619,7 +619,7 @@ pub fn infer_body<'db>(
     body: FuncBody<'db>,
     ctx: BodyTyContext<'db>,
 ) -> InferenceResult<'db> {
-    if tracing::enabled!(tracing::Level::DEBUG) {
+    if tracing::enabled!(target: "hir_ty::query", tracing::Level::DEBUG) {
         let def = body.def_id(db);
         let span = tracing::Span::current();
         span.record("file", field::display(file_url_tail(db, def.file(db))));

@@ -1,13 +1,13 @@
 use super::*;
 
 pub(super) fn record_module_fields<'db>(db: &'db dyn Db, module: Module<'db>) {
-    if tracing::enabled!(Level::DEBUG) {
+    if tracing::enabled!(target: "hir::query", Level::DEBUG) {
         record_def_fields(db, module.def_id_value(db));
     }
 }
 
 pub(super) fn record_body_fields<'db>(db: &'db dyn Db, body: FuncBody<'db>) {
-    if tracing::enabled!(Level::DEBUG) {
+    if tracing::enabled!(target: "hir::query", Level::DEBUG) {
         record_def_fields(db, body.def_id(db));
     }
 }

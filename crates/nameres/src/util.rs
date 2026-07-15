@@ -303,13 +303,13 @@ fn virtual_module_id_for_source_file<'db>(
 }
 
 pub(super) fn record_source_file_field(db: &dyn Db, file: SourceFile) {
-    if tracing::enabled!(Level::DEBUG) {
+    if tracing::enabled!(target: "nameres::query", Level::DEBUG) {
         tracing::Span::current().record("file", field::display(file_url_tail(db, file)));
     }
 }
 
 pub(super) fn record_module_field<'db>(db: &'db dyn Db, module: ModuleId<'db>) {
-    if tracing::enabled!(Level::DEBUG) {
+    if tracing::enabled!(target: "nameres::query", Level::DEBUG) {
         let span = tracing::Span::current();
         span.record("module", field::display(module.display(db)));
         if let Some(file) = db.module_file(module) {
@@ -319,7 +319,7 @@ pub(super) fn record_module_field<'db>(db: &'db dyn Db, module: ModuleId<'db>) {
 }
 
 pub(super) fn record_body_field<'db>(db: &'db dyn Db, body: FuncBody<'db>) {
-    if tracing::enabled!(Level::DEBUG) {
+    if tracing::enabled!(target: "nameres::query", Level::DEBUG) {
         let def = body.def_id(db);
         let span = tracing::Span::current();
         span.record("file", field::display(file_url_tail(db, def.file(db))));

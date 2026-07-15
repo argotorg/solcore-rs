@@ -5,15 +5,22 @@ use rustc_hash::FxHashSet;
 
 use crate::{db::DriverDb, paths::source_file_for_path};
 
+#[tracing::instrument(
+    target = "driver::modules",
+    level = "debug",
+    skip_all,
+    fields(entry = %module_key_display(&entry))
+)]
 pub(crate) fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) -> Result<(), String> {
     let mut queue = VecDeque::from([entry]);
     let mut visited = FxHashSet::default();
+    let mut loaded = 0usize;
 
     while let Some(key) = queue.pop_front() {
         if !visited.insert(key.clone()) {
             continue;
         }
-        tracing::debug!(
+        tracing::trace!(
             target: "driver::modules",
             module = %module_key_display(&key),
             "visiting reachable module"
@@ -66,6 +73,7 @@ pub(crate) fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) -> Res
                                 "loaded module source"
                             );
                             db.module_files.insert(target_key.clone(), file);
+                            loaded += 1;
                         }
                         Err(message) => {
                             return Err(format!(
@@ -90,6 +98,13 @@ pub(crate) fn load_reachable_modules(db: &mut DriverDb, entry: ModuleKey) -> Res
         }
     }
     db.sync_module_file_snapshot();
+    tracing::debug!(
+        target: "driver::modules",
+        visited = visited.len(),
+        loaded,
+        available = db.module_files.len(),
+        "reachable module loading completed"
+    );
     Ok(())
 }
 

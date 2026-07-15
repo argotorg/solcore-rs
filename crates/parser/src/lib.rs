@@ -79,7 +79,7 @@ pub fn parse_file_to_hir<'db>(db: &'db dyn Db, file: SourceFile) -> ParseHirOutp
 }
 
 fn record_source_file_field(db: &dyn Db, file: SourceFile) {
-    if tracing::enabled!(Level::DEBUG) {
+    if tracing::enabled!(target: "parser::query", Level::DEBUG) {
         tracing::Span::current().record("file", field::display(file_url_tail(db, file)));
     }
 }

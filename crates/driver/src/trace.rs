@@ -5,10 +5,12 @@ use tracing_subscriber::EnvFilter;
 const TRACE_DEFAULT_FILTER: &str = concat!(
     "warn,",
     "driver::modules=debug,",
+    "compiler::pipeline=debug,compiler::abi=debug,",
     "parser=debug,parser::query=debug,parser::recovery=trace,",
     "hir::query=debug,",
+    "hir_ty::frontend=debug,hir_ty::query=debug,",
     "nameres=debug,nameres::query=debug,nameres::imports=trace,nameres::fixpoint=debug,",
-    "salsa=debug"
+    "driver::salsa=debug"
 );
 
 pub(crate) fn init_tracing(trace: bool) {
@@ -34,7 +36,7 @@ pub(crate) fn emit_salsa_event(event: salsa::Event) {
     match event.kind {
         salsa::EventKind::WillExecute { database_key } => {
             tracing::debug!(
-                target: "salsa",
+                target: "driver::salsa",
                 event = "WillExecute",
                 thread = ?event.thread_id,
                 key = ?database_key,
@@ -43,7 +45,7 @@ pub(crate) fn emit_salsa_event(event: salsa::Event) {
         }
         salsa::EventKind::DidValidateMemoizedValue { database_key } => {
             tracing::debug!(
-                target: "salsa",
+                target: "driver::salsa",
                 event = "DidValidateMemoizedValue",
                 thread = ?event.thread_id,
                 key = ?database_key,
@@ -51,8 +53,8 @@ pub(crate) fn emit_salsa_event(event: salsa::Event) {
             );
         }
         salsa::EventKind::DidValidateInternedValue { key, revision } => {
-            tracing::debug!(
-                target: "salsa",
+            tracing::trace!(
+                target: "driver::salsa",
                 event = "DidValidateInternedValue",
                 thread = ?event.thread_id,
                 key = ?key,
@@ -65,7 +67,7 @@ pub(crate) fn emit_salsa_event(event: salsa::Event) {
             iteration,
         } => {
             tracing::debug!(
-                target: "salsa",
+                target: "driver::salsa",
                 event = "WillIterateCycle",
                 thread = ?event.thread_id,
                 key = ?database_key,
@@ -78,7 +80,7 @@ pub(crate) fn emit_salsa_event(event: salsa::Event) {
             iteration,
         } => {
             tracing::debug!(
-                target: "salsa",
+                target: "driver::salsa",
                 event = "DidFinalizeCycle",
                 thread = ?event.thread_id,
                 key = ?database_key,
@@ -88,7 +90,7 @@ pub(crate) fn emit_salsa_event(event: salsa::Event) {
         }
         kind => {
             tracing::trace!(
-                target: "salsa",
+                target: "driver::salsa",
                 thread = ?event.thread_id,
                 kind = ?kind,
                 "salsa event"

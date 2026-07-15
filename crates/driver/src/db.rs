@@ -29,11 +29,13 @@ pub(crate) struct DriverDb {
 impl DriverDb {
     pub(crate) fn new() -> Self {
         Self {
-            storage: salsa::Storage::new(if tracing::enabled!(target: "salsa", Level::DEBUG) {
-                Some(Box::new(emit_salsa_event))
-            } else {
-                None
-            }),
+            storage: salsa::Storage::new(
+                if tracing::enabled!(target: "driver::salsa", Level::DEBUG) {
+                    Some(Box::new(emit_salsa_event))
+                } else {
+                    None
+                },
+            ),
             module_tree: None,
             module_fs_snapshot: None,
             module_file_snapshot: None,

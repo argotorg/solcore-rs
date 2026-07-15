@@ -365,7 +365,7 @@ pub(crate) fn parse_body_statements<'src>(
     body_span: LexSpan,
 ) -> ParseOutput<ParsedStmt<'src>> {
     if body_span.end <= body_span.start + 2 {
-        tracing::debug!(
+        tracing::trace!(
             target: "parser",
             start = body_span.start,
             end = body_span.end,
@@ -405,7 +405,7 @@ pub(crate) fn parse_body_statements<'src>(
         .collect::<Vec<_>>()
         .parse(stream)
         .into_output_errors();
-    tracing::debug!(
+    tracing::trace!(
         target: "parser",
         start = body_span.start,
         end = body_span.end,
