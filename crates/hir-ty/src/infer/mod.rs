@@ -23,6 +23,10 @@ use hir::{
     nameres as hir_nameres,
     span::{Span, Spanned},
 };
+use matchcov::{
+    Arm as CoverageArm, ConstructorFields, ConstructorOracle, ConstructorSpace, Exhaustiveness,
+    Reachability, UnreachableReason, Witness as CoverageWitness,
+};
 use nameres::{LibraryId, ModuleId, module_id_from_key, module_key_for_path};
 use parser::{parse_diagnostics, parse_file_to_hir};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -36,9 +40,7 @@ use crate::{
     alias::{AliasError, AliasNormalizer, AliasType, AliasTypeKind},
     builtin_scheme, canonical_goal_with_allowed, class_method_type_vars,
     contract::{module_contract_diagnostics, module_manual_generic_abi_diagnostics},
-    coverage::{
-        self, BuiltinCoverageCtor, ConstructorOracle, CoverageCtor, CoveragePat, WitnessPat,
-    },
+    coverage::{BuiltinCoverageCtor, CoverageCtor, CoverageHead, CoveragePat},
     solver::{
         DerivedClauseKind, Evidence, Solution, Substitution, TraitEnvId, collect_evidence_vars,
         collect_pred_vars, collect_ty_vars, instance_soundness_diagnostics, solve_report,

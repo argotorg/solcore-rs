@@ -315,6 +315,48 @@ fn generated_dispatch_reuses_std_instance_facts_per_module() {
 }
 
 #[test]
+fn match_coverage_conservative_cases_emit_no_false_diagnostics() {
+    let repo = repo_root();
+    let corpus_root = repo.join("crates/parser/tests/fixtures/corpus");
+    let std_root = corpus_root.join("ok/std");
+
+    for fixture in [
+        "examples/cases/false-redundant-warning.solc",
+        "examples/comptime/match_labels.solc",
+        "examples/cases/polymatch-error.solc",
+    ] {
+        let entry = corpus_entry(&corpus_root, fixture);
+        let outcome = run_frontend_with_roots(
+            &entry.path,
+            &entry.main_root,
+            &std_root,
+            entry.external_roots,
+        );
+        assert!(
+            outcome.unresolved_imports.is_empty()
+                && outcome.frontend_error_diagnostics.is_empty()
+                && outcome.typeck_error_diagnostics.is_empty(),
+            "{fixture} failed before conservative coverage could be checked\n  unresolved imports: {:#?}\n  frontend errors: {:#?}\n  typeck errors: {:#?}",
+            outcome.unresolved_imports,
+            outcome.frontend_error_diagnostics,
+            outcome.typeck_error_diagnostics,
+        );
+
+        let coverage_diagnostics = outcome
+            .typeck_diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic.starts_with("SC0302:") || diagnostic.starts_with("SC0303:")
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            coverage_diagnostics.is_empty(),
+            "{fixture} emitted false coverage diagnostics: {coverage_diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
 fn reference_rejected_corpus_stays_rejected() {
     let repo = repo_root();
     let corpus_root = repo.join("crates/parser/tests/fixtures/corpus");

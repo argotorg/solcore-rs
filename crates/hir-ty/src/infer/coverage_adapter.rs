@@ -96,7 +96,7 @@ impl<'db> InferCtx<'db> {
             tys.push(ty);
         }
 
-        let mut matrix = Vec::with_capacity(arms.len());
+        let mut coverage_arms = Vec::with_capacity(arms.len());
         for arm in arms {
             let mut row = Vec::with_capacity(arm.pats.len());
             for (pat, ty) in arm.pats.iter().zip(tys.iter()) {
@@ -108,13 +108,19 @@ impl<'db> InferCtx<'db> {
                 };
                 row.push(coverage_pat);
             }
-            matrix.push(row);
+            coverage_arms.push(CoverageArm::new(row));
         }
 
-        let analysis = coverage::analyze(self, &tys, &matrix);
+        let Ok(analysis) = matchcov::analyze(self, &tys, &coverage_arms) else {
+            return;
+        };
 
-        for arm_index in analysis.unreachable {
-            if let Some(arm) = arms.get(arm_index) {
+        for (arm_index, reachability) in analysis.arms.iter().enumerate() {
+            if matches!(
+                reachability,
+                Reachability::Unreachable(UnreachableReason::Pattern)
+            ) && let Some(arm) = arms.get(arm_index)
+            {
                 self.diagnostics
                     .push(TypeckDiagnostic::UnreachableMatchArm {
                         span: self.label_span(arm.span(self.db)),
@@ -122,14 +128,14 @@ impl<'db> InferCtx<'db> {
             }
         }
 
-        if let Some(witness) = analysis.missing {
+        if let Exhaustiveness::NonExhaustive(witness) = &analysis.exhaustiveness {
             let span = scrutinee_exprs
                 .first()
                 .map(|expr| self.expr_label_span(body, *expr))
                 .unwrap_or_else(|| self.body_label_span(body));
             self.diagnostics.push(TypeckDiagnostic::NonExhaustiveMatch {
                 span,
-                missing: self.display_witness_row(&witness),
+                missing: self.display_witness_row(witness),
             });
         }
     }
@@ -154,16 +160,16 @@ impl<'db> InferCtx<'db> {
         }
         let kind = body.pats(self.db).get(pat_id).kind.clone();
         match kind {
-            PatKind::Wildcard => Some(CoveragePat::Wild),
+            PatKind::Wildcard => Some(CoveragePat::Wildcard),
             PatKind::Var(name) => {
                 let name = (*name.atom()).text(self.db).to_owned();
                 self.coverage_ctor_for_pat(body, pat_id, &name, &[], expected)
-                    .map(|(ctor, _)| CoveragePat::Ctor(ctor, Vec::new()))
-                    .or(Some(CoveragePat::Wild))
+                    .map(|(ctor, _)| CoveragePat::constant(CoverageHead::Ctor(ctor)))
+                    .or(Some(CoveragePat::Wildcard))
             }
             PatKind::Lit(LitKind::Error) => None,
             PatKind::Lit(lit) => Some(self.coverage_lit_pat(&lit, expected)),
-            PatKind::ComptimeLabel { .. } => Some(CoveragePat::Opaque),
+            PatKind::ComptimeLabel { .. } => None,
             PatKind::Tuple { elems } => {
                 let expected = self.coverage_ty(expected);
                 if let Some(field_tys) = self.product_field_tys(expected.clone())
@@ -188,7 +194,7 @@ impl<'db> InferCtx<'db> {
                 } else {
                     CoverageCtor::Builtin(BuiltinCoverageCtor::Tuple(fields.len()))
                 };
-                Some(CoveragePat::Ctor(ctor, fields))
+                Some(CoveragePat::constructor(CoverageHead::Ctor(ctor), fields))
             }
             PatKind::Ctor { head, args } => {
                 let name = (*head.name().atom()).text(self.db).to_owned();
@@ -201,7 +207,7 @@ impl<'db> InferCtx<'db> {
                 for (arg, field_ty) in args.into_iter().zip(field_tys) {
                     fields.push(self.coverage_pat(body, arg, field_ty)?);
                 }
-                Some(CoveragePat::Ctor(ctor, fields))
+                Some(CoveragePat::constructor(CoverageHead::Ctor(ctor), fields))
             }
             PatKind::Error => None,
         }
@@ -236,7 +242,7 @@ impl<'db> InferCtx<'db> {
         Some((ctor, field_tys))
     }
 
-    fn constructor_space(&mut self, ty: InferTy<'db>) -> Option<Vec<CoverageCtor<'db>>> {
+    fn finite_constructor_space(&mut self, ty: InferTy<'db>) -> Option<Vec<CoverageCtor<'db>>> {
         match self.coverage_ty(ty) {
             InferTy::Named {
                 ctor: TyCtor::Builtin(crate::BuiltinTyCtor::Bool),
@@ -295,10 +301,17 @@ impl<'db> InferCtx<'db> {
                     }),
                 ..
             } => {
-                let matches = self
-                    .user_ctor_heads(def)
-                    .into_iter()
-                    .filter(|ctor| matches!(ctor, CoverageCtor::User { name: ctor_name, .. } if ctor_name == name))
+                let info = self.adt_lookup(def)?;
+                let matches = info
+                    .adt
+                    .ctors(self.db)
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, ctor)| ident_text(self.db, &ctor.name) == name)
+                    .map(|(index, _)| CoverageCtor::User {
+                        ty: def,
+                        index: hir_nameres::CtorIndex::from_usize(index),
+                    })
                     .collect::<Vec<_>>();
                 match matches.as_slice() {
                     [ctor] => Some(ctor.clone()),
@@ -440,19 +453,13 @@ impl<'db> InferCtx<'db> {
         let Some(info) = self.adt_lookup(ty) else {
             return Vec::new();
         };
-        let ty_name = ty
-            .name(self.db)
-            .or_else(|| Some(ident_text(self.db, &info.adt.name_elem(self.db))))
-            .unwrap_or_else(|| "adt".to_owned());
         info.adt
             .ctors(self.db)
             .iter()
             .enumerate()
-            .map(|(index, ctor)| CoverageCtor::User {
+            .map(|(index, _)| CoverageCtor::User {
                 ty,
                 index: hir_nameres::CtorIndex::from_usize(index),
-                ty_name: ty_name.clone(),
-                name: ident_text(self.db, &ctor.name),
             })
             .collect()
     }
@@ -477,44 +484,67 @@ impl<'db> InferCtx<'db> {
         find_adt_info(self.db, hir_module, def)
     }
 
-    fn display_witness_row(&self, row: &[WitnessPat<'db>]) -> String {
+    fn display_witness_row(&self, row: &[CoverageWitness<CoverageHead<'db>>]) -> String {
         row.iter()
             .map(|pat| self.display_witness_pat(pat))
             .collect::<Vec<_>>()
             .join(", ")
     }
 
-    fn display_witness_pat(&self, pat: &WitnessPat<'db>) -> String {
+    fn display_witness_pat(&self, pat: &CoverageWitness<CoverageHead<'db>>) -> String {
         match pat {
-            WitnessPat::Wild => "_".to_owned(),
-            WitnessPat::Ctor(ctor, fields) => {
-                let fields = fields
+            CoverageWitness::Wildcard | CoverageWitness::OtherThan { .. } => "_".to_owned(),
+            CoverageWitness::Constructor { head, arguments } => {
+                let fields = arguments
                     .iter()
                     .map(|field| self.display_witness_pat(field))
                     .collect::<Vec<_>>();
-                match ctor {
-                    CoverageCtor::User { ty_name, name, .. } => {
-                        let name = format!("{ty_name}.{name}");
+                match head {
+                    CoverageHead::Literal(_) => "_".to_owned(),
+                    CoverageHead::Ctor(CoverageCtor::User { ty, index }) => {
+                        let name = self.display_user_ctor(*ty, *index);
                         self.display_ctor_pat(&name, &fields)
                     }
-                    CoverageCtor::Builtin(BuiltinCoverageCtor::True) => "true".to_owned(),
-                    CoverageCtor::Builtin(BuiltinCoverageCtor::False) => "false".to_owned(),
-                    CoverageCtor::Builtin(BuiltinCoverageCtor::Unit) => "()".to_owned(),
-                    CoverageCtor::Builtin(BuiltinCoverageCtor::Tuple(_)) => {
+                    CoverageHead::Ctor(CoverageCtor::Builtin(BuiltinCoverageCtor::True)) => {
+                        "true".to_owned()
+                    }
+                    CoverageHead::Ctor(CoverageCtor::Builtin(BuiltinCoverageCtor::False)) => {
+                        "false".to_owned()
+                    }
+                    CoverageHead::Ctor(CoverageCtor::Builtin(BuiltinCoverageCtor::Unit)) => {
+                        "()".to_owned()
+                    }
+                    CoverageHead::Ctor(CoverageCtor::Builtin(BuiltinCoverageCtor::Tuple(_))) => {
                         format!("({})", fields.join(", "))
                     }
-                    CoverageCtor::Builtin(BuiltinCoverageCtor::Pair) => {
+                    CoverageHead::Ctor(CoverageCtor::Builtin(BuiltinCoverageCtor::Pair)) => {
                         self.display_ctor_pat("pair", &fields)
                     }
-                    CoverageCtor::Builtin(BuiltinCoverageCtor::Inl) => {
+                    CoverageHead::Ctor(CoverageCtor::Builtin(BuiltinCoverageCtor::Inl)) => {
                         self.display_ctor_pat("inl", &fields)
                     }
-                    CoverageCtor::Builtin(BuiltinCoverageCtor::Inr) => {
+                    CoverageHead::Ctor(CoverageCtor::Builtin(BuiltinCoverageCtor::Inr)) => {
                         self.display_ctor_pat("inr", &fields)
                     }
                 }
             }
         }
+    }
+
+    fn display_user_ctor(&self, ty: DefId<'db>, index: hir_nameres::CtorIndex) -> String {
+        let ty_name = ty
+            .name(self.db)
+            .or_else(|| {
+                self.adt_lookup(ty)
+                    .map(|info| ident_text(self.db, &info.adt.name_elem(self.db)))
+            })
+            .unwrap_or_else(|| "adt".to_owned());
+        let ctor_name = self
+            .adt_lookup(ty)
+            .and_then(|info| info.adt.ctors(self.db).get(index.as_usize()).cloned())
+            .map(|ctor| ident_text(self.db, &ctor.name))
+            .unwrap_or_else(|| format!("constructor{}", index.as_u32()));
+        format!("{ty_name}.{ctor_name}")
     }
 
     fn display_ctor_pat(&self, name: &str, fields: &[String]) -> String {
@@ -536,17 +566,16 @@ impl<'db> InferCtx<'db> {
         field_tys: &[InferTy<'db>],
     ) -> Option<CoveragePat<'db>> {
         match elems {
-            [] => Some(CoveragePat::Ctor(
+            [] => Some(CoveragePat::constant(CoverageHead::Ctor(
                 CoverageCtor::Builtin(BuiltinCoverageCtor::Unit),
-                Vec::new(),
-            )),
+            ))),
             [elem] => self.coverage_pat(body, *elem, field_tys[0].clone()),
             [head, tail @ ..] => {
                 let head = self.coverage_pat(body, *head, field_tys[0].clone())?;
                 let tail = self.coverage_product_pat(body, tail, &field_tys[1..])?;
-                Some(CoveragePat::Ctor(
-                    CoverageCtor::Builtin(BuiltinCoverageCtor::Pair),
-                    vec![head, tail],
+                Some(CoveragePat::constructor(
+                    CoverageHead::Ctor(CoverageCtor::Builtin(BuiltinCoverageCtor::Pair)),
+                    [head, tail],
                 ))
             }
         }
@@ -563,8 +592,10 @@ impl<'db> InferCtx<'db> {
                 16,
                 expected,
             ),
-            LitKind::String(value) => CoveragePat::Literal(format!("string:{value}")),
-            LitKind::Error => CoveragePat::Opaque,
+            LitKind::String(value) => {
+                CoveragePat::constant(CoverageHead::Literal(format!("string:{value}")))
+            }
+            LitKind::Error => unreachable!("error literals are filtered before coverage analysis"),
         }
     }
 
@@ -589,7 +620,9 @@ impl<'db> InferCtx<'db> {
                 .map(|value| format!("integer:{value}")),
             _ => None,
         };
-        CoveragePat::Literal(canonical.unwrap_or_else(|| raw_numeric_literal_key(digits, radix)))
+        CoveragePat::constant(CoverageHead::Literal(
+            canonical.unwrap_or_else(|| raw_numeric_literal_key(digits, radix)),
+        ))
     }
 }
 
@@ -640,13 +673,55 @@ fn canonical_exact_unsigned_integer(digits: &str, radix: u32) -> Option<String> 
     BigUint::parse_bytes(digits.as_bytes(), radix).map(|value| value.to_str_radix(16))
 }
 
-impl<'db> ConstructorOracle<'db, InferTy<'db>> for InferCtx<'db> {
-    fn constructors(&mut self, ty: InferTy<'db>) -> Option<Vec<CoverageCtor<'db>>> {
-        self.constructor_space(ty)
+impl<'db> ConstructorOracle<InferTy<'db>, CoverageHead<'db>> for InferCtx<'db> {
+    type Error = ();
+
+    fn constructor_space(
+        &mut self,
+        ty: &InferTy<'db>,
+        seen: &[CoverageHead<'db>],
+    ) -> Result<ConstructorSpace<CoverageHead<'db>>, Self::Error> {
+        let ty = self.coverage_ty(ty.clone());
+        if let Some(constructors) = self.finite_constructor_space(ty.clone()) {
+            return Ok(ConstructorSpace::from_finite(
+                seen,
+                constructors.into_iter().map(CoverageHead::Ctor),
+            ));
+        }
+        match ty {
+            InferTy::Named {
+                ctor:
+                    TyCtor::Builtin(
+                        crate::BuiltinTyCtor::Word
+                        | crate::BuiltinTyCtor::String
+                        | crate::BuiltinTyCtor::Integer,
+                    ),
+                args,
+            } if args.is_empty() => Ok(ConstructorSpace::open()),
+            InferTy::Named {
+                ctor:
+                    TyCtor::User(crate::UserTyCtor {
+                        def,
+                        kind: crate::UserTyCtorKind::Adt,
+                    }),
+                ..
+            } if self.adt_lookup(def).is_some() => Ok(ConstructorSpace::open()),
+            _ => Err(()),
+        }
     }
 
-    fn fields(&mut self, ctor: &CoverageCtor<'db>, ty: InferTy<'db>) -> Option<Vec<InferTy<'db>>> {
-        self.field_tys_for_ctor(ctor, ty)
+    fn constructor_fields(
+        &mut self,
+        ty: &InferTy<'db>,
+        head: &CoverageHead<'db>,
+    ) -> Result<ConstructorFields<InferTy<'db>>, Self::Error> {
+        match head {
+            CoverageHead::Literal(_) => Ok(ConstructorFields::Fields(Vec::new())),
+            CoverageHead::Ctor(ctor) => self
+                .field_tys_for_ctor(ctor, ty.clone())
+                .map(ConstructorFields::Fields)
+                .ok_or(()),
+        }
     }
 }
 

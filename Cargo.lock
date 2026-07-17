@@ -851,6 +851,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "matchcov"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40459aafa8d5c25a61c1e176a86d8111b508927716c76f98e4f66a007eb6ee86"
+
+[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1460,6 +1466,7 @@ version = "0.1.0"
 dependencies = [
  "dir-test",
  "ena",
+ "matchcov",
  "num-bigint",
  "proptest",
  "rustc-hash",

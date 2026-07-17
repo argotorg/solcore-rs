@@ -9,6 +9,7 @@ annotate-snippets = "0.12"
 rustc-hash = "2"
 percent-encoding = "2.3"
 ena = "0.14"
+matchcov = "0.1.0"
 num-bigint = "0.4.6"
 proptest = { version = "1.11.0", default-features = false, features = ["std"] }
 tracing = "0.1"
