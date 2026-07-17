@@ -2,23 +2,15 @@
 //!
 //! Class and instance declarations are lowered into Horn-style `ProgramClause`s
 //! (`head :- conditions`) and interned into a per-module `TraitEnvId`. A class
-//! goal is canonicalized (`canonicalize_goal`) and discharged by a tabled
-//! resolution engine (`TabledEngine`).
+//! goal is canonicalized (`canonicalize_goal`) and discharged by the shared
+//! `tablesolve` proof-forest engine through Solcore's `TabledEngine` adapter.
 //!
-//! Tabling memoizes each distinct (canonicalized) subgoal in a `TableEntry`
-//! that records both the answers found so far and the consumers suspended on
-//! it:
-//!
-//! - a `GeneratorNode` resolves the program clauses applicable to a subgoal
-//!   (local givens, instances, superclass projections, and — only when nothing
-//!   else applies — default instances) one at a time, producing answers;
-//! - a `ConsumerNode` is a partially-solved clause suspended on one of its
-//!   condition subgoals; it resumes (`WorkItem::Resume`) once per answer that
-//!   subgoal yields, threading the answer's substitution and evidence;
-//! - `produce_answer` admits an answer only when an equal one is not already
-//!   tabled (the paper's answer-subsumption step, here exact-duplicate
-//!   elimination on the canonical substitution), so duplicate answers are never
-//!   stored or re-propagated.
+//! Solcore owns the language-specific operations exposed to `tablesolve`:
+//! canonicalization, clause selection and matching, answer rebasing, evidence
+//! construction, and answer identity. The library owns table allocation,
+//! generator/consumer scheduling, duplicate suppression, and fixpoint
+//! detection. Local givens, instances, superclass projections, and fallback
+//! defaults retain their existing resolution order.
 //!
 //! Because every subgoal is solved once and shared, diamond-shaped constraint
 //! graphs are resolved without the exponential blow-up of naive backtracking,

@@ -13,6 +13,7 @@ num-bigint = { workspace = true }
 parser = { workspace = true }
 rustc-hash = { workspace = true }
 salsa = { workspace = true }
+tablesolve = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

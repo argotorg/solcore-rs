@@ -1,3 +1,11 @@
+use std::convert::Infallible;
+
+use tablesolve::{
+    AnswerlessMode, Canonical as TabledCanonical, CanonicalizeResult, ClausesResult,
+    Config as TabledConfig, ContextTransition, Limits, ReportOptions, ResolutionContext,
+    Scheduling, Transition,
+};
+
 use super::*;
 
 // Tabled resolution can otherwise spend the entire work-item fuel budget on a
@@ -7,20 +15,15 @@ use super::*;
 // without charging rigid-head-prefiltered clauses against useful solver fuel.
 const MAX_TABLE_ENTRIES: usize = 1_024;
 
+/// Solcore's language adapter for the shared tabled-resolution engine.
 pub(super) struct TabledEngine<'db> {
     db: &'db dyn Db,
     env: TraitEnvId<'db>,
     /// Variables fixed by the surrounding checked body; never solved by the
     /// engine and tracked by stable origin across canonicalization.
     local_context_vars: Vec<RigidVar>,
-    /// Memo table: one `TableEntry` per canonicalized subgoal.
-    table: FxHashMap<TableKey<'db>, TableEntry<'db>>,
-    /// Pending generator/consumer work.
-    worklist: VecDeque<WorkItem<'db>>,
-    /// Remaining step budget; a backstop against unbounded type growth.
+    /// Work-item budget retained for compatibility with `SolverReport`.
     fuel: usize,
-    exhausted: bool,
-    stats: SolverStats,
 }
 
 impl<'db> TabledEngine<'db> {
@@ -39,88 +42,56 @@ impl<'db> TabledEngine<'db> {
             db,
             env,
             local_context_vars,
-            table: FxHashMap::default(),
-            worklist: VecDeque::new(),
             fuel,
-            exhausted: false,
-            stats: SolverStats::default(),
         }
     }
 
-    /// Drive the worklist to a fixpoint (or until fuel runs out) and return the
-    /// answers tabled for `goal`, mapped back into the caller's variables.
+    /// Resolve `goal` through `tablesolve`, mapping the generic engine report
+    /// back to the solver's existing result and counter types.
     pub(super) fn run(
         &mut self,
         goal: Pred<'db>,
         allowed_goal_vars: &FxHashSet<u32>,
     ) -> EngineResult<'db> {
-        let (top_key, top_renaming) =
-            canonicalize_goal(self.db, goal, allowed_goal_vars, &self.local_context_vars);
-        self.ensure_entry(top_key.clone());
-        while let Some(item) = self.worklist.pop_front() {
-            if self.exhausted || self.fuel == 0 {
-                self.exhausted = true;
-                break;
-            }
-            self.fuel -= 1;
-            match item {
-                WorkItem::Generator(node) => self.step_generator(node),
-                WorkItem::Resume { consumer, answer } => {
-                    self.resume_consumer(*consumer, answer);
-                }
-            }
-        }
-
-        self.stats.table_size = self.table.len();
-        let answers = self
-            .table
-            .get(&top_key)
-            .map(|entry| {
-                entry
-                    .answers
-                    .iter()
-                    .map(|answer| actualize_answer(self.db, answer, &top_renaming))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let root = SolverGoal {
+            pred: goal,
+            allowed_vars: allowed_goal_vars.clone(),
+            rigid_vars: self.local_context_vars.clone(),
+        };
+        let config = TabledConfig {
+            scheduling: Scheduling::Fair,
+            limits: Limits {
+                max_steps: Some(self.fuel),
+                max_tables: Some(MAX_TABLE_ENTRIES),
+                max_root_answers: None,
+                max_pending_work: None,
+            },
+        };
+        let report_options = ReportOptions::new().with_answerless(AnswerlessMode::Omit);
+        let report = tablesolve::solve_with_options(self, root, config, report_options)
+            .unwrap_or_else(|error: Infallible| match error {});
+        let stats = SolverStats {
+            table_size: report.stats.tables_created,
+            generator_steps: report.stats.clauses_tried,
+            answers_found: report.stats.answers_added,
+        };
+        let exhausted = report.resource_exhausted();
+        let fuel_remaining = self.fuel.saturating_sub(report.stats.steps);
         EngineResult {
-            answers,
-            exhausted: self.exhausted,
-            fuel_remaining: self.fuel,
-            stats: self.stats,
+            answers: report.answers,
+            exhausted,
+            fuel_remaining,
+            stats,
         }
-    }
-
-    /// Create a table slot for `key` and schedule its generator if the subgoal
-    /// is new. Re-entering an in-progress subgoal is a no-op — that is what
-    /// lets cyclic instance dependencies terminate.
-    fn ensure_entry(&mut self, key: TableKey<'db>) {
-        if self.table.contains_key(&key) {
-            return;
-        }
-        if self.table.len() >= MAX_TABLE_ENTRIES {
-            self.exhausted = true;
-            return;
-        }
-        let clauses = self.applicable_clauses(&key);
-        self.table.insert(key.clone(), TableEntry::default());
-        self.worklist.push_back(WorkItem::Generator(GeneratorNode {
-            key,
-            clauses,
-            next_clause: 0,
-        }));
     }
 
     /// Program clauses eligible for `key`, in resolution order: local givens,
-    /// then non-default instances, then superclass projections, and — only when
-    /// no non-default clause head can unify with the goal — default instances.
+    /// then non-default instances, then superclass projections, and — only
+    /// when no non-default clause head can unify with the goal — defaults.
     fn applicable_clauses(&self, key: &TableKey<'db>) -> Vec<ProgramClause<'db>> {
-        // Base clauses are prefiltered by rigid head shape. Bound variables
-        // and their correlations are deliberately ignored, while comptime is
-        // transparent, so this may retain impossible heads but never discards
-        // one that directed matching could accept. The same one-way shape
-        // check is safe for local givens that share fixed variables with the
-        // goal because variables are treated as wildcards rather than bound.
+        // This is a one-way prefilter. Variables and their correlations are
+        // deliberately ignored, so impossible clauses may remain but an
+        // applicable clause is never discarded.
         let head_can_apply = |clause: &ProgramClause<'db>| {
             pred_head_shapes_may_match(self.db, clause.head, key.pred)
         };
@@ -151,13 +122,9 @@ impl<'db> TabledEngine<'db> {
                 && head_can_apply(clause))
             .then_some(clause.clone())
         }));
+
         // Default selection is local to each tabled subgoal. A non-default
-        // instance may itself depend on a constraint that is discharged by a
-        // default instance, so suppressing defaults for the whole engine run
-        // would incorrectly reject such clauses. Check for a matching default
-        // first: `has_non_default_unifying_head` traverses the complete goal,
-        // which is prohibitively expensive for fuel-bounded, type-growing
-        // chains that have no default candidate at all.
+        // instance may itself rely on a condition discharged by a default.
         let default_clauses = base_clauses
             .iter()
             .filter(|clause| clause.origin.is_default() && head_can_apply(clause))
@@ -183,27 +150,72 @@ impl<'db> TabledEngine<'db> {
         })
     }
 
-    /// Try the generator's next clause against its subgoal, re-queuing the node
-    /// for the remaining clauses so clause resolution is interleaved fairly
-    /// with the rest of the worklist.
-    fn step_generator(&mut self, mut node: GeneratorNode<'db>) {
-        if node.next_clause >= node.clauses.len() {
-            return;
-        }
-        let key = node.key.clone();
-        let clause = node.clauses[node.next_clause].clone();
-        node.next_clause += 1;
-        if node.next_clause < node.clauses.len() {
-            self.worklist.push_back(WorkItem::Generator(node));
-        }
-        self.stats.generator_steps += 1;
-        self.try_clause(key, &clause);
+    fn suspend(&self, state: ConsumerState<'db>) -> ContextTransition<Self> {
+        let condition = state
+            .subst
+            .apply_pred(self.db, state.clause.conditions[state.next_condition]);
+        let goal = SolverGoal {
+            pred: condition,
+            allowed_vars: state.condition_vars.clone(),
+            rigid_vars: state.rigid_vars.clone(),
+        };
+        Transition::Suspend { goal, state }
     }
 
-    fn try_clause(&mut self, key: TableKey<'db>, clause: &ProgramClause<'db>) {
+    fn answer(
+        &self,
+        key: &TableKey<'db>,
+        clause: &InstantiatedClause<'db>,
+        subst: MatchSubst<'db>,
+        sub_evidence: Vec<Evidence<'db>>,
+    ) -> Answer<'db> {
+        let evidence = clause_evidence(self.db, key.pred, clause, &subst, sub_evidence);
+        Answer {
+            candidate: Candidate {
+                subst: subst.snapshot_for_vars(self.db, key.flex_count),
+                evidence: apply_evidence(self.db, evidence, &subst),
+            },
+            origin: clause.origin.clone(),
+        }
+    }
+}
+
+impl<'db> ResolutionContext for TabledEngine<'db> {
+    type Goal = SolverGoal<'db>;
+    type Key = TableKey<'db>;
+    type Clause = ProgramClause<'db>;
+    type Answer = Answer<'db>;
+    type AnswerKey = (Substitution<'db>, ClauseOrigin<'db>);
+    type Output = Answer<'db>;
+    type State = ConsumerState<'db>;
+    type Rebase = GoalRenaming;
+    type Error = Infallible;
+    type StopReason = Infallible;
+
+    fn canonicalize(
+        &mut self,
+        goal: Self::Goal,
+    ) -> CanonicalizeResult<Self::Key, Self::Rebase, Self::StopReason, Self::Error> {
+        let (key, rebase) =
+            canonicalize_goal(self.db, goal.pred, &goal.allowed_vars, &goal.rigid_vars);
+        Ok(TabledCanonical::new(key, rebase).into())
+    }
+
+    fn clauses(
+        &mut self,
+        key: &Self::Key,
+    ) -> ClausesResult<Self::Clause, Self::StopReason, Self::Error> {
+        Ok(self.applicable_clauses(key).into())
+    }
+
+    fn apply_clause(
+        &mut self,
+        key: &Self::Key,
+        clause: Self::Clause,
+    ) -> Result<ContextTransition<Self>, Self::Error> {
         let allowed_goal_vars = key.allowed_vars();
         let avoid_vars = key.canonical_context_vars();
-        let instantiated = instantiate_clause(self.db, clause, key.pred, &avoid_vars);
+        let instantiated = instantiate_clause(self.db, &clause, key.pred, &avoid_vars);
         let Some(subst) = match_head(
             self.db,
             instantiated.head,
@@ -211,144 +223,95 @@ impl<'db> TabledEngine<'db> {
             &instantiated.binder_vars,
             &allowed_goal_vars,
         ) else {
-            return;
+            return Ok(Transition::Reject);
         };
 
         let mut condition_vars = allowed_goal_vars;
         condition_vars.extend(instantiated.binder_vars.iter().copied());
         if instantiated.conditions.is_empty() {
-            self.emit_answer(key, &instantiated, subst, Vec::new());
-            return;
+            return Ok(Transition::Answer(self.answer(
+                key,
+                &instantiated,
+                subst,
+                Vec::new(),
+            )));
         }
 
-        let rigid_vars = key.rigid_vars().to_vec();
-        self.register_for_next_condition(ConsumerNode {
-            parent: key,
+        Ok(self.suspend(ConsumerState {
             clause: instantiated,
             subst,
             sub_evidence: Vec::new(),
             next_condition: 0,
             condition_vars,
-            rigid_vars,
-            waiting_renaming: GoalRenaming::default(),
-        });
+            rigid_vars: key.rigid_vars().to_vec(),
+        }))
     }
 
-    /// Suspend `consumer` on its current condition subgoal: ensure that
-    /// subgoal's table entry, register the consumer as a waiter, and
-    /// immediately resume it against any answers already tabled for it.
-    fn register_for_next_condition(&mut self, mut consumer: ConsumerNode<'db>) {
-        let condition = consumer
-            .subst
-            .apply_pred(self.db, consumer.clause.conditions[consumer.next_condition]);
-        let (key, renaming) = canonicalize_goal(
-            self.db,
-            condition,
-            &consumer.condition_vars,
-            &consumer.rigid_vars,
-        );
-        consumer.waiting_renaming = renaming;
-        self.ensure_entry(key.clone());
-        if self.exhausted {
-            return;
-        }
-        let answers = {
-            let entry = self
-                .table
-                .get_mut(&key)
-                .expect("table entry must exist after ensure_entry");
-            let answers = entry.answers.clone();
-            entry.consumers.push(consumer.clone());
-            answers
-        };
-        for answer in answers {
-            self.worklist.push_back(WorkItem::Resume {
-                consumer: Box::new(consumer.clone()),
-                answer,
-            });
-        }
-    }
-
-    /// Feed one `answer` for the current condition into `consumer`: merge the
-    /// answer's substitution and evidence, then either suspend on the next
-    /// condition or, if this was the last one, emit an answer for `parent`.
-    /// A substitution merge conflict silently drops this resumption.
-    fn resume_consumer(&mut self, mut consumer: ConsumerNode<'db>, answer: Answer<'db>) {
-        let alternative = actualize_answer(self.db, &answer, &consumer.waiting_renaming);
-        let mut combined_subst = consumer.subst.clone();
+    fn resume(
+        &mut self,
+        parent: &Self::Key,
+        mut state: Self::State,
+        answer: Self::Answer,
+        rebase: Self::Rebase,
+    ) -> Result<ContextTransition<Self>, Self::Error> {
+        let alternative = actualize_answer(self.db, &answer, &rebase);
+        let mut combined_subst = state.subst.clone();
         if !combined_subst.merge(self.db, &alternative.candidate.subst) {
-            return;
+            return Ok(Transition::Reject);
         }
         for (_, ty) in &alternative.candidate.subst.values {
-            collect_ty_vars(self.db, *ty, &mut consumer.condition_vars);
+            collect_ty_vars(self.db, *ty, &mut state.condition_vars);
         }
-        consumer.sub_evidence.push(apply_evidence(
+        state.sub_evidence.push(apply_evidence(
             self.db,
             alternative.candidate.evidence,
             &combined_subst,
         ));
-        consumer.subst = combined_subst;
-        consumer.next_condition += 1;
-        if consumer.next_condition < consumer.clause.conditions.len() {
-            self.register_for_next_condition(consumer);
+        state.subst = combined_subst;
+        state.next_condition += 1;
+        if state.next_condition < state.clause.conditions.len() {
+            Ok(self.suspend(state))
         } else {
-            self.emit_answer(
-                consumer.parent,
-                &consumer.clause,
-                consumer.subst,
-                consumer.sub_evidence,
-            );
+            Ok(Transition::Answer(self.answer(
+                parent,
+                &state.clause,
+                state.subst,
+                state.sub_evidence,
+            )))
         }
     }
 
-    fn emit_answer(
+    fn rebase_answer(
         &mut self,
-        key: TableKey<'db>,
-        clause: &InstantiatedClause<'db>,
-        subst: MatchSubst<'db>,
-        sub_evidence: Vec<Evidence<'db>>,
-    ) {
-        let evidence = clause_evidence(self.db, key.pred, clause, &subst, sub_evidence);
-        let candidate = Candidate {
-            subst: subst.snapshot_for_vars(self.db, key.flex_count),
-            evidence: apply_evidence(self.db, evidence, &subst),
-        };
-        self.produce_answer(
-            key,
-            Answer {
-                candidate,
-                origin: clause.origin.clone(),
-            },
-        );
+        answer: &Self::Answer,
+        rebase: &Self::Rebase,
+    ) -> Result<Self::Output, Self::Error> {
+        Ok(actualize_answer(self.db, answer, rebase))
     }
 
-    /// Admit `answer` to `key`'s table entry unless an equal answer is already
-    /// present (exact-duplicate elimination on the canonical substitution),
-    /// then resume every consumer currently waiting on `key` with it.
-    fn produce_answer(&mut self, key: TableKey<'db>, answer: Answer<'db>) {
-        let consumers = {
-            let entry = self
-                .table
-                .get_mut(&key)
-                .expect("answer produced for an existing table entry");
-            if entry
-                .answers
-                .iter()
-                .any(|existing| same_table_answer(existing, &answer))
-            {
-                return;
-            }
-            entry.answers.push(answer.clone());
-            self.stats.answers_found += 1;
-            entry.consumers.clone()
-        };
-        for consumer in consumers {
-            self.worklist.push_back(WorkItem::Resume {
-                consumer: Box::new(consumer),
-                answer: answer.clone(),
-            });
-        }
+    fn answer_key(&self, _key: &Self::Key, answer: &Self::Answer) -> Self::AnswerKey {
+        (answer.candidate.subst.clone(), answer.origin.clone())
     }
+}
+
+#[derive(Clone)]
+pub(super) struct SolverGoal<'db> {
+    pred: Pred<'db>,
+    allowed_vars: FxHashSet<u32>,
+    rigid_vars: Vec<RigidVar>,
+}
+
+/// A partially solved clause retained by `tablesolve` while it waits for the
+/// current condition's table to produce answers.
+#[derive(Clone)]
+pub(super) struct ConsumerState<'db> {
+    clause: InstantiatedClause<'db>,
+    subst: MatchSubst<'db>,
+    sub_evidence: Vec<Evidence<'db>>,
+    next_condition: usize,
+    condition_vars: FxHashSet<u32>,
+    /// Stable rigid origins mapped into the parent subgoal's coordinates.
+    rigid_vars: Vec<RigidVar>,
 }
 
 pub(super) struct EngineResult<'db> {
@@ -358,65 +321,12 @@ pub(super) struct EngineResult<'db> {
     pub(super) stats: SolverStats,
 }
 
-/// Memo slot for one subgoal: the answers found and the consumers waiting.
-#[derive(Default)]
-struct TableEntry<'db> {
-    /// Distinct (non-subsumed) answers produced for this subgoal so far.
-    answers: Vec<Answer<'db>>,
-    /// Consumers suspended on this subgoal, resumed as new answers arrive.
-    consumers: Vec<ConsumerNode<'db>>,
-}
-
-/// Produces answers for `key` by resolving its applicable clauses in turn.
-#[derive(Clone)]
-struct GeneratorNode<'db> {
-    key: TableKey<'db>,
-    clauses: Vec<ProgramClause<'db>>,
-    /// Index of the next clause to try; each step advances one clause.
-    next_clause: usize,
-}
-
-/// A partially-solved clause suspended on one of its condition subgoals.
-///
-/// It resumes once for every answer that `clause.conditions[next_condition]`
-/// yields, extending `subst`/`sub_evidence` and moving on to the next condition
-/// (or emitting an answer for `parent` when all conditions are discharged).
-#[derive(Clone)]
-struct ConsumerNode<'db> {
-    /// Subgoal this consumer will emit an answer for once fully solved.
-    parent: TableKey<'db>,
-    clause: InstantiatedClause<'db>,
-    subst: MatchSubst<'db>,
-    sub_evidence: Vec<Evidence<'db>>,
-    /// Index of the condition currently being solved.
-    next_condition: usize,
-    condition_vars: FxHashSet<u32>,
-    /// Stable rigid origins mapped into the parent subgoal's coordinates.
-    rigid_vars: Vec<RigidVar>,
-    /// Maps the current condition subgoal's canonical vars back to this clause.
-    waiting_renaming: GoalRenaming,
-}
-
-/// A unit of engine work: advance a generator, or feed one answer to a
-/// consumer.
-enum WorkItem<'db> {
-    Generator(GeneratorNode<'db>),
-    Resume {
-        consumer: Box<ConsumerNode<'db>>,
-        answer: Answer<'db>,
-    },
-}
-
 /// One answer for a subgoal: a substitution over its flex variables plus the
 /// evidence that discharges the goal, tagged with the clause it came from.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(super) struct Answer<'db> {
     pub(super) candidate: Candidate<'db>,
     pub(super) origin: ClauseOrigin<'db>,
-}
-
-fn same_table_answer<'db>(lhs: &Answer<'db>, rhs: &Answer<'db>) -> bool {
-    lhs.candidate.subst == rhs.candidate.subst && lhs.origin == rhs.origin
 }
 
 fn pred_head_shapes_may_match<'db>(db: &'db dyn Db, lhs: Pred<'db>, rhs: Pred<'db>) -> bool {
