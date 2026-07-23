@@ -399,13 +399,18 @@ pub fn lower_normalized_function_with_inferred_signature<'db>(
     if !body_map.diagnostics.is_empty() {
         return lowered;
     }
+    // An omitted return on a complete signature is unit. This legacy recovery
+    // path is reached only for missing parameter types, however, and using
+    // unit as an expectation would add cascading return/call diagnostics on
+    // top of SC0220. Infer the body return solely to keep recovery stable.
+    let recovery_ret = function.sig(db).ret.map(|_| lowered.ret);
     let pre_typeck_desugar = crate::pre_typeck_desugar_body_tree(db, body);
     let mut ctx = BodyTyContext::new(
         module,
         body_map.clone(),
         type_vars.to_vec(),
         lowered.params.clone(),
-        Some(lowered.ret),
+        recovery_ret,
     )
     .with_param_names(param_names(db, function.sig(db).params.atom()))
     .with_ret_display(
