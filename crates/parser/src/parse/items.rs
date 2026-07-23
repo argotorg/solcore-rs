@@ -175,7 +175,8 @@ where
     })
 }
 
-fn return_type_parser<'src, I>() -> impl Parser<'src, I, Option<ParsedTy<'src>>, ParserErr<'src>>
+fn return_type_parser<'src, I>()
+-> impl Parser<'src, I, Option<(ParsedTy<'src>, Vec<Option<SpannedStr<'src>>>)>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
@@ -184,9 +185,10 @@ where
         .rewind()
         .ignore_then(ident_parser())
         .then_ignore(just(Token::Colon))
-        .ignore_then(type_parser())
+        .then(type_parser())
+        .map(|(name, ty)| (Some(name), ty))
         .boxed();
-    let result = named.or(type_parser()).boxed();
+    let result = named.or(type_parser().map(|ty| (None, ty))).boxed();
     let results = result
         .separated_by(just(Token::Comma))
         .allow_trailing()
@@ -194,13 +196,15 @@ where
         .delimited_by(just(Token::LParen), just(Token::RParen))
         .map_with(|results, e| {
             let span = e.span();
-            match <[_; 1]>::try_from(results) {
+            let (names, results): (Vec<_>, Vec<_>) = results.into_iter().unzip();
+            let ty = match <[_; 1]>::try_from(results) {
                 Ok([result]) => result,
                 Err(elems) => ParsedTy {
                     span,
                     kind: ParsedTyKind::Tuple { elems },
                 },
-            }
+            };
+            (ty, names)
         });
 
     just(Token::Returns).ignore_then(results).or_not()
@@ -247,6 +251,10 @@ where
         .then(where_clause_parser())
         .map_with(
             |(((((name, type_vars), (params, params_span)), modifiers), ret), preds), e| {
+                let (ret, ret_names) = match ret {
+                    Some((ret, names)) => (Some(ret), names),
+                    None => (None, Vec::new()),
+                };
                 ParsedFuncSig {
                     span: e.span(),
                     type_vars,
@@ -257,6 +265,7 @@ where
                     params,
                     params_span,
                     ret,
+                    ret_names,
                 }
             },
         )
@@ -371,6 +380,7 @@ where
                     params,
                     params_span,
                     ret: None,
+                    ret_names: Vec::new(),
                 },
                 body_span,
             },
@@ -417,7 +427,7 @@ where
         .then(implicit_public_modifiers_parser(context, "fallback", true))
         .then(return_type_parser())
         .validate(|value, _, emitter| {
-            if let Some(ret_ty) = &value.1
+            if let Some((ret_ty, _)) = &value.1
                 && !parsed_ty_is_unit(ret_ty)
             {
                 emitter.emit(Rich::custom(
@@ -430,6 +440,10 @@ where
         .then(body_span_parser())
         .map_with(
             |((((name_span, (params, params_span)), modifiers), ret), body_span), e| {
+                let (ret, ret_names) = match ret {
+                    Some((ret, names)) => (Some(ret), names),
+                    None => (None, Vec::new()),
+                };
                 ParsedFunctionDef {
                     span: e.span(),
                     kind: FuncKind::Fallback,
@@ -444,6 +458,7 @@ where
                         params,
                         params_span,
                         ret,
+                        ret_names,
                     },
                     body_span,
                 }

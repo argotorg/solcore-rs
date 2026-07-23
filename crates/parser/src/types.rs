@@ -427,6 +427,12 @@ pub(crate) struct ParsedFuncSig<'src> {
     pub(crate) params_span: LexSpan,
     /// Optional return type.
     pub(crate) ret: Option<ParsedTy<'src>>,
+    /// Optional names for each top-level return value.
+    ///
+    /// The vector is parallel to the source-level `returns (...)` entries.
+    /// Unnamed entries are represented by `None`; an omitted `returns` clause
+    /// and an explicit empty result list both have no entries.
+    pub(crate) ret_names: Vec<Option<SpannedStr<'src>>>,
 }
 
 /// Parsed function definition with an unparsed body span.

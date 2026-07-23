@@ -11,7 +11,7 @@ use crate::{BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtor};
 /// ABI parameter or tuple component.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct AbiParam {
-    /// Parameter name. Outputs and tuple components use the empty name,
+    /// Parameter name. Unnamed outputs and tuple components use the empty name,
     /// matching the reference ABI emitter.
     pub name: String,
     /// Canonical ABI type.
@@ -186,6 +186,7 @@ pub(super) fn abi_params<'db>(
 
 pub(super) fn abi_outputs<'db>(
     db: &'db dyn Db,
+    names: &[String],
     ty: Ty<'db>,
     diagnostics: &mut Vec<Diagnostic>,
     span: hir::span::Span<'db>,
@@ -195,8 +196,14 @@ pub(super) fn abi_outputs<'db>(
     }
     flatten_output_ty(db, ty)
         .into_iter()
-        .map(
-            |ty| match abi_param(db, String::new(), ty, &mut Vec::new()) {
+        .enumerate()
+        .map(|(index, ty)| {
+            match abi_param(
+                db,
+                names.get(index).cloned().unwrap_or_default(),
+                ty,
+                &mut Vec::new(),
+            ) {
                 Ok(param) => param,
                 Err(err) => {
                     diagnostics.push(contract_diag_unsupported_abi_type(
@@ -206,13 +213,13 @@ pub(super) fn abi_outputs<'db>(
                         &err,
                     ));
                     AbiParam {
-                        name: String::new(),
+                        name: names.get(index).cloned().unwrap_or_default(),
                         ty: AbiType::Unsupported,
                         components: Vec::new(),
                     }
                 }
-            },
-        )
+            }
+        })
         .collect()
 }
 

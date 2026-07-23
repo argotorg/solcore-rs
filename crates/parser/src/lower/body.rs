@@ -62,6 +62,13 @@ impl<'db> BodyArenas<'db> {
     ) {
         (self.stmts, self.exprs, self.pats)
     }
+
+    pub(super) fn alloc_stmt(
+        &mut self,
+        stmt: function::Stmt<'db>,
+    ) -> hir::arena::Id<function::Stmt<'db>> {
+        self.stmts.alloc(stmt)
+    }
 }
 
 impl<'db, 'a> LoweringCtx<'db, 'a> {

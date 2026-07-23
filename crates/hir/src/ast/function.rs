@@ -42,6 +42,12 @@ pub struct FuncSig<'db> {
     pub params: SpannedElem<'db, Vec<FuncParam<'db>>>,
     /// Optional explicit return type.
     pub ret: Option<TypeRef<'db>>,
+    /// Optional source names for each top-level return value.
+    ///
+    /// This vector is parallel to the entries in the source `returns (...)`
+    /// list. `None` preserves an unnamed entry without conflating it with an
+    /// omitted or empty return list.
+    pub ret_names: Vec<Option<SpannedElem<'db, Ident<'db>>>>,
 }
 
 impl<'db> Spanned<'db> for FuncSig<'db> {

@@ -98,3 +98,17 @@ pub(super) fn param_names<'db>(db: &'db dyn HirDb, params: &[FuncParam<'db>]) ->
         })
         .collect()
 }
+
+pub(super) fn return_names<'db>(
+    db: &'db dyn HirDb,
+    sig: &hir::ast::function::FuncSig<'db>,
+) -> Vec<String> {
+    sig.ret_names
+        .iter()
+        .map(|name| {
+            name.as_ref()
+                .map(|name| ident_text(db, name))
+                .unwrap_or_default()
+        })
+        .collect()
+}

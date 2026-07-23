@@ -438,6 +438,7 @@ fn generated_constructor_init<'db>(
         name: spanned_ident(db, constructor.span, CONSTRUCTOR_INIT_NAME),
         params: SpannedElem::new(constructor.params.clone(), constructor.span),
         ret: Some(unit_ty(db, constructor.span)),
+        ret_names: Vec::new(),
     };
     let function = FunctionDef::new(
         db,
@@ -543,6 +544,7 @@ fn generated_constructor_copy_arguments<'db>(
         name: spanned_ident(db, constructor.span, CONSTRUCTOR_COPY_NAME),
         params: SpannedElem::new(Vec::new(), constructor.span),
         ret: Some(args_ty),
+        ret_names: Vec::new(),
     };
     let function = FunctionDef::new(
         db,
@@ -652,6 +654,7 @@ fn generated_deployment_main<'db>(
         name: spanned_ident(db, constructor.span, DEPLOYMENT_MAIN_NAME),
         params: SpannedElem::new(Vec::new(), constructor.span),
         ret: Some(unit_ty(db, constructor.span)),
+        ret_names: Vec::new(),
     };
     let function = FunctionDef::new(
         db,
@@ -1200,6 +1203,7 @@ fn sig_string_method<'db>(
             span,
         ),
         ret: Some(named_ty(db, span, "string", Vec::new())),
+        ret_names: Vec::new(),
     };
     FunctionDef::new(
         db,
@@ -1321,6 +1325,7 @@ fn generated_dispatch_main<'db>(
         name: spanned_ident(db, span, GENERATED_MAIN_NAME),
         params: SpannedElem::new(Vec::new(), span),
         ret: Some(unit_ty(db, span)),
+        ret_names: Vec::new(),
     };
     Some(FunctionDef::new(
         db,

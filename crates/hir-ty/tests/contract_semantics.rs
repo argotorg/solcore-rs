@@ -491,6 +491,44 @@ contract Sample {
 }
 
 #[test]
+fn named_return_typechecks_and_preserves_abi_output_names() {
+    let typeck_diagnostics = diagnostics(
+        r#"
+function named(x: word) returns (result: word) {
+  result = x;
+  return result;
+}
+"#,
+    );
+    assert!(
+        typeck_diagnostics.is_empty(),
+        "named result assignment and reference should typecheck: {typeck_diagnostics:?}"
+    );
+
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+contract Named {
+  function pair(x: word) public returns (first: word, bool) {
+    first = x;
+    return (first, true);
+  }
+}
+"#,
+    );
+    let contract = contract_named(&db, module, "Named");
+    let surface = contract_dispatch_surface(&db, module, contract);
+    assert_eq!(surface.methods.len(), 1);
+    assert_eq!(surface.methods[0].outputs.len(), 2);
+    assert_eq!(surface.methods[0].outputs[0].name, "first");
+    assert_eq!(surface.methods[0].outputs[1].name, "");
+
+    let abi = contract_abi_json(&db, module, contract).expect("ABI JSON");
+    assert!(abi.contains("\"name\": \"first\""), "{abi}");
+}
+
+#[test]
 fn abi_json_matches_reference_constructor_payable_and_tuple_outputs() {
     let db = TestDb::default();
     let module = parse_module(

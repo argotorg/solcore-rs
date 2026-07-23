@@ -415,6 +415,43 @@ fn let_initializer_resolves_before_binder_and_then_shadows() {
 }
 
 #[test]
+fn named_return_is_preserved_and_resolves_as_a_body_local() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "function named(x: word) returns (result: word) {
+           result = x;
+           return result;
+         }",
+    );
+    assert!(diagnostic_codes(&db, module).is_empty());
+
+    let function = top_function(&db, module, "named");
+    let sig = function.sig(&db);
+    assert_eq!(sig.ret_names.len(), 1);
+    assert_eq!(
+        sig.ret_names[0]
+            .as_ref()
+            .map(|name| (*name.atom()).text(&db)),
+        Some("result")
+    );
+
+    let body = function.body(&db).expect("body");
+    let map = body_map(&db, module, body);
+    let events = ident_resolutions(&db, body, &map);
+    let result_events = events
+        .iter()
+        .filter(|(name, _)| *name == "result")
+        .collect::<Vec<_>>();
+    assert_eq!(result_events.len(), 2);
+    assert!(
+        result_events
+            .iter()
+            .all(|(_, resolution)| matches!(resolution, Resolution::Local(_)))
+    );
+}
+
+#[test]
 fn explicit_blocks_scope_locals_but_for_body_lets_leak() {
     let db = TestDb::default();
     let module = parse_module(

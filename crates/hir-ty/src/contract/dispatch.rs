@@ -16,7 +16,7 @@ use super::{
     },
     helpers::{
         find_contract_by_def, function_type_vars, ident_text, lower_normalized_function,
-        param_names, resolve_contract_item_types, type_var_bindings,
+        param_names, resolve_contract_item_types, return_names, type_var_bindings,
     },
 };
 use crate::{ClassId, ClauseOrigin, Db, PredKind, TraitEnvId, TyCtor, TyKind, UserTyCtorKind};
@@ -417,7 +417,13 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                     &mut diagnostics,
                     sig.span,
                 );
-                let outputs = abi_outputs(db, lowered.ret, &mut diagnostics, sig.span);
+                let outputs = abi_outputs(
+                    db,
+                    &return_names(db, sig),
+                    lowered.ret,
+                    &mut diagnostics,
+                    sig.span,
+                );
                 let signature =
                     method_signature_string(db, &ident_text(db, &sig.name), &lowered.params)
                         .unwrap_or_else(|err| {
@@ -494,7 +500,13 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                     &mut diagnostics,
                     sig.span,
                 );
-                let outputs = abi_outputs(db, lowered.ret, &mut diagnostics, sig.span);
+                let outputs = abi_outputs(
+                    db,
+                    &return_names(db, sig),
+                    lowered.ret,
+                    &mut diagnostics,
+                    sig.span,
+                );
                 if !inputs.is_empty() || !outputs.is_empty() {
                     diagnostics.push(contract_diag_unsupported_fallback_shape(
                         db,

@@ -3,7 +3,7 @@ use hir::{
     ast::{Ident, function, item, ty},
     diag::{AnyDiagnostic, Diagnostic},
     input::SourceFile,
-    span::{AnchorId, SpannedElem},
+    span::{AnchorId, Spanned, SpannedElem},
 };
 
 use super::{
@@ -473,6 +473,11 @@ fn lower_func_sig<'db>(
     let ret = parsed
         .ret
         .map(|ret_ty| lower_type_ref(db, anchor, base_start, ret_ty));
+    let ret_names = parsed
+        .ret_names
+        .into_iter()
+        .map(|name| name.map(|name| lower_spanned_ident(db, anchor, base_start, name)))
+        .collect();
 
     let span = span_from_absolute(anchor, parsed.span, base_start);
     let public = parsed
@@ -490,7 +495,27 @@ fn lower_func_sig<'db>(
         name,
         params,
         ret,
+        ret_names,
     }
+}
+
+fn named_return_bindings<'db>(
+    db: &'db dyn Db,
+    sig: &function::FuncSig<'db>,
+) -> Vec<(SpannedElem<'db, Ident<'db>>, ty::TypeRef<'db>)> {
+    let result_tys = match (sig.ret, sig.ret_names.len()) {
+        (Some(ret), 1) => vec![ret],
+        (Some(ret), count) if count > 1 => match ret.kind(db) {
+            ty::TypeRefKind::Tuple { elems } if elems.atom().len() == count => elems.atom().clone(),
+            _ => vec![ret],
+        },
+        _ => Vec::new(),
+    };
+    sig.ret_names
+        .iter()
+        .zip(result_tys)
+        .filter_map(|(name, ty)| name.map(|name| (name, ty)))
+        .collect()
 }
 
 pub(super) fn lower_class<'db, 'src>(
@@ -575,9 +600,23 @@ pub(super) fn lower_function<'db>(
     let body_anchor = AnchorId::def(ctx.db, body_def);
 
     let mut arenas = BodyArenas::new();
-    let top_level_stmts = ctx.with_owner(body_def, |ctx| {
+    let mut top_level_stmts = named_return_bindings(ctx.db, &lowered_sig)
+        .into_iter()
+        .map(|(name, ty)| {
+            arenas.alloc_stmt(function::Stmt {
+                span: name.span(ctx.db),
+                kind: function::StmtKind::Let {
+                    comptime: None,
+                    name,
+                    ty: Some(ty),
+                    init: None,
+                },
+            })
+        })
+        .collect::<Vec<_>>();
+    top_level_stmts.extend(ctx.with_owner(body_def, |ctx| {
         ctx.lower_body_statements(body_anchor, body_span, &mut arenas)
-    });
+    }));
     let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
     let (stmts, exprs, pats) = arenas.into_parts();
     let body = function::FuncBody::new(
