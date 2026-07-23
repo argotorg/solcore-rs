@@ -22,11 +22,16 @@ Pass ``--classic-bare-imports`` when the input still uses Classic Solcore's
 ``import * as M from M;`` before the remaining syntax migration; without the
 flag, canonical Core ``import M;`` keeps its open-import meaning.
 
-By default, a same-name enum constructor is qualified from its declaration
-owner when its leaf has one unambiguous owner in the CLI input
-(``enum Point { Point(...) }`` makes term and pattern uses become
-``Point.Point(...)``).  A source that deliberately tests the rejected
-unqualified spelling can opt out of only that pass with this comment:
+Classic prefix-dot enum constructors are qualified from their declaration
+owner when the leaf has one unambiguous owner in the CLI input
+(``.Some(...)`` becomes ``Option.Some(...)``).  Ambiguous or unresolved
+prefix-dot constructors stop the migration with a diagnostic instead of
+silently producing source that the new parser rejects.
+
+Bare same-name constructors are also qualified when their owner is
+unambiguous (``enum Point { Point(...) }`` makes term and pattern uses become
+``Point.Point(...)``).  A source that deliberately tests a rejected
+unqualified spelling can opt out of these passes with this comment:
 
     // migrate-syntax: keep-unqualified-constructor
 
@@ -1044,6 +1049,55 @@ def _constructor_owner_candidates(
     return candidates, declarations
 
 
+def _dot_constructor_owner_candidates(
+    tokens: Sequence[Token],
+) -> dict[str, set[str]]:
+    """Collect every enum constructor owner for Classic ``.Leaf`` uses.
+
+    The older bare-constructor fallback intentionally considers only
+    same-name constructors because an ordinary bare call can otherwise be
+    indistinguishable from a function call.  A prefix dot is explicit Classic
+    constructor syntax, so all enum variants are safe candidates.  Structs
+    contribute their implicit same-name constructor as well.
+    """
+
+    candidates: dict[str, set[str]] = {}
+    for index, token in enumerate(tokens):
+        if (
+            token.text not in {"enum", "struct"}
+            or index + 1 >= len(tokens)
+            or tokens[index + 1].kind != "word"
+        ):
+            continue
+        owner = tokens[index + 1].text
+        cursor = index + 2
+        if cursor < len(tokens) and tokens[cursor].text == "<":
+            close = matching_index(tokens, cursor)
+            if close is None:
+                continue
+            cursor = close + 1
+        if cursor >= len(tokens) or tokens[cursor].text != "{":
+            continue
+        close = matching_index(tokens, cursor)
+        if close is None:
+            continue
+        if token.text == "struct":
+            candidates.setdefault(owner, set()).add(owner)
+            continue
+        for constructor in split_top(tokens[cursor + 1 : close], ","):
+            if not (
+                constructor
+                and constructor[0].kind == "word"
+                and (
+                    len(constructor) == 1
+                    or (len(constructor) > 1 and constructor[1].text == "(")
+                )
+            ):
+                continue
+            candidates.setdefault(constructor[0].text, set()).add(owner)
+    return candidates
+
+
 def _unique_constructor_owners(
     candidates: Mapping[str, set[str]],
 ) -> dict[str, str]:
@@ -1430,6 +1484,129 @@ def migrate_qualified_constructors(
         owner = constructor_owners[leaf]
         replacements[index] = (token.start, token.end, f"{owner}.{leaf}")
     return replace_spans(source, replacements.values())
+
+
+_LEGACY_DOT_PREFIX_SYMBOLS = {
+    "(",
+    "[",
+    "{",
+    ",",
+    ";",
+    ":",
+    "?",
+    "=",
+    ":=",
+    "=>",
+    "+",
+    "-",
+    "*",
+    "/",
+    "%",
+    "**",
+    "!",
+    "==",
+    "!=",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "&&",
+    "||",
+    "&",
+    "|",
+    "^",
+    "<<",
+    ">>",
+}
+_LEGACY_DOT_PREFIX_WORDS = {
+    "case",
+    "comptime",
+    "default",
+    "else",
+    "if",
+    "in",
+    "let",
+    "match",
+    "not",
+    "return",
+}
+
+
+def _is_legacy_dot_constructor(
+    tokens: Sequence[Token], dot_index: int
+) -> bool:
+    """Distinguish prefix ``.Leaf`` from member or qualified access."""
+
+    if (
+        tokens[dot_index].text != "."
+        or dot_index + 1 >= len(tokens)
+        or tokens[dot_index + 1].kind != "word"
+    ):
+        return False
+    if dot_index == 0:
+        return True
+    previous = tokens[dot_index - 1]
+    if previous.kind == "word":
+        return previous.text in _LEGACY_DOT_PREFIX_WORDS
+    return previous.text in _LEGACY_DOT_PREFIX_SYMBOLS
+
+
+def _source_line_column(source: str, offset: int) -> tuple[int, int]:
+    line = source.count("\n", 0, offset) + 1
+    line_start = source.rfind("\n", 0, offset) + 1
+    return line, offset - line_start + 1
+
+
+def migrate_legacy_dot_constructors(
+    source: str,
+    global_candidates: Mapping[str, set[str]] | None = None,
+) -> str:
+    """Rewrite Classic ``.Leaf`` constructors or reject unsafe guesses."""
+
+    if KEEP_UNQUALIFIED_CONSTRUCTOR_MARKER in source:
+        return source
+
+    tokens = significant(source)
+    local_candidates = _dot_constructor_owner_candidates(tokens)
+    candidates = {
+        leaf: set(owners)
+        for leaf, owners in (global_candidates or {}).items()
+    }
+    # A source-local declaration is more precise than the CLI-wide table,
+    # while two local declarations with the same leaf remain ambiguous.
+    candidates.update(
+        {leaf: set(owners) for leaf, owners in local_candidates.items()}
+    )
+
+    replacements: list[tuple[int, int, str]] = []
+    errors: list[str] = []
+    for index, token in enumerate(tokens):
+        if not _is_legacy_dot_constructor(tokens, index):
+            continue
+        leaf = tokens[index + 1].text
+        owners = candidates.get(leaf, set())
+        line, column = _source_line_column(source, token.start)
+        location = f"line {line}, column {column}"
+        if len(owners) == 1:
+            # Insert the owner before the original dot instead of replacing
+            # the whole span so comments between `.` and the leaf survive.
+            owner = next(iter(owners))
+            replacements.append((token.start, token.start, owner))
+        elif owners:
+            rendered = ", ".join(sorted(owners))
+            errors.append(
+                f"ambiguous legacy dot-constructor .{leaf} at {location}; "
+                f"possible owners: {rendered}; qualify it explicitly"
+            )
+        else:
+            errors.append(
+                f"cannot resolve legacy dot-constructor .{leaf} at "
+                f"{location}; include its enum declaration in this migration "
+                "invocation or qualify it explicitly"
+            )
+    if errors:
+        raise ValueError("; ".join(errors))
+    return replace_spans(source, replacements)
 
 
 def migrate_incomplete_data_heads(source: str) -> str:
@@ -2263,6 +2440,7 @@ def migrate_expression_annotations(source: str) -> str:
 def migrate_source(
     source: str,
     global_constructor_owners: Mapping[str, str] | None = None,
+    global_dot_constructor_candidates: Mapping[str, set[str]] | None = None,
 ) -> str:
     if KEEP_LEGACY_NEGATIVE_MARKER in source:
         return source
@@ -2290,6 +2468,9 @@ def migrate_source(
         before = source
         for migration in passes:
             source = migration(source)
+        source = migrate_legacy_dot_constructors(
+            source, global_dot_constructor_candidates
+        )
         source = migrate_qualified_constructors(
             source, global_constructor_owners
         )
@@ -2303,11 +2484,29 @@ def collect_global_constructor_owners(sources: Iterable[str]) -> dict[str, str]:
 
     merged: dict[str, set[str]] = {}
     for source in sources:
-        canonical = migrate_source(source)
+        canonical = migrate_incomplete_data_heads(
+            migrate_data_declarations(source)
+        )
         candidates, _ = _constructor_owner_candidates(significant(canonical))
         for leaf, owners in candidates.items():
             merged.setdefault(leaf, set()).update(owners)
     return _unique_constructor_owners(merged)
+
+
+def collect_global_dot_constructor_candidates(
+    sources: Iterable[str],
+) -> dict[str, set[str]]:
+    """Build the CLI-wide owner table used for Classic ``.Leaf`` syntax."""
+
+    merged: dict[str, set[str]] = {}
+    for source in sources:
+        canonical = migrate_incomplete_data_heads(
+            migrate_data_declarations(source)
+        )
+        candidates = _dot_constructor_owner_candidates(significant(canonical))
+        for leaf, owners in candidates.items():
+            merged.setdefault(leaf, set()).update(owners)
+    return merged
 
 
 def source_paths(arguments: Sequence[str]) -> list[Path]:
@@ -2519,6 +2718,7 @@ def _rust_solcore_literal_spans(source: str) -> list[tuple[int, int]]:
 def migrate_rust_strings(
     source: str,
     global_constructor_owners: Mapping[str, str] | None = None,
+    global_dot_constructor_candidates: Mapping[str, set[str]] | None = None,
     *,
     classic_bare_imports: bool = False,
 ) -> str:
@@ -2547,6 +2747,7 @@ def migrate_rust_strings(
         migrated = migrate_source(
             body,
             global_constructor_owners,
+            global_dot_constructor_candidates,
         )
         if decoded_body is not None and not is_raw:
             migrated = _encode_rust_ordinary_body(migrated)
@@ -2644,6 +2845,9 @@ def main() -> int:
         global_constructor_owners = collect_global_constructor_owners(
             owner_sources
         )
+        global_dot_constructor_candidates = (
+            collect_global_dot_constructor_candidates(owner_sources)
+        )
     except Exception as error:
         print(f"error: failed to build constructor owner table: {error}", file=sys.stderr)
         return 2
@@ -2660,10 +2864,15 @@ def main() -> int:
                 migrate_rust_strings(
                     original,
                     global_constructor_owners,
+                    global_dot_constructor_candidates,
                     classic_bare_imports=args.classic_bare_imports,
                 )
                 if args.rust_strings
-                else migrate_source(prepared, global_constructor_owners)
+                else migrate_source(
+                    prepared,
+                    global_constructor_owners,
+                    global_dot_constructor_candidates,
+                )
             )
         except Exception as error:  # Continue so a corpus run reports every issue.
             failures.append((path, error))
