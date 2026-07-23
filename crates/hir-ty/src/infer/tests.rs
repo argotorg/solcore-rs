@@ -510,14 +510,14 @@ fn unannotated_function_scheme_uses_inferred_polymorphic_body_type() {
 }
 
 #[test]
-fn contract_entry_dispatch_uses_inferred_return_type() {
+fn contract_entry_dispatch_uses_explicit_return_type() {
     let mut db = TestDb::default();
     let key = insert_module_source(
         &mut db,
         &["main"],
         r#"
 contract Answer {
-  function main() public {
+  function main() public returns (word) {
 return 42;
   }
 }
@@ -1069,7 +1069,7 @@ return 0;
 contract C {
   value: word;
 
-  function get() {
+  function get() returns (word) {
 let x = value;
 return x;
   }
@@ -1118,7 +1118,7 @@ return memory.memory(0);
 contract C {
   value: string;
 
-  function get() {
+  function get() returns (string memory) {
 let x = value;
 return x;
   }
