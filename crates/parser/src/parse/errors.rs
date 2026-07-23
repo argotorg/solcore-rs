@@ -139,6 +139,7 @@ fn token_spelling(token: &Token<'_>) -> &'static str {
         Token::Slash => "/",
         Token::Percent => "%",
         Token::Bang => "!",
+        Token::Tilde => "~",
         Token::Less => "<",
         Token::Greater => ">",
         Token::Eq => "=",

@@ -628,6 +628,36 @@ mod tests {
     }
 
     #[test]
+    fn solidity_pragma_accepts_tilde_version_constraint() {
+        let parsed = parse_supported_items("pragma solidity ~0.8.23;");
+        assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
+
+        assert!(matches!(
+            parsed.output.as_slice(),
+            [ParsedTopItem::Pragma {
+                name: ("solidity", _),
+                items,
+                ..
+            }] if items.is_empty()
+        ));
+    }
+
+    #[test]
+    fn tilde_outside_pragma_remains_a_parse_error() {
+        let source = "{ let value = ~; return 0; }";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+        let tilde = source.find('~').expect("tilde");
+
+        assert!(
+            parsed.errors.iter().any(|error| {
+                error.span.start == tilde && error.message.contains("unexpected `~`")
+            }),
+            "missing parser diagnostic for unsupported tilde expression: {:#?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
     fn plain_import_uses_unqualified_public_surface() {
         let parsed = parse_supported_items("import math.bits;");
         assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
@@ -809,13 +839,13 @@ mod tests {
 
     #[test]
     fn lexical_error_does_not_hide_independent_top_level_parse_error() {
-        let parsed = parse_supported_items("~\nfunction ok() {}\nfunction broken( { }\n");
+        let parsed = parse_supported_items("#\nfunction ok() {}\nfunction broken( { }\n");
 
         assert!(
             parsed
                 .errors
                 .iter()
-                .any(|error| error.message.contains("invalid token `~`")),
+                .any(|error| error.message.contains("invalid token `#`")),
             "missing lexer diagnostic: {:#?}",
             parsed.errors
         );
@@ -831,7 +861,7 @@ mod tests {
 
     #[test]
     fn lexical_error_does_not_hide_independent_body_parse_error() {
-        let source = "{\n~\nlet broken = ;\n}";
+        let source = "{\n#\nlet broken = ;\n}";
         let parsed = parse_body_statements(source, (0..source.len()).into());
 
         assert!(
@@ -846,7 +876,7 @@ mod tests {
 
     #[test]
     fn lexical_error_suppresses_only_its_adjacent_body_cascade() {
-        let source = "{ let value = ~; return 0; }";
+        let source = "{ let value = #; return 0; }";
         let parsed = parse_body_statements(source, (0..source.len()).into());
 
         let semicolon = source.find(';').expect("initializer semicolon");
@@ -874,7 +904,7 @@ mod tests {
 
     #[test]
     fn lexical_error_does_not_hide_a_next_line_top_level_error() {
-        let source = "~\n;\n";
+        let source = "#\n;\n";
         let parsed = parse_supported_items(source);
         let semicolon = source.find(';').expect("standalone semicolon");
 
@@ -882,7 +912,7 @@ mod tests {
             parsed
                 .errors
                 .iter()
-                .any(|error| error.message.contains("invalid token `~`")),
+                .any(|error| error.message.contains("invalid token `#`")),
             "missing lexer diagnostic: {:#?}",
             parsed.errors
         );

@@ -258,6 +258,9 @@ pub enum Token<'a> {
     /// `!`.
     #[token("!")]
     Bang,
+    /// `~`.
+    #[token("~")]
+    Tilde,
     /// `<`.
     #[token("<")]
     Less,
@@ -505,6 +508,7 @@ mod tests {
         assert_eq!(tokenize("/"), vec![Token::Slash]);
         assert_eq!(tokenize("%"), vec![Token::Percent]);
         assert_eq!(tokenize("!"), vec![Token::Bang]);
+        assert_eq!(tokenize("~"), vec![Token::Tilde]);
         assert_eq!(tokenize("<"), vec![Token::Less]);
         assert_eq!(tokenize(">"), vec![Token::Greater]);
         assert_eq!(tokenize("="), vec![Token::Eq]);
