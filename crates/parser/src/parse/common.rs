@@ -17,6 +17,12 @@ where
         Token::Fallback => "fallback",
     }
     .validate(|name, e, emitter| {
+        if matches!(name, "true" | "false" | "fallback") {
+            emitter.emit(Rich::custom(
+                e.span(),
+                format!("`{name}` is reserved and cannot be used as an identifier"),
+            ));
+        }
         if name.contains('-') {
             emitter.emit(Rich::custom(
                 e.span(),
@@ -25,6 +31,17 @@ where
         }
         (name, e.span())
     })
+}
+
+pub(super) fn bool_ident_parser<'src, I>() -> impl Parser<'src, I, SpannedStr<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    select! {
+        Token::True => "true",
+        Token::False => "false",
+    }
+    .map_with(|name, e| (name, e.span()))
 }
 
 pub(super) fn non_comptime_param_name_parser<'src, I>()

@@ -210,24 +210,6 @@ where
     just(Token::Returns).ignore_then(results).or_not()
 }
 
-fn function_name_parser<'src, I>() -> impl Parser<'src, I, SpannedStr<'src>, ParserErr<'src>>
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
-{
-    ident_parser().validate(|name, _, emitter| {
-        if matches!(name.0, "fallback" | "true" | "false") {
-            emitter.emit(Rich::custom(
-                name.1,
-                format!(
-                    "`{}` is reserved and cannot be used as a function name",
-                    name.0
-                ),
-            ));
-        }
-        name
-    })
-}
-
 fn signature_parser<'src, I>(
     context: FunctionContext,
 ) -> impl Parser<'src, I, ParsedFuncSig<'src>, ParserErr<'src>>
@@ -243,7 +225,7 @@ where
         .boxed();
 
     just(Token::Function)
-        .ignore_then(function_name_parser())
+        .ignore_then(ident_parser())
         .then(type_param_list_parser())
         .then(params)
         .then(function_modifiers_parser(context))

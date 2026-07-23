@@ -787,3 +787,63 @@ fn compound_assignments_lower_through_binary_operator_calls() {
         ));
     }
 }
+
+#[test]
+fn boolean_and_fallback_keywords_are_rejected_as_declaration_names() {
+    let db = TestDb::default();
+    let contexts = [
+        "function {keyword}() {}",
+        "function f({keyword}: word) {}",
+        "function f() returns ({keyword}: word) {}",
+        "function f() { let {keyword}: word = 0; }",
+        "struct {keyword} { value: word; }",
+        "struct S { {keyword}: word; }",
+        "enum E { {keyword} }",
+        "type {keyword} is word;",
+        "contract {keyword} {}",
+        "contract C { {keyword}: word; }",
+        "alias A<{keyword}> = word;",
+        "import * as {keyword} from source;",
+    ];
+
+    for keyword in ["true", "false", "fallback"] {
+        let expected = format!("`{keyword}` is reserved and cannot be used as an identifier");
+        for (index, context) in contexts.iter().enumerate() {
+            let source = context.replace("{keyword}", keyword);
+            let file = source_file(&db, &format!("reserved-{keyword}-{index}"), &source);
+            let messages = diagnostics(&db, file)
+                .into_iter()
+                .map(|diagnostic| diagnostic.message)
+                .collect::<Vec<_>>();
+            assert!(
+                messages.iter().any(|message| message == &expected),
+                "missing reserved-name diagnostic for `{source}`: {messages:#?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn boolean_values_patterns_and_special_fallback_remain_valid() {
+    let db = TestDb::default();
+    let source = r#"
+contract Keywords {
+  fallback() external {}
+}
+
+function negate(value: bool) returns (bool) {
+  match (value) {
+    case true { return false; }
+    case false { return true; }
+  }
+}
+
+function fallbackHandler() {}
+"#;
+    let file = source_file(&db, "reserved-keyword-positive", source);
+    let diagnostics = diagnostics(&db, file);
+    assert!(
+        diagnostics.is_empty(),
+        "keyword literals and the special fallback declaration should parse: {diagnostics:#?}"
+    );
+}

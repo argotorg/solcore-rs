@@ -162,11 +162,19 @@ where
             })
             .boxed();
 
+        let bool_ident = bool_ident_parser()
+            .map(|ident| ParsedExpr {
+                span: ident.1,
+                kind: ParsedExprKind::Ident(ident),
+            })
+            .boxed();
+
         let atom = parsed_lit_parser()
             .map_with(|lit, e| ParsedExpr {
                 span: e.span(),
                 kind: ParsedExprKind::Lit(lit),
             })
+            .or(bool_ident)
             .or(ident_parser().map(|ident| ParsedExpr {
                 span: ident.1,
                 kind: ParsedExprKind::Ident(ident),
@@ -444,6 +452,13 @@ where
             })
             .boxed();
 
+        let bool_pat = bool_ident_parser()
+            .map(|name| ParsedPat {
+                span: name.1,
+                kind: ParsedPatKind::Var(name),
+            })
+            .boxed();
+
         let ctor_or_var = qualified_ident_parser()
             .then(ctor_args)
             .map_with(|(mut path, args), e| {
@@ -496,6 +511,7 @@ where
             .or(lit_pat)
             .or(tuple_or_paren_pat)
             .or(comptime_pat)
+            .or(bool_pat)
             .or(ctor_or_var)
             .recover_with(via_parser(recovery))
     });

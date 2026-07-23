@@ -337,6 +337,9 @@ fn is_reserved_keyword(token: &Token<'_>) -> bool {
             | Token::Lam
             | Token::Assembly
             | Token::Pragma
+            | Token::True
+            | Token::False
+            | Token::Fallback
     )
 }
 
