@@ -1,4 +1,5 @@
 use chumsky::{input::ValueInput, prelude::*};
+use hir::ast::{function::FunctionMutability, ty::FunctionTypeVisibility};
 
 use super::common::*;
 use crate::{lexer::Token, types::*};
@@ -96,15 +97,19 @@ where
             )
             .boxed();
 
-        let function_visibility = choice((just(Token::Internal), just(Token::External)))
-            .ignored()
-            .or_not()
-            .boxed();
-        let function_mutability =
-            choice((just(Token::Pure), just(Token::View), just(Token::Payable)))
-                .ignored()
-                .or_not()
-                .boxed();
+        let function_visibility = choice((
+            just(Token::Internal).map_with(|_, e| (FunctionTypeVisibility::Internal, e.span())),
+            just(Token::External).map_with(|_, e| (FunctionTypeVisibility::External, e.span())),
+        ))
+        .or_not()
+        .boxed();
+        let function_mutability = choice((
+            just(Token::Pure).map_with(|_, e| (FunctionMutability::Pure, e.span())),
+            just(Token::View).map_with(|_, e| (FunctionMutability::View, e.span())),
+            just(Token::Payable).map_with(|_, e| (FunctionMutability::Payable, e.span())),
+        ))
+        .or_not()
+        .boxed();
         let function_returns = just(Token::Returns)
             .ignore_then(grouped_types.clone())
             .or_not()
@@ -115,7 +120,7 @@ where
             .then(function_mutability)
             .then(function_returns)
             .map_with(
-                |((((params, params_span), _visibility), _mutability), returns), e| {
+                |((((params, params_span), visibility), mutability), returns), e| {
                     let function_span: LexSpan = e.span();
                     let ret = match returns {
                         Some((elems, span)) => match <[_; 1]>::try_from(elems) {
@@ -138,6 +143,8 @@ where
                         kind: ParsedTyKind::Fn {
                             params,
                             params_span,
+                            visibility,
+                            mutability,
                             ret: Box::new(ret),
                         },
                     }

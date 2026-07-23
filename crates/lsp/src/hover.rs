@@ -206,6 +206,7 @@ fn definition_hover<'db>(db: &'db vfs::AnalysisHost, def: DefId<'db>) -> Option<
                                 &found.type_var_names,
                                 scheme,
                                 Some(sig),
+                                None,
                             )
                         },
                     )
@@ -512,13 +513,37 @@ fn constructor_hover<'db>(
     let name = ctor.name.atom().text(db);
     let module_id = nameres::module_id_for_source_file(db, ty.file(db))?;
     let scheme = hir_ty::infer::adt_ctor_scheme(db, module_id, ty, index)?;
+    let source_params = adt_ctor_source_params(db, ctor);
     Some(HoverInfo {
         code: format!(
             "constructor {}",
-            format_callable_scheme(db, name, &[], &found.type_var_names, scheme, None)
+            format_callable_scheme(
+                db,
+                name,
+                &[],
+                &found.type_var_names,
+                scheme,
+                None,
+                Some(&source_params),
+            )
         ),
         documentation: comments_markdown(found.adt.ctor_leading_comments(db, index.as_usize())?),
     })
+}
+
+fn adt_ctor_source_params<'db>(
+    db: &'db dyn hir_ty::Db,
+    ctor: &hir::ast::item::AdtCtor<'db>,
+) -> Vec<TypeRef<'db>> {
+    let fields = *ctor.fields.atom();
+    match ctor.field_count {
+        0 => Vec::new(),
+        1 => vec![fields],
+        _ => match fields.kind(db) {
+            TypeRefKind::Tuple { elems } => elems.atom().clone(),
+            _ => vec![fields],
+        },
+    }
 }
 
 fn field_hover<'db>(
@@ -530,14 +555,11 @@ fn field_hover<'db>(
         return None;
     };
     let field_def = contract.fields(db).get(field.index.as_usize())?;
-    let module_id = nameres::module_id_for_source_file(db, field.contract.file(db))?;
-    let scheme = hir_ty::infer::field_scheme(db, module_id, field)?;
-    let type_var_names = ident_names(db, contract.ty_param_elems(db));
     Some(HoverInfo {
         code: format!(
             "{}: {}",
             field_def.name().atom().text(db),
-            display_scheme_type(db, scheme, &type_var_names)
+            display_type_ref(db, field_def.ty())
         ),
         documentation: comments_markdown(
             contract.field_leading_comments(db, field.index.as_usize())?,
@@ -572,6 +594,7 @@ fn class_method_hover<'db>(
                 &type_var_names,
                 scheme,
                 Some(sig),
+                None,
             )
         ),
         documentation: comments_markdown(class_def.method_leading_comments(db, index)?),
@@ -617,9 +640,8 @@ fn parameter_hover<'db>(
         }
         FuncParam::Error { .. } => return None,
     };
-    let ty = inferred
-        .map(|ty| display_ty(db, ty, &analysis.type_var_names))
-        .or(annotated)
+    let ty = annotated
+        .or_else(|| inferred.map(|ty| display_ty(db, ty, &analysis.type_var_names)))
         .unwrap_or_else(|| "_".to_owned());
     let prefix = if comptime { "comptime " } else { "" };
     Some(HoverInfo {
@@ -659,11 +681,14 @@ fn local_hover<'db>(
             else {
                 return None;
             };
-            let ty = analysis
-                .inference
-                .let_ty(*body, *stmt)
-                .map(|ty| display_ty(db, ty, &analysis.type_var_names))
-                .or_else(|| annotation.map(|ty| display_type_ref(db, ty)))
+            let ty = annotation
+                .map(|ty| display_type_ref(db, ty))
+                .or_else(|| {
+                    analysis
+                        .inference
+                        .let_ty(*body, *stmt)
+                        .map(|ty| display_ty(db, ty, &analysis.type_var_names))
+                })
                 .unwrap_or_else(|| "_".to_owned());
             let prefix = if comptime.is_some() { "comptime " } else { "" };
             Some(HoverInfo {
@@ -676,10 +701,14 @@ fn local_hover<'db>(
             let PatKind::Var(name) = &pattern.kind else {
                 return None;
             };
-            let ty = analysis
-                .inference
-                .pat_ty(*body, *pat)
-                .map(|ty| display_ty(db, ty, &analysis.type_var_names))
+            let ty = source_type_for_pattern_binding(db, *body, *pat)
+                .map(|ty| display_type_ref(db, ty))
+                .or_else(|| {
+                    analysis
+                        .inference
+                        .pat_ty(*body, *pat)
+                        .map(|ty| display_ty(db, ty, &analysis.type_var_names))
+                })
                 .unwrap_or_else(|| "_".to_owned());
             Some(HoverInfo {
                 code: format!("{}: {ty}", name.atom().text(db)),
@@ -688,6 +717,66 @@ fn local_hover<'db>(
         }
         LocalBinding::TypeVar(_) => unreachable!("handled above"),
     }
+}
+
+fn source_type_for_pattern_binding<'db>(
+    db: &'db dyn hir_ty::Db,
+    body: FuncBody<'db>,
+    target: hir::arena::Id<hir::ast::function::Pat<'db>>,
+) -> Option<TypeRef<'db>> {
+    for (_, statement) in body.stmts(db).iter() {
+        let StmtKind::Match { scrutinees, arms } = &statement.kind else {
+            continue;
+        };
+        for arm in arms {
+            for (root, scrutinee) in arm.pats.iter().zip(scrutinees) {
+                let Some(path) = tuple_pattern_path(db, body, *root, target) else {
+                    continue;
+                };
+                let ExprKind::TypeAscription { ty, .. } = &body.exprs(db).get(*scrutinee).kind
+                else {
+                    continue;
+                };
+                return tuple_type_at_path(db, *ty, &path);
+            }
+        }
+    }
+    None
+}
+
+fn tuple_pattern_path<'db>(
+    db: &'db dyn hir_ty::Db,
+    body: FuncBody<'db>,
+    current: hir::arena::Id<hir::ast::function::Pat<'db>>,
+    target: hir::arena::Id<hir::ast::function::Pat<'db>>,
+) -> Option<Vec<usize>> {
+    if current == target {
+        return Some(Vec::new());
+    }
+    let PatKind::Tuple { elems } = &body.pats(db).get(current).kind else {
+        return None;
+    };
+    for (index, child) in elems.iter().enumerate() {
+        if let Some(mut path) = tuple_pattern_path(db, body, *child, target) {
+            path.insert(0, index);
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn tuple_type_at_path<'db>(
+    db: &'db dyn hir_ty::Db,
+    mut ty: TypeRef<'db>,
+    path: &[usize],
+) -> Option<TypeRef<'db>> {
+    for index in path {
+        let TypeRefKind::Tuple { elems } = ty.kind(db) else {
+            return None;
+        };
+        ty = *elems.atom().get(*index)?;
+    }
+    Some(ty)
 }
 
 fn root_parameter_ty<'db>(
@@ -911,6 +1000,7 @@ fn format_callable_scheme<'db>(
     type_var_names: &[String],
     scheme: TyScheme<'db>,
     source_sig: Option<&FuncSig<'db>>,
+    source_params: Option<&[TypeRef<'db>]>,
 ) -> String {
     let ty = scheme.body(db).ty(db);
     let (params, ret) = match ty.kind(db) {
@@ -921,7 +1011,25 @@ fn format_callable_scheme<'db>(
         .iter()
         .enumerate()
         .map(|(index, param)| {
-            let ty = display_ty(db, *param, type_var_names);
+            let source_param = source_sig.and_then(|sig| sig.params.atom().get(index));
+            let ty = source_param
+                .and_then(|param| match param {
+                    FuncParam::Typed { ty, .. } => Some(display_type_ref(db, *ty)),
+                    FuncParam::Untyped { .. } | FuncParam::Error { .. } => None,
+                })
+                .or_else(|| {
+                    source_params
+                        .and_then(|params| params.get(index))
+                        .map(|ty| display_type_ref(db, *ty))
+                })
+                .unwrap_or_else(|| display_ty(db, *param, type_var_names));
+            if let Some(
+                FuncParam::Typed { comptime, name, .. } | FuncParam::Untyped { comptime, name },
+            ) = source_param
+            {
+                let prefix = if comptime.is_some() { "comptime " } else { "" };
+                return format!("{prefix}{}: {ty}", name.atom().text(db));
+            }
             param_names
                 .get(index)
                 .map(|name| format!("{name}: {ty}"))
@@ -940,7 +1048,11 @@ fn format_callable_scheme<'db>(
             signature.push_str(mutability.keyword());
         }
     }
-    signature.push_str(&display_ty_return_suffix(db, ret, type_var_names));
+    if let Some(source_ret) = source_sig.and_then(|sig| sig.ret) {
+        signature.push_str(&display_type_ref_return_suffix(db, source_ret));
+    } else {
+        signature.push_str(&display_ty_return_suffix(db, ret, type_var_names));
+    }
     let predicates = scheme
         .body(db)
         .preds(db)
@@ -952,14 +1064,6 @@ fn format_callable_scheme<'db>(
         signature.push_str(&predicates.join(", "));
     }
     signature
-}
-
-fn display_scheme_type<'db>(
-    db: &'db dyn hir_ty::Db,
-    scheme: TyScheme<'db>,
-    type_var_names: &[String],
-) -> String {
-    display_ty(db, scheme.body(db).ty(db), type_var_names)
 }
 
 fn display_ty<'db>(db: &'db dyn hir_ty::Db, ty: Ty<'db>, names: &[String]) -> String {
@@ -1084,75 +1188,7 @@ fn display_pred<'db>(db: &'db dyn hir_ty::Db, pred: hir_ty::Pred<'db>, names: &[
 }
 
 fn display_type_ref<'db>(db: &'db dyn hir_ty::Db, ty: TypeRef<'db>) -> String {
-    match ty.kind(db) {
-        TypeRefKind::Named {
-            qualifier,
-            name,
-            args,
-        } => {
-            let mut out = String::new();
-            let is_qualified = qualifier.is_some();
-            if let Some(qualifier) = qualifier {
-                out.push_str(qualifier.atom().text(db));
-                out.push('.');
-            }
-            let name = name.atom().text(db);
-            let args = args.atom();
-            if !is_qualified && name == "DynArray" && args.len() == 1 {
-                return format!("{}[]", display_type_ref(db, args[0]));
-            }
-            if !is_qualified && matches!(name, "memory" | "storage" | "calldata") && args.len() == 1
-            {
-                return format!("{} {name}", display_type_ref(db, args[0]));
-            }
-            if !is_qualified && name == "mapping" && args.len() == 2 {
-                return format!(
-                    "mapping({} => {})",
-                    display_type_ref(db, args[0]),
-                    display_type_ref(db, args[1])
-                );
-            }
-            out.push_str(name);
-            if !args.is_empty() {
-                out.push('<');
-                out.push_str(
-                    &args
-                        .iter()
-                        .map(|arg| display_type_ref(db, *arg))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                );
-                out.push('>');
-            }
-            out
-        }
-        TypeRefKind::FixedArray {
-            element, length, ..
-        } => format!("{}[{length}]", display_type_ref(db, *element)),
-        TypeRefKind::Fn { params, ret } => format!(
-            "function({}){}",
-            params
-                .atom()
-                .iter()
-                .map(|param| display_type_ref(db, *param))
-                .collect::<Vec<_>>()
-                .join(", "),
-            display_type_ref_return_suffix(db, *ret)
-        ),
-        TypeRefKind::Comptime { inner, .. } => {
-            format!("comptime {}", display_type_ref(db, *inner))
-        }
-        TypeRefKind::Tuple { elems } => format!(
-            "({})",
-            elems
-                .atom()
-                .iter()
-                .map(|elem| display_type_ref(db, *elem))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        TypeRefKind::Error { .. } => "<error type>".to_owned(),
-    }
+    hir_ty::display_type_ref_source(db, ty)
 }
 
 fn display_type_ref_return_suffix<'db>(db: &'db dyn hir_ty::Db, ret: TypeRef<'db>) -> String {
@@ -1476,6 +1512,80 @@ library Helpers {
         assert_eq!(
             hover_code(&hover_at(source, &world, &uri, identity)),
             "function identity(value: word) internal pure returns (word)"
+        );
+    }
+
+    #[test]
+    fn function_type_hovers_preserve_source_qualifiers() {
+        let source = "\
+alias Callback = function(word) internal pure returns (bool);
+
+contract Registry {
+  handler: function(word) external view returns (bool);
+}
+
+function inspect(
+  comptime callback: function(word) external view returns (bool)
+) returns (function(address) internal payable returns (word)) {
+  let local: function(address) internal payable returns (word) = callback;
+  return local;
+}
+";
+        let (world, uri) = world_with_main(source);
+
+        let alias = source.find("Callback").expect("alias declaration");
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, alias)),
+            "alias Callback = function(word) internal pure returns (bool)"
+        );
+
+        let field = source.find("handler").expect("field declaration");
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, field)),
+            "handler: function(word) external view returns (bool)"
+        );
+
+        let function = source.find("inspect").expect("function declaration");
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, function)),
+            "function inspect(comptime callback: function(word) external view returns (bool)) returns (function(address) internal payable returns (word))"
+        );
+
+        let parameter = source.rfind("callback").expect("parameter reference");
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, parameter)),
+            "comptime callback: function(word) external view returns (bool)"
+        );
+
+        let local = source.rfind("local").expect("local reference");
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, local)),
+            "let local: function(address) internal payable returns (word)"
+        );
+    }
+
+    #[test]
+    fn destructured_local_hover_preserves_function_type_qualifiers() {
+        let source = "function inspect(value: (function(word) external view returns (bool), word)) {\n  let (destructured, seed): (function(word) external view returns (bool), word) = value;\n  destructured;\n}\n";
+        let (world, uri) = world_with_main(source);
+        let local = source.rfind("destructured").expect("local reference");
+
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, local)),
+            "destructured: function(word) external view returns (bool)"
+        );
+    }
+
+    #[test]
+    fn constructor_hover_preserves_function_type_qualifiers() {
+        let source =
+            "enum CallbackBox { CallbackBox(function(word) external view returns (bool)) }\n";
+        let (world, uri) = world_with_main(source);
+        let constructor = source.rfind("CallbackBox(").expect("constructor");
+
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, constructor)),
+            "constructor CallbackBox(function(word) external view returns (bool)) returns (CallbackBox)"
         );
     }
 }

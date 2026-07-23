@@ -320,7 +320,7 @@ fn type_ref_contains_fixed_array(db: &dyn HirDb, ty: hir::ast::ty::TypeRef<'_>) 
             .atom()
             .iter()
             .any(|arg| type_ref_contains_fixed_array(db, *arg)),
-        TypeRefKind::Fn { params, ret } => {
+        TypeRefKind::Fn { params, ret, .. } => {
             params
                 .atom()
                 .iter()

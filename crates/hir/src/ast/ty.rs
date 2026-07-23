@@ -1,15 +1,38 @@
 //! Unresolved type and predicate syntax in HIR.
 //!
 //! These nodes preserve source-level type names and argument structure before
-//! name resolution and type checking. The semantic shape is interned separately
-//! from occurrence spans so equivalent type references share the same intern
-//! key even when they appear at different byte offsets.
+//! name resolution and type checking. A span-free source structural shape is
+//! interned separately from occurrence spans so equivalent type references
+//! share the same intern key even when they appear at different byte offsets.
 
 use crate::{
     Db,
-    ast::Ident,
+    ast::{Ident, function::FunctionMutability},
     span::{Span, Spanned, SpannedElem},
 };
+
+/// Source-level visibility qualifier on a function type.
+///
+/// Function types admit only `internal` and `external` in the source grammar.
+/// Declaration-only `public` and `private` states are intentionally
+/// unrepresentable here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum FunctionTypeVisibility {
+    /// Source `internal` qualifier.
+    Internal,
+    /// Source `external` qualifier.
+    External,
+}
+
+impl FunctionTypeVisibility {
+    /// Returns the canonical source keyword.
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Internal => "internal",
+            Self::External => "external",
+        }
+    }
+}
 
 /// Unresolved type reference occurrence.
 ///
@@ -35,7 +58,10 @@ impl<'db> TypeRef<'db> {
         self.occurrence.kind(db)
     }
 
-    /// Returns the span-free interned semantic shape.
+    /// Returns the span-free interned source structural shape.
+    ///
+    /// Despite the historical method name, this is unresolved source syntax,
+    /// not the checked semantic type used by type inference.
     pub fn semantic_shape(self) -> TypeRefShape<'db> {
         self.shape
     }
@@ -47,15 +73,18 @@ impl<'db> Spanned<'db> for TypeRef<'db> {
     }
 }
 
-/// Interned semantic type reference shape without occurrence spans.
+/// Interned source structural type-reference shape without occurrence spans.
+///
+/// This preserves unresolved source distinctions and is separate from the
+/// checked semantic type representation.
 #[salsa::interned(debug)]
 pub struct TypeRefShape<'db> {
-    /// Span-free type structure.
+    /// Span-free source type structure.
     #[returns(ref)]
     pub kind: TypeRefShapeKind<'db>,
 }
 
-/// Span-free shape of an unresolved type reference.
+/// Span-free source structural shape of an unresolved type reference.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum TypeRefShapeKind<'db> {
     /// Named type constructor with optional qualifier and type arguments.
@@ -78,6 +107,10 @@ pub enum TypeRefShapeKind<'db> {
     Fn {
         /// Parameter type shapes.
         params: Vec<TypeRefShape<'db>>,
+        /// Explicit function-type visibility qualifier.
+        visibility: Option<FunctionTypeVisibility>,
+        /// Explicit function-type state-mutability qualifier.
+        mutability: Option<FunctionMutability>,
         /// Return type shape.
         ret: TypeRefShape<'db>,
     },
@@ -129,8 +162,14 @@ pub enum TypeRefKind<'db> {
     },
     /// Function type from parameter types to a return type.
     Fn {
+        /// Span covering the complete function type, beginning at `function`.
+        span: Span<'db>,
         /// Parameter type list and the span of the parameter group.
         params: SpannedElem<'db, Vec<TypeRef<'db>>>,
+        /// Explicit visibility qualifier and its keyword span.
+        visibility: Option<SpannedElem<'db, FunctionTypeVisibility>>,
+        /// Explicit state-mutability qualifier and its keyword span.
+        mutability: Option<SpannedElem<'db, FunctionMutability>>,
         /// Return type.
         ret: TypeRef<'db>,
     },
@@ -170,7 +209,7 @@ impl<'db> Spanned<'db> for TypeRefKind<'db> {
             Self::FixedArray {
                 element, brackets, ..
             } => element.span(db) + *brackets,
-            Self::Fn { params, ret } => params.span(db) + ret.span(db),
+            Self::Fn { span, .. } => *span,
             Self::Comptime { kw, inner } => *kw + inner.span(db),
             Self::Tuple { elems } => elems.span(db),
             Self::Error { span } => *span,
@@ -195,12 +234,20 @@ fn type_shape_from_occurrence<'db>(kind: &TypeRefKind<'db>) -> TypeRefShapeKind<
             element: element.semantic_shape(),
             length: *length,
         },
-        TypeRefKind::Fn { params, ret } => TypeRefShapeKind::Fn {
+        TypeRefKind::Fn {
+            params,
+            visibility,
+            mutability,
+            ret,
+            ..
+        } => TypeRefShapeKind::Fn {
             params: params
                 .atom()
                 .iter()
                 .map(|param| param.semantic_shape())
                 .collect(),
+            visibility: visibility.map(|visibility| *visibility.atom()),
+            mutability: mutability.map(|mutability| *mutability.atom()),
             ret: ret.semantic_shape(),
         },
         TypeRefKind::Comptime { inner, .. } => TypeRefShapeKind::Comptime {

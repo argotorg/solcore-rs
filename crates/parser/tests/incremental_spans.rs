@@ -8,7 +8,10 @@ use std::sync::{Arc, Mutex};
 use hir::{
     ast::{
         function::{ExprKind, FuncBody, FunctionMutability, FunctionVisibility},
-        item::{AdtDef, ClassDef, ContractDef, ContractItem, ContractKind, FunctionDef, Item},
+        item::{
+            AdtDef, ClassDef, ContractDef, ContractItem, ContractKind, FunctionDef, Item, TypeAlias,
+        },
+        ty::{FunctionTypeVisibility, TypeRefKind, TypeRefShapeKind},
     },
     input::SourceFile,
     span::Spanned,
@@ -151,6 +154,18 @@ fn first_function<'db>(db: &'db TestDb, file: SourceFile) -> FunctionDef<'db> {
             _ => None,
         })
         .expect("a top-level function")
+}
+
+fn first_type_alias<'db>(db: &'db TestDb, file: SourceFile) -> TypeAlias<'db> {
+    parse_file_to_hir(db, file)
+        .module(db)
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::TypeAlias(alias) => Some(*alias),
+            _ => None,
+        })
+        .expect("a top-level type alias")
 }
 
 fn first_lambda_body<'db>(db: &'db TestDb, file: SourceFile) -> FuncBody<'db> {
@@ -320,6 +335,98 @@ fn modifier_edits_update_the_signature_without_changing_def_identity() {
                 .as_u32(),
         ),
         before_identity
+    );
+}
+
+#[test]
+fn function_type_qualifier_edits_update_shape_without_changing_alias_identity() {
+    let mut db = TestDb::default();
+    let file = SourceFile::new(
+        &db,
+        "memory:///function-type-qualifier-edit.solc"
+            .parse()
+            .expect("valid url"),
+        Some("alias Callback = function(word) internal view returns (bool);\n".to_owned()),
+    );
+
+    let before_identity = {
+        let alias = first_type_alias(&db, file);
+        let ty = alias.ty(&db);
+        let TypeRefKind::Fn {
+            visibility: Some(visibility),
+            mutability: Some(mutability),
+            ..
+        } = ty.kind(&db)
+        else {
+            panic!("qualified function type");
+        };
+        assert_eq!(*visibility.atom(), FunctionTypeVisibility::Internal);
+        assert_eq!(*mutability.atom(), FunctionMutability::View);
+        let TypeRefShapeKind::Fn {
+            visibility,
+            mutability,
+            ..
+        } = ty.semantic_shape().kind(&db)
+        else {
+            panic!("function type shape");
+        };
+        assert_eq!(*visibility, Some(FunctionTypeVisibility::Internal));
+        assert_eq!(*mutability, Some(FunctionMutability::View));
+        alias.def_id_value(&db).disambiguator(&db).as_u32()
+    };
+
+    let after_src = "alias Callback = function(word) external payable returns (bool);\n";
+    file.set_content(&mut db).to(Some(after_src.to_owned()));
+
+    let alias = first_type_alias(&db, file);
+    assert_eq!(
+        alias.def_id_value(&db).disambiguator(&db).as_u32(),
+        before_identity
+    );
+    let ty = alias.ty(&db);
+    let TypeRefKind::Fn {
+        span,
+        visibility: Some(visibility),
+        mutability: Some(mutability),
+        ..
+    } = ty.kind(&db)
+    else {
+        panic!("updated qualified function type");
+    };
+    assert_eq!(*visibility.atom(), FunctionTypeVisibility::External);
+    assert_eq!(*mutability.atom(), FunctionMutability::Payable);
+    let TypeRefShapeKind::Fn {
+        visibility: shape_visibility,
+        mutability: shape_mutability,
+        ..
+    } = ty.semantic_shape().kind(&db)
+    else {
+        panic!("updated function type shape");
+    };
+    assert_eq!(*shape_visibility, Some(FunctionTypeVisibility::External));
+    assert_eq!(*shape_mutability, Some(FunctionMutability::Payable));
+
+    let type_text = "function(word) external payable returns (bool)";
+    let expected_start = after_src.find(type_text).expect("updated type") as u32;
+    let absolute = span.resolve_to_absolute(&db);
+    assert_eq!(absolute.start().as_u32(), expected_start);
+    assert_eq!(
+        absolute.end().as_u32(),
+        expected_start + type_text.len() as u32
+    );
+    let visibility_absolute = visibility.span(&db).resolve_to_absolute(&db);
+    let visibility_start = after_src.find("external").expect("updated visibility") as u32;
+    assert_eq!(visibility_absolute.start().as_u32(), visibility_start);
+    assert_eq!(
+        visibility_absolute.end().as_u32(),
+        visibility_start + "external".len() as u32
+    );
+    let mutability_absolute = mutability.span(&db).resolve_to_absolute(&db);
+    let mutability_start = after_src.find("payable").expect("updated mutability") as u32;
+    assert_eq!(mutability_absolute.start().as_u32(), mutability_start);
+    assert_eq!(
+        mutability_absolute.end().as_u32(),
+        mutability_start + "payable".len() as u32
     );
 }
 

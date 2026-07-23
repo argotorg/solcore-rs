@@ -201,15 +201,21 @@ impl<'db> TypeLowering<'db> {
             TypeRefKind::FixedArray {
                 element, length, ..
             } => Ty::fixed_array(self.db, self.lower_type(*element), *length),
-            TypeRefKind::Fn { params, ret } => Ty::function(
-                self.db,
-                params
-                    .atom()
-                    .iter()
-                    .map(|param| self.lower_type(*param))
-                    .collect(),
-                self.lower_type(*ret),
-            ),
+            TypeRefKind::Fn { params, ret, .. } => {
+                // The existing checked-type model has no function qualifiers.
+                // Keep them losslessly in source HIR and erase them only at
+                // this explicit compatibility boundary until that semantic
+                // model grows qualifier-aware conversion and compatibility.
+                Ty::function(
+                    self.db,
+                    params
+                        .atom()
+                        .iter()
+                        .map(|param| self.lower_type(*param))
+                        .collect(),
+                    self.lower_type(*ret),
+                )
+            }
             TypeRefKind::Comptime { inner, .. } => Ty::comptime(self.db, self.lower_type(*inner)),
             TypeRefKind::Tuple { elems } => product_ty(
                 self.db,

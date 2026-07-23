@@ -144,7 +144,11 @@ pub(crate) fn display_pred_source<'db>(
     }
 }
 
-pub(crate) fn display_type_ref_source<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>) -> String {
+/// Renders a source type reference using canonical new-syntax spelling.
+///
+/// Unlike semantic [`Ty`] display, this preserves source-only function-type
+/// qualifiers that are intentionally erased during type lowering.
+pub fn display_type_ref_source<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>) -> String {
     match ty.kind(db) {
         TypeRefKind::Named {
             qualifier,
@@ -192,16 +196,33 @@ pub(crate) fn display_type_ref_source<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>)
         TypeRefKind::FixedArray {
             element, length, ..
         } => format!("{}[{length}]", display_type_ref_source(db, *element)),
-        TypeRefKind::Fn { params, ret } => format!(
-            "function({}){}",
-            params
-                .atom()
-                .iter()
-                .map(|param| display_type_ref_source(db, *param))
-                .collect::<Vec<_>>()
-                .join(", "),
-            display_type_ref_return_suffix(db, *ret)
-        ),
+        TypeRefKind::Fn {
+            params,
+            visibility,
+            mutability,
+            ret,
+            ..
+        } => {
+            let mut out = format!(
+                "function({})",
+                params
+                    .atom()
+                    .iter()
+                    .map(|param| display_type_ref_source(db, *param))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            if let Some(visibility) = visibility {
+                out.push(' ');
+                out.push_str(visibility.atom().keyword());
+            }
+            if let Some(mutability) = mutability {
+                out.push(' ');
+                out.push_str(mutability.atom().keyword());
+            }
+            out.push_str(&display_type_ref_return_suffix(db, *ret));
+            out
+        }
         TypeRefKind::Comptime { inner, .. } => {
             format!("comptime {}", display_type_ref_source(db, *inner))
         }

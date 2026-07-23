@@ -9,6 +9,7 @@ use chumsky::{extra, prelude::Rich};
 use hir::ast::{
     function,
     item::{ContractKind, FuncKind},
+    ty::FunctionTypeVisibility,
 };
 
 use crate::lexer::Token;
@@ -349,6 +350,10 @@ pub(crate) enum ParsedTyKind<'src> {
         params: Vec<ParsedTy<'src>>,
         /// Span of the source domain type or parameter group.
         params_span: LexSpan,
+        /// Explicit visibility qualifier and its keyword span.
+        visibility: Option<(FunctionTypeVisibility, LexSpan)>,
+        /// Explicit state-mutability qualifier and its keyword span.
+        mutability: Option<(function::FunctionMutability, LexSpan)>,
         /// Return type.
         ret: Box<ParsedTy<'src>>,
     },

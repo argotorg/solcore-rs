@@ -279,6 +279,8 @@ pub(super) fn lower_type_ref<'db>(
         ParsedTyKind::Fn {
             params,
             params_span,
+            visibility,
+            mutability,
             ret,
         } => {
             let params = params
@@ -286,9 +288,18 @@ pub(super) fn lower_type_ref<'db>(
                 .map(|param| lower_type_ref(db, anchor, base_start, param))
                 .collect::<Vec<_>>();
             let params_span = span_from_absolute(anchor, params_span, base_start);
+            let visibility = visibility.map(|(visibility, span)| {
+                SpannedElem::new(visibility, span_from_absolute(anchor, span, base_start))
+            });
+            let mutability = mutability.map(|(mutability, span)| {
+                SpannedElem::new(mutability, span_from_absolute(anchor, span, base_start))
+            });
             let ret = lower_type_ref(db, anchor, base_start, *ret);
             ty::TypeRefKind::Fn {
+                span: span_from_absolute(anchor, ty_span, base_start),
                 params: SpannedElem::new(params, params_span),
+                visibility,
+                mutability,
                 ret,
             }
         }

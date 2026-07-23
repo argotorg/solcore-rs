@@ -4,8 +4,9 @@ use hir::{
     anchor::DefId,
     arena::Id,
     ast::{
-        function::{Expr, ExprKind, FuncBody, FuncParam},
+        function::{Expr, ExprKind, FuncBody, FuncParam, FuncSig},
         item::{AdtDef, ContractItem, FunctionDef, Item, Module},
+        ty::{TypeRef, TypeRefKind},
     },
     input::SourceFile,
     nameres::{self as hir_nameres, DefResolutionKind, Resolution, TypeVarBinding},
@@ -268,29 +269,31 @@ fn callable_signature<'db>(
             kind: DefResolutionKind::Function,
         } => {
             let function = function_for_def(db, def)?;
-            let name = function.sig(db).name.atom().text(db).to_owned();
-            let names = function_param_names(db, function);
+            let sig = function.sig(db);
+            let name = sig.name.atom().text(db).to_owned();
             let defining_module = nameres::module_id_for_source_file(db, def.file(db))?;
             let scheme = hir_ty::infer::function_scheme(db, defining_module, def)?;
-            signature_from_scheme(db, &name, &names, scheme)
+            signature_from_scheme(db, &name, &[], scheme, Some(sig), None)
         }
         Resolution::Ctor { ty, index } => {
             let ctor = adt_ctor_for_def(db, ty, index.as_usize())?;
             let name = ctor.name.atom().text(db).to_owned();
             let defining_module = nameres::module_id_for_source_file(db, ty.file(db))?;
             let scheme = hir_ty::infer::adt_ctor_scheme(db, defining_module, ty, index)?;
-            signature_from_scheme(db, &name, &[], scheme)
+            let source_params = adt_ctor_source_params(db, &ctor);
+            signature_from_scheme(db, &name, &[], scheme, None, Some(&source_params))
         }
         Resolution::ClassMethod { class, name } => {
             let defining_module = nameres::module_id_for_source_file(db, class.file(db))?;
             let scheme =
                 hir_ty::infer::class_method_scheme(db, defining_module, class, name.clone())?;
-            signature_from_scheme(db, &name, &[], scheme)
+            let source_sig = class_method_sig_for_def(db, class, &name);
+            signature_from_scheme(db, &name, &[], scheme, source_sig, None)
         }
         Resolution::Builtin(kind) => {
             let name = builtin_name(kind)?;
             let scheme = hir_ty::builtin_scheme(db, kind)?;
-            signature_from_scheme(db, name, &[], scheme)
+            signature_from_scheme(db, name, &[], scheme, None, None)
         }
         Resolution::Def { .. }
         | Resolution::Local(_)
@@ -307,6 +310,8 @@ fn signature_from_scheme<'db>(
     name: &str,
     param_names: &[String],
     scheme: TyScheme<'db>,
+    source_sig: Option<&FuncSig<'db>>,
+    source_params: Option<&[TypeRef<'db>]>,
 ) -> Option<CallableSignature> {
     let ty = scheme.body(db).ty(db);
     let (params, ret) = match ty.kind(db) {
@@ -317,25 +322,46 @@ fn signature_from_scheme<'db>(
         .iter()
         .enumerate()
         .map(|(index, param)| {
-            let ty = param.display(db);
+            let source_param = source_sig.and_then(|sig| sig.params.atom().get(index));
+            let ty = source_param
+                .and_then(|param| match param {
+                    FuncParam::Typed { ty, .. } => Some(hir_ty::display_type_ref_source(db, *ty)),
+                    FuncParam::Untyped { .. } | FuncParam::Error { .. } => None,
+                })
+                .or_else(|| {
+                    source_params
+                        .and_then(|params| params.get(index))
+                        .map(|ty| hir_ty::display_type_ref_source(db, *ty))
+                })
+                .unwrap_or_else(|| param.display(db));
+            if let Some(
+                FuncParam::Typed { comptime, name, .. } | FuncParam::Untyped { comptime, name },
+            ) = source_param
+            {
+                let prefix = if comptime.is_some() { "comptime " } else { "" };
+                return format!("{prefix}{}: {ty}", name.atom().text(db));
+            }
             param_names
                 .get(index)
                 .map(|name| format!("{name}: {ty}"))
                 .unwrap_or(ty)
         })
         .collect::<Vec<_>>();
-    let return_suffix = match ret.kind(db) {
-        TyKind::Tuple(elements) if elements.is_empty() => String::new(),
-        TyKind::Tuple(elements) => format!(
-            " returns ({})",
-            elements
-                .iter()
-                .map(|element| element.display(db))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        _ => format!(" returns ({})", ret.display(db)),
-    };
+    let return_suffix = source_sig
+        .and_then(|sig| sig.ret)
+        .map(|ret| display_source_return_suffix(db, ret))
+        .unwrap_or_else(|| match ret.kind(db) {
+            TyKind::Tuple(elements) if elements.is_empty() => String::new(),
+            TyKind::Tuple(elements) => format!(
+                " returns ({})",
+                elements
+                    .iter()
+                    .map(|element| element.display(db))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            _ => format!(" returns ({})", ret.display(db)),
+        });
     let label = format!("{name}({}){return_suffix}", parameters.join(", "));
 
     Some(CallableSignature { label, parameters })
@@ -382,19 +408,36 @@ fn function_in_item<'db>(
     }
 }
 
-fn function_param_names<'db>(db: &'db dyn hir_ty::Db, function: FunctionDef<'db>) -> Vec<String> {
-    function
-        .sig(db)
-        .params
-        .atom()
-        .iter()
-        .filter_map(|param| match param {
-            FuncParam::Typed { name, .. } | FuncParam::Untyped { name, .. } => {
-                Some(name.atom().text(db).to_owned())
-            }
-            FuncParam::Error { .. } => None,
-        })
-        .collect()
+fn class_method_sig_for_def<'db>(
+    db: &'db dyn hir_ty::Db,
+    def: DefId<'db>,
+    name: &str,
+) -> Option<&'db FuncSig<'db>> {
+    let file = def.file(db);
+    let module = parser::parse_file_to_hir(db, file).module(db);
+    module.items(db).iter().find_map(|item| match item {
+        Item::ClassDef(class) if class.def_id_value(db) == def => class
+            .methods(db)
+            .iter()
+            .find(|method| method.name.atom().text(db) == name),
+        _ => None,
+    })
+}
+
+fn display_source_return_suffix<'db>(db: &'db dyn hir_ty::Db, ret: TypeRef<'db>) -> String {
+    match ret.kind(db) {
+        TypeRefKind::Tuple { elems } if elems.atom().is_empty() => String::new(),
+        TypeRefKind::Tuple { elems } => format!(
+            " returns ({})",
+            elems
+                .atom()
+                .iter()
+                .map(|elem| hir_ty::display_type_ref_source(db, *elem))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => format!(" returns ({})", hir_ty::display_type_ref_source(db, ret)),
+    }
 }
 
 fn adt_ctor_for_def<'db>(
@@ -409,6 +452,21 @@ fn adt_ctor_for_def<'db>(
         .iter()
         .find_map(|item| adt_in_item(db, *item, def))?;
     adt.ctors(db).get(index).cloned()
+}
+
+fn adt_ctor_source_params<'db>(
+    db: &'db dyn hir_ty::Db,
+    ctor: &hir::ast::item::AdtCtor<'db>,
+) -> Vec<TypeRef<'db>> {
+    let fields = *ctor.fields.atom();
+    match ctor.field_count {
+        0 => Vec::new(),
+        1 => vec![fields],
+        _ => match fields.kind(db) {
+            TypeRefKind::Tuple { elems } => elems.atom().clone(),
+            _ => vec![fields],
+        },
+    }
 }
 
 fn adt_in_item<'db>(
@@ -605,5 +663,60 @@ mod tests {
         assert!(signature.label.contains("combine("));
         assert!(signature.label.contains("a: word"));
         assert!(signature.label.contains("b: word"));
+    }
+
+    #[test]
+    fn signature_help_preserves_function_type_qualifiers() {
+        let source = "\
+function register(
+  comptime callback: function(word) external view returns (bool),
+  seed: word
+) returns (bool) {
+  return true;
+}
+
+function main() returns (bool) {
+  return register(1, 2);
+}
+";
+        let (world, uri) = world_with_main(source);
+        let position = position_at(source, &world, &uri, "1, 2");
+        let help = handle_signature_help(&world, &uri, position).expect("signature help");
+        let signature = &help.signatures[0];
+
+        assert_eq!(
+            signature.label,
+            "register(comptime callback: function(word) external view returns (bool), seed: word) returns (bool)"
+        );
+        assert_eq!(
+            signature.parameters.as_ref().expect("parameters")[0].label,
+            ParameterLabel::Simple(
+                "comptime callback: function(word) external view returns (bool)".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn constructor_signature_help_preserves_function_type_qualifiers() {
+        let source = "\
+enum CallbackBox { CallbackBox(function(word) external view returns (bool)) }
+
+function main() returns (CallbackBox) {
+  return CallbackBox.CallbackBox(1);
+}
+";
+        let (world, uri) = world_with_main(source);
+        let position = position_at(source, &world, &uri, "1);");
+        let help = handle_signature_help(&world, &uri, position).expect("signature help");
+        let signature = &help.signatures[0];
+
+        assert_eq!(
+            signature.label,
+            "CallbackBox(function(word) external view returns (bool)) returns (adt:CallbackBox)"
+        );
+        assert_eq!(
+            signature.parameters.as_ref().expect("parameters")[0].label,
+            ParameterLabel::Simple("function(word) external view returns (bool)".to_owned())
+        );
     }
 }

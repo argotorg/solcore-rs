@@ -383,7 +383,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 self.map.types.push(TypeResolution { ty, resolution });
             }
             TypeRefKind::FixedArray { element, .. } => self.ty(*element),
-            TypeRefKind::Fn { params, ret } => {
+            TypeRefKind::Fn { params, ret, .. } => {
                 for param in params.atom() {
                     self.ty(*param);
                 }

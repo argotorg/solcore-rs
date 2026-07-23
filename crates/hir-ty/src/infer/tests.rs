@@ -838,6 +838,75 @@ function call_tuple(f: function((word, bool)) returns (word), x: (word, bool)) r
 }
 
 #[test]
+fn call_diagnostics_preserve_qualified_function_types_without_a_return_clause() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+function use(comptime callback: function(word) external view returns (bool)) {}
+
+function main() {
+  use();
+}
+"#,
+    );
+    let (_, result) = infer_function(&db, module, "main");
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| matches!(diagnostic, TypeckDiagnostic::WrongArity { .. }))
+        .expect("wrong-arity diagnostic");
+    let TypeckDiagnostic::WrongArity {
+        callee: Some(callee),
+        ..
+    } = diagnostic
+    else {
+        panic!("wrong-arity diagnostic should retain its callee");
+    };
+    assert_eq!(
+        callee.signature,
+        "use(comptime callback: function(word) external view returns (bool))"
+    );
+}
+
+#[test]
+fn constructor_call_diagnostics_preserve_qualified_function_payloads() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+enum CallbackBox { CallbackBox(function(word) external view returns (bool)) }
+
+function main() {
+  CallbackBox.CallbackBox(true);
+}
+"#,
+    );
+    let (_, result) = infer_function(&db, module, "main");
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| matches!(diagnostic, TypeckDiagnostic::ArgMismatch { .. }))
+        .unwrap_or_else(|| panic!("argument-mismatch diagnostic: {:?}", result.diagnostics));
+    let TypeckDiagnostic::ArgMismatch {
+        callee: Some(callee),
+        param,
+        ..
+    } = diagnostic
+    else {
+        panic!("argument-mismatch diagnostic should retain constructor metadata");
+    };
+    assert_eq!(
+        callee.signature,
+        "CallbackBox(function(word) external view returns (bool)) returns (CallbackBox)"
+    );
+    assert_eq!(
+        param.ty.as_deref(),
+        Some("function(word) external view returns (bool)")
+    );
+}
+
+#[test]
 fn tuple_destructuring_let_resolves_bindings_and_typechecks() {
     let db = TestDb::default();
     let module = parse_module(
@@ -995,6 +1064,66 @@ function different(x: word[4]) returns (word[5]) {
                 } if expected == "word[5]" && actual == "word[4]"
             ))
     );
+}
+
+#[test]
+fn function_type_qualifiers_are_erased_only_at_semantic_lowering() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+alias InternalCallback = function(word) internal pure returns (bool);
+alias ExternalCallback = function(word) external payable returns (bool);
+"#,
+    );
+    let aliases = module
+        .items(&db)
+        .iter()
+        .filter_map(|item| match item {
+            Item::TypeAlias(alias) => Some(*alias),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(aliases.len(), 2);
+    assert_ne!(
+        aliases[0].ty(&db).semantic_shape(),
+        aliases[1].ty(&db).semantic_shape(),
+        "source structural shapes must retain qualifier distinctions"
+    );
+
+    let resolution = hir_nameres::resolve_module(&db, module);
+    assert!(resolution.diagnostics.is_empty(), "{resolution:?}");
+    let lowerer = TypeLowering::from_item_resolutions(
+        &db,
+        &resolution.item_resolutions,
+        BinderEnv::from_type_vars(&[]),
+    );
+    let internal = lowerer.lower_type_alias(aliases[0]).ty;
+    let external = lowerer.lower_type_alias(aliases[1]).ty;
+
+    assert_eq!(
+        internal, external,
+        "the current checked-type model erases qualifiers only after source HIR retains them"
+    );
+    assert!(matches!(
+        internal.kind(&db),
+        TyKind::Function { params, ret }
+            if params.len() == 1
+                && matches!(
+                    params[0].kind(&db),
+                    TyKind::Named {
+                        ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
+                        args,
+                    } if args.is_empty()
+                )
+                && matches!(
+                    ret.kind(&db),
+                    TyKind::Named {
+                        ctor: TyCtor::Builtin(BuiltinTyCtor::Bool),
+                        args,
+                    } if args.is_empty()
+                )
+    ));
 }
 
 #[test]

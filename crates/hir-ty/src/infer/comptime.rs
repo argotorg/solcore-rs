@@ -805,7 +805,7 @@ fn type_ref_mentions_type_var<'db>(
         TypeRefKind::FixedArray { element, .. } => {
             type_ref_mentions_type_var(db, *element, type_vars)
         }
-        TypeRefKind::Fn { params, ret } => {
+        TypeRefKind::Fn { params, ret, .. } => {
             params
                 .atom()
                 .iter()

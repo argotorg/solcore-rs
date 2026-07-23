@@ -6,7 +6,7 @@ use hir::{
             AssignOp, BinOp, ExprKind, FuncParam, FunctionMutability, FunctionVisibility, StmtKind,
         },
         item::{ContractDef, ContractItem, ContractKind, FunctionDef, Item, Module, TypeAliasKind},
-        ty::TypeRefKind,
+        ty::{FunctionTypeVisibility, TypeRefKind, TypeRefShapeKind},
     },
     diag::{AnyDiagnostic, Diagnostic},
     input::SourceFile,
@@ -668,10 +668,19 @@ fn function_types_preserve_source_arity_and_explicit_tuple_domains() {
         .collect::<Vec<_>>();
 
     let f = aliases[0].ty(&db);
-    let TypeRefKind::Fn { params, ret } = f.kind(&db) else {
+    let TypeRefKind::Fn {
+        params,
+        visibility,
+        mutability,
+        ret,
+        ..
+    } = f.kind(&db)
+    else {
         panic!("F should be a function type");
     };
     assert_eq!(params.atom().len(), 1);
+    assert!(visibility.is_none());
+    assert!(mutability.is_none());
     assert!(matches!(ret.kind(&db), TypeRefKind::Fn { .. }));
 
     let g = aliases[1].ty(&db);
@@ -701,6 +710,206 @@ fn function_types_preserve_source_arity_and_explicit_tuple_domains() {
         panic!("I should be a function type");
     };
     assert!(params.atom().is_empty());
+}
+
+#[test]
+fn function_type_qualifiers_preserve_spans_shapes_and_fingerprints() {
+    let db = TestDb::default();
+    let src = "alias A = function(word) internal view returns (bool);
+alias B = function(word) internal view returns (bool);
+alias C = function(word) external view returns (bool);
+alias D = function(word) external pure returns (bool);
+trait Marker<self> {}
+impl Marker<function(word) internal view returns (bool)> {}
+impl Marker<function(word) external view returns (bool)> {}";
+    let (file, module) = parse_module(&db, "function-type-qualifiers", src);
+    assert!(
+        diagnostics(&db, file).is_empty(),
+        "function-type qualifiers should parse without diagnostics"
+    );
+
+    let aliases = module
+        .items(&db)
+        .iter()
+        .filter_map(|item| match item {
+            Item::TypeAlias(alias) => Some(*alias),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(aliases.len(), 4);
+
+    let a_ty = aliases[0].ty(&db);
+    let TypeRefKind::Fn {
+        span,
+        params,
+        visibility: Some(visibility),
+        mutability: Some(mutability),
+        ..
+    } = a_ty.kind(&db)
+    else {
+        panic!("A should retain its complete qualified function type");
+    };
+    assert_eq!(
+        *visibility.atom(),
+        FunctionTypeVisibility::Internal,
+        "function-type visibility must use its restricted enum"
+    );
+    assert_eq!(*mutability.atom(), FunctionMutability::View);
+
+    let type_text = "function(word) internal view returns (bool)";
+    let type_start = src.find(type_text).expect("qualified function type") as u32;
+    let type_abs = span.resolve_to_absolute(&db);
+    assert_eq!(type_abs.start().as_u32(), type_start);
+    assert_eq!(
+        type_abs.end().as_u32(),
+        type_start + type_text.len() as u32,
+        "the HIR type span must begin at `function`, not at its parameter list"
+    );
+
+    let params_abs = params.span(&db).resolve_to_absolute(&db);
+    let params_start = src.find("(word)").expect("function domain") as u32;
+    assert_eq!(params_abs.start().as_u32(), params_start);
+    assert_eq!(
+        params_abs.end().as_u32(),
+        params_start + "(word)".len() as u32
+    );
+
+    let visibility_abs = visibility.span(&db).resolve_to_absolute(&db);
+    let visibility_start = src.find("internal").expect("visibility keyword") as u32;
+    assert_eq!(visibility_abs.start().as_u32(), visibility_start);
+    assert_eq!(
+        visibility_abs.end().as_u32(),
+        visibility_start + "internal".len() as u32
+    );
+
+    let mutability_abs = mutability.span(&db).resolve_to_absolute(&db);
+    let mutability_start = src.find("view").expect("mutability keyword") as u32;
+    assert_eq!(mutability_abs.start().as_u32(), mutability_start);
+    assert_eq!(
+        mutability_abs.end().as_u32(),
+        mutability_start + "view".len() as u32
+    );
+
+    let TypeRefShapeKind::Fn {
+        visibility,
+        mutability,
+        ..
+    } = a_ty.semantic_shape().kind(&db)
+    else {
+        panic!("A should have a function-type shape");
+    };
+    assert_eq!(*visibility, Some(FunctionTypeVisibility::Internal));
+    assert_eq!(*mutability, Some(FunctionMutability::View));
+    assert_eq!(
+        a_ty.semantic_shape(),
+        aliases[1].ty(&db).semantic_shape(),
+        "equal qualifier values should share a span-free shape"
+    );
+    assert_ne!(
+        a_ty.semantic_shape(),
+        aliases[2].ty(&db).semantic_shape(),
+        "visibility must participate in function-type shape identity"
+    );
+    assert_ne!(
+        aliases[2].ty(&db).semantic_shape(),
+        aliases[3].ty(&db).semantic_shape(),
+        "mutability must participate in function-type shape identity"
+    );
+    let TypeRefKind::Fn {
+        visibility: Some(visibility),
+        mutability: Some(mutability),
+        ..
+    } = aliases[3].ty(&db).kind(&db)
+    else {
+        panic!("D should retain both function-type qualifiers");
+    };
+    assert_eq!(*visibility.atom(), FunctionTypeVisibility::External);
+    assert_eq!(*mutability.atom(), FunctionMutability::Pure);
+
+    let mut fingerprints = module
+        .items(&db)
+        .iter()
+        .filter_map(|item| match item {
+            Item::InstanceDef(instance) => instance.def_id_value(&db).fingerprint(&db),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    fingerprints.sort();
+    let internal = "fn[internal view](word)->bool";
+    let external = "fn[external view](word)->bool";
+    let mut expected = vec![
+        format!("pred[1]|{}:{internal}", internal.len()),
+        format!("pred[1]|{}:{external}", external.len()),
+    ];
+    expected.sort();
+    assert_eq!(
+        fingerprints, expected,
+        "fingerprints must encode qualifiers in canonical visibility/mutability order"
+    );
+}
+
+#[test]
+fn function_type_qualifiers_survive_conversion_target_lowering() {
+    let db = TestDb::default();
+    let src = "function convert(candidate: word) {
+  return candidate as function(word) external payable returns (bool);
+}";
+    let (file, module) = parse_module(&db, "function-type-conversion", src);
+    assert!(
+        diagnostics(&db, file).is_empty(),
+        "qualified function conversion should parse"
+    );
+
+    let convert = top_function(&db, module, "convert");
+    let body = convert.body(&db).expect("conversion body");
+    let stmt = body.stmts(&db).get(body.top_level_stmts(&db)[0]);
+    let StmtKind::Return(Some(expr)) = stmt.kind else {
+        panic!("expected conversion return");
+    };
+    let ExprKind::Conversion { ty, .. } = body.exprs(&db).get(expr).kind else {
+        panic!("expected source `as` conversion");
+    };
+    let TypeRefKind::Fn {
+        span,
+        visibility: Some(visibility),
+        mutability: Some(mutability),
+        ..
+    } = ty.kind(&db)
+    else {
+        panic!("conversion target should retain its function-type qualifiers");
+    };
+    assert_eq!(*visibility.atom(), FunctionTypeVisibility::External);
+    assert_eq!(*mutability.atom(), FunctionMutability::Payable);
+
+    let type_text = "function(word) external payable returns (bool)";
+    let expected_start = src.find(type_text).expect("conversion target") as u32;
+    let absolute = span.resolve_to_absolute(&db);
+    assert_eq!(absolute.start().as_u32(), expected_start);
+    assert_eq!(
+        absolute.end().as_u32(),
+        expected_start + type_text.len() as u32
+    );
+}
+
+#[test]
+fn function_types_reject_declaration_only_and_noncanonical_qualifiers() {
+    for (name, ty) in [
+        ("public", "function(word) public returns (bool)"),
+        ("private", "function(word) private returns (bool)"),
+        ("data-location", "function(word) memory returns (bool)"),
+        (
+            "modifier-order",
+            "function(word) view external returns (bool)",
+        ),
+    ] {
+        let db = TestDb::default();
+        let src = format!("// migrate-syntax: keep-legacy-negative\nalias Callback = {ty};\n");
+        let (file, _) = parse_module(&db, name, &src);
+        assert!(
+            !diagnostics(&db, file).is_empty(),
+            "function type `{ty}` must not be accepted as canonical new syntax"
+        );
+    }
 }
 
 #[test]

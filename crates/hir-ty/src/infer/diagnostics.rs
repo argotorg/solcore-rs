@@ -1048,9 +1048,16 @@ pub(super) fn callee_diagnostic_info<'db>(
             let name = ident_text(db, &ctor.name);
             let type_var_names = type_var_names(db, &info.type_vars);
             let scheme = adt_ctor_callee_scheme(db, entry, module, *ty, *index)?;
+            let source_params = adt_ctor_source_params(db, ctor);
             Some(CalleeDiagnostic {
                 name: name.clone(),
-                signature: signature_from_scheme(db, &name, &[], &type_var_names, scheme),
+                signature: signature_from_scheme_with_source_params(
+                    db,
+                    &name,
+                    &type_var_names,
+                    scheme,
+                    &source_params,
+                ),
                 definition: Some(LabelSpan::from_span(db, ctor.name.span(db))),
             })
         }
@@ -1121,13 +1128,19 @@ pub(super) fn call_param_diagnostic_info<'db>(
         }
         CallSiteCallee::AdtCtor { ty, index: ctor } => {
             let module = def_hir_module(db, *ty);
-            let definition = find_adt_info(db, module, *ty)
-                .and_then(|info| info.adt.ctors(db).get(ctor.as_usize()).cloned())
-                .and_then(|ctor| ctor_param_label_span(db, &ctor, index));
+            let ctor = find_adt_info(db, module, *ty)
+                .and_then(|info| info.adt.ctors(db).get(ctor.as_usize()).cloned());
+            let ty = ctor
+                .as_ref()
+                .and_then(|ctor| adt_ctor_source_params(db, ctor).get(index).copied())
+                .map(|ty| display_type_ref_source(db, ty));
+            let definition = ctor
+                .as_ref()
+                .and_then(|ctor| ctor_param_label_span(db, ctor, index));
             ParameterDiagnostic {
                 index,
                 name: None,
-                ty: None,
+                ty,
                 definition,
             }
         }
@@ -1213,6 +1226,29 @@ fn signature_from_scheme<'db>(
     )
 }
 
+fn signature_from_scheme_with_source_params<'db>(
+    db: &'db dyn Db,
+    name: &str,
+    type_var_names: &[String],
+    scheme: TyScheme<'db>,
+    source_params: &[TypeRef<'db>],
+) -> String {
+    let ty = scheme.body(db).ty(db);
+    let ret = match ty.kind(db) {
+        TyKind::Function { ret, .. } => *ret,
+        _ => ty,
+    };
+    let parameters = source_params
+        .iter()
+        .map(|param| display_type_ref_source(db, *param))
+        .collect::<Vec<_>>();
+    format!(
+        "{name}({}){}",
+        parameters.join(", "),
+        display_ty_return_suffix(db, ret, type_var_names)
+    )
+}
+
 fn source_signature_from_func_sig<'db>(
     db: &'db dyn HirDb,
     name: &str,
@@ -1232,12 +1268,11 @@ fn source_signature_from_func_sig<'db>(
             FuncParam::Untyped { .. } | FuncParam::Error { .. } => return None,
         }
     }
-    let ret = sig.ret?;
-    Some(format!(
-        "{name}({}){}",
-        params.join(", "),
-        display_type_ref_return_suffix(db, ret)
-    ))
+    let return_suffix = sig
+        .ret
+        .map(|ret| display_type_ref_return_suffix(db, ret))
+        .unwrap_or_default();
+    Some(format!("{name}({}){}", params.join(", "), return_suffix))
 }
 
 fn def_hir_module<'db>(db: &'db dyn Db, def: DefId<'db>) -> Module<'db> {
@@ -1317,6 +1352,18 @@ fn ctor_param_label_span<'db>(
             .map(|ty| LabelSpan::from_span(db, ty.span(db))),
         _ if index == 0 => Some(LabelSpan::from_span(db, ctor.fields.atom().span(db))),
         _ => None,
+    }
+}
+
+fn adt_ctor_source_params<'db>(db: &'db dyn HirDb, ctor: &AdtCtor<'db>) -> Vec<TypeRef<'db>> {
+    let fields = *ctor.fields.atom();
+    match ctor.field_count {
+        0 => Vec::new(),
+        1 => vec![fields],
+        _ => match fields.kind(db) {
+            TypeRefKind::Tuple { elems } => elems.atom().clone(),
+            _ => vec![fields],
+        },
     }
 }
 
@@ -1648,7 +1695,7 @@ fn collect_type_ref_tree<'db>(
             }
         }
         TypeRefKind::FixedArray { element, .. } => collect_type_ref_tree(db, *element, out),
-        TypeRefKind::Fn { params, ret } => {
+        TypeRefKind::Fn { params, ret, .. } => {
             for param in params.atom() {
                 collect_type_ref_tree(db, *param, out);
             }
@@ -2062,7 +2109,7 @@ fn collect_data_cycle_edges<'db>(
         TypeRefKind::FixedArray { element, .. } => {
             collect_data_cycle_edges(db, from, *element, resolutions, local_defs, names, edges);
         }
-        TypeRefKind::Fn { params, ret } => {
+        TypeRefKind::Fn { params, ret, .. } => {
             for param in params.atom() {
                 collect_data_cycle_edges(db, from, *param, resolutions, local_defs, names, edges);
             }

@@ -237,6 +237,8 @@ fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> O
         ParsedTyKind::Fn {
             params,
             params_span: _,
+            visibility,
+            mutability,
             ret,
         } => {
             let params = params
@@ -244,7 +246,24 @@ fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> O
                 .map(|param| canonical_ty_fingerprint(param, type_vars))
                 .collect::<Option<Vec<_>>>()?;
             let ret = canonical_ty_fingerprint(ret, type_vars)?;
-            Some(format!("fn({})->{ret}", params.join(",")))
+            let qualifiers = [
+                visibility
+                    .as_ref()
+                    .map(|(visibility, _)| visibility.keyword()),
+                mutability
+                    .as_ref()
+                    .map(|(mutability, _)| mutability.keyword()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ");
+            let head = if qualifiers.is_empty() {
+                "fn".to_owned()
+            } else {
+                format!("fn[{qualifiers}]")
+            };
+            Some(format!("{head}({})->{ret}", params.join(",")))
         }
         ParsedTyKind::Comptime { inner, .. } => {
             canonical_ty_fingerprint(inner, type_vars).map(|inner| format!("comptime({inner})"))

@@ -805,7 +805,7 @@ impl<'db> ModuleCollector<'db> {
                 }
             }
             TypeRefKind::FixedArray { element, .. } => self.type_ref(*element),
-            TypeRefKind::Fn { params, ret } => {
+            TypeRefKind::Fn { params, ret, .. } => {
                 for param in params.atom() {
                     self.type_ref(*param);
                 }
@@ -1057,7 +1057,7 @@ impl<'db> BodyCollector<'db> {
                 }
             }
             TypeRefKind::FixedArray { element, .. } => self.type_ref(*element),
-            TypeRefKind::Fn { params, ret } => {
+            TypeRefKind::Fn { params, ret, .. } => {
                 for param in params.atom() {
                     self.type_ref(*param);
                 }
