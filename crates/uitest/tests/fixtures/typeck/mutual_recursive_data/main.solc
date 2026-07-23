@@ -1,6 +1,6 @@
-data A = A(B);
-data B = B(A);
+enum A { A(B) };
+enum B { B(A) };
 
-function f(x: A) -> word {
+function f(x: A) returns (word) {
   return 0;
 }

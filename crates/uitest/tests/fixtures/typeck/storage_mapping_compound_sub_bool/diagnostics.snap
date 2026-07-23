@@ -3,13 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/storage_mapping_compound_sub_bool/main.solc
 ---
-error[SC0207]: cannot satisfy class constraint: bool : Sub
-  --> /main/main.solc:22:31
+error[SC0207]: cannot satisfy trait constraint: bool: Sub
+  --> /main/main.solc:22:38
    |
-21 |   m: mapping(word, bool);
-22 |   function f(k: word) -> () { m[k] -= true; }
-   |                               ^^^^^^^^^^^^ constraint originates here
-23 |   function main() -> () { return (); }
+21 |   m: mapping(word => bool);
+22 |   function f(k: word) returns (()) { m[k] -= true; }
+   |                                      ^^^^^^^^^^^^ constraint originates here
+23 |   function main() returns (()) { return (); }
    |
-   = note: no visible instance matches `bool : Sub`
-   = help: add a matching instance or strengthen the surrounding type context
+   = note: no visible impl matches `bool: Sub`
+   = help: add a matching impl or strengthen the surrounding type context

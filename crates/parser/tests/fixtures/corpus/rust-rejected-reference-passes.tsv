@@ -6,8 +6,8 @@ cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: Method	refe
 cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: RunContract	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
 cases/field-helper-cxt-collision.solc	typeck	SC0101: undefined name: fallback_default_implementation	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
 cases/field-helper-cxt-collision.solc	typeck	SC0103: undefined type constructor: NonPayable	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
-cases/field-helper-cxt-collision.solc	typeck	SC0105: undefined class: SigString	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
-cases/ixa.solc	typeck	SC0221: invalid instance member signature for `size`	reference accepts this legacy instance member with a narrowed array signature; Rust frontend enforces the declared class signature
+cases/field-helper-cxt-collision.solc	typeck	SC0105: undefined trait: SigString	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
+cases/ixa.solc	typeck	SC0221: invalid impl member signature for `size`	reference accepts this legacy impl member with a narrowed array signature; Rust frontend enforces the declared trait signature
 cases/multi-stmt-var-leaf.solc	typeck	SC0236: contract runtime `main` must not take parameters	reference accepts the legacy parameterized contract main form; Rust frontend reserves runtime main as a zero-argument entrypoint
 cases/pair-bug.solc	typeck	SC0101: undefined name: Contract	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
 cases/pair-bug.solc	typeck	SC0101: undefined name: Fallback	reference verdict used -g and skipped generated dispatch; the Rust full-frontend gate generates it, but this fixture does not import std.dispatch
@@ -51,7 +51,7 @@ imports/module_unqualified_type_fail.solc	frontend	SC0103: undefined type constr
 imports/opaque_alias_leak_fail.solc	frontend	SC0103: undefined type constructor: T	intentional negative import fixture proving opaque type aliases do not leak through imports
 imports/opaque_alias_qualifier_leak_fail.solc	frontend	SC0103: undefined type constructor: Base.T	intentional negative import fixture proving opaque type aliases do not leak through qualifiers
 imports/opaque_select_direct_leak_fail.solc	frontend	SC0103: undefined type constructor: T	intentional negative import fixture proving opaque type aliases cannot be selected through re-exports
-imports/pragma_scope_main.solc	typeck	SC0212: Coverage condition fails for class:	intentional negative import fixture proving a dependency pragma does not disable checks in its importer
+imports/pragma_scope_main.solc	typeck	SC0212: Coverage condition fails for trait:	intentional negative import fixture proving a dependency pragma does not disable checks in its importer
 imports/private_bad_lib.solc	typeck	SC0201: type mismatch: expected word, found bool	intentional negative import fixture containing a type error in a private helper body
 imports/private_bad_main.solc	typeck	SC0201: type mismatch: expected word, found bool	intentional negative import fixture proving reachable private helper bodies are type-checked
 imports/reexport_ctor_expr_hidden_fail.solc	frontend	SC0101: undefined name: Err	intentional negative import fixture proving hidden constructors do not leak through re-exports

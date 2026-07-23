@@ -6,14 +6,14 @@ input_file: crates/uitest/tests/fixtures/typeck/ergo_ctor_arity_expr/main.solc
 error[SC0203]: constructor expects 2 arguments, but 1 was provided
  --> /main/main.solc:4:10
   |
-1 | data Pair(a, b) = Mk(a, b);
+1 | enum Pair<a, b> { Mk(a, b) };
   |                   -- `Mk` defined here
 2 |
-3 | function f() -> Pair(word, word) {
+3 | function f() returns (Pair<word, word>) {
 4 |   return Pair.Mk(1);
   |          ^^^^^^^^^^ wrong number of arguments
 5 | }
   |
   = note: expected 2 arguments
   = note: found 1 argument
-  = note: `Mk` has signature `Mk(a, b) -> Pair(a, b)`
+  = note: `Mk` has signature `Mk(a, b) returns (Pair<a, b>)`

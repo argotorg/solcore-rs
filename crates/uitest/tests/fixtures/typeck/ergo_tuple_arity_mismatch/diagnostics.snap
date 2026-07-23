@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/typeck/ergo_tuple_arity_mismatch/main.s
 error[SC0203]: tuple expects 3 arguments, but 2 were provided
  --> /main/main.solc:2:10
   |
-1 | function f() -> (word, word, word) {
+1 | function f() returns ((word, word, word)) {
 2 |   return (1, 2);
   |          ^^^^^^ wrong number of arguments
 3 | }

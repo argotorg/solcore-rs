@@ -1,7 +1,7 @@
-function clamp(lo: word, hi: word, v: word) -> word {
+function clamp(lo: word, hi: word, v: word) returns (word) {
   return v;
 }
 
-function g() -> word {
+function g() returns (word) {
   return clamp(1);
 }

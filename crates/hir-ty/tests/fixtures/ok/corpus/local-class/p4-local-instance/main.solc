@@ -1,17 +1,15 @@
-data Wrap = Wrap(word);
+enum Wrap { Wrap(word) }
 
-forall a . class a:Boxed {
-  function unbox(x:a) -> word;
+trait Boxed<a> {
+  function unbox(x: a) returns (word) ;
 }
 
-instance Wrap:Boxed {
-  function unbox(x:Wrap) -> word {
-    match x {
-    | Wrap.Wrap(w) => return w;
-    }
+impl Boxed<Wrap> {
+  function unbox(x: Wrap) returns (word) {
+    match (x) { case Wrap.Wrap(w) { return w; } }
   }
 }
 
-function main() -> word {
+function main() returns (word) {
   return Boxed.unbox(Wrap.Wrap(1));
 }

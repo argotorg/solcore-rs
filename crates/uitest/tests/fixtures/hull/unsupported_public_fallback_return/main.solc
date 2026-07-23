@@ -1,8 +1,8 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract C {
-  fallback() -> word {
+  fallback() returns (word) {
     return 1;
   }
 }

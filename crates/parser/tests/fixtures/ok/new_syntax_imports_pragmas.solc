@@ -1,0 +1,14 @@
+import std;
+import std.dispatch;
+import @ext.plain;
+import * as dispatch from std.dispatch;
+import * as externalDispatch from @ext.foo.dispatch;
+import {address, uint256 as U256} from std;
+import {foo, bar as baz,} from @ext.foo.bar;
+
+pragma solidity ^0.8.23;
+pragma abicoder v2;
+pragma solcore noCoverageCondition;
+pragma solcore noPattersonCondition;
+pragma solcore noBoundVariableCondition;
+pragma solcore noGenericInstanceFor MyType, OtherType;

@@ -1,3 +1,3 @@
-import std;
+import * as std from std;
 
-function main() -> () {}
+function main() returns () {}

@@ -12,5 +12,5 @@ error[SC0202]: recursive type would be required
 5 |   };
   |
   = note: an inferred type would need to contain itself
-  = note: recursive shape: ((_) -> _) -> _
+  = note: recursive shape: function(function(_) returns (_)) returns (_)
   = help: add an explicit type annotation or split the recursive call

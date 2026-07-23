@@ -1,3 +1,3 @@
-function g() -> word {
+function g() returns (word) {
   return 0;
 }

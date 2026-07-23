@@ -1,1 +1,3 @@
-class a : C {}
+trait C<b> {
+  function use(x: a) returns (b) ;
+}

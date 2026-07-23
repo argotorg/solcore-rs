@@ -1,10 +1,10 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract PublicFallback {
     constructor() {}
 
-    public fallback() -> () {
+    fallback() public returns () {
         revert("fallback-was-called");
     }
 }

@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/parse/multibyte_eof_string/main.solc
 error[SC0001]: unterminated string literal
  --> /main/main.solc:2:11
   |
-1 | function f() -> word {
+1 | function f() returns (word) {
 2 |   let s = "café
   |           ^^^^^ string literal starts here
   |

@@ -1,0 +1,30 @@
+function coreSurface(x: word, y: word) returns (word) {
+  let comptime limit: word = 10;
+  let n: word = x as word as word;
+  let selected: word = n < y ? n : y;
+  let shifted = (x << 1) >> 1;
+  let powered = x ** 2;
+
+  if (n < limit) {
+    n = n + 1;
+  } else {
+    n = y;
+  }
+
+  while (n < limit) {
+    n += 1;
+  }
+
+  unchecked {
+    n = n + 1;
+  }
+
+  match (n, selected) {
+    case (0, _) {
+      return selected;
+    }
+    default {
+      revert;
+    }
+  }
+}

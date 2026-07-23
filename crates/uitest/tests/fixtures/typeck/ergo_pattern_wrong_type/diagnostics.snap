@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_pattern_wrong_type/main.solc
 ---
 error[SC0201]: type mismatch: expected Shape, found Color
- --> /main/main.solc:6:5
+ --> /main/main.solc:6:8
   |
-5 |   match c {
-6 |   | Shape.Circle(r) => return r;
-  |     ^^^^^^^^^^^^^^^ expression has mismatched type
+5 |   match (c) {
+6 |   case Shape.Circle(r) { return r; }
+  |        ^^^^^^^^^^^^^^^ expression has mismatched type
 7 |   }
   |
   = note: expected type: Shape

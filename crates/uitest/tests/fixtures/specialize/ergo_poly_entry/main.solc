@@ -2,6 +2,6 @@
 // the specialization root (no contract), so ensure_closed fails with
 // context "entry specialization".  Judge the phrasing of that message.
 
-forall a . function main(x : a) -> a {
+function main<a>(x: a) returns (a) {
   return x;
 }

@@ -1,4 +1,4 @@
 export { wrapper(wrapper), boxed(boxed) };
 
-data wrapper = wrapper(word);
-data boxed = boxed(word);
+enum wrapper { wrapper(word) }
+enum boxed { boxed(word) }

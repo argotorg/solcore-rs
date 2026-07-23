@@ -7,7 +7,7 @@ error[SC0411]: runtime lowering cannot represent `integer` in return type of `ma
  --> /main/main.solc:2:3
   |
 1 |   contract C {
-2 | /   public function main() -> integer {
+2 | /   function main() public returns (integer) {
 3 | |     return 1;
 4 | |   }
   | |___^ not representable at runtime

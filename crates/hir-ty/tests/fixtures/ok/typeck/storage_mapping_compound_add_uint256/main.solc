@@ -1,24 +1,24 @@
-data mapping(key, value) = mapping(word);
-data uint256 = uint256(word);
+enum mapping<key, value> { mapping(word) }
+enum uint256 { uint256(word) }
 
-forall t . class t:Add {
-  function add(l: t, r: t) -> t;
+trait Add<t> {
+  function add(l: t, r: t) returns (t) ;
 }
-forall t . class t:Sub {
-  function sub(l: t, r: t) -> t;
+trait Sub<t> {
+  function sub(l: t, r: t) returns (t) ;
 }
-instance word:Add {
-  function add(l: word, r: word) -> word { return l; }
+impl Add<word> {
+  function add(l: word, r: word) returns (word) { return l; }
 }
-instance word:Sub {
-  function sub(l: word, r: word) -> word { return l; }
+impl Sub<word> {
+  function sub(l: word, r: word) returns (word) { return l; }
 }
-instance uint256:Add {
-  function add(l: uint256, r: uint256) -> uint256 { return l; }
+impl Add<uint256> {
+  function add(l: uint256, r: uint256) returns (uint256) { return l; }
 }
 
 contract C {
-  m: mapping(word, uint256);
-  function f(k: word, v: uint256) -> () { m[k] += v; }
-  function main() -> () { return (); }
+  m: mapping(word => uint256);
+  function f(k: word, v: uint256) returns () { m[k] += v; }
+  function main() returns () { return (); }
 }

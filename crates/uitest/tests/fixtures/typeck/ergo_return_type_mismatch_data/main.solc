@@ -1,5 +1,5 @@
-data Color = Red | Green;
+enum Color { Red, Green };
 
-function pick() -> word {
+function pick() returns (word) {
   return Color.Red;
 }

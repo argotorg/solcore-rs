@@ -1,31 +1,40 @@
-data Pair(a, b) = Pair(a, b);
+struct Pair<A, B> {
+  first: A;
+  second: B;
+}
 
-forall a b . function fst(p : (a, b)) -> a {
-  match p {
-    | (x, y) => return x;
+function fst<A, B>(p: (A, B)) returns (A) {
+  match (p) {
+    case (x, y) {
+      return x;
+    }
   }
 }
 
-function tupleValue() -> (word, word) {
+function tupleValue() returns (word, word) {
   return (1, 0);
 }
 
-function unitValue() -> () {
+function unitValue() {
   return ();
 }
 
 function nestedTupleUnitPattern(p) {
-  match p {
-    | ((), (x, y)) => return x;
+  match (p) {
+    case ((), (x, y)) {
+      return x;
+    }
   }
 }
 
 function groupedSinglePattern(p) {
-  match p {
-    | (y) => return y;
+  match (p) {
+    case (y) {
+      return y;
+    }
   }
 }
 
-function pairData(x : word, y : word) -> Pair(word, word) {
-  return Pair(x, y);
+function pairData(x: word, y: word) returns (Pair<word, word>) {
+  return Pair.Pair(x, y);
 }

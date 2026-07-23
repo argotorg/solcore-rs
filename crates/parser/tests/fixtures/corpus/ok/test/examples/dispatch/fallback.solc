@@ -1,14 +1,14 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract WithFallback {
     constructor() {}
 
-    public function answer() -> uint256 {
-        return uint256(42);
+    function answer() public returns (uint256) {
+        return uint256.uint256(42);
     }
 
-    fallback() -> () {
+    fallback() returns () {
         revertLit("fallback-was-called");
     }
 }

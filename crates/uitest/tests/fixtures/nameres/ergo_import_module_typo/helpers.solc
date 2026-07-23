@@ -1,5 +1,5 @@
 export { helperValue };
 
-function helperValue(x: word) -> word {
+function helperValue(x: word) returns (word) {
   return x;
 }

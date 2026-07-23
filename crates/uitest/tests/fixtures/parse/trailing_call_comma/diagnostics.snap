@@ -3,21 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/trailing_call_comma/main.solc
 ---
-error[SC0001]: parse error: unexpected `return`
- --> /main/main.solc:2:24
-  |
-1 | function g(x: word) -> word { return x; }
-2 | function f() -> word { return g(1,); }
-  |                        ^^^^^^ unexpected token
-  |
-  = note: expecting `!`, `(`, `.`, `@`, `if`, or `lam`
----
-
 error[SC0001]: parse error: unexpected `)`
- --> /main/main.solc:2:35
+ --> /main/main.solc:2:42
   |
-1 | function g(x: word) -> word { return x; }
-2 | function f() -> word { return g(1,); }
-  |                                   ^ unexpected token
+1 | function g(x: word) returns (word) { return x; }
+2 | function f() returns (word) { return g(1,); }
+  |                                          ^ unexpected token
   |
-  = note: expecting `!`, `(`, `.`, `@`, `if`, or `lam`
+  = note: expecting `!`, `(`, `@`, or `lam`

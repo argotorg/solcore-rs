@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/unqualified_ctor_expr/main.solc
 ---
 error[SC0106]: unqualified constructor: on
-  --> /main/main.solc:11:15
+  --> /main/main.solc:12:15
    |
-10 | function main() -> word {
-11 |   return pick(on);
+11 | function main() returns (word) {
+12 |   return pick(on);
    |               ^^ constructor must be qualified
-12 | }
+13 | }
    |
    = help: use `flag.on`

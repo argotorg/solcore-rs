@@ -3,12 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_fuel_blowup/main.solc
 ---
-error[SC0209]: cannot solve class constraint `word : C`: solver exceeded its iteration bound
+error[SC0209]: cannot solve trait constraint `word: C`: solver exceeded its iteration bound
   --> /main/main.solc:16:10
    |
-15 | function f() -> word {
+15 | function f() returns (word) {
 16 |   return C.c(0);
    |          ^^^^^^ constraint originates here
 17 | }
    |
-   = help: simplify the instance chain or add a more direct instance
+   = help: simplify the impl chain or add a more direct impl

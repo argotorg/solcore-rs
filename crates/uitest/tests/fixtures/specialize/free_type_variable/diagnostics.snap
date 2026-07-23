@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/specialize/free_type_variable/main.solc
 error[SC0401]: cannot specialize expression: type is not concrete
  --> /main/main.solc:8:13
   |
-7 |   public function main() -> () {
+7 |   function main() public returns (()) {
 8 |     let x = leak();
   |             ^^^^^^ type must be concrete here
 9 |     return ();

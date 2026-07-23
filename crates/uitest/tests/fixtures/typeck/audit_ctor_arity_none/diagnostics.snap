@@ -6,14 +6,14 @@ input_file: crates/uitest/tests/fixtures/typeck/audit_ctor_arity_none/main.solc
 error[SC0203]: constructor expects 0 arguments, but 1 was provided
  --> /main/main.solc:4:10
   |
-1 | data Opt = Some(word) | None;
-  |                         ---- `None` defined here
+1 | enum Opt { Some(word), None };
+  |                        ---- `None` defined here
 2 |
-3 | function f() -> Opt {
+3 | function f() returns (Opt) {
 4 |   return Opt.None(1);
   |          ^^^^^^^^^^^ wrong number of arguments
 5 | }
   |
   = note: expected 0 arguments
   = note: found 1 argument
-  = note: `None` has signature `None() -> Opt`
+  = note: `None` has signature `None() returns (Opt)`

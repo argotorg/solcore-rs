@@ -3,10 +3,10 @@
    so its result is runtime.  Binding it with 'let y : comptime word'
    must be rejected by the verifier.
 */
-import std;
+import * as std from std;
 
-function sloadWord() -> word {
-  let v : word;
+function sloadWord() returns (word) {
+  let v: word;
   assembly {
     v := sload(0)
   }
@@ -14,8 +14,8 @@ function sloadWord() -> word {
 }
 
 contract ComptimeLetRuntime {
-  function main() -> word {
-    let y : comptime word = sloadWord();
+  function main() returns (word) {
+    let comptime y: word = sloadWord();
     return y;
   }
 }

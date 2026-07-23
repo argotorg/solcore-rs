@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/type_alias_missing_equals/main.solc
 ---
 error[SC0001]: parse error: unexpected identifier `U`
- --> /main/main.solc:1:13
+ --> /main/main.solc:1:14
   |
-1 | type Amount U;
-  |             ^ unexpected token
+1 | alias Amount U;
+  |              ^ unexpected token
   |
-  = note: expecting `(`, or `=`
-  = note: while parsing type alias declaration
+  = note: expecting `=`, or type parameter list
+  = note: while parsing type declaration

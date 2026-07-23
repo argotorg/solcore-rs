@@ -1,10 +1,10 @@
-forall a . function leak() -> a {
-  let y : a;
+function leak<a>() returns (a) {
+  let y: a;
   return y;
 }
 
 contract C {
-  public function main() -> () {
+  function main() public returns (()) {
     let x = leak();
     return ();
   }

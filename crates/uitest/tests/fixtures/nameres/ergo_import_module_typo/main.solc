@@ -1,5 +1,5 @@
-import helprs.{helperValue};
+import {helperValue} from helprs;
 
-function main() -> word {
+function main() returns (word) {
   return helperValue(1);
 }

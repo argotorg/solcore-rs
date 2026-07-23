@@ -1,3 +1,3 @@
 contract C {
-  public function echo(value: uint256) -> uint256 { return value; }
+  function echo(value: uint256) public returns (uint256) { return value; }
 }

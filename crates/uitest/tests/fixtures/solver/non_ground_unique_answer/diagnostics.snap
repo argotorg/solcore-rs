@@ -3,13 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/non_ground_unique_answer/main.solc
 ---
-error[SC0208]: ambiguous class constraint: word : Parent
+error[SC0208]: ambiguous trait constraint: word: Parent
   --> /main/main.solc:12:10
    |
-11 | forall unused . function trigger() -> word {
+11 | function trigger<unused>() returns (word) {
 12 |   return use(0);
    |          ^^^^^^ ambiguous constraint here
 13 | }
    |
    = note: the matching proof leaves existential type variables unresolved
-   = help: make the type more specific or remove overlapping instances
+   = help: make the type more specific or remove overlapping impls

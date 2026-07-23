@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/specialize/polyrec_type_size_fuel/main.
 error[SC0412]: specialization type size exceeded at 4096 type nodes
  --> /main/main.solc:2:10
   |
-1 | forall a . function go(x: a) -> word {
+1 | function go<a>(x: a) returns (word) {
 2 |   return go((x, x));
   |          ^^^^^^^^^^ specialization type size limit reached here
 3 | }

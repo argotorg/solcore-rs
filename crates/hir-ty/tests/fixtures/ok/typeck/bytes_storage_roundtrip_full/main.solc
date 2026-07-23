@@ -1,17 +1,17 @@
-import std.{*};
+import std;
 
 contract C {
   value : bytes;
 
-  constructor(x : memory(bytes)) {
+  constructor(x: bytes memory) {
     value = x;
   }
 
-  public function get() -> memory(bytes) {
+  function get() public returns (bytes memory) {
     return value;
   }
 
-  function main() -> () {
+  function main() returns () {
     return ();
   }
 }

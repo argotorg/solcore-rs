@@ -1,3 +1,3 @@
-import util.{value};
+import {value} from util;
 
 function main() {}

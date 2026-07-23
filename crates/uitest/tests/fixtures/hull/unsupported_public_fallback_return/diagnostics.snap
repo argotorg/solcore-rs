@@ -3,11 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/unsupported_public_fallback_return/main.solc
 ---
-error[SC0231]: fallback ABI must be unit -> unit
+error[SC0231]: fallback ABI must have type `function()`
  --> /main/main.solc:5:3
   |
 4 |   contract C {
-5 | /   fallback() -> word {
+5 | /   fallback() returns (word) {
 6 | |     return 1;
 7 | |   }
   | |___^ unsupported fallback ABI

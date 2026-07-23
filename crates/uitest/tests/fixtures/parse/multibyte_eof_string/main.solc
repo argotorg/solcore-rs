@@ -1,2 +1,2 @@
-function f() -> word {
+function f() returns (word) {
   let s = "café

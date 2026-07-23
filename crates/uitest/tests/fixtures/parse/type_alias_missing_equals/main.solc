@@ -1,1 +1,1 @@
-type Amount U;
+alias Amount U;

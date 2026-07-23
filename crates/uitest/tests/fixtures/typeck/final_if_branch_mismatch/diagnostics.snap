@@ -6,9 +6,9 @@ input_file: crates/uitest/tests/fixtures/typeck/final_if_branch_mismatch/main.so
 error[SC0201]: type mismatch: expected word, found ()
  --> /main/main.solc:2:3
   |
-1 | function f(x : bool) -> word {
-2 |   if x { 1; } else { true; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^ expression has mismatched type
+1 | function f(x: bool) returns (word) {
+2 |   if (x) { 1; } else { true; }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expression has mismatched type
 3 | }
   |
   = note: expected type: word

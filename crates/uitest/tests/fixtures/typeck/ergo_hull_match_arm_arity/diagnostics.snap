@@ -6,10 +6,10 @@ input_file: crates/uitest/tests/fixtures/typeck/ergo_hull_match_arm_arity/main.s
 error[SC0203]: match arm expects 2 arguments, but 1 was provided
  --> /main/main.solc:5:3
   |
-4 |   match x, y {
-5 |   | Nat.Zero => return 0;
-  |   ^^^^^^^^^^^^^^^^^^^^^^^ wrong number of arguments
-6 |   | Nat.Succ(a), Nat.Zero => return 1;
+4 |   match (x, y) {
+5 |   case Nat.Zero { return 0; }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ wrong number of arguments
+6 |   case (Nat.Succ(a), Nat.Zero) { return 1; }
   |
   = note: expected 2 arguments
   = note: found 1 argument

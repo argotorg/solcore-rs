@@ -1,4 +1,4 @@
-import @missing.math.api;
+import * as api from @missing.math.api;
 
 contract Missing {
   constructor() {}

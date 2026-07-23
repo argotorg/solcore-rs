@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/typeck/comptime_class_method_runtime_ar
 error[SC0240]: runtime value passed to comptime parameter 'x' of 'Wrap.unwrap'
   --> /main/main.solc:25:20
    |
-24 |   public function main() -> word {
+24 |   function main() public returns (word) {
 25 |     return process(sloadWord());
    |                    ^^^^^^^^^^^ runtime value passed here
 26 |   }

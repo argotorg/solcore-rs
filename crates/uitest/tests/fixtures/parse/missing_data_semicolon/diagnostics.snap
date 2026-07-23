@@ -6,8 +6,8 @@ input_file: crates/uitest/tests/fixtures/parse/missing_data_semicolon/main.solc
 error[SC0001]: parse error: unexpected end of input
  --> /main/main.solc:1:12
   |
-1 | data D = C
+1 | enum D { C
   |           ^ unexpected token
   |
-  = note: expecting `(`, `;`, or `|`
-  = note: while parsing data declaration
+  = note: expecting `(`, `,`, or `}`
+  = note: while parsing enum or struct declaration

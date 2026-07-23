@@ -7,7 +7,7 @@ error[SC0401]: entry point must have a concrete, non-polymorphic type before spe
  --> /main/main.solc:5:1
   |
 4 |
-5 | / forall a . function main(x : a) -> a {
+5 | / function main<a>(x: a) returns (a) {
 6 | |   return x;
 7 | | }
   | |_^ type must be concrete here

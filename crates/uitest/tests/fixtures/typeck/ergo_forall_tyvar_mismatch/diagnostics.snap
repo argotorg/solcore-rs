@@ -3,13 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_forall_tyvar_mismatch/main.solc
 ---
-error[SC0207]: cannot satisfy class constraint: a : Int
- --> /main/main.solc:1:8
+error[SC0207]: cannot satisfy trait constraint: a: Int
+ --> /main/main.solc:1:16
   |
-1 | forall a . function ident(x: a) -> a {
-  |        ^ constraint originates here
+1 | function ident<a>(x: a) returns (a) {
+  |                ^ constraint originates here
 2 |   return 1;
 3 | }
   |
-  = note: no visible instance matches `a : Int`
-  = help: add a matching instance or strengthen the surrounding type context
+  = note: no visible impl matches `a: Int`
+  = help: add a matching impl or strengthen the surrounding type context

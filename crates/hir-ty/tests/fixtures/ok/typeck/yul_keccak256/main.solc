@@ -1,4 +1,4 @@
-function hash_word(value: word) -> word {
+function hash_word(value: word) returns (word) {
   let result: word;
   assembly {
     mstore(0, value)

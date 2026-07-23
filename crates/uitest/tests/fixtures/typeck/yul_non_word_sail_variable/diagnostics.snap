@@ -6,8 +6,8 @@ input_file: crates/uitest/tests/fixtures/typeck/yul_non_word_sail_variable/main.
 error[SC0204]: Yul reference `b` requires word type, got bool
  --> /main/main.solc:3:14
   |
-2 |   let b : bool = false;
+2 |   let b: bool = false;
 3 |   assembly { b := add(1, 1) }
   |              ^ Yul reference has non-word type
-4 |   if b { return 1; } else { return 0; }
+4 |   if (b) { return 1; } else { return 0; }
   |

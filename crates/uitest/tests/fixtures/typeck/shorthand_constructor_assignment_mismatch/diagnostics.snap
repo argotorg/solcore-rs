@@ -4,17 +4,17 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/shorthand_constructor_assignment_mismatch/main.solc
 ---
 error[SC0201]: argument type mismatch in call to `Some`
- --> /main/main.solc:5:13
+ --> /main/main.solc:5:19
   |
-1 | data Option = None | Some(word);
-  |                           ---- parameter 1 defined here
+1 | enum Option { None, Some(word) };
+  |                          ---- parameter 1 defined here
 2 |
-3 | function bad() -> word {
-4 |   let x : Option;
-5 |   x = .Some(true);
-  |             ^^^^ argument has mismatched type
+3 | function bad() returns (word) {
+4 |   let x: Option;
+5 |   x = Option.Some(true);
+  |                   ^^^^ argument has mismatched type
 6 |   return 0;
   |
   = note: expected `word` because parameter 1 of `Some` has type `word`
   = note: found type: bool
-  = note: `Some` has signature `Some(word) -> Option`
+  = note: `Some` has signature `Some(word) returns (Option)`

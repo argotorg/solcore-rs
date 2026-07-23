@@ -62,7 +62,7 @@ machine/power state, and the JSON files produced through `BENCH_EXPORT_DIR`.
 The manual Hyperfine suite above is intended for before/after measurement, not
 for a stable threshold across different machines. CI separately runs
 `scripts/check-compile-performance.sh`, which is a coarse pathology detector.
-It compiles generated 2,000-binding and 500-instance modules through Hull and
+It compiles generated 2,000-binding and 500-impl modules through Hull and
 re-analyzes a 256-function VFS module across 64 edits. Each case has an
 independent, deliberately generous 45-second ceiling, configurable through
 `PERF_CASE_TIMEOUT_SECONDS` for slower development machines.

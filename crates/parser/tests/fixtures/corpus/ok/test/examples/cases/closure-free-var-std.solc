@@ -1,15 +1,15 @@
-import std.{*};
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+import std;
+pragma solcore noPattersonCondition;
+pragma solcore noCoverageCondition;
+pragma solcore noBoundVariableCondition;
 
 contract Bug {
-    public function main() -> word {
+    function main() public returns (word) {
         return makeClosure(42);
     }
 
-    public function makeClosure(e : word) -> word {
-        let f = lam (x : word) {
+    function makeClosure(e: word) public returns (word) {
+        let f = lam (x: word) {
             return e + x;  // Uses Add.add typeclass method
         };
         return f(1);

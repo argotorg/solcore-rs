@@ -1,8 +1,8 @@
-data Flag = Off | On;
+enum Flag { Off, On };
 
-function pick(x : Flag) -> word {
-  match x {
-  | _ => return 0;
-  | Flag.Off => return 1;
+function pick(x: Flag) returns (word) {
+  match (x) {
+  default { return 0; }
+  case Flag.Off { return 1; }
   }
 }

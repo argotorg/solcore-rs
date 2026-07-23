@@ -3,23 +3,23 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_ct_indirect_escape/main.solc
 ---
-error[SC0207]: cannot satisfy class constraint: operator Add.add
+error[SC0207]: cannot satisfy trait constraint: operator Add.add
   --> /main/main.solc:17:12
    |
-16 |   function double(comptime x : word) -> comptime word {
+16 |   function double(comptime x: word) returns (comptime word) {
 17 |     return x + x;
    |            ^^^^^ constraint originates here
 18 |   }
    |
-   = note: no visible instance matches `operator Add.add`
-   = help: add a matching instance or strengthen the surrounding type context
+   = note: no visible impl matches `operator Add.add`
+   = help: add a matching impl or strengthen the surrounding type context
 ---
 
 error[SC0240]: runtime value passed to comptime parameter 'x' of 'double'
-  --> /main/main.solc:20:44
+  --> /main/main.solc:20:43
    |
-19 |   function main() -> word {
-20 |     let g = lam (y : word) { return double(y); };
-   |                                            ^ runtime value passed here
+19 |   function main() returns (word) {
+20 |     let g = lam (y: word) { return double(y); };
+   |                                           ^ runtime value passed here
 21 |     return g(sloadWord());
    |

@@ -6,10 +6,10 @@ input_file: crates/uitest/tests/fixtures/nameres/glob_shadow_local/main.solc
 error[SC0108]: duplicate declaration `value` in term namespace
  --> /main/main.solc:3:10
   |
-1 | import lib.{*};
-  | --------------- previous declaration
+1 | import lib;
+  | ----------- previous declaration
 2 |
-3 | function value(x: word) -> word {
+3 | function value(x: word) returns (word) {
   |          ^^^^^ duplicate declaration
 4 |   return x;
   |

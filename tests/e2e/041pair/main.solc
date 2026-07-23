@@ -1,16 +1,14 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract Pair {
 
-  function fst(p : (word, word)) -> word {
-    match p {
-      | (a,b) => return a;
-    }
+  function fst(p: (word, word)) returns (word) {
+    match (p) { case (a, b) { return a; } }
   }
 
   // #[() -> 1]
-  public function run() -> uint256 {
-    return uint256(fst((1,0)));
+  function run() public returns (uint256) {
+    return uint256.uint256(fst((1,0)));
   }
 }

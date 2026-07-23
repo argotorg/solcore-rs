@@ -4,15 +4,15 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/poly_int_defaulting/main.solc
 ---
 error[SC0299]: ambiguous inferred type
- --> /main/main.solc:5:22
+ --> /main/main.solc:5:29
   |
 4 |
-5 |   function f() -> word {
-  |  ______________________^
+5 |   function f() returns (word) {
+  |  _____________________________^
 6 | |   let y = poly(7);
 7 | |   return 0;
 8 | | }
   | |_^ ambiguous inferred type
   |
-  = note: forall _ . _ : Int => () -> word
-  = help: add a type annotation or a matching instance to fix the ambiguous type variable
+  = note: <_> function() returns (word) where _: Int
+  = help: add a type annotation or a matching impl to fix the ambiguous type variable

@@ -1,1 +1,1 @@
-import lib.{D(C)};
+import {D(C)} from lib;

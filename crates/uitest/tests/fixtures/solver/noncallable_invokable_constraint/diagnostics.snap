@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/solver/noncallable_invokable_constraint
 error[SC0206]: non-callable value of type word
  --> /main/main.solc:3:10
   |
-2 |   let x : word = 1;
+2 |   let x: word = 1;
 3 |   return x();
   |          ^ callee is not callable
 4 | }

@@ -4,10 +4,10 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/derive-self-return-poc.solc
 ---
 error[SC0001]: invalid token `#`
-  --> /derive-self-return-poc.solc:37:1
+  --> /derive-self-return-poc.solc:35:1
    |
-36 |
-37 | #[derive(CloneLike)]
+34 |
+35 | #[derive(CloneLike)]
    | ^ invalid token
-38 | data Box(a) = Box(a);
+36 | enum Box<a> { Box(a) }
    |

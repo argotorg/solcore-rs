@@ -1,14 +1,14 @@
-function first(p: (word, word)) -> word {
-  match p {
-  | (a, b) => return a;
+function first(p: (word, word)) returns (word) {
+  match (p) {
+  case (a, b) { return a; }
   }
 }
 
-function f() -> word {
+function f() returns (word) {
   let x = first(true);
   return x;
 }
 
-function g() -> bool {
+function g() returns (bool) {
   return 42;
 }

@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/parse/ergo_unterminated_string/main.sol
 error[SC0001]: unterminated string literal
  --> /main/main.solc:2:13
   |
-1 |   function f() -> word {
+1 |   function f() returns (word) {
 2 |       let s = "hello;
   |  _____________^
 3 | |     return 1;

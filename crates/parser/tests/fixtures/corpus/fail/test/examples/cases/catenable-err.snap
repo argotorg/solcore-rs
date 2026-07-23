@@ -6,10 +6,10 @@ input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/catenab
 error[SC0001]: parse error: unexpected `}`
  --> /catenable-err.solc:3:1
   |
-1 | forall t.class t:Catenable {
-2 |   function cat(x:t) -> memory(bytes)
+1 | trait Catenable<t> {
+2 |   function cat(x:t) returns (bytes memory)
 3 | }
   | ^ unexpected token
   |
-  = note: expecting `->`, or `;`
-  = note: while parsing type
+  = note: expecting `;`, or where clause
+  = note: while parsing function signature

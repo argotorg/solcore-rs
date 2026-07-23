@@ -1,4 +1,4 @@
 contract C {
   x: word = 1;
-  function main() -> () { return (); }
+  function main() returns () { return (); }
 }

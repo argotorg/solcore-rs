@@ -1,5 +1,5 @@
-import lib as L;
+import * as L from lib;
 
-function go() -> word {
+function go() returns (word) {
   return L.id();
 }

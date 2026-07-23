@@ -3,13 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_no_instance/main.solc
 ---
-error[SC0207]: cannot satisfy class constraint: Bool : Eq
+error[SC0207]: cannot satisfy trait constraint: Bool: Eq
   --> /main/main.solc:14:10
    |
-13 | function f() -> Bool {
+13 | function f() returns (Bool) {
 14 |   return Eq.eq(Bool.True, Bool.False);
    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constraint originates here
 15 | }
    |
-   = note: no visible instance matches `Bool : Eq`
-   = help: add a matching instance or strengthen the surrounding type context
+   = note: no visible impl matches `Bool: Eq`
+   = help: add a matching impl or strengthen the surrounding type context

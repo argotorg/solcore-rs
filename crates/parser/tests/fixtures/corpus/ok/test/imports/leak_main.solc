@@ -1,6 +1,6 @@
-import leak_a;
-import leak_b;
+import * as leak_a from leak_a;
+import * as leak_b from leak_b;
 
-function main() -> word {
+function main() returns (word) {
   return fromB();
 }

@@ -1,1 +1,1 @@
-data D = C
+enum D { C

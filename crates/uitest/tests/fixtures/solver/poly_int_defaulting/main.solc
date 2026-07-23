@@ -1,8 +1,8 @@
-forall a . a:Int => function poly(x:a) -> a {
+function poly<a>(x: a) returns (a) where a: Int {
   return x;
 }
 
-function f() -> word {
+function f() returns (word) {
   let y = poly(7);
   return 0;
 }

@@ -1,13 +1,14 @@
-data Light = On | Off;
-data Power = Plugged | Battery;
+// migrate-syntax: keep-unqualified-constructor
+enum Light { On, Off };
+enum Power { Plugged, Battery };
 
-function isOn(l: Light) -> word {
-  match l {
-  | Light.On => return 1;
-  | Light.Off => return 0;
+function isOn(l: Light) returns (word) {
+  match (l) {
+  case Light.On { return 1; }
+  case Light.Off { return 0; }
   }
 }
 
-function main() -> word {
+function main() returns (word) {
   return isOn(On);
 }

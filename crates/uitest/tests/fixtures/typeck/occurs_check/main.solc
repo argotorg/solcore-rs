@@ -1,4 +1,4 @@
-function f() -> () {
-  let self = lam(x) { return x(x); };
+function f() returns (()) {
+  let self = lam (x) { return x(x); };
   return ();
 }

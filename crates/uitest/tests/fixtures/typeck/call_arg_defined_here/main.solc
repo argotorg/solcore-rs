@@ -1,5 +1,5 @@
-import lib as L;
+import * as L from lib;
 
-function go() -> L.Color {
+function go() returns (L.Color) {
   return L.paint(1, true);
 }

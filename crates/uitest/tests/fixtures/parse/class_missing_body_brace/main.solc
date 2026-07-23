@@ -1,1 +1,1 @@
-class T: Eq
+trait Eq<T>

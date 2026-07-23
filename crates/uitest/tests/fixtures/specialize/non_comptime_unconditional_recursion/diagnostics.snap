@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/non_comptime_unconditional_recursion/main.solc
 ---
 error[SC0414]: `id` cannot be reduced at compile time: recursive calls form a cycle with no base case (infinite recursion)
- --> /main/main.solc:4:48
+ --> /main/main.solc:4:55
   |
-3 | contract Answer { function main() -> word { return id(0); }
-4 |   public function id(x: word) -> word { return id(x); }
-  |                                                ^^^^^ recursive call cannot be reduced here
+3 | contract Answer { function main() returns (word) { return id(0); }
+4 |   function id(x: word) public returns (word) { return id(x); }
+  |                                                       ^^^^^ recursive call cannot be reduced here
 5 | }
   |
   = note: help: add a base case, or guard the recursive call behind a runtime condition so it compiles to a runtime call

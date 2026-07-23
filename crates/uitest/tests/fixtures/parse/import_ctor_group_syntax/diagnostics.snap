@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/import_ctor_group_syntax/main.solc
 ---
 error[SC0001]: parse error: unexpected `(`
- --> /main/main.solc:1:14
+ --> /main/main.solc:1:10
   |
-1 | import lib.{D(C)};
-  |              ^ unexpected token
+1 | import {D(C)} from lib;
+  |          ^ unexpected token
   |
   = note: expecting `,`, `as`, or `}`
   = note: while parsing import declaration

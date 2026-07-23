@@ -1,5 +1,5 @@
 contract Bad {
-  public constructor() {}
+  constructor() public {}
 
   function after() {}
 }

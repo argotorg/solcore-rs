@@ -1,1 +1,1 @@
-import mod.{A as B, (^^)} hiding {C};
+import {A as B, power} from mod;

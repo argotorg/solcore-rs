@@ -3,20 +3,20 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_overlapping_instances/main.solc
 ---
-error[SC0218]: Overlapping instances are not supported
-               instance:
-               word : C
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               word: C
                overlaps with:
-               word : C
-  --> /main/main.solc:11:10
+               word: C
+  --> /main/main.solc:11:6
    |
  4 |
- 5 | instance word : C {
-   |          -------- previous overlapping instance
- 6 |   function c(x: word) -> word {
+ 5 | impl C<word> {
+   |      ------- previous overlapping impl
+ 6 |   function c(x: word) returns (word) {
 ...
 10 |
-11 | instance word : C {
-   |          ^^^^^^^^ overlapping instance
-12 |   function c(x: word) -> word {
+11 | impl C<word> {
+   |      ^^^^^^^ overlapping impl
+12 |   function c(x: word) returns (word) {
    |

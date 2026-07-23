@@ -3,13 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/whole_mapping_private_full/main.solc
 ---
-error[SC0201]: type mismatch: expected mapping(address, uint256), found storage(mapping(address, uint256))
+error[SC0201]: type mismatch: expected mapping(address => uint256), found mapping(address => uint256) storage
   --> /main/main.solc:10:12
    |
- 9 |   function leak() -> mapping(address, uint256) {
+ 9 |   function leak() returns (mapping(address => uint256)) {
 10 |     return balances;
    |            ^^^^^^^^ expression has mismatched type
 11 |   }
    |
-   = note: expected type: mapping(address, uint256)
-   = note: found type: storage(mapping(address, uint256))
+   = note: expected type: mapping(address => uint256)
+   = note: found type: mapping(address => uint256) storage

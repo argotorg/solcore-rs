@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/user-op-lambda.solc
 ---
-error[SC0001]: could not parse top-level item near `infixl 70 (^^) => pow;`; expected a declaration starting with `import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`
+error[SC0001]: could not parse top-level item near `infixl 70 (^^) => pow;`; expected a declaration starting with `import`, `pragma`, `type`, `alias`, `enum`, `struct`, `trait`, `impl`, `contract`, `interface`, `library`, or `function`
  --> /user-op-lambda.solc:6:1
   |
 5 |
@@ -14,11 +14,11 @@ error[SC0001]: could not parse top-level item near `infixl 70 (^^) => pow;`; exp
 ---
 
 error[SC0001]: parse error: unexpected `^`
-  --> /user-op-lambda.solc:17:47
+  --> /user-op-lambda.solc:17:54
    |
 16 |     // operator (^^) used inside a lambda body
-17 |     let f = lam(x : word) -> word { return x ^^ 3; };
-   |                                               ^ unexpected token
+17 |     let f = lam (x: word) returns (word) { return x ^^ 3; };
+   |                                                      ^ unexpected token
 18 |     return f(2);
    |
-   = note: expecting `!`, `(`, `.`, `@`, `if`, or `lam`
+   = note: expecting `!`, `(`, `@`, or `lam`

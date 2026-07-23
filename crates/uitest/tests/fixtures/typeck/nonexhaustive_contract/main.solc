@@ -1,13 +1,13 @@
 contract C {
-  data Flag = Off | On;
+  enum Flag { Off, On };
 
-  public function pick(x : Flag) -> word {
-    match x {
-    | Flag.Off => return 0;
+  function pick(x: Flag) public returns (word) {
+    match (x) {
+    case Flag.Off { return 0; }
     }
   }
 
-  function main() -> word {
+  function main() returns (word) {
     return 0;
   }
 }

@@ -1,5 +1,5 @@
-function f() -> word {
-    let r : word;
+function f() returns (word) {
+    let r: word;
     assembly {
         r := add(1,
     }

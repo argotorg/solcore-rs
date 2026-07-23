@@ -6,13 +6,13 @@ input_file: crates/uitest/tests/fixtures/nameres/ergo_dup_function/main.solc
 error[SC0108]: duplicate declaration `twice` in term namespace
   --> /main/main.solc:9:10
    |
- 1 | function twice(x: word) -> word {
+ 1 | function twice(x: word) returns (word) {
    |          ----- previous declaration
  2 |   return x;
  3 | }
 ...
  8 |
- 9 | function twice(x: word) -> word {
+ 9 | function twice(x: word) returns (word) {
    |          ^^^^^ duplicate declaration
 10 |   return x;
    |

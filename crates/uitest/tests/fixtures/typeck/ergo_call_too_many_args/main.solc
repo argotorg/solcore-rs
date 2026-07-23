@@ -1,7 +1,7 @@
-function double(x: word) -> word {
+function double(x: word) returns (word) {
   return x;
 }
 
-function g() -> word {
+function g() returns (word) {
   return double(1, 2, 3);
 }

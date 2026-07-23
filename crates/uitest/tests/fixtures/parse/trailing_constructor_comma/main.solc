@@ -1,1 +1,1 @@
-data D = C(word,);
+enum D { C(word,,) };

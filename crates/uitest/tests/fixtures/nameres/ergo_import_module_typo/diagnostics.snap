@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_import_module_typo/main.solc
 ---
 error[SC0109]: import helprs: file not found
- --> /main/main.solc:1:8
+ --> /main/main.solc:1:27
   |
-1 | import helprs.{helperValue};
-  |        ^^^^^^ module reference
+1 | import {helperValue} from helprs;
+  |                           ^^^^^^ module reference
 2 |
-3 | function main() -> word {
+3 | function main() returns (word) {
   |
   = help: check the module path or add the missing source file
   = help: did you mean `helpers`?

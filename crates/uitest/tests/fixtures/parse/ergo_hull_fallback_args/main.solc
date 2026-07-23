@@ -1,12 +1,12 @@
 // Mirrors reference corpus test/examples/cases/fallback-with-args.solc
 // (expected failure there): fallback must take no arguments.
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract BadFallback {
     constructor() {}
 
-    fallback(x: uint256) -> () {
-        revert("fallback-was-called");
+    fallback(x: uint256) returns (()) {
+        revert;
     }
 }

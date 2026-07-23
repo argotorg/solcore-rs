@@ -1,14 +1,14 @@
-import std.{*};
+import std;
 
-function deposit(pubkey: memory(string), withdrawal_credentials: memory(string), signature: memory(string), deposit_data_root: uint256) -> () {
-    let msg_value : word = 0;
+function deposit(pubkey: string memory, withdrawal_credentials: string memory, signature: string memory, deposit_data_root: uint256) returns () {
+    let msg_value: word = 0;
     assembly {
         msg_value := callvalue()
     }
 }
 
 contract Foo {
-   public function main () -> () {
-      deposit(memory(0), memory(0), memory(0), uint256(2));
+   function main() public returns () {
+      deposit(memory.memory(0), memory.memory(0), memory.memory(0), uint256.uint256(2));
    }
 }

@@ -1,1 +1,1 @@
-import @lib.a.b as X;
+import * as X from @lib.a.b;

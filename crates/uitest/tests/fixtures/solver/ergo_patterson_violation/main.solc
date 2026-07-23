@@ -1,4 +1,4 @@
-forall a . class a : C1 {}
-forall a . class a : C2 {}
+trait C1<a> {}
+trait C2<a> {}
 
-forall U . U : C1, U : C2 => instance U : C1 {}
+impl<U> C1<U> where U: C1, U: C2 {}

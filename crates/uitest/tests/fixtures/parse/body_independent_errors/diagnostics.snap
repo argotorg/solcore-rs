@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/parse/body_independent_errors/main.solc
 error[SC0001]: invalid token `~`
  --> /main/main.solc:2:1
   |
-1 | function main() -> word {
+1 | function main() returns (word) {
 2 | ~
   | ^ invalid token
 3 | let broken = ;

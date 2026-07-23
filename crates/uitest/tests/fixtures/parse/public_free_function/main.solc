@@ -1,3 +1,4 @@
+// migrate-syntax: keep-legacy-negative
 public function bad() {}
 
 function after() {}

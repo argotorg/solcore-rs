@@ -1,5 +1,5 @@
-data P(a) = Mk(a);
+enum P<a> { Mk(a) };
 
-function f(x: P(word(word))) -> word {
+function f(x: P<word<word>>) returns (word) {
   return 0;
 }

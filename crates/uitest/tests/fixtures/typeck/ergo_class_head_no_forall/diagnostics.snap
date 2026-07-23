@@ -3,8 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_class_head_no_forall/main.solc
 ---
-error[SC0102]: undefined type variables: a
- --> /main/main.solc:1:7
+error[SC0103]: undefined type constructor: a
+ --> /main/main.solc:2:19
   |
-1 | class a : C {}
-  |       ^ undefined type variable
+1 | trait C<b> {
+2 |   function use(x: a) returns (b) ;
+  |                   ^ undefined type constructor
+3 | }
+  |
+  = help: did you mean type `C`?

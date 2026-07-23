@@ -1,3 +1,3 @@
-function f() -> (word, word, word) {
+function f() returns ((word, word, word)) {
   return (1, 2);
 }

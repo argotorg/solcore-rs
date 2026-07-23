@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/string_type_annotation/main.solc
 ---
 error[SC0103]: undefined type constructor: string
- --> /main/main.solc:1:17
+ --> /main/main.solc:1:23
   |
-1 | function f() -> string {
-  |                 ^^^^^^ undefined type constructor
+1 | function f() returns (string) {
+  |                       ^^^^^^ undefined type constructor
 2 |   return "ok";
 3 | }
   |

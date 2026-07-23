@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/hull/ergo_hull_multi_error/main.solc
 error[SC0421]: cannot lower literal `"oops"` to Hull
  --> /main/main.solc:5:12
   |
-4 |   public function main() -> string {
+4 |   function main() public returns (string) {
 5 |     return "oops";
   |            ^^^^^^ unsupported literal
 6 |   }
@@ -16,7 +16,7 @@ error[SC0421]: cannot lower literal `"oops"` to Hull
 error[SC0421]: cannot lower literal `"also bad"` to Hull
   --> /main/main.solc:11:12
    |
-10 |   public function main() -> string {
+10 |   function main() public returns (string) {
 11 |     return "also bad";
    |            ^^^^^^^^^^ unsupported literal
 12 |   }

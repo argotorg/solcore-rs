@@ -1,5 +1,5 @@
-import std.a.b.{value};
+import {value} from std.a.b;
 
-function main(x: word) -> word {
+function main(x: word) returns (word) {
   return value(x);
 }

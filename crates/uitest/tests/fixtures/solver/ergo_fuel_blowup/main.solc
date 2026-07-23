@@ -1,17 +1,17 @@
-pragma no-patterson-condition ;
+pragma solcore noPattersonCondition ;
 
-data Box(a) = MkBox(a);
+enum Box<a> { MkBox(a) };
 
-forall a . class a : C {
-  function c(x: a) -> word;
+trait C<a> {
+  function c(x: a) returns (word);
 }
 
-forall a . Box(a) : C => instance a : C {
-  function c(x: a) -> word {
+impl<a> C<a> where Box<a>: C {
+  function c(x: a) returns (word) {
     return 1;
   }
 }
 
-function f() -> word {
+function f() returns (word) {
   return C.c(0);
 }

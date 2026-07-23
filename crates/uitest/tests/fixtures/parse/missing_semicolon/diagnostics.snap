@@ -9,5 +9,5 @@ error[SC0001]: parse error: unexpected end of input
 1 | import core.math
   |                 ^ unexpected token
   |
-  = note: expecting `.`, `;`, or `as`
+  = note: expecting `.`, or `;`
   = note: while parsing import declaration

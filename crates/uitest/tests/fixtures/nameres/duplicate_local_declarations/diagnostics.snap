@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/duplicate_local_declarations/main.solc
 ---
 error[SC0108]: duplicate declaration `Foo` in type namespace
- --> /main/main.solc:2:6
+ --> /main/main.solc:2:7
   |
-1 | data Foo = Foo;
+1 | enum Foo { Foo };
   |      --- previous declaration
-2 | type Foo = word;
-  |      ^^^ duplicate declaration
+2 | alias Foo = word;
+  |       ^^^ duplicate declaration
 3 |
   |
 ---

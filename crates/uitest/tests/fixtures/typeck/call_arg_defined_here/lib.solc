@@ -1,7 +1,7 @@
 export { Color(*), paint };
 
-data Color = Red | Green;
+enum Color { Red, Green };
 
-function paint(name: word, c: Color) -> Color {
+function paint(name: word, c: Color) returns (Color) {
   return c;
 }

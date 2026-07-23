@@ -1,1 +1,1 @@
-function f(comptime) -> word { return comptime; }
+function f(comptime) returns (word) { return comptime; }

@@ -1,9 +1,9 @@
-forall a b . class a : Rel(b) {
-  function rel(x: a, y: b) -> word;
+trait Rel<a, b> {
+  function rel(x: a, y: b) returns (word);
 }
 
-instance word : Rel {
-  function rel(x: word, y: word) -> word {
+impl Rel<word> {
+  function rel(x: word, y: word) returns (word) {
     return 1;
   }
 }

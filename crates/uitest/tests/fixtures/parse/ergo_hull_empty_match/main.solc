@@ -1,12 +1,12 @@
-data B = A | C;
+enum B { A, C };
 
-function impossible(b : B) -> word {
-  match b {
+function impossible(b: B) returns (word) {
+  match (b) {
   }
 }
 
 contract T {
-  public function main(x : word) -> word {
+  function main(x: word) public returns (word) {
     return impossible(B.A);
   }
 }

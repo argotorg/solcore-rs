@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/unknown_import/main.solc
 ---
 error[SC0110]: unknown import item `missing`
- --> /main/main.solc:1:14
+ --> /main/main.solc:1:9
   |
-1 | import util.{missing};
-  |              ^^^^^^^ unknown import item
+1 | import {missing} from util;
+  |         ^^^^^^^ unknown import item
   |
   = note: `missing` is not exported by module `util`
   = help: check the imported module's exported names

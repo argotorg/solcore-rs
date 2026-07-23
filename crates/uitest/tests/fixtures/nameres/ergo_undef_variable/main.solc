@@ -1,3 +1,3 @@
-function addOne(x: word) -> word {
+function addOne(x: word) returns (word) {
   return x + missingVar;
 }

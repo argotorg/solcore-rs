@@ -1,3 +1,3 @@
-function match(x : word) -> word {
+function match(x: word) returns (word) {
     return x;
 }

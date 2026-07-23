@@ -1,5 +1,5 @@
-import vault;
+import * as vault from vault;
 
-function main() -> word {
+function main() returns (word) {
   return vault.secret(1);
 }

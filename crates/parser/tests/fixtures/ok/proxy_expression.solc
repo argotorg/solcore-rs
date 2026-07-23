@@ -1,6 +1,6 @@
-function main(x: word) -> word {
+function main(x: word) returns (word) {
   let p = @word;
   let pairProxy = @(word, word);
-  let annotated = p : @word;
+  let converted = p as @word;
   return x;
 }

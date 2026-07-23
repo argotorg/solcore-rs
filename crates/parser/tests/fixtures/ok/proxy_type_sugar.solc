@@ -1,1 +1,1 @@
-function proxy_sig(x: @word) -> @word {}
+function proxy_sig(x: @word) returns (@word) {}

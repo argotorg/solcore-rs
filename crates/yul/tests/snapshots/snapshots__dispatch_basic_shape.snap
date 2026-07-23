@@ -1,6 +1,6 @@
 ---
 source: crates/yul/tests/snapshots.rs
-expression: "render_source(\"dispatch_basic_shape\",\nr#\"\nimport std.{*};\nimport std.dispatch.{*};\n\ncontract DispatchBasicShape {\n  public function id(x : uint256) -> uint256 {\n    return x;\n  }\n\n  public function answer() -> uint256 {\n    return uint256(42);\n  }\n}\n\"#,)"
+expression: "render_source(\"dispatch_basic_shape\",\nr#\"\nimport std;\nimport std.dispatch;\n\ncontract DispatchBasicShape {\n  function id(x: uint256) public returns (uint256) {\n    return x;\n  }\n\n  function answer() public returns (uint256) {\n    return 42 as uint256;\n  }\n}\n\"#,)"
 ---
 object "DispatchBasicShapeDeploy" {
   code {
@@ -356,7 +356,7 @@ object "DispatchBasicShapeDeploy" {
       function usr$opcodes_mstore_d7415bc7e(src$a_79, src$b_80) {
         mstore(src$a_79, src$b_80)
       }
-      function usr$opcodes_revert_d73350734(src$a_81, src$b_82) {
+      function usr$opcodes_revert__df9f680cd(src$a_81, src$b_82) {
         revert(src$a_81, src$b_82)
       }
       function usr$opcodes_shr_d588bcc8e(src$a_83, src$b_84) -> gen$result_85 {
@@ -448,13 +448,13 @@ object "DispatchBasicShapeDeploy" {
             let src$selector_99
             src$selector_99 := _v83
             usr$opcodes_mstore_d7415bc7e(0, src$selector_99)
-            usr$opcodes_revert_d73350734(28, 4)
+            usr$opcodes_revert__df9f680cd(28, 4)
           }
           case true {
             switch _v83
               case false {
                 /* Empty */
-                usr$opcodes_revert_d73350734(0, 0)
+                usr$opcodes_revert__df9f680cd(0, 0)
               }
               case true {
                 {
@@ -469,14 +469,13 @@ object "DispatchBasicShapeDeploy" {
                   _v86 := usr$Add_add_d2e932f0d$word(src$msg__101, 32)
                   let _v87
                   _v87 := usr$opcodes_mload_d8413229c(src$msg__101)
-                  usr$opcodes_revert_d73350734(_v86, _v87)
+                  usr$opcodes_revert__df9f680cd(_v86, _v87)
                 }
               }
           }
       }
       function usr$std_set_free_memory_d65c817cd(src$loc_102) {
         usr$opcodes_mstore_d7415bc7e(0x40, src$loc_102)
-        leave
       }
       usr$dispatch_basic_shape_DispatchBasicShape_main_d302fef00()
     }

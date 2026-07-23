@@ -1,18 +1,18 @@
-import std.{*};
-import std.dispatch.{*};
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+import std;
+import std.dispatch;
+pragma solcore noPattersonCondition;
+pragma solcore noCoverageCondition;
+pragma solcore noBoundVariableCondition;
 
 contract Simple {
-  myval : word ;
+  myval : word;
 
-  function getVal () -> word {
+  function getVal() returns (word) {
     return myval ;
   }
 
   // #[() -> 0]
-  public function run () -> uint256 {
-    return uint256(getVal());
+  function run() public returns (uint256) {
+    return uint256.uint256(getVal());
   }
 }

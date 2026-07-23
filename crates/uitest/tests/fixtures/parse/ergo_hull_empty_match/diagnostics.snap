@@ -3,14 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_hull_empty_match/main.solc
 ---
-error[SC0001]: match statement requires at least one arm
- --> /main/main.solc:4:11
+error[SC0001]: parse error: unexpected `}`
+ --> /main/main.solc:5:3
   |
-3 |   function impossible(b : B) -> word {
-4 |     match b {
-  |  ___________^
-5 | |   }
-  | |___^ empty match arm list
-6 |   }
+4 |   match (b) {
+5 |   }
+  |   ^ unexpected token
+6 | }
   |
-  = note: add a `| pattern =>` arm
+  = note: expecting `case`, or `default`

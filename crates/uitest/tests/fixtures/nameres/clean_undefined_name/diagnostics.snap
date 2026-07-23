@@ -4,7 +4,7 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/clean_undefined_name/main.solc
 ---
 error[SC0101]: undefined name: missing
- --> /main/main.solc:1:36
+ --> /main/main.solc:1:43
   |
-1 | function caller() -> word { return missing; }
-  |                                    ^^^^^^^ unknown name
+1 | function caller() returns (word) { return missing; }
+  |                                           ^^^^^^^ unknown name

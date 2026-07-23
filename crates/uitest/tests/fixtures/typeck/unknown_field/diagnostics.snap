@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/typeck/unknown_field/main.solc
 error[SC0205]: cannot resolve field `foo`
  --> /main/main.solc:2:12
   |
-1 | function f(x: word) -> word {
+1 | function f(x: word) returns (word) {
 2 |   return x.foo;
   |            ^^^ unknown field
 3 | }

@@ -1,1 +1,1 @@
-function qualified_ret() -> mod.Type {}
+function qualified_ret() returns (mod.Type) {}

@@ -1,5 +1,5 @@
-instance word : NoSuchClass {
-  function frob(x: word) -> word {
+impl NoSuchClass<word> {
+  function frob(x: word) returns (word) {
     return x;
   }
 }

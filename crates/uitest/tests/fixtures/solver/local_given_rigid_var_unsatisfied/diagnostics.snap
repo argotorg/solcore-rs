@@ -3,13 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/local_given_rigid_var_unsatisfied/main.solc
 ---
-error[SC0207]: cannot satisfy class constraint: word : C
+error[SC0207]: cannot satisfy trait constraint: word: C
  --> /main/main.solc:6:10
   |
-5 | forall a . a:C => function bad() -> word {
+5 | function bad<a>() returns (word) where a: C {
 6 |   return C.c(1);
   |          ^^^^^^ constraint originates here
 7 | }
   |
-  = note: no visible instance matches `word : C`
-  = help: add a matching instance or strengthen the surrounding type context
+  = note: no visible impl matches `word: C`
+  = help: add a matching impl or strengthen the surrounding type context

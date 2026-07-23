@@ -1,5 +1,7 @@
 function f() {
-  match 0 {
-  | _ => return ();
-  };
+  match (0) {
+    default {
+      return ();
+    }
+  }
 }

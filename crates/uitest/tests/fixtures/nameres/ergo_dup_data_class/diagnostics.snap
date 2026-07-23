@@ -6,25 +6,25 @@ input_file: crates/uitest/tests/fixtures/nameres/ergo_dup_data_class/main.solc
 error[SC0108]: duplicate declaration `Shape` in type namespace
  --> /main/main.solc:3:6
   |
-1 | data Shape = Circle(word);
+1 | enum Shape { Circle(word) };
   |      ----- previous declaration
 2 |
-3 | data Shape = Square(word);
+3 | enum Shape { Square(word) };
   |      ^^^^^ duplicate declaration
 4 |
   |
 ---
 
 error[SC0108]: duplicate declaration `Render` in type namespace
-  --> /main/main.solc:9:20
+  --> /main/main.solc:9:7
    |
  4 |
- 5 | forall a . class a:Render {
-   |                    ------ previous declaration
- 6 |   function render(x: a) -> word;
+ 5 | trait Render<a> {
+   |       ------ previous declaration
+ 6 |   function render(x: a) returns (word);
  7 | }
  8 |
- 9 | forall a . class a:Render {
-   |                    ^^^^^^ duplicate declaration
-10 |   function paint(x: a) -> word;
+ 9 | trait Render<a> {
+   |       ^^^^^^ duplicate declaration
+10 |   function paint(x: a) returns (word);
    |

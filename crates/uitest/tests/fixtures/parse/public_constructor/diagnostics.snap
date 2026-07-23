@@ -3,12 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/public_constructor/main.solc
 ---
-error[SC0001]: constructor is implicitly public; remove the 'public' keyword
- --> /main/main.solc:2:3
+error[SC0001]: constructor is implicitly public; remove the visibility keyword
+ --> /main/main.solc:2:17
   |
 1 | contract Bad {
-2 |   public constructor() {}
-  |   ^^^^^^
+2 |   constructor() public {}
+  |                 ^^^^^^
 3 |
   |
   = note: while parsing constructor definition

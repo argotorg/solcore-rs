@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/match_branch_mismatch/main.solc
 ---
 error[SC0201]: type mismatch: expected word, found bool
- --> /main/main.solc:4:21
+ --> /main/main.solc:4:23
   |
-3 |   | true => return 1;
-4 |   | false => return true;
-  |                     ^^^^ expression has mismatched type
+3 |   case true { return 1; }
+4 |   case false { return true; }
+  |                       ^^^^ expression has mismatched type
 5 |   }
   |
   = note: expected type: word

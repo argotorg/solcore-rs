@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/hull/ergo_hull_string_return/main.solc
 error[SC0421]: cannot lower literal `"42"` to Hull
  --> /main/main.solc:5:12
   |
-4 |   public function main() {
+4 |   function main() public {
 5 |     return "42";
   |            ^^^^ unsupported literal
 6 |   }

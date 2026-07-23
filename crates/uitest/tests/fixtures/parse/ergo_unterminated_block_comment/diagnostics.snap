@@ -8,7 +8,7 @@ error[SC0001]: unterminated block comment
   |
 3 |   }
 4 | / /* this comment never ends
-5 | | function g() -> word {
+5 | | function g() returns (word) {
 6 | |     return 2;
 7 | | }
   | |__^ comment starts here

@@ -7,7 +7,7 @@ error[SC0001]: parse error: unexpected `function`
  --> /main/main.solc:3:1
   |
 2 |
-3 | function f() -> word {
+3 | function f() returns (word) {
   | ^^^^^^^^ unexpected token
 4 |     return 1;
   |

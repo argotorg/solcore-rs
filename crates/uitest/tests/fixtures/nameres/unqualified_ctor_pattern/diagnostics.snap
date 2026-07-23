@@ -4,22 +4,22 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/unqualified_ctor_pattern/main.solc
 ---
 error[SC0106]: unqualified constructor: off
- --> /main/main.solc:5:5
+ --> /main/main.solc:6:8
   |
-4 |   match f {
-5 |   | off => return 0;
-  |     ^^^ constructor must be qualified
-6 |   | on => return 1;
+5 |   match (f) {
+6 |   case off { return 0; }
+  |        ^^^ constructor must be qualified
+7 |   case on { return 1; }
   |
   = help: use `flag.off`
 ---
 
 error[SC0106]: unqualified constructor: on
- --> /main/main.solc:6:5
+ --> /main/main.solc:7:8
   |
-5 |   | off => return 0;
-6 |   | on => return 1;
-  |     ^^ constructor must be qualified
-7 |   }
+6 |   case off { return 0; }
+7 |   case on { return 1; }
+  |        ^^ constructor must be qualified
+8 |   }
   |
   = help: use `flag.on`

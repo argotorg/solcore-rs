@@ -1,4 +1,4 @@
-function T() -> word {
+function T() returns (word) {
   return 0;
 }
 

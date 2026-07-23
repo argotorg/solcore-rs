@@ -1,6 +1,6 @@
-function h(x : bool) -> word {
-  match x {
-  | true => return 1;
-  | false => return true;
+function h(x: bool) returns (word) {
+  match (x) {
+  case true { return 1; }
+  case false { return true; }
   }
 }

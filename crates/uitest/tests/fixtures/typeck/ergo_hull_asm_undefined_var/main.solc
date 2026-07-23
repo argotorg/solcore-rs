@@ -1,6 +1,6 @@
 contract C {
-  public function main() -> word {
-    let x : word;
+  function main() public returns (word) {
+    let x: word;
     assembly {
       x := someUndefinedThing
     }

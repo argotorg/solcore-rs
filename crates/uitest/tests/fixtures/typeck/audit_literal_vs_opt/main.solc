@@ -1,5 +1,5 @@
-data Opt = Some(word) | None;
+enum Opt { Some(word), None };
 
-function f() -> Opt {
+function f() returns (Opt) {
   return 1;
 }

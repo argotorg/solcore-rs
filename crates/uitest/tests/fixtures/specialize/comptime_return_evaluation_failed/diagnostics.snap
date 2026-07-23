@@ -3,10 +3,10 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/comptime_return_evaluation_failed/main.solc
 ---
-error[SC0409]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
+error[SC0409]: comptime evaluation failed: function with a comptime return type returns a runtime expression
   --> /main/main.solc:10:3
    |
- 9 | function leak(comptime x: word) -> comptime word {
+ 9 | function leak(comptime x: word) returns (comptime word) {
 10 |   return sloadWord();
    |   ^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
 11 | }

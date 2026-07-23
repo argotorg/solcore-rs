@@ -9,5 +9,5 @@ error[SC0001]: parse error: unexpected `;`
 1 | pragma ;
   |        ^ unexpected token
   |
-  = note: expecting identifier
+  = note: expecting solcore, or solidity or abicoder
   = note: while parsing pragma declaration

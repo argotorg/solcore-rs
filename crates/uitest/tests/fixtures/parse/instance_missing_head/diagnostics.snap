@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/instance_missing_head/main.solc
 ---
 error[SC0001]: parse error: unexpected `{`
- --> /main/main.solc:1:10
+ --> /main/main.solc:1:6
   |
-1 | instance {}
-  |          ^ unexpected token
+1 | impl {}
+  |      ^ unexpected token
   |
-  = note: expecting `(`, `=>`, or predicate
-  = note: while parsing instance declaration
+  = note: expecting trait reference, or type parameter list
+  = note: while parsing impl declaration

@@ -1,9 +1,9 @@
-forall a . function go(x: a) -> word {
+function go<a>(x: a) returns (word) {
   return go((x, x));
 }
 
 contract C {
-  public function main(x: word) -> word {
+  function main(x: word) public returns (word) {
     return go(x);
   }
 }

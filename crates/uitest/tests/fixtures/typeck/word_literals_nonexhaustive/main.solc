@@ -1,6 +1,6 @@
-function pick(x : word) -> word {
-  match x {
-  | 0 => return 0;
-  | 1 => return 1;
+function pick(x: word) returns (word) {
+  match (x) {
+  case 0 { return 0; }
+  case 1 { return 1; }
   }
 }

@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/typeck/ergo_deep_nested_mismatch/main.s
 error[SC0201]: argument type mismatch in call to `add3`
  --> /main/main.solc:7:34
   |
-1 | function add3(a: word, b: word, c: word) -> word {
+1 | function add3(a: word, b: word, c: word) returns (word) {
   |                        - parameter `b` defined here
 2 |   return a;
 3 | }
@@ -18,4 +18,4 @@ error[SC0201]: argument type mismatch in call to `add3`
   |
   = note: expected `word` because parameter `b` of `add3` has type `word`
   = note: found type: bool
-  = note: `add3` has signature `add3(a: word, b: word, c: word) -> word`
+  = note: `add3` has signature `add3(a: word, b: word, c: word) returns (word)`

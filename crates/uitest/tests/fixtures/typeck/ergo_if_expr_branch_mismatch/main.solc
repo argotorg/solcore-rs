@@ -1,4 +1,4 @@
-function f(b: bool) -> word {
-  let x = if b then 1 else false;
+function f(b: bool) returns (word) {
+  let x = b ? 1 : false;
   return x;
 }

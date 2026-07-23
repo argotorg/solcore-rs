@@ -1,9 +1,9 @@
 export { opened };
 
-function opened(x: word) -> word {
+function opened(x: word) returns (word) {
   return secret(x);
 }
 
-function secret(x: word) -> word {
+function secret(x: word) returns (word) {
   return x;
 }

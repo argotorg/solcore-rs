@@ -1,5 +1,5 @@
 contract C {
-  public function main() -> integer {
+  function main() public returns (integer) {
     return 1;
   }
 }

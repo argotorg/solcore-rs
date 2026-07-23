@@ -1,8 +1,8 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
-data Point = Point(word, bool);
+enum Point { Point(word, bool) };
 
 contract C {
-  public function roundtrip(value: memory(Point)) -> word { return 0; }
+  function roundtrip(value: Point memory) public returns (word) { return 0; }
 }

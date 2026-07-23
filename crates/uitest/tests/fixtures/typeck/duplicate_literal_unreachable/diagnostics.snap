@@ -6,9 +6,9 @@ input_file: crates/uitest/tests/fixtures/typeck/duplicate_literal_unreachable/ma
 warning[SC0303]: unreachable match arm
  --> /main/main.solc:4:3
   |
-3 |   | 0 => return 0;
-4 |   | 0 => return 1;
-  |   ^^^^^^^^^^^^^^^^ this arm is unreachable
-5 |   | _ => return 2;
+3 |   case 0 { return 0; }
+4 |   case 0 { return 1; }
+  |   ^^^^^^^^^^^^^^^^^^^^ this arm is unreachable
+5 |   default { return 2; }
   |
   = note: this arm is covered by previous match arms

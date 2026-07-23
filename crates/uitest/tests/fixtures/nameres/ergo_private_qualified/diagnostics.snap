@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/nameres/ergo_private_qualified/main.sol
 error[SC0101]: undefined name: secret
  --> /main/main.solc:4:16
   |
-3 | function main() -> word {
+3 | function main() returns (word) {
 4 |   return vault.secret(1);
   |                ^^^^^^ unknown name
 5 | }
@@ -14,7 +14,7 @@ error[SC0101]: undefined name: secret
  ::: /main/vault.solc:6
   |
 6 |
-7 | function secret(x: word) -> word {
+7 | function secret(x: word) returns (word) {
   |          ------ private item declared here
 8 |   return x;
   |

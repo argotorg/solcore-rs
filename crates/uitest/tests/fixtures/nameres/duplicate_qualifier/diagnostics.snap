@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/duplicate_qualifier/main.solc
 ---
 error[SC0116]: duplicate import qualifier `bar`
- --> /main/main.solc:2:12
+ --> /main/main.solc:2:13
   |
-1 | import foo.bar;
-  |            --- first qualifier with this name
-2 | import baz.bar;
-  |            ^^^ duplicate import qualifier
+1 | import * as bar from foo.bar;
+  |             --- first qualifier with this name
+2 | import * as bar from baz.bar;
+  |             ^^^ duplicate import qualifier
   |
   = note: use an explicit alias to disambiguate one of the imports

@@ -1,16 +1,16 @@
-forall t . class t:Add {
-  function add(l: t, r: t) -> t;
+trait Add<t> {
+  function add(l: t, r: t) returns (t) ;
 }
 
-data Choice = Choice(word);
+enum Choice { Choice(word) }
 
-instance Choice:Add {
-  function add(l: Choice, r: Choice) -> Choice {
+impl Add<Choice> {
+  function add(l: Choice, r: Choice) returns (Choice) {
     return r;
   }
 }
 
-function choose_right(x: Choice, y: Choice) -> Choice {
+function choose_right(x: Choice, y: Choice) returns (Choice) {
   let result: Choice = x;
   result += y;
   return result;

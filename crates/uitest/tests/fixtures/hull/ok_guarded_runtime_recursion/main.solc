@@ -1,6 +1,6 @@
-import std.{*};
+import std;
 
-function countdown(n: word) -> word {
+function countdown(n: word) returns (word) {
   if (n == 0) {
     return 0;
   } else {
@@ -9,7 +9,7 @@ function countdown(n: word) -> word {
 }
 
 contract Counter {
-  public function main() -> word {
+  function main() public returns (word) {
     return countdown(3);
   }
 }

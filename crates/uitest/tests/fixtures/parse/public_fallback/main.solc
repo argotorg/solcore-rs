@@ -1,5 +1,5 @@
 contract Bad {
-  public fallback() {}
+  fallback() public {}
 
   function after() {}
 }

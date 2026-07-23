@@ -6,10 +6,10 @@ input_file: crates/uitest/tests/fixtures/parse/ergo_unclosed_brace_eof/main.solc
 error[SC0001]: parse error: unexpected end of input
  --> /main/main.solc:4:7
   |
-2 |     function f() -> word {
+2 |     function f() returns (word) {
 3 |         return 1;
 4 |     }
   |      ^ unexpected token
   |
   = note: expecting `}`, contract field, or contract member
-  = note: while parsing contract declaration
+  = note: while parsing contract, interface, or library declaration

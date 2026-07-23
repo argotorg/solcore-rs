@@ -4,14 +4,14 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/let_unannotated_literal/main.solc
 ---
 error[SC0299]: ambiguous inferred type
- --> /main/main.solc:1:22
+ --> /main/main.solc:1:29
   |
-1 |   function f() -> word {
-  |  ______________________^
+1 |   function f() returns (word) {
+  |  _____________________________^
 2 | |   let y = 7;
 3 | |   return 0;
 4 | | }
   | |_^ ambiguous inferred type
   |
-  = note: forall _ . _ : Int => () -> word
-  = help: add a type annotation or a matching instance to fix the ambiguous type variable
+  = note: <_> function() returns (word) where _: Int
+  = help: add a type annotation or a matching impl to fix the ambiguous type variable

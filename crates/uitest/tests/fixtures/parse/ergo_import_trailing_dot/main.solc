@@ -1,5 +1,5 @@
-import a.b.;
+import * as b from a.b.;
 
-function f() -> word {
+function f() returns (word) {
     return 1;
 }

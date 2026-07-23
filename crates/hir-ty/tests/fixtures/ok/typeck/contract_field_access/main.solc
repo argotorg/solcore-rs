@@ -1,11 +1,11 @@
 contract Simple {
   val : word;
 
-  public function getVal() -> word {
+  function getVal() public returns (word) {
     return val;
   }
 
-  function main() -> () {
+  function main() returns () {
     return ();
   }
 }

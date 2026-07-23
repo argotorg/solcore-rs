@@ -11,6 +11,7 @@ error[SC0001]: parse error: unexpected `(`
   |                 ^ unexpected token
 5 |     }
   |
+  = note: expecting `revert`
 ---
 
 error[SC0001]: parse error: unexpected `,`

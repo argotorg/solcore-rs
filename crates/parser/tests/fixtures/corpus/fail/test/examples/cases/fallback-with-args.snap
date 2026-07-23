@@ -7,8 +7,19 @@ error[SC0001]: fallback function must not declare input parameters
  --> /fallback-with-args.solc:7:13
   |
 6 |
-7 |     fallback(x: uint256) -> () {
+7 |     fallback(x: uint256) returns () {
   |             ^^^^^^^^^^^^
 8 |         revert("fallback-was-called");
   |
   = note: while parsing fallback definition
+---
+
+error[SC0001]: parse error: unexpected `)`
+ --> /fallback-with-args.solc:8:37
+  |
+7 |     fallback(x: uint256) returns () {
+8 |         revert("fallback-was-called");
+  |                                     ^ unexpected token
+9 |     }
+  |
+  = note: expecting `%=`, `&&`, `&=`, `&`, `(`, `*`, `+=`, `-=`, `.`, `;`, `<`, `=`, `>`, `?`, `[`, `^=`, `^`, `as`, `|=`, `|`, or `||`

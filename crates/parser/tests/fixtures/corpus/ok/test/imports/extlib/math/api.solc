@@ -1,8 +1,8 @@
-import internals.add;
-import lib.util;
+import * as add from internals.add;
+import * as util from lib.util;
 
 export {sum};
 
-function sum(x: word) -> word {
+function sum(x: word) returns (word) {
   return add.inc(x) + util.offset();
 }

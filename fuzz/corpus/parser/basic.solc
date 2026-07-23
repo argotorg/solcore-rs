@@ -1,1 +1,1 @@
-function id(x: word) -> word { return x; }
+function id(x: word) returns (word) { return x; }

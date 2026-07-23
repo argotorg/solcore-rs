@@ -1,6 +1,6 @@
-import a.{T};
-import b.{T};
+import {T} from a;
+import {T} from b;
 
-function main() -> word {
+function main() returns (word) {
   return 0;
 }

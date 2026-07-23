@@ -1,15 +1,15 @@
-data Nat = Zero | Succ(Nat);
+enum Nat { Zero, Succ(Nat) };
 
-function pick(x : Nat, y : Nat) -> word {
-  match x, y {
-  | Nat.Zero => return 0;
-  | Nat.Succ(a), Nat.Zero => return 1;
-  | Nat.Succ(a), Nat.Succ(b) => return 2;
+function pick(x: Nat, y: Nat) returns (word) {
+  match (x, y) {
+  case Nat.Zero { return 0; }
+  case (Nat.Succ(a), Nat.Zero) { return 1; }
+  case (Nat.Succ(a), Nat.Succ(b)) { return 2; }
   }
 }
 
 contract T {
-  public function main() -> word {
+  function main() public returns (word) {
     return pick(Nat.Zero, Nat.Zero);
   }
 }

@@ -7,7 +7,7 @@ error[SC0299]: Invalid number of type arguments!
  --> /main/main.solc:3:15
   |
 2 |
-3 | function f(x: P) -> word {
+3 | function f(x: P) returns (word) {
   |               ^ diagnostic reported here
 4 |   return 0;
   |

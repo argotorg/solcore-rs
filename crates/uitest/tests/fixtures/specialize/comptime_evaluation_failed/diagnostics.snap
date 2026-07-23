@@ -6,8 +6,8 @@ input_file: crates/uitest/tests/fixtures/specialize/comptime_evaluation_failed/m
 error[SC0409]: comptime evaluation failed: comptime let 'y' is bound to a runtime expression
   --> /main/main.solc:11:5
    |
-10 |   public function main() -> word {
-11 |     let y : comptime word = sloadWord();
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
+10 |   function main() public returns (word) {
+11 |     let comptime y: word = sloadWord();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
 12 |     return y;
    |

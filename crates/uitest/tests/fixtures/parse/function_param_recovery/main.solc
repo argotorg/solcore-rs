@@ -1,2 +1,2 @@
-function bad(x:, y: U) {}
+function bad(x: , y: U) {}
 function ok() {}

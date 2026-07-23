@@ -1,38 +1,38 @@
-data Opt = Some(word) | None;
-contract K { function main() -> word { return 0; } }
+enum Opt { Some(word), None };
+contract K { function main() returns (word) { return 0; } }
 
-function opt_ret() -> Opt {
+function opt_ret() returns (Opt) {
   return 1;
 }
 
-function bool_ret() -> bool {
+function bool_ret() returns (bool) {
   return 1;
 }
 
-function string_ret() -> string {
+function string_ret() returns (string) {
   return 1;
 }
 
-function unit_ret() -> () {
+function unit_ret() returns (()) {
   return 1;
 }
 
-function contract_ret() -> K {
+function contract_ret() returns (K) {
   return 1;
 }
 
-function pair_ret() -> pair(word, word) {
+function pair_ret() returns (pair<word, word>) {
   return 1;
 }
 
-function sum_ret() -> sum(word, word) {
+function sum_ret() returns (sum<word, word>) {
   return 1;
 }
 
-function tuple_ret() -> (word, word) {
+function tuple_ret() returns ((word, word)) {
   return 1;
 }
 
-function function_ret() -> () -> word {
+function function_ret() returns (function() returns (word)) {
   return 1;
 }

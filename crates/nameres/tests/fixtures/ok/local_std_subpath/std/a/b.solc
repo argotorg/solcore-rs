@@ -1,4 +1,4 @@
-function value(x: word) -> word {
+function value(x: word) returns (word) {
   return x;
 }
 

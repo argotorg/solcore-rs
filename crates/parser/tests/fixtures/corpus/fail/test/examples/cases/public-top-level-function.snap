@@ -3,12 +3,25 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/public-top-level-function.solc
 ---
-error[SC0001]: 'public' is only allowed on functions declared inside a contract
+error[SC0001]: parse error: unexpected `public`
  --> /public-top-level-function.solc:6:1
   |
-5 | // top-level function (outside any `contract { … }` body) must be rejected.
+5 | // migrate-syntax: keep-legacy-negative
 6 | public function answer() -> uint256 {
-  | ^^^^^^
-7 |     return uint256(42);
+  | ^^^^^^ unexpected token
+7 |     return uint256.uint256(42);
   |
+  = note: expecting contract, interface, or library declaration, enum or struct declaration, export declaration, function declaration, impl declaration, import declaration, pragma declaration, trait declaration, or type declaration
+  = note: while parsing top-level item
+---
+
+error[SC0001]: parse error: unexpected `->`
+ --> /public-top-level-function.solc:6:26
+  |
+5 | // migrate-syntax: keep-legacy-negative
+6 | public function answer() -> uint256 {
+  |                          ^^ unexpected token
+7 |     return uint256.uint256(42);
+  |
+  = note: expecting `external`, `internal`, `payable`, `private`, `public`, `pure`, `returns`, `view`, `{`, or where clause
   = note: while parsing function signature

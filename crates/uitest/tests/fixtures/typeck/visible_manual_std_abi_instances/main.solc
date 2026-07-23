@@ -1,23 +1,23 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
-instance word:ABIAttribs {
-  function headSize(p: Proxy(word)) -> word { return 32; }
-  function isStatic(p: Proxy(word)) -> bool { return true; }
+impl ABIAttribs<word> {
+  function headSize(p: Proxy<word>) returns (word) { return 32; }
+  function isStatic(p: Proxy<word>) returns (bool) { return true; }
 }
 
-instance word:ABIEncode {
-  function encodeInto(x: word, base: word, offset: word, tail: word) -> word { return tail; }
+impl ABIEncode<word> {
+  function encodeInto(x: word, base: word, offset: word, tail: word) returns (word) { return tail; }
 }
 
-instance ABIDecoder(word, CalldataWordReader):ABIDecode(word) {
-  function decode(d: ABIDecoder(word, CalldataWordReader), offset: word) -> word { return 0; }
+impl ABIDecode<ABIDecoder<word, CalldataWordReader>, word> {
+  function decode(d: ABIDecoder<word, CalldataWordReader>, offset: word) returns (word) { return 0; }
 }
 
-instance word:SigString {
-  function sigStr(p: Proxy(word)) -> string { return "uint256"; }
+impl SigString<word> {
+  function sigStr(p: Proxy<word>) returns (string) { return "uint256"; }
 }
 
 contract C {
-  public function echo(value: word) -> word { return value; }
+  function echo(value: word) public returns (word) { return value; }
 }

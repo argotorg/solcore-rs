@@ -1,11 +1,11 @@
-data Bool = True | False;
+enum Bool { True, False };
 
-forall a . class a : Sz {
-  function size(x: a) -> word;
+trait Sz<a> {
+  function size(x: a) returns (word);
 }
 
-instance Bool : Sz {
-  function size(x: Bool) -> Bool {
+impl Sz<Bool> {
+  function size(x: Bool) returns (Bool) {
     return x;
   }
 }

@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/hull/unsupported_dispatch_storage/main.
 error[SC0430]: undefined Hull variable `content`
   --> /main/main.solc:11:5
    |
-10 |   public function set(value: memory(bytes)) -> () {
+10 |   function set(value: bytes memory) public returns (()) {
 11 |     content = value;
    |     ^^^^^^^ undefined variable
 12 |   }
@@ -16,7 +16,7 @@ error[SC0430]: undefined Hull variable `content`
 error[SC0430]: undefined Hull variable `content`
   --> /main/main.solc:15:12
    |
-14 |   public function get() -> memory(bytes) {
+14 |   function get() public returns (bytes memory) {
 15 |     return content;
    |            ^^^^^^^ undefined variable
 16 |   }

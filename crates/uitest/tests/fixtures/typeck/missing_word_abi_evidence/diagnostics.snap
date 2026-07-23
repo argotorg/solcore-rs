@@ -3,13 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/missing_word_abi_evidence/main.solc
 ---
-error[SC0207]: cannot satisfy class constraint: Contract(Method(DispatchNameTy_WordAbiProbe_echo, NonPayable, word, word, (word) -> word), Fallback(NonPayable, (), (), () -> ())) : RunContract
+error[SC0207]: cannot satisfy trait constraint: Contract<Method<DispatchNameTy_WordAbiProbe_echo, NonPayable, word, word, function(word) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract
  --> /main/main.solc:7:10
   |
 6 | // with a bounded solver diagnostic while that evidence is missing.
 7 | contract WordAbiProbe {
   |          ^^^^^^^^^^^^ constraint originates here
-8 |   public function echo(value: word) -> word {
+8 |   function echo(value: word) public returns (word) {
   |
-  = note: no visible instance matches `Contract(Method(DispatchNameTy_WordAbiProbe_echo, NonPayable, word, word, (word) -> word), Fallback(NonPayable, (), (), () -> ())) : RunContract`
-  = help: add a matching instance or strengthen the surrounding type context
+  = note: no visible impl matches `Contract<Method<DispatchNameTy_WordAbiProbe_echo, NonPayable, word, word, function(word) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract`
+  = help: add a matching impl or strengthen the surrounding type context

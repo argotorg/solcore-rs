@@ -1,18 +1,15 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract Option {
-  data Option(a) = None | Some(a);
+  enum Option<a> { None, Some(a) }
 
-  function maybe(n : word, o : Option(word)) -> word {
-    match o {
-      | Option.Some(x) => return x;
-      | _ => return n;
-    }
+  function maybe(n: word, o: Option<word>) returns (word) {
+    match (o) { case Option.Some(x) { return x; } default { return n; } }
   }
 
   // #[() -> 7]
-  public function run() -> uint256 {
-    return uint256(maybe(7, Option.None));
+  function run() public returns (uint256) {
+    return uint256.uint256(maybe(7, Option.None));
   }
 }

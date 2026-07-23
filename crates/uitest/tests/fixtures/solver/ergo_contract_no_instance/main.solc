@@ -1,13 +1,13 @@
-data Bool = True | False;
+enum Bool { True, False };
 
-forall a . class a : Eq {
-  function eq(x: a, y: a) -> Bool;
+trait Eq<a> {
+  function eq(x: a, y: a) returns (Bool);
 }
 
 contract Check {
-  function go(x: word) -> Bool {
+  function go(x: word) returns (Bool) {
     return Eq.eq(x, x);
   }
 
-  function main() -> () {}
+  function main() returns (()) {}
 }

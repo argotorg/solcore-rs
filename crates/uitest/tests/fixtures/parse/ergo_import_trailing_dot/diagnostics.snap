@@ -4,12 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/ergo_import_trailing_dot/main.solc
 ---
 error[SC0001]: parse error: unexpected `;`
- --> /main/main.solc:1:12
+ --> /main/main.solc:1:24
   |
-1 | import a.b.;
-  |            ^ unexpected token
+1 | import * as b from a.b.;
+  |                        ^ unexpected token
 2 |
-3 | function f() -> word {
+3 | function f() returns (word) {
   |
-  = note: expecting import selector after `.`
   = note: while parsing import declaration

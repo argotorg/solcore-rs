@@ -3,9 +3,9 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/invalid_default_instance/main.solc
 ---
-error[SC0219]: Cannot have a default instance whose main argument contains no type variable: word : C
- --> /main/main.solc:2:18
+error[SC0219]: Cannot have a default impl whose main argument contains no type variable: word: C
+ --> /main/main.solc:2:14
   |
-1 | forall a . class a:C {}
-2 | default instance word:C {}
-  |                  ^^^^^^ invalid default instance head
+1 | trait C<a> {}
+2 | default impl C<word> {}
+  |              ^^^^^^^ invalid default impl head

@@ -4,16 +4,16 @@
    of 'double'.  The SAIL check rejects this on the parameter type alone,
    before looking at specific call sites.
 */
-import std;
+import * as std from std;
 
 contract ComptimeParamRuntime {
-  function double(comptime x : word) -> comptime word {
+  function double(comptime x: word) returns (comptime word) {
     return x + x;
   }
-  function process(value : word) -> word {
+  function process(value: word) returns (word) {
     return double(value);
   }
-  function main() -> word {
+  function main() returns (word) {
     return process(21);
   }
 }

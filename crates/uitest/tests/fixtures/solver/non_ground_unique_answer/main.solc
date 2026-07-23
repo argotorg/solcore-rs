@@ -1,17 +1,17 @@
-pragma no-coverage-condition;
+pragma solcore noCoverageCondition;
 
-forall a . class a:Parent {}
-forall a b . a:Parent => class a:Child(b) {}
-forall b . instance word:Child(b) {}
+trait Parent<a> {}
+trait Child<a, b> where a: Parent {}
+impl<b> Child<word, b> {}
 
-forall a . a:Parent => function use(x: a) -> a {
+function use<a>(x: a) returns (a) where a: Parent {
   return x;
 }
 
-forall unused . function trigger() -> word {
+function trigger<unused>() returns (word) {
   return use(0);
 }
 
-function main() -> word {
+function main() returns (word) {
   return 0;
 }

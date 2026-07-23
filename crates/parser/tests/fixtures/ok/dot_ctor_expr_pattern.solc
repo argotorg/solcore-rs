@@ -1,12 +1,19 @@
-data Option = None | Some(word);
-
-function mkSome(x: word) -> Option {
-  return .Some(x);
+enum Option {
+  None,
+  Some(word),
 }
 
-function fromOption(x: Option) -> word {
-  match x {
-  | .Some(v) => return v;
-  | .None => return 0;
+function mkSome(x: word) returns (Option) {
+  return Option.Some(x);
+}
+
+function fromOption(x: Option) returns (word) {
+  match (x) {
+    case Option.Some(v) {
+      return v;
+    }
+    case Option.None {
+      return 0;
+    }
   }
 }

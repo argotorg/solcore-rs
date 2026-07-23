@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/nameres/unresolved_qualified/main.solc
 error[SC0101]: undefined name: missing
  --> /main/main.solc:4:15
   |
-3 | function main() -> word {
+3 | function main() returns (word) {
 4 |   return util.missing();
   |               ^^^^^^^ unknown name
 5 | }

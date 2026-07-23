@@ -1,6 +1,6 @@
-data Option = None | Some(word);
+enum Option { None, Some(word) };
 
-function noContext() -> word {
-  let x = .Some(1);
+function noContext() returns (word) {
+  let x = Some(1);
   return 0;
 }

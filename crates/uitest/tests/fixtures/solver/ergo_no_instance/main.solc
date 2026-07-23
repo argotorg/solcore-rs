@@ -1,15 +1,15 @@
-data Bool = True | False;
+enum Bool { True, False };
 
-forall a . class a : Eq {
-  function eq(x: a, y: a) -> Bool;
+trait Eq<a> {
+  function eq(x: a, y: a) returns (Bool);
 }
 
-instance word : Eq {
-  function eq(x: word, y: word) -> Bool {
+impl Eq<word> {
+  function eq(x: word, y: word) returns (Bool) {
     return Bool.True;
   }
 }
 
-function f() -> Bool {
+function f() returns (Bool) {
   return Eq.eq(Bool.True, Bool.False);
 }

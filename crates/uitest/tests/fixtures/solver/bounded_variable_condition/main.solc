@@ -1,5 +1,5 @@
-data Box(a) = Box(word);
-forall a . class a:Eq {}
-forall a b . class a:Container(b) {}
+enum Box<a> { Box(word) };
+trait Eq<a> {}
+trait Container<a, b> {}
 
-forall a c . c:Eq => instance Box(a):Container(a) {}
+impl<a, c> Container<Box<a>, a> where c: Eq {}

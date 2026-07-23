@@ -1,9 +1,9 @@
-data Bool = True | False;
+enum Bool { True, False };
 
-forall a . class a : Same {
-  function same(x: a, y: a) -> Bool;
+trait Same<a> {
+  function same(x: a, y: a) returns (Bool);
 }
 
-forall a . function f(x: a) -> Bool {
+function f<a>(x: a) returns (Bool) {
   return Same.same(x, x);
 }

@@ -1,1 +1,1 @@
-export { f, (^^) };
+import {f} from operators;

@@ -1,19 +1,19 @@
-forall a . class a : C {
-  function c(x: a) -> word;
+trait C<a> {
+  function c(x: a) returns (word);
 }
 
-instance word : C {
-  function c(x: word) -> word {
+impl C<word> {
+  function c(x: word) returns (word) {
     return 1;
   }
 }
 
-instance word : C {
-  function c(x: word) -> word {
+impl C<word> {
+  function c(x: word) returns (word) {
     return 2;
   }
 }
 
-function f() -> word {
+function f() returns (word) {
   return C.c(0);
 }

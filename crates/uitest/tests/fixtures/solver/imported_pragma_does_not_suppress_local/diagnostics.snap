@@ -3,42 +3,42 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/imported_pragma_does_not_suppress_local/main.solc
 ---
-error[SC0212]: Coverage condition fails for class:
+error[SC0212]: Coverage condition fails for trait:
                C
                - the type:
-               List(b)
+               List<b>
                does not determine:
                a
- --> /main/main.solc:7:23
+ --> /main/main.solc:7:12
   |
 6 |
-7 | forall a b . instance List(b) : C(a, List(a)) {}
-  |                       ^^^^^^^^^^^^^^^^^^^^^^^ instance head does not determine these variables
-8 | forall x . x:C(word, word) => instance x:C(word, word) {}
+7 | impl<a, b> C<List<b>, a, List<a>> {}
+  |            ^^^^^^^^^^^^^^^^^^^^^^ impl head does not determine these variables
+8 | impl<x> C<x, word, word> where x: C<word, word> {}
   |
 ---
 
-error[SC0213]: instance `x : C(word, word)` does not satisfy the Patterson conditions
- --> /main/main.solc:8:40
+error[SC0213]: impl `x: C<word, word>` does not satisfy the Patterson conditions
+ --> /main/main.solc:8:9
   |
 6 |
-7 | forall a b . instance List(b) : C(a, List(a)) {}
-8 | forall x . x:C(word, word) => instance x:C(word, word) {}
-  |                                        ^^^^^^^^^^^^^^^ instance head violates Patterson condition
+7 | impl<a, b> C<List<b>, a, List<a>> {}
+8 | impl<x> C<x, word, word> where x: C<word, word> {}
+  |         ^^^^^^^^^^^^^^^^ impl head violates Patterson condition
   |
-  = note: each instance context must be structurally smaller than the instance head
-  = help: remove the recursive context, add a more specific instance, or use the Patterson-condition pragma intentionally
+  = note: each impl constraint must be structurally smaller than the impl head
+  = help: remove the recursive constraint, add a more specific impl, or use the Patterson-condition pragma intentionally
 ---
 
-error[SC0218]: Overlapping instances are not supported
-               instance:
-               x : C(word, word)
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               x: C<word, word>
                overlaps with:
-               List(_) : C(_, List(_))
- --> /main/main.solc:8:40
+               List<_>: C<_, List<_>>
+ --> /main/main.solc:8:9
   |
 6 |
-7 | forall a b . instance List(b) : C(a, List(a)) {}
-  |                       ----------------------- previous overlapping instance
-8 | forall x . x:C(word, word) => instance x:C(word, word) {}
-  |                                        ^^^^^^^^^^^^^^^ overlapping instance
+7 | impl<a, b> C<List<b>, a, List<a>> {}
+  |            ---------------------- previous overlapping impl
+8 | impl<x> C<x, word, word> where x: C<word, word> {}
+  |         ^^^^^^^^^^^^^^^^ overlapping impl

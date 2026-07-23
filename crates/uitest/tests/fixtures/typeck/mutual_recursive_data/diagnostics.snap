@@ -6,8 +6,8 @@ input_file: crates/uitest/tests/fixtures/typeck/mutual_recursive_data/main.solc
 error[SC0203]: undefined type: A
  --> /main/main.solc:2:12
   |
-1 | data A = A(B);
-2 | data B = B(A);
+1 | enum A { A(B) };
+2 | enum B { B(A) };
   |            ^ undefined type
 3 |
   |

@@ -3,12 +3,23 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/public-fallback.solc
 ---
-error[SC0001]: fallback is implicitly public; remove the 'public' keyword
- --> /public-fallback.solc:7:5
+error[SC0001]: fallback is implicitly public; remove the visibility keyword
+ --> /public-fallback.solc:7:16
   |
 6 |
-7 |     public fallback() -> () {
-  |     ^^^^^^
+7 |     fallback() public returns () {
+  |                ^^^^^^
 8 |         revert("fallback-was-called");
   |
   = note: while parsing fallback definition
+---
+
+error[SC0001]: parse error: unexpected `)`
+ --> /public-fallback.solc:8:37
+  |
+7 |     fallback() public returns () {
+8 |         revert("fallback-was-called");
+  |                                     ^ unexpected token
+9 |     }
+  |
+  = note: expecting `%=`, `&&`, `&=`, `&`, `(`, `*`, `+=`, `-=`, `.`, `;`, `<`, `=`, `>`, `?`, `[`, `^=`, `^`, `as`, `|=`, `|`, or `||`

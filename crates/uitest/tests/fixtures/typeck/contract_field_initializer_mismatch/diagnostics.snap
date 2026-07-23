@@ -9,7 +9,7 @@ error[SC0201]: type mismatch: expected word, found bool
 1 | contract C {
 2 |   x: word = true;
   |             ^^^^ expression has mismatched type
-3 |   function main() -> () { return (); }
+3 |   function main() returns (()) { return (); }
   |
   = note: expected type: word
   = note: found type: bool

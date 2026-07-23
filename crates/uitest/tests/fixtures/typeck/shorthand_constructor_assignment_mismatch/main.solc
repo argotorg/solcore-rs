@@ -1,7 +1,7 @@
-data Option = None | Some(word);
+enum Option { None, Some(word) };
 
-function bad() -> word {
-  let x : Option;
-  x = .Some(true);
+function bad() returns (word) {
+  let x: Option;
+  x = Option.Some(true);
   return 0;
 }

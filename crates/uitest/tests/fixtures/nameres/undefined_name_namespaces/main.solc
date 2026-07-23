@@ -1,3 +1,3 @@
-forall a . a:MissingClass => function f(x: MissingTy) -> word {
+function f<a>(x: MissingTy) returns (word) where a: MissingClass {
   return missingName;
 }

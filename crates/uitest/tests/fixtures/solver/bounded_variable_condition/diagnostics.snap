@@ -4,9 +4,9 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/bounded_variable_condition/main.solc
 ---
 error[SC0214]: Bounded variable condition fails!
- --> /main/main.solc:5:31
+ --> /main/main.solc:5:12
   |
-3 | forall a b . class a:Container(b) {}
+3 | trait Container<a, b> {}
 4 |
-5 | forall a c . c:Eq => instance Box(a):Container(a) {}
-  |                               ^^^^^^^^^^^^^^^^^^^ instance head is missing context variables
+5 | impl<a, c> Container<Box<a>, a> where c: Eq {}
+  |            ^^^^^^^^^^^^^^^^^^^^ impl head is missing constraint variables

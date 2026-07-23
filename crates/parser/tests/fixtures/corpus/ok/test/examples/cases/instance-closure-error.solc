@@ -1,10 +1,10 @@
-forall t . class t:CtFun {
-    function ct(x : t) -> ((t) -> t);
+trait CtFun<t> {
+    function ct(x: t) returns (function(t) returns (t)) ;
 }
 
-instance word:CtFun {
-    function ct(x : word) -> ((word) -> word) {
-        return lam(y : word) {
+impl CtFun<word> {
+    function ct(x: word) returns (function(word) returns (word)) {
+        return lam (y: word) {
             return x;
         };
     }

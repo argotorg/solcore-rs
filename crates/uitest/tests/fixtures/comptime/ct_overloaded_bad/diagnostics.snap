@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_overloaded_bad/main.solc
 ---
-error[SC0409]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
+error[SC0409]: comptime evaluation failed: function with a comptime return type returns a runtime expression
   --> /main/main.solc:18:5
    |
 17 |     }
@@ -18,7 +18,7 @@ error[SC0406]: missing evidence: add
    |
 17 |     }
 18 |     return base + x * factor;
-   |            ^^^^^^^^^^^^^^^^^ class evidence required here
+   |            ^^^^^^^^^^^^^^^^^ trait evidence required here
 19 |   }
    |
 ---
@@ -28,7 +28,7 @@ error[SC0406]: missing evidence: mul
    |
 17 |     }
 18 |     return base + x * factor;
-   |                   ^^^^^^^^^^ class evidence required here
+   |                   ^^^^^^^^^^ trait evidence required here
 19 |   }
    |
 ---
@@ -36,8 +36,8 @@ error[SC0406]: missing evidence: mul
 error[SC0409]: comptime evaluation failed: comptime let 'a' is bound to a runtime expression
   --> /main/main.solc:24:5
    |
-23 |   function main() -> word {
-24 |     let a : comptime word = Scale.scale(3, 10);
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
+23 |   function main() returns (word) {
+24 |     let comptime a: word = Scale.scale(3, 10);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
 25 |     return a;
    |

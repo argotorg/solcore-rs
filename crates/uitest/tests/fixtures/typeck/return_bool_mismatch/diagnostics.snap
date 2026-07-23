@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/typeck/return_bool_mismatch/main.solc
 error[SC0201]: type mismatch: expected word, found bool
  --> /main/main.solc:2:10
   |
-1 | function f() -> word {
+1 | function f() returns (word) {
 2 |   return true;
   |          ^^^^ expression has mismatched type
 3 | }

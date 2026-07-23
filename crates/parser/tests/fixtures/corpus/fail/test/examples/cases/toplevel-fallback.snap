@@ -3,10 +3,10 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/toplevel-fallback.solc
 ---
-error[SC0001]: could not parse top-level item near `fallback() -> () {}`; expected a declaration starting with `import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`
+error[SC0001]: could not parse top-level item near `fallback() returns () {}`; expected a declaration starting with `import`, `pragma`, `type`, `alias`, `enum`, `struct`, `trait`, `impl`, `contract`, `interface`, `library`, or `function`
  --> /toplevel-fallback.solc:3:1
   |
 1 | // A `fallback` may only be declared inside a contract.
 2 | // At the top level this must fail to parse.
-3 | fallback() -> () {}
-  | ^^^^^^^^^^^^^^^^^^^
+3 | fallback() returns () {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^

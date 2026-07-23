@@ -1,14 +1,11 @@
-import dot_left;
-import dot_right;
+import * as dot_left from dot_left;
+import * as dot_right from dot_right;
 
-function mkLeft() -> dot_left.LeftOpt {
-  let x: dot_left.LeftOpt = .Some(1);
+function mkLeft() returns (dot_left.LeftOpt) {
+  let x: dot_left.LeftOpt = dot_left.LeftOpt.Some(1);
   return x;
 }
 
-function main() -> word {
-  match mkLeft() {
-  | .Some(v) => return v;
-  | .None => return 0;
-  }
+function main() returns (word) {
+  match (mkLeft()) { case dot_left.LeftOpt.Some(v) { return v; } case dot_left.LeftOpt.None { return 0; } }
 }

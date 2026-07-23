@@ -1,26 +1,26 @@
-function addW (l: word, r: word) -> word {
-     let rw : word;
+function addW(l: word, r: word) returns (word) {
+     let rw: word;
      assembly {
 	 rw := add(l,r)
      }
      return rw;
 }
 
-forall t . class t:Add {
-    function add(l: t, r: t) -> t;
+trait Add<t> {
+    function add(l: t, r: t) returns (t) ;
 }
 
-instance word:Add {
-    function add(l: word, r: word) -> word { return addW(l,r); }
+impl Add<word> {
+    function add(l: word, r: word) returns (word) { return addW(l,r); }
 }
 
 contract Bug {
-    public function main() -> word {
+    function main() public returns (word) {
         return makeClosure(42);
     }
 
-    public function makeClosure(e : word) -> word {
-        let f = lam (x : word) {
+    function makeClosure(e: word) public returns (word) {
+        let f = lam (x: word) {
             return Add.add(x,e);  // this crashes
 	    // return addW(e,x);  // this works
         };

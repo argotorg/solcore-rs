@@ -1,1 +1,1 @@
-function main() -> word { return 0; }
+function main() returns (word) { return 0; }

@@ -1,8 +1,8 @@
-import pragma_scope_lib;
+import * as pragma_scope_lib from pragma_scope_lib;
 
-data List(a) = Nil | Cons(a, List(a));
+enum List<a> { Nil, Cons(a, List<a>) };
 
-forall a b c . class a : C(b, c) {}
+trait C<a, b, c> {}
 
-forall a b . instance List(b) : C(a, List(a)) {}
-forall x . x:C(word, word) => instance x:C(word, word) {}
+impl<a, b> C<List<b>, a, List<a>> {}
+impl<x> C<x, word, word> where x: C<word, word> {}

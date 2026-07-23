@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_if_expr_branch_mismatch/main.solc
 ---
 error[SC0201]: type mismatch: expected numeric, found bool
- --> /main/main.solc:2:28
+ --> /main/main.solc:2:19
   |
-1 | function f(b: bool) -> word {
-2 |   let x = if b then 1 else false;
-  |                            ^^^^^ expression has mismatched type
+1 | function f(b: bool) returns (word) {
+2 |   let x = b ? 1 : false;
+  |                   ^^^^^ expression has mismatched type
 3 |   return x;
   |
   = note: expected type: numeric

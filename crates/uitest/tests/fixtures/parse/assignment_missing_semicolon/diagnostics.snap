@@ -3,11 +3,12 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/assignment_missing_semicolon/main.solc
 ---
-error[SC0001]: assignment statement requires trailing `;`
- --> /main/main.solc:2:3
+error[SC0001]: parse error: unexpected end of input
+ --> /main/main.solc:3:1
   |
 1 | function bad() {
 2 |   x = 1
-  |   ^^^^^
 3 | }
+  | ^ unexpected token
   |
+  = note: expecting `&&`, `&`, `(`, `*`, `.`, `;`, `<`, `>`, `?`, `[`, `^`, `as`, `|`, or `||`

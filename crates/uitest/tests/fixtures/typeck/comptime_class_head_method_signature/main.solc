@@ -1,9 +1,9 @@
-forall a. class comptime a : C {
-  function f(x : a) -> a;
+trait C<a> {
+  function f(x: a) returns (a);
 }
 
-instance word : C {
-  function f(x : word) -> bool {
+impl C<word> {
+  function f(x: word) returns (bool) {
     return true;
   }
 }

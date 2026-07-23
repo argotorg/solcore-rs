@@ -1,5 +1,5 @@
 contract {
-    function f() -> word {
+    function f() returns (word) {
         return 1;
     }
 }

@@ -1,1 +1,1 @@
-import util.{missing};
+import {missing} from util;

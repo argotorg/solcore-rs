@@ -1,3 +1,3 @@
-function takeIt(x: MissingType) -> word {
+function takeIt(x: MissingType) returns (word) {
   return 0;
 }

@@ -6,16 +6,16 @@ input_file: crates/uitest/tests/fixtures/typeck/call_wrong_arity/main.solc
 error[SC0203]: call expects 1 argument, but 0 were provided
  --> /main/main.solc:6:10
   |
-1 | function f(x: word) -> word {
+1 | function f(x: word) returns (word) {
   |          - `f` defined here
 2 |   return x;
 3 | }
 4 |
-5 | function g() -> word {
+5 | function g() returns (word) {
 6 |   return f();
   |          ^^^ wrong number of arguments
 7 | }
   |
   = note: expected 1 argument
   = note: found 0 arguments
-  = note: `f` has signature `f(x: word) -> word`
+  = note: `f` has signature `f(x: word) returns (word)`

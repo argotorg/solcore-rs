@@ -7,15 +7,15 @@ error[SC0201]: argument type mismatch in call to `paint`
  --> /main/main.solc:8:19
   |
 2 |
-3 | function paint(name: word, c: Color) -> Color {
+3 | function paint(name: word, c: Color) returns (Color) {
   |                            - parameter `c` defined here
 4 |   return c;
 ...
-7 | function go() -> Color {
+7 | function go() returns (Color) {
 8 |   return paint(1, true);
   |                   ^^^^ argument has mismatched type
 9 | }
   |
   = note: expected `Color` because parameter `c` of `paint` has type `Color`
   = note: found type: bool
-  = note: `paint` has signature `paint(name: word, c: Color) -> Color`
+  = note: `paint` has signature `paint(name: word, c: Color) returns (Color)`

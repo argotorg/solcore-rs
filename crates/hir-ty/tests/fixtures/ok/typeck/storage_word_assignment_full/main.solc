@@ -1,17 +1,16 @@
-data storage(t) = storage(word);
+enum storage<t> { storage(word) }
 
-forall a b.
-class a:CanStore(b) {
-  function store(r:a, v:b) -> ();
-  function load(r:a) -> b;
+trait CanStore<a, b> {
+  function store(r: a, v: b) returns () ;
+  function load(r: a) returns (b) ;
 }
 
-instance storage(word):CanStore(word) {
-  function store(dst: storage(word), src: word) -> () {
+impl CanStore<word storage, word> {
+  function store(dst: word storage, src: word) returns () {
     return ();
   }
 
-  function load(src: storage(word)) -> word {
+  function load(src: word storage) returns (word) {
     return 0;
   }
 }
@@ -19,11 +18,11 @@ instance storage(word):CanStore(word) {
 contract StorageWordAssign {
   x: word;
 
-  function setx() -> () {
+  function setx() returns () {
     x = 8;
   }
 
-  public function main() -> word {
+  function main() public returns (word) {
     setx();
     return x;
   }

@@ -1,10 +1,10 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract BadFallback {
     constructor() {}
 
-    fallback() -> uint256 {
-        return uint256(0);
+    fallback() returns (uint256) {
+        return uint256.uint256(0);
     }
 }

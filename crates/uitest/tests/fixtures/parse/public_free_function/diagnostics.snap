@@ -3,12 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/public_free_function/main.solc
 ---
-error[SC0001]: 'public' is only allowed on functions declared inside a contract
- --> /main/main.solc:1:1
+error[SC0001]: could not parse top-level item near `public`; expected a declaration starting with `import`, `pragma`, `type`, `alias`, `enum`, `struct`, `trait`, `impl`, `contract`, `interface`, `library`, or `function`
+ --> /main/main.solc:2:1
   |
-1 | public function bad() {}
+1 | // migrate-syntax: keep-legacy-negative
+2 | public function bad() {}
   | ^^^^^^
-2 |
-3 | function after() {}
+3 |
   |
-  = note: while parsing function signature

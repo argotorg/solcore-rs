@@ -1,5 +1,5 @@
-import foo.bar.baz;
+import * as baz from foo.bar.baz;
 
-function main() -> word {
-  return foo.bar.baz.deep();
+function main() returns (word) {
+  return baz.deep();
 }

@@ -1,3 +1,3 @@
-import @pkg.extmod.{ext};
+import {ext} from @pkg.extmod;
 
 function main() {}

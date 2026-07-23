@@ -1,5 +1,5 @@
-// `payable` is only valid on a function/fallback inside a contract,
-// never on a top-level function. This must fail to parse.
+// The Classic prefix modifier order is no longer accepted.
+// migrate-syntax: keep-legacy-negative
 payable function deposit() -> uint256 {
     return 0;
 }

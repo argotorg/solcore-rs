@@ -1,13 +1,13 @@
-type comptime = word;
+alias CompileTime = word;
 
 contract ComptimeModifier {
-  function f(comptime x : word) -> comptime word {
+  function f(comptime x: word) returns (comptime word) {
     return x;
   }
 
-  function identifier(x : comptime) -> comptime {
-    let comptime : word = 1;
-    let y : comptime word = f(comptime);
+  function identifier(x: CompileTime) returns (CompileTime) {
+    let compileTimeValue: word = 1;
+    let comptime y: word = f(compileTimeValue);
     return y;
   }
 }

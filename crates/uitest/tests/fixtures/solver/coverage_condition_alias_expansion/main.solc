@@ -1,4 +1,4 @@
-type Phantom(a) = word;
-forall a b . class a:MyClass(b) {}
+alias Phantom<a> = word;
+trait MyClass<a, b> {}
 
-forall a . instance Phantom(a):MyClass(a) {}
+impl<a> MyClass<Phantom<a>, a> {}

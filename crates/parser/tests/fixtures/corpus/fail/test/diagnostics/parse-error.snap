@@ -3,11 +3,12 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/diagnostics/parse-error.solc
 ---
-error[SC0001]: parse error: unexpected end of input
- --> /parse-error.solc:1:38
+error[SC0001]: parse error: unexpected `returns`
+ --> /parse-error.solc:1:16
   |
-1 | function main( -> word { return 0; }
-  |                                     ^ unexpected token
+1 | function main( returns (word) { return 0; }
+  |                ^^^^^^^ unexpected token
   |
-  = note: expecting `)`, or `,`
+  = note: expecting `comptime`
+  = note: keywords cannot be used as identifiers; choose a different name
   = note: while parsing function parameter

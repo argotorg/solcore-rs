@@ -6,9 +6,9 @@ input_file: crates/uitest/tests/fixtures/typeck/nested_constructor_unreachable/m
 warning[SC0303]: unreachable match arm
  --> /main/main.solc:7:3
   |
-6 |   | Outer.Wrap(_) => return 0;
-7 |   | Outer.Wrap(Inner.A) => return 1;
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this arm is unreachable
-8 |   | Outer.Other => return 2;
+6 |   case Outer.Wrap(_) { return 0; }
+7 |   case Outer.Wrap(Inner.A) { return 1; }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this arm is unreachable
+8 |   case Outer.Other { return 2; }
   |
   = note: this arm is covered by previous match arms

@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/toplevel-constructor.solc
 ---
-error[SC0001]: could not parse top-level item near `constructor() {}`; expected a declaration starting with `import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`
+error[SC0001]: could not parse top-level item near `constructor() {}`; expected a declaration starting with `import`, `pragma`, `type`, `alias`, `enum`, `struct`, `trait`, `impl`, `contract`, `interface`, `library`, or `function`
  --> /toplevel-constructor.solc:3:1
   |
 1 | // A `constructor` may only be declared inside a contract.

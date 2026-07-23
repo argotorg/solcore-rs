@@ -1,26 +1,26 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract PayableTest {
     constructor() {}
 
-    public payable function deposit() -> uint256 {
+    function deposit() public payable returns (uint256) {
         let value;
         assembly {
             value := callvalue()
         }
-        return uint256(value);
+        return uint256.uint256(value);
     }
 
-    public function balance() -> uint256 {
+    function balance() public returns (uint256) {
         let value;
         assembly {
             value := selfbalance()
         }
-        return uint256(value);
+        return uint256.uint256(value);
     }
 
-    payable fallback() -> () {
+    fallback() payable returns () {
         let value;
         assembly {
             value := callvalue()

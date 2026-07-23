@@ -1,3 +1,3 @@
-function f() -> string {
+function f() returns (string) {
   return "ok";
 }

@@ -6,9 +6,9 @@ input_file: crates/uitest/tests/fixtures/comptime/ct_param_runtime/main.solc
 error[SC0406]: missing evidence: add
   --> /main/main.solc:11:12
    |
-10 |   function double(comptime x : word) -> comptime word {
+10 |   function double(comptime x: word) returns (comptime word) {
 11 |     return x + x;
-   |            ^^^^^ class evidence required here
+   |            ^^^^^ trait evidence required here
 12 |   }
    |
 ---
@@ -16,7 +16,7 @@ error[SC0406]: missing evidence: add
 error[SC0409]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'double'
   --> /main/main.solc:14:12
    |
-13 |   function process(value : word) -> word {
+13 |   function process(value: word) returns (word) {
 14 |     return double(value);
    |            ^^^^^^^^^^^^^ comptime evaluation failed here
 15 |   }

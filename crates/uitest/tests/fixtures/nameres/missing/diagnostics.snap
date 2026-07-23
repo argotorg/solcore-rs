@@ -4,9 +4,9 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/missing/main.solc
 ---
 error[SC0109]: import missing: file not found
- --> /main/main.solc:1:8
+ --> /main/main.solc:1:21
   |
-1 | import missing.{value};
-  |        ^^^^^^^ module reference
+1 | import {value} from missing;
+  |                     ^^^^^^^ module reference
   |
   = help: check the module path or add the missing source file

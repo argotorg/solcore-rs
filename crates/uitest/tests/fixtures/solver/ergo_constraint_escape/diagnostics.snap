@@ -3,13 +3,13 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_constraint_escape/main.solc
 ---
-error[SC0207]: cannot satisfy class constraint: a : Same
- --> /main/main.solc:7:8
+error[SC0207]: cannot satisfy trait constraint: a: Same
+ --> /main/main.solc:7:12
   |
 6 |
-7 | forall a . function f(x: a) -> Bool {
-  |        ^ constraint originates here
+7 | function f<a>(x: a) returns (Bool) {
+  |            ^ constraint originates here
 8 |   return Same.same(x, x);
   |
-  = note: no visible instance matches `a : Same`
-  = help: add a matching instance or strengthen the surrounding type context
+  = note: no visible impl matches `a: Same`
+  = help: add a matching impl or strengthen the surrounding type context

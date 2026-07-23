@@ -6,9 +6,9 @@ input_file: crates/uitest/tests/fixtures/nameres/selected_import_ambiguity_cross
 error[SC0120]: ambiguous selected import `T` across term/type namespaces
  --> /main/main.solc:1:1
   |
-1 | import a.{T};
-  | ^^^^^^^^^^^^^ ambiguous selected import across term/type namespaces
-2 | import b.{T};
+1 | import {T} from a;
+  | ^^^^^^^^^^^^^^^^^^ ambiguous selected import across term/type namespaces
+2 | import {T} from b;
 3 |
   |
   = note: `T` is imported from a, b across term/type namespaces

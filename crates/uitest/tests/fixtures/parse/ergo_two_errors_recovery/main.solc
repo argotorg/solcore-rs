@@ -1,13 +1,13 @@
-function f() -> word {
+function f() returns (word) {
     let x = ;
     return 0;
 }
 
-function g(y : word) -> word {
-    if y { return 1; }
+function g(y: word) returns (word) {
+    if (y) { return 1; }
     return 0;
 }
 
-function h() -> word {
+function h() returns (word) {
     return (1;
 }

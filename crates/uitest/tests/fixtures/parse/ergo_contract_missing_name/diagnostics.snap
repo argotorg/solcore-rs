@@ -8,8 +8,7 @@ error[SC0001]: parse error: unexpected `{`
   |
 1 | contract {
   |          ^ unexpected token
-2 |     function f() -> word {
+2 |     function f() returns (word) {
 3 |         return 1;
   |
-  = note: expecting identifier
-  = note: while parsing contract declaration
+  = note: while parsing contract, interface, or library declaration

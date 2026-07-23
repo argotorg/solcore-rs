@@ -1,5 +1,5 @@
-data Pair(a, b) = Mk(a, b);
+enum Pair<a, b> { Mk(a, b) };
 
-function f() -> Pair(word, word) {
+function f() returns (Pair<word, word>) {
   return Pair.Mk(1);
 }

@@ -1,1 +1,1 @@
-data Option(T) = Some(T) | ;
+enum Option<T> { Some(T), , };

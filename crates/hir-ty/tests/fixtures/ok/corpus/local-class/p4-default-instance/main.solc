@@ -1,15 +1,15 @@
-data Name = Name(word);
+enum Name { Name(word) }
 
-forall a . class a:Token {
-  function token(x:a) -> word;
+trait Token<a> {
+  function token(x: a) returns (word) ;
 }
 
-forall a . default instance a:Token {
-  function token(x:a) -> word {
+default impl<a> Token<a> {
+  function token(x: a) returns (word) {
     return 0;
   }
 }
 
-function main() -> word {
+function main() returns (word) {
   return Token.token(Name.Name(2));
 }

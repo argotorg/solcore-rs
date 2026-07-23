@@ -1,12 +1,13 @@
-data flag = off | on;
+// migrate-syntax: keep-unqualified-constructor
+enum flag { off, on };
 
-function pick(f: flag) -> word {
-  match f {
-  | flag.off => return 0;
-  | flag.on => return 1;
+function pick(f: flag) returns (word) {
+  match (f) {
+  case flag.off { return 0; }
+  case flag.on { return 1; }
   }
 }
 
-function main() -> word {
+function main() returns (word) {
   return pick(on);
 }

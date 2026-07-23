@@ -1,2 +1,2 @@
-import foo.bar;
-import baz.bar;
+import * as bar from foo.bar;
+import * as bar from baz.bar;

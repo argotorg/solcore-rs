@@ -1,9 +1,9 @@
-forall a . class a : C {
-  function f(x: a) -> word;
+trait C<a> {
+  function f(x: a) returns (word);
 }
 
-forall b . class b : D {}
+trait D<b> {}
 
-instance word : C {
-  forall b . b:D => function f(x: word) -> word { return x; }
+impl C<word> {
+  function f<b>(x: word) returns (word) where b: D { return x; }
 }

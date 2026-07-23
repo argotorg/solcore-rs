@@ -16,7 +16,7 @@ The reference corpus in
 [`reference-frontend.tsv`](crates/parser/tests/fixtures/corpus/reference-frontend.tsv)
 was produced with Haskell flags `-n -g`: specialization/Hull emission and
 generated contract dispatch were disabled. It used the default legacy
-type-class resolver. Its 278 passes, 153 failures, and two timeouts describe
+trait resolver. Its 278 passes, 153 failures, and two timeouts describe
 that configuration, not the whole Haskell compiler.
 
 The Rust accepted-corpus gate in
@@ -43,7 +43,7 @@ the compiler behaviors already agree once the same options are used.
 | `for` post-clause `let` ([fixture](crates/parser/tests/fixtures/corpus/fail/test/examples/cases/for-let-post.solc)) | Rust accepts it; the Haskell parser accepts only assignments in the post clause. | A post clause has the same forms as an init clause, as the Haskell language documentation says. **Fix Haskell parser and its negative fixture.** |
 | Calling a `word` (`Uncurry`, `rec`) | Haskell accepts invocation of a value annotated as `word`; Rust reports a non-callable value. | Only function/invokable values are callable. **Fix Haskell type checking; keep Rust.** |
 | Explicit closure desugaring ([fixture](crates/parser/tests/fixtures/corpus/fail/test/examples/cases/compose_desugared.solc)) | Haskell says the generated-style `invoke` implementation is not polymorphic enough; Rust accepts it. | Accept the explicit representation if it is valid closure-conversion output. **Fix Haskell rank-polymorphic checking**, while retaining a Rust specialization regression. |
-| Narrowed instance member ([fixture](crates/parser/tests/fixtures/corpus/ok/test/examples/cases/ixa.solc)) | Haskell accepts `size : Proxy(memory(a)) -> word` where the instantiated class requires `Proxy(memory(array(a)))`; Rust rejects it. | An instance member must implement the instantiated class signature. **Fix Haskell instance checking; keep Rust.** |
+| Narrowed impl member ([fixture](crates/parser/tests/fixtures/corpus/ok/test/examples/cases/ixa.solc)) | Haskell accepts `function size(value: Proxy<memory<a>>) returns (word)` where the instantiated trait requires `Proxy<memory<array<a>>>`; Rust rejects it. | An impl member must implement the instantiated trait signature. **Fix Haskell impl checking; keep Rust.** |
 | Recursive/table-reuse fixtures | Haskell legacy rejects `super-class-recursive-arg`, `tabled-answer-reuse`, and `tabled-mutual-chain`; Haskell tabled mode and Rust accept them. | These are not semantic differences under the tabled resolver. Make tabled canonical, or record the mode in each verdict. **Fix Haskell configuration and the harness.** |
 | Polymorphic comptime argument ([fixture](crates/parser/tests/fixtures/corpus/fail/test/examples/comptime/ct_param_poly_runtime.solc)) | The Haskell legacy frontend first reports ambiguity. Both Haskell tabled full-pipeline mode and Rust specialization reject a runtime value passed to a comptime parameter; the Rust frontend-only parity probe intentionally defers it. | The latent comptime obligation is already preserved through Rust specialization. **Keep the specialization regression and record the phase in the harness.** |
 | Parameterized contract `main` ([fixture](crates/parser/tests/fixtures/corpus/ok/test/examples/cases/multi-stmt-var-leaf.solc)) | Haskell suppresses generated dispatch whenever a local `main` exists and accepts parameters; Rust rejects them because the runtime entry receives no arguments. | A source runtime entry must be zero-argument. **Fix Haskell dispatch validation; keep Rust.** |
@@ -68,7 +68,7 @@ both positions. Haskell is the outlier.
 
 Haskell's acceptance of calls through a `word` annotation remains a
 type-checking defect. The `ixa` case is another Haskell false acceptance:
-substitution of the instance head into the class signature does not equal the
+substitution of the impl head into the trait signature does not equal the
 implementation signature. Rust's `SC0221` should remain.
 
 ### Resolver and comptime modes
@@ -135,7 +135,7 @@ The current shared snapshot has this evidence matrix:
 | `bool` | **no** | **no** | yes | output-only |
 | `word` (ABI `uint256`) | **no** | **no** | **no** | unsupported by dispatch |
 | pair/tuple | recursive | recursive | recursive | complete only when all components are complete |
-| user ADT | **no generic instance** | representation helpers only | representation helpers only | no complete external contract |
+| user ADT | **no generic impl** | representation helpers only | representation helpers only | no complete external contract |
 
 For `word`, the minimum upstream std correction is:
 

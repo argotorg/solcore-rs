@@ -1,8 +1,8 @@
-function id(x: word) -> word {
+function id(x: word) returns (word) {
   return x;
 }
 
-function id_ct(x: word) -> comptime word {
-  let y : comptime word = id(x);
+function id_ct(x: word) returns (comptime word) {
+  let comptime y: word = id(x);
   return id(x);
 }

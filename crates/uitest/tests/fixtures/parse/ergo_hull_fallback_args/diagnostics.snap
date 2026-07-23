@@ -7,8 +7,8 @@ error[SC0001]: fallback function must not declare input parameters
   --> /main/main.solc:9:13
    |
  8 |
- 9 |     fallback(x: uint256) -> () {
+ 9 |     fallback(x: uint256) returns (()) {
    |             ^^^^^^^^^^^^
-10 |         revert("fallback-was-called");
+10 |         revert;
    |
    = note: while parsing fallback definition

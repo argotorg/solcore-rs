@@ -1,21 +1,17 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
-forall a b . function nestedSnd(p: (a, b)) -> b {
-  match p {
-  | (_, tail) => return tail;
-  }
+function nestedSnd<a, b>(p: (a, b)) returns (b) {
+  match (p) { case (_, tail) { return tail; } }
 }
 
 contract NestedPairTail {
   x: word;
 
   // #[() -> 42]
-  public function run() -> uint256 {
+  function run() public returns (uint256) {
     x = 42;
     let tail = nestedSnd((x, (x, x)));
-    match tail {
-    | (head, _) => return uint256(head);
-    }
+    match (tail) { case (head, _) { return uint256.uint256(head); } }
   }
 }

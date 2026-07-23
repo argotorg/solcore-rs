@@ -3,16 +3,16 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_obligation_classification/main.solc
 ---
-error[SC0201]: type mismatch: expected numeric, found () -> word
+error[SC0201]: type mismatch: expected numeric, found function() returns (word)
  --> /main/main.solc:2:10
   |
-1 | function literal_as_callee() -> word {
+1 | function literal_as_callee() returns (word) {
 2 |   return 1();
   |          ^ expression has mismatched type
 3 | }
   |
   = note: expected type: numeric
-  = note: found type: () -> word
+  = note: found type: function() returns (word)
 ---
 
 error[SC0206]: non-callable value of type word
@@ -28,23 +28,23 @@ error[SC0206]: non-callable value of type word
 error[SC0201]: argument type mismatch in call to `fromInteger`
   --> /main/main.solc:11:26
    |
-10 | function from_integer_bad_arg() -> word {
+10 | function from_integer_bad_arg() returns (word) {
 11 |   return Int.fromInteger(true);
    |                          ^^^^ argument has mismatched type
 12 | }
    |
    = note: expected `integer` because parameter 1 of `fromInteger` has type `integer`
    = note: found type: bool
-   = note: `fromInteger` has signature `fromInteger(integer) -> _`
+   = note: `fromInteger` has signature `fromInteger(integer) returns (_)`
 ---
 
-error[SC0207]: cannot satisfy class constraint: a : invokable((), word)
-  --> /main/main.solc:14:8
+error[SC0207]: cannot satisfy trait constraint: a: invokable<(), word>
+  --> /main/main.solc:14:25
    |
 13 |
-14 | forall a . function open_invokable(x: a) -> word {
-   |        ^ constraint originates here
+14 | function open_invokable<a>(x: a) returns (word) {
+   |                         ^ constraint originates here
 15 |   return invoke(x, ());
    |
-   = note: no visible instance matches `a : invokable((), word)`
-   = help: add a matching instance or strengthen the surrounding type context
+   = note: no visible impl matches `a: invokable<(), word>`
+   = help: add a matching impl or strengthen the surrounding type context

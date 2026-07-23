@@ -36,7 +36,7 @@ trap 'rm -rf "$work_dir"' EXIT
 
 large_body="$work_dir/large-body.solc"
 {
-  echo 'function main() -> word {'
+  echo 'function main() returns (word) {'
   echo '  let value0: word = 0;'
   for index in $(seq 1 2000); do
     previous=$((index - 1))
@@ -46,14 +46,14 @@ large_body="$work_dir/large-body.solc"
   echo '}'
 } > "$large_body"
 
-instance_heavy="$work_dir/instance-heavy.solc"
+impl_heavy="$work_dir/impl-heavy.solc"
 {
   for index in $(seq 0 499); do
-    echo "forall a . class a:AuditClass${index} {}"
-    echo "instance word:AuditClass${index} {}"
+    echo "trait AuditClass${index}<a> {}"
+    echo "impl AuditClass${index}<word> {}"
   done
-  echo 'function main() -> word { return 0; }'
-} > "$instance_heavy"
+  echo 'function main() returns (word) { return 0; }'
+} > "$impl_heavy"
 
 run_with_deadline() {
   local name="$1"
@@ -98,10 +98,10 @@ run_with_deadline \
   "$large_body"
 
 run_with_deadline \
-  instance-heavy \
+  impl-heavy \
   "${common_args[@]}" \
-  "--emit-hull=$work_dir/instance-heavy.hull" \
-  "$instance_heavy"
+  "--emit-hull=$work_dir/impl-heavy.hull" \
+  "$impl_heavy"
 
 run_with_deadline \
   incremental-diagnostics \

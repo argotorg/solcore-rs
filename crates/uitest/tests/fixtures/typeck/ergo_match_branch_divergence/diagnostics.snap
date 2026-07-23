@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_match_branch_divergence/main.solc
 ---
 error[SC0201]: type mismatch: expected word, found bool
- --> /main/main.solc:6:31
+ --> /main/main.solc:6:33
   |
-5 |   | Shape.Circle(r) => return r;
-6 |   | Shape.Square(w) => return true;
-  |                               ^^^^ expression has mismatched type
+5 |   case Shape.Circle(r) { return r; }
+6 |   case Shape.Square(w) { return true; }
+  |                                 ^^^^ expression has mismatched type
 7 |   }
   |
   = note: expected type: word

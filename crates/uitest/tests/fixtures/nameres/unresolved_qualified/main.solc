@@ -1,5 +1,5 @@
-import util;
+import * as util from util;
 
-function main() -> word {
+function main() returns (word) {
   return util.missing();
 }

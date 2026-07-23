@@ -1,4 +1,4 @@
-function g() -> word {
+function g() returns (word) {
   return 1;
   return 2;
 }

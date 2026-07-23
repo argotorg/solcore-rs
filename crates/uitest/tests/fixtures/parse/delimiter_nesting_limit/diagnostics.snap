@@ -4,7 +4,7 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/delimiter_nesting_limit/main.solc
 ---
 error[SC0001]: delimiter nesting exceeds the compiler limit of 128
- --> /main/main.solc:1:164
+ --> /main/main.solc:1:172
   |
 1 | ...((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((...
   |                                                                    ^

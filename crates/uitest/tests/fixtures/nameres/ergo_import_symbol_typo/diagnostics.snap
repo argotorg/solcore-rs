@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_import_symbol_typo/main.solc
 ---
 error[SC0110]: unknown import item `valu`
- --> /main/main.solc:1:14
+ --> /main/main.solc:1:9
   |
-1 | import util.{valu};
-  |              ^^^^ unknown import item
+1 | import {valu} from util;
+  |         ^^^^ unknown import item
 2 |
-3 | function main() -> word {
+3 | function main() returns (word) {
   |
   = note: `valu` is not exported by module `util`
   = help: did you mean `value`?

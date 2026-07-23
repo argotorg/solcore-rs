@@ -1,8 +1,8 @@
-forall a . class a : C {
-  function f(x: a) -> word;
+trait C<a> {
+  function f(x: a) returns (word);
 }
 
-instance word : C {
-  function f(x: word) -> word { return x; }
-  function g(x: word) -> word { return x; }
+impl C<word> {
+  function f(x: word) returns (word) { return x; }
+  function g(x: word) returns (word) { return x; }
 }

@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_asm_ret/main.solc
 ---
-error[SC0409]: comptime evaluation failed: function annotated '-> comptime' returns a runtime expression
+error[SC0409]: comptime evaluation failed: function with a comptime return type returns a runtime expression
   --> /main/main.solc:12:5
    |
 11 |     }

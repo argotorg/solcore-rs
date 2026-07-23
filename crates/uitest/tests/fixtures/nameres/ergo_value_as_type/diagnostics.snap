@@ -6,12 +6,12 @@ input_file: crates/uitest/tests/fixtures/nameres/ergo_value_as_type/main.solc
 error[SC0103]: undefined type constructor: MkPair
  --> /main/main.solc:3:19
   |
-1 | data Pair = MkPair(word, word);
+1 | enum Pair { MkPair(word, word) };
   |             ------ constructor declared here
 2 |
-3 | function first(p: MkPair) -> word {
+3 | function first(p: MkPair) returns (word) {
   |                   ^^^^^^ undefined type constructor
-4 |   match p {
+4 |   match (p) {
   |
   = note: `MkPair` is a constructor of type `Pair`
   = help: use `Pair` as the type name

@@ -2,10 +2,10 @@
    sloadWord uses sload; storage is mutable state, so its result is
    a runtime value; passing it to double's comptime param is an error.
 */
-import std;
+import * as std from std;
 
-function sloadWord() -> word {
-  let v : word;
+function sloadWord() returns (word) {
+  let v: word;
   assembly {
     v := sload(0)
   }
@@ -13,10 +13,10 @@ function sloadWord() -> word {
 }
 
 contract ComptimeRuntimeArg {
-  function double(comptime x : word) -> comptime word {
+  function double(comptime x: word) returns (comptime word) {
     return x + x;
   }
-  function main() -> word {
+  function main() returns (word) {
     return double(sloadWord());
   }
 }

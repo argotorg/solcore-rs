@@ -1,50 +1,50 @@
-import util as U;
+import * as U from util;
 
-data Opt = Some(word) | None;
-type Alias = word;
-contract K { function main() -> word { return 0; } }
-forall a . class a:C {}
+enum Opt { Some(word), None };
+alias Alias = word;
+contract K { function main() returns (word) { return 0; } }
+trait C<a> {}
 
-function adt_value() -> word {
+function adt_value() returns (word) {
   return Opt;
 }
 
-function alias_value() -> word {
+function alias_value() returns (word) {
   return Alias;
 }
 
-function contract_value() -> word {
+function contract_value() returns (word) {
   return K;
 }
 
-function class_value() -> word {
+function class_value() returns (word) {
   return C;
 }
 
-function builtin_type_value() -> word {
+function builtin_type_value() returns (word) {
   return word;
 }
 
-function builtin_class_value() -> word {
+function builtin_class_value() returns (word) {
   return Int;
 }
 
-forall a . function type_var_value() -> word {
+function type_var_value<a>() returns (word) {
   return a;
 }
 
-function module_value() -> word {
+function module_value() returns (word) {
   return U;
 }
 
-function type_as_callee() -> word {
+function type_as_callee() returns (word) {
   return Opt();
 }
 
-function module_as_callee() -> word {
+function module_as_callee() returns (word) {
   return U();
 }
 
-function type_in_binop() -> word {
+function type_in_binop() returns (word) {
   return Opt + 1;
 }

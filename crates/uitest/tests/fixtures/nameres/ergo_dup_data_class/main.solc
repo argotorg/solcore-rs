@@ -1,11 +1,11 @@
-data Shape = Circle(word);
+enum Shape { Circle(word) };
 
-data Shape = Square(word);
+enum Shape { Square(word) };
 
-forall a . class a:Render {
-  function render(x: a) -> word;
+trait Render<a> {
+  function render(x: a) returns (word);
 }
 
-forall a . class a:Render {
-  function paint(x: a) -> word;
+trait Render<a> {
+  function paint(x: a) returns (word);
 }

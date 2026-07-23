@@ -1,5 +1,5 @@
 contract Bad {
-  fallback() -> word {}
+  fallback() returns (word) {}
 
   function after() {}
 }

@@ -1,9 +1,9 @@
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
-import ltproxy.{ltproxy};
+import {ltproxy} from ltproxy;
 
 contract LtImp {
   // #[() -> true]
-  public function run() -> bool { ltproxy() }
+  function run() public returns (bool) { return ltproxy(); }
 }

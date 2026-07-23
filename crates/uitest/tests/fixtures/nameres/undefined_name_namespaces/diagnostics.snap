@@ -3,21 +3,21 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/undefined_name_namespaces/main.solc
 ---
-error[SC0105]: undefined class: MissingClass
- --> /main/main.solc:1:14
+error[SC0103]: undefined type constructor: MissingTy
+ --> /main/main.solc:1:18
   |
-1 | forall a . a:MissingClass => function f(x: MissingTy) -> word {
-  |              ^^^^^^^^^^^^ undefined class
+1 | function f<a>(x: MissingTy) returns (word) where a: MissingClass {
+  |                  ^^^^^^^^^ undefined type constructor
 2 |   return missingName;
 3 | }
   |
 ---
 
-error[SC0103]: undefined type constructor: MissingTy
- --> /main/main.solc:1:44
+error[SC0105]: undefined trait: MissingClass
+ --> /main/main.solc:1:53
   |
-1 | forall a . a:MissingClass => function f(x: MissingTy) -> word {
-  |                                            ^^^^^^^^^ undefined type constructor
+1 | function f<a>(x: MissingTy) returns (word) where a: MissingClass {
+  |                                                     ^^^^^^^^^^^^ undefined trait
 2 |   return missingName;
 3 | }
   |
@@ -26,7 +26,7 @@ error[SC0103]: undefined type constructor: MissingTy
 error[SC0101]: undefined name: missingName
  --> /main/main.solc:2:10
   |
-1 | forall a . a:MissingClass => function f(x: MissingTy) -> word {
+1 | function f<a>(x: MissingTy) returns (word) where a: MissingClass {
 2 |   return missingName;
   |          ^^^^^^^^^^^ unknown name
 3 | }

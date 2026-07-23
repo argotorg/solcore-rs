@@ -1,14 +1,14 @@
 # Backend E2E fixtures
 
 Both the Yul and Sonatina backends run every `**/main.solc` fixture in this
-directory. Selector-dispatched fixtures explicitly import both `std.{*}` and
-`std.dispatch.{*}`. Expectations live next to the contract function they
+directory. Selector-dispatched fixtures explicitly import the names they use
+from `std` and `std.dispatch`. Expectations live next to the contract function they
 exercise:
 
 ```solcore
 // #[(0, 1) -> 1]
 // #[(1, 1) -> 2]
-public function add(x: uint256, y: uint256) -> uint256 {
+function add(x: uint256, y: uint256) public returns (uint256) {
   return Add.add(x, y);
 }
 ```
@@ -30,10 +30,10 @@ normal call directive on a later public method to assert the persisted state:
 
 ```solcore
 // #[send(41)]
-public function set(value: uint256) { stored = value; }
+function set(value: uint256) public { stored = value; }
 
 // #[() -> 41]
-public function readAfterSend() -> uint256 { return stored; }
+function readAfterSend() public returns (uint256) { return stored; }
 ```
 
 The outer parentheses delimit the argument or result list; another pair is
@@ -42,7 +42,7 @@ double parentheses:
 
 ```solcore
 // #[((7, 1)) -> (7, 1)]
-public function echo(point: (uint256, uint256)) -> (uint256, uint256) {
+function echo(point: (uint256, uint256)) public returns (uint256, uint256) {
   return point;
 }
 ```

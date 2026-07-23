@@ -6,8 +6,8 @@ input_file: crates/uitest/tests/fixtures/parse/class_missing_body_brace/main.sol
 error[SC0001]: parse error: unexpected end of input
  --> /main/main.solc:1:13
   |
-1 | class T: Eq
+1 | trait Eq<T>
   |            ^ unexpected token
   |
-  = note: expecting `(`, or `{`
-  = note: while parsing predicate
+  = note: expecting `{`, or where clause
+  = note: while parsing trait declaration

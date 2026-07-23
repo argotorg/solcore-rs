@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/comptime/ct_param_poly_runtime/main.sol
 error[SC0409]: comptime evaluation failed: runtime value passed to comptime parameter 'x' of 'unwrap'
   --> /main/main.solc:20:10
    |
-19 | forall t. t:Wrap => function process(z : t) -> word {
+19 | function process<t>(z: t) returns (word) where t: Wrap {
 20 |   return Wrap.unwrap(z);
    |          ^^^^^^^^^^^^^^ comptime evaluation failed here
 21 | }

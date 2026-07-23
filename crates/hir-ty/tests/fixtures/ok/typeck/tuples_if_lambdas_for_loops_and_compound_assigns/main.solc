@@ -1,89 +1,87 @@
-forall t . class t:Add {
-  function add(l:t, r:t) -> t;
+trait Add<t> {
+  function add(l: t, r: t) returns (t) ;
 }
 
-forall t . class t:Mod {
-  function mod(l:t, r:t) -> t;
+trait Mod<t> {
+  function mod(l: t, r: t) returns (t) ;
 }
 
-forall t . class t:BitAnd {
-  function band(l:t, r:t) -> t;
+trait BitAnd<t> {
+  function band(l: t, r: t) returns (t) ;
 }
 
-forall t . class t:BitOr {
-  function bor(l:t, r:t) -> t;
+trait BitOr<t> {
+  function bor(l: t, r: t) returns (t) ;
 }
 
-forall t . class t:BitXor {
-  function bxor(l:t, r:t) -> t;
+trait BitXor<t> {
+  function bxor(l: t, r: t) returns (t) ;
 }
 
-forall t . class t:Ord {
-  function gt(l:t, r:t) -> bool;
+trait Ord<t> {
+  function gt(l: t, r: t) returns (bool) ;
 }
 
-forall t . class t:Eq {
-  function eq(l:t, r:t) -> bool;
+trait Eq<t> {
+  function eq(l: t, r: t) returns (bool) ;
 }
 
-instance word:Add {
-  function add(l:word, r:word) -> word {
+impl Add<word> {
+  function add(l: word, r: word) returns (word) {
     return primAddWord(l, r);
   }
 }
 
-instance word:Mod {
-  function mod(l:word, r:word) -> word {
+impl Mod<word> {
+  function mod(l: word, r: word) returns (word) {
     return l;
   }
 }
 
-instance word:BitAnd {
-  function band(l:word, r:word) -> word {
+impl BitAnd<word> {
+  function band(l: word, r: word) returns (word) {
     return l;
   }
 }
 
-instance word:BitOr {
-  function bor(l:word, r:word) -> word {
+impl BitOr<word> {
+  function bor(l: word, r: word) returns (word) {
     return l;
   }
 }
 
-instance word:BitXor {
-  function bxor(l:word, r:word) -> word {
+impl BitXor<word> {
+  function bxor(l: word, r: word) returns (word) {
     return l;
   }
 }
 
-instance word:Ord {
-  function gt(l:word, r:word) -> bool {
+impl Ord<word> {
+  function gt(l: word, r: word) returns (bool) {
     return true;
   }
 }
 
-instance word:Eq {
-  function eq(l:word, r:word) -> bool {
+impl Eq<word> {
+  function eq(l: word, r: word) returns (bool) {
     return true;
   }
 }
 
-function lt(l:word, r:word) -> bool {
+function lt(l: word, r: word) returns (bool) {
   return Ord.gt(r, l);
 }
 
-function main() -> word {
-  let f = lam(x: word) { return x; };
-  let acc : word = 0;
-  for (let i : word = 0; i < 3; i = i + 1) {
+function main() returns (word) {
+  let f = lam (x: word) { return x; };
+  let acc: word = 0;
+  for (let i: word = 0; i < 3; i = i + 1) {
     acc += f(i);
     acc ^= 1;
     acc &= 7;
     acc |= 2;
     acc %= 5;
   }
-  let t : (word, word) = (acc, 1);
-  match t {
-  | (x, _) => return if x == 0 then 1 else x;
-  }
+  let t: (word, word) = (acc, 1);
+  match (t) { case (x, _) { return (x == 0 ? 1 : x); } }
 }

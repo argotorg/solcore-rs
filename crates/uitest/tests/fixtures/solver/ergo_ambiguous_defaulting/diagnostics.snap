@@ -4,14 +4,14 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_ambiguous_defaulting/main.solc
 ---
 error[SC0299]: ambiguous inferred type
-  --> /main/main.solc:28:22
+  --> /main/main.solc:28:29
    |
 27 |
-28 |   function f() -> word {
-   |  ______________________^
+28 |   function f() returns (word) {
+   |  _____________________________^
 29 | |   return Conv.out(Conv.make(1));
 30 | | }
    | |_^ ambiguous inferred type
    |
-   = note: forall _ . _ : Conv => () -> word
-   = help: add a type annotation or a matching instance to fix the ambiguous type variable
+   = note: <_> function() returns (word) where _: Conv
+   = help: add a type annotation or a matching impl to fix the ambiguous type variable

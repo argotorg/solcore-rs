@@ -1,6 +1,6 @@
 ---
 source: crates/yul/tests/snapshots.rs
-expression: "render_source(\"doc_id\",\nr#\"\nimport std.{*};\nimport std.dispatch.{*};\n\ncontract IdDoc {\n  public function id(x : uint256) -> uint256 {\n    return x;\n  }\n}\n\"#,)"
+expression: "render_source(\"doc_id\",\nr#\"\nimport std;\nimport std.dispatch;\n\ncontract IdDoc {\n  function id(x: uint256) public returns (uint256) {\n    return x;\n  }\n}\n\"#,)"
 ---
 object "IdDocDeploy" {
   code {
@@ -285,7 +285,7 @@ object "IdDocDeploy" {
       function usr$opcodes_mstore_d7415bc7e(src$a_71, src$b_72) {
         mstore(src$a_71, src$b_72)
       }
-      function usr$opcodes_revert_d73350734(src$a_73, src$b_74) {
+      function usr$opcodes_revert__df9f680cd(src$a_73, src$b_74) {
         revert(src$a_73, src$b_74)
       }
       function usr$opcodes_shr_d588bcc8e(src$a_75, src$b_76) -> gen$result_77 {
@@ -377,13 +377,13 @@ object "IdDocDeploy" {
             let src$selector_91
             src$selector_91 := _v66
             usr$opcodes_mstore_d7415bc7e(0, src$selector_91)
-            usr$opcodes_revert_d73350734(28, 4)
+            usr$opcodes_revert__df9f680cd(28, 4)
           }
           case true {
             switch _v66
               case false {
                 /* Empty */
-                usr$opcodes_revert_d73350734(0, 0)
+                usr$opcodes_revert__df9f680cd(0, 0)
               }
               case true {
                 {
@@ -398,14 +398,13 @@ object "IdDocDeploy" {
                   _v69 := usr$Add_add_d2e932f0d$word(src$msg__93, 32)
                   let _v70
                   _v70 := usr$opcodes_mload_d8413229c(src$msg__93)
-                  usr$opcodes_revert_d73350734(_v69, _v70)
+                  usr$opcodes_revert__df9f680cd(_v69, _v70)
                 }
               }
           }
       }
       function usr$std_set_free_memory_d65c817cd(src$loc_94) {
         usr$opcodes_mstore_d7415bc7e(0x40, src$loc_94)
-        leave
       }
       usr$doc_id_IdDoc_main_d45c46589()
     }

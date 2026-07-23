@@ -3,11 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_undef_class/main.solc
 ---
-error[SC0105]: undefined class: NoSuchClass
- --> /main/main.solc:1:17
+error[SC0105]: undefined trait: NoSuchClass
+ --> /main/main.solc:1:6
   |
-1 | instance word : NoSuchClass {
-  |                 ^^^^^^^^^^^ undefined class
-2 |   function frob(x: word) -> word {
+1 | impl NoSuchClass<word> {
+  |      ^^^^^^^^^^^ undefined trait
+2 |   function frob(x: word) returns (word) {
 3 |     return x;
   |

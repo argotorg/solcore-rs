@@ -1,0 +1,79 @@
+pragma solidity ^0.8.23;
+pragma solcore noCoverageCondition Eq;
+
+alias Word = uint256;
+alias PairOf<T> = (T, T);
+type Wad is uint256;
+
+struct Pair<T> {
+  left: T;
+  right: T;
+}
+
+enum Option<T> {
+  None,
+  Some(T),
+}
+
+enum Result<T, E> {
+  Ok(T),
+  Err(E),
+}
+
+trait Eq<T> {
+  function eq(x: T, y: T) returns (bool);
+}
+
+impl Eq<uint256> {
+  function eq(x: uint256, y: uint256) returns (bool) {
+    return x == y;
+  }
+}
+
+impl<T> Eq<Option<T>> where T: Eq {
+  function eq(x: Option<T>, y: Option<T>) returns (bool) {
+    return true;
+  }
+}
+
+function id<T>(x: T) returns (T) {
+  return x;
+}
+
+function namedResult() returns (result: uint256) {
+  return 0;
+}
+
+function destructure(x: uint256, y: uint256) returns (uint256) {
+  let (left, right): (uint256, uint256) = (x, y);
+  return left + right;
+}
+
+contract Token {
+  balances: mapping(address => uint256);
+  values: uint256[];
+  fixedValues: uint256[4];
+  callback: function(uint256) internal returns (bool);
+
+  constructor(initialSupply: uint256) payable {
+    balances[msg.sender] = initialSupply;
+  }
+
+  function balanceOf(account: address) public view returns (uint256) {
+    return balances[account];
+  }
+
+  fallback() external payable {
+    revert;
+  }
+}
+
+interface Reader {
+  function read(key: uint256) external view returns (uint256);
+}
+
+library Math {
+  function add(x: uint256, y: uint256) internal pure returns (uint256) {
+    return x + y;
+  }
+}

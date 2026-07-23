@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/typeck/ergo_lambda_body_mismatch/main.s
 error[SC0201]: type mismatch: expected word, found bool
  --> /main/main.solc:6:39
   |
-5 | function g() -> word {
+5 | function g() returns (word) {
 6 |   return apply(lam (y: word) { return true; }, 1);
   |                                       ^^^^ expression has mismatched type
 7 | }

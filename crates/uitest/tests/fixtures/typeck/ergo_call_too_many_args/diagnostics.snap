@@ -6,16 +6,16 @@ input_file: crates/uitest/tests/fixtures/typeck/ergo_call_too_many_args/main.sol
 error[SC0203]: call expects 1 argument, but 3 were provided
  --> /main/main.solc:6:10
   |
-1 | function double(x: word) -> word {
+1 | function double(x: word) returns (word) {
   |          ------ `double` defined here
 2 |   return x;
 3 | }
 4 |
-5 | function g() -> word {
+5 | function g() returns (word) {
 6 |   return double(1, 2, 3);
   |          ^^^^^^^^^^^^^^^ wrong number of arguments
 7 | }
   |
   = note: expected 1 argument
   = note: found 3 arguments
-  = note: `double` has signature `double(x: word) -> word`
+  = note: `double` has signature `double(x: word) returns (word)`

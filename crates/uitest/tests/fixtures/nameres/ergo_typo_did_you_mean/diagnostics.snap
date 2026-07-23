@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/nameres/ergo_typo_did_you_mean/main.sol
 error[SC0101]: undefined name: computeVale
  --> /main/main.solc:6:10
   |
-5 | function main() -> word {
+5 | function main() returns (word) {
 6 |   return computeVale(1);
   |          ^^^^^^^^^^^ unknown name
 7 | }

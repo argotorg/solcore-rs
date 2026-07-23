@@ -1,6 +1,3 @@
-function classify(n : integer) -> integer {
-  match n {
-  | 0 => return 1;
-  | _ => return n;
-  }
+function classify(n: integer) returns (integer) {
+  match (n) { case 0 { return 1; } default { return n; } }
 }

@@ -1,5 +1,5 @@
-data Box(a) = Box(a);
+enum Box<a> { Box(a) };
 
-forall a . class a : C {}
+trait C<a> {}
 
-instance Box : C {}
+impl C<Box> {}

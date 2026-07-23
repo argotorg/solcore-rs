@@ -3,12 +3,25 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/payable-toplevel-function.solc
 ---
-error[SC0001]: `payable` is only allowed on a function, constructor, or fallback inside a contract
+error[SC0001]: parse error: unexpected `payable`
  --> /payable-toplevel-function.solc:3:1
   |
-2 | // never on a top-level function. This must fail to parse.
+2 | // migrate-syntax: keep-legacy-negative
 3 | payable function deposit() -> uint256 {
-  | ^^^^^^^
+  | ^^^^^^^ unexpected token
 4 |     return 0;
   |
+  = note: expecting contract, interface, or library declaration, enum or struct declaration, export declaration, function declaration, impl declaration, import declaration, pragma declaration, trait declaration, or type declaration
+  = note: while parsing top-level item
+---
+
+error[SC0001]: parse error: unexpected `->`
+ --> /payable-toplevel-function.solc:3:28
+  |
+2 | // migrate-syntax: keep-legacy-negative
+3 | payable function deposit() -> uint256 {
+  |                            ^^ unexpected token
+4 |     return 0;
+  |
+  = note: expecting `external`, `internal`, `payable`, `private`, `public`, `pure`, `returns`, `view`, `{`, or where clause
   = note: while parsing function signature

@@ -1,19 +1,19 @@
-forall t. class t : Wrap {
-  function unwrap(comptime x : t) -> comptime word;
+trait Wrap<t> {
+  function unwrap(comptime x: t) returns (comptime word);
 }
 
-instance word : Wrap {
-  function unwrap(comptime x : word) -> comptime word {
+impl Wrap<word> {
+  function unwrap(comptime x: word) returns (comptime word) {
     return x;
   }
 }
 
-forall t. t:Wrap => function process(z : t) -> word {
+function process<t>(z: t) returns (word) where t: Wrap {
   return Wrap.unwrap(z);
 }
 
-function sloadWord() -> word {
-  let v : word;
+function sloadWord() returns (word) {
+  let v: word;
   assembly {
     v := sload(0)
   }
@@ -21,7 +21,7 @@ function sloadWord() -> word {
 }
 
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     return process(sloadWord());
   }
 }

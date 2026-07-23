@@ -1,8 +1,8 @@
 contract YulMultiRetBad {
-  public function main() -> word {
-    let x : word;
-    let y : word;
-    let z : word;
+  function main() public returns (word) {
+    let x: word;
+    let y: word;
+    let z: word;
     assembly {
       function pair() -> a, b {
         a := 1

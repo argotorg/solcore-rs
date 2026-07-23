@@ -1,5 +1,5 @@
-import util.{valu};
+import {valu} from util;
 
-function main() -> word {
+function main() returns (word) {
   return valu(1);
 }

@@ -6,9 +6,9 @@ input_file: crates/uitest/tests/fixtures/typeck/unreachable_match_arm/main.solc
 warning[SC0303]: unreachable match arm
  --> /main/main.solc:6:3
   |
-5 |   | _ => return 0;
-6 |   | Flag.Off => return 1;
-  |   ^^^^^^^^^^^^^^^^^^^^^^^ this arm is unreachable
+5 |   default { return 0; }
+6 |   case Flag.Off { return 1; }
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ this arm is unreachable
 7 |   }
   |
   = note: this arm is covered by previous match arms

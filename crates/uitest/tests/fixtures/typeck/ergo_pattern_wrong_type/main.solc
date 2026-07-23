@@ -1,8 +1,8 @@
-data Color = Red | Green;
-data Shape = Circle(word);
+enum Color { Red, Green };
+enum Shape { Circle(word) };
 
-function f(c: Color) -> word {
-  match c {
-  | Shape.Circle(r) => return r;
+function f(c: Color) returns (word) {
+  match (c) {
+  case Shape.Circle(r) { return r; }
   }
 }

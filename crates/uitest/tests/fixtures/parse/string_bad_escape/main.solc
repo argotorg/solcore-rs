@@ -1,1 +1,1 @@
-function f() -> string { return "a\q"; }
+function f() returns (string) { return "a\q"; }

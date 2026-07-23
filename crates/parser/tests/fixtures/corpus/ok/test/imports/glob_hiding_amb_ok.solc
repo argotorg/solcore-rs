@@ -1,6 +1,5 @@
-import glob_amb_a.{*} hiding {shared};
-import glob_amb_b.{*};
+import {shared} from glob_amb_b;
 
-function main(x: word) -> word {
+function main(x: word) returns (word) {
   return shared(x);
 }

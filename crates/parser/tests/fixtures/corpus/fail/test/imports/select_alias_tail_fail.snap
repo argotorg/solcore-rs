@@ -4,12 +4,12 @@ expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/imports/select_alias_tail_fail.solc
 ---
 error[SC0001]: parse error: unexpected `as`
- --> /select_alias_tail_fail.solc:1:25
+ --> /select_alias_tail_fail.solc:1:30
   |
-1 | import selectlib.{keep} as keep_;
-  |                         ^^ unexpected token
+1 | import {keep} from selectlib as keep_;
+  |                              ^^ unexpected token
 2 |
-3 | function main(x: word) -> word {
+3 | function main(x: word) returns (word) {
   |
-  = note: expecting `;`
+  = note: expecting `.`, or `;`
   = note: while parsing import declaration

@@ -1,1 +1,1 @@
-import missing.{value};
+import {value} from missing;

@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/ergo_ct_public_param/main.solc
 ---
 error[SC0413]: public function `double` cannot take comptime parameter `x`
-  --> /main/main.solc:9:26
+  --> /main/main.solc:9:19
    |
  8 | contract CtPublicParam {
- 9 |   public function double(comptime x : word) -> word {
-   |                          ^^^^^^^^^^^^^^^^^ public entry parameter is runtime
+ 9 |   function double(comptime x: word) public returns (word) {
+   |                   ^^^^^^^^^^^^^^^^ public entry parameter is runtime
 10 |     return x + x;
    |
    = note: public function parameters are supplied from calldata at runtime

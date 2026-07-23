@@ -1,10 +1,10 @@
-data Inner = A | B;
-data Outer = Other | Wrap(Inner);
+enum Inner { A, B };
+enum Outer { Other, Wrap(Inner) };
 
-function pick(x : Outer) -> word {
-  match x {
-  | Outer.Wrap(_) => return 0;
-  | Outer.Wrap(Inner.A) => return 1;
-  | Outer.Other => return 2;
+function pick(x: Outer) returns (word) {
+  match (x) {
+  case Outer.Wrap(_) { return 0; }
+  case Outer.Wrap(Inner.A) { return 1; }
+  case Outer.Other { return 2; }
   }
 }

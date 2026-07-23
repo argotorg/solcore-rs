@@ -3,10 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/data_trailing_pipe/main.solc
 ---
-error[SC0001]: parse error: unexpected `;`
- --> /main/main.solc:1:28
+error[SC0001]: parse error: unexpected `,`
+ --> /main/main.solc:1:27
   |
-1 | data Option(T) = Some(T) | ;
-  |                            ^ unexpected token
+1 | enum Option<T> { Some(T), , };
+  |                           ^ unexpected token
   |
-  = note: while parsing data declaration
+  = note: expecting `}`
+  = note: while parsing enum or struct declaration

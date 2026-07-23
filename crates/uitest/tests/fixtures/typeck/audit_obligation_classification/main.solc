@@ -1,16 +1,16 @@
-function literal_as_callee() -> word {
+function literal_as_callee() returns (word) {
   return 1();
 }
 
-function word_as_callee() -> word {
+function word_as_callee() returns (word) {
   let x: word;
   return x();
 }
 
-function from_integer_bad_arg() -> word {
+function from_integer_bad_arg() returns (word) {
   return Int.fromInteger(true);
 }
 
-forall a . function open_invokable(x: a) -> word {
+function open_invokable<a>(x: a) returns (word) {
   return invoke(x, ());
 }

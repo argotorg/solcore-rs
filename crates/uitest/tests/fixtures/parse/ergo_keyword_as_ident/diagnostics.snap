@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/parse/ergo_keyword_as_ident/main.solc
 error[SC0001]: parse error: unexpected `match`
  --> /main/main.solc:1:10
   |
-1 | function match(x : word) -> word {
+1 | function match(x: word) returns (word) {
   |          ^^^^^ unexpected token
 2 |     return x;
 3 | }

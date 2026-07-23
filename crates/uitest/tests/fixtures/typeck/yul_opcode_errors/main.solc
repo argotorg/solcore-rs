@@ -1,5 +1,5 @@
-function badYul() -> word {
-  let x : word;
+function badYul() returns (word) {
+  let x: word;
   assembly {
     let one := add(1)
     let two := add("bad", 1)
