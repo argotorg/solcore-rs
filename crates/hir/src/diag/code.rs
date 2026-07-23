@@ -114,6 +114,7 @@ impl DiagnosticCode {
     pub const TYPECK_TYPE_ALIAS_EXPANSION_LIMIT: &'static str = "SC0243";
     pub const TYPECK_INCOMPLETE_INSTANCE: &'static str = "SC0244";
     pub const TYPECK_INVALID_CONVERSION: &'static str = "SC0245";
+    pub const TYPECK_UNSUPPORTED_STORAGE_FIELD_PROJECTION: &'static str = "SC0246";
     pub const TYPECK_AMBIGUOUS_INFERENCE_OR_TYPE_CONSTRUCTOR_ARITY: &'static str = "SC0299";
     pub const TYPECK_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
     pub const EMIT_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
@@ -290,6 +291,10 @@ impl DiagnosticCode {
             Self::TYPECK_INCOMPLETE_INSTANCE,
         ),
         DiagnosticCodeEntry::new("TYPECK_INVALID_CONVERSION", Self::TYPECK_INVALID_CONVERSION),
+        DiagnosticCodeEntry::new(
+            "TYPECK_UNSUPPORTED_STORAGE_FIELD_PROJECTION",
+            Self::TYPECK_UNSUPPORTED_STORAGE_FIELD_PROJECTION,
+        ),
         DiagnosticCodeEntry::new(
             "TYPECK_INCOMPLETE_SIGNATURE",
             Self::TYPECK_INCOMPLETE_SIGNATURE,

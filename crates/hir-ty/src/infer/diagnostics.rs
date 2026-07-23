@@ -394,6 +394,13 @@ pub enum TypeckDiagnostic {
         /// Conversion expression within the assignment target.
         span: LabelSpan,
     },
+    /// `SC0246`: a named field was projected from a contract-storage value.
+    UnsupportedStorageFieldProjection {
+        /// Source span for the unsupported field projection.
+        span: LabelSpan,
+        /// Projected field name.
+        field: String,
+    },
     /// `SC0302`: a match does not cover every possible scrutinee value.
     NonExhaustiveMatch {
         /// Source span for the match scrutinee.
@@ -867,6 +874,19 @@ impl TypeckDiagnostic {
                         Some("a converted value is not an assignment location"),
                     )
                     .with_help("assign to the original variable, field, or index instead")
+            }
+            TypeckDiagnostic::UnsupportedStorageFieldProjection { span, field } => {
+                Diagnostic::error(format!(
+                    "cannot project field `{field}` from a contract-storage value"
+                ))
+                .with_code(DiagnosticCode::TYPECK_UNSUPPORTED_STORAGE_FIELD_PROJECTION)
+                .with_primary_label_span(
+                    span.clone(),
+                    Some("storage field projection is not supported"),
+                )
+                .with_help(
+                    "access named fields only on local values; contract-storage struct layout is not implemented",
+                )
             }
             TypeckDiagnostic::NonExhaustiveMatch { span, missing } => {
                 Diagnostic::error("non-exhaustive pattern match")

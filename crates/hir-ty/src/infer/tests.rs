@@ -1170,6 +1170,109 @@ function project(p: Pair) returns (word) {
 }
 
 #[test]
+fn contract_storage_struct_field_read_is_rejected_before_field_selection() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+struct Pair {
+  x: word;
+}
+
+contract C {
+  pair: Pair;
+
+  function get() returns (word) {
+    return pair.x;
+  }
+}
+"#,
+    );
+    let (_, result) = infer_function(&db, module, "get");
+
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            matches!(
+                diagnostic,
+                TypeckDiagnostic::UnsupportedStorageFieldProjection { field, .. }
+                    if field == "x"
+            )
+        })
+        .expect("unsupported storage field projection diagnostic");
+    assert_eq!(
+        diagnostic.lower().code.as_deref(),
+        Some(hir::diag::DiagnosticCode::TYPECK_UNSUPPORTED_STORAGE_FIELD_PROJECTION)
+    );
+    assert!(result.adt_field_selections.is_empty());
+}
+
+#[test]
+fn contract_storage_struct_field_assignment_is_rejected_before_field_selection() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+struct Pair {
+  x: word;
+}
+
+contract C {
+  pair: Pair;
+
+  function set(value: word) {
+    pair.x = value;
+  }
+}
+"#,
+    );
+    let (_, result) = infer_function(&db, module, "set");
+
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic,
+            TypeckDiagnostic::UnsupportedStorageFieldProjection { field, .. }
+                if field == "x"
+        )
+    }));
+    assert!(result.adt_field_selections.is_empty());
+}
+
+#[test]
+fn mapping_storage_struct_field_projection_is_rejected_before_field_selection() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+enum mapping<index, member> { mapping(word) }
+
+struct Pair {
+  x: word;
+}
+
+contract C {
+  pairs: mapping(word => Pair);
+
+  function get(key: word) returns (word) {
+    return pairs[key].x;
+  }
+}
+"#,
+    );
+    let (_, result) = infer_function(&db, module, "get");
+
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic,
+            TypeckDiagnostic::UnsupportedStorageFieldProjection { field, .. }
+                if field == "x"
+        )
+    }));
+    assert!(result.adt_field_selections.is_empty());
+}
+
+#[test]
 fn storage_word_field_read_loads_as_word_without_context() {
     let db = TestDb::default();
     let module = parse_module(

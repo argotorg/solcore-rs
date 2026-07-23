@@ -106,26 +106,30 @@ impl<'db> InferCtx<'db> {
                 }
             }
             ExprKind::Field { base, .. } => {
-                let base_ty =
-                    (!self.is_namespace_expr(body, *base)).then(|| self.infer_expr(body, *base));
-                let resolution = self.expr_resolutions.get(&(body, expr_id)).cloned();
-                if let Some(resolution) = resolution {
-                    self.infer_resolution(body, expr_id, resolution)
-                } else if let Some(base_ty) = base_ty
-                    && let Some(field_ty) =
-                        self.infer_adt_field_access(body, expr_id, *base, base_ty)
-                {
-                    field_ty
-                } else {
-                    self.emit_expr_error(
-                        body,
-                        expr_id,
-                        TypeckDiagnostic::UnknownField {
-                            span: self.field_label_span(body, expr_id),
-                            field: self.field_name(body, expr_id),
-                        },
-                    );
+                if self.reject_storage_field_projection(body, expr_id, *base) {
                     InferTy::Error
+                } else {
+                    let base_ty = (!self.is_namespace_expr(body, *base))
+                        .then(|| self.infer_expr(body, *base));
+                    let resolution = self.expr_resolutions.get(&(body, expr_id)).cloned();
+                    if let Some(resolution) = resolution {
+                        self.infer_resolution(body, expr_id, resolution)
+                    } else if let Some(base_ty) = base_ty
+                        && let Some(field_ty) =
+                            self.infer_adt_field_access(body, expr_id, *base, base_ty)
+                    {
+                        field_ty
+                    } else {
+                        self.emit_expr_error(
+                            body,
+                            expr_id,
+                            TypeckDiagnostic::UnknownField {
+                                span: self.field_label_span(body, expr_id),
+                                field: self.field_name(body, expr_id),
+                            },
+                        );
+                        InferTy::Error
+                    }
                 }
             }
             ExprKind::Conversion { expr, ty } => {
@@ -591,33 +595,38 @@ impl<'db> InferCtx<'db> {
                 )
             }
             ExprKind::Field { base, .. } => {
-                let base_ty =
-                    (!self.is_namespace_expr(body, *base)).then(|| self.infer_expr(body, *base));
-                let resolution = self.expr_resolutions.get(&(body, callee_expr)).cloned();
-                if let Some(resolution) = resolution {
-                    let source = self.call_site_source(body, call_expr, callee_expr, &resolution);
-                    self.infer_resolution_with_source(
-                        body,
-                        callee_expr,
-                        resolution,
-                        source,
-                        ValuePosition::Callee,
-                    )
-                } else if let Some(base_ty) = base_ty
-                    && let Some(field_ty) =
-                        self.infer_adt_field_access(body, callee_expr, *base, base_ty)
-                {
-                    field_ty
-                } else {
-                    self.emit_expr_error(
-                        body,
-                        callee_expr,
-                        TypeckDiagnostic::UnknownField {
-                            span: self.field_label_span(body, callee_expr),
-                            field: self.field_name(body, callee_expr),
-                        },
-                    );
+                if self.reject_storage_field_projection(body, callee_expr, *base) {
                     InferTy::Error
+                } else {
+                    let base_ty = (!self.is_namespace_expr(body, *base))
+                        .then(|| self.infer_expr(body, *base));
+                    let resolution = self.expr_resolutions.get(&(body, callee_expr)).cloned();
+                    if let Some(resolution) = resolution {
+                        let source =
+                            self.call_site_source(body, call_expr, callee_expr, &resolution);
+                        self.infer_resolution_with_source(
+                            body,
+                            callee_expr,
+                            resolution,
+                            source,
+                            ValuePosition::Callee,
+                        )
+                    } else if let Some(base_ty) = base_ty
+                        && let Some(field_ty) =
+                            self.infer_adt_field_access(body, callee_expr, *base, base_ty)
+                    {
+                        field_ty
+                    } else {
+                        self.emit_expr_error(
+                            body,
+                            callee_expr,
+                            TypeckDiagnostic::UnknownField {
+                                span: self.field_label_span(body, callee_expr),
+                                field: self.field_name(body, callee_expr),
+                            },
+                        );
+                        InferTy::Error
+                    }
                 }
             }
             _ => self.infer_expr(body, callee_expr),

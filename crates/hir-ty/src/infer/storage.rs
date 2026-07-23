@@ -82,6 +82,26 @@ impl<'db> InferCtx<'db> {
         }
     }
 
+    pub(super) fn reject_storage_field_projection(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        base: Id<Expr<'db>>,
+    ) -> bool {
+        if !self.is_storage_index_expr(body, base) {
+            return false;
+        }
+        self.emit_expr_error(
+            body,
+            expr,
+            TypeckDiagnostic::UnsupportedStorageFieldProjection {
+                span: self.field_label_span(body, expr),
+                field: self.field_name(body, expr),
+            },
+        );
+        true
+    }
+
     fn storage_mapping_args(&mut self, ty: InferTy<'db>) -> Option<(InferTy<'db>, InferTy<'db>)> {
         let storage_ctor = self.storage_type_ctor();
         let ty = self.normalize_aliases(ty);
