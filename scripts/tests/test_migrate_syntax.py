@@ -624,6 +624,84 @@ const SOURCE: &str =
 
 
 class FunctionMigrationTests(unittest.TestCase):
+    def test_moves_classic_prefix_before_canonical_return_clause(self) -> None:
+        classic = """\
+public function f(x: word) returns (word) { return x; }
+external function read(key: word) returns (word);
+"""
+        expected = """\
+function f(x: word) public returns (word) { return x; }
+function read(key: word) external returns (word);
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_moves_classic_prefix_around_existing_generics_and_where(self) -> None:
+        classic = """\
+public function existing<T>(x: T) returns (T) where T: Eq { return x; }
+forall T. function introduced(x: T) returns (T) { return x; }
+"""
+        expected = """\
+function existing<T>(x: T) public returns (T) where T: Eq { return x; }
+function introduced<T>(x: T) returns (T) { return x; }
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_mixed_prefix_cli_check_reaches_a_clean_fixed_point(self) -> None:
+        source = "public function f(x: word) returns (word) { return x; }\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mixed.solc"
+            path.write_text(source)
+
+            needs_migration = subprocess.run(
+                [sys.executable, str(SCRIPT), "--check", str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migration = subprocess.run(
+                [sys.executable, str(SCRIPT), str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            clean = subprocess.run(
+                [sys.executable, str(SCRIPT), "--check", str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(needs_migration.returncode, 1, needs_migration.stderr)
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        self.assertIn("1 file(s) need migration", needs_migration.stdout)
+        self.assertIn("0 file(s) need migration", clean.stdout)
+
+    def test_moves_mixed_prefix_in_rust_source_literal(self) -> None:
+        rust = (
+            'const SOURCE: &str = r#"public function f(x: word) '
+            'returns (word) { return x; }"#;\n'
+        )
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn(
+            "function f(x: word) public returns (word)",
+            migrated,
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
     def test_preserves_canonical_no_result_prototype(self) -> None:
         canonical = """\
 trait Hook<t> {

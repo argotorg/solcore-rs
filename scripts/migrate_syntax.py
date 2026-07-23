@@ -2152,11 +2152,25 @@ def migrate_functions(source: str) -> str:
         if index + 2 >= len(tokens) or tokens[index + 1].kind != "word":
             continue
         name_token = tokens[index + 1]
+        candidate_start = _previous_boundary(tokens, index)
+        variables, constraints, modifiers, start_index = _function_prefix(
+            tokens, candidate_start, index
+        )
+        has_legacy_prefix = start_index != index
+
         cursor = index + 2
-        # A canonical generic function has already been migrated.
+        existing_variables: list[str] = []
         if tokens[cursor].text == "<":
-            continue
-        if tokens[cursor].text != "(":
+            generic_close = matching_index(tokens, cursor)
+            if generic_close is None:
+                continue
+            existing_variables = [
+                join_tokens(part)
+                for part in split_top(tokens[cursor + 1 : generic_close], ",")
+                if part
+            ]
+            cursor = generic_close + 1
+        if cursor >= len(tokens) or tokens[cursor].text != "(":
             continue
         close = matching_index(tokens, cursor)
         if close is None:
@@ -2165,36 +2179,70 @@ def migrate_functions(source: str) -> str:
         if end is None:
             continue
         tail = list(tokens[close + 1 : end])
-        if any(item.text in {"returns", "where"} for item in tail):
+
+        where = find_top(tail, "where")
+        signature_tail = tail[:where] if where is not None else tail
+        existing_constraints = tail[where + 1 :] if where is not None else []
+        arrow = find_top(signature_tail, "->")
+        returns = find_top(signature_tail, "returns")
+        if arrow is not None and returns is not None:
             continue
 
-        candidate_start = _previous_boundary(tokens, index)
-        variables, constraints, modifiers, start_index = _function_prefix(
-            tokens, candidate_start, index
-        )
-        arrow = find_top(tail, "->")
         return_tokens: list[Token] = []
+        has_returns = returns is not None
         if arrow is not None:
-            return_tokens = tail[arrow + 1 :]
+            return_tokens = signature_tail[arrow + 1 :]
             # Modifiers after the parameter list are already canonical; retain
             # them if a partially migrated file still has an old return arrow.
             modifiers.extend(
-                item.text for item in tail[:arrow] if item.text in MODIFIERS
+                item.text
+                for item in signature_tail[:arrow]
+                if item.text in MODIFIERS
             )
-        elif tail:
-            modifiers.extend(item.text for item in tail if item.text in MODIFIERS)
+        elif returns is not None:
+            if (
+                returns + 1 >= len(signature_tail)
+                or signature_tail[returns + 1].text != "("
+            ):
+                continue
+            returns_close = matching_index(signature_tail, returns + 1)
+            if returns_close != len(signature_tail) - 1:
+                continue
+            return_tokens = signature_tail[returns + 2 : returns_close]
+            modifiers.extend(
+                item.text
+                for item in signature_tail[:returns]
+                if item.text in MODIFIERS
+            )
+        elif signature_tail:
+            modifiers.extend(
+                item.text for item in signature_tail if item.text in MODIFIERS
+            )
+
+        if not has_legacy_prefix and arrow is None:
+            continue
 
         predicates = render_predicates(constraints) if constraints else []
         if constraints and not predicates:
             continue
+        existing_predicates = (
+            render_predicates(existing_constraints)
+            if existing_constraints
+            else []
+        )
+        if existing_constraints and not existing_predicates:
+            continue
+        predicates.extend(existing_predicates)
+
         params = render_params(tokens[cursor + 1 : close])
         replacement = f"function {name_token.text}"
+        variables = list(dict.fromkeys([*existing_variables, *variables]))
         if variables:
             replacement += "<" + ", ".join(variables) + ">"
         replacement += f"({params})"
         if modifiers:
             replacement += " " + " ".join(dict.fromkeys(modifiers))
-        if return_tokens:
+        if arrow is not None or has_returns:
             replacement += " returns (" + render_return_type(return_tokens) + ")"
         if predicates:
             replacement += " where " + ", ".join(predicates)
