@@ -182,6 +182,166 @@ function wrap(x: word) -> Option(word) { return .Some(x); }
         self.assertIn("0 file(s) need migration", check.stdout)
 
 
+class ClassicBareImportMigrationTests(unittest.TestCase):
+    def test_parameter_shadowing_preserves_receiver_access(self) -> None:
+        classic = """\
+import foo.bar;
+
+function shadowed(foo: Receiver) -> word {
+  let value: foo.bar.Value;
+  return foo.bar();
+}
+
+function namespaceUse() -> word {
+  return foo.bar.run();
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertIn("import * as bar from foo.bar;", migrated)
+        self.assertIn("let value: bar.Value;", migrated)
+        self.assertIn("return foo.bar();", migrated)
+        self.assertIn("return bar.run();", migrated)
+        self.assertEqual(
+            MIGRATE.migrate_classic_bare_imports(migrated),
+            migrated,
+        )
+
+    def test_local_shadowing_respects_nested_block_scope(self) -> None:
+        classic = """\
+import foo.bar;
+
+function nested() -> word {
+  {
+    let foo = foo.bar.make();
+    foo.bar();
+  }
+  return foo.bar.run();
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertIn("let foo = bar.make();", migrated)
+        self.assertIn("foo.bar();", migrated)
+        self.assertIn("return bar.run();", migrated)
+        self.assertEqual(
+            MIGRATE.migrate_classic_bare_imports(migrated),
+            migrated,
+        )
+
+    def test_contract_field_shadows_namespace_in_methods(self) -> None:
+        classic = """\
+import foo.bar;
+
+contract Wallet {
+  foo: Receiver;
+  cached: word = foo.bar();
+
+  function read() -> word {
+    return foo.bar();
+  }
+}
+
+function namespaceUse() -> word {
+  return foo.bar.read();
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertIn("cached: word = foo.bar();", migrated)
+        self.assertIn("return foo.bar();", migrated)
+        self.assertIn("return bar.read();", migrated)
+
+    def test_match_binder_shadows_only_its_classic_arm(self) -> None:
+        classic = """\
+import foo.bar;
+
+function read(value: pair(Receiver, word)) -> word {
+  return match value {
+    | (foo, _) => foo.bar()
+    | _ => foo.bar.read()
+  };
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertIn("| (foo, _) => foo.bar()", migrated)
+        self.assertIn("| _ => bar.read()", migrated)
+
+    def test_for_binding_scope_ends_after_loop_body(self) -> None:
+        classic = """\
+import foo.bar;
+
+function read() -> word {
+  for (let foo = receiver(); foo.ready(); foo.step()) {
+    foo.bar();
+  }
+  return foo.bar.read();
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertIn("foo.bar();", migrated)
+        self.assertIn("return bar.read();", migrated)
+
+    def test_cli_flag_preserves_shadowed_receiver_and_reaches_fixed_point(
+        self,
+    ) -> None:
+        source = """\
+import foo.bar;
+
+function shadowed(foo: Receiver) -> word {
+  return foo.bar();
+}
+
+function namespaceUse() -> word {
+  return foo.bar.run();
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "imports.solc"
+            path.write_text(source)
+
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--classic-bare-imports",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            check = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--check",
+                    "--classic-bare-imports",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migrated = path.read_text()
+
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertEqual(check.returncode, 0, check.stderr)
+        self.assertIn("import * as bar from foo.bar;", migrated)
+        self.assertIn("return foo.bar();", migrated)
+        self.assertIn("return bar.run();", migrated)
+        self.assertIn("0 file(s) need migration", check.stdout)
+
+
 class FunctionMigrationTests(unittest.TestCase):
     def test_preserves_canonical_no_result_prototype(self) -> None:
         canonical = """\

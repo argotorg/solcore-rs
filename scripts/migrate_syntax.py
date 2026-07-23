@@ -751,6 +751,324 @@ def migrate_imports(source: str) -> str:
     return replace_spans(source, replacements)
 
 
+def _classic_brace_context(
+    tokens: Sequence[Token],
+) -> tuple[dict[int, int], list[int | None]]:
+    """Return matching braces and the innermost block around each token."""
+
+    pairs: dict[int, int] = {}
+    enclosing: list[int | None] = [None] * len(tokens)
+    stack: list[int] = []
+    for index, token in enumerate(tokens):
+        if token.text == "}" and stack:
+            open_index = stack.pop()
+            pairs[open_index] = index
+            pairs[index] = open_index
+        enclosing[index] = stack[-1] if stack else None
+        if token.text == "{":
+            stack.append(index)
+    return pairs, enclosing
+
+
+def _classic_callable_regions(
+    tokens: Sequence[Token], brace_pairs: Mapping[int, int]
+) -> list[tuple[int, int, int | None, int | None]]:
+    """Return body and parameter-list bounds for function-like declarations."""
+
+    regions: list[tuple[int, int, int | None, int | None]] = []
+    for index, token in enumerate(tokens):
+        if token.text not in {"function", "constructor", "fallback", "lam"}:
+            continue
+        body_open = _header_boundary(tokens, index + 1)
+        if (
+            body_open is None
+            or tokens[body_open].text != "{"
+            or body_open not in brace_pairs
+        ):
+            continue
+        param_open = next(
+            (
+                cursor
+                for cursor in range(index + 1, body_open)
+                if tokens[cursor].text == "("
+            ),
+            None,
+        )
+        param_close = (
+            matching_index(tokens, param_open) if param_open is not None else None
+        )
+        if param_close is not None and param_close >= body_open:
+            param_open = None
+            param_close = None
+        regions.append(
+            (body_open, brace_pairs[body_open], param_open, param_close)
+        )
+    return regions
+
+
+def _classic_binding_names(
+    tokens: Sequence[Token], namespace_roots: set[str]
+) -> set[str]:
+    """Collect binding identifiers from a parameter or tuple binding pattern."""
+
+    return {
+        token.text
+        for token in tokens
+        if token.kind == "word"
+        and token.text != "comptime"
+        and token.text in namespace_roots
+    }
+
+
+def _classic_pattern_binding_names(
+    tokens: Sequence[Token], namespace_roots: set[str]
+) -> set[str]:
+    """Collect binders without mistaking qualified constructor paths for them."""
+
+    result: set[str] = set()
+    for index, token in enumerate(tokens):
+        if token.kind != "word" or token.text not in namespace_roots:
+            continue
+        previous = tokens[index - 1].text if index else ""
+        following = tokens[index + 1].text if index + 1 < len(tokens) else ""
+        if previous == "." or following in {".", "("}:
+            continue
+        result.add(token.text)
+    return result
+
+
+def _classic_type_only_tokens(tokens: Sequence[Token]) -> set[int]:
+    """Mark explicit type regions where term bindings cannot shadow modules."""
+
+    marked: set[int] = set()
+    stops = {
+        "=",
+        ":=",
+        ";",
+        ",",
+        ")",
+        "]",
+        "}",
+        "{",
+        "=>",
+        "?",
+        ":",
+        "+",
+        "-",
+        "*",
+        "/",
+        "%",
+        "==",
+        "!=",
+        "<=",
+        ">=",
+        "&&",
+        "||",
+    }
+    for index, token in enumerate(tokens):
+        if token.text == ":" and not _is_ternary_colon(tokens, index):
+            _mark_type_region(tokens, index + 1, len(tokens), stops, marked)
+        elif token.text == "as":
+            _mark_type_region(tokens, index + 1, len(tokens), stops, marked)
+    return marked
+
+
+def _classic_shadow_ranges(
+    tokens: Sequence[Token], namespace_roots: set[str]
+) -> dict[str, list[tuple[int, int]]]:
+    """Map term bindings to the token ranges where they shadow import roots."""
+
+    if not namespace_roots:
+        return {}
+
+    ranges: dict[str, list[tuple[int, int]]] = {
+        name: [] for name in namespace_roots
+    }
+    brace_pairs, enclosing = _classic_brace_context(tokens)
+    callables = _classic_callable_regions(tokens, brace_pairs)
+
+    def add(names: Iterable[str], start: int, end: int) -> None:
+        if start >= end:
+            return
+        for name in names:
+            ranges[name].append((start, end))
+
+    # Parameters shadow a namespace throughout their function or lambda body.
+    for body_open, body_close, param_open, param_close in callables:
+        if param_open is None or param_close is None:
+            continue
+        for parameter in split_top(tokens[param_open + 1 : param_close], ","):
+            colon = find_top(parameter, ":", angles=False)
+            binding = parameter if colon is None else parameter[:colon]
+            add(
+                _classic_binding_names(binding, namespace_roots),
+                body_open + 1,
+                body_close,
+            )
+
+    # A contract field is visible in every executable body in that contract.
+    for index, token in enumerate(tokens):
+        if token.text not in {"contract", "interface", "library"}:
+            continue
+        contract_open = _header_boundary(tokens, index + 1)
+        if (
+            contract_open is None
+            or tokens[contract_open].text != "{"
+            or contract_open not in brace_pairs
+        ):
+            continue
+        contract_close = brace_pairs[contract_open]
+        field_names: set[str] = set()
+        field_initializers: list[tuple[int, int]] = []
+        for cursor in range(contract_open + 1, contract_close - 1):
+            if (
+                enclosing[cursor] != contract_open
+                or tokens[cursor].kind != "word"
+                or tokens[cursor + 1].text != ":"
+            ):
+                continue
+            previous = tokens[cursor - 1].text
+            if previous not in {"{", "}", ";"}:
+                continue
+            field_end = _statement_end(tokens, cursor)
+            if field_end is None or field_end >= contract_close:
+                continue
+            if tokens[cursor].text in namespace_roots:
+                field_names.add(tokens[cursor].text)
+            equals = find_top(tokens[cursor + 2 : field_end], "=", angles=False)
+            if equals is not None:
+                field_initializers.append((cursor + 2 + equals + 1, field_end))
+        if not field_names:
+            continue
+        for body_open, body_close, _, _ in callables:
+            if contract_open < body_open < body_close < contract_close:
+                add(field_names, body_open + 1, body_close)
+        for initializer_start, initializer_end in field_initializers:
+            add(field_names, initializer_start, initializer_end)
+
+    # `let` bindings begin after their initializer and end with their lexical
+    # block. A binding in a for initializer instead ends with that loop body.
+    for_loops: list[tuple[int, int, int]] = []
+    for index, token in enumerate(tokens):
+        if token.text != "for" or index + 1 >= len(tokens):
+            continue
+        paren_open = index + 1
+        if tokens[paren_open].text != "(":
+            continue
+        paren_close = matching_index(tokens, paren_open)
+        if (
+            paren_close is None
+            or paren_close + 1 >= len(tokens)
+            or tokens[paren_close + 1].text != "{"
+        ):
+            continue
+        body_close = brace_pairs.get(paren_close + 1)
+        if body_close is not None:
+            for_loops.append((paren_open, paren_close, body_close))
+
+    for index, token in enumerate(tokens):
+        if token.text != "let":
+            continue
+        for_loop = next(
+            (
+                loop
+                for loop in for_loops
+                if loop[0] < index < loop[1]
+            ),
+            None,
+        )
+        declaration_end: int | None = None
+        stack: list[str] = []
+        scan_end = for_loop[1] + 1 if for_loop is not None else len(tokens)
+        for cursor in range(index + 1, scan_end):
+            text = tokens[cursor].text
+            if not stack and (
+                text in {",", ";"}
+                or (for_loop is not None and cursor == for_loop[1])
+            ):
+                declaration_end = cursor
+                break
+            _depth_step(stack, text, angles=False)
+        if declaration_end is None:
+            continue
+        binding_end = find_top_any(
+            tokens[index + 1 : declaration_end],
+            {":", "=", ":="},
+            angles=False,
+        )
+        binding = tokens[
+            index + 1 :
+            declaration_end if binding_end is None else index + 1 + binding_end
+        ]
+        names = _classic_binding_names(binding, namespace_roots)
+        if not names:
+            continue
+        if for_loop is not None:
+            scope_end = for_loop[2]
+        else:
+            block_open = enclosing[index]
+            scope_end = (
+                brace_pairs.get(block_open, len(tokens))
+                if block_open is not None
+                else len(tokens)
+            )
+        add(names, declaration_end + 1, scope_end)
+
+    # Canonical match binders are scoped to their case body.
+    for index, token in enumerate(tokens):
+        if token.text != "case":
+            continue
+        body_open = _header_boundary(tokens, index + 1)
+        if (
+            body_open is None
+            or tokens[body_open].text != "{"
+            or body_open not in brace_pairs
+        ):
+            continue
+        add(
+            _classic_pattern_binding_names(
+                tokens[index + 1 : body_open], namespace_roots
+            ),
+            body_open + 1,
+            brace_pairs[body_open],
+        )
+
+    # Classic `| pattern => expression` binders end at the next match arm.
+    for index, token in enumerate(tokens):
+        if token.text != "match":
+            continue
+        match_open = _header_boundary(tokens, index + 1)
+        if (
+            match_open is None
+            or tokens[match_open].text != "{"
+            or match_open not in brace_pairs
+        ):
+            continue
+        match_close = brace_pairs[match_open]
+        arms = _match_arm_starts(tokens, match_open + 1, match_close)
+        for arm_offset, arm_start in enumerate(arms):
+            arm_end = (
+                arms[arm_offset + 1]
+                if arm_offset + 1 < len(arms)
+                else match_close
+            )
+            arrow = find_top(
+                tokens[arm_start + 1 : arm_end], "=>", angles=False
+            )
+            if arrow is None:
+                continue
+            arrow += arm_start + 1
+            add(
+                _classic_pattern_binding_names(
+                    tokens[arm_start + 1 : arrow], namespace_roots
+                ),
+                arrow + 1,
+                arm_end,
+            )
+
+    return ranges
+
+
 def migrate_classic_bare_imports(
     source: str,
     path_limits: Mapping[str, int] | None = None,
@@ -760,6 +1078,8 @@ def migrate_classic_bare_imports(
     ``path_limits`` is used by repository migrations that contain a mixture of
     already-converted wildcard imports and Classic bare imports with the same
     path.  The public CLI omits it and converts every bare import in its input.
+    Term bindings shadow the first path segment only within their lexical
+    scope; explicit type regions continue to use the imported namespace.
     """
 
     tokens = significant(source)
@@ -818,6 +1138,12 @@ def migrate_classic_bare_imports(
             for import_start, import_end in import_spans
         )
 
+    shadow_ranges = _classic_shadow_ranges(
+        tokens,
+        {segments[0] for segments, _ in namespace_paths if len(segments) >= 2},
+    )
+    type_only_tokens = _classic_type_only_tokens(tokens)
+
     seen_uses: set[tuple[int, int]] = set()
     for segments, alias in namespace_paths:
         if len(segments) < 2:
@@ -841,6 +1167,11 @@ def migrate_classic_bare_imports(
             start = candidate[0].start
             end = candidate[-1].end
             if inside_import(start, end) or (start, end) in seen_uses:
+                continue
+            if index not in type_only_tokens and any(
+                scope_start <= index < scope_end
+                for scope_start, scope_end in shadow_ranges[segments[0]]
+            ):
                 continue
             seen_uses.add((start, end))
             replacements.append((start, end, alias))
