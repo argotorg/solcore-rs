@@ -190,27 +190,35 @@ fn definition_hover<'db>(db: &'db vfs::AnalysisHost, def: DefId<'db>) -> Option<
         Definition::Function(found) => {
             let function = found.function;
             let sig = function.sig(db);
-            let module_id = nameres::module_id_for_source_file(db, def.file(db));
-            let scheme = module_id.and_then(|module| hir_ty::function_scheme(db, module, def));
-            let callable = scheme.map_or_else(
-                || format_source_function_signature(db, sig),
-                |scheme| {
-                    format_callable_scheme(
-                        db,
-                        sig.name.atom().text(db),
-                        &function_param_names(db, sig),
-                        &found.type_var_names,
-                        scheme,
+            let kind = function.kind(db);
+            let callable = match kind {
+                FuncKind::Function => {
+                    let module_id = nameres::module_id_for_source_file(db, def.file(db));
+                    let scheme =
+                        module_id.and_then(|module| hir_ty::function_scheme(db, module, def));
+                    scheme.map_or_else(
+                        || format_source_function_signature(db, sig),
+                        |scheme| {
+                            format_callable_scheme(
+                                db,
+                                sig.name.atom().text(db),
+                                &function_param_names(db, sig),
+                                &found.type_var_names,
+                                scheme,
+                            )
+                        },
                     )
-                },
-            );
-            let keyword = match function.kind(db) {
-                FuncKind::Function => "function",
-                FuncKind::Constructor => "constructor",
-                FuncKind::Fallback => "fallback",
+                }
+                FuncKind::Constructor | FuncKind::Fallback => {
+                    format_source_function_signature(db, sig)
+                }
+            };
+            let code = match kind {
+                FuncKind::Function => format!("function {callable}"),
+                FuncKind::Constructor | FuncKind::Fallback => callable,
             };
             Some(HoverInfo {
-                code: format!("{keyword} {callable}"),
+                code,
                 documentation: comments_markdown(function.leading_comments(db)),
             })
         }
@@ -1277,7 +1285,7 @@ function main() returns (word) {
         let call = source.rfind("id(42)").expect("call");
         let function_hover = hover_at(source, &world, &uri, call);
         assert!(
-            hover_code(&function_hover).contains("id(x: word) returns (word)"),
+            hover_code(&function_hover).contains("function id(x: word) returns (word)"),
             "unexpected function hover: {:?}",
             function_hover.contents
         );
@@ -1297,6 +1305,28 @@ function main() returns (word) {
             parameter_hover.range,
             Some(line_index.range(parameter as u32, parameter as u32 + 1))
         );
+    }
+
+    #[test]
+    fn special_function_hovers_show_the_keyword_once() {
+        let source = "\
+contract Wallet {
+  constructor(owner: address) payable {}
+  fallback() payable {}
+}
+";
+        let (world, uri) = world_with_main(source);
+
+        let constructor = source.find("constructor").expect("constructor");
+        let constructor_hover = hover_at(source, &world, &uri, constructor);
+        assert_eq!(
+            hover_code(&constructor_hover),
+            "constructor(owner: address) payable"
+        );
+
+        let fallback = source.find("fallback").expect("fallback");
+        let fallback_hover = hover_at(source, &world, &uri, fallback);
+        assert_eq!(hover_code(&fallback_hover), "fallback() payable");
     }
 
     #[test]
