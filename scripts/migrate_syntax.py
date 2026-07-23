@@ -45,7 +45,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import json
 from pathlib import Path
 import re
 import sys
@@ -2958,27 +2957,12 @@ def _rust_ordinary_literal(
 
 
 def _decode_rust_ordinary_body(body: str) -> str | None:
-    """Decode the JSON-compatible subset of Rust ordinary string escapes.
-
-    Embedded test programs overwhelmingly use ``\n``, quotes, and ordinary
-    backslash escapes, all shared with JSON.  Returning ``None`` for a
-    Rust-specific escape lets the caller retain the older lexical fallback
-    instead of guessing at string contents.
-    """
-
-    try:
-        decoded = json.loads('"' + body + '"')
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    return decoded if isinstance(decoded, str) else None
-
-
-def _decode_rust_ordinary_body_for_detection(body: str) -> str:
-    """Decode Rust-only escapes for source classification, without rewriting."""
+    """Decode a Rust ordinary string body to its semantic text."""
 
     simple_escapes = {
         "\\": "\\",
         '"': '"',
+        "'": "'",
         "n": "\n",
         "r": "\r",
         "t": "\t",
@@ -2987,10 +2971,12 @@ def _decode_rust_ordinary_body_for_detection(body: str) -> str:
     decoded: list[str] = []
     cursor = 0
     while cursor < len(body):
-        if body[cursor] != "\\" or cursor + 1 >= len(body):
+        if body[cursor] != "\\":
             decoded.append(body[cursor])
             cursor += 1
             continue
+        if cursor + 1 >= len(body):
+            return None
 
         escaped = body[cursor + 1]
         if escaped in simple_escapes:
@@ -3000,7 +2986,10 @@ def _decode_rust_ordinary_body_for_detection(body: str) -> str:
         if escaped == "x" and cursor + 3 < len(body):
             digits = body[cursor + 2 : cursor + 4]
             if all(digit in "0123456789abcdefABCDEF" for digit in digits):
-                decoded.append(chr(int(digits, 16)))
+                value = int(digits, 16)
+                if value > 0x7F:
+                    return None
+                decoded.append(chr(value))
                 cursor += 4
                 continue
         if escaped == "u" and cursor + 2 < len(body) and body[cursor + 2] == "{":
@@ -3009,17 +2998,22 @@ def _decode_rust_ordinary_body_for_detection(body: str) -> str:
             normalized = digits.replace("_", "")
             if (
                 normalized
+                and len(normalized) <= 6
                 and all(
                     digit in "0123456789abcdefABCDEF"
                     for digit in normalized
                 )
             ):
                 value = int(normalized, 16)
-                if value <= 0x10FFFF:
+                if value <= 0x10FFFF and not 0xD800 <= value <= 0xDFFF:
                     decoded.append(chr(value))
                     cursor = close + 1
                     continue
-        if escaped in {"\r", "\n"}:
+        if escaped == "\n" or (
+            escaped == "\r"
+            and cursor + 2 < len(body)
+            and body[cursor + 2] == "\n"
+        ):
             cursor += 2
             if escaped == "\r" and cursor < len(body) and body[cursor] == "\n":
                 cursor += 1
@@ -3027,13 +3021,36 @@ def _decode_rust_ordinary_body_for_detection(body: str) -> str:
                 cursor += 1
             continue
 
-        decoded.extend(("\\", escaped))
-        cursor += 2
+        return None
     return "".join(decoded)
 
 
 def _encode_rust_ordinary_body(body: str) -> str:
-    return json.dumps(body, ensure_ascii=False)[1:-1]
+    """Encode semantic text as a valid Rust ordinary string body."""
+
+    escapes = {
+        "\\": "\\\\",
+        '"': '\\"',
+        "\n": "\\n",
+        "\r": "\\r",
+        "\t": "\\t",
+        "\0": "\\0",
+    }
+    encoded: list[str] = []
+    for char in body:
+        if char in escapes:
+            encoded.append(escapes[char])
+        elif ord(char) < 0x20 or ord(char) == 0x7F:
+            encoded.append(f"\\u{{{ord(char):x}}}")
+        else:
+            encoded.append(char)
+    return "".join(encoded)
+
+
+def _rust_literal_semantic_body(body: str, is_raw: bool) -> str | None:
+    """Return one literal body's semantic text for every migration phase."""
+
+    return body if is_raw else _decode_rust_ordinary_body(body)
 
 
 _SOLCORE_PREFIX_MODIFIERS = {
@@ -3062,6 +3079,9 @@ _SOLCORE_CONTAINER_KEYWORDS = {
     "impl",
     "instance",
 }
+_RUST_NAMED_TEMPLATE_HOLE_RE = re.compile(
+    r"\{[a-z_$][A-Za-z0-9_$]*\}"
+)
 
 
 def _rust_source_text_is_trivia(source: str) -> bool:
@@ -3557,6 +3577,12 @@ def _rust_pragma_fragment_is_source_like(
 def _looks_like_solcore_literal(source: str) -> bool:
     """Classify an embedded literal from combined Solcore syntax signals."""
 
+    # Dynamically completed Rust test templates are not standalone Solcore
+    # sources yet. Rewriting around a `{name}` hole can mistake a canonical
+    # `name: Type` declaration for the removed `expression : Type` spelling.
+    if _RUST_NAMED_TEMPLATE_HOLE_RE.search(source) is not None:
+        return False
+
     tokens = significant(source)
     for index, token in enumerate(tokens):
         if token.text == "import" and _rust_import_fragment_is_source_like(
@@ -3624,13 +3650,10 @@ def _rust_solcore_literals(source: str) -> list[tuple[int, int, bool]]:
 
         body_start, body_end, literal_end = literal
         body = source[body_start:body_end]
-        if is_raw:
-            detected_body = body
-        else:
-            detected_body = _decode_rust_ordinary_body(body)
-            if detected_body is None:
-                detected_body = _decode_rust_ordinary_body_for_detection(body)
-        if _looks_like_solcore_literal(detected_body):
+        semantic_body = _rust_literal_semantic_body(body, is_raw)
+        if semantic_body is not None and _looks_like_solcore_literal(
+            semantic_body
+        ):
             literals.append((body_start, body_end, is_raw))
         cursor = literal_end
     return literals
@@ -3665,12 +3688,9 @@ def migrate_rust_strings(
     replacements: list[tuple[int, int, str]] = []
     for body_start, body_end, is_raw in _rust_solcore_literals(source):
         encoded_body = source[body_start:body_end]
-        decoded_body = (
-            encoded_body
-            if is_raw
-            else _decode_rust_ordinary_body(encoded_body)
-        )
-        body = decoded_body if decoded_body is not None else encoded_body
+        body = _rust_literal_semantic_body(encoded_body, is_raw)
+        if body is None:
+            continue
         if classic_bare_imports:
             body = migrate_classic_bare_imports(body)
         migrated = migrate_source(
@@ -3678,7 +3698,9 @@ def migrate_rust_strings(
             global_constructor_owners,
             global_dot_constructor_candidates,
         )
-        if decoded_body is not None and not is_raw:
+        if migrated == body:
+            continue
+        if not is_raw:
             migrated = _encode_rust_ordinary_body(migrated)
         if migrated != encoded_body:
             replacements.append((body_start, body_end, migrated))
@@ -3747,16 +3769,12 @@ def main() -> int:
         for original in originals.values():
             for start, end, is_raw in _rust_solcore_literals(original):
                 encoded_source = original[start:end]
-                decoded_source = (
-                    encoded_source
-                    if is_raw
-                    else _decode_rust_ordinary_body(encoded_source)
+                source = _rust_literal_semantic_body(
+                    encoded_source,
+                    is_raw,
                 )
-                source = (
-                    decoded_source
-                    if decoded_source is not None
-                    else encoded_source
-                )
+                if source is None:
+                    continue
                 owner_sources.append(
                     migrate_classic_bare_imports(source)
                     if args.classic_bare_imports

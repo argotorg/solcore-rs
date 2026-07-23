@@ -343,6 +343,32 @@ function namespaceUse() -> word {
 
 
 class RustStringMigrationTests(unittest.TestCase):
+    def assert_rust_syntax(self, source: str) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "embedded.rs"
+            output = root / "embedded.rmeta"
+            path.write_text(source)
+            checked = subprocess.run(
+                [
+                    "rustc",
+                    "--crate-name",
+                    "embedded_migration_test",
+                    "--crate-type",
+                    "lib",
+                    "--emit",
+                    "metadata",
+                    "-o",
+                    str(output),
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+
     def test_preserves_prose_format_strings_and_sql(self) -> None:
         rust = r'''
 const HELP: &str = r#"prefer function f(x: T) -> T syntax"#;
@@ -351,6 +377,9 @@ const FORMAT: &str = r#"function f(x: T) -> T {{ return {value}; }}"#;
 const TYPE_FORMAT: &str = r#"type {name} = {ty};"#;
 const IMPORT_FORMAT: &str = r#"import {{name}} from {path};"#;
 const IMPORT_PROSE: &str = r#"run import foo.bar; to continue"#;
+const DECLARATION_TEMPLATE: &str =
+    "function f({keyword}: word) { let {keyword}: word = 0; }";
+const FIELD_TEMPLATE: &str = "struct S { {keyword}: word; }";
 const SQL: &str =
     r#"select type, alias, comptime from function where match = ?;"#;
 const SQL_IMPORT: &str = r#"import records from audit;"#;
@@ -460,6 +489,78 @@ const CONTRACT: &str =
             migrated,
         )
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+    def test_migrates_rust_specific_escapes_semantically(self) -> None:
+        rust = r'''
+const FUNCTION: &str =
+    "public function\x20f(x: word) -> word { return x; }";
+const COMPTIME: &str = "let x : comptime\u{20}word = 1;";
+const IMPORT: &str = "import \
+    foo.{Thing};";
+const PROSE: &str =
+    "prefer function\x20f(x: T) -> T syntax";
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn(
+            '"function f(x: word) public returns (word) { return x; }"',
+            migrated,
+        )
+        self.assertIn('"let comptime x: word = 1;"', migrated)
+        self.assertIn('"import {Thing} from foo;"', migrated)
+        self.assertIn(
+            '"prefer function\\x20f(x: T) -> T syntax"',
+            migrated,
+        )
+        self.assertNotIn("\\ x20", migrated)
+        self.assertNotIn("\\ u{20}", migrated)
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+        self.assert_rust_syntax(migrated)
+
+    def test_cli_owner_scan_decodes_rust_specific_escapes(self) -> None:
+        source = r'''
+const DECLARATION: &str =
+    "data\x20Option(a) = None | Some(a);";
+const USE: &str =
+    "function wrap(x: word) -> Option(word) { return .Some(x); }";
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "embedded.rs"
+            path.write_text(source)
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migrated = path.read_text()
+            check = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--check",
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertEqual(check.returncode, 0, check.stderr)
+        self.assertIn('"enum Option<a> { None, Some(a) }"', migrated)
+        self.assertIn("return Option.Some(x);", migrated)
+        self.assertIn("0 file(s) need migration", check.stdout)
+        self.assert_rust_syntax(migrated)
 
     def test_cli_rust_string_check_reports_then_reaches_fixed_point(self) -> None:
         source = r'''
