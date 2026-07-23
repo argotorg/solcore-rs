@@ -95,6 +95,167 @@ fn truncate_excessive_nesting(
             _ => {}
         }
     }
+
+    if let Some(span) = excessive_type_argument_nesting(tokens) {
+        trace_recovery("nesting_limit", span);
+        errors.push(ParsedError::new(
+            span,
+            format!("generic argument nesting exceeds the compiler limit of {MAX_SYNTAX_NESTING}"),
+        ));
+        tokens.clear();
+    }
+}
+
+/// Returns the first angle bracket which exceeds the parser's recursion limit.
+///
+/// `<` and `>` are also expression operators, so treating every occurrence as
+/// a delimiter would make a long (but shallow) sequence of comparisons look
+/// recursively nested. Start tracking only where the surrounding tokens
+/// establish a type or generic-binder context; once inside such a list, nested
+/// lists are unambiguous. Adjacent `<<` tokens are shifts, never generic
+/// delimiters.
+fn excessive_type_argument_nesting(tokens: &[(Token<'_>, LexSpan)]) -> Option<LexSpan> {
+    let mut angle_depth = 0usize;
+
+    for (index, (token, span)) in tokens.iter().enumerate() {
+        match token {
+            Token::Less if !is_left_shift_token(tokens, index) => {
+                if angle_depth > 0 || starts_type_argument_list(tokens, index) {
+                    angle_depth += 1;
+                    if angle_depth > MAX_SYNTAX_NESTING {
+                        return Some(*span);
+                    }
+                }
+            }
+            Token::Greater if angle_depth > 0 => angle_depth -= 1,
+            // A generic list cannot cross any of these boundaries. Resetting
+            // also keeps an incomplete type from making later expressions
+            // appear nested inside it.
+            Token::Semi | Token::LBrace | Token::RBrace => angle_depth = 0,
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn is_left_shift_token(tokens: &[(Token<'_>, LexSpan)], index: usize) -> bool {
+    matches!(
+        index.checked_sub(1).and_then(|index| tokens.get(index)),
+        Some((Token::Less, _))
+    ) || matches!(tokens.get(index + 1), Some((Token::Less, _)))
+}
+
+fn starts_type_argument_list(tokens: &[(Token<'_>, LexSpan)], less_index: usize) -> bool {
+    let Some((Token::Ident(_), _)) = less_index
+        .checked_sub(1)
+        .and_then(|index| tokens.get(index))
+    else {
+        return false;
+    };
+
+    let mut name_start = less_index - 1;
+    while name_start >= 2
+        && matches!(&tokens[name_start - 1].0, Token::Dot)
+        && matches!(&tokens[name_start - 2].0, Token::Ident(_))
+    {
+        name_start -= 2;
+    }
+
+    token_position_starts_type(tokens, name_start)
+}
+
+fn token_position_starts_type(tokens: &[(Token<'_>, LexSpan)], type_start: usize) -> bool {
+    let Some(previous_index) = type_start.checked_sub(1) else {
+        return false;
+    };
+
+    match &tokens[previous_index].0 {
+        Token::Colon => !has_unclosed_conditional_before(tokens, previous_index),
+        Token::Is | Token::As | Token::FatArrow | Token::Where | Token::At | Token::Comptime => {
+            true
+        }
+        Token::Impl => true,
+        Token::Function
+        | Token::Enum
+        | Token::Struct
+        | Token::Trait
+        | Token::Contract
+        | Token::Interface
+        | Token::Library => true,
+        Token::Eq => declaration_contains_before(tokens, previous_index, Token::Alias),
+        Token::Greater => declaration_contains_before(tokens, previous_index, Token::Impl),
+        Token::LParen | Token::Comma => {
+            enclosing_parenthesis_starts_type_list(tokens, previous_index)
+        }
+        _ => false,
+    }
+}
+
+fn has_unclosed_conditional_before(tokens: &[(Token<'_>, LexSpan)], boundary_index: usize) -> bool {
+    tokens[..boundary_index]
+        .iter()
+        .rev()
+        .take_while(|(token, _)| {
+            !matches!(
+                token,
+                Token::Semi | Token::LBrace | Token::RBrace | Token::Comma
+            )
+        })
+        .any(|(token, _)| matches!(token, Token::Question))
+}
+
+fn declaration_contains_before(
+    tokens: &[(Token<'_>, LexSpan)],
+    boundary_index: usize,
+    expected: Token<'_>,
+) -> bool {
+    tokens[..boundary_index]
+        .iter()
+        .rev()
+        .take_while(|(token, _)| !matches!(token, Token::Semi | Token::LBrace | Token::RBrace))
+        .any(|(token, _)| token == &expected)
+}
+
+fn enclosing_parenthesis_starts_type_list(
+    tokens: &[(Token<'_>, LexSpan)],
+    before_type_index: usize,
+) -> bool {
+    let mut depth = 0usize;
+    let mut open_index = None;
+
+    for index in (0..=before_type_index).rev() {
+        match &tokens[index].0 {
+            Token::RParen => depth += 1,
+            Token::LParen if depth == 0 => {
+                open_index = Some(index);
+                break;
+            }
+            Token::LParen => depth -= 1,
+            _ => {}
+        }
+    }
+
+    let Some(open_index) = open_index else {
+        return false;
+    };
+    let Some((introducer, _)) = open_index
+        .checked_sub(1)
+        .and_then(|index| tokens.get(index))
+    else {
+        return false;
+    };
+
+    match introducer {
+        Token::Returns | Token::Function => true,
+        Token::Ident("mapping") => true,
+        // A parenthesized tuple can itself occur wherever a type starts.
+        _ if token_position_starts_type(tokens, open_index) => true,
+        // Enum constructor payloads are type lists. Restrict this to an enum
+        // declaration so an ordinary call expression is not misclassified.
+        Token::Ident(_) => declaration_contains_before(tokens, open_index, Token::Enum),
+        _ => false,
+    }
 }
 
 pub(super) fn tokenize_with_base<'src>(

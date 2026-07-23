@@ -936,6 +936,46 @@ mod tests {
     }
 
     #[test]
+    fn deeply_nested_generic_type_hits_the_nesting_guard() {
+        let mut source = "alias Deep = ".to_owned();
+        source.push_str(&"Box<".repeat(MAX_SYNTAX_NESTING + 1));
+        source.push_str("word");
+        source.push_str(&">".repeat(MAX_SYNTAX_NESTING + 1));
+        source.push(';');
+
+        let (tokens, errors) = tokenize(&source);
+
+        assert!(
+            errors.iter().any(|error| error
+                .message
+                .contains("generic argument nesting exceeds the compiler limit")),
+            "missing generic nesting diagnostic: {:#?}",
+            errors
+        );
+        assert!(tokens.is_empty(), "unsafe token stream was not discarded");
+    }
+
+    #[test]
+    fn comparison_and_shift_operators_are_not_generic_nesting() {
+        let mut source = "{ sink(".to_owned();
+        for index in 0..=MAX_SYNTAX_NESTING {
+            if index > 0 {
+                source.push(',');
+            }
+            source.push_str("left < right");
+        }
+        source.push_str("); let shifted = left << 1; return shifted > right >> 1; }");
+
+        let parsed = parse_body_statements(&source, (0..source.len()).into());
+
+        assert!(
+            parsed.errors.is_empty(),
+            "angle-bracket operators were mistaken for generic delimiters: {:#?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
     fn expression_statement_requires_trailing_semicolon() {
         let source = "{ f() }";
         let parsed = parse_body_statements(source, (0..source.len()).into());
