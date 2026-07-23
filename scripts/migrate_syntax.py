@@ -1886,7 +1886,8 @@ def migrate_functions(source: str) -> str:
             replacement += " returns (" + render_return_type(return_tokens) + ")"
         if predicates:
             replacement += " where " + ", ".join(predicates)
-        replacement += " "
+        if tokens[end].text == "{":
+            replacement += " "
 
         start = tokens[start_index].start
         replacement = _with_preserved_comments(

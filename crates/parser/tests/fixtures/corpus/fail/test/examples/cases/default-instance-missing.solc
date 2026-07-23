@@ -1,4 +1,4 @@
-trait Test<self> { function f(x: self) ; }
+trait Test<self> { function f(x: self); }
 
 enum memory<a> { memory(word) }
 enum Proxy<a> { Proxy }

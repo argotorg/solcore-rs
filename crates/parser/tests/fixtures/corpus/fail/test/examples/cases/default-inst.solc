@@ -1,4 +1,4 @@
-trait Test<self> { function f(x: self) ; }
+trait Test<self> { function f(x: self); }
 
 default impl Test<a> { function f(x: self) {}}
 

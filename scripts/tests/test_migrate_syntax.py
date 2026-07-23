@@ -182,5 +182,16 @@ function wrap(x: word) -> Option(word) { return .Some(x); }
         self.assertIn("0 file(s) need migration", check.stdout)
 
 
+class FunctionMigrationTests(unittest.TestCase):
+    def test_preserves_canonical_no_result_prototype(self) -> None:
+        canonical = """\
+trait Hook<t> {
+  function run(value: t);
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,5 @@
 
-trait D<a> { function f(x: a) ; }
+trait D<a> { function f(x: a); }
 trait F<a, b> {}
 
 enum Memory<a> { Memory(word) }

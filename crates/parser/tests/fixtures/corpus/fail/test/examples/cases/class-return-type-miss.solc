@@ -1,7 +1,7 @@
 enum bytes32 { bytes32(word) }
 
 trait Memory<t> {
-    function encodeInto(v: t, target: word) ;
+    function encodeInto(v: t, target: word);
 }
 
 impl Memory<bytes32> {

@@ -3,7 +3,7 @@ function nop() {
 }
 
 trait Hook<t> {
-  function run(value: t) ;
+  function run(value: t);
 }
 
 impl Hook<word> {

@@ -20,12 +20,12 @@ enum array<size, elem> { array }
 enum memory<a> { memory(word) }
 
 trait IndexAccessible<self, indexType, elementType> {
-    function set(self: self, ix: indexType, val: elementType) ;
-    function at(self: self, ix: indexType) returns (elementType) ;
+    function set(self: self, ix: indexType, val: elementType);
+    function at(self: self, ix: indexType) returns (elementType);
 }
 
 trait ToWord<self> {
-    function toWord(self: Itself<self>) returns (word) ;
+    function toWord(self: Itself<self>) returns (word);
 }
 
 impl ToWord<Zero> {
@@ -43,8 +43,8 @@ impl<prev> ToWord<Succ<prev>> where prev: ToWord {
 }
 
 trait MemoryType<self> {
-    function load(ptr: word) returns (self) ;
-    function store(ptr: word, value: self) ;
+    function load(ptr: word) returns (self);
+    function store(ptr: word, value: self);
 }
 
 impl MemoryType<word> {
