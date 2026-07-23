@@ -20,7 +20,16 @@ impl<'db> Emitter<'db> {
         let Some(contract) = find_contract(self.db, module, def) else {
             return BTreeMap::new();
         };
-        let resolutions = hir::nameres::resolve_item_types(self.db, module);
+        let resolutions = nameres::module_id_for_source_file(self.db, def.file(self.db))
+            .map(|module_id| {
+                let env = nameres::module_env_for_hir_module(self.db, module_id, module);
+                let scope = env
+                    .item_scope
+                    .clone()
+                    .unwrap_or_else(|| hir::nameres::item_scope(self.db, module));
+                hir::nameres::resolve_item_types_with_imports(self.db, module, &scope, &env)
+            })
+            .unwrap_or_else(|| hir::nameres::resolve_item_types(self.db, module));
         let lowerer =
             TypeLowering::from_item_resolutions(self.db, &resolutions, BinderEnv::empty());
         let mut fields = BTreeMap::new();
@@ -46,16 +55,35 @@ impl<'db> Emitter<'db> {
     ) -> Option<StorageFieldKind> {
         let SemTyKind::Named {
             ctor: TyCtor::User(user),
-            ..
+            args,
         } = ty.kind(self.db)
         else {
             return None;
         };
-        if !matches!(user.kind, UserTyCtorKind::Adt) {
-            return None;
+        match user.kind {
+            UserTyCtorKind::ValueType if args.is_empty() => {
+                let underlying = value_type_underlying(self.db, user.def).ok()?;
+                let lowered = self.try_hull_ty(underlying, span);
+                if lowered
+                    .as_ref()
+                    .is_some_and(|ty| matches!(ty.strip_named().kind, TyKind::Word))
+                {
+                    return Some(StorageFieldKind::DirectWord);
+                }
+                self.push(
+                    span,
+                    EmitDiagnosticKind::UnsupportedType {
+                        ty: ty.display(self.db),
+                    },
+                );
+                None
+            }
+            UserTyCtorKind::Adt => {
+                let ty = self.try_hull_ty(ty, span)?;
+                (hull_ty_word_slots(&ty) == Some(1)).then_some(StorageFieldKind::DirectWord)
+            }
+            UserTyCtorKind::Alias | UserTyCtorKind::Contract | UserTyCtorKind::ValueType => None,
         }
-        let ty = self.try_hull_ty(ty, span)?;
-        (hull_ty_word_slots(&ty) == Some(1)).then_some(StorageFieldKind::DirectWord)
     }
 
     pub(super) fn lower_storage_fields_in_function(

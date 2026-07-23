@@ -500,7 +500,7 @@ fn completion_kind_for_resolution(resolution: &Resolution<'_>) -> CompletionItem
             ..
         } => CompletionItemKind::ENUM,
         Resolution::Def {
-            kind: DefResolutionKind::TypeAlias,
+            kind: DefResolutionKind::TypeAlias | DefResolutionKind::ValueType,
             ..
         } => CompletionItemKind::STRUCT,
         Resolution::Def {
@@ -544,6 +544,10 @@ fn detail_for_resolution(resolution: &Resolution<'_>) -> &'static str {
             kind: DefResolutionKind::TypeAlias,
             ..
         } => "type alias",
+        Resolution::Def {
+            kind: DefResolutionKind::ValueType,
+            ..
+        } => "user-defined value type",
         Resolution::Def {
             kind: DefResolutionKind::Class,
             ..

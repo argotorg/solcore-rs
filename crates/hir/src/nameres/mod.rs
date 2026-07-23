@@ -37,7 +37,7 @@ use crate::{
         },
         item::{
             AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FunctionDef, InstanceDef, Item,
-            Module, TypeAlias,
+            Module, TypeAlias, TypeAliasKind,
         },
         ty::{PredRef, TypeRef, TypeRefKind},
     },

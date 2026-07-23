@@ -126,12 +126,20 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                 ParsedTopItem::TypeAlias {
                     span,
                     leading_comments,
+                    kind,
                     name,
                     ty_params,
                     ty,
                 } => {
-                    let alias =
-                        lower_type_alias(&mut ctx, span, leading_comments, name, ty_params, ty);
+                    let alias = lower_type_alias(
+                        &mut ctx,
+                        span,
+                        leading_comments,
+                        kind,
+                        name,
+                        ty_params,
+                        ty,
+                    );
                     items.push(item::Item::TypeAlias(alias));
                 }
                 ParsedTopItem::Adt {

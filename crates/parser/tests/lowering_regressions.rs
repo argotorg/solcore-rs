@@ -1,8 +1,9 @@
 use hir::{
+    anchor::DefKind,
     ast::{
         SourceComment, SourceCommentKind,
         function::{AssignOp, BinOp, ExprKind, FuncParam, StmtKind},
-        item::{ContractItem, FunctionDef, Item, Module},
+        item::{ContractItem, FunctionDef, Item, Module, TypeAliasKind},
         ty::TypeRefKind,
     },
     diag::{AnyDiagnostic, Diagnostic},
@@ -685,6 +686,35 @@ fn function_types_preserve_source_arity_and_explicit_tuple_domains() {
         panic!("I should be a function type");
     };
     assert!(params.atom().is_empty());
+}
+
+#[test]
+fn alias_and_value_type_declarations_remain_distinct_in_hir() {
+    let db = TestDb::default();
+    let (_, module) = parse_module(
+        &db,
+        "type-declaration-kinds",
+        "alias WordAlias = word; type Wad is word;",
+    );
+    let declarations = module
+        .items(&db)
+        .iter()
+        .filter_map(|item| match item {
+            Item::TypeAlias(declaration) => Some(*declaration),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(declarations[0].kind(&db), TypeAliasKind::Transparent);
+    assert_eq!(
+        declarations[0].def_id_value(&db).kind(&db),
+        DefKind::TypeAlias
+    );
+    assert_eq!(declarations[1].kind(&db), TypeAliasKind::ValueType);
+    assert_eq!(
+        declarations[1].def_id_value(&db).kind(&db),
+        DefKind::ValueType
+    );
 }
 
 #[test]

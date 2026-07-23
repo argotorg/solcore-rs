@@ -549,6 +549,7 @@ fn token_kind_for_resolution(resolution: &Resolution<'_>) -> Option<TokenKind> {
             DefResolutionKind::Contract
             | DefResolutionKind::Adt
             | DefResolutionKind::TypeAlias
+            | DefResolutionKind::ValueType
             | DefResolutionKind::Class
             | DefResolutionKind::Instance => Some(TokenKind::Type),
         },

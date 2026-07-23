@@ -69,6 +69,8 @@ pub enum DefResolutionKind {
     Adt,
     /// Type alias definition.
     TypeAlias,
+    /// Nominal user-defined value type definition.
+    ValueType,
     /// Type class definition.
     Class,
     /// Type class instance definition.

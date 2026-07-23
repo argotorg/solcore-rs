@@ -1042,7 +1042,10 @@ impl<'db> Evaluator<'db> {
             MonoExprKind::Conversion {
                 expr,
                 ty: annot_ty,
-                kind: ConversionKind::Identity,
+                kind:
+                    kind @ (ConversionKind::Identity
+                    | ConversionKind::ValueTypeWrap
+                    | ConversionKind::ValueTypeUnwrap),
             } => {
                 let expr = self.eval_expr(env, comptime_env, *expr);
                 if self.expr_is_known_value(&expr) {
@@ -1058,7 +1061,7 @@ impl<'db> Evaluator<'db> {
                         kind: MonoExprKind::Conversion {
                             expr: Box::new(expr),
                             ty: annot_ty,
-                            kind: ConversionKind::Identity,
+                            kind,
                         },
                     }
                 }

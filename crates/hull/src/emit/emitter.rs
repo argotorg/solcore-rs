@@ -496,13 +496,16 @@ impl<'db> Emitter<'db> {
             },
             MonoExprKind::Conversion {
                 expr: inner,
-                kind: ConversionKind::Identity,
+                kind:
+                    ConversionKind::Identity
+                    | ConversionKind::ValueTypeWrap
+                    | ConversionKind::ValueTypeUnwrap,
                 ..
             } => {
                 let mut inner = self.emit_expr(inner);
                 assert!(
                     same_hull_ty_shape(&inner.ty, &ty),
-                    "identity conversion changed the structural Hull layout"
+                    "checked conversion changed the structural Hull layout"
                 );
                 inner.span = expr.span;
                 inner.ty = ty;

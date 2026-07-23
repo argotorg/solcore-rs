@@ -237,6 +237,112 @@ function main(x: word) returns (word) {
 }
 
 #[test]
+fn specialization_preserves_value_type_conversion_kinds() {
+    let (_db, output) = specialize_src(
+        r#"
+type Wad is word;
+
+function main(x: word) returns (word) {
+  return (x as Wad) as word;
+}
+"#,
+    );
+
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let main = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Function(function) if function.name.contains("main") => Some(function),
+            _ => None,
+        })
+        .expect("specialized main function");
+    let MonoStmtKind::Return(Some(ret)) = &main.body[0].kind else {
+        panic!("expected value-type return: {:#?}", main.body);
+    };
+    let MonoExprKind::Conversion {
+        expr: inner,
+        kind: ConversionKind::ValueTypeUnwrap,
+        ..
+    } = &ret.kind
+    else {
+        panic!("expected outer value-type unwrap: {ret:#?}");
+    };
+    assert!(matches!(
+        inner.kind,
+        MonoExprKind::Conversion {
+            kind: ConversionKind::ValueTypeWrap,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn specialization_uses_canonical_alias_targets_for_value_type_unwraps() {
+    let (db, output) = specialize_src(
+        r#"
+alias W = word;
+alias B = bool;
+
+type Wad is word;
+type Flag is bool;
+
+function unwrap_word(x: Wad) returns (W) {
+  return x as W;
+}
+
+function unwrap_bool(x: Flag) returns (B) {
+  return x as B;
+}
+
+function main(x: word, b: bool) returns (word) {
+  let flag: Flag = b as Flag;
+  if (unwrap_bool(flag)) {
+    return unwrap_word(x as Wad);
+  } else {
+    return 0;
+  }
+}
+"#,
+    );
+
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    for (name, expected) in [
+        ("unwrap_word", BuiltinTyCtor::Word),
+        ("unwrap_bool", BuiltinTyCtor::Bool),
+    ] {
+        let function = output
+            .module
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MonoItem::Function(function) if function.name.contains(name) => Some(function),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("specialized {name} function"));
+        let MonoStmtKind::Return(Some(ret)) = &function.body[0].kind else {
+            panic!(
+                "expected value-type return for {name}: {:#?}",
+                function.body
+            );
+        };
+        let MonoExprKind::Conversion {
+            ty: conversion_ty,
+            kind: ConversionKind::ValueTypeUnwrap,
+            ..
+        } = &ret.kind
+        else {
+            panic!("expected value-type unwrap for {name}: {ret:#?}");
+        };
+        let expected = Ty::builtin(db, expected);
+        assert_eq!(function.ret.ty(), expected, "{name} return type");
+        assert_eq!(ret.ty.ty(), expected, "{name} expression type");
+        assert_eq!(conversion_ty.ty(), expected, "{name} conversion type");
+    }
+}
+
+#[test]
 fn specialization_erases_internal_type_ascription() {
     let (_db, output) = specialize_src(
         r#"

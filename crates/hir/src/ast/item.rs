@@ -259,6 +259,15 @@ impl<'db> FunctionDef<'db> {
     }
 }
 
+/// Semantic family of a source type declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum TypeAliasKind {
+    /// `alias Name<T, U> = Type` is a transparent type synonym.
+    Transparent,
+    /// `type Name is Type` is a nominal user-defined value type.
+    ValueType,
+}
+
 /// Type alias or value-type definition: `alias Name<T, U> = Type` or
 /// `type Name is Type`.
 #[salsa::tracked(debug)]
@@ -277,6 +286,11 @@ pub struct TypeAlias<'db> {
     #[tracked]
     #[returns(ref)]
     pub leading_comments: Vec<SourceComment>,
+
+    /// Semantic family selected by the declaration keyword.
+    #[tracked]
+    #[returns(copy)]
+    pub kind: TypeAliasKind,
 
     /// Alias name.
     #[tracked]

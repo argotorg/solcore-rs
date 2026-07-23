@@ -353,11 +353,20 @@ pub(super) fn lower_type_alias<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     leading_comments: Vec<ParsedSourceComment<'_>>,
+    kind: ParsedTypeAliasKind,
     name: SpannedStr<'_>,
     ty_params: Vec<SpannedStr<'_>>,
     parsed_ty: ParsedTy<'_>,
 ) -> item::TypeAlias<'db> {
-    let alias_def = ctx.alloc_def_with_location(DefKind::TypeAlias, Some(name.0), span.start);
+    let hir_kind = match kind {
+        ParsedTypeAliasKind::Transparent => item::TypeAliasKind::Transparent,
+        ParsedTypeAliasKind::ValueType => item::TypeAliasKind::ValueType,
+    };
+    let def_kind = match hir_kind {
+        item::TypeAliasKind::Transparent => DefKind::TypeAlias,
+        item::TypeAliasKind::ValueType => DefKind::ValueType,
+    };
+    let alias_def = ctx.alloc_def_with_location(def_kind, Some(name.0), span.start);
 
     let anchor = AnchorId::def(ctx.db, alias_def);
     let name = lower_spanned_ident(ctx.db, anchor, span.start, name);
@@ -372,6 +381,7 @@ pub(super) fn lower_type_alias<'db>(
         alias_def,
         span,
         lower_source_comments(leading_comments),
+        hir_kind,
         name,
         ty_params,
         ty,
@@ -732,6 +742,7 @@ fn lower_contract_item<'db>(
         ParsedContractItem::TypeAlias {
             span,
             leading_comments,
+            kind,
             name,
             ty_params,
             ty,
@@ -739,6 +750,7 @@ fn lower_contract_item<'db>(
             ctx,
             span,
             leading_comments,
+            kind,
             name,
             ty_params,
             ty,

@@ -32,7 +32,7 @@ impl<'db> InferCtx<'db> {
             .unwrap_or_else(|| self.engine.fresh_var());
         let rhs_ty = self.infer_expr_expected(body, rhs, Some(expected_rhs.clone()));
         self.unify_expr(body, rhs, expected_rhs, rhs_ty.clone());
-        self.push_can_store_obligation(lhs_ty, rhs_ty.clone(), ObligationSource::Scheme);
+        self.push_can_store_obligation(body, lhs, lhs_ty, rhs_ty.clone(), ObligationSource::Scheme);
         self.expr_tys.push((body, lhs, rhs_ty));
         true
     }
@@ -199,8 +199,8 @@ impl<'db> InferCtx<'db> {
 
     fn storage_load_ty(
         &mut self,
-        _body: FuncBody<'db>,
-        _expr: Id<Expr<'db>>,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
         storage_ty: InferTy<'db>,
     ) -> InferTy<'db> {
         if self.storage_type_ctor().is_none() {
@@ -209,7 +209,13 @@ impl<'db> InferCtx<'db> {
         let loaded = self
             .loaded_ty_for_storage_ty(storage_ty.clone())
             .unwrap_or_else(|| self.engine.fresh_var());
-        self.push_can_store_obligation(storage_ty, loaded.clone(), ObligationSource::Scheme);
+        self.push_can_store_obligation(
+            body,
+            expr,
+            storage_ty,
+            loaded.clone(),
+            ObligationSource::Scheme,
+        );
         loaded
     }
 
@@ -269,10 +275,46 @@ impl<'db> InferCtx<'db> {
 
     fn push_can_store_obligation(
         &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
         storage_ty: InferTy<'db>,
         loaded_ty: InferTy<'db>,
         source: ObligationSource<'db>,
     ) {
+        if let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::ValueType,
+                }),
+            args,
+        } = self.engine.resolve(loaded_ty.clone())
+            && args.is_empty()
+        {
+            let item_resolutions = self.item_resolutions_for_aliases();
+            if let Ok(underlying) =
+                value_type_underlying_in_context(self.db, self.module, &item_resolutions, def)
+            {
+                if !value_type_underlying_has_word_storage_representation(self.db, underlying) {
+                    self.emit_expr_error(
+                        body,
+                        expr,
+                        TypeckDiagnostic::UnsupportedValueTypeStorage {
+                            span: self.expr_label_span(body, expr),
+                            ty: def
+                                .name(self.db)
+                                .unwrap_or_else(|| "<anonymous value type>".to_owned()),
+                        },
+                    );
+                    return;
+                }
+                // A valid UDVT has exactly the storage representation of its
+                // word-like underlying elementary value type. Its nominal
+                // identity is restored on load and checked on assignment
+                // before this point.
+                return;
+            }
+        }
         let Some(class) = self.lookup_class_id("CanStore") else {
             return;
         };

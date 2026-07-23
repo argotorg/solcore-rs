@@ -50,6 +50,15 @@ pub(crate) struct ParsedItemMeta<'src> {
     pub(crate) leading_comments: Vec<ParsedSourceComment<'src>>,
 }
 
+/// Semantic family selected by a source type declaration keyword.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ParsedTypeAliasKind {
+    /// `alias Name = Type` is a transparent synonym.
+    Transparent,
+    /// `type Name is Type` introduces a nominal user-defined value type.
+    ValueType,
+}
+
 /// User-facing parse error before conversion to HIR diagnostics.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedError {
@@ -139,6 +148,8 @@ pub(crate) enum ParsedTopItem<'src> {
         span: LexSpan,
         /// Consecutive comments directly preceding the declaration.
         leading_comments: Vec<ParsedSourceComment<'src>>,
+        /// Whether this is a transparent alias or a nominal value type.
+        kind: ParsedTypeAliasKind,
         /// Alias name.
         name: SpannedStr<'src>,
         /// Type parameters.
@@ -480,6 +491,8 @@ pub(crate) enum ParsedContractItem<'src> {
         span: LexSpan,
         /// Consecutive comments directly preceding the declaration.
         leading_comments: Vec<ParsedSourceComment<'src>>,
+        /// Whether this is a transparent alias or a nominal value type.
+        kind: ParsedTypeAliasKind,
         /// Alias name.
         name: SpannedStr<'src>,
         /// Type parameters.

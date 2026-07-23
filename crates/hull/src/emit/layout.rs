@@ -49,6 +49,13 @@ impl<'db> Emitter<'db> {
             SemTyKind::Named {
                 ctor: TyCtor::User(user),
                 args,
+            } if matches!(user.kind, UserTyCtorKind::ValueType) && args.is_empty() => {
+                let underlying = value_type_underlying(self.db, user.def).ok()?;
+                self.try_hull_ty(underlying, span)
+            }
+            SemTyKind::Named {
+                ctor: TyCtor::User(user),
+                args,
             } if matches!(user.kind, UserTyCtorKind::Adt) => {
                 let layout = self.adt_layout(user.def, args, span)?;
                 Some(layout.target)

@@ -285,11 +285,15 @@ impl<'db> ItemScopeBuilder<'db> {
     }
 
     fn add_alias(&mut self, def: TypeAlias<'db>, contract: Option<&mut ContractScopeBuilder<'db>>) {
+        let kind = match def.kind(self.db) {
+            TypeAliasKind::Transparent => DefResolutionKind::TypeAlias,
+            TypeAliasKind::ValueType => DefResolutionKind::ValueType,
+        };
         self.add_type(
             def.name_elem(self.db),
             Resolution::Def {
                 def: def.def_id_value(self.db),
-                kind: DefResolutionKind::TypeAlias,
+                kind,
             },
             contract,
             TypeDeclFamily::Alias,

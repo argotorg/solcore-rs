@@ -11,8 +11,9 @@ use rustc_hash::FxHashMap;
 
 use super::{
     abi::{
-        AbiParam, AbiSelector, AbiSignature, AbiType, abi_outputs, abi_params, abi_selector,
-        abi_type_contains_user_adt, contract_diag_unsupported_abi_type, method_signature_string,
+        AbiParam, AbiSelector, AbiSignature, abi_outputs, abi_params,
+        abi_params_contain_unsupported, abi_selector, abi_type_contains_user_adt,
+        contract_diag_unsupported_abi_type, method_signature_string,
     },
     helpers::{
         find_contract_by_def, function_type_vars, ident_text, lower_normalized_function,
@@ -572,13 +573,6 @@ fn contract_dispatch_surface_with_resolutions<'db>(
         constructor_abi_diagnostics,
         diagnostics,
     }
-}
-
-fn abi_params_contain_unsupported(params: &[AbiParam]) -> bool {
-    params.iter().any(|param| {
-        matches!(&param.ty, AbiType::Unsupported)
-            || abi_params_contain_unsupported(&param.components)
-    })
 }
 
 fn contract_diag_duplicate_signature<'db>(

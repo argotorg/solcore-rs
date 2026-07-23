@@ -560,6 +560,7 @@ fn def_resolution_kind<'db>(
         DefKind::Contract => Some(hir_nameres::DefResolutionKind::Contract),
         DefKind::Adt => Some(hir_nameres::DefResolutionKind::Adt),
         DefKind::TypeAlias => Some(hir_nameres::DefResolutionKind::TypeAlias),
+        DefKind::ValueType => Some(hir_nameres::DefResolutionKind::ValueType),
         DefKind::Class => Some(hir_nameres::DefResolutionKind::Class),
         DefKind::Instance => Some(hir_nameres::DefResolutionKind::Instance),
         DefKind::Module

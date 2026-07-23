@@ -19,7 +19,7 @@ use hir::{
 };
 use hir_ty::{
     BinderEnv, BuiltinTyCtor, ConversionKind, Ty as SemTy, TyCtor, TyKind as SemTyKind,
-    TypeLowering, UserTyCtorKind, contract::FrontendTransform,
+    TypeLowering, UserTyCtorKind, contract::FrontendTransform, value_type_underlying,
 };
 use parser::parse_file_to_hir;
 use specialize::{

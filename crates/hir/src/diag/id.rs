@@ -193,6 +193,7 @@ fn def_kind_name(kind: crate::anchor::DefKind) -> &'static str {
         crate::anchor::DefKind::Function => "function",
         crate::anchor::DefKind::FuncBody => "func_body",
         crate::anchor::DefKind::TypeAlias => "type_alias",
+        crate::anchor::DefKind::ValueType => "value_type",
         crate::anchor::DefKind::Adt => "adt",
         crate::anchor::DefKind::AdtCtor => "adt_ctor",
         crate::anchor::DefKind::Class => "trait",

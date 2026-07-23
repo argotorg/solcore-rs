@@ -11,7 +11,7 @@ use hir::{
         function::{ExprKind, FuncBody, FuncParam, FuncSig, PatKind, StmtKind},
         item::{
             AdtDef, ClassDef, ContractDef, ContractItem, FuncKind, FunctionDef, InstanceDef, Item,
-            Module, SourceComment, TypeAlias,
+            Module, SourceComment, TypeAlias, TypeAliasKind,
         },
         ty::{PredRef, TypeRef, TypeRefKind},
     },
@@ -225,9 +225,13 @@ fn definition_hover<'db>(db: &'db vfs::AnalysisHost, def: DefId<'db>) -> Option<
         Definition::TypeAlias(alias) => {
             let name = alias.name_elem(db).atom().text(db);
             let params = type_parameter_list(db, alias.ty_param_elems(db));
+            let (keyword, separator) = match alias.kind(db) {
+                TypeAliasKind::Transparent => ("alias", "="),
+                TypeAliasKind::ValueType => ("type", "is"),
+            };
             Some(HoverInfo {
                 code: format!(
-                    "alias {name}{params} = {}",
+                    "{keyword} {name}{params} {separator} {}",
                     display_type_ref(db, alias.ty(db))
                 ),
                 documentation: comments_markdown(alias.leading_comments(db)),
@@ -1389,5 +1393,24 @@ function main() returns (Maybe) {
             ctor_hover.range,
             Some(line_index.range(ctor_reference as u32, ctor_reference as u32 + 4))
         );
+    }
+
+    #[test]
+    fn type_declaration_hover_preserves_alias_and_value_type_spelling() {
+        let source = "\
+alias WordAlias = word;
+type Wad is word;
+
+function expose(alias_value: WordAlias, wad_value: Wad) {}
+";
+        let (world, uri) = world_with_main(source);
+
+        let alias_reference = source.rfind("WordAlias").expect("alias reference");
+        let alias_hover = hover_at(source, &world, &uri, alias_reference);
+        assert_eq!(hover_code(&alias_hover), "alias WordAlias = word");
+
+        let value_type_reference = source.rfind("Wad").expect("value type reference");
+        let value_type_hover = hover_at(source, &world, &uri, value_type_reference);
+        assert_eq!(hover_code(&value_type_hover), "type Wad is word");
     }
 }

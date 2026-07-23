@@ -19,7 +19,7 @@ pub(super) struct BodyIndex<'db> {
     pat_tys: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), Ty<'db>>,
     let_tys: FxHashMap<(FuncBody<'db>, Id<Stmt<'db>>), Ty<'db>>,
     adt_field_indices: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), u32>,
-    checked_conversions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), ConversionKind>,
+    checked_conversions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), CheckedConversion<'db>>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
     call_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), CallSiteEvidence<'db>>,
@@ -79,7 +79,7 @@ impl<'db> BodyIndex<'db> {
             index
                 .checked_conversions
                 .entry((conversion.body, conversion.expr))
-                .or_insert(conversion.kind);
+                .or_insert_with(|| conversion.clone());
         }
         for entry in &body_map.exprs {
             let key = (entry.body, entry.expr);
@@ -411,6 +411,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
 
     pub(super) fn expr(&mut self, expr_id: Id<Expr<'db>>) -> Option<MonoExpr<'db>> {
         let expr = self.body.exprs(self.driver.db).get(expr_id);
+        let checked_conversion = if matches!(&expr.kind, ExprKind::Conversion { .. }) {
+            self.checked_conversion(expr_id).cloned()
+        } else {
+            None
+        };
         let mut ty = self
             .expr_ty(expr_id)
             .map(|ty| self.subst.apply_ty(self.driver.db, ty))
@@ -449,11 +454,19 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         {
             ty = closed;
         }
-        if let ExprKind::Conversion { ty: target, .. }
-        | ExprKind::TypeAscription { ty: target, .. } = &expr.kind
-        {
-            let target = self.lower_body_ty(*target)?;
-            ty = self.subst.apply_ty(self.driver.db, target);
+        match &expr.kind {
+            ExprKind::Conversion { ty: target, .. } => {
+                let target = match checked_conversion.as_ref() {
+                    Some(conversion) => conversion.target,
+                    None => self.lower_body_ty(*target)?,
+                };
+                ty = self.subst.apply_ty(self.driver.db, target);
+            }
+            ExprKind::TypeAscription { ty: target, .. } => {
+                let target = self.lower_body_ty(*target)?;
+                ty = self.subst.apply_ty(self.driver.db, target);
+            }
+            _ => {}
         }
         let mono_ty = self.driver.mono_ty(ty, "expression", expr.span)?;
         if let Some(kind) = self.bool_expr_kind(expr_id, mono_ty, expr.span) {
@@ -593,7 +606,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 MonoExprKind::Proxy(self.driver.mono_ty(ty, "proxy", expr.span)?)
             }
             ExprKind::Conversion { expr: inner, .. } => {
-                let Some(kind) = self.checked_conversion(expr_id) else {
+                let Some(conversion) = checked_conversion else {
                     self.driver.diagnostics.push(SpecializeDiagnostic {
                         kind: SpecializeDiagnosticKind::MissingResolution {
                             context: "checked conversion".to_owned(),
@@ -609,7 +622,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 MonoExprKind::Conversion {
                     expr: Box::new(self.expr(*inner)?),
                     ty: mono_ty,
-                    kind,
+                    kind: conversion.kind,
                 }
             }
             ExprKind::TypeAscription { expr: inner, .. } => {
@@ -888,11 +901,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             .copied()
     }
 
-    fn checked_conversion(&self, expr: Id<Expr<'db>>) -> Option<ConversionKind> {
-        self.index
-            .checked_conversions
-            .get(&(self.body, expr))
-            .copied()
+    fn checked_conversion(&self, expr: Id<Expr<'db>>) -> Option<&CheckedConversion<'db>> {
+        self.index.checked_conversions.get(&(self.body, expr))
     }
 
     fn function_value_ty(&mut self, def: DefId<'db>) -> Option<Ty<'db>> {

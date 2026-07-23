@@ -559,7 +559,8 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     kind: DefResolutionKind::Adt
                         | DefResolutionKind::Contract
                         | DefResolutionKind::Class
-                        | DefResolutionKind::TypeAlias,
+                        | DefResolutionKind::TypeAlias
+                        | DefResolutionKind::ValueType,
                     ..
                 } | Resolution::Builtin(BuiltinKind::Type(_) | BuiltinKind::Class(_))
             )

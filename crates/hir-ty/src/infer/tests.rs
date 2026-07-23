@@ -299,6 +299,40 @@ fn infer_function<'db>(
     (body, infer_body(db, body, ctx))
 }
 
+fn infer_function_with_imports<'db>(
+    db: &'db TestDb,
+    module_id: ModuleId<'db>,
+    module: Module<'db>,
+    name: &str,
+) -> (FuncBody<'db>, InferenceResult<'db>) {
+    let info = function_infos(db, module)
+        .into_iter()
+        .find(|info| function_name(db, info.function) == name)
+        .expect("function");
+    let function = info.function;
+    let body = function.body(db).expect("body");
+    let env = nameres::module_env_for_hir_module(db, module_id, module);
+    let scope = env.item_scope.clone().expect("item scope");
+    let module_resolution = hir_nameres::resolve_module_with_imports(db, module, scope, &env);
+    let lowered = TypeLowering::from_item_resolutions(
+        db,
+        &module_resolution.item_resolutions,
+        BinderEnv::from_type_vars(&info.type_vars),
+    )
+    .lower_function(function);
+    let body_map = body_map(db, &module_resolution, body);
+    let ctx = BodyTyContext::new(
+        module,
+        body_map,
+        info.type_vars,
+        lowered.params,
+        Some(lowered.ret),
+    )
+    .with_param_names(param_names(db, function.sig(db).params.atom()))
+    .with_entry_module(module_id);
+    (body, infer_body(db, body, ctx))
+}
+
 fn infer_all_functions_with_solver<'db>(
     db: &'db TestDb,
     module: Module<'db>,
@@ -954,6 +988,150 @@ function alias_identity(x: WordAlias2) returns (word) {
 }
 
 #[test]
+fn value_type_conversions_are_nominal_wraps_and_unwraps() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+alias WordAlias = word;
+type Wad is WordAlias;
+type Price is word;
+
+function wrap(x: WordAlias) returns (Wad) {
+  return x as Wad;
+}
+
+function unwrap(x: Wad) returns (word) {
+  return x as word;
+}
+
+function direct(x: Wad) returns (Price) {
+  return x as Price;
+}
+
+function staged(x: Wad) returns (Price) {
+  return (x as word) as Price;
+}
+
+function implicit(x: word) returns (Wad) {
+  return x;
+}
+"#,
+    );
+
+    let (_, wrap) = infer_function(&db, module, "wrap");
+    assert_no_typeck(&wrap);
+    assert_eq!(
+        wrap.checked_conversions[0].kind,
+        ConversionKind::ValueTypeWrap
+    );
+
+    let (_, unwrap) = infer_function(&db, module, "unwrap");
+    assert_no_typeck(&unwrap);
+    assert_eq!(
+        unwrap.checked_conversions[0].kind,
+        ConversionKind::ValueTypeUnwrap
+    );
+
+    let (_, direct) = infer_function(&db, module, "direct");
+    assert!(direct.checked_conversions.is_empty());
+    assert!(direct.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic,
+        TypeckDiagnostic::InvalidConversion { source, target, .. }
+            if source == "Wad" && target == "Price"
+    )));
+
+    let (_, staged) = infer_function(&db, module, "staged");
+    assert_no_typeck(&staged);
+    assert_eq!(
+        staged
+            .checked_conversions
+            .iter()
+            .map(|conversion| conversion.kind)
+            .collect::<Vec<_>>(),
+        vec![
+            ConversionKind::ValueTypeUnwrap,
+            ConversionKind::ValueTypeWrap,
+        ]
+    );
+
+    let (_, implicit) = infer_function(&db, module, "implicit");
+    assert!(implicit.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic,
+        TypeckDiagnostic::Mismatch { expected, actual, .. }
+            if expected == "Wad" && actual == "word"
+    )));
+}
+
+#[test]
+fn invalid_value_type_definitions_have_a_dedicated_diagnostic() {
+    for source in [
+        "type Generic<a> is word;",
+        "type FunctionBacked is function(word) returns (word);",
+        "type TupleBacked is (word, word);",
+        "type First is word; type Nested is First;",
+        "enum uint256 { uint256(word) } type Fake is uint256;",
+        "contract Generic<a> { type Inner is word; }",
+    ] {
+        let diagnostics = lowered_module_typeck_diagnostics(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0247")),
+            "{source}: {diagnostics:#?}"
+        );
+    }
+
+    let diagnostics =
+        lowered_module_typeck_diagnostics("type Wad is word; function bad(x: Wad<word>) {}");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0299")),
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
+fn imported_value_type_underlying_supports_checked_conversions() {
+    let mut db = TestDb::default();
+    let types_key = insert_module_source(&mut db, &["types"], "export { Wad }; type Wad is word;");
+    let main_key = insert_module_source(
+        &mut db,
+        &["main"],
+        r#"
+import { Wad } from types;
+
+function wrap(x: word) returns (Wad) {
+  return x as Wad;
+}
+
+function unwrap(x: Wad) returns (word) {
+  return x as word;
+}
+"#,
+    );
+    let _types_module = module_id_from_key(&db, &types_key);
+    let main_module = module_id_from_key(&db, &main_key);
+    let main_file = nameres::Db::module_file(&db, main_module).expect("main source file");
+    let module = parse_file_to_hir(&db, main_file).module(&db);
+
+    let (_, wrap) = infer_function_with_imports(&db, main_module, module, "wrap");
+    assert_no_typeck(&wrap);
+    assert_eq!(
+        wrap.checked_conversions[0].kind,
+        ConversionKind::ValueTypeWrap
+    );
+
+    let (_, unwrap) = infer_function_with_imports(&db, main_module, module, "unwrap");
+    assert_no_typeck(&unwrap);
+    assert_eq!(
+        unwrap.checked_conversions[0].kind,
+        ConversionKind::ValueTypeUnwrap
+    );
+}
+
+#[test]
 fn invalid_surface_conversion_has_dedicated_diagnostic() {
     let db = TestDb::default();
     let module = parse_module(
@@ -1317,6 +1495,90 @@ return x;
         })
         .expect("value expression");
     assert_eq!(result.expr_ty(body, value_expr), Some(Ty::word(&db)));
+}
+
+#[test]
+fn storage_value_type_field_uses_its_underlying_representation() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+enum storage<t> { storage(word) }
+type Wad is word;
+
+contract C {
+  value: Wad;
+
+  function get() returns (Wad) {
+    return value;
+  }
+
+  function set(next: Wad) {
+    value = next;
+  }
+}
+"#,
+    );
+    let (body, get) = infer_function(&db, module, "get");
+    assert_no_typeck(&get);
+    let value_expr = body
+        .exprs(&db)
+        .iter()
+        .find_map(|(expr_id, expr)| match &expr.kind {
+            ExprKind::Ident(name) if (*name.atom()).text(&db) == "value" => Some(expr_id),
+            _ => None,
+        })
+        .expect("value expression");
+    let loaded = get.expr_ty(body, value_expr).expect("loaded value type");
+    assert!(matches!(
+        loaded.kind(&db),
+        TyKind::Named {
+            ctor: TyCtor::User(UserTyCtor {
+                def,
+                kind: UserTyCtorKind::ValueType,
+            }),
+            args,
+        } if args.is_empty() && def.name(&db).as_deref() == Some("Wad")
+    ));
+
+    let (_, set) = infer_function(&db, module, "set");
+    assert_no_typeck(&set);
+}
+
+#[test]
+fn storage_rejects_non_word_value_type_representations() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+enum storage<t> { storage(word) }
+type Flag is bool;
+
+contract C {
+  value: Flag;
+
+  function get() returns (Flag) {
+    return value;
+  }
+
+  function set(next: Flag) {
+    value = next;
+  }
+}
+"#,
+    );
+
+    for function in ["get", "set"] {
+        let (_, result) = infer_function(&db, module, function);
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::UnsupportedValueTypeStorage { ty, .. } if ty == "Flag"
+            )),
+            "{function}: {:?}",
+            result.diagnostics
+        );
+    }
 }
 
 #[test]

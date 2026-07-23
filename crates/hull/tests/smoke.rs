@@ -255,6 +255,74 @@ contract C {
 }
 
 #[test]
+fn value_type_wrap_and_unwrap_emit_without_runtime_operation() {
+    let hull = pretty_src_hull(
+        "value_type_conversion",
+        r#"
+type Wad is word;
+
+function roundtrip(x: word) returns (word) {
+  return (x as Wad) as word;
+}
+
+contract C {
+  value: word;
+
+  function main() public returns (word) {
+    return roundtrip(value);
+  }
+}
+"#,
+    );
+    let roundtrip = hull_function(&hull, "_roundtrip_");
+    assert!(roundtrip.contains("return x"), "{roundtrip}\n{hull}");
+}
+
+#[test]
+fn value_type_unwraps_to_alias_targets_emit_with_canonical_layouts() {
+    let hull = pretty_src_hull_with_std(
+        "value_type_alias_targets",
+        r#"
+import std;
+import {calldataload} from std.opcodes;
+
+alias W = word;
+alias B = bool;
+
+type Wad is word;
+type Flag is bool;
+
+function unwrap_word(x: Wad) returns (W) {
+  return x as W;
+}
+
+function unwrap_bool(x: Flag) returns (B) {
+  return x as B;
+}
+
+contract C {
+  value: word;
+
+  function main() public returns (word) {
+    let raw: word;
+    assembly { raw := calldataload(0) }
+    let flag: Flag = (tobool(raw)) as Flag;
+    if (unwrap_bool(flag)) {
+      return unwrap_word(value as Wad);
+    } else {
+      return 0;
+    }
+  }
+}
+"#,
+    );
+    let unwrap_word = hull_function(&hull, "_unwrap_word_");
+    let unwrap_bool = hull_function(&hull, "_unwrap_bool_");
+    assert!(unwrap_word.contains("return x"), "{unwrap_word}\n{hull}");
+    assert!(unwrap_bool.contains("return x"), "{unwrap_bool}\n{hull}");
+}
+
+#[test]
 fn deployment_objects_copy_runtime_and_guard_constructor_value() {
     let repo = repo_root();
     let fixture = repo.join(
@@ -552,6 +620,62 @@ fn word_storage_fixture_reaches_word_slot_ops() {
         "{:?}",
         emitted.diagnostics
     );
+}
+
+#[test]
+fn value_type_storage_field_uses_underlying_word_slot_ops() {
+    let hull = pretty_src_hull(
+        "value_type_storage",
+        r#"
+type Wad is word;
+
+contract Vault {
+  value: Wad;
+
+  function set(input: word) {
+    value = input as Wad;
+  }
+
+  function main() public returns (word) {
+    set(1);
+    return value as word;
+  }
+}
+"#,
+    );
+    let main = hull_function(&hull, "_main_");
+    assert!(hull.contains("sstore(0,"), "{main}\n{hull}");
+    assert!(main.contains("return sload(0)"), "{main}\n{hull}");
+}
+
+#[test]
+fn non_word_value_type_storage_fails_closed_in_the_emitter() {
+    let (db, output) = specialize_src(
+        "value_type_bool_storage",
+        r#"
+type Flag is bool;
+
+contract Vault {
+  value: Flag;
+
+  function main() public returns (bool) {
+    return value;
+  }
+}
+"#,
+    );
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert!(
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedType { ty } if ty.contains("Flag")
+        )),
+        "{:?}",
+        emitted.diagnostics
+    );
+    let hull = pretty_program(db, &emitted.program);
+    assert!(!hull.contains("sload("), "{hull}");
+    assert!(!hull.contains("sstore("), "{hull}");
 }
 
 #[test]

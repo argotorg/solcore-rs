@@ -6,7 +6,9 @@ use hir::{
 use nameres::{LibraryId, module_id_for_source_file};
 use parser::parse_file_to_hir;
 
-use crate::{BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtor};
+use crate::{
+    BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtor, UserTyCtorKind, value_type_underlying,
+};
 
 /// ABI parameter or tuple component.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -121,6 +123,9 @@ fn signature_type_string<'db>(
             ctor: TyCtor::User(user),
             args,
         } => {
+            if user.kind == UserTyCtorKind::ValueType {
+                return Err(unsupported_value_type_abi_type(db, user, args));
+            }
             if args.is_empty()
                 && let Some(name) = canonical_user_abi_name(db, user)
             {
@@ -281,6 +286,9 @@ fn abi_type_of<'db>(
             ctor: TyCtor::User(user),
             args,
         } => {
+            if user.kind == UserTyCtorKind::ValueType {
+                return Err(unsupported_value_type_abi_type(db, user, args));
+            }
             if args.is_empty()
                 && let Some(name) = canonical_user_abi_name(db, user)
             {
@@ -397,6 +405,18 @@ fn unsupported_user_adt_abi_type<'db>(
     let ty = Ty::named(db, TyCtor::User(*user), args.to_vec());
     format!(
         "{} (user-defined ADTs are not supported by the canonical external ABI)",
+        crate::display::display_ty_source(db, ty, &[])
+    )
+}
+
+fn unsupported_value_type_abi_type<'db>(
+    db: &'db dyn Db,
+    user: &UserTyCtor<'db>,
+    args: &[Ty<'db>],
+) -> String {
+    let ty = Ty::named(db, TyCtor::User(*user), args.to_vec());
+    format!(
+        "{} (user-defined value types are not supported by the canonical external ABI)",
         crate::display::display_ty_source(db, ty, &[])
     )
 }
@@ -597,6 +617,13 @@ pub(super) fn abi_type_contains_user_adt<'db>(
             TyKind::Named {
                 ctor: TyCtor::User(user),
                 args,
+            } if user.kind == UserTyCtorKind::ValueType && args.is_empty() => {
+                value_type_underlying(db, user.def)
+                    .is_ok_and(|underlying| visit(db, underlying, target, adt_stack))
+            }
+            TyKind::Named {
+                ctor: TyCtor::User(user),
+                args,
             } if is_canonical_std_location(db, user) && args.len() == 1 => {
                 visit(db, args[0], target, adt_stack)
             }
@@ -669,6 +696,13 @@ fn is_unit_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {
             args,
         } if args.is_empty()
     )
+}
+
+pub(super) fn abi_params_contain_unsupported(params: &[AbiParam]) -> bool {
+    params.iter().any(|param| {
+        matches!(&param.ty, AbiType::Unsupported)
+            || abi_params_contain_unsupported(&param.components)
+    })
 }
 
 fn is_canonical_std_location(db: &dyn Db, user: &UserTyCtor<'_>) -> bool {

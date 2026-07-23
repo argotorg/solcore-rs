@@ -112,6 +112,8 @@ pub enum UserTyCtorKind {
     Adt,
     /// Type alias constructor.
     Alias,
+    /// Nominal user-defined value type constructor.
+    ValueType,
     /// Contract type constructor.
     Contract,
 }
@@ -503,6 +505,7 @@ impl fmt::Display for UserTyCtorKind {
         match self {
             Self::Adt => f.write_str("adt"),
             Self::Alias => f.write_str("alias"),
+            Self::ValueType => f.write_str("value type"),
             Self::Contract => f.write_str("contract"),
         }
     }

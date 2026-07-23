@@ -234,6 +234,7 @@ impl<'db> InferCtx<'db> {
     fn finish_pending_conversions(&mut self) -> Vec<CheckedConversion<'db>> {
         let pending = std::mem::take(&mut self.pending_conversions);
         let mut checked = Vec::with_capacity(pending.len());
+        let item_resolutions = self.item_resolutions_for_aliases();
         for conversion in pending {
             if self
                 .poisoned_exprs
@@ -260,6 +261,16 @@ impl<'db> InferCtx<'db> {
                 });
                 continue;
             }
+            if let Some(kind) = self.value_type_conversion_kind(&item_resolutions, source, target) {
+                checked.push(CheckedConversion {
+                    body: conversion.body,
+                    expr: conversion.expr,
+                    source,
+                    target,
+                    kind,
+                });
+                continue;
+            }
             self.diagnostics.push(TypeckDiagnostic::InvalidConversion {
                 target_span: self.label_span(conversion.target_ref.span(self.db)),
                 operand_span: self.expr_label_span(conversion.body, conversion.operand),
@@ -268,6 +279,27 @@ impl<'db> InferCtx<'db> {
             });
         }
         checked
+    }
+
+    fn value_type_conversion_kind(
+        &self,
+        item_resolutions: &hir_nameres::ItemResolutionFacts<'db>,
+        source: Ty<'db>,
+        target: Ty<'db>,
+    ) -> Option<ConversionKind> {
+        if let Some(def) = value_type_def(self.db, target)
+            && value_type_underlying_in_context(self.db, self.module, item_resolutions, def)
+                .is_ok_and(|underlying| underlying == source)
+        {
+            return Some(ConversionKind::ValueTypeWrap);
+        }
+        if let Some(def) = value_type_def(self.db, source)
+            && value_type_underlying_in_context(self.db, self.module, item_resolutions, def)
+                .is_ok_and(|underlying| underlying == target)
+        {
+            return Some(ConversionKind::ValueTypeUnwrap);
+        }
+        None
     }
 
     fn inferred_root_scheme(&mut self) -> TyScheme<'db> {
@@ -612,7 +644,8 @@ impl<'db> InferCtx<'db> {
                     kind: hir_nameres::DefResolutionKind::Adt
                         | hir_nameres::DefResolutionKind::Contract
                         | hir_nameres::DefResolutionKind::Class
-                        | hir_nameres::DefResolutionKind::TypeAlias,
+                        | hir_nameres::DefResolutionKind::TypeAlias
+                        | hir_nameres::DefResolutionKind::ValueType,
                     ..
                 } | hir_nameres::Resolution::Builtin(
                     hir_nameres::BuiltinKind::Type(_) | hir_nameres::BuiltinKind::Class(_)
@@ -650,6 +683,20 @@ impl<'db> InferCtx<'db> {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name).cloned())
+    }
+}
+
+fn value_type_def<'db>(db: &'db dyn Db, ty: Ty<'db>) -> Option<DefId<'db>> {
+    match ty.kind(db) {
+        TyKind::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::ValueType,
+                }),
+            args,
+        } if args.is_empty() => Some(*def),
+        _ => None,
     }
 }
 

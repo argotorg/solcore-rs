@@ -928,6 +928,23 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         alias: TypeAlias<'db>,
         inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
     ) {
+        if alias.kind(self.db) == TypeAliasKind::ValueType
+            && let Err(error) = value_type_underlying_in_context(
+                self.db,
+                self.hir_module,
+                &self.item_resolutions,
+                alias.def_id_value(self.db),
+            )
+        {
+            self.diagnostics.push(AnyDiagnostic::Typeck(
+                TypeckDiagnostic::InvalidValueTypeDefinition {
+                    span: error.span,
+                    name: error.name,
+                    reason: error.reason,
+                }
+                .lower(),
+            ));
+        }
         let mut type_vars = inherited_type_vars.to_vec();
         type_vars.extend(type_var_bindings(
             alias.def_id_value(self.db),

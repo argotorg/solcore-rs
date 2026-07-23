@@ -205,7 +205,7 @@ impl<'db> InferCtx<'db> {
         value
     }
 
-    fn item_resolutions_for_aliases(&self) -> hir_nameres::ItemResolutionFacts<'db> {
+    pub(super) fn item_resolutions_for_aliases(&self) -> hir_nameres::ItemResolutionFacts<'db> {
         if let Some(entry_module) = self.entry_module {
             let env = nameres::module_import_surface(self.db, entry_module);
             if let Some(scope) = env.item_scope.as_ref() {

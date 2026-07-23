@@ -15,7 +15,7 @@ use hir::{
         },
         item::{
             AdtCtor, AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FuncKind, FunctionDef,
-            Item, Module, TypeAlias,
+            Item, Module, TypeAlias, TypeAliasKind,
         },
         ty::{TypeRef, TypeRefKind},
     },
@@ -46,6 +46,7 @@ use crate::{
         collect_pred_vars, collect_ty_vars, instance_soundness_diagnostics, solve_report,
     },
     trait_env_with_givens, type_alias_normalization_errors,
+    value_type_underlying_has_word_storage_representation, value_type_underlying_in_context,
 };
 
 mod comptime;
@@ -197,6 +198,10 @@ pub struct CheckedConversion<'db> {
 pub enum ConversionKind {
     /// Source and target are the same alias-normalized resolved type.
     Identity,
+    /// Wrap an underlying value in its nominal user-defined value type.
+    ValueTypeWrap,
+    /// Unwrap a nominal user-defined value type to its underlying value.
+    ValueTypeUnwrap,
 }
 
 /// Source of a deferred obligation.

@@ -467,8 +467,17 @@ where
         .boxed()
 }
 
-fn type_alias_payload_parser<'src, I>()
--> impl Parser<'src, I, (SpannedStr<'src>, Vec<SpannedStr<'src>>, ParsedTy<'src>), ParserErr<'src>>
+fn type_alias_payload_parser<'src, I>() -> impl Parser<
+    'src,
+    I,
+    (
+        ParsedTypeAliasKind,
+        SpannedStr<'src>,
+        Vec<SpannedStr<'src>>,
+        ParsedTy<'src>,
+    ),
+    ParserErr<'src>,
+>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
@@ -488,16 +497,18 @@ where
     let alias = just(Token::Alias)
         .ignore_then(ident_parser())
         .then(type_param_list_parser())
-        .then_ignore(just(Token::Eq));
+        .then_ignore(just(Token::Eq))
+        .map(|(name, params)| (ParsedTypeAliasKind::Transparent, name, params));
     let value_type = just(Token::Type)
         .ignore_then(ident_parser())
         .then(type_param_list_parser())
-        .then_ignore(just(Token::Is));
+        .then_ignore(just(Token::Is))
+        .map(|(name, params)| (ParsedTypeAliasKind::ValueType, name, params));
 
     choice((alias, value_type))
         .then(type_parser().recover_with(via_parser(type_recovery)))
         .then_ignore(just(Token::Semi))
-        .map(|((name, ty_params), ty)| (name, ty_params, ty))
+        .map(|((kind, name, ty_params), ty)| (kind, name, ty_params, ty))
 }
 
 fn type_alias_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
@@ -505,9 +516,10 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     type_alias_payload_parser()
-        .map_with(|(name, ty_params, ty), e| ParsedTopItem::TypeAlias {
+        .map_with(|(kind, name, ty_params, ty), e| ParsedTopItem::TypeAlias {
             span: e.span(),
             leading_comments: Vec::new(),
+            kind,
             name,
             ty_params,
             ty,
@@ -825,13 +837,16 @@ where
         .map(ParsedContractItem::Function)
         .boxed();
     let type_alias = type_alias_payload_parser()
-        .map_with(|(name, ty_params, ty), e| ParsedContractItem::TypeAlias {
-            span: e.span(),
-            leading_comments: Vec::new(),
-            name,
-            ty_params,
-            ty,
-        })
+        .map_with(
+            |(kind, name, ty_params, ty), e| ParsedContractItem::TypeAlias {
+                span: e.span(),
+                leading_comments: Vec::new(),
+                kind,
+                name,
+                ty_params,
+                ty,
+            },
+        )
         .boxed();
     let adt = adt_payload_parser()
         .map_with(|(name, ty_params, ctors), e| ParsedContractItem::Adt {

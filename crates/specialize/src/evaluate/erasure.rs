@@ -222,7 +222,10 @@ impl<'db> Visitor<'db> for Evaluator<'db> {
             MonoExprKind::Conversion {
                 expr: inner,
                 ty,
-                kind: ConversionKind::Identity,
+                kind:
+                    ConversionKind::Identity
+                    | ConversionKind::ValueTypeWrap
+                    | ConversionKind::ValueTypeUnwrap,
             } => {
                 self.visit_expr(inner);
                 self.check_erasure_ty("explicit conversion", ty.ty(), Some(expr.span));

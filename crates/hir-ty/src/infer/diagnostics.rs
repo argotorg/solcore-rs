@@ -401,6 +401,24 @@ pub enum TypeckDiagnostic {
         /// Projected field name.
         field: String,
     },
+    /// `SC0247`: a user-defined value type has no valid elementary
+    /// representation.
+    InvalidValueTypeDefinition {
+        /// Value-type declaration span.
+        span: LabelSpan,
+        /// Declared value-type name.
+        name: String,
+        /// Semantic restriction that was violated.
+        reason: String,
+    },
+    /// `SC0248`: a user-defined value type has a storage representation that
+    /// the backend cannot encode and decode safely.
+    UnsupportedValueTypeStorage {
+        /// Source span for the storage read or write.
+        span: LabelSpan,
+        /// User-defined value-type name.
+        ty: String,
+    },
     /// `SC0302`: a match does not cover every possible scrutinee value.
     NonExhaustiveMatch {
         /// Source span for the match scrutinee.
@@ -886,6 +904,32 @@ impl TypeckDiagnostic {
                 )
                 .with_help(
                     "access named fields only on local values; contract-storage struct layout is not implemented",
+                )
+            }
+            TypeckDiagnostic::InvalidValueTypeDefinition { span, name, reason } => {
+                Diagnostic::error(format!(
+                    "invalid user-defined value type `{name}`: {reason}"
+                ))
+                .with_code(DiagnosticCode::TYPECK_INVALID_VALUE_TYPE_DEFINITION)
+                .with_primary_label_span(
+                    span.clone(),
+                    Some("invalid user-defined value type"),
+                )
+                .with_note(
+                    "value types are nominal, non-generic wrappers over one Solidity elementary value type",
+                )
+            }
+            TypeckDiagnostic::UnsupportedValueTypeStorage { span, ty } => {
+                Diagnostic::error(format!(
+                    "user-defined value type `{ty}` cannot be stored by this backend"
+                ))
+                .with_code(DiagnosticCode::TYPECK_UNSUPPORTED_VALUE_TYPE_STORAGE)
+                .with_primary_label_span(
+                    span.clone(),
+                    Some("unsupported value-type storage representation"),
+                )
+                .with_note(
+                    "contract storage currently supports only value types with a one-word representation",
                 )
             }
             TypeckDiagnostic::NonExhaustiveMatch { span, missing } => {
@@ -1665,6 +1709,7 @@ fn user_type_expected_arity<'db>(
         // Type aliases already have dedicated normalization diagnostics in
         // this crate; keep this pass scoped to kind-checking constructors.
         hir_nameres::DefResolutionKind::TypeAlias => None,
+        hir_nameres::DefResolutionKind::ValueType => Some(0),
         hir_nameres::DefResolutionKind::Contract => find_contract_arity(db, module, def),
         hir_nameres::DefResolutionKind::Function
         | hir_nameres::DefResolutionKind::Class
@@ -2119,6 +2164,13 @@ pub(super) fn type_ctor_from_resolution<'db>(
         } => Some(TyCtor::User(crate::UserTyCtor {
             def,
             kind: UserTyCtorKind::Alias,
+        })),
+        hir_nameres::Resolution::Def {
+            def,
+            kind: hir_nameres::DefResolutionKind::ValueType,
+        } => Some(TyCtor::User(crate::UserTyCtor {
+            def,
+            kind: UserTyCtorKind::ValueType,
         })),
         hir_nameres::Resolution::Def {
             def,

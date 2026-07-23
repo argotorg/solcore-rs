@@ -491,6 +491,224 @@ contract Sample {
 }
 
 #[test]
+fn public_value_types_are_rejected_from_the_external_abi() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+type Wad is word;
+
+contract Vault {
+  function set(amount: Wad) public returns (Wad) { return amount; }
+}
+"#,
+    );
+    let contract = contract_named(&db, module, "Vault");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert_eq!(surface.methods[0].signature, "set(<unsupported>)");
+    assert_eq!(surface.methods[0].inputs[0].ty.to_string(), "<unsupported>");
+    assert_eq!(
+        surface.methods[0].outputs[0].ty.to_string(),
+        "<unsupported>"
+    );
+    assert!(
+        surface.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0231")
+                && diagnostic.message.contains("user-defined value types")
+        }),
+        "{:?}",
+        surface.diagnostics
+    );
+    assert!(
+        contract_abi_json(&db, module, contract)
+            .expect_err("UDVT must fail closed in ABI JSON")
+            .contains("unsupported type")
+    );
+}
+
+#[test]
+fn canonical_std_uint256_value_type_typechecks_internally_but_is_not_public_abi_safe() {
+    let (mut db, key) = db_with_main(
+        r#"
+import std;
+
+type Wad is uint256;
+
+function roundtrip(amount: Wad) returns (Wad) {
+  return (amount as uint256) as Wad;
+}
+"#,
+    );
+    insert_real_std_modules(&mut db);
+    let module_id = module_id_from_key(&db, &key);
+    let diagnostics = module_typeck_diagnostics(&db, module_id);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+
+    let abi_key = ModuleKey {
+        library: LibraryId::Main,
+        logical_path: vec!["abi".to_owned()],
+    };
+    insert_module_source(
+        &mut db,
+        abi_key.clone(),
+        "/main/abi.solc",
+        r#"
+import std;
+
+type Wad is uint256;
+
+contract Vault {
+  function echo(amount: Wad) public returns (Wad) {
+    return amount;
+  }
+}
+"#,
+    );
+    let file = db.module_files[&abi_key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "Vault");
+    let surface = contract_dispatch_surface(&db, module, contract);
+    assert_eq!(surface.methods[0].signature, "echo(<unsupported>)");
+    assert_eq!(surface.methods[0].inputs[0].ty.to_string(), "<unsupported>");
+    assert_eq!(
+        surface.methods[0].outputs[0].ty.to_string(),
+        "<unsupported>"
+    );
+    assert!(
+        surface
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0231")),
+        "{:?}",
+        surface.diagnostics
+    );
+    assert!(contract_abi_json(&db, module, contract).is_err());
+}
+
+#[test]
+fn imported_value_types_are_rejected_recursively_from_methods_and_constructors() {
+    let (mut db, key) = db_with_main(
+        r#"
+import { Wad } from types;
+
+contract Vault {
+  constructor(seed: (word, (Wad, bool))) {}
+
+  function nested(value: (word, (Wad, bool))) public returns ((bool, Wad)) {
+    revert;
+  }
+}
+"#,
+    );
+    insert_module_source(
+        &mut db,
+        ModuleKey {
+            library: LibraryId::Main,
+            logical_path: vec!["types".to_owned()],
+        },
+        "/main/types.solc",
+        "export { Wad }; type Wad is word;",
+    );
+
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "Vault");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    let DispatchConstructor::Explicit { inputs, .. } = &surface.constructor else {
+        panic!("expected explicit constructor: {:?}", surface.constructor);
+    };
+    assert_eq!(inputs[0].ty.to_string(), "<unsupported>");
+    assert_eq!(surface.methods[0].signature, "nested(<unsupported>)");
+    assert_eq!(surface.methods[0].inputs[0].ty.to_string(), "<unsupported>");
+    assert_eq!(surface.methods[0].outputs[0].ty.to_string(), "bool");
+    assert_eq!(
+        surface.methods[0].outputs[1].ty.to_string(),
+        "<unsupported>"
+    );
+    assert!(
+        surface
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_deref() == Some("SC0231"))
+            .count()
+            >= 4,
+        "{:?}",
+        surface.diagnostics
+    );
+    assert!(contract_abi_json(&db, module, contract).is_err());
+}
+
+#[test]
+fn internal_value_types_do_not_poison_an_otherwise_supported_public_abi() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+type Wad is word;
+
+contract Vault {
+  function hidden(value: Wad) returns (Wad) {
+    return value;
+  }
+
+  function echo(value: word) public returns (word) {
+    return value;
+  }
+}
+"#,
+    );
+    let contract = contract_named(&db, module, "Vault");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert_eq!(surface.methods.len(), 1);
+    assert_eq!(surface.methods[0].name, "echo");
+    assert_eq!(surface.methods[0].signature, "echo(uint256)");
+    assert!(
+        surface
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_deref() != Some("SC0231")),
+        "{:?}",
+        surface.diagnostics
+    );
+    assert!(contract_abi_json(&db, module, contract).is_ok());
+}
+
+#[test]
+fn public_value_type_reports_sc0231_alongside_solver_failure() {
+    let (mut db, key) = db_with_main(
+        r#"
+import std;
+import std.dispatch;
+
+type Wad is word;
+
+contract Vault {
+  function echo(value: Wad) public returns (Wad) {
+    return value;
+  }
+}
+"#,
+    );
+    insert_real_std_modules(&mut db);
+    let diagnostics = diagnostics_for_module(&db, &key);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0207")),
+        "{diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code.as_deref() == Some("SC0231")),
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
 fn named_return_typechecks_and_preserves_abi_output_names() {
     let typeck_diagnostics = diagnostics(
         r#"

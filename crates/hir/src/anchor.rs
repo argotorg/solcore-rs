@@ -60,6 +60,8 @@ pub enum DefKind {
     FuncBody,
     /// Type alias declaration.
     TypeAlias,
+    /// User-defined value type declaration.
+    ValueType,
     /// Algebraic data type declaration.
     Adt,
     /// Algebraic data constructor.

@@ -244,6 +244,7 @@ impl<'db> InferCtx<'db> {
                 hir_nameres::DefResolutionKind::Function => unreachable!("handled above"),
                 hir_nameres::DefResolutionKind::Adt
                 | hir_nameres::DefResolutionKind::TypeAlias
+                | hir_nameres::DefResolutionKind::ValueType
                 | hir_nameres::DefResolutionKind::Contract
                 | hir_nameres::DefResolutionKind::Instance => {
                     self.namespace_as_value(body, expr, ValueNamespace::Type, position)

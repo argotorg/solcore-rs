@@ -628,6 +628,7 @@ fn user_type_ctor<'db>(
     let kind = match kind {
         hir_nameres::DefResolutionKind::Adt => UserTyCtorKind::Adt,
         hir_nameres::DefResolutionKind::TypeAlias => UserTyCtorKind::Alias,
+        hir_nameres::DefResolutionKind::ValueType => UserTyCtorKind::ValueType,
         hir_nameres::DefResolutionKind::Contract => UserTyCtorKind::Contract,
         hir_nameres::DefResolutionKind::Function
         | hir_nameres::DefResolutionKind::Class

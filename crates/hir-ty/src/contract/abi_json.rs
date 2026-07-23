@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use hir::ast::item::{ContractDef, Module};
 
 use super::{
-    abi::{AbiParam, AbiType},
+    abi::{AbiParam, AbiType, abi_params_contain_unsupported},
     dispatch::{DispatchConstructor, DispatchFallback, contract_dispatch_surface},
 };
 use crate::Db;
@@ -17,6 +17,22 @@ pub fn contract_abi_json<'db>(
     contract: ContractDef<'db>,
 ) -> Result<String, String> {
     let surface = contract_dispatch_surface(db, module, contract);
+    if surface.methods.iter().any(|method| {
+        abi_params_contain_unsupported(&method.inputs)
+            || abi_params_contain_unsupported(&method.outputs)
+    }) || matches!(
+        &surface.constructor,
+        DispatchConstructor::Explicit { inputs, .. }
+            if abi_params_contain_unsupported(inputs)
+    ) || matches!(
+        &surface.fallback,
+        DispatchFallback::Explicit {
+            inputs, outputs, ..
+        } if abi_params_contain_unsupported(inputs)
+            || abi_params_contain_unsupported(outputs)
+    ) {
+        return Err("cannot represent unsupported type in ABI".to_owned());
+    }
     let mut entries = Vec::new();
     if let DispatchConstructor::Explicit {
         source_index,
