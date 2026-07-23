@@ -1,5 +1,5 @@
 use chumsky::{input::ValueInput, prelude::*};
-use hir::ast::item::FuncKind;
+use hir::ast::item::{ContractKind, FuncKind};
 
 use super::{
     common::*,
@@ -296,7 +296,7 @@ where
             kind: FuncKind::Function,
             leading_comments: Vec::new(),
             sig,
-            body_span,
+            body_span: Some(body_span),
         })
         .labelled("function definition")
         .as_context()
@@ -309,7 +309,7 @@ fn function_member_parser<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let body_or_semi = body_span_parser().or(just(Token::Semi).map_with(|_, e| e.span()));
+    let body_or_semi = body_span_parser().map(Some).or(just(Token::Semi).to(None));
     signature_parser(context)
         .then(body_or_semi)
         .map_with(|(sig, body_span), e| ParsedFunctionDef {
@@ -364,7 +364,7 @@ where
                     ret: None,
                     ret_names: Vec::new(),
                 },
-                body_span,
+                body_span: Some(body_span),
             },
         )
         .labelled("constructor definition")
@@ -442,7 +442,7 @@ where
                         ret,
                         ret_names,
                     },
-                    body_span,
+                    body_span: Some(body_span),
                 }
             },
         )
@@ -460,7 +460,7 @@ where
             span: def.span,
             leading_comments: def.leading_comments,
             sig: def.sig,
-            body_span: def.body_span,
+            body_span: def.body_span.expect("top-level functions require a body"),
         })
         .labelled("function declaration")
         .as_context()
@@ -901,9 +901,9 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     let shell = choice((
-        just(Token::Contract),
-        just(Token::Interface),
-        just(Token::Library),
+        just(Token::Contract).to(ContractKind::Contract),
+        just(Token::Interface).to(ContractKind::Interface),
+        just(Token::Library).to(ContractKind::Library),
     ));
     let members = contract_member_parser()
         .repeated()
@@ -911,10 +911,78 @@ where
         .delimited_by(just(Token::LBrace), just(Token::RBrace));
 
     shell
-        .ignore_then(ident_parser())
+        .then(ident_parser())
         .then(type_param_list_parser())
         .then(members)
-        .map_with(|((name, ty_params), members), e| {
+        .validate(|value, _, emitter| {
+            let (((kind, _), _), members) = &value;
+            for member in members {
+                let invalid = match member {
+                    ParsedContractMember::Field(field) if *kind != ContractKind::Contract => {
+                        Some((
+                            field.span,
+                            format!(
+                                "{} declarations cannot contain storage fields",
+                                kind.keyword()
+                            ),
+                        ))
+                    }
+                    ParsedContractMember::Item(ParsedContractItem::Function(function)) => {
+                        match (*kind, function.kind, function.body_span.is_some()) {
+                            (
+                                ContractKind::Interface,
+                                FuncKind::Constructor | FuncKind::Fallback,
+                                _,
+                            ) => Some((
+                                function.span,
+                                format!(
+                                    "interface declarations cannot contain {} functions",
+                                    match function.kind {
+                                        FuncKind::Constructor => "constructor",
+                                        FuncKind::Fallback => "fallback",
+                                        FuncKind::Function => unreachable!(),
+                                    }
+                                ),
+                            )),
+                            (
+                                ContractKind::Library,
+                                FuncKind::Constructor | FuncKind::Fallback,
+                                _,
+                            ) => Some((
+                                function.span,
+                                format!(
+                                    "library declarations cannot contain {} functions",
+                                    match function.kind {
+                                        FuncKind::Constructor => "constructor",
+                                        FuncKind::Fallback => "fallback",
+                                        FuncKind::Function => unreachable!(),
+                                    }
+                                ),
+                            )),
+                            (ContractKind::Interface, FuncKind::Function, true) => Some((
+                                function.span,
+                                "interface functions must be prototypes ending in `;`".to_owned(),
+                            )),
+                            (
+                                ContractKind::Contract | ContractKind::Library,
+                                FuncKind::Function,
+                                false,
+                            ) => Some((
+                                function.span,
+                                format!("{} functions must provide a body", kind.keyword()),
+                            )),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some((span, message)) = invalid {
+                    emitter.emit(Rich::custom(span, message));
+                }
+            }
+            value
+        })
+        .map_with(|(((kind, name), ty_params), members), e| {
             let mut fields = Vec::new();
             let mut items = Vec::new();
             for member in members {
@@ -926,6 +994,7 @@ where
             ParsedTopItem::Contract {
                 span: e.span(),
                 leading_comments: Vec::new(),
+                kind,
                 name,
                 ty_params,
                 fields,

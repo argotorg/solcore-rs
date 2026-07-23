@@ -405,8 +405,12 @@ impl<'db> ItemScopeBuilder<'db> {
             None,
             TypeDeclFamily::Contract,
         );
-        let mut contract =
-            ContractScopeBuilder::new(self.db, def.def_id_value(self.db), contract_name);
+        let mut contract = ContractScopeBuilder::new(
+            self.db,
+            def.def_id_value(self.db),
+            def.kind(self.db).keyword(),
+            contract_name,
+        );
         for (index, field) in def.fields(self.db).iter().enumerate() {
             contract.add_field(field, index as u32);
         }
@@ -420,6 +424,32 @@ impl<'db> ItemScopeBuilder<'db> {
         }
         let (contract_scope, diagnostics) = contract.finish();
         self.diagnostics.extend(diagnostics);
+        if def.kind(self.db) == ContractKind::Library {
+            for entry in &contract_scope.types {
+                self.types.push(
+                    self.db,
+                    &mut self.diagnostics,
+                    DuplicatePolicy::Silent,
+                    ScopeEntry {
+                        name: qualify(&contract_scope.name, &entry.name),
+                        span: entry.span,
+                        resolution: entry.resolution.clone(),
+                    },
+                );
+            }
+            for entry in &contract_scope.terms {
+                self.terms.push(
+                    self.db,
+                    &mut self.diagnostics,
+                    DuplicatePolicy::Silent,
+                    ScopeEntry {
+                        name: qualify(&contract_scope.name, &entry.name),
+                        span: entry.span,
+                        resolution: entry.resolution.clone(),
+                    },
+                );
+            }
+        }
         self.contracts.push(contract_scope);
     }
 
@@ -491,8 +521,8 @@ struct ContractScopeBuilder<'db> {
 }
 
 impl<'db> ContractScopeBuilder<'db> {
-    fn new(db: &'db dyn Db, contract: DefId<'db>, name: String) -> Self {
-        let context = format!("contract {name}");
+    fn new(db: &'db dyn Db, contract: DefId<'db>, declaration_keyword: &str, name: String) -> Self {
+        let context = format!("{declaration_keyword} {name}");
         Self {
             db,
             contract,

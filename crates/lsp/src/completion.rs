@@ -4,7 +4,7 @@ use hir::{
     anchor::DefId,
     ast::{
         function::{FuncParam, PatKind, StmtKind},
-        item::{ContractItem, Item, Module},
+        item::{ContractItem, ContractKind, Item, Module},
     },
     input::SourceFile,
     nameres::{
@@ -109,7 +109,7 @@ pub fn handle_completion(
 
     let mut completions = CompletionAccumulator::default();
     add_keyword_completions(&mut completions);
-    add_item_scope_completions(&scope, &mut completions);
+    add_item_scope_completions(db, &scope, &mut completions);
     add_imported_completions(db, &env, &mut completions);
 
     if let Some(owner) = owner {
@@ -184,13 +184,13 @@ fn add_qualified_completions<'db>(
     context: &QualifiedCompletionContext,
     completions: &mut CompletionAccumulator,
 ) {
-    add_qualified_scope_entries(&scope.terms, context, completions);
-    add_qualified_scope_entries(&scope.types, context, completions);
-    add_qualified_scope_entries(&scope.modules, context, completions);
+    add_qualified_scope_entries(db, &scope.terms, context, completions);
+    add_qualified_scope_entries(db, &scope.types, context, completions);
+    add_qualified_scope_entries(db, &scope.modules, context, completions);
 
     if let Some(contract) = enclosing_contract.and_then(|contract| scope.contract_scope(contract)) {
-        add_qualified_scope_entries(&contract.terms, context, completions);
-        add_qualified_scope_entries(&contract.types, context, completions);
+        add_qualified_scope_entries(db, &contract.terms, context, completions);
+        add_qualified_scope_entries(db, &contract.types, context, completions);
     }
 
     for namespace in [Namespace::Term, Namespace::Type, Namespace::Module] {
@@ -201,17 +201,19 @@ fn add_qualified_completions<'db>(
             let resolution = imports.imported(db, namespace, &name);
             let kind = resolution.as_ref().map_or_else(
                 || completion_kind_for_namespace(namespace),
-                completion_kind_for_resolution,
+                |resolution| completion_kind_for_resolution(db, resolution),
             );
-            let detail = resolution
-                .as_ref()
-                .map_or_else(|| detail_for_namespace(namespace), detail_for_resolution);
+            let detail = resolution.as_ref().map_or_else(
+                || detail_for_namespace(namespace),
+                |resolution| detail_for_resolution(db, resolution),
+            );
             completions.push(member.to_owned(), kind, Some(detail));
         }
     }
 }
 
 fn add_qualified_scope_entries(
+    db: &vfs::AnalysisHost,
     entries: &hir::nameres::NamespaceTable<'_>,
     context: &QualifiedCompletionContext,
     completions: &mut CompletionAccumulator,
@@ -222,8 +224,8 @@ fn add_qualified_scope_entries(
         };
         completions.push(
             member.to_owned(),
-            completion_kind_for_resolution(&entry.resolution),
-            Some(detail_for_resolution(&entry.resolution)),
+            completion_kind_for_resolution(db, &entry.resolution),
+            Some(detail_for_resolution(db, &entry.resolution)),
         );
     }
 }
@@ -305,25 +307,30 @@ fn add_keyword_completions(completions: &mut CompletionAccumulator) {
 }
 
 fn add_item_scope_completions<'db>(
+    db: &'db vfs::AnalysisHost,
     scope: &hir::nameres::ItemScopeFacts<'db>,
     completions: &mut CompletionAccumulator,
 ) {
     for entry in &scope.terms {
-        add_scope_entry_completion(entry, completions);
+        add_scope_entry_completion(db, entry, completions);
     }
     for entry in &scope.types {
-        add_scope_entry_completion(entry, completions);
+        add_scope_entry_completion(db, entry, completions);
     }
     for entry in &scope.modules {
-        add_scope_entry_completion(entry, completions);
+        add_scope_entry_completion(db, entry, completions);
     }
 }
 
-fn add_scope_entry_completion(entry: &ScopeEntry<'_>, completions: &mut CompletionAccumulator) {
+fn add_scope_entry_completion(
+    db: &vfs::AnalysisHost,
+    entry: &ScopeEntry<'_>,
+    completions: &mut CompletionAccumulator,
+) {
     completions.push(
         entry.name.clone(),
-        completion_kind_for_resolution(&entry.resolution),
-        Some(detail_for_resolution(&entry.resolution)),
+        completion_kind_for_resolution(db, &entry.resolution),
+        Some(detail_for_resolution(db, &entry.resolution)),
     );
 }
 
@@ -340,11 +347,12 @@ fn add_imported_completions<'db>(
             let resolution = imports.imported(db, namespace, &name);
             let kind = resolution.as_ref().map_or_else(
                 || completion_kind_for_namespace(namespace),
-                completion_kind_for_resolution,
+                |resolution| completion_kind_for_resolution(db, resolution),
             );
-            let detail = resolution
-                .as_ref()
-                .map_or_else(|| detail_for_namespace(namespace), detail_for_resolution);
+            let detail = resolution.as_ref().map_or_else(
+                || detail_for_namespace(namespace),
+                |resolution| detail_for_resolution(db, resolution),
+            );
             completions.push(name, kind, Some(detail));
         }
     }
@@ -388,10 +396,10 @@ fn add_body_completions<'db>(
     }
     if let Some(contract) = enclosing_contract.and_then(|contract| scope.contract_scope(contract)) {
         for entry in &contract.terms {
-            add_scope_entry_completion(entry, completions);
+            add_scope_entry_completion(db, entry, completions);
         }
         for entry in &contract.types {
-            add_scope_entry_completion(entry, completions);
+            add_scope_entry_completion(db, entry, completions);
         }
         for field in &contract.fields {
             completions.push(field.name.clone(), CompletionItemKind::FIELD, Some("field"));
@@ -485,7 +493,10 @@ fn detail_for_namespace(namespace: Namespace) -> &'static str {
     }
 }
 
-fn completion_kind_for_resolution(resolution: &Resolution<'_>) -> CompletionItemKind {
+fn completion_kind_for_resolution(
+    db: &vfs::AnalysisHost,
+    resolution: &Resolution<'_>,
+) -> CompletionItemKind {
     match resolution {
         Resolution::Def {
             kind: DefResolutionKind::Function,
@@ -493,8 +504,12 @@ fn completion_kind_for_resolution(resolution: &Resolution<'_>) -> CompletionItem
         } => CompletionItemKind::FUNCTION,
         Resolution::Def {
             kind: DefResolutionKind::Contract,
-            ..
-        } => CompletionItemKind::CLASS,
+            def,
+        } => match contract_kind_for_def(db, *def) {
+            Some(ContractKind::Interface) => CompletionItemKind::INTERFACE,
+            Some(ContractKind::Library) => CompletionItemKind::MODULE,
+            Some(ContractKind::Contract) | None => CompletionItemKind::CLASS,
+        },
         Resolution::Def {
             kind: DefResolutionKind::Adt,
             ..
@@ -526,7 +541,7 @@ fn completion_kind_for_resolution(resolution: &Resolution<'_>) -> CompletionItem
     }
 }
 
-fn detail_for_resolution(resolution: &Resolution<'_>) -> &'static str {
+fn detail_for_resolution(db: &vfs::AnalysisHost, resolution: &Resolution<'_>) -> &'static str {
     match resolution {
         Resolution::Def {
             kind: DefResolutionKind::Function,
@@ -534,8 +549,10 @@ fn detail_for_resolution(resolution: &Resolution<'_>) -> &'static str {
         } => "function",
         Resolution::Def {
             kind: DefResolutionKind::Contract,
-            ..
-        } => "contract",
+            def,
+        } => contract_kind_for_def(db, *def)
+            .unwrap_or(ContractKind::Contract)
+            .keyword(),
         Resolution::Def {
             kind: DefResolutionKind::Adt,
             ..
@@ -571,6 +588,14 @@ fn detail_for_resolution(resolution: &Resolution<'_>) -> &'static str {
         Resolution::DotCtorDeferred => "constructor",
         Resolution::Err => "unresolved",
     }
+}
+
+fn contract_kind_for_def(db: &vfs::AnalysisHost, def: DefId<'_>) -> Option<ContractKind> {
+    let module = parser::parse_file_to_hir(db, def.file(db)).module(db);
+    module.items(db).iter().find_map(|item| match item {
+        Item::ContractDef(contract) if contract.def_id_value(db) == def => Some(contract.kind(db)),
+        _ => None,
+    })
 }
 
 fn kind_rank(kind: Option<CompletionItemKind>) -> u8 {
@@ -664,6 +689,45 @@ function main(input: word) returns (word) {
         assert_completion(&items, "storage", CompletionItemKind::KEYWORD);
         assert_completion(&items, "while", CompletionItemKind::KEYWORD);
         assert_no_completion(&items, "forall");
+    }
+
+    #[test]
+    fn completion_preserves_contract_like_shell_kinds() {
+        let source = "\
+interface Reader {
+  function read(key: word) external view returns (word);
+}
+
+library Helpers {
+  function identity(value: word) internal pure returns (word) { return value; }
+}
+
+function main() returns (word) {
+  return 1;
+}
+";
+        let (world, uri) = world_with_main(source);
+        let offset = source.rfind('1').expect("literal") as u32;
+        let position = world
+            .line_index(&uri)
+            .expect("line index")
+            .byte_to_position(offset);
+        let items =
+            completion_items(handle_completion(&world, &uri, position).expect("completion"));
+
+        let reader = items
+            .iter()
+            .find(|item| item.label == "Reader")
+            .expect("interface completion");
+        assert_eq!(reader.kind, Some(CompletionItemKind::INTERFACE));
+        assert_eq!(reader.detail.as_deref(), Some("interface"));
+
+        let helpers = items
+            .iter()
+            .find(|item| item.label == "Helpers")
+            .expect("library completion");
+        assert_eq!(helpers.kind, Some(CompletionItemKind::MODULE));
+        assert_eq!(helpers.detail.as_deref(), Some("library"));
     }
 
     #[test]

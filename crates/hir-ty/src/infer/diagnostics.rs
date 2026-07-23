@@ -1884,6 +1884,9 @@ fn dispatch_reserved_type_names<'db>(
         let Item::ContractDef(contract) = item else {
             continue;
         };
+        if contract.kind(db) != ContractKind::Contract {
+            continue;
+        }
         if contract.items(db).iter().any(|item| {
             matches!(
                 item,

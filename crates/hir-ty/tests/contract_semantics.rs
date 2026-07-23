@@ -1846,3 +1846,64 @@ impl Generic<Manual, word> {}
             .is_none()
     );
 }
+
+#[test]
+fn interface_prototypes_are_typechecked_as_signatures_without_empty_bodies() {
+    let (db, key) = db_with_main(
+        r#"
+interface Reader {
+  function read(key: word) external view returns (word);
+}
+"#,
+    );
+    let module_id = module_id_from_key(&db, &key);
+    let diagnostics = module_typeck_diagnostics(&db, module_id);
+    assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+}
+
+#[test]
+fn interface_prototype_signatures_report_type_lowering_errors() {
+    let (db, key) = db_with_main(
+        r#"
+interface Reader {
+  function read(key: Int) external view returns (word);
+}
+"#,
+    );
+    let module_id = module_id_from_key(&db, &key);
+    let diagnostics = module_typeck_diagnostics(&db, module_id);
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            let diagnostic = diagnostic.lower(&db);
+            diagnostic.code.as_deref() == Some("SC0229")
+                && diagnostic
+                    .message
+                    .contains("trait name used as type: `Int`")
+        }),
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
+fn interface_prototypes_retain_abi_duplicate_signature_diagnostics() {
+    let (db, key) = db_with_main(
+        r#"
+interface Reader {
+  function read(key: word) external view returns (word);
+  function read(key: word) external view returns (word);
+}
+"#,
+    );
+    let module_id = module_id_from_key(&db, &key);
+    let diagnostics = module_typeck_diagnostics(&db, module_id);
+    assert!(
+        diagnostics.iter().any(|diagnostic| {
+            let diagnostic = diagnostic.lower(&db);
+            diagnostic.code.as_deref() == Some("SC0230")
+                && diagnostic
+                    .message
+                    .contains("duplicate public ABI signature in interface `Reader`")
+        }),
+        "{diagnostics:#?}"
+    );
+}

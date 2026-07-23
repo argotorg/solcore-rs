@@ -36,8 +36,8 @@ use crate::{
             Stmt, StmtKind,
         },
         item::{
-            AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FunctionDef, InstanceDef, Item,
-            Module, TypeAlias, TypeAliasKind,
+            AdtDef, ClassDef, ContractDef, ContractItem, ContractKind, FieldDef, FunctionDef,
+            InstanceDef, Item, Module, TypeAlias, TypeAliasKind,
         },
         ty::{PredRef, TypeRef, TypeRefKind},
     },

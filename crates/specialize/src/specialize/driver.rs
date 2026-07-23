@@ -352,6 +352,9 @@ impl<'db> Driver<'db> {
             let Item::ContractDef(contract) = item else {
                 continue;
             };
+            if contract.kind(self.db) != ContractKind::Contract {
+                continue;
+            }
             has_contract = true;
             // Constructor declarations are replaced by deployment wrappers in
             // effective HIR. Keep ABI/source metadata anchored to the source
@@ -526,7 +529,11 @@ impl<'db> Driver<'db> {
             let main_defs = self
                 .functions
                 .values()
-                .filter(|info| ident_text(self.db, &info.function.sig(self.db).name) == "main")
+                .filter(|info| {
+                    matches!(&info.kind, FunctionInfoKind::Source)
+                        && info.module.def_id_value(self.db) == self.module.def_id_value(self.db)
+                        && ident_text(self.db, &info.function.sig(self.db).name) == "main"
+                })
                 .map(|info| info.function.def_id_value(self.db))
                 .collect::<Vec<_>>();
             for def in main_defs {

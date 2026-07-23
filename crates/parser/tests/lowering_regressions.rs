@@ -3,7 +3,7 @@ use hir::{
     ast::{
         SourceComment, SourceCommentKind,
         function::{AssignOp, BinOp, ExprKind, FuncParam, StmtKind},
-        item::{ContractItem, FunctionDef, Item, Module, TypeAliasKind},
+        item::{ContractDef, ContractItem, ContractKind, FunctionDef, Item, Module, TypeAliasKind},
         ty::TypeRefKind,
     },
     diag::{AnyDiagnostic, Diagnostic},
@@ -80,6 +80,19 @@ fn contract_function<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> F
             _ => None,
         })
         .expect("contract function")
+}
+
+fn contract_named<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> ContractDef<'db> {
+    module
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ContractDef(contract) if contract.name_elem(db).atom().text(db) == name => {
+                Some(*contract)
+            }
+            _ => None,
+        })
+        .expect("contract-like declaration")
 }
 
 fn assert_comment_texts(comments: &[SourceComment], expected: &[&str]) {
@@ -998,4 +1011,110 @@ function fallbackHandler() {}
         diagnostics.is_empty(),
         "keyword literals and the special fallback declaration should parse: {diagnostics:#?}"
     );
+}
+
+#[test]
+fn contract_shell_kinds_and_prototype_bodies_survive_lowering() {
+    let db = TestDb::default();
+    let source = r#"
+contract C {
+  function run() {}
+}
+
+interface I {
+  function read(key: word) external view returns (word);
+}
+
+library L {
+  function add(x: word, y: word) internal pure returns (word) { return x + y; }
+}
+"#;
+    let (file, module) = parse_module(&db, "contract-shell-kinds", source);
+    assert!(diagnostics(&db, file).is_empty());
+
+    let contract = contract_named(&db, module, "C");
+    let interface = contract_named(&db, module, "I");
+    let library = contract_named(&db, module, "L");
+    assert_eq!(contract.kind(&db), ContractKind::Contract);
+    assert_eq!(interface.kind(&db), ContractKind::Interface);
+    assert_eq!(library.kind(&db), ContractKind::Library);
+
+    let has_body = |declaration: ContractDef<'_>| {
+        declaration
+            .items(&db)
+            .iter()
+            .find_map(|item| match item {
+                ContractItem::FunctionDef(function) => Some(function.body(&db)),
+                _ => None,
+            })
+            .expect("function member")
+            .is_some()
+    };
+    assert!(has_body(contract));
+    assert!(!has_body(interface));
+    assert!(has_body(library));
+}
+
+#[test]
+fn contract_shells_reject_members_that_cannot_be_implemented() {
+    let db = TestDb::default();
+    let cases = [
+        (
+            "interface-field",
+            "interface Bad { value: word; }",
+            "interface declarations cannot contain storage fields",
+        ),
+        (
+            "interface-body",
+            "interface Bad { function f() external {} }",
+            "interface functions must be prototypes ending in `;`",
+        ),
+        (
+            "interface-constructor",
+            "interface Bad { constructor() {} }",
+            "interface declarations cannot contain constructor functions",
+        ),
+        (
+            "interface-fallback",
+            "interface Bad { fallback() external {} }",
+            "interface declarations cannot contain fallback functions",
+        ),
+        (
+            "library-field",
+            "library Bad { value: word; }",
+            "library declarations cannot contain storage fields",
+        ),
+        (
+            "library-prototype",
+            "library Bad { function f(); }",
+            "library functions must provide a body",
+        ),
+        (
+            "library-constructor",
+            "library Bad { constructor() {} }",
+            "library declarations cannot contain constructor functions",
+        ),
+        (
+            "library-fallback",
+            "library Bad { fallback() external {} }",
+            "library declarations cannot contain fallback functions",
+        ),
+        (
+            "contract-prototype",
+            "contract Bad { function f(); }",
+            "contract functions must provide a body",
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        let file = source_file(&db, name, source);
+        let messages = diagnostics(&db, file)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| message == expected),
+            "missing `{expected}` for `{source}`: {messages:#?}"
+        );
+    }
 }

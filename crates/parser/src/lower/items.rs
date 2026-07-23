@@ -615,7 +615,7 @@ pub(super) fn lower_function<'db>(
     kind: item::FuncKind,
     leading_comments: Vec<ParsedSourceComment<'_>>,
     sig: ParsedFuncSig<'_>,
-    body_span: LexSpan,
+    body_span: Option<LexSpan>,
 ) -> item::FunctionDef<'db> {
     let func_name = sig.name.0;
     let func_def = ctx.alloc_def_with_location(DefKind::Function, Some(func_name), span.start);
@@ -624,40 +624,42 @@ pub(super) fn lower_function<'db>(
     let lowered_sig = lower_func_sig(ctx.db, func_anchor, span.start, sig);
     let func_span = span_from_absolute(func_anchor, span, span.start);
 
-    let body_def = ctx.with_owner(func_def, |ctx| {
-        ctx.alloc_def_with_location(DefKind::FuncBody, Some(func_name), body_span.start)
-    });
-    let body_anchor = AnchorId::def(ctx.db, body_def);
+    let body = body_span.map(|body_span| {
+        let body_def = ctx.with_owner(func_def, |ctx| {
+            ctx.alloc_def_with_location(DefKind::FuncBody, Some(func_name), body_span.start)
+        });
+        let body_anchor = AnchorId::def(ctx.db, body_def);
 
-    let mut arenas = BodyArenas::new();
-    let mut top_level_stmts = named_return_bindings(ctx.db, &lowered_sig)
-        .into_iter()
-        .map(|(name, ty)| {
-            arenas.alloc_stmt(function::Stmt {
-                span: name.span(ctx.db),
-                kind: function::StmtKind::Let {
-                    comptime: None,
-                    name,
-                    ty: Some(ty),
-                    init: None,
-                },
+        let mut arenas = BodyArenas::new();
+        let mut top_level_stmts = named_return_bindings(ctx.db, &lowered_sig)
+            .into_iter()
+            .map(|(name, ty)| {
+                arenas.alloc_stmt(function::Stmt {
+                    span: name.span(ctx.db),
+                    kind: function::StmtKind::Let {
+                        comptime: None,
+                        name,
+                        ty: Some(ty),
+                        init: None,
+                    },
+                })
             })
-        })
-        .collect::<Vec<_>>();
-    top_level_stmts.extend(ctx.with_owner(body_def, |ctx| {
-        ctx.lower_body_statements(body_anchor, body_span, &mut arenas)
-    }));
-    let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
-    let (stmts, exprs, pats) = arenas.into_parts();
-    let body = function::FuncBody::new(
-        ctx.db,
-        body_def,
-        lowered_body_span,
-        top_level_stmts,
-        stmts,
-        exprs,
-        pats,
-    );
+            .collect::<Vec<_>>();
+        top_level_stmts.extend(ctx.with_owner(body_def, |ctx| {
+            ctx.lower_body_statements(body_anchor, body_span, &mut arenas)
+        }));
+        let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
+        let (stmts, exprs, pats) = arenas.into_parts();
+        function::FuncBody::new(
+            ctx.db,
+            body_def,
+            lowered_body_span,
+            top_level_stmts,
+            stmts,
+            exprs,
+            pats,
+        )
+    });
 
     let leading_comments = lower_source_comments(leading_comments);
 
@@ -668,7 +670,7 @@ pub(super) fn lower_function<'db>(
         kind,
         leading_comments,
         lowered_sig,
-        Some(body),
+        body,
     )
 }
 
@@ -814,6 +816,7 @@ pub(super) fn lower_contract<'db>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     leading_comments: Vec<ParsedSourceComment<'_>>,
+    kind: item::ContractKind,
     name: SpannedStr<'_>,
     ty_params: Vec<SpannedStr<'_>>,
     fields: Vec<ParsedFieldDef<'_>>,
@@ -849,6 +852,7 @@ pub(super) fn lower_contract<'db>(
         contract_def,
         span,
         lower_source_comments(leading_comments),
+        kind,
         name,
         ty_params,
         fields,

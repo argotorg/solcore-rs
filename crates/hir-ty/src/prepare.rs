@@ -27,7 +27,8 @@ use hir::{
             PatKind, Stmt, StmtKind, YulExpr, YulExprKind, YulLitKind, YulStmt, YulStmtKind,
         },
         item::{
-            AdtDef, ContractDef, ContractItem, FuncKind, FunctionDef, InstanceDef, Item, Module,
+            AdtDef, ContractDef, ContractItem, ContractKind, FuncKind, FunctionDef, InstanceDef,
+            Item, Module,
         },
         ty::{PredRef, PredRefKind, TypeRef, TypeRefKind},
     },
@@ -224,6 +225,10 @@ pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModu
             prepared_source_items.push(*item);
             continue;
         };
+        if contract.kind(db) != ContractKind::Contract {
+            prepared_source_items.push(*item);
+            continue;
+        }
 
         let mut prepared_contract = contract;
         if !contract_has_prepared_constructor(db, contract)
@@ -389,6 +394,7 @@ fn prepare_contract_constructor<'db>(
         contract_def,
         contract.span(db),
         contract.leading_comments(db).clone(),
+        contract.kind(db),
         contract.name_elem(db),
         contract.ty_param_elems(db).clone(),
         contract.fields(db).clone(),
@@ -1032,6 +1038,7 @@ fn prepare_contract_dispatch<'db>(
         contract_def,
         contract.span(db),
         contract.leading_comments(db).clone(),
+        contract.kind(db),
         contract.name_elem(db),
         contract.ty_param_elems(db).clone(),
         contract.fields(db).clone(),

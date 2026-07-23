@@ -28,9 +28,9 @@ use hir::{
         Ident,
         function::{FuncBody, FuncParam},
         item::{
-            AdtDef, ClassDef, ConstructorSelector, ContractDef, ContractItem, Export, ExportKind,
-            ExportedName, FunctionDef, Import, ImportHiddenName, ImportSelector, Item, Module,
-            SelectedName, TypeAlias,
+            AdtDef, ClassDef, ConstructorSelector, ContractDef, ContractItem, ContractKind, Export,
+            ExportKind, ExportedName, FunctionDef, Import, ImportHiddenName, ImportSelector, Item,
+            Module, SelectedName, TypeAlias,
         },
     },
     diag::{

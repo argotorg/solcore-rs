@@ -268,7 +268,8 @@ fn definition_hover<'db>(db: &'db vfs::AnalysisHost, def: DefId<'db>) -> Option<
             let name = contract.name_elem(db).atom().text(db);
             Some(HoverInfo {
                 code: format!(
-                    "contract {name}{}",
+                    "{} {name}{}",
+                    contract.kind(db).keyword(),
                     type_parameter_list(db, contract.ty_param_elems(db))
                 ),
                 documentation: comments_markdown(contract.leading_comments(db)),
@@ -1425,5 +1426,31 @@ function expose(alias_value: WordAlias, words: Words, wad_value: Wad) {}
         let value_type_reference = source.rfind("Wad").expect("value type reference");
         let value_type_hover = hover_at(source, &world, &uri, value_type_reference);
         assert_eq!(hover_code(&value_type_hover), "type Wad is word");
+    }
+
+    #[test]
+    fn contract_like_declaration_hover_preserves_shell_kind() {
+        let source = "\
+interface Reader {
+  function read(key: word) external view returns (word);
+}
+
+library Helpers {
+  function identity(value: word) internal pure returns (word) { return value; }
+}
+";
+        let (world, uri) = world_with_main(source);
+
+        let interface = source.find("Reader").expect("interface declaration");
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, interface)),
+            "interface Reader"
+        );
+
+        let library = source.find("Helpers").expect("library declaration");
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, library)),
+            "library Helpers"
+        );
     }
 }

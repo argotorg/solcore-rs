@@ -197,6 +197,7 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                 ParsedTopItem::Contract {
                     span,
                     leading_comments,
+                    kind,
                     name,
                     ty_params,
                     fields,
@@ -206,6 +207,7 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                         &mut ctx,
                         span,
                         leading_comments,
+                        kind,
                         name,
                         ty_params,
                         fields,
@@ -225,7 +227,7 @@ pub(crate) fn parse_file_to_hir_impl<'db>(
                         item::FuncKind::Function,
                         leading_comments,
                         sig,
-                        body_span,
+                        Some(body_span),
                     );
                     items.push(item::Item::FunctionDef(function));
                 }

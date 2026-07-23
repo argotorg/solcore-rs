@@ -1038,9 +1038,6 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 return;
             }
         }
-        let Some(body) = function.body(self.db) else {
-            return;
-        };
         let mut type_vars = inherited_type_vars.to_vec();
         type_vars.extend(sig_type_vars(function.def_id_value(self.db), sig));
         let lowerer = TypeLowering::from_item_resolutions(
@@ -1065,6 +1062,9 @@ impl<'db> TypeckDiagnosticCollector<'db> {
                 .map(alias_error_to_diagnostic)
                 .map(|diagnostic| AnyDiagnostic::Typeck(diagnostic.lower())),
         );
+        let Some(body) = function.body(self.db) else {
+            return;
+        };
         let context = hir_nameres::BodyResolutionContext {
             module: self.hir_module,
             enclosing_contract,

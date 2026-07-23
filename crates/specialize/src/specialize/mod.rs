@@ -16,8 +16,8 @@ use hir::{
             UnOp,
         },
         item::{
-            AdtDef, ContractItem, FuncKind, FunctionDef, Import, ImportSelector, InstanceDef, Item,
-            Module,
+            AdtDef, ContractItem, ContractKind, FuncKind, FunctionDef, Import, ImportSelector,
+            InstanceDef, Item, Module,
         },
     },
     diag::{Diagnostic, DiagnosticCode},

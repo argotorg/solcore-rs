@@ -501,6 +501,7 @@ impl<'db> ModuleEnvBuilder<'db> {
                     self.env.types.entry(name.clone()).or_insert(resolution);
                 }
                 self.add_constructor_surface(item_ref, &name);
+                self.add_library_member_surface(item_ref, &name);
             }
             Namespace::Class => {
                 if let Some(resolution) = resolution_for_item_ref(self.db, item_ref) {
@@ -508,6 +509,37 @@ impl<'db> ModuleEnvBuilder<'db> {
                 }
                 self.add_class_method_surface(item_ref, &name);
             }
+        }
+    }
+
+    fn add_library_member_surface(&mut self, item_ref: &ItemRef<'db>, library_name: &str) {
+        let Some(file) = self.db.module_file(item_ref.origin.module) else {
+            return;
+        };
+        let hir_module = parse_file_to_hir(self.db, file).module(self.db);
+        let is_library = hir_module.items(self.db).iter().any(|item| {
+            matches!(
+                item,
+                Item::ContractDef(def)
+                    if def.def_id_value(self.db) == item_ref.origin.def_id
+                        && def.kind(self.db) == ContractKind::Library
+            )
+        });
+        if !is_library {
+            return;
+        }
+        let item_scope = hir_nameres::item_scope(self.db, hir_module);
+        let Some(library_scope) = item_scope.contract_scope(item_ref.origin.def_id) else {
+            return;
+        };
+        for entry in &library_scope.types {
+            self.env
+                .types
+                .entry(qualify(library_name, &entry.name))
+                .or_insert(entry.resolution.clone());
+        }
+        for entry in &library_scope.terms {
+            self.insert_term(qualify(library_name, &entry.name), entry.resolution.clone());
         }
     }
 

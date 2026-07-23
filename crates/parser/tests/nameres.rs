@@ -668,6 +668,39 @@ contract Option {
 }
 
 #[test]
+fn library_members_are_available_through_the_library_name() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+library Helpers {
+  alias Fixed = word[3];
+  function id(x: Fixed) internal returns (Fixed) { return x; }
+}
+
+function reuse(x: Helpers.Fixed) returns (Helpers.Fixed) {
+  return Helpers.id(x);
+}
+"#,
+    );
+
+    assert!(diagnostic_codes(&db, module).is_empty());
+    let reuse = top_function(&db, module, "reuse");
+    let body = reuse.body(&db).expect("body");
+    let map = body_map(&db, module, body);
+    assert!(map.exprs.iter().any(|entry| {
+        entry.body == body
+            && matches!(
+                entry.resolution,
+                Resolution::Def {
+                    kind: DefResolutionKind::Function,
+                    ..
+                }
+            )
+    }));
+}
+
+#[test]
 fn unqualified_same_name_constructor_is_rejected_with_unknown_wildcard_import() {
     let db = TestDb::default();
     let module = parse_module(

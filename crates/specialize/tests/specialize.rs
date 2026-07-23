@@ -195,6 +195,236 @@ fn specializes_large_linear_body_with_indexed_frontend_lookups() {
 }
 
 #[test]
+fn interface_and_library_shells_are_not_deployment_roots() {
+    let (_, output) = specialize_src(
+        r#"
+interface Reader {
+  function read(key: word) external view returns (word);
+}
+
+library Helpers {
+  function main() internal returns (word) { return 99; }
+}
+
+function main() returns (word) { return 1; }
+"#,
+    );
+
+    assert!(
+        output
+            .module
+            .items
+            .iter()
+            .all(|item| !matches!(item, MonoItem::Contract(_))),
+        "{:#?}",
+        output.module.items
+    );
+    assert!(
+        output.diagnostics.iter().all(|diagnostic| !matches!(
+            diagnostic.kind,
+            SpecializeDiagnosticKind::MissingBody { .. }
+        )),
+        "{:#?}",
+        output.diagnostics
+    );
+    assert_eq!(
+        function_names(&output).len(),
+        1,
+        "{:#?}",
+        output.module.items
+    );
+}
+
+#[test]
+fn local_library_functions_are_reusable_without_becoming_contracts() {
+    let (_, output) = specialize_src(
+        r#"
+library Helpers {
+  function id(x: word) internal returns (word) { return x; }
+}
+
+function main() returns (word) { return Helpers.id(41); }
+"#,
+    );
+
+    assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
+    assert!(
+        output
+            .module
+            .items
+            .iter()
+            .all(|item| !matches!(item, MonoItem::Contract(_))),
+        "{:#?}",
+        output.module.items
+    );
+    assert_eq!(
+        function_names(&output).len(),
+        1,
+        "{:#?}",
+        output.module.items
+    );
+}
+
+#[test]
+fn imported_library_members_keep_their_qualified_surface() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        PathBuf::from("/std"),
+        BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(db, [main_root.as_path()]));
+
+    let helper_path = main_root.join("helper.solc");
+    let helper_file = source_file_at_path(
+        db,
+        &helper_path,
+        r#"
+export { Helpers };
+library Helpers {
+  alias Value = word;
+  function id(x: Value) internal returns (Value) { return x; }
+}
+"#,
+    );
+    let main_path = main_root.join("main.solc");
+    let main_file = source_file_at_path(
+        db,
+        &main_path,
+        r#"
+import {Helpers} from helper;
+function main(x: Helpers.Value) returns (Helpers.Value) {
+  return Helpers.id(x);
+}
+"#,
+    );
+    let helper_key = module_key_for_path(LibraryId::Main, &main_root, &helper_path).unwrap();
+    let main_key = module_key_for_path(LibraryId::Main, &main_root, &main_path).unwrap();
+    db.insert_module_file(helper_key, helper_file);
+    db.insert_module_file(main_key, main_file);
+
+    let module = parse_file_to_hir(db, main_file).module(db);
+    let output = specialize_module(db, module, SpecializeOptions::default());
+
+    assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
+    assert_eq!(
+        function_names(&output).len(),
+        2,
+        "{:#?}",
+        output.module.items
+    );
+}
+
+#[test]
+fn imported_fixed_array_aliases_reach_runtime_type_rejection() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        PathBuf::from("/std"),
+        BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(db, [main_root.as_path()]));
+
+    let helper_path = main_root.join("helper.solc");
+    let helper_file = source_file_at_path(
+        db,
+        &helper_path,
+        r#"
+export { Helpers };
+library Helpers {
+  alias Fixed = word[3];
+}
+"#,
+    );
+    let main_path = main_root.join("main.solc");
+    let main_file = source_file_at_path(
+        db,
+        &main_path,
+        r#"
+import {Helpers} from helper;
+function main(x: Helpers.Fixed) returns (Helpers.Fixed) { return x; }
+"#,
+    );
+    let helper_key = module_key_for_path(LibraryId::Main, &main_root, &helper_path).unwrap();
+    let main_key = module_key_for_path(LibraryId::Main, &main_root, &main_path).unwrap();
+    db.insert_module_file(helper_key, helper_file);
+    db.insert_module_file(main_key, main_file);
+
+    let module = parse_file_to_hir(db, main_file).module(db);
+    let output = specialize_module(db, module, SpecializeOptions::default());
+
+    let diagnostic = output
+        .diagnostics
+        .iter()
+        .find(|diagnostic| matches!(
+            &diagnostic.kind,
+            SpecializeDiagnosticKind::UnsupportedRuntimeType { ty, .. } if ty.contains("word[3]")
+        ))
+        .expect("qualified fixed-array runtime diagnostic");
+    assert_eq!(diagnostic.lower(db).code.as_deref(), Some("SC0416"));
+    assert!(
+        output.module.items.iter().all(|item| !matches!(
+            item,
+            MonoItem::Function(function) if function.name.contains("main")
+        )),
+        "{:#?}",
+        output.module.items
+    );
+}
+
+#[test]
+fn no_contract_fallback_only_roots_main_from_entry_module() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let main_root = PathBuf::from("/main");
+    db.module_tree = Some(ModuleTree::new(
+        db,
+        main_root.clone(),
+        PathBuf::from("/std"),
+        BTreeMap::new(),
+    ));
+    db.module_fs_snapshot = Some(module_fs_snapshot_for_roots(db, [main_root.as_path()]));
+
+    let helper_path = main_root.join("helper.solc");
+    let helper_file = source_file_at_path(
+        db,
+        &helper_path,
+        r#"
+export { helper_value };
+function helper_value() returns (word) { return 7; }
+function main() returns (word) { return 99; }
+"#,
+    );
+    let main_path = main_root.join("main.solc");
+    let main_file = source_file_at_path(
+        db,
+        &main_path,
+        r#"
+import {helper_value} from helper;
+function main() returns (word) { return helper_value(); }
+"#,
+    );
+    let helper_key = module_key_for_path(LibraryId::Main, &main_root, &helper_path).unwrap();
+    let main_key = module_key_for_path(LibraryId::Main, &main_root, &main_path).unwrap();
+    db.insert_module_file(helper_key, helper_file);
+    db.insert_module_file(main_key, main_file);
+
+    let module = parse_file_to_hir(db, main_file).module(db);
+    let output = specialize_module(db, module, SpecializeOptions::default());
+
+    assert!(output.diagnostics.is_empty(), "{:#?}", output.diagnostics);
+    assert_eq!(
+        function_names(&output).len(),
+        1,
+        "{:#?}",
+        output.module.items
+    );
+}
+
+#[test]
 fn specialization_preserves_checked_identity_conversion_kind() {
     let (_db, output) = specialize_src(
         r#"

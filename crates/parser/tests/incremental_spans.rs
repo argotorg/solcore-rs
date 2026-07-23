@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use hir::{
     ast::{
         function::{ExprKind, FuncBody},
-        item::{AdtDef, ClassDef, ContractDef, FunctionDef, Item},
+        item::{AdtDef, ClassDef, ContractDef, ContractItem, ContractKind, FunctionDef, Item},
     },
     input::SourceFile,
     span::Spanned,
@@ -197,6 +197,30 @@ fn nested_item_defs<'db>(
     (adt, class, contract)
 }
 
+fn first_contract_function<'db>(
+    db: &'db TestDb,
+    file: SourceFile,
+) -> (ContractDef<'db>, FunctionDef<'db>) {
+    let contract = parse_file_to_hir(db, file)
+        .module(db)
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ContractDef(contract) => Some(*contract),
+            _ => None,
+        })
+        .expect("a contract-like declaration");
+    let function = contract
+        .items(db)
+        .iter()
+        .find_map(|item| match item {
+            ContractItem::FunctionDef(function) => Some(*function),
+            _ => None,
+        })
+        .expect("a contract-like function");
+    (contract, function)
+}
+
 #[test]
 fn top_level_error_item_has_recovery_span() {
     let db = TestDb::default();
@@ -216,6 +240,40 @@ fn top_level_error_item_has_recovery_span() {
     assert_eq!(
         absolute.start().as_u32(),
         src.find("unknown").expect("error text") as u32
+    );
+}
+
+#[test]
+fn shell_and_prototype_edits_update_tracked_hir_without_changing_def_identity() {
+    let mut db = TestDb::default();
+    let file = SourceFile::new(
+        &db,
+        "memory:///shell-edit.solc".parse().expect("valid url"),
+        Some("interface Service { function run() external; }\n".to_owned()),
+    );
+
+    let before_identity = {
+        let (contract, function) = first_contract_function(&db, file);
+        assert_eq!(contract.kind(&db), ContractKind::Interface);
+        assert!(function.body(&db).is_none());
+        (
+            contract.def_id_value(&db).disambiguator(&db).as_u32(),
+            function.def_id_value(&db).disambiguator(&db).as_u32(),
+        )
+    };
+
+    file.set_content(&mut db)
+        .to(Some("contract Service { function run() {} }\n".to_owned()));
+
+    let (contract, function) = first_contract_function(&db, file);
+    assert_eq!(contract.kind(&db), ContractKind::Contract);
+    assert!(function.body(&db).is_some());
+    assert_eq!(
+        (
+            contract.def_id_value(&db).disambiguator(&db).as_u32(),
+            function.def_id_value(&db).disambiguator(&db).as_u32(),
+        ),
+        before_identity
     );
 }
 

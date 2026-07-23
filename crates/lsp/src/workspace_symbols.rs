@@ -103,7 +103,7 @@ fn collect_item_symbols<'db>(
                 line_index,
                 uri,
                 contract_name.clone(),
-                SymbolKind::CLASS,
+                contract_symbol_kind(contract.kind(db)),
                 contract.name_elem(db).span(db),
                 None,
             ));
@@ -129,6 +129,14 @@ fn collect_item_symbols<'db>(
             }
         }
         Item::Import(_) | Item::Export(_) | Item::Pragma(_) | Item::Error { .. } => {}
+    }
+}
+
+fn contract_symbol_kind(kind: hir::ast::item::ContractKind) -> SymbolKind {
+    match kind {
+        hir::ast::item::ContractKind::Contract => SymbolKind::CLASS,
+        hir::ast::item::ContractKind::Interface => SymbolKind::INTERFACE,
+        hir::ast::item::ContractKind::Library => SymbolKind::MODULE,
     }
 }
 
@@ -345,6 +353,14 @@ alias Alias = word;
 enum Choice { One, Two }
 
 contract Vault {}
+
+interface Reader {
+  function read(key: word) external view returns (word);
+}
+
+library Helpers {
+  function identity(value: word) internal pure returns (word) { return value; }
+}
 ";
         let (world, uri) = world_with_main(source);
 
@@ -353,15 +369,24 @@ contract Vault {}
             .iter()
             .map(|symbol| symbol.name.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(names, ["Alias", "Choice", "Vault", "alpha"]);
+        assert_eq!(
+            names,
+            [
+                "Alias", "Choice", "Helpers", "Reader", "Vault", "alpha", "identity", "read"
+            ]
+        );
         assert!(symbols.iter().all(|symbol| symbol.location.uri == uri));
         assert_eq!(
             symbols.iter().map(|symbol| symbol.kind).collect::<Vec<_>>(),
             [
                 SymbolKind::CLASS,
                 SymbolKind::ENUM,
+                SymbolKind::MODULE,
+                SymbolKind::INTERFACE,
                 SymbolKind::CLASS,
-                SymbolKind::FUNCTION
+                SymbolKind::FUNCTION,
+                SymbolKind::METHOD,
+                SymbolKind::METHOD,
             ]
         );
 

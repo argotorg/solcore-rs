@@ -87,13 +87,21 @@ fn symbol_for_item<'db>(
                 db,
                 line_index,
                 contract.name_elem(db).atom().text(db).to_owned(),
-                SymbolKind::CLASS,
+                contract_symbol_kind(contract.kind(db)),
                 contract.span(db),
                 contract.name_elem(db).span(db),
                 Some(children),
             ))
         }
         Item::Import(_) | Item::Export(_) | Item::Pragma(_) | Item::Error { .. } => None,
+    }
+}
+
+fn contract_symbol_kind(kind: hir::ast::item::ContractKind) -> SymbolKind {
+    match kind {
+        hir::ast::item::ContractKind::Contract => SymbolKind::CLASS,
+        hir::ast::item::ContractKind::Interface => SymbolKind::INTERFACE,
+        hir::ast::item::ContractKind::Library => SymbolKind::MODULE,
     }
 }
 
@@ -236,6 +244,14 @@ contract Box {
     return item;
   }
 }
+
+interface Reader {
+  function read(key: word) external view returns (word);
+}
+
+library Helpers {
+  function identity(value: word) internal pure returns (word) { return value; }
+}
 ";
         let (world, uri) = world_with_main(source);
         let response = handle_document_symbol(&world, &uri).expect("symbols");
@@ -270,6 +286,19 @@ contract Box {
         for child in children {
             assert_selection_in_range(child);
         }
+
+        assert_eq!(
+            find_symbol(&symbols, "Reader")
+                .expect("interface symbol")
+                .kind,
+            SymbolKind::INTERFACE
+        );
+        assert_eq!(
+            find_symbol(&symbols, "Helpers")
+                .expect("library symbol")
+                .kind,
+            SymbolKind::MODULE
+        );
     }
 
     fn find_symbol<'a>(symbols: &'a [DocumentSymbol], name: &str) -> Option<&'a DocumentSymbol> {

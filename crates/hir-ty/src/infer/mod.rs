@@ -14,8 +14,8 @@ use hir::{
             YulStmtKind,
         },
         item::{
-            AdtCtor, AdtDef, ClassDef, ContractDef, ContractItem, FieldDef, FuncKind, FunctionDef,
-            Item, Module, TypeAlias, TypeAliasKind,
+            AdtCtor, AdtDef, ClassDef, ContractDef, ContractItem, ContractKind, FieldDef, FuncKind,
+            FunctionDef, Item, Module, TypeAlias, TypeAliasKind,
         },
         ty::{TypeRef, TypeRefKind},
     },

@@ -6,7 +6,10 @@
 //! anchors, arenas, and diagnostics.
 
 use chumsky::{extra, prelude::Rich};
-use hir::ast::{function, item::FuncKind};
+use hir::ast::{
+    function,
+    item::{ContractKind, FuncKind},
+};
 
 use crate::lexer::Token;
 
@@ -208,6 +211,8 @@ pub(crate) enum ParsedTopItem<'src> {
         span: LexSpan,
         /// Consecutive comments directly preceding the declaration.
         leading_comments: Vec<ParsedSourceComment<'src>>,
+        /// Solidity-style declaration shell.
+        kind: ContractKind,
         /// Contract name.
         name: SpannedStr<'src>,
         /// Contract type parameters.
@@ -459,7 +464,7 @@ pub(crate) struct ParsedFuncSig<'src> {
     pub(crate) ret_names: Vec<Option<SpannedStr<'src>>>,
 }
 
-/// Parsed function definition with an unparsed body span.
+/// Parsed function declaration with an optional unparsed body span.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedFunctionDef<'src> {
     /// Span covering the definition.
@@ -470,8 +475,8 @@ pub(crate) struct ParsedFunctionDef<'src> {
     pub(crate) leading_comments: Vec<ParsedSourceComment<'src>>,
     /// Function signature.
     pub(crate) sig: ParsedFuncSig<'src>,
-    /// Absolute span of the body braces.
-    pub(crate) body_span: LexSpan,
+    /// Absolute span of the body braces, or `None` for a prototype.
+    pub(crate) body_span: Option<LexSpan>,
 }
 
 /// Parsed contract field.

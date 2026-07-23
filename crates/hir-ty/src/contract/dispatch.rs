@@ -1,6 +1,6 @@
 use hir::{
     anchor::DefId,
-    ast::item::{ContractDef, ContractItem, FuncKind, Item, Module},
+    ast::item::{ContractDef, ContractItem, ContractKind, FuncKind, Item, Module},
     diag::{Diagnostic, DiagnosticCode},
     nameres as hir_nameres,
     span::Spanned,
@@ -159,18 +159,22 @@ pub fn module_contract_diagnostics<'db>(db: &'db dyn Db, module: Module<'db>) ->
         .flat_map(|contract| {
             let dispatch_generated = contract_needs_generated_dispatch(db, contract);
             let surface = contract_dispatch_surface(db, module, contract);
-            let mut diagnostics = if dispatch_generated {
-                surface.diagnostics
-            } else {
-                let mut diagnostics = surface
-                    .diagnostics
-                    .into_iter()
-                    .filter(|diagnostic| diagnostic.code.as_deref() != Some("SC0231"))
-                    .collect::<Vec<_>>();
-                diagnostics.extend(surface.constructor_abi_diagnostics);
-                diagnostics
+            let mut diagnostics = match contract.kind(db) {
+                ContractKind::Contract if dispatch_generated => surface.diagnostics,
+                ContractKind::Contract => {
+                    let mut diagnostics = surface
+                        .diagnostics
+                        .into_iter()
+                        .filter(|diagnostic| diagnostic.code.as_deref() != Some("SC0231"))
+                        .collect::<Vec<_>>();
+                    diagnostics.extend(surface.constructor_abi_diagnostics);
+                    diagnostics
+                }
+                ContractKind::Interface | ContractKind::Library => surface.diagnostics,
             };
-            diagnostics.extend(contract_runtime_main_diagnostics(db, contract));
+            if contract.kind(db) == ContractKind::Contract {
+                diagnostics.extend(contract_runtime_main_diagnostics(db, contract));
+            }
             diagnostics
         })
         .filter(|diagnostic| {
@@ -241,6 +245,9 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
         let Item::ContractDef(contract) = *item else {
             continue;
         };
+        if contract.kind(db) == ContractKind::Library {
+            continue;
+        }
         let dispatch_generated = contract_needs_generated_dispatch(db, contract);
         let contract_name = ident_text(db, &contract.name_elem(db));
         let contract_type_vars =
@@ -251,12 +258,19 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
             };
             let sig = function.sig(db);
             let abi_context = match function.kind(db) {
-                FuncKind::Constructor => Some("constructor".to_owned()),
-                FuncKind::Function if sig.public.is_some() && dispatch_generated => Some(format!(
-                    "function `{}` declared public",
-                    ident_text(db, &sig.name)
-                )),
-                FuncKind::Function | FuncKind::Fallback => None,
+                FuncKind::Constructor if contract.kind(db) == ContractKind::Contract => {
+                    Some("constructor".to_owned())
+                }
+                FuncKind::Function
+                    if sig.public.is_some()
+                        && (dispatch_generated || contract.kind(db) == ContractKind::Interface) =>
+                {
+                    Some(format!(
+                        "function `{}` declared public",
+                        ident_text(db, &sig.name)
+                    ))
+                }
+                FuncKind::Constructor | FuncKind::Function | FuncKind::Fallback => None,
             };
             let Some(abi_context) = abi_context else {
                 continue;
@@ -292,7 +306,8 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                 );
                 diagnostics.push(
                     Diagnostic::error(format!(
-                        "{abi_context} ABI for contract `{contract_name}` cannot use {subject}"
+                        "{abi_context} ABI for {} `{contract_name}` cannot use {subject}",
+                        contract.kind(db).keyword()
                     ))
                     .with_code("SC0231")
                     .with_primary_label(
@@ -372,7 +387,7 @@ fn contract_runtime_main_diagnostics<'db>(
 /// convention: any contract-local ordinary function named `main` is a
 /// user-supplied runtime entry, irrespective of visibility.
 pub fn contract_needs_generated_dispatch<'db>(db: &'db dyn Db, contract: ContractDef<'db>) -> bool {
-    !contract.has_runtime_main(db)
+    contract.kind(db) == ContractKind::Contract && !contract.has_runtime_main(db)
 }
 
 fn contract_dispatch_surface_with_resolutions<'db>(
@@ -540,6 +555,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 db,
                 dispatch_method_span(db, contract, method),
                 dispatch_method_span(db, contract, &methods[previous_index]),
+                contract.kind(db),
                 &contract_name,
                 &method.signature,
             ));
@@ -554,6 +570,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                     db,
                     dispatch_method_span(db, contract, method),
                     dispatch_method_span(db, contract, previous),
+                    contract.kind(db),
                     &contract_name,
                     method,
                     previous,
@@ -579,11 +596,13 @@ fn contract_diag_duplicate_signature<'db>(
     db: &'db dyn Db,
     current_span: hir::span::Span<'db>,
     previous_span: hir::span::Span<'db>,
-    contract: &str,
+    declaration_kind: ContractKind,
+    declaration_name: &str,
     signature: &str,
 ) -> Diagnostic {
     Diagnostic::error(format!(
-        "duplicate public ABI signature in contract `{contract}`: {signature}"
+        "duplicate public ABI signature in {} `{declaration_name}`: {signature}",
+        declaration_kind.keyword()
     ))
     .with_code("SC0230")
     .with_primary_label(db, current_span, Some("duplicate ABI signature"))
@@ -594,12 +613,14 @@ fn contract_diag_selector_collision<'db>(
     db: &'db dyn Db,
     current_span: hir::span::Span<'db>,
     previous_span: hir::span::Span<'db>,
-    contract: &str,
+    declaration_kind: ContractKind,
+    declaration_name: &str,
     current: &DispatchMethod<'db>,
     previous: &DispatchMethod<'db>,
 ) -> Diagnostic {
     Diagnostic::error(format!(
-        "public ABI selector collision in contract `{contract}`: `{}` and `{}` both use {}",
+        "public ABI selector collision in {} `{declaration_name}`: `{}` and `{}` both use {}",
+        declaration_kind.keyword(),
         previous.signature,
         current.signature,
         current.selector.to_hex(),

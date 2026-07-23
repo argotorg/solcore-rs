@@ -171,6 +171,28 @@ pub enum FuncKind {
     Fallback,
 }
 
+/// Solidity-style declaration shell used for a contract-like item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ContractKind {
+    /// Deployable contract declaration.
+    Contract,
+    /// Interface declaration containing an external surface.
+    Interface,
+    /// Library declaration containing reusable definitions.
+    Library,
+}
+
+impl ContractKind {
+    /// Returns the canonical source keyword for this declaration kind.
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Contract => "contract",
+            Self::Interface => "interface",
+            Self::Library => "library",
+        }
+    }
+}
+
 /// Lexical form of a source comment attached to a declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
 pub enum SourceCommentKind {
@@ -621,6 +643,11 @@ pub struct ContractDef<'db> {
     #[tracked]
     #[returns(ref)]
     pub leading_comments: Vec<SourceComment>,
+
+    /// Solidity-style declaration shell.
+    #[tracked]
+    #[returns(copy)]
+    pub kind: ContractKind,
 
     /// Contract name.
     #[tracked]
