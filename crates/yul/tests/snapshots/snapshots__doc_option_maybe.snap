@@ -1,6 +1,6 @@
 ---
 source: crates/yul/tests/snapshots.rs
-expression: "render_source(\"doc_option_maybe\",\nr#\"\ncontract OptionDoc {\n  data Option(a) = None | Some(a);\n\n  function maybe(n : word, o : Option(word)) -> word {\n    match o {\n      | Option.None => return n;\n      | Option.Some(x) => return x;\n    }\n  }\n\n  public function main() -> word {\n    return maybe(0, Option.Some(42));\n  }\n}\n\"#,)"
+expression: "render_source(\"doc_option_maybe\",\nr#\"\ncontract OptionDoc {\n  enum Option<a> { None, Some(a) }\n\n  function maybe(n: word, o: Option<word>) returns (word) {\n    match (o) { case Option.None { return n; } case Option.Some(x) { return x; } }\n  }\n\n  function main() public returns (word) {\n    return maybe(0, Option.Some(42));\n  }\n}\n\"#,)"
 ---
 object "OptionDocDeploy" {
   code {
