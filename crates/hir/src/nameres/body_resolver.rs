@@ -536,6 +536,10 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
         field: &SpannedElem<'db, Ident<'db>>,
     ) -> Option<Resolution<'db>> {
         let path = expr_path(self.db, body, base)?;
+        let first = path.first()?;
+        if self.lookup_local(first).is_some() || self.lookup_field(first).is_some() {
+            return None;
+        }
         let qualifier = path.join(".");
         let field_text = ident_text_str(self.db, field);
         let qualified = qualify(&qualifier, field_text);

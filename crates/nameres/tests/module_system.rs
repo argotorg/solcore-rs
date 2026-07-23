@@ -6,8 +6,14 @@ use std::{
 
 use annotate_snippets::Renderer;
 use hir::{
+    arena::Id,
+    ast::{
+        function::{Expr, ExprKind, FuncBody},
+        item::{ContractItem, Item, Module},
+    },
     diag::{Diagnostic, sort_dedup_rendered_diagnostics},
     input::SourceFile,
+    nameres::{DefResolutionKind, Resolution, resolve_module_with_imports},
 };
 use parser::parse_file_to_hir;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -572,6 +578,100 @@ fn namespace_aliases_do_not_reserve_source_path_prefixes() {
     let candidates = auto_import_module_candidates(&db, importing, "math", "value");
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].import_path, "lib.missing.math");
+}
+
+#[test]
+fn namespace_qualified_lookup_yields_to_value_receivers() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            r#"
+import * as p from lib;
+
+struct Pair {
+  x: word;
+}
+
+function project(p: Pair) returns (word) {
+  return p.x;
+}
+
+contract C {
+  p: Pair;
+
+  function readContract() returns (word) {
+    return p.x;
+  }
+}
+
+function readImport() returns (word) {
+  return p.x();
+}
+"#,
+        ),
+        (
+            vec!["lib"],
+            r#"
+export { x };
+
+function x() returns (word) {
+  return 1;
+}
+"#,
+        ),
+    ]);
+    let main_file = db.module_files[&entry];
+    let main_hir = parse_file_to_hir(&db, main_file).module(&db);
+    let main_module = module_id_from_key(&db, &entry);
+    let env = module_env(&db, main_module);
+    let scope = env.item_scope.clone().expect("main item scope");
+    let resolution = resolve_module_with_imports(&db, main_hir, scope, &env);
+    assert!(
+        resolution.diagnostics.is_empty(),
+        "unexpected name-resolution diagnostics: {:#?}",
+        resolution.diagnostics
+    );
+
+    let project = named_function_body(&db, main_hir, "project");
+    let (project_field, project_base) = named_field_access(&db, project, "p", "x");
+    let project_map = body_resolution_map(&resolution, project);
+    assert!(matches!(
+        expression_resolution(project_map, project, project_base),
+        Some(Resolution::Param(_))
+    ));
+    assert_eq!(
+        expression_resolution(project_map, project, project_field),
+        None,
+        "a named ADT field must remain unresolved for type inference"
+    );
+
+    let read_contract = named_function_body(&db, main_hir, "readContract");
+    let (contract_field, contract_base) = named_field_access(&db, read_contract, "p", "x");
+    let contract_map = body_resolution_map(&resolution, read_contract);
+    assert!(matches!(
+        expression_resolution(contract_map, read_contract, contract_base),
+        Some(Resolution::Field(_))
+    ));
+    assert_eq!(
+        expression_resolution(contract_map, read_contract, contract_field),
+        None,
+        "a contract field receiver must not be reinterpreted as a module alias"
+    );
+
+    let read_import = named_function_body(&db, main_hir, "readImport");
+    let (import_field, import_base) = named_field_access(&db, read_import, "p", "x");
+    let import_map = body_resolution_map(&resolution, read_import);
+    assert!(matches!(
+        expression_resolution(import_map, read_import, import_base),
+        Some(Resolution::Module(_))
+    ));
+    assert!(matches!(
+        expression_resolution(import_map, read_import, import_field),
+        Some(Resolution::Def {
+            kind: DefResolutionKind::Function,
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -1270,6 +1370,82 @@ fn module_key<const N: usize>(path: [&str; N]) -> ModuleKey {
         library: LibraryId::Main,
         logical_path: path.into_iter().map(str::to_owned).collect(),
     }
+}
+
+fn named_function_body<'db>(db: &'db TestDb, module: Module<'db>, name: &str) -> FuncBody<'db> {
+    fn from_items<'db>(
+        db: &'db TestDb,
+        items: impl IntoIterator<Item = Item<'db>>,
+        name: &str,
+    ) -> Option<FuncBody<'db>> {
+        for item in items {
+            match item {
+                Item::FunctionDef(function) if (*function.sig(db).name.atom()).text(db) == name => {
+                    return function.body(db);
+                }
+                Item::ContractDef(contract) => {
+                    for member in contract.items(db) {
+                        if let ContractItem::FunctionDef(function) = member
+                            && (*function.sig(db).name.atom()).text(db) == name
+                        {
+                            return function.body(db);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    from_items(db, module.items(db).iter().copied(), name).expect("named function body")
+}
+
+fn named_field_access<'db>(
+    db: &'db TestDb,
+    body: FuncBody<'db>,
+    receiver: &str,
+    field: &str,
+) -> (Id<Expr<'db>>, Id<Expr<'db>>) {
+    body.exprs(db)
+        .iter()
+        .find_map(|(expr_id, expr)| {
+            let ExprKind::Field {
+                base,
+                field: selected,
+            } = &expr.kind
+            else {
+                return None;
+            };
+            let ExprKind::Ident(base_name) = &body.exprs(db).get(*base).kind else {
+                return None;
+            };
+            ((*base_name.atom()).text(db) == receiver && (*selected.atom()).text(db) == field)
+                .then_some((expr_id, *base))
+        })
+        .expect("named field access")
+}
+
+fn body_resolution_map<'a, 'db>(
+    resolution: &'a hir::nameres::ModuleResolutionMap<'db>,
+    body: FuncBody<'db>,
+) -> &'a hir::nameres::BodyResolutionMap<'db> {
+    resolution
+        .bodies
+        .iter()
+        .find(|map| map.exprs.iter().any(|entry| entry.body == body))
+        .expect("body resolution map")
+}
+
+fn expression_resolution<'a, 'db>(
+    map: &'a hir::nameres::BodyResolutionMap<'db>,
+    body: FuncBody<'db>,
+    expr: Id<Expr<'db>>,
+) -> Option<&'a Resolution<'db>> {
+    map.exprs
+        .iter()
+        .find(|entry| entry.body == body && entry.expr == expr)
+        .map(|entry| &entry.resolution)
 }
 
 fn lowered_module_diagnostics<'db>(db: &'db TestDb, module: ModuleId<'db>) -> Vec<Diagnostic> {
