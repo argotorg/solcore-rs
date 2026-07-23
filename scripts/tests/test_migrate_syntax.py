@@ -342,6 +342,186 @@ function namespaceUse() -> word {
         self.assertIn("0 file(s) need migration", check.stdout)
 
 
+class RustStringMigrationTests(unittest.TestCase):
+    def test_preserves_prose_format_strings_and_sql(self) -> None:
+        rust = r'''
+const HELP: &str = r#"prefer function f(x: T) -> T syntax"#;
+const DIAGNOSTIC: &str = "expected function f(x: T) -> T";
+const FORMAT: &str = r#"function f(x: T) -> T {{ return {value}; }}"#;
+const TYPE_FORMAT: &str = r#"type {name} = {ty};"#;
+const IMPORT_FORMAT: &str = r#"import {{name}} from {path};"#;
+const IMPORT_PROSE: &str = r#"run import foo.bar; to continue"#;
+const SQL: &str =
+    r#"select type, alias, comptime from function where match = ?;"#;
+const SQL_IMPORT: &str = r#"import records from audit;"#;
+'''
+
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+        self.assertEqual(MIGRATE._rust_solcore_literal_spans(rust), [])
+
+    def test_recognizes_and_migrates_structured_imports(self) -> None:
+        rust = r'''
+const BARE: &str = r#"import foo.bar;"#;
+const NAMESPACE: &str = r#"import * as bar from foo.bar;"#;
+const SELECTIVE: &str = r#"import {Thing, value as renamed} from foo;"#;
+const CLASSIC_SELECTIVE: &str =
+    r#"import foo.{Thing, value as renamed};"#;
+const PACKAGE: &str = r#"import {Thing} from @ext.foo;"#;
+const RUST_ESCAPES: &str = "import {Thing} from foo;\x20\n";
+'''
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 6)
+
+        migrated = MIGRATE.migrate_rust_strings(
+            rust,
+            classic_bare_imports=True,
+        )
+
+        self.assertIn("import * as bar from foo.bar;", migrated)
+        self.assertIn(
+            "import {Thing, value as renamed} from foo;",
+            migrated,
+        )
+        self.assertIn("import {Thing} from @ext.foo;", migrated)
+        self.assertEqual(
+            MIGRATE.migrate_rust_strings(
+                migrated,
+                classic_bare_imports=True,
+            ),
+            migrated,
+        )
+
+    def test_migrates_raw_classic_fragments_idempotently(self) -> None:
+        rust = r'''
+const FUNCTION: &str =
+    r#"function f(x: word) -> word { return x; }"#;
+const MATCH: &str = r#"match x { | _ => 0; }"#;
+const ALIAS: &str = r#"type Amount = word;"#;
+const COMPTIME: &str = r#"let x : comptime word = 1;"#;
+const CONTRACT: &str =
+    r#"contract C { public function get() -> word { return 1; } }"#;
+const PRAGMA: &str = r#"pragma no-coverage-condition;"#;
+const GENERIC_FUNCTION: &str =
+    r#"forall T. function id(x: T) -> T { return x; }"#;
+const CLASS: &str = r#"forall T. class T: Eq {}"#;
+const INSTANCE: &str = r#"forall T. instance T: Eq {}"#;
+const COMMENTED: &str =
+    r#"/* outer /* inner */ done */ function commented() -> word { return 1; }"#;
+'''
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 10)
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn(
+            "function f(x: word) returns (word) { return x; }",
+            migrated,
+        )
+        self.assertIn("match (x)", migrated)
+        self.assertIn("alias Amount = word;", migrated)
+        self.assertIn("let comptime x: word = 1;", migrated)
+        self.assertIn("function get() public returns (word)", migrated)
+        self.assertIn("pragma solcore noCoverageCondition;", migrated)
+        self.assertIn(
+            "function id<T>(x: T) returns (T) { return x; }",
+            migrated,
+        )
+        self.assertIn("trait Eq<T> {}", migrated)
+        self.assertIn("impl<T> Eq<T> {}", migrated)
+        self.assertIn("function commented() returns (word)", migrated)
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+    def test_recognizes_canonical_fragments_without_rewriting(self) -> None:
+        rust = r'''
+const FUNCTION: &str =
+    r#"function f(x: word) returns (word) { return x; }"#;
+const MATCH: &str =
+    r#"match (x) { case _ { return 0; } }"#;
+const ALIAS: &str = r#"alias Amount = word;"#;
+const COMPTIME: &str = r#"let comptime x: word = 1;"#;
+const CONTRACT: &str =
+    r#"contract C { function get() public returns (word) { return 1; } }"#;
+'''
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 5)
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
+    def test_migrates_ordinary_escaped_string_and_preserves_escapes(self) -> None:
+        rust = (
+            'const SOURCE: &str = "function message() -> string '
+            '{\\n  return \\"ok\\";\\n}";\n'
+        )
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn(
+            'function message() returns (string) {\\n'
+            '  return \\"ok\\";\\n}',
+            migrated,
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+    def test_cli_rust_string_check_reports_then_reaches_fixed_point(self) -> None:
+        source = r'''
+const HELP: &str = r#"prefer function f(x: T) -> T syntax"#;
+const SOURCE: &str =
+    r#"function f(x: word) -> word { return x; }"#;
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "embedded.rs"
+            path.write_text(source)
+
+            needs_migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--check",
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            unchanged = path.read_text()
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migrated = path.read_text()
+            clean = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--check",
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(needs_migration.returncode, 1, needs_migration.stderr)
+        self.assertEqual(unchanged, source)
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        self.assertIn("1 file(s) need migration", needs_migration.stdout)
+        self.assertIn("function f(x: word) returns (word)", migrated)
+        self.assertIn("prefer function f(x: T) -> T syntax", migrated)
+        self.assertIn("0 file(s) need migration", clean.stdout)
+
+
 class FunctionMigrationTests(unittest.TestCase):
     def test_preserves_canonical_no_result_prototype(self) -> None:
         canonical = """\

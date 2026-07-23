@@ -55,24 +55,6 @@ from typing import Iterable, Mapping, Sequence
 TRIVIA = {"ws", "comment"}
 WORD_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 NUMBER_RE = re.compile(r"(?:0[xX][0-9A-Fa-f]+|[0-9]+)")
-SOLCORE_LITERAL_HINT_RE = re.compile(
-    r"(?:"
-    r"\bfunction\s+[A-Za-z_$][A-Za-z0-9_$]*\s*(?:<[^>{};]*>)?\s*\("
-    r"|\b(?:contract|interface|library)\s+[A-Za-z_$][A-Za-z0-9_$]*\s+\{"
-    r"|\b(?:enum|trait)\s+[A-Za-z_$][A-Za-z0-9_$.]*(?:\s*<[^>{};]*>)?\s+\{"
-    r"|\bdata\s+[A-Za-z_$][^;{}\n]*=\s*[^;\n]+;"
-    r"|\balias\s+[A-Za-z_$][^;{}\n]*=\s*[^;\n]+;"
-    r"|\bclass\s+[A-Za-z_$][^;{}\n]*:"
-    r"[A-Za-z_$][A-Za-z0-9_$.]*(?:\([^;{}\n]*\))?\s+\{"
-    r"|\bimpl(?:\s*<[^>{};]*>)?\s+[A-Za-z_$][A-Za-z0-9_$.]*"
-    r"(?:\s*<[^>{};]*>)?\s+\{"
-    r"|\binstance\s+[A-Za-z_$][^;{}\n]*:"
-    r"[A-Za-z_$][A-Za-z0-9_$.]*(?:\([^;{}\n]*\))?\s+\{"
-    r"|\b(?:import|export|pragma)\s+(?:[@*{A-Za-z_$])[^;\n]*;"
-    r"|\bmatch\s*\("
-    r")",
-    re.DOTALL,
-)
 MULTI_SYMBOLS = (
     ">>>=",
     "<<=",
@@ -2991,8 +2973,621 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
     return decoded if isinstance(decoded, str) else None
 
 
+def _decode_rust_ordinary_body_for_detection(body: str) -> str:
+    """Decode Rust-only escapes for source classification, without rewriting."""
+
+    simple_escapes = {
+        "\\": "\\",
+        '"': '"',
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "0": "\0",
+    }
+    decoded: list[str] = []
+    cursor = 0
+    while cursor < len(body):
+        if body[cursor] != "\\" or cursor + 1 >= len(body):
+            decoded.append(body[cursor])
+            cursor += 1
+            continue
+
+        escaped = body[cursor + 1]
+        if escaped in simple_escapes:
+            decoded.append(simple_escapes[escaped])
+            cursor += 2
+            continue
+        if escaped == "x" and cursor + 3 < len(body):
+            digits = body[cursor + 2 : cursor + 4]
+            if all(digit in "0123456789abcdefABCDEF" for digit in digits):
+                decoded.append(chr(int(digits, 16)))
+                cursor += 4
+                continue
+        if escaped == "u" and cursor + 2 < len(body) and body[cursor + 2] == "{":
+            close = body.find("}", cursor + 3)
+            digits = body[cursor + 3 : close] if close >= 0 else ""
+            normalized = digits.replace("_", "")
+            if (
+                normalized
+                and all(
+                    digit in "0123456789abcdefABCDEF"
+                    for digit in normalized
+                )
+            ):
+                value = int(normalized, 16)
+                if value <= 0x10FFFF:
+                    decoded.append(chr(value))
+                    cursor = close + 1
+                    continue
+        if escaped in {"\r", "\n"}:
+            cursor += 2
+            if escaped == "\r" and cursor < len(body) and body[cursor] == "\n":
+                cursor += 1
+            while cursor < len(body) and body[cursor].isspace():
+                cursor += 1
+            continue
+
+        decoded.extend(("\\", escaped))
+        cursor += 2
+    return "".join(decoded)
+
+
 def _encode_rust_ordinary_body(body: str) -> str:
     return json.dumps(body, ensure_ascii=False)[1:-1]
+
+
+_SOLCORE_PREFIX_MODIFIERS = {
+    "public",
+    "external",
+    "internal",
+    "private",
+    "payable",
+    "pure",
+    "view",
+    "comptime",
+}
+_SOLCORE_FUNCTION_TRAILER_MODIFIERS = _SOLCORE_PREFIX_MODIFIERS | {
+    "memory",
+    "storage",
+    "calldata",
+}
+_SOLCORE_CONTAINER_KEYWORDS = {
+    "contract",
+    "interface",
+    "library",
+    "enum",
+    "struct",
+    "trait",
+    "class",
+    "impl",
+    "instance",
+}
+
+
+def _rust_source_text_is_trivia(source: str) -> bool:
+    cursor = 0
+    while cursor < len(source):
+        if source[cursor].isspace():
+            cursor += 1
+            continue
+        if source.startswith("//", cursor):
+            newline = source.find("\n", cursor + 2)
+            if newline < 0:
+                return True
+            cursor = newline + 1
+            continue
+        if source.startswith("/*", cursor):
+            depth = 1
+            cursor += 2
+            while cursor < len(source) and depth:
+                if source.startswith("/*", cursor):
+                    depth += 1
+                    cursor += 2
+                elif source.startswith("*/", cursor):
+                    depth -= 1
+                    cursor += 2
+                else:
+                    cursor += 1
+            if depth:
+                return False
+            continue
+        return False
+    return True
+
+
+def _rust_source_boundary(
+    source: str, tokens: Sequence[Token], index: int
+) -> bool:
+    """Return whether a declaration begins at a source-like boundary."""
+
+    start = index
+    while (
+        start > 0
+        and tokens[start - 1].kind == "word"
+        and tokens[start - 1].text in _SOLCORE_PREFIX_MODIFIERS
+    ):
+        start -= 1
+    if start == 0:
+        return True
+    line_start = source.rfind("\n", 0, tokens[start].start) + 1
+    if _rust_source_text_is_trivia(source[line_start : tokens[start].start]):
+        return True
+    return start > 0 and tokens[start - 1].text in {"{", "}", ";"}
+
+
+def _rust_classic_prefix_start(
+    tokens: Sequence[Token],
+    index: int,
+    *,
+    allow_default: bool = False,
+) -> int | None:
+    """Return the start of a structured Classic declaration prefix."""
+
+    start = _previous_boundary(tokens, index)
+    prefix = list(tokens[start:index])
+    if not prefix:
+        return None
+    if allow_default and prefix[0].text == "default":
+        prefix = prefix[1:]
+    prefix = [
+        token
+        for token in prefix
+        if not (
+            token.kind == "word"
+            and token.text in _SOLCORE_PREFIX_MODIFIERS
+        )
+    ]
+    if not prefix:
+        return start
+    if prefix[0].text == "forall":
+        dot = find_top(prefix[1:], ".", angles=False)
+        if dot is None:
+            return None
+        binder = prefix[1 : dot + 1]
+        return start if any(token.kind == "word" for token in binder) else None
+    if prefix[-1].text == "=>":
+        has_name = any(token.kind == "word" for token in prefix[:-1])
+        has_predicate_shape = any(
+            token.text in {"(", ":", "<"} for token in prefix[:-1]
+        )
+        return start if has_name and has_predicate_shape else None
+    return None
+
+
+def _rust_source_line_starts_at(source: str, token: Token) -> bool:
+    line_start = source.rfind("\n", 0, token.start) + 1
+    return _rust_source_text_is_trivia(source[line_start:token.start])
+
+
+def _rust_source_line_ends_after(source: str, token: Token) -> bool:
+    line_end = source.find("\n", token.end)
+    if line_end < 0:
+        line_end = len(source)
+    suffix = source[token.end:line_end].strip()
+    return not suffix or suffix.startswith(("//", "/*"))
+
+
+def _rust_format_escaped_block(
+    source: str,
+    tokens: Sequence[Token],
+    open_index: int,
+    close_index: int,
+) -> bool:
+    """Recognize Rust format-string `{{ ... }}` escapes."""
+
+    if open_index + 1 >= close_index or tokens[open_index + 1].text != "{":
+        return False
+    inner_close = matching_index(tokens, open_index + 1)
+    if inner_close != close_index - 1:
+        return False
+    return (
+        source[tokens[open_index].start : tokens[open_index + 1].end] == "{{"
+        and source[tokens[inner_close].start : tokens[close_index].end] == "}}"
+    )
+
+
+def _rust_executable_block_is_source_like(
+    source: str,
+    tokens: Sequence[Token],
+    open_index: int,
+    close_index: int,
+) -> bool:
+    if close_index == open_index + 1:
+        return True
+    if _rust_format_escaped_block(source, tokens, open_index, close_index):
+        return False
+    inner = tokens[open_index + 1 : close_index]
+    statement_words = {
+        "return",
+        "let",
+        "match",
+        "if",
+        "else",
+        "for",
+        "while",
+        "unchecked",
+        "revert",
+        "break",
+        "continue",
+    }
+    return (
+        any(token.text == ";" for token in inner)
+        or any(token.kind == "assembly" for token in inner)
+        or any(token.text in statement_words for token in inner)
+    )
+
+
+def _rust_declaration_block_is_source_like(
+    source: str,
+    tokens: Sequence[Token],
+    open_index: int,
+    close_index: int,
+) -> bool:
+    if close_index == open_index + 1:
+        return True
+    if _rust_format_escaped_block(source, tokens, open_index, close_index):
+        return False
+    inner = tokens[open_index + 1 : close_index]
+    declaration_words = {
+        "function",
+        "constructor",
+        "fallback",
+        "alias",
+        "type",
+        "enum",
+        "struct",
+        "let",
+        "return",
+    }
+    return (
+        any(token.text in {";", ","} for token in inner)
+        or any(token.text == "{" for token in inner)
+        or any(token.text in declaration_words for token in inner)
+    )
+
+
+def _rust_function_trailer_is_source_like(tokens: Sequence[Token]) -> bool:
+    if not tokens:
+        return True
+    texts = [token.text for token in tokens]
+    if "->" in texts:
+        arrow = texts.index("->")
+        return arrow + 1 < len(tokens)
+    if "returns" in texts:
+        returns = texts.index("returns")
+        if returns + 1 >= len(tokens) or tokens[returns + 1].text != "(":
+            return False
+        close = matching_index(tokens, returns + 1)
+        return close is not None
+    if "where" in texts:
+        return texts.index("where") + 1 < len(tokens)
+    return all(
+        token.kind == "word"
+        and token.text in _SOLCORE_FUNCTION_TRAILER_MODIFIERS
+        for token in tokens
+    )
+
+
+def _rust_function_fragment_is_source_like(
+    source: str, tokens: Sequence[Token], index: int
+) -> bool:
+    prefixed_start = _rust_classic_prefix_start(tokens, index)
+    source_boundary = _rust_source_boundary(source, tokens, index)
+    if prefixed_start is not None:
+        source_boundary = source_boundary or _rust_source_boundary(
+            source, tokens, prefixed_start
+        )
+    if (
+        not source_boundary
+        or index + 2 >= len(tokens)
+        or tokens[index + 1].kind != "word"
+    ):
+        return False
+    cursor = index + 2
+    if tokens[cursor].text == "<":
+        generic_close = matching_index(tokens, cursor)
+        if generic_close is None:
+            return False
+        cursor = generic_close + 1
+    if cursor >= len(tokens) or tokens[cursor].text != "(":
+        return False
+    params_close = matching_index(tokens, cursor)
+    if params_close is None:
+        return False
+    boundary = _header_boundary(tokens, params_close + 1)
+    if boundary is None or not _rust_function_trailer_is_source_like(
+        tokens[params_close + 1 : boundary]
+    ):
+        return False
+    if tokens[boundary].text == ";":
+        return _rust_source_line_ends_after(source, tokens[boundary])
+    if tokens[boundary].text != "{":
+        return False
+    body_close = matching_index(tokens, boundary)
+    return body_close is not None and _rust_executable_block_is_source_like(
+        source, tokens, boundary, body_close
+    )
+
+
+def _rust_assignment_declaration_is_source_like(
+    source: str, tokens: Sequence[Token], index: int
+) -> bool:
+    if (
+        not _rust_source_boundary(source, tokens, index)
+        or index + 1 >= len(tokens)
+        or tokens[index + 1].kind != "word"
+    ):
+        return False
+    end = _statement_end(tokens, index)
+    if end is None or not _rust_source_line_ends_after(source, tokens[end]):
+        return False
+    equals = find_top(tokens[index + 2 : end], "=", angles=False)
+    return equals is not None and index + 2 + equals + 1 < end
+
+
+def _rust_comptime_let_is_source_like(
+    source: str, tokens: Sequence[Token], index: int
+) -> bool:
+    if not _rust_source_boundary(source, tokens, index):
+        return False
+    end = _statement_end(tokens, index)
+    if end is None or not _rust_source_line_ends_after(source, tokens[end]):
+        return False
+    declaration = tokens[index + 1 : end]
+    colon = find_top(declaration, ":", angles=False)
+    if colon is None or colon == 0 or colon + 1 >= len(declaration):
+        return False
+    canonical = declaration[0].text == "comptime"
+    classic = declaration[colon + 1].text == "comptime"
+    if not (canonical or classic):
+        return False
+    binding = declaration[1:colon] if canonical else declaration[:colon]
+    return bool(binding) and (
+        binding[0].kind == "word" or binding[0].text == "("
+    )
+
+
+def _rust_match_fragment_is_source_like(
+    source: str, tokens: Sequence[Token], index: int
+) -> bool:
+    previous = tokens[index - 1].text if index else ""
+    if not (
+        index == 0
+        or _rust_source_line_starts_at(source, tokens[index])
+        or previous in {"return", "=", ":=", "(", "[", ",", "=>"}
+    ):
+        return False
+    body_open = _header_boundary(tokens, index + 1)
+    if body_open is None or tokens[body_open].text != "{":
+        return False
+    body_close = matching_index(tokens, body_open)
+    if body_close is None or _rust_format_escaped_block(
+        source, tokens, body_open, body_close
+    ):
+        return False
+    body = tokens[body_open + 1 : body_close]
+    if any(token.text == "=>" for token in body):
+        return True
+    has_case = any(token.text in {"case", "default"} for token in body)
+    return has_case and any(token.text == "{" for token in body)
+
+
+def _rust_container_fragment_is_source_like(
+    source: str, tokens: Sequence[Token], index: int
+) -> bool:
+    previous = tokens[index - 1].text if index else ""
+    source_boundary = (
+        index == 0
+        or _rust_source_line_starts_at(source, tokens[index])
+        or previous in {"{", "}", ";"}
+    )
+    if tokens[index].text in {"class", "instance"}:
+        prefixed_start = _rust_classic_prefix_start(
+            tokens,
+            index,
+            allow_default=tokens[index].text == "instance",
+        )
+        if prefixed_start is not None:
+            source_boundary = source_boundary or _rust_source_boundary(
+                source, tokens, prefixed_start
+            )
+    if not source_boundary:
+        return False
+    body_open = _header_boundary(tokens, index + 1)
+    if body_open is None or tokens[body_open].text != "{":
+        return False
+    header = tokens[index + 1 : body_open]
+    if not header or not any(token.kind == "word" for token in header):
+        return False
+    if (
+        tokens[index].text
+        in {"contract", "interface", "library", "enum", "struct", "trait", "class"}
+        and header[0].kind != "word"
+    ):
+        return False
+    body_close = matching_index(tokens, body_open)
+    if body_close is None:
+        return False
+    if tokens[index].text == "enum":
+        return not _rust_format_escaped_block(
+            source, tokens, body_open, body_close
+        )
+    return _rust_declaration_block_is_source_like(
+        source, tokens, body_open, body_close
+    )
+
+
+def _rust_module_path_is_source_like(tokens: Sequence[Token]) -> bool:
+    if not tokens:
+        return False
+    cursor = 0
+    if tokens[cursor].text == "@":
+        cursor += 1
+    if cursor >= len(tokens) or tokens[cursor].kind != "word":
+        return False
+    cursor += 1
+    while cursor < len(tokens):
+        if (
+            tokens[cursor].text != "."
+            or cursor + 1 >= len(tokens)
+            or tokens[cursor + 1].kind != "word"
+        ):
+            return False
+        cursor += 2
+    return True
+
+
+def _rust_import_selectors_are_source_like(
+    tokens: Sequence[Token],
+) -> bool:
+    parts = split_top(tokens, ",", angles=False)
+    if not parts or any(not part for part in parts):
+        return False
+    for part in parts:
+        if len(part) == 1 and (
+            part[0].kind == "word" or part[0].text == "*"
+        ):
+            continue
+        if (
+            len(part) == 3
+            and part[0].kind == "word"
+            and part[1].text == "as"
+            and part[2].kind == "word"
+        ):
+            continue
+        return False
+    return True
+
+
+def _rust_import_body_is_source_like(tokens: Sequence[Token]) -> bool:
+    if not tokens:
+        return False
+
+    if tokens[0].text == "*":
+        return (
+            len(tokens) >= 5
+            and tokens[1].text == "as"
+            and tokens[2].kind == "word"
+            and tokens[3].text == "from"
+            and _rust_module_path_is_source_like(tokens[4:])
+        )
+
+    if tokens[0].text == "{":
+        close = matching_index(tokens, 0)
+        return (
+            close is not None
+            and close + 2 < len(tokens)
+            and tokens[close + 1].text == "from"
+            and _rust_import_selectors_are_source_like(tokens[1:close])
+            and _rust_module_path_is_source_like(tokens[close + 2 :])
+        )
+
+    brace = find_top(tokens, "{", angles=False)
+    if brace is not None:
+        if brace == 0 or tokens[brace - 1].text != ".":
+            return False
+        close = matching_index(tokens, brace)
+        if (
+            close is None
+            or not _rust_module_path_is_source_like(tokens[: brace - 1])
+            or not _rust_import_selectors_are_source_like(
+                tokens[brace + 1 : close]
+            )
+        ):
+            return False
+        tail = tokens[close + 1 :]
+        if not tail:
+            return True
+        if len(tail) < 3 or tail[0].text != "hiding":
+            return False
+        if tail[1].text != "{" or matching_index(tail, 1) != len(tail) - 1:
+            return False
+        return _rust_import_selectors_are_source_like(tail[2:-1])
+
+    as_index = find_top(tokens, "as", angles=False)
+    if as_index is not None:
+        return (
+            as_index + 2 == len(tokens)
+            and tokens[as_index + 1].kind == "word"
+            and _rust_module_path_is_source_like(tokens[:as_index])
+        )
+    return _rust_module_path_is_source_like(tokens)
+
+
+def _rust_import_fragment_is_source_like(
+    source: str, tokens: Sequence[Token], index: int
+) -> bool:
+    if not _rust_source_boundary(source, tokens, index):
+        return False
+    end = _statement_end(tokens, index)
+    return (
+        end is not None
+        and _rust_source_line_ends_after(source, tokens[end])
+        and _rust_import_body_is_source_like(tokens[index + 1 : end])
+    )
+
+
+def _rust_pragma_fragment_is_source_like(
+    source: str, tokens: Sequence[Token], index: int
+) -> bool:
+    if not _rust_source_boundary(source, tokens, index):
+        return False
+    end = _statement_end(tokens, index)
+    if (
+        end is None
+        or not _rust_source_line_ends_after(source, tokens[end])
+        or index + 1 >= end
+    ):
+        return False
+    body = tokens[index + 1 : end]
+    if body[0].text in {"solidity", "abicoder", "solcore"}:
+        return len(body) > 1
+    body_texts = [token.text for token in body]
+    for legacy_name in PRAGMA_NAMES:
+        expected: list[str] = []
+        for piece_index, piece in enumerate(legacy_name.split("-")):
+            if piece_index:
+                expected.append("-")
+            expected.append(piece)
+        if body_texts[: len(expected)] == expected:
+            return True
+    return False
+
+
+def _looks_like_solcore_literal(source: str) -> bool:
+    """Classify an embedded literal from combined Solcore syntax signals."""
+
+    tokens = significant(source)
+    for index, token in enumerate(tokens):
+        if token.text == "import" and _rust_import_fragment_is_source_like(
+            source, tokens, index
+        ):
+            return True
+        if token.text == "pragma" and _rust_pragma_fragment_is_source_like(
+            source, tokens, index
+        ):
+            return True
+        if token.text == "function" and _rust_function_fragment_is_source_like(
+            source, tokens, index
+        ):
+            return True
+        if token.text in {"data", "type", "alias"} and (
+            _rust_assignment_declaration_is_source_like(source, tokens, index)
+        ):
+            return True
+        if token.text == "let" and _rust_comptime_let_is_source_like(
+            source, tokens, index
+        ):
+            return True
+        if token.text == "match" and _rust_match_fragment_is_source_like(
+            source, tokens, index
+        ):
+            return True
+        if token.text in _SOLCORE_CONTAINER_KEYWORDS and (
+            _rust_container_fragment_is_source_like(source, tokens, index)
+        ):
+            return True
+    return False
 
 
 def _rust_solcore_literals(source: str) -> list[tuple[int, int, bool]]:
@@ -3029,12 +3624,13 @@ def _rust_solcore_literals(source: str) -> list[tuple[int, int, bool]]:
 
         body_start, body_end, literal_end = literal
         body = source[body_start:body_end]
-        detected_body = (
-            body
-            if is_raw
-            else (_decode_rust_ordinary_body(body) or body)
-        )
-        if SOLCORE_LITERAL_HINT_RE.search(detected_body) is not None:
+        if is_raw:
+            detected_body = body
+        else:
+            detected_body = _decode_rust_ordinary_body(body)
+            if detected_body is None:
+                detected_body = _decode_rust_ordinary_body_for_detection(body)
+        if _looks_like_solcore_literal(detected_body):
             literals.append((body_start, body_end, is_raw))
         cursor = literal_end
     return literals
@@ -3056,10 +3652,11 @@ def migrate_rust_strings(
 ) -> str:
     """Migrate Solcore programs embedded in Rust string literals.
 
-    Literals are rewritten only when they contain a language-surface keyword,
-    leaving unrelated regex, snapshot, and prose literals byte-for-byte
-    unchanged.  Ordinary strings are transformed in their escaped spelling so
-    the surrounding Rust source and existing escapes stay intact.
+    Literals are rewritten only when combined token, boundary, and declaration
+    signals make them source-like, leaving unrelated regex, format templates,
+    and prose byte-for-byte unchanged.  Ordinary strings are transformed in
+    their escaped spelling so the surrounding Rust source and existing escapes
+    stay intact.
     """
 
     if KEEP_RUST_FILE_MARKER in source:
