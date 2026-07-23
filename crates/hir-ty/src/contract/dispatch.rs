@@ -1,6 +1,9 @@
 use hir::{
     anchor::DefId,
-    ast::item::{ContractDef, ContractItem, ContractKind, FuncKind, Item, Module},
+    ast::{
+        function::FunctionMutability,
+        item::{ContractDef, ContractItem, ContractKind, FuncKind, Item, Module},
+    },
     diag::{Diagnostic, DiagnosticCode},
     nameres as hir_nameres,
     span::Spanned,
@@ -29,7 +32,7 @@ pub struct DispatchSurface<'db> {
     pub contract: DefId<'db>,
     /// Contract name.
     pub name: String,
-    /// Public methods eligible for selector dispatch.
+    /// Externally visible methods eligible for selector dispatch.
     pub methods: Vec<DispatchMethod<'db>>,
     /// Constructor entry. A missing source constructor is represented as an
     /// implicit non-payable unit constructor.
@@ -45,7 +48,7 @@ pub struct DispatchSurface<'db> {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// One public method in the dispatch surface.
+/// One externally visible method in the dispatch surface.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct DispatchMethod<'db> {
     /// Function definition.
@@ -54,8 +57,8 @@ pub struct DispatchMethod<'db> {
     pub source_index: usize,
     /// Source method name.
     pub name: String,
-    /// Whether the method is payable.
-    pub payable: bool,
+    /// Explicit source state mutability; absence denotes `nonpayable`.
+    pub mutability: Option<FunctionMutability>,
     /// ABI selector preimage, e.g. `transfer(address,uint256)`.
     pub signature: String,
     /// First four bytes of `keccak256(signature)`.
@@ -262,12 +265,15 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                     Some("constructor".to_owned())
                 }
                 FuncKind::Function
-                    if sig.public.is_some()
+                    if sig.is_abi_visible()
                         && (dispatch_generated || contract.kind(db) == ContractKind::Interface) =>
                 {
                     Some(format!(
-                        "function `{}` declared public",
-                        ident_text(db, &sig.name)
+                        "function `{}` declared {}",
+                        ident_text(db, &sig.name),
+                        sig.visibility_kind()
+                            .expect("ABI-visible function has explicit visibility")
+                            .keyword()
                     ))
                 }
                 FuncKind::Constructor | FuncKind::Function | FuncKind::Fallback => None,
@@ -412,7 +418,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
         match function.kind(db) {
             FuncKind::Function => {
                 let sig = function.sig(db);
-                if sig.public.is_none() || ident_text(db, &sig.name) == "fallback" {
+                if !sig.is_abi_visible() || ident_text(db, &sig.name) == "fallback" {
                     continue;
                 }
                 let type_vars =
@@ -456,7 +462,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                     def: function.def_id_value(db),
                     source_index,
                     name: ident_text(db, &sig.name),
-                    payable: sig.payable.is_some(),
+                    mutability: sig.mutability_kind(),
                     signature,
                     selector,
                     inputs,
@@ -489,7 +495,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 diagnostics.extend(constructor_abi_diagnostics.iter().cloned());
                 constructor = Some(DispatchConstructor::Explicit {
                     source_index,
-                    payable: sig.payable.is_some(),
+                    payable: sig.is_payable(),
                     inputs,
                 });
             }
@@ -532,7 +538,7 @@ fn contract_dispatch_surface_with_resolutions<'db>(
                 fallback = Some(DispatchFallback::Explicit {
                     def: function.def_id_value(db),
                     source_index,
-                    payable: sig.payable.is_some(),
+                    payable: sig.is_payable(),
                     inputs,
                     outputs,
                 });
@@ -601,7 +607,7 @@ fn contract_diag_duplicate_signature<'db>(
     signature: &str,
 ) -> Diagnostic {
     Diagnostic::error(format!(
-        "duplicate public ABI signature in {} `{declaration_name}`: {signature}",
+        "duplicate external ABI signature in {} `{declaration_name}`: {signature}",
         declaration_kind.keyword()
     ))
     .with_code("SC0230")
@@ -619,7 +625,7 @@ fn contract_diag_selector_collision<'db>(
     previous: &DispatchMethod<'db>,
 ) -> Diagnostic {
     Diagnostic::error(format!(
-        "public ABI selector collision in {} `{declaration_name}`: `{}` and `{}` both use {}",
+        "external ABI selector collision in {} `{declaration_name}`: `{}` and `{}` both use {}",
         declaration_kind.keyword(),
         previous.signature,
         current.signature,

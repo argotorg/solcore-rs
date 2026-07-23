@@ -2,7 +2,9 @@ use hir::{
     anchor::DefKind,
     ast::{
         SourceComment, SourceCommentKind,
-        function::{AssignOp, BinOp, ExprKind, FuncParam, StmtKind},
+        function::{
+            AssignOp, BinOp, ExprKind, FuncParam, FunctionMutability, FunctionVisibility, StmtKind,
+        },
         item::{ContractDef, ContractItem, ContractKind, FunctionDef, Item, Module, TypeAliasKind},
         ty::TypeRefKind,
     },
@@ -1039,6 +1041,28 @@ library L {
     assert_eq!(interface.kind(&db), ContractKind::Interface);
     assert_eq!(library.kind(&db), ContractKind::Library);
 
+    let run = contract_function(&db, module, "run");
+    assert_eq!(run.sig(&db).visibility_kind(), None);
+    assert_eq!(run.sig(&db).mutability_kind(), None);
+    let read = contract_function(&db, module, "read");
+    assert_eq!(
+        read.sig(&db).visibility_kind(),
+        Some(FunctionVisibility::External)
+    );
+    assert_eq!(
+        read.sig(&db).mutability_kind(),
+        Some(FunctionMutability::View)
+    );
+    let add = contract_function(&db, module, "add");
+    assert_eq!(
+        add.sig(&db).visibility_kind(),
+        Some(FunctionVisibility::Internal)
+    );
+    assert_eq!(
+        add.sig(&db).mutability_kind(),
+        Some(FunctionMutability::Pure)
+    );
+
     let has_body = |declaration: ContractDef<'_>| {
         declaration
             .items(&db)
@@ -1053,6 +1077,121 @@ library L {
     assert!(has_body(contract));
     assert!(!has_body(interface));
     assert!(has_body(library));
+}
+
+#[test]
+fn function_declaration_modifiers_survive_lowering_with_keyword_spans() {
+    let db = TestDb::default();
+    let source = r#"
+function public_fn() public {}
+function external_fn() external {}
+function internal_fn() internal {}
+function private_fn() private {}
+function pure_fn() pure {}
+function view_fn() view {}
+function payable_fn() payable {}
+"#;
+    let (file, module) = parse_module(&db, "function-modifiers", source);
+    assert!(diagnostics(&db, file).is_empty());
+
+    for (name, expected) in [
+        ("public_fn", FunctionVisibility::Public),
+        ("external_fn", FunctionVisibility::External),
+        ("internal_fn", FunctionVisibility::Internal),
+        ("private_fn", FunctionVisibility::Private),
+    ] {
+        let visibility = top_function(&db, module, name)
+            .sig(&db)
+            .visibility
+            .expect("visibility modifier");
+        assert_eq!(*visibility.atom(), expected);
+        let absolute = visibility.span(&db).resolve_to_absolute(&db);
+        assert_eq!(
+            &source[absolute.start().as_usize()..absolute.end().as_usize()],
+            expected.keyword()
+        );
+    }
+
+    for (name, expected) in [
+        ("pure_fn", FunctionMutability::Pure),
+        ("view_fn", FunctionMutability::View),
+        ("payable_fn", FunctionMutability::Payable),
+    ] {
+        let mutability = top_function(&db, module, name)
+            .sig(&db)
+            .mutability
+            .expect("mutability modifier");
+        assert_eq!(*mutability.atom(), expected);
+        let absolute = mutability.span(&db).resolve_to_absolute(&db);
+        assert_eq!(
+            &source[absolute.start().as_usize()..absolute.end().as_usize()],
+            expected.keyword()
+        );
+    }
+}
+
+#[test]
+fn duplicate_conflicting_and_invalid_function_modifiers_are_rejected() {
+    let db = TestDb::default();
+    let cases = [
+        (
+            "duplicate-visibility",
+            "// migrate-syntax: keep-legacy-negative\nfunction f() public public {}",
+            "duplicate function visibility `public`; `public` was already specified",
+        ),
+        (
+            "conflicting-visibility",
+            "function f() public external {}",
+            "conflicting function visibility `external`; `public` was already specified",
+        ),
+        (
+            "duplicate-mutability",
+            "// migrate-syntax: keep-legacy-negative\nfunction f() pure pure {}",
+            "duplicate function mutability `pure`; `pure` was already specified",
+        ),
+        (
+            "conflicting-mutability",
+            "function f() view payable {}",
+            "conflicting function mutability `payable`; `view` was already specified",
+        ),
+        (
+            "constructor-visibility",
+            "contract C { constructor() internal {} }",
+            "`internal` is not allowed on constructor",
+        ),
+        (
+            "constructor-mutability",
+            "contract C { constructor() pure {} }",
+            "`pure` is not allowed on constructor",
+        ),
+        (
+            "fallback-visibility",
+            "contract C { fallback() private {} }",
+            "`private` is not allowed on fallback",
+        ),
+        (
+            "fallback-mutability",
+            "contract C { fallback() view {} }",
+            "`view` is not allowed on fallback",
+        ),
+        (
+            "interface-visibility",
+            "interface I { function f() public; }",
+            "interface functions must be declared `external`",
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        let file = source_file(&db, name, source);
+        let messages = diagnostics(&db, file)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect::<Vec<_>>();
+        assert!(
+            messages.iter().any(|message| message == expected),
+            "missing `{expected}` for `{source}`: {messages:#?}"
+        );
+    }
 }
 
 #[test]

@@ -1,5 +1,8 @@
 use chumsky::{input::ValueInput, prelude::*};
-use hir::ast::item::{ContractKind, FuncKind};
+use hir::ast::{
+    function::{FunctionMutability, FunctionVisibility},
+    item::{ContractKind, FuncKind},
+};
 
 use super::{
     common::*,
@@ -78,20 +81,14 @@ where
 
 #[derive(Debug, Clone, Copy, Default)]
 struct ParsedFuncModifiers {
-    public: Option<LexSpan>,
-    external: Option<LexSpan>,
-    payable: Option<LexSpan>,
+    visibility: Option<(FunctionVisibility, LexSpan)>,
+    mutability: Option<(FunctionMutability, LexSpan)>,
 }
 
 #[derive(Debug, Clone, Copy)]
 enum ParsedFuncModifier {
-    Public(LexSpan),
-    External(LexSpan),
-    Internal,
-    Private,
-    Payable(LexSpan),
-    Pure,
-    View,
+    Visibility(FunctionVisibility, LexSpan),
+    Mutability(FunctionMutability, LexSpan),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,40 +105,73 @@ where
 {
     let modifier = choice((
         just(Token::Public)
-            .map_with(|_, e| ParsedFuncModifier::Public(e.span()))
+            .map_with(|_, e| ParsedFuncModifier::Visibility(FunctionVisibility::Public, e.span()))
             .boxed(),
         just(Token::External)
-            .map_with(|_, e| ParsedFuncModifier::External(e.span()))
+            .map_with(|_, e| ParsedFuncModifier::Visibility(FunctionVisibility::External, e.span()))
             .boxed(),
         just(Token::Internal)
-            .to(ParsedFuncModifier::Internal)
+            .map_with(|_, e| ParsedFuncModifier::Visibility(FunctionVisibility::Internal, e.span()))
             .boxed(),
-        just(Token::Private).to(ParsedFuncModifier::Private).boxed(),
+        just(Token::Private)
+            .map_with(|_, e| ParsedFuncModifier::Visibility(FunctionVisibility::Private, e.span()))
+            .boxed(),
         just(Token::Payable)
-            .map_with(|_, e| ParsedFuncModifier::Payable(e.span()))
+            .map_with(|_, e| ParsedFuncModifier::Mutability(FunctionMutability::Payable, e.span()))
             .boxed(),
-        just(Token::Pure).to(ParsedFuncModifier::Pure).boxed(),
-        just(Token::View).to(ParsedFuncModifier::View).boxed(),
+        just(Token::Pure)
+            .map_with(|_, e| ParsedFuncModifier::Mutability(FunctionMutability::Pure, e.span()))
+            .boxed(),
+        just(Token::View)
+            .map_with(|_, e| ParsedFuncModifier::Mutability(FunctionMutability::View, e.span()))
+            .boxed(),
     ));
 
     modifier
         .repeated()
         .collect::<Vec<_>>()
-        .validate(move |modifiers, _, _emitter| {
+        .validate(move |modifiers, _, emitter| {
             let mut parsed = ParsedFuncModifiers::default();
             for modifier in modifiers {
                 match modifier {
-                    ParsedFuncModifier::Public(span) => {
-                        parsed.public.get_or_insert(span);
+                    ParsedFuncModifier::Visibility(kind, span) => {
+                        if let Some((previous, _)) = parsed.visibility {
+                            let conflict = if previous == kind {
+                                "duplicate"
+                            } else {
+                                "conflicting"
+                            };
+                            emitter.emit(Rich::custom(
+                                span,
+                                format!(
+                                    "{conflict} function visibility `{}`; `{}` was already specified",
+                                    kind.keyword(),
+                                    previous.keyword()
+                                ),
+                            ));
+                        } else {
+                            parsed.visibility = Some((kind, span));
+                        }
                     }
-                    ParsedFuncModifier::External(span) => {
-                        parsed.external.get_or_insert(span);
+                    ParsedFuncModifier::Mutability(kind, span) => {
+                        if let Some((previous, _)) = parsed.mutability {
+                            let conflict = if previous == kind {
+                                "duplicate"
+                            } else {
+                                "conflicting"
+                            };
+                            emitter.emit(Rich::custom(
+                                span,
+                                format!(
+                                    "{conflict} function mutability `{}`; `{}` was already specified",
+                                    kind.keyword(),
+                                    previous.keyword()
+                                ),
+                            ));
+                        } else {
+                            parsed.mutability = Some((kind, span));
+                        }
                     }
-                    ParsedFuncModifier::Internal | ParsedFuncModifier::Private => {}
-                    ParsedFuncModifier::Payable(span) => {
-                        parsed.payable.get_or_insert(span);
-                    }
-                    ParsedFuncModifier::Pure | ParsedFuncModifier::View => {}
                 }
             }
             parsed
@@ -156,19 +186,32 @@ fn implicit_public_modifiers_parser<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    function_modifiers_parser(context).validate(move |mut modifiers, _, emitter| {
-        if let Some(span) = modifiers.public.take() {
-            emitter.emit(Rich::custom(
-                span,
-                format!("{decl_name} is implicitly public; remove the visibility keyword"),
-            ));
+    function_modifiers_parser(context).validate(move |modifiers, _, emitter| {
+        if let Some((visibility, span)) = modifiers.visibility {
+            match visibility {
+                FunctionVisibility::Public if allow_external => emitter.emit(Rich::custom(
+                    span,
+                    format!("`public` is not allowed on {decl_name}; use `external`"),
+                )),
+                FunctionVisibility::Public => emitter.emit(Rich::custom(
+                    span,
+                    format!("{decl_name} is implicitly public; remove the visibility keyword"),
+                )),
+                FunctionVisibility::External if allow_external => {}
+                FunctionVisibility::External
+                | FunctionVisibility::Internal
+                | FunctionVisibility::Private => emitter.emit(Rich::custom(
+                    span,
+                    format!("`{}` is not allowed on {decl_name}", visibility.keyword()),
+                )),
+            }
         }
-        if let Some(span) = modifiers.external.take()
-            && !allow_external
+        if let Some((mutability, span)) = modifiers.mutability
+            && mutability != FunctionMutability::Payable
         {
             emitter.emit(Rich::custom(
                 span,
-                format!("`external` is not allowed on {decl_name}"),
+                format!("`{}` is not allowed on {decl_name}", mutability.keyword()),
             ));
         }
         modifiers
@@ -241,8 +284,8 @@ where
                     span: e.span(),
                     type_vars,
                     preds,
-                    public: modifiers.public.or(modifiers.external),
-                    payable: modifiers.payable,
+                    visibility: modifiers.visibility,
+                    mutability: modifiers.mutability,
                     name,
                     params,
                     params_span,
@@ -356,8 +399,8 @@ where
                     span: e.span(),
                     type_vars: Vec::new(),
                     preds: Vec::new(),
-                    public: None,
-                    payable: modifiers.payable,
+                    visibility: modifiers.visibility,
+                    mutability: modifiers.mutability,
                     name: ("constructor", name_span),
                     params,
                     params_span,
@@ -434,8 +477,8 @@ where
                         span: e.span(),
                         type_vars: Vec::new(),
                         preds: Vec::new(),
-                        public: None,
-                        payable: modifiers.payable,
+                        visibility: modifiers.visibility,
+                        mutability: modifiers.mutability,
                         name: ("fallback", name_span),
                         params,
                         params_span,
@@ -963,6 +1006,18 @@ where
                                 function.span,
                                 "interface functions must be prototypes ending in `;`".to_owned(),
                             )),
+                            (ContractKind::Interface, FuncKind::Function, false)
+                                if function.sig.visibility.map(|(kind, _)| kind)
+                                    != Some(FunctionVisibility::External) =>
+                            {
+                                Some((
+                                    function
+                                        .sig
+                                        .visibility
+                                        .map_or(function.sig.span, |(_, span)| span),
+                                    "interface functions must be declared `external`".to_owned(),
+                                ))
+                            }
                             (
                                 ContractKind::Contract | ContractKind::Library,
                                 FuncKind::Function,

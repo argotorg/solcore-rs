@@ -517,17 +517,34 @@ impl<'db> ModuleEnvBuilder<'db> {
             return;
         };
         let hir_module = parse_file_to_hir(self.db, file).module(self.db);
-        let is_library = hir_module.items(self.db).iter().any(|item| {
-            matches!(
-                item,
+        let Some(library) = hir_module
+            .items(self.db)
+            .iter()
+            .find_map(|item| match item {
                 Item::ContractDef(def)
                     if def.def_id_value(self.db) == item_ref.origin.def_id
-                        && def.kind(self.db) == ContractKind::Library
-            )
-        });
-        if !is_library {
+                        && def.kind(self.db) == ContractKind::Library =>
+                {
+                    Some(*def)
+                }
+                _ => None,
+            })
+        else {
             return;
-        }
+        };
+        let private_functions = library
+            .items(self.db)
+            .iter()
+            .filter_map(|item| match item {
+                ContractItem::FunctionDef(function)
+                    if function.sig(self.db).visibility_kind()
+                        == Some(FunctionVisibility::Private) =>
+                {
+                    Some(function.def_id_value(self.db))
+                }
+                _ => None,
+            })
+            .collect::<FxHashSet<_>>();
         let item_scope = hir_nameres::item_scope(self.db, hir_module);
         let Some(library_scope) = item_scope.contract_scope(item_ref.origin.def_id) else {
             return;
@@ -539,6 +556,15 @@ impl<'db> ModuleEnvBuilder<'db> {
                 .or_insert(entry.resolution.clone());
         }
         for entry in &library_scope.terms {
+            if matches!(
+                entry.resolution,
+                hir_nameres::Resolution::Def {
+                    def,
+                    kind: hir_nameres::DefResolutionKind::Function,
+                } if private_functions.contains(&def)
+            ) {
+                continue;
+            }
             self.insert_term(qualify(library_name, &entry.name), entry.resolution.clone());
         }
     }

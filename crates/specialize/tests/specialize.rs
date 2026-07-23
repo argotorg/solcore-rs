@@ -1452,7 +1452,7 @@ contract C {
 }
 
 #[test]
-fn generated_contract_dispatch_rejects_public_comptime_params_before_runtime_rooting() {
+fn generated_contract_dispatch_rejects_abi_visible_comptime_params_before_runtime_rooting() {
     let output = specialize_src_with_std(
         r#"
 import std;
@@ -1460,6 +1460,10 @@ import std.dispatch;
 
 contract C {
   function answer(comptime x: word) public returns (word) {
+    return x;
+  }
+
+  function other(comptime x: word) external view returns (word) {
     return x;
   }
 }
@@ -1475,7 +1479,7 @@ contract C {
                 SpecializeDiagnosticKind::PublicComptimeParam { .. }
             ))
             .count(),
-        1,
+        2,
         "{:?}",
         output.diagnostics
     );
@@ -1505,7 +1509,7 @@ import std;
 import std.dispatch;
 
 contract C {
-  function answer() public returns (uint256) {
+  function answer() external view returns (uint256) {
     return uint256.uint256(1);
   }
 }

@@ -109,7 +109,7 @@ pub fn handle_completion(
 
     let mut completions = CompletionAccumulator::default();
     add_keyword_completions(&mut completions);
-    add_item_scope_completions(db, &scope, &mut completions);
+    add_item_scope_completions(db, &scope, enclosing_contract, &mut completions);
     add_imported_completions(db, &env, &mut completions);
 
     if let Some(owner) = owner {
@@ -184,13 +184,14 @@ fn add_qualified_completions<'db>(
     context: &QualifiedCompletionContext,
     completions: &mut CompletionAccumulator,
 ) {
-    add_qualified_scope_entries(db, &scope.terms, context, completions);
-    add_qualified_scope_entries(db, &scope.types, context, completions);
-    add_qualified_scope_entries(db, &scope.modules, context, completions);
+    let contract = enclosing_contract.and_then(|contract| scope.contract_scope(contract));
+    add_qualified_scope_entries(db, &scope.terms, contract, context, completions);
+    add_qualified_scope_entries(db, &scope.types, None, context, completions);
+    add_qualified_scope_entries(db, &scope.modules, None, context, completions);
 
-    if let Some(contract) = enclosing_contract.and_then(|contract| scope.contract_scope(contract)) {
-        add_qualified_scope_entries(db, &contract.terms, context, completions);
-        add_qualified_scope_entries(db, &contract.types, context, completions);
+    if let Some(contract) = contract {
+        add_qualified_scope_entries(db, &contract.terms, None, context, completions);
+        add_qualified_scope_entries(db, &contract.types, None, context, completions);
     }
 
     for namespace in [Namespace::Term, Namespace::Type, Namespace::Module] {
@@ -215,10 +216,16 @@ fn add_qualified_completions<'db>(
 fn add_qualified_scope_entries(
     db: &vfs::AnalysisHost,
     entries: &hir::nameres::NamespaceTable<'_>,
+    enclosing_contract: Option<&hir::nameres::ContractScope<'_>>,
     context: &QualifiedCompletionContext,
     completions: &mut CompletionAccumulator,
 ) {
     for entry in entries {
+        if enclosing_contract
+            .is_some_and(|contract| contract.is_external_function_resolution(&entry.resolution))
+        {
+            continue;
+        }
         let Some(member) = direct_qualified_member(&entry.name, context) else {
             continue;
         };
@@ -309,9 +316,16 @@ fn add_keyword_completions(completions: &mut CompletionAccumulator) {
 fn add_item_scope_completions<'db>(
     db: &'db vfs::AnalysisHost,
     scope: &hir::nameres::ItemScopeFacts<'db>,
+    enclosing_contract: Option<DefId<'db>>,
     completions: &mut CompletionAccumulator,
 ) {
+    let contract = enclosing_contract.and_then(|contract| scope.contract_scope(contract));
     for entry in &scope.terms {
+        if contract
+            .is_some_and(|contract| contract.is_external_function_resolution(&entry.resolution))
+        {
+            continue;
+        }
         add_scope_entry_completion(db, entry, completions);
     }
     for entry in &scope.types {
@@ -396,7 +410,9 @@ fn add_body_completions<'db>(
     }
     if let Some(contract) = enclosing_contract.and_then(|contract| scope.contract_scope(contract)) {
         for entry in &contract.terms {
-            add_scope_entry_completion(db, entry, completions);
+            if contract.is_unqualified_term_visible(entry) {
+                add_scope_entry_completion(db, entry, completions);
+            }
         }
         for entry in &contract.types {
             add_scope_entry_completion(db, entry, completions);
@@ -820,6 +836,52 @@ contract Palette {
         assert_completion(&items, "Red", CompletionItemKind::CONSTRUCTOR);
         assert_completion(&items, "Green", CompletionItemKind::CONSTRUCTOR);
         assert_no_completion(&items, "Color.Red");
+    }
+
+    #[test]
+    fn completion_hides_only_the_current_librarys_external_functions() {
+        let source = "\
+library Other {
+  function available() external returns (word) { return 1; }
+}
+
+library Helpers {
+  function external_value() external returns (word) { return 2; }
+  function internal_value() internal returns (word) { return 3; }
+
+  function qualified_probe() internal returns (word) {
+    return Helpers.;
+  }
+
+  function other_library_probe() internal returns (word) {
+    return Other.;
+  }
+
+  function item_scope_probe() internal returns (word) {
+    return missing;
+  }
+}
+";
+        let (world, uri) = world_with_main(source);
+
+        let own_members = completion_at(&world, &uri, source, "return Helpers.");
+        assert_no_completion(&own_members, "external_value");
+        assert_completion(&own_members, "internal_value", CompletionItemKind::FUNCTION);
+
+        let other_members = completion_at(&world, &uri, source, "return Other.");
+        assert_completion(&other_members, "available", CompletionItemKind::FUNCTION);
+
+        let offset =
+            (source.find("return missing").expect("item completion") + "return ".len()) as u32;
+        let position = world
+            .line_index(&uri)
+            .expect("line index")
+            .byte_to_position(offset);
+        let items =
+            completion_items(handle_completion(&world, &uri, position).expect("completion"));
+        assert_no_completion(&items, "external_value");
+        assert_no_completion(&items, "Helpers.external_value");
+        assert_completion(&items, "internal_value", CompletionItemKind::FUNCTION);
     }
 
     #[test]

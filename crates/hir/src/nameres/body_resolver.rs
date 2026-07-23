@@ -664,10 +664,22 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             .and_then(|contract| self.scope.contract_scope(contract))
         {
             names.extend(contract.fields.iter().map(|entry| entry.name.clone()));
-            names.extend(contract.terms.iter().map(|entry| entry.name.clone()));
+            names.extend(
+                contract
+                    .terms
+                    .iter()
+                    .filter(|entry| contract.is_unqualified_term_visible(entry))
+                    .map(|entry| entry.name.clone()),
+            );
             names.extend(contract.types.iter().map(|entry| entry.name.clone()));
         }
-        names.extend(self.scope.terms.iter().map(|entry| entry.name.clone()));
+        names.extend(
+            self.scope
+                .terms
+                .iter()
+                .filter(|entry| !self.is_self_external_resolution(&entry.resolution))
+                .map(|entry| entry.name.clone()),
+        );
         names.extend(self.scope.types.iter().map(|entry| entry.name.clone()));
         names.extend(self.scope.modules.iter().map(|entry| entry.name.clone()));
         names.extend(self.imports.candidate_names(self.db, Namespace::Term));
@@ -713,12 +725,28 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
     }
 
     fn lookup_qualified_term(&self, name: &str) -> Option<Resolution<'db>> {
-        self.contract
+        if let Some(resolution) = self
+            .contract
             .and_then(|contract| self.scope.contract_scope(contract))
             .and_then(|contract| contract.term_resolution(name))
-            .or_else(|| self.scope.term_resolution(name))
+        {
+            return Some(resolution);
+        }
+        let resolution = self
+            .scope
+            .term_resolution(name)
             .or_else(|| self.imports.imported(self.db, Namespace::Term, name))
-            .or_else(|| builtin_term(name))
+            .or_else(|| builtin_term(name))?;
+        if self.is_self_external_resolution(&resolution) {
+            return None;
+        }
+        Some(resolution)
+    }
+
+    fn is_self_external_resolution(&self, resolution: &Resolution<'db>) -> bool {
+        self.contract
+            .and_then(|contract| self.scope.contract_scope(contract))
+            .is_some_and(|contract| contract.is_external_function_resolution(resolution))
     }
 
     fn lookup_unqualified_class_method(&self, name: &str) -> Option<Resolution<'db>> {

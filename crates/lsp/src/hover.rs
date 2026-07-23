@@ -205,6 +205,7 @@ fn definition_hover<'db>(db: &'db vfs::AnalysisHost, def: DefId<'db>) -> Option<
                                 &function_param_names(db, sig),
                                 &found.type_var_names,
                                 scheme,
+                                Some(sig),
                             )
                         },
                     )
@@ -410,11 +411,13 @@ fn format_source_function_signature<'db>(db: &'db dyn hir_ty::Db, sig: &FuncSig<
     signature.push('(');
     signature.push_str(&params);
     signature.push(')');
-    if sig.public.is_some() {
-        signature.push_str(" public");
+    if let Some(visibility) = sig.visibility_kind() {
+        signature.push(' ');
+        signature.push_str(visibility.keyword());
     }
-    if sig.payable.is_some() {
-        signature.push_str(" payable");
+    if let Some(mutability) = sig.mutability_kind() {
+        signature.push(' ');
+        signature.push_str(mutability.keyword());
     }
     if let Some(ret) = sig.ret {
         signature.push_str(&display_type_ref_return_suffix(db, ret));
@@ -512,7 +515,7 @@ fn constructor_hover<'db>(
     Some(HoverInfo {
         code: format!(
             "constructor {}",
-            format_callable_scheme(db, name, &[], &found.type_var_names, scheme)
+            format_callable_scheme(db, name, &[], &found.type_var_names, scheme, None)
         ),
         documentation: comments_markdown(found.adt.ctor_leading_comments(db, index.as_usize())?),
     })
@@ -568,6 +571,7 @@ fn class_method_hover<'db>(
                 &function_param_names(db, sig),
                 &type_var_names,
                 scheme,
+                Some(sig),
             )
         ),
         documentation: comments_markdown(class_def.method_leading_comments(db, index)?),
@@ -906,6 +910,7 @@ fn format_callable_scheme<'db>(
     param_names: &[String],
     type_var_names: &[String],
     scheme: TyScheme<'db>,
+    source_sig: Option<&FuncSig<'db>>,
 ) -> String {
     let ty = scheme.body(db).ty(db);
     let (params, ret) = match ty.kind(db) {
@@ -924,10 +929,18 @@ fn format_callable_scheme<'db>(
         })
         .collect::<Vec<_>>()
         .join(", ");
-    let mut signature = format!(
-        "{name}({params}){}",
-        display_ty_return_suffix(db, ret, type_var_names)
-    );
+    let mut signature = format!("{name}({params})");
+    if let Some(sig) = source_sig {
+        if let Some(visibility) = sig.visibility_kind() {
+            signature.push(' ');
+            signature.push_str(visibility.keyword());
+        }
+        if let Some(mutability) = sig.mutability_kind() {
+            signature.push(' ');
+            signature.push_str(mutability.keyword());
+        }
+    }
+    signature.push_str(&display_ty_return_suffix(db, ret, type_var_names));
     let predicates = scheme
         .body(db)
         .preds(db)
@@ -1325,7 +1338,7 @@ function main() returns (word) {
         let source = "\
 contract Wallet {
   constructor(owner: address) payable {}
-  fallback() payable {}
+  fallback() external payable {}
 }
 ";
         let (world, uri) = world_with_main(source);
@@ -1339,7 +1352,7 @@ contract Wallet {
 
         let fallback = source.find("fallback").expect("fallback");
         let fallback_hover = hover_at(source, &world, &uri, fallback);
-        assert_eq!(hover_code(&fallback_hover), "fallback() payable");
+        assert_eq!(hover_code(&fallback_hover), "fallback() external payable");
     }
 
     #[test]
@@ -1451,6 +1464,18 @@ library Helpers {
         assert_eq!(
             hover_code(&hover_at(source, &world, &uri, library)),
             "library Helpers"
+        );
+
+        let read = source.find("read(").expect("interface method");
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, read)),
+            "function read(key: word) external view returns (word)"
+        );
+
+        let identity = source.find("identity(").expect("library method");
+        assert_eq!(
+            hover_code(&hover_at(source, &world, &uri, identity)),
+            "function identity(value: word) internal pure returns (word)"
         );
     }
 }

@@ -444,10 +444,10 @@ pub(crate) struct ParsedFuncSig<'src> {
     pub(crate) type_vars: Vec<SpannedStr<'src>>,
     /// Qualifying predicates.
     pub(crate) preds: Vec<ParsedPred<'src>>,
-    /// Optional `public` keyword span.
-    pub(crate) public: Option<LexSpan>,
-    /// Optional `payable` keyword span.
-    pub(crate) payable: Option<LexSpan>,
+    /// Optional visibility keyword and span.
+    pub(crate) visibility: Option<(function::FunctionVisibility, LexSpan)>,
+    /// Optional state-mutability keyword and span.
+    pub(crate) mutability: Option<(function::FunctionMutability, LexSpan)>,
     /// Function name.
     pub(crate) name: SpannedStr<'src>,
     /// Parameters.

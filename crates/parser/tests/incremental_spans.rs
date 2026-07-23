@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use hir::{
     ast::{
-        function::{ExprKind, FuncBody},
+        function::{ExprKind, FuncBody, FunctionMutability, FunctionVisibility},
         item::{AdtDef, ClassDef, ContractDef, ContractItem, ContractKind, FunctionDef, Item},
     },
     input::SourceFile,
@@ -272,6 +272,52 @@ fn shell_and_prototype_edits_update_tracked_hir_without_changing_def_identity() 
         (
             contract.def_id_value(&db).disambiguator(&db).as_u32(),
             function.def_id_value(&db).disambiguator(&db).as_u32(),
+        ),
+        before_identity
+    );
+}
+
+#[test]
+fn modifier_edits_update_the_signature_without_changing_def_identity() {
+    let mut db = TestDb::default();
+    let file = SourceFile::new(
+        &db,
+        "memory:///modifier-edit.solc".parse().expect("valid url"),
+        Some("function run() public view {}\n".to_owned()),
+    );
+
+    let before_identity = {
+        let function = first_function(&db, file);
+        let sig = function.sig(&db);
+        assert_eq!(sig.visibility_kind(), Some(FunctionVisibility::Public));
+        assert_eq!(sig.mutability_kind(), Some(FunctionMutability::View));
+        (
+            function.def_id_value(&db).disambiguator(&db).as_u32(),
+            function
+                .body(&db)
+                .expect("body")
+                .def_id(&db)
+                .disambiguator(&db)
+                .as_u32(),
+        )
+    };
+
+    file.set_content(&mut db)
+        .to(Some("function run() external pure {}\n".to_owned()));
+
+    let function = first_function(&db, file);
+    let sig = function.sig(&db);
+    assert_eq!(sig.visibility_kind(), Some(FunctionVisibility::External));
+    assert_eq!(sig.mutability_kind(), Some(FunctionMutability::Pure));
+    assert_eq!(
+        (
+            function.def_id_value(&db).disambiguator(&db).as_u32(),
+            function
+                .body(&db)
+                .expect("body")
+                .def_id(&db)
+                .disambiguator(&db)
+                .as_u32(),
         ),
         before_identity
     );

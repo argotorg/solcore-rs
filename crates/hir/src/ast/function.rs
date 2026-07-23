@@ -18,12 +18,68 @@ use crate::{
     span::{Span, Spanned, SpannedElem},
 };
 
+/// Source-level visibility modifier on a function declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum FunctionVisibility {
+    /// Externally callable and internally reusable.
+    Public,
+    /// Externally callable through the ABI.
+    External,
+    /// Reusable within the declaring program/library.
+    Internal,
+    /// Visible only within the declaring contract-like scope.
+    Private,
+}
+
+impl FunctionVisibility {
+    /// Returns the canonical source keyword.
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Public => "public",
+            Self::External => "external",
+            Self::Internal => "internal",
+            Self::Private => "private",
+        }
+    }
+
+    /// Returns whether the declaration contributes to an external ABI.
+    pub const fn is_abi_visible(self) -> bool {
+        matches!(self, Self::Public | Self::External)
+    }
+}
+
+/// Explicit source-level state-mutability modifier.
+///
+/// The absence of a modifier denotes Solidity's `nonpayable` ABI state.
+/// This node records the declaration; effect validation is a separate semantic
+/// concern rather than a property guaranteed by lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum FunctionMutability {
+    /// Source `pure` annotation.
+    Pure,
+    /// Source `view` annotation.
+    View,
+    /// Source `payable` annotation.
+    Payable,
+}
+
+impl FunctionMutability {
+    /// Returns the canonical source keyword.
+    pub const fn keyword(self) -> &'static str {
+        match self {
+            Self::Pure => "pure",
+            Self::View => "view",
+            Self::Payable => "payable",
+        }
+    }
+}
+
 /// Lowered function signature shared by functions, methods, lambdas, and ABI
 /// forms.
 ///
 /// The signature stores source-level types and predicates, not checked types.
-/// `public` and `payable` keep the keyword spans when present so diagnostics
-/// can point at modifier misuse.
+/// Explicit modifiers keep their keyword spans so diagnostics can point at
+/// modifier misuse without inventing implicit source syntax.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub struct FuncSig<'db> {
     /// Span covering the complete signature syntax.
@@ -32,10 +88,10 @@ pub struct FuncSig<'db> {
     pub type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
     /// Trait constraints that qualify this signature.
     pub preds: Vec<PredRef<'db>>,
-    /// Span of the `public` keyword when written.
-    pub public: Option<Span<'db>>,
-    /// Span of the `payable` keyword when written.
-    pub payable: Option<Span<'db>>,
+    /// Explicit visibility keyword and its source span.
+    pub visibility: Option<SpannedElem<'db, FunctionVisibility>>,
+    /// Explicit state-mutability keyword and its source span.
+    pub mutability: Option<SpannedElem<'db, FunctionMutability>>,
     /// Function or method name.
     pub name: SpannedElem<'db, Ident<'db>>,
     /// Parameters and the span of the parameter list.
@@ -48,6 +104,29 @@ pub struct FuncSig<'db> {
     /// list. `None` preserves an unnamed entry without conflating it with an
     /// omitted or empty return list.
     pub ret_names: Vec<Option<SpannedElem<'db, Ident<'db>>>>,
+}
+
+impl FuncSig<'_> {
+    /// Returns the explicit visibility kind, if one was written.
+    pub fn visibility_kind(&self) -> Option<FunctionVisibility> {
+        self.visibility.map(|visibility| *visibility.atom())
+    }
+
+    /// Returns the explicit state-mutability kind, if one was written.
+    pub fn mutability_kind(&self) -> Option<FunctionMutability> {
+        self.mutability.map(|mutability| *mutability.atom())
+    }
+
+    /// Returns whether the declaration contributes to an external ABI.
+    pub fn is_abi_visible(&self) -> bool {
+        self.visibility_kind()
+            .is_some_and(FunctionVisibility::is_abi_visible)
+    }
+
+    /// Returns whether the declaration may receive value.
+    pub fn is_payable(&self) -> bool {
+        self.mutability_kind() == Some(FunctionMutability::Payable)
+    }
 }
 
 impl<'db> Spanned<'db> for FuncSig<'db> {

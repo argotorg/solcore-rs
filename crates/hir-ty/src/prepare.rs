@@ -351,7 +351,7 @@ fn prepare_contract_constructor<'db>(
             params: sig.params.atom().clone(),
             param_types: explicit_param_types(sig.params.atom())?,
             body: function.body(db),
-            payable: sig.payable.is_some(),
+            payable: sig.is_payable(),
         }
     } else {
         RawConstructor {
@@ -439,8 +439,8 @@ fn generated_constructor_init<'db>(
         span: constructor.span,
         type_vars: Vec::new(),
         preds: Vec::new(),
-        public: None,
-        payable: None,
+        visibility: None,
+        mutability: None,
         name: spanned_ident(db, constructor.span, CONSTRUCTOR_INIT_NAME),
         params: SpannedElem::new(constructor.params.clone(), constructor.span),
         ret: Some(unit_ty(db, constructor.span)),
@@ -545,8 +545,8 @@ fn generated_constructor_copy_arguments<'db>(
         span: constructor.span,
         type_vars: Vec::new(),
         preds: Vec::new(),
-        public: None,
-        payable: None,
+        visibility: None,
+        mutability: None,
         name: spanned_ident(db, constructor.span, CONSTRUCTOR_COPY_NAME),
         params: SpannedElem::new(Vec::new(), constructor.span),
         ret: Some(args_ty),
@@ -655,8 +655,8 @@ fn generated_deployment_main<'db>(
         span: constructor.span,
         type_vars: Vec::new(),
         preds: Vec::new(),
-        public: None,
-        payable: None,
+        visibility: None,
+        mutability: None,
         name: spanned_ident(db, constructor.span, DEPLOYMENT_MAIN_NAME),
         params: SpannedElem::new(Vec::new(), constructor.span),
         ret: Some(unit_ty(db, constructor.span)),
@@ -973,13 +973,13 @@ fn prepare_contract_dispatch<'db>(
         let sig = function.sig(db);
         match function.kind(db) {
             FuncKind::Function
-                if sig.public.is_some() && ident_text(db, &sig.name) != "fallback" =>
+                if sig.is_abi_visible() && ident_text(db, &sig.name) != "fallback" =>
             {
                 methods.push(RawMethod {
                     def: function.def_id_value(db),
                     name: ident_text(db, &sig.name),
                     span: sig.span,
-                    payable: sig.payable.is_some(),
+                    payable: sig.is_payable(),
                     params: explicit_param_types(sig.params.atom())?,
                     ret: sig.ret.unwrap_or_else(|| unit_ty(db, sig.span)),
                 });
@@ -987,7 +987,7 @@ fn prepare_contract_dispatch<'db>(
             FuncKind::Fallback => {
                 fallback = Some(RawFallback {
                     name: ident_text(db, &sig.name),
-                    payable: sig.payable.is_some(),
+                    payable: sig.is_payable(),
                     params: explicit_param_types(sig.params.atom())?,
                     ret: sig.ret.unwrap_or_else(|| unit_ty(db, sig.span)),
                 });
@@ -1198,8 +1198,8 @@ fn sig_string_method<'db>(
         span,
         type_vars: Vec::new(),
         preds: Vec::new(),
-        public: None,
-        payable: None,
+        visibility: None,
+        mutability: None,
         name: spanned_ident(db, span, "sigStr"),
         params: SpannedElem::new(
             vec![FuncParam::Typed {
@@ -1327,8 +1327,8 @@ fn generated_dispatch_main<'db>(
         span,
         type_vars: Vec::new(),
         preds: Vec::new(),
-        public: None,
-        payable: None,
+        visibility: None,
+        mutability: None,
         name: spanned_ident(db, span, GENERATED_MAIN_NAME),
         params: SpannedElem::new(Vec::new(), span),
         ret: Some(unit_ty(db, span)),

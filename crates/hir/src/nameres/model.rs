@@ -461,6 +461,9 @@ pub struct ContractScope<'db> {
     pub types: NamespaceTable<'db>,
     /// Contract-local term entries.
     pub terms: NamespaceTable<'db>,
+    /// Function definitions declared `external`, which are not callable by a
+    /// bare name from inside the same declaration.
+    pub external_functions: Vec<DefId<'db>>,
     /// Field entries.
     pub fields: Vec<FieldEntry<'db>>,
     /// Constructor lists declared inside the contract.
@@ -845,22 +848,42 @@ impl<'db> ContractScope<'db> {
         // such as `Option.Some`, even when the enclosing contract is also
         // named `Option`. Preserve exact source lookup, and recognize the
         // unspellable compiler-only method reference independently.
+        if let Some(entry) = compiler_contract_method_name(name)
+            .and_then(|method| self.terms.get(method))
+            .filter(|entry| {
+                matches!(
+                    entry.resolution,
+                    Resolution::Def {
+                        kind: DefResolutionKind::Function,
+                        ..
+                    }
+                )
+            })
+        {
+            return Some(entry.resolution.clone());
+        }
         self.terms
             .get(name)
-            .or_else(|| {
-                compiler_contract_method_name(name)
-                    .and_then(|method| self.terms.get(method))
-                    .filter(|entry| {
-                        matches!(
-                            entry.resolution,
-                            Resolution::Def {
-                                kind: DefResolutionKind::Function,
-                                ..
-                            }
-                        )
-                    })
-            })
+            .filter(|entry| self.is_unqualified_term_visible(entry))
             .map(|entry| entry.resolution.clone())
+    }
+
+    /// Returns whether `entry` can be referenced by a bare name inside the
+    /// declaration that owns this scope.
+    pub fn is_unqualified_term_visible(&self, entry: &ScopeEntry<'db>) -> bool {
+        !self.is_external_function_resolution(&entry.resolution)
+    }
+
+    /// Returns whether `resolution` names an `external` function declared by
+    /// the declaration that owns this scope.
+    pub fn is_external_function_resolution(&self, resolution: &Resolution<'db>) -> bool {
+        matches!(
+            resolution,
+            Resolution::Def {
+                def,
+                kind: DefResolutionKind::Function,
+            } if self.external_functions.contains(&def)
+        )
     }
 
     pub(super) fn field_resolution(&self, name: &str) -> Option<Resolution<'db>> {

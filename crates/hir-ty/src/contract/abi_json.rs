@@ -1,6 +1,9 @@
 use std::fmt::Write as _;
 
-use hir::ast::item::{ContractDef, Module};
+use hir::ast::{
+    function::FunctionMutability,
+    item::{ContractDef, Module},
+};
 
 use super::{
     abi::{AbiParam, AbiType, abi_params_contain_unsupported},
@@ -49,7 +52,7 @@ pub fn contract_abi_json<'db>(
                 name: method.name,
                 inputs: method.inputs,
                 outputs: method.outputs,
-                payable: method.payable,
+                mutability: method.mutability,
             },
         ));
     }
@@ -74,7 +77,7 @@ enum AbiJsonEntry {
         name: String,
         inputs: Vec<AbiParam>,
         outputs: Vec<AbiParam>,
-        payable: bool,
+        mutability: Option<FunctionMutability>,
     },
     Constructor {
         inputs: Vec<AbiParam>,
@@ -108,7 +111,7 @@ fn render_abi_entry(out: &mut String, entry: &AbiJsonEntry, ind: usize) -> Resul
             name,
             inputs,
             outputs,
-            payable,
+            mutability,
         } => {
             line(out, ind, "{");
             render_named_params(out, ind + 1, "inputs", inputs, true)?;
@@ -117,7 +120,10 @@ fn render_abi_entry(out: &mut String, entry: &AbiJsonEntry, ind: usize) -> Resul
             line(
                 out,
                 ind + 1,
-                &format!("\"stateMutability\": \"{}\",", state_mutability(*payable)),
+                &format!(
+                    "\"stateMutability\": \"{}\",",
+                    function_state_mutability(*mutability)
+                ),
             );
             line(out, ind + 1, "\"type\": \"function\"");
             push_close_brace(out, ind);
@@ -128,7 +134,7 @@ fn render_abi_entry(out: &mut String, entry: &AbiJsonEntry, ind: usize) -> Resul
             line(
                 out,
                 ind + 1,
-                &format!("\"stateMutability\": \"{}\",", state_mutability(*payable)),
+                &format!("\"stateMutability\": \"{}\",", payability_state(*payable)),
             );
             line(out, ind + 1, "\"type\": \"constructor\"");
             push_close_brace(out, ind);
@@ -138,7 +144,7 @@ fn render_abi_entry(out: &mut String, entry: &AbiJsonEntry, ind: usize) -> Resul
             line(
                 out,
                 ind + 1,
-                &format!("\"stateMutability\": \"{}\",", state_mutability(*payable)),
+                &format!("\"stateMutability\": \"{}\",", payability_state(*payable)),
             );
             line(out, ind + 1, "\"type\": \"fallback\"");
             push_close_brace(out, ind);
@@ -215,8 +221,17 @@ fn abi_param_is_unsupported(param: &AbiParam) -> bool {
         || param.components.iter().any(abi_param_is_unsupported)
 }
 
-fn state_mutability(payable: bool) -> &'static str {
+fn payability_state(payable: bool) -> &'static str {
     if payable { "payable" } else { "nonpayable" }
+}
+
+fn function_state_mutability(mutability: Option<FunctionMutability>) -> &'static str {
+    match mutability {
+        None => "nonpayable",
+        Some(FunctionMutability::Pure) => "pure",
+        Some(FunctionMutability::View) => "view",
+        Some(FunctionMutability::Payable) => "payable",
+    }
 }
 
 fn line(out: &mut String, ind: usize, text: &str) {

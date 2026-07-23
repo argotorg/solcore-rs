@@ -1905,7 +1905,7 @@ fn dispatch_reserved_type_names<'db>(
                 continue;
             }
             let sig = function.sig(db);
-            if sig.public.is_none() {
+            if !sig.is_abi_visible() {
                 continue;
             }
             let method_name = ident_text(db, &sig.name);
@@ -2338,11 +2338,13 @@ pub(super) fn format_func_sig<'db>(db: &'db dyn HirDb, sig: &FuncSig<'db>) -> St
             .join(", "),
     );
     out.push(')');
-    if sig.public.is_some() {
-        out.push_str(" public");
+    if let Some(visibility) = sig.visibility_kind() {
+        out.push(' ');
+        out.push_str(visibility.keyword());
     }
-    if sig.payable.is_some() {
-        out.push_str(" payable");
+    if let Some(mutability) = sig.mutability_kind() {
+        out.push(' ');
+        out.push_str(mutability.keyword());
     }
     if let Some(ret) = sig.ret {
         out.push_str(&display_type_ref_return_suffix(db, ret));

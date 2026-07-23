@@ -26,7 +26,7 @@ use hir::{
     anchor::{DefId, DefKind},
     ast::{
         Ident,
-        function::{FuncBody, FuncParam},
+        function::{FuncBody, FuncParam, FunctionVisibility},
         item::{
             AdtDef, ClassDef, ConstructorSelector, ContractDef, ContractItem, ContractKind, Export,
             ExportKind, ExportedName, FunctionDef, Import, ImportHiddenName, ImportSelector, Item,

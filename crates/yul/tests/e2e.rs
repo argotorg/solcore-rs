@@ -171,7 +171,7 @@ fn resolve_fixture_directives(
                             "{context}: directives may only target ordinary public functions"
                         )));
                     }
-                    if function.sig(db).public.is_none() {
+                    if !function.sig(db).is_abi_visible() {
                         return Err(directive_error(format!(
                             "{context}: directive target is private and has no external selector"
                         )));

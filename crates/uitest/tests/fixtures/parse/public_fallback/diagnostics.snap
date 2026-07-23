@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/public_fallback/main.solc
 ---
-error[SC0001]: fallback is implicitly public; remove the visibility keyword
+error[SC0001]: `public` is not allowed on fallback; use `external`
  --> /main/main.solc:2:14
   |
 1 | contract Bad {

@@ -701,6 +701,99 @@ function reuse(x: Helpers.Fixed) returns (Helpers.Fixed) {
 }
 
 #[test]
+fn private_library_functions_stay_inside_the_library_scope() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+library Helpers {
+  function secret() private pure returns (word) { return 7; }
+  function reveal() internal pure returns (word) { return secret(); }
+}
+
+function good() returns (word) { return Helpers.reveal(); }
+function bad() returns (word) { return Helpers.secret(); }
+"#,
+    );
+
+    let diagnostics = diagnostics(&db, module);
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_deref() == Some("SC0101"))
+            .count(),
+        1,
+        "{diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("undefined name: secret")),
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
+fn external_contract_functions_are_not_bare_internal_calls() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+contract C {
+  function public_value() public pure returns (word) { return 1; }
+  function external_value() external pure returns (word) { return 2; }
+  function caller() returns (word) {
+    let value = public_value();
+    return external_value();
+  }
+}
+"#,
+    );
+
+    let diagnostics = diagnostics(&db, module);
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_deref() == Some("SC0101"))
+            .count(),
+        1,
+        "{diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic
+            .message
+            .contains("undefined name: external_value")),
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
+fn external_library_functions_cannot_call_themselves_through_the_library_name() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+library Helpers {
+  function external_value() external pure returns (word) { return 2; }
+  function caller() internal pure returns (word) {
+    return Helpers.external_value();
+  }
+}
+"#,
+    );
+
+    let diagnostics = diagnostics(&db, module);
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code.as_deref() == Some("SC0101"))
+            .count(),
+        1,
+        "{diagnostics:#?}"
+    );
+}
+
+#[test]
 fn unqualified_same_name_constructor_is_rejected_with_unknown_wildcard_import() {
     let db = TestDb::default();
     let module = parse_module(

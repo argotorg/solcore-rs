@@ -1078,6 +1078,62 @@ fn plain_import_binds_reexported_terms() {
 }
 
 #[test]
+fn private_library_members_do_not_leak_through_import_aliases_or_reexports() {
+    let (db, entry) = load_sources([
+        (
+            vec!["main"],
+            r#"
+import {Helpers as Direct} from lib.base;
+import * as base_ns from lib.base;
+import {Renamed as ViaReexport} from lib.wrapper;
+
+function direct() returns (word) { return Direct.reveal(); }
+function namespaced() returns (word) { return base_ns.Helpers.reveal(); }
+function reexported() returns (word) { return ViaReexport.reveal(); }
+"#,
+        ),
+        (
+            vec!["base"],
+            r#"
+export { Helpers };
+
+library Helpers {
+  function secret() private pure returns (word) { return 7; }
+  function reveal() internal pure returns (word) { return secret(); }
+}
+"#,
+        ),
+        (
+            vec!["wrapper"],
+            r#"
+import {Helpers as Renamed} from lib.base;
+export { Renamed };
+"#,
+        ),
+    ]);
+
+    let (_, diagnostics) = run(&db, &entry);
+    assert_no_diagnostics(&db, &diagnostics);
+
+    let main = module_id_from_key(&db, &entry);
+    let env = module_env(&db, main);
+    for visible in [
+        "Direct.reveal",
+        "base_ns.Helpers.reveal",
+        "ViaReexport.reveal",
+    ] {
+        assert!(env.terms.contains_key(visible), "missing {visible}");
+    }
+    for hidden in [
+        "Direct.secret",
+        "base_ns.Helpers.secret",
+        "ViaReexport.secret",
+    ] {
+        assert!(!env.terms.contains_key(hidden), "leaked {hidden}");
+    }
+}
+
+#[test]
 fn recursive_export_cycle_reaches_fixed_point() {
     let fixture = fixture_dir("ok/cycle");
     let (db, entry) = load_fixture(&fixture, BTreeMap::new());

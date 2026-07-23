@@ -5,7 +5,10 @@ use std::{
 
 use hir::{
     anchor::DefLocationTable,
-    ast::item::{AdtDef, ContractDef, FunctionDef, Item, Module},
+    ast::{
+        function::FunctionMutability,
+        item::{AdtDef, ContractDef, FunctionDef, Item, Module},
+    },
     diag::{Diagnostic, DiagnosticCode},
     input::SourceFile,
 };
@@ -396,7 +399,7 @@ import std;
 import std.dispatch;
 
 contract Answer {
-  function ping(x: word) public returns (word) { return x; }
+  function ping(x: word) external view returns (word) { return x; }
 }
 "#,
     );
@@ -521,7 +524,10 @@ contract Token {
     assert!(*payable);
     assert_eq!(surface.methods.len(), 1);
     assert_eq!(surface.methods[0].name, "pay");
-    assert!(surface.methods[0].payable);
+    assert_eq!(
+        surface.methods[0].mutability,
+        Some(FunctionMutability::Payable)
+    );
     assert_eq!(surface.methods[0].signature, "pay(uint256)");
     assert_eq!(surface.methods[0].selector.to_hex(), "0xc290d691");
     assert_eq!(surface.methods[0].outputs[0].ty.to_string(), "uint256");
@@ -561,6 +567,63 @@ contract Sample {
         "]\n"
     );
     assert_eq!(abi, expected);
+}
+
+#[test]
+fn external_abi_preserves_visibility_and_all_state_mutability_modes() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+contract Modes {
+  function pure_fn() public pure returns (word) { return 1; }
+  function view_fn() external view returns (word) { return 2; }
+  function default_fn() public returns (word) { return 3; }
+  function payable_fn() external payable returns (word) { return 4; }
+  function internal_fn() internal pure returns (word) { return 5; }
+  function private_fn() private view returns (word) { return 6; }
+}
+"#,
+    );
+    let contract = contract_named(&db, module, "Modes");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    assert_eq!(surface.methods.len(), 4, "{:#?}", surface.methods);
+    assert_eq!(
+        surface
+            .methods
+            .iter()
+            .map(|method| (method.name.as_str(), method.mutability))
+            .collect::<Vec<_>>(),
+        vec![
+            ("pure_fn", Some(FunctionMutability::Pure)),
+            ("view_fn", Some(FunctionMutability::View)),
+            ("default_fn", None),
+            ("payable_fn", Some(FunctionMutability::Payable)),
+        ]
+    );
+
+    let abi = contract_abi_json(&db, module, contract).expect("ABI JSON");
+    for (name, expected) in [
+        ("pure_fn", "pure"),
+        ("view_fn", "view"),
+        ("default_fn", "nonpayable"),
+        ("payable_fn", "payable"),
+    ] {
+        let name_offset = abi
+            .find(&format!("\"name\": \"{name}\""))
+            .unwrap_or_else(|| panic!("missing `{name}` entry: {abi}"));
+        let entry_end = abi[name_offset..]
+            .find("\n  }")
+            .map(|offset| name_offset + offset)
+            .unwrap_or(abi.len());
+        assert!(
+            abi[name_offset..entry_end].contains(&format!("\"stateMutability\": \"{expected}\"")),
+            "wrong state mutability for `{name}`: {abi}"
+        );
+    }
+    assert!(!abi.contains("\"name\": \"internal_fn\""), "{abi}");
+    assert!(!abi.contains("\"name\": \"private_fn\""), "{abi}");
 }
 
 #[test]
@@ -1902,7 +1965,7 @@ interface Reader {
             diagnostic.code.as_deref() == Some("SC0230")
                 && diagnostic
                     .message
-                    .contains("duplicate public ABI signature in interface `Reader`")
+                    .contains("duplicate external ABI signature in interface `Reader`")
         }),
         "{diagnostics:#?}"
     );

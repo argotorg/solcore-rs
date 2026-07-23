@@ -141,7 +141,7 @@ impl SpecializeDiagnosticKind<'_> {
             Self::IntegerErasure { .. } | Self::UnsupportedRuntimeType { .. } => {
                 "not representable at runtime"
             }
-            Self::PublicComptimeParam { .. } => "public entry parameter is runtime",
+            Self::PublicComptimeParam { .. } => "external ABI parameter is runtime",
         }
     }
 
@@ -213,8 +213,9 @@ impl SpecializeDiagnosticKind<'_> {
                     .to_owned(),
             ],
             Self::PublicComptimeParam { .. } => vec![
-                "public function parameters are supplied from calldata at runtime".to_owned(),
-                "help: remove `comptime` from the public parameter or call a private comptime helper with a compile-time value"
+                "externally visible function parameters are supplied from calldata at runtime"
+                    .to_owned(),
+                "help: remove `comptime` from the ABI parameter or call a private comptime helper with a compile-time value"
                     .to_owned(),
             ],
             _ => Vec::new(),
@@ -281,7 +282,7 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
             }
             Self::PublicComptimeParam { function, param } => write!(
                 f,
-                "public function `{function}` cannot take comptime parameter `{param}`"
+                "externally visible function `{function}` cannot take comptime parameter `{param}`"
             ),
         }
     }

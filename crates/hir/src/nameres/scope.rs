@@ -270,9 +270,14 @@ impl<'db> ItemScopeBuilder<'db> {
     fn add_function(
         &mut self,
         def: FunctionDef<'db>,
-        contract: Option<&mut ContractScopeBuilder<'db>>,
+        mut contract: Option<&mut ContractScopeBuilder<'db>>,
     ) {
         let sig = def.sig(self.db);
+        if sig.visibility_kind() == Some(FunctionVisibility::External)
+            && let Some(contract) = contract.as_deref_mut()
+        {
+            contract.external_functions.push(def.def_id_value(self.db));
+        }
         self.add_term(
             ident_text_str(self.db, &sig.name).to_owned(),
             sig.name.span(self.db),
@@ -425,6 +430,19 @@ impl<'db> ItemScopeBuilder<'db> {
         let (contract_scope, diagnostics) = contract.finish();
         self.diagnostics.extend(diagnostics);
         if def.kind(self.db) == ContractKind::Library {
+            let private_functions = def
+                .items(self.db)
+                .iter()
+                .filter_map(|item| match item {
+                    ContractItem::FunctionDef(function)
+                        if function.sig(self.db).visibility_kind()
+                            == Some(FunctionVisibility::Private) =>
+                    {
+                        Some(function.def_id_value(self.db))
+                    }
+                    _ => None,
+                })
+                .collect::<FxHashSet<_>>();
             for entry in &contract_scope.types {
                 self.types.push(
                     self.db,
@@ -438,6 +456,15 @@ impl<'db> ItemScopeBuilder<'db> {
                 );
             }
             for entry in &contract_scope.terms {
+                if matches!(
+                    entry.resolution,
+                    Resolution::Def {
+                        def,
+                        kind: DefResolutionKind::Function,
+                    } if private_functions.contains(&def)
+                ) {
+                    continue;
+                }
                 self.terms.push(
                     self.db,
                     &mut self.diagnostics,
@@ -517,6 +544,7 @@ struct ContractScopeBuilder<'db> {
     terms: ScopeTableBuilder<'db>,
     fields: Vec<FieldEntry<'db>>,
     ctor_lists: Vec<CtorList<'db>>,
+    external_functions: Vec<DefId<'db>>,
     diagnostics: Vec<NameresDiagnostic>,
 }
 
@@ -532,6 +560,7 @@ impl<'db> ContractScopeBuilder<'db> {
             terms: ScopeTableBuilder::single_span(Namespace::Term),
             fields: Vec::new(),
             ctor_lists: Vec::new(),
+            external_functions: Vec::new(),
             diagnostics: Vec::new(),
         }
     }
@@ -543,6 +572,7 @@ impl<'db> ContractScopeBuilder<'db> {
                 name: self.name,
                 types: self.types.into_table(),
                 terms: self.terms.into_table(),
+                external_functions: self.external_functions,
                 fields: self.fields,
                 ctor_lists: self.ctor_lists,
             },

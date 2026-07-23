@@ -381,7 +381,7 @@ impl<'db> Driver<'db> {
             let mut blocked_runtime_entry = false;
             for method in &surface.methods {
                 if let Some(info) = self.functions.get(&method.def).cloned()
-                    && self.reject_public_comptime_params(&info)
+                    && self.reject_abi_visible_comptime_params(&info)
                 {
                     blocked_runtime_entry = true;
                 }
@@ -546,7 +546,7 @@ impl<'db> Driver<'db> {
         (contracts, roots)
     }
 
-    fn reject_public_comptime_params(&mut self, info: &FunctionInfo<'db>) -> bool {
+    fn reject_abi_visible_comptime_params(&mut self, info: &FunctionInfo<'db>) -> bool {
         let function = ident_text(self.db, &info.function.sig(self.db).name);
         let mut rejected = false;
         for param in info.function.sig(self.db).params.atom() {

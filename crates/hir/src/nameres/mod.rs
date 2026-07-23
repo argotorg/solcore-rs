@@ -32,8 +32,8 @@ use crate::{
     ast::{
         Ident,
         function::{
-            Expr, ExprKind, FuncBody, FuncParam, FuncSig, MatchArm, Pat, PatCtorHead, PatKind,
-            Stmt, StmtKind,
+            Expr, ExprKind, FuncBody, FuncParam, FuncSig, FunctionVisibility, MatchArm, Pat,
+            PatCtorHead, PatKind, Stmt, StmtKind,
         },
         item::{
             AdtDef, ClassDef, ContractDef, ContractItem, ContractKind, FieldDef, FunctionDef,

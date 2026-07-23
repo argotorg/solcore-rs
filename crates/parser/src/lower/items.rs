@@ -510,18 +510,18 @@ fn lower_func_sig<'db>(
         .collect();
 
     let span = span_from_absolute(anchor, parsed.span, base_start);
-    let public = parsed
-        .public
-        .map(|span| span_from_absolute(anchor, span, base_start));
-    let payable = parsed
-        .payable
-        .map(|span| span_from_absolute(anchor, span, base_start));
+    let visibility = parsed.visibility.map(|(visibility, span)| {
+        SpannedElem::new(visibility, span_from_absolute(anchor, span, base_start))
+    });
+    let mutability = parsed.mutability.map(|(mutability, span)| {
+        SpannedElem::new(mutability, span_from_absolute(anchor, span, base_start))
+    });
     function::FuncSig {
         span,
         type_vars,
         preds,
-        public,
-        payable,
+        visibility,
+        mutability,
         name,
         params,
         ret,

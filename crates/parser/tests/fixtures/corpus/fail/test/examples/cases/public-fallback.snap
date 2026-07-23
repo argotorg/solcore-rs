@@ -3,7 +3,7 @@ source: crates/parser/tests/diagnostics.rs
 expression: value
 input_file: crates/parser/tests/fixtures/corpus/fail/test/examples/cases/public-fallback.solc
 ---
-error[SC0001]: fallback is implicitly public; remove the visibility keyword
+error[SC0001]: `public` is not allowed on fallback; use `external`
  --> /public-fallback.solc:7:16
   |
 6 |
