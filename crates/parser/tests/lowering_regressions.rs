@@ -746,6 +746,41 @@ fn ternary_expression_lowers_to_conditional_expression() {
 }
 
 #[test]
+fn surface_conversion_and_lowering_ascription_remain_distinct() {
+    let db = TestDb::default();
+    let (_, module) = parse_module(
+        &db,
+        "conversion-vs-ascription",
+        "function convert(x: word) returns (word) { return x as word; }
+         function destructure(x: word, y: bool) {
+           let (a, b): (word, bool) = (x, y);
+         }",
+    );
+
+    let convert = top_function(&db, module, "convert");
+    let body = convert.body(&db).expect("conversion body");
+    let stmt = body.stmts(&db).get(body.top_level_stmts(&db)[0]);
+    let StmtKind::Return(Some(expr)) = stmt.kind else {
+        panic!("expected conversion return");
+    };
+    assert!(matches!(
+        body.exprs(&db).get(expr).kind,
+        ExprKind::Conversion { .. }
+    ));
+
+    let destructure = top_function(&db, module, "destructure");
+    let body = destructure.body(&db).expect("destructure body");
+    let stmt = body.stmts(&db).get(body.top_level_stmts(&db)[0]);
+    let StmtKind::Match { scrutinees, .. } = &stmt.kind else {
+        panic!("typed tuple binding should lower through a match");
+    };
+    assert!(matches!(
+        body.exprs(&db).get(scrutinees[0]).kind,
+        ExprKind::TypeAscription { .. }
+    ));
+}
+
+#[test]
 fn compound_assignments_lower_through_binary_operator_calls() {
     let db = TestDb::default();
     let (_, module) = parse_module(

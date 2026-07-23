@@ -378,6 +378,22 @@ pub enum TypeckDiagnostic {
         /// Function or body context.
         context: String,
     },
+    /// `SC0245`: a surface conversion has no defined semantics.
+    InvalidConversion {
+        /// Conversion target type span.
+        target_span: LabelSpan,
+        /// Operand expression span.
+        operand_span: LabelSpan,
+        /// Alias-normalized source type.
+        source: String,
+        /// Alias-normalized target type.
+        target: String,
+    },
+    /// `SC0245`: a conversion was used as an assignment location.
+    ConversionAssignmentTarget {
+        /// Conversion expression within the assignment target.
+        span: LabelSpan,
+    },
     /// `SC0302`: a match does not cover every possible scrutinee value.
     NonExhaustiveMatch {
         /// Source span for the match scrutinee.
@@ -825,6 +841,33 @@ impl TypeckDiagnostic {
             ))
             .with_code(DiagnosticCode::TYPECK_COMPTIME_RETURN_RUNTIME)
             .with_primary_label_span(span.clone(), Some("runtime return expression")),
+            TypeckDiagnostic::InvalidConversion {
+                target_span,
+                operand_span,
+                source,
+                target,
+            } => Diagnostic::error(format!("cannot convert `{source}` to `{target}`"))
+                .with_code(DiagnosticCode::TYPECK_INVALID_CONVERSION)
+                .with_primary_label_span(
+                    target_span.clone(),
+                    Some("conversion to this type is not defined"),
+                )
+                .with_secondary_label_span(
+                    operand_span.clone(),
+                    Some(format!("expression has type `{source}`")),
+                )
+                .with_help(format!(
+                    "if you intended to guide inference, use `let value: {target} = expression`"
+                )),
+            TypeckDiagnostic::ConversionAssignmentTarget { span } => {
+                Diagnostic::error("cannot assign through a conversion")
+                    .with_code(DiagnosticCode::TYPECK_INVALID_CONVERSION)
+                    .with_primary_label_span(
+                        span.clone(),
+                        Some("a converted value is not an assignment location"),
+                    )
+                    .with_help("assign to the original variable, field, or index instead")
+            }
             TypeckDiagnostic::NonExhaustiveMatch { span, missing } => {
                 Diagnostic::error("non-exhaustive pattern match")
                     .with_code(DiagnosticCode::TYPECK_NON_EXHAUSTIVE_MATCH)
@@ -1474,7 +1517,9 @@ fn collect_uninitialized_let_type_refs_from_expr<'db>(
             collect_uninitialized_let_type_refs_from_expr(db, body, *lhs, out);
             collect_uninitialized_let_type_refs_from_expr(db, body, *rhs, out);
         }
-        ExprKind::UnaryOp { expr, .. } | ExprKind::Conversion { expr, .. } => {
+        ExprKind::UnaryOp { expr, .. }
+        | ExprKind::Conversion { expr, .. }
+        | ExprKind::TypeAscription { expr, .. } => {
             collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
         }
         ExprKind::Call { callee, args } => {

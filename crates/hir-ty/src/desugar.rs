@@ -966,7 +966,7 @@ impl<'db> BodyCollector<'db> {
                 }
             }
             ExprKind::Field { base, .. } => self.expr(*base),
-            ExprKind::Conversion { expr, ty } => {
+            ExprKind::Conversion { expr, ty } | ExprKind::TypeAscription { expr, ty } => {
                 self.expr(*expr);
                 self.type_ref(*ty);
             }
@@ -1125,7 +1125,9 @@ impl<'a, 'db> FieldInitCollector<'a, 'db> {
                 }
             }
             ExprKind::Field { base, .. } => self.expr(*base),
-            ExprKind::Conversion { expr, .. } | ExprKind::UnaryOp { expr, .. } => self.expr(*expr),
+            ExprKind::Conversion { expr, .. }
+            | ExprKind::TypeAscription { expr, .. }
+            | ExprKind::UnaryOp { expr, .. } => self.expr(*expr),
             ExprKind::If {
                 cond,
                 then_expr,

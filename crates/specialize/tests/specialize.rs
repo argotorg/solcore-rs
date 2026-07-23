@@ -13,7 +13,7 @@ use hir::{
     input::SourceFile,
     nameres::ident_text,
 };
-use hir_ty::{BuiltinTyCtor, Ty, prepare_module};
+use hir_ty::{BuiltinTyCtor, ConversionKind, Ty, prepare_module};
 use nameres::{
     LibraryId, ModuleFileSnapshot, ModuleFsSnapshot, ModuleId, ModuleKey, ModuleTree,
     module_id_from_key, module_key_for_path, module_path_display, resolve_module_path_candidate,
@@ -192,6 +192,82 @@ fn specializes_large_linear_body_with_indexed_frontend_lookups() {
 
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert!(!function_names(&output).is_empty());
+}
+
+#[test]
+fn specialization_preserves_checked_identity_conversion_kind() {
+    let (_db, output) = specialize_src(
+        r#"
+alias W = word;
+
+function main(x: word) returns (word) {
+  return x as W as word;
+}
+"#,
+    );
+
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let main = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Function(function) if function.name.contains("main") => Some(function),
+            _ => None,
+        })
+        .expect("specialized main function");
+    let MonoStmtKind::Return(Some(ret)) = &main.body[0].kind else {
+        panic!("expected identity return: {:#?}", main.body);
+    };
+    let MonoExprKind::Conversion {
+        expr: inner,
+        kind: ConversionKind::Identity,
+        ..
+    } = &ret.kind
+    else {
+        panic!("expected outer identity conversion: {ret:#?}");
+    };
+    assert!(matches!(
+        inner.kind,
+        MonoExprKind::Conversion {
+            kind: ConversionKind::Identity,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn specialization_erases_internal_type_ascription() {
+    let (_db, output) = specialize_src(
+        r#"
+alias Pair = (word, bool);
+
+function main(value: Pair) returns (word) {
+  let (head, flag): Pair = value;
+  return head;
+}
+"#,
+    );
+
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let main = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Function(function) if function.name.contains("main") => Some(function),
+            _ => None,
+        })
+        .expect("specialized main function");
+    let MonoStmtKind::Match { scrutinees, .. } = &main.body[0].kind else {
+        panic!("expected lowered tuple match: {:#?}", main.body);
+    };
+    assert!(
+        scrutinees
+            .iter()
+            .all(|expr| !matches!(expr.kind, MonoExprKind::Conversion { .. })),
+        "{scrutinees:#?}"
+    );
 }
 
 #[test]
@@ -934,7 +1010,7 @@ import std;
 import std.dispatch;
 
 contract C {
-  function answer() public returns (uint256) { return 1 as uint256; }
+  function answer() public returns (uint256) { return uint256.uint256(1); }
 }
 "#;
     let output = specialize_src_with_std(source);
@@ -1018,7 +1094,7 @@ import std.dispatch;
 
 contract C {
   function answer() public returns (uint256) {
-    return 1 as uint256;
+    return uint256.uint256(1);
   }
 }
 "#;
@@ -1087,7 +1163,7 @@ import std.dispatch;
 
 contract C {
   constructor(seed: uint256) payable { let saved = seed; }
-  function answer() public returns (uint256) { return 1 as uint256; }
+  function answer() public returns (uint256) { return uint256.uint256(1); }
 }
 "#;
     let (db, file, _) = specialize_src_with_std_and_db(src);
@@ -1170,7 +1246,7 @@ import std.dispatch;
 
 contract PayableTest {
   constructor() {}
-  function deposit() public payable returns (uint256) { return 1 as uint256; }
+  function deposit() public payable returns (uint256) { return uint256.uint256(1); }
   fallback() external payable {}
 }
 "#,
@@ -1850,8 +1926,7 @@ contract C {
   function main() returns (word) {
     let buf = allocate_zeroed_memory(64);
     let rdr: MemoryWordReader = MemoryWordReader.MemoryWordReader(buf);
-    let dec: ABIDecoder<Choice, MemoryWordReader> =
-        ABIDecoder.ABIDecoder(rdr) as ABIDecoder<Choice, MemoryWordReader>;
+    let dec: ABIDecoder<Choice, MemoryWordReader> = ABIDecoder.ABIDecoder(rdr);
     let value: Choice = decode(dec, 0);
     match (value) { case Choice.Left(x) { return Typedef.rep(x); } case Choice.Right(_) { return 0; } }
   }

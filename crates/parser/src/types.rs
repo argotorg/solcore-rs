@@ -591,6 +591,16 @@ pub(crate) enum ParsedExprKind<'src> {
         /// Conversion target type.
         ty: ParsedTy<'src>,
     },
+    /// Internal type ascription used by lowering-generated expressions.
+    ///
+    /// The surface grammar never constructs this variant. Unlike `Conversion`,
+    /// it is allowed to guide inference from its target type.
+    TypeAscription {
+        /// Ascribed expression.
+        expr: Box<ParsedExpr<'src>>,
+        /// Expected type for the expression.
+        ty: ParsedTy<'src>,
+    },
     /// Unary operator expression.
     UnaryOp {
         /// Operator and span.

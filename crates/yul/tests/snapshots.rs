@@ -175,7 +175,7 @@ contract DispatchBasicShape {
   }
 
   function answer() public returns (uint256) {
-    return 42 as uint256;
+    return uint256.uint256(42);
   }
 }
 "#,
@@ -1282,7 +1282,7 @@ contract DispatchBasicShape {
   }
 
   function answer() public returns (uint256) {
-    return 42 as uint256;
+    return uint256.uint256(42);
   }
 }
 "#,

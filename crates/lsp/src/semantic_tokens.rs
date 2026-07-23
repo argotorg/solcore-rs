@@ -519,6 +519,7 @@ fn expr_token_span<'db>(
         | ExprKind::Index { .. }
         | ExprKind::Call { .. }
         | ExprKind::Conversion { .. }
+        | ExprKind::TypeAscription { .. }
         | ExprKind::UnaryOp { .. }
         | ExprKind::If { .. }
         | ExprKind::Tuple(_)

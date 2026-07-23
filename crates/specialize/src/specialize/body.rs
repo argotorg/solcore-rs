@@ -19,6 +19,7 @@ pub(super) struct BodyIndex<'db> {
     pat_tys: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), Ty<'db>>,
     let_tys: FxHashMap<(FuncBody<'db>, Id<Stmt<'db>>), Ty<'db>>,
     adt_field_indices: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), u32>,
+    checked_conversions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), ConversionKind>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
     call_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), CallSiteEvidence<'db>>,
@@ -40,6 +41,7 @@ impl<'db> BodyIndex<'db> {
             pat_tys: FxHashMap::default(),
             let_tys: FxHashMap::default(),
             adt_field_indices: FxHashMap::default(),
+            checked_conversions: FxHashMap::default(),
             expr_resolutions: FxHashMap::default(),
             pat_resolutions: FxHashMap::default(),
             call_evidence: FxHashMap::default(),
@@ -72,6 +74,12 @@ impl<'db> BodyIndex<'db> {
                 .adt_field_indices
                 .entry((selection.body, selection.expr))
                 .or_insert(selection.index);
+        }
+        for conversion in &result.checked_conversions {
+            index
+                .checked_conversions
+                .entry((conversion.body, conversion.expr))
+                .or_insert(conversion.kind);
         }
         for entry in &body_map.exprs {
             let key = (entry.body, entry.expr);
@@ -191,6 +199,18 @@ impl<'db> BodyIndex<'db> {
             adt_field_keys
                 .iter()
                 .all(|key| self.adt_field_indices.contains_key(key))
+        );
+
+        let conversion_keys = result
+            .checked_conversions
+            .iter()
+            .map(|conversion| (conversion.body, conversion.expr))
+            .collect::<FxHashSet<_>>();
+        debug_assert_eq!(self.checked_conversions.len(), conversion_keys.len());
+        debug_assert!(
+            conversion_keys
+                .iter()
+                .all(|key| self.checked_conversions.contains_key(key))
         );
 
         let expr_resolution_keys = body_map
@@ -429,6 +449,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         {
             ty = closed;
         }
+        if let ExprKind::Conversion { ty: target, .. }
+        | ExprKind::TypeAscription { ty: target, .. } = &expr.kind
+        {
+            let target = self.lower_body_ty(*target)?;
+            ty = self.subst.apply_ty(self.driver.db, target);
+        }
         let mono_ty = self.driver.mono_ty(ty, "expression", expr.span)?;
         if let Some(kind) = self.bool_expr_kind(expr_id, mono_ty, expr.span) {
             let mono_expr = MonoExpr {
@@ -566,13 +592,33 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 let ty = self.subst.apply_ty(self.driver.db, ty);
                 MonoExprKind::Proxy(self.driver.mono_ty(ty, "proxy", expr.span)?)
             }
-            ExprKind::Conversion { expr: inner, ty } => {
-                let ty = self.lower_body_ty(*ty)?;
-                let ty = self.subst.apply_ty(self.driver.db, ty);
+            ExprKind::Conversion { expr: inner, .. } => {
+                let Some(kind) = self.checked_conversion(expr_id) else {
+                    self.driver.diagnostics.push(SpecializeDiagnostic {
+                        kind: SpecializeDiagnosticKind::MissingResolution {
+                            context: "checked conversion".to_owned(),
+                        },
+                        span: Some(expr.span),
+                    });
+                    return Some(MonoExpr {
+                        span: expr.span,
+                        ty: mono_ty,
+                        kind: MonoExprKind::Error,
+                    });
+                };
                 MonoExprKind::Conversion {
                     expr: Box::new(self.expr(*inner)?),
-                    ty: self.driver.mono_ty(ty, "explicit conversion", expr.span)?,
+                    ty: mono_ty,
+                    kind,
                 }
+            }
+            ExprKind::TypeAscription { expr: inner, .. } => {
+                let mut inner = self.expr(*inner)?;
+                debug_assert_eq!(inner.ty, mono_ty);
+                inner.span = expr.span;
+                inner.ty = mono_ty;
+                self.lowered_exprs.insert(expr_id, inner.clone());
+                return Some(inner);
             }
             ExprKind::If {
                 cond,
@@ -838,6 +884,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     fn adt_field_index(&self, expr: Id<Expr<'db>>) -> Option<u32> {
         self.index
             .adt_field_indices
+            .get(&(self.body, expr))
+            .copied()
+    }
+
+    fn checked_conversion(&self, expr: Id<Expr<'db>>) -> Option<ConversionKind> {
+        self.index
+            .checked_conversions
             .get(&(self.body, expr))
             .copied()
     }
@@ -1110,7 +1163,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         }
         match &self.body.exprs(self.driver.db).get(expr).kind {
             ExprKind::Index { base, .. } => self.is_storage_index_expr(*base),
-            ExprKind::Conversion { expr, .. } => self.is_storage_index_expr(*expr),
+            ExprKind::TypeAscription { expr, .. } => self.is_storage_index_expr(*expr),
             _ => false,
         }
     }

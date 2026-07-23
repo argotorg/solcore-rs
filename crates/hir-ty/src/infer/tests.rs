@@ -796,6 +796,10 @@ function call_tuple(f: function((word, bool)) returns (word), x: (word, bool)) r
             "{name}: {:?}",
             result.diagnostics
         );
+        assert!(
+            result.checked_conversions.is_empty(),
+            "{name}: rejected assignment conversions must not reach specialization"
+        );
     }
 }
 
@@ -916,6 +920,128 @@ function classify_integer(comptime x: integer) returns (word) {
     for (name, result) in infer_all_functions_with_solver(&db, module) {
         assert!(
             result.diagnostics.is_empty(),
+            "{name}: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+#[test]
+fn surface_conversion_accepts_only_alias_normalized_identity() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+alias WordAlias = word;
+alias WordAlias2 = WordAlias;
+
+function generic_identity<a>(x: a) returns (a) {
+  return x as a;
+}
+
+function alias_identity(x: WordAlias2) returns (word) {
+  return x as word;
+}
+"#,
+    );
+
+    for name in ["generic_identity", "alias_identity"] {
+        let (_, result) = infer_function(&db, module, name);
+        assert_no_typeck(&result);
+        assert_eq!(result.checked_conversions.len(), 1, "{name}: {result:?}");
+        assert_eq!(result.checked_conversions[0].kind, ConversionKind::Identity);
+    }
+}
+
+#[test]
+fn invalid_surface_conversion_has_dedicated_diagnostic() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "function bad(x: word) returns (bool) { return x as bool; }",
+    );
+    let (_, result) = infer_function(&db, module, "bad");
+
+    assert_eq!(
+        result
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| matches!(diagnostic, TypeckDiagnostic::InvalidConversion { .. }))
+            .count(),
+        1,
+        "{:?}",
+        result.diagnostics
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic, TypeckDiagnostic::Mismatch { .. })),
+        "{:?}",
+        result.diagnostics
+    );
+    assert!(result.checked_conversions.is_empty());
+}
+
+#[test]
+fn unresolved_surface_conversion_suppresses_cascade_diagnostic() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "function unresolved(x) returns (word) { return x as word; }",
+    );
+    let (_, result) = infer_function(&db, module, "unresolved");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|diagnostic| !matches!(diagnostic, TypeckDiagnostic::InvalidConversion { .. })),
+        "{:?}",
+        result.diagnostics
+    );
+    assert!(result.checked_conversions.is_empty());
+}
+
+#[test]
+fn comptime_wrapper_is_not_an_identity_conversion() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "function bad(comptime x: word) returns (word) { return x as word; }",
+    );
+    let (_, result) = infer_function(&db, module, "bad");
+    assert!(result.diagnostics.iter().any(|diagnostic| matches!(
+        diagnostic,
+        TypeckDiagnostic::InvalidConversion { source, target, .. }
+            if source == "comptime word" && target == "word"
+    )));
+}
+
+#[test]
+fn conversion_is_not_an_assignment_location() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+struct Box { value: word; }
+
+function direct(x: word) {
+  (x as word) = 1;
+}
+
+function through_field(x: Box) {
+  (x as Box).value = 1;
+}
+"#,
+    );
+    for name in ["direct", "through_field"] {
+        let (_, result) = infer_function(&db, module, name);
+        assert!(
+            result.diagnostics.iter().any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::ConversionAssignmentTarget { .. }
+            )),
             "{name}: {:?}",
             result.diagnostics
         );

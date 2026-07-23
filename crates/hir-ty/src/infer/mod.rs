@@ -177,6 +177,28 @@ pub struct AdtFieldSelection<'db> {
     pub index: u32,
 }
 
+/// A source-level conversion validated after inference has resolved its types.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct CheckedConversion<'db> {
+    /// Body containing the conversion.
+    pub body: FuncBody<'db>,
+    /// Conversion expression ID.
+    pub expr: Id<Expr<'db>>,
+    /// Alias-normalized source type.
+    pub source: Ty<'db>,
+    /// Alias-normalized target type.
+    pub target: Ty<'db>,
+    /// Runtime conversion semantics.
+    pub kind: ConversionKind,
+}
+
+/// Runtime semantics of a validated conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, salsa::Update)]
+pub enum ConversionKind {
+    /// Source and target are the same alias-normalized resolved type.
+    Identity,
+}
+
 /// Source of a deferred obligation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum ObligationSource<'db> {
@@ -337,6 +359,8 @@ pub struct InferenceResult<'db> {
     pub let_tys: Vec<LetTy<'db>>,
     /// Named struct fields selected after the base expression type was known.
     pub adt_field_selections: Vec<AdtFieldSelection<'db>>,
+    /// Source conversions whose semantics were validated after inference.
+    pub checked_conversions: Vec<CheckedConversion<'db>>,
     /// Deferred obligations that the future solver must resolve.
     pub obligations: Vec<DeferredObligation<'db>>,
     /// Evidence for obligations solved by the trait solver.
@@ -396,6 +420,36 @@ struct PendingObligation<'db> {
 struct PendingEqualityError<'db> {
     source: ObligationSource<'db>,
     error: UnifyError<'db>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingConversion<'db> {
+    body: FuncBody<'db>,
+    expr: Id<Expr<'db>>,
+    operand: Id<Expr<'db>>,
+    target_ref: TypeRef<'db>,
+    source: InferTy<'db>,
+    target: InferTy<'db>,
+}
+
+fn ty_is_resolved_for_conversion<'db>(db: &'db dyn HirDb, ty: Ty<'db>) -> bool {
+    match ty.kind(db) {
+        TyKind::Error | TyKind::Unknown => false,
+        TyKind::BoundVar(_) => true,
+        TyKind::Named { args, .. } => args
+            .iter()
+            .all(|arg| ty_is_resolved_for_conversion(db, *arg)),
+        TyKind::Function { params, ret } => {
+            params
+                .iter()
+                .all(|param| ty_is_resolved_for_conversion(db, *param))
+                && ty_is_resolved_for_conversion(db, *ret)
+        }
+        TyKind::Tuple(elems) => elems
+            .iter()
+            .all(|elem| ty_is_resolved_for_conversion(db, *elem)),
+        TyKind::Comptime(inner) => ty_is_resolved_for_conversion(db, *inner),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

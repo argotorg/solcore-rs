@@ -144,6 +144,9 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedExprKind::Conversion { expr, ty } => {
                 self.lower_conversion_expr(anchor, base_start, *expr, ty, arenas)
             }
+            ParsedExprKind::TypeAscription { expr, ty } => {
+                self.lower_type_ascription_expr(anchor, base_start, *expr, ty, arenas)
+            }
             ParsedExprKind::UnaryOp { op, expr } => {
                 self.lower_unary_expr(anchor, base_start, op, *expr, arenas)
             }
@@ -241,6 +244,19 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         let expr = self.lower_expr(anchor, base_start, expr, arenas);
         let ty = lower_type_ref(self.db, anchor, base_start, ty);
         function::ExprKind::Conversion { expr, ty }
+    }
+
+    fn lower_type_ascription_expr(
+        &mut self,
+        anchor: AnchorId<'db>,
+        base_start: usize,
+        expr: ParsedExpr<'_>,
+        ty: ParsedTy<'_>,
+        arenas: &mut BodyArenas<'db>,
+    ) -> function::ExprKind<'db> {
+        let expr = self.lower_expr(anchor, base_start, expr, arenas);
+        let ty = lower_type_ref(self.db, anchor, base_start, ty);
+        function::ExprKind::TypeAscription { expr, ty }
     }
 
     fn lower_unary_expr(
@@ -490,7 +506,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             let scrutinee = match ty {
                 Some(ty) => ParsedExpr {
                     span: init.span,
-                    kind: ParsedExprKind::Conversion {
+                    kind: ParsedExprKind::TypeAscription {
                         expr: Box::new(init),
                         ty,
                     },
@@ -594,7 +610,9 @@ fn drop_parsed_expr_iteratively(root: ParsedExpr<'_>) {
                 pending.extend(args);
             }
             ParsedExprKind::Field { base, .. } => pending.push(*base),
-            ParsedExprKind::Conversion { expr, .. } | ParsedExprKind::UnaryOp { expr, .. } => {
+            ParsedExprKind::Conversion { expr, .. }
+            | ParsedExprKind::TypeAscription { expr, .. }
+            | ParsedExprKind::UnaryOp { expr, .. } => {
                 pending.push(*expr);
             }
             ParsedExprKind::If {

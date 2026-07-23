@@ -231,6 +231,30 @@ fn dispatch_basic_fixture_uses_std_dispatch_main() {
 }
 
 #[test]
+fn identity_conversion_emits_without_runtime_operation() {
+    let hull = pretty_src_hull(
+        "identity_conversion",
+        r#"
+alias W = word;
+
+function identity(x: word) returns (word) {
+  return x as W as word;
+}
+
+contract C {
+  value: word;
+
+  function main() public returns (word) {
+    return identity(value);
+  }
+}
+"#,
+    );
+    let identity = hull_function(&hull, "_identity_");
+    assert!(identity.contains("return x"), "{identity}\n{hull}");
+}
+
+#[test]
 fn deployment_objects_copy_runtime_and_guard_constructor_value() {
     let repo = repo_root();
     let fixture = repo.join(
@@ -412,7 +436,7 @@ import std;
 import std.dispatch;
 
 contract C {
-  function answer() public returns (uint256) { return 42 as uint256; }
+  function answer() public returns (uint256) { return uint256.uint256(42); }
   fallback() external {}
 }
 "#,

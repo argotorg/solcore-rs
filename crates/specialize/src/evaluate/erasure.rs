@@ -1,5 +1,5 @@
 use hir::span::Span;
-use hir_ty::{BuiltinTyCtor, Db, Ty, TyCtor, TyKind};
+use hir_ty::{BuiltinTyCtor, ConversionKind, Db, Ty, TyCtor, TyKind};
 
 use super::core::Evaluator;
 use crate::{
@@ -219,7 +219,11 @@ impl<'db> Visitor<'db> for Evaluator<'db> {
             MonoExprKind::Proxy(ty) => {
                 self.check_erasure_ty("proxy", ty.ty(), Some(expr.span));
             }
-            MonoExprKind::Conversion { expr: inner, ty } => {
+            MonoExprKind::Conversion {
+                expr: inner,
+                ty,
+                kind: ConversionKind::Identity,
+            } => {
                 self.visit_expr(inner);
                 self.check_erasure_ty("explicit conversion", ty.ty(), Some(expr.span));
             }

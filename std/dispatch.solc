@@ -55,13 +55,17 @@ impl SigString<()> { function sigStr(x: Proxy<()>) returns (string) { return "";
 
 impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
   function sigStr(x: Proxy<(a, b)>) returns (string) {
-    return SigString.sigStr( Proxy.Proxy as Proxy<a> ) +  "," + SigString.sigStr( Proxy.Proxy as Proxy<b> );
+    let pa: Proxy<a> = Proxy.Proxy;
+    let pb: Proxy<b> = Proxy.Proxy;
+    return SigString.sigStr(pa) +  "," + SigString.sigStr(pb);
   }
 }
 
 impl<name, f, args, rets, payability> SigString<Method<name, payability, args, rets, f>> where f: invokable<args, rets>, name: SigString, args: SigString, rets: SigString {
   function sigStr(x: Proxy<Method<name, payability, args, rets, f>>) returns (string) {
-    return sigStr(Proxy.Proxy as Proxy<name>)  + "(" + sigStr(Proxy.Proxy as Proxy<args>) + ")";
+    let pname: Proxy<name> = Proxy.Proxy;
+    let pargs: Proxy<args> = Proxy.Proxy;
+    return sigStr(pname)  + "(" + sigStr(pargs) + ")";
   }
 }
 
@@ -76,7 +80,9 @@ trait Selector<ty> {
 impl<name, payability, args, rets, fn> Selector<Method<name, payability, args, rets, fn>> where name: SigString, args: SigString {
     function compute(prx: Proxy<Method<name, payability, args, rets, fn>>) returns (bytes4) {
         // let hash : word = keccakLit(sigStr(prx));
-        let hash = keccakLit(sigStr(Proxy.Proxy as Proxy<name>)  + "(" + sigStr(Proxy.Proxy as Proxy<args>) + ")");
+        let pname: Proxy<name> = Proxy.Proxy;
+        let pargs: Proxy<args> = Proxy.Proxy;
+        let hash = keccakLit(sigStr(pname)  + "(" + sigStr(pargs) + ")");
         return bytes4.bytes4(shr(224, hash));
     }
 }
@@ -92,7 +98,7 @@ trait ExecMethod<ty> {
 impl<name, args, rets, fn> ExecMethod<Method<name, NonPayable, args, rets, fn>> where fn: invokable<args, rets>, args: ABIAttribs, rets: ABIAttribs, ABIDecoder<args, CalldataWordReader>: ABIDecode<args>, rets: ABIEncode {
   function exec(m: Method<name, NonPayable, args, rets, fn>) returns () {
     match (m) { case Method.Method(pnm, ppayability, pargs, prets, fn) { // non-payable methods must reject any callvalue before running
-        MethodLevelCallvalueCheck.checkCallvalue(Proxy.Proxy  as Proxy<NonPayable>);
+        MethodLevelCallvalueCheck.checkCallvalue(ppayability);
         do_exec(pargs, prets, fn); } }
   }
 }
@@ -110,7 +116,7 @@ impl<name, args, rets, fn> ExecMethod<Method<name, Payable, args, rets, fn>> whe
 // and ABI decode/encode entirely.
 impl<payability, fn> ExecMethod<Fallback<payability, (), (), fn>> where fn: invokable<(), ()>, payability: MethodLevelCallvalueCheck {
   function exec(fb: Fallback<payability, (), (), fn>) returns () {
-    match (fb) { case Fallback.Fallback(ppayability, pargs, prets, fn) { MethodLevelCallvalueCheck.checkCallvalue(Proxy.Proxy  as Proxy<payability>);
+    match (fb) { case Fallback.Fallback(ppayability, pargs, prets, fn) { MethodLevelCallvalueCheck.checkCallvalue(ppayability);
         fn(());
         assembly {
           stop()
@@ -128,7 +134,8 @@ function do_exec<args, rets, fn>(pargs: Proxy<args>, prets: Proxy<rets>, fn: fn)
     let ptr: bytes calldata = calldata.calldata(4);
 
     // TODO: this needs entirely too many type annotations
-    let args: args = abi_decode(ptr, pargs, Proxy.Proxy  as Proxy<CalldataWordReader>);
+    let readerProxy: Proxy<CalldataWordReader> = Proxy.Proxy;
+    let args: args = abi_decode(ptr, pargs, readerProxy);
 
     // call fn with args
     // TODO: why are type annotations needed here?
@@ -158,7 +165,8 @@ trait RunDispatch<ty> {
 // We can dispatch to a single executable method with a known selector
 impl<name, payability, args, rets, fn> RunDispatch<Method<name, payability, args, rets, fn>> where Method<name, payability, args, rets, fn>: ExecMethod, Method<name, payability, args, rets, fn>: Selector {
   function go(method: Method<name, payability, args, rets, fn>) returns () {
-    match (selector_matches(Proxy.Proxy  as Proxy<Method<name, payability, args, rets, fn>>)) { case true { ExecMethod.exec(method); } case false { return (); } }
+    let methodProxy: Proxy<Method<name, payability, args, rets, fn>> = Proxy.Proxy;
+    match (selector_matches(methodProxy)) { case true { ExecMethod.exec(method); } case false { return (); } }
   }
 }
 
@@ -170,7 +178,8 @@ impl RunDispatch<()> {
 // Recursive impl
 impl<n, m> RunDispatch<(n, m)> where n: ExecMethod, n: Selector, m: RunDispatch {
   function go(methods: (n, m)) returns () {
-    match (methods) { case (method_n, rest) { match (selector_matches(Proxy.Proxy  as Proxy<n>)) { case true { ExecMethod.exec(method_n); } case false { RunDispatch.go(rest); } } } }
+    let methodProxy: Proxy<n> = Proxy.Proxy;
+    match (methods) { case (method_n, rest) { match (selector_matches(methodProxy)) { case true { ExecMethod.exec(method_n); } case false { RunDispatch.go(rest); } } } }
   }
 }
 

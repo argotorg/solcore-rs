@@ -494,7 +494,20 @@ impl<'db> Emitter<'db> {
                     args: vec![self.emit_storage_slot_expr(expr)],
                 },
             },
-            MonoExprKind::Conversion { expr: inner, .. } => self.emit_expr(inner),
+            MonoExprKind::Conversion {
+                expr: inner,
+                kind: ConversionKind::Identity,
+                ..
+            } => {
+                let mut inner = self.emit_expr(inner);
+                assert!(
+                    same_hull_ty_shape(&inner.ty, &ty),
+                    "identity conversion changed the structural Hull layout"
+                );
+                inner.span = expr.span;
+                inner.ty = ty;
+                inner
+            }
             MonoExprKind::Match { scrutinee, arms } => {
                 self.emit_match_expr(expr, &ty, scrutinee, arms)
             }
@@ -647,7 +660,11 @@ impl<'db> Emitter<'db> {
         let name = match &callee.kind {
             MonoExprKind::Var(id) => &id.name,
             MonoExprKind::Lambda { name, .. } => name,
-            MonoExprKind::Conversion { expr, .. } => return self.closure_callee_name(expr),
+            MonoExprKind::Conversion {
+                expr,
+                kind: ConversionKind::Identity,
+                ..
+            } => return self.closure_callee_name(expr),
             _ => return None,
         };
         self.function_names.contains(name).then(|| name.clone())
@@ -679,7 +696,6 @@ impl<'db> Emitter<'db> {
                     args: vec![self.emit_storage_slot_expr(base), self.emit_expr(index)],
                 },
             },
-            MonoExprKind::Conversion { expr: inner, .. } => self.emit_storage_slot_expr(inner),
             _ => self.emit_expr(expr),
         }
     }
@@ -1118,6 +1134,47 @@ fn mono_expr_name(kind: &MonoExprKind<'_>) -> &'static str {
         MonoExprKind::ClosureDispatch { .. } => "closure dispatch",
         MonoExprKind::Error => "error expression",
         _ => "expression",
+    }
+}
+
+fn same_hull_ty_shape(lhs: &Ty<'_>, rhs: &Ty<'_>) -> bool {
+    match (&lhs.kind, &rhs.kind) {
+        (TyKind::Word, TyKind::Word)
+        | (TyKind::Bool, TyKind::Bool)
+        | (TyKind::Unit, TyKind::Unit) => true,
+        (TyKind::Product(lhs_head, lhs_tail), TyKind::Product(rhs_head, rhs_tail))
+        | (TyKind::Sum(lhs_head, lhs_tail), TyKind::Sum(rhs_head, rhs_tail)) => {
+            same_hull_ty_shape(lhs_head, rhs_head) && same_hull_ty_shape(lhs_tail, rhs_tail)
+        }
+        (
+            TyKind::Named {
+                name: lhs_name,
+                inner: lhs_inner,
+            },
+            TyKind::Named {
+                name: rhs_name,
+                inner: rhs_inner,
+            },
+        ) => lhs_name == rhs_name && same_hull_ty_shape(lhs_inner, rhs_inner),
+        (TyKind::NamedRef { name: lhs }, TyKind::NamedRef { name: rhs }) => lhs == rhs,
+        (
+            TyKind::Function {
+                params: lhs_params,
+                ret: lhs_ret,
+            },
+            TyKind::Function {
+                params: rhs_params,
+                ret: rhs_ret,
+            },
+        ) => {
+            lhs_params.len() == rhs_params.len()
+                && lhs_params
+                    .iter()
+                    .zip(rhs_params)
+                    .all(|(lhs, rhs)| same_hull_ty_shape(lhs, rhs))
+                && same_hull_ty_shape(lhs_ret, rhs_ret)
+        }
+        _ => false,
     }
 }
 

@@ -29,7 +29,7 @@ use hir_ty::infer::ComptimeObligation;
 use hir_ty::{
     AbiParam, AliasNormalizer, BinderEnv, BodyDesugarView, BodyPreTypeckDesugarPlan, BodyTyContext,
     BuiltinClassId, BuiltinTyCtor, CallSiteCallee, CallSiteEvidence, ClassId,
-    ComptimeObligationKind, Db, DispatchConstructor, DispatchFallback, Evidence,
+    ComptimeObligationKind, ConversionKind, Db, DispatchConstructor, DispatchFallback, Evidence,
     GeneratedOriginKind, InferenceResult, LoweredFunction, Pred, PredKind, PreparedModule,
     ProductShape, Solution, Ty, TyCtor, TyKind, TypeLowering, UserTyCtor, UserTyCtorKind,
     canonical_goal, contract_dispatch_surface_for_module, contract_overlay_backend_name,

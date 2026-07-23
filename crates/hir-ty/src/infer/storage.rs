@@ -52,7 +52,7 @@ impl<'db> InferCtx<'db> {
                 self.unify_expr(body, index, index_ty, actual_index_ty);
                 Some(value_ty)
             }
-            ExprKind::Conversion { expr: inner, .. } => {
+            ExprKind::TypeAscription { expr: inner, .. } => {
                 self.infer_storage_ref_expr(body, inner, true)
             }
             _ => match self.expr_resolutions.get(&(body, expr)).cloned() {
@@ -77,7 +77,7 @@ impl<'db> InferCtx<'db> {
         }
         match &body.exprs(self.db).get(expr).kind {
             ExprKind::Index { base, .. } => self.is_storage_index_expr(body, *base),
-            ExprKind::Conversion { expr, .. } => self.is_storage_index_expr(body, *expr),
+            ExprKind::TypeAscription { expr, .. } => self.is_storage_index_expr(body, *expr),
             _ => false,
         }
     }

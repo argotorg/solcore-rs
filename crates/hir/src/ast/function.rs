@@ -278,6 +278,16 @@ pub enum ExprKind<'db> {
         /// Conversion target type.
         ty: TypeRef<'db>,
     },
+    /// Internal type ascription introduced by lowering/generated HIR.
+    ///
+    /// This is intentionally distinct from a source-level conversion: an
+    /// ascription guides inference and is erased before backend lowering.
+    TypeAscription {
+        /// Ascribed expression.
+        expr: Id<Expr<'db>>,
+        /// Expected type for the expression.
+        ty: TypeRef<'db>,
+    },
     /// Unary operator expression.
     UnaryOp {
         /// Operator and token span.

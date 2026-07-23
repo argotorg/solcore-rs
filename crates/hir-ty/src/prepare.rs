@@ -1432,7 +1432,7 @@ impl<'db> BodyBuilder<'db> {
     fn proxy(&mut self, ty: TypeRef<'db>) -> Id<Expr<'db>> {
         let proxy = self.path(&["Proxy", "Proxy"]);
         let proxy_ty = named_ty(self.db, self.span, "Proxy", vec![ty]);
-        self.alloc_expr(ExprKind::Conversion {
+        self.alloc_expr(ExprKind::TypeAscription {
             expr: proxy,
             ty: proxy_ty,
         })
@@ -1869,7 +1869,7 @@ contract C {
     #[test]
     fn runtime_dispatch_is_implicit_and_existing_main_suppresses_it() {
         let (db, file) = db_with_main(
-            "contract C { function answer() public returns (uint256) { return 1 as uint256; } }",
+            "contract C { function answer() public returns (uint256) { return uint256.uint256(1); } }",
         );
         let source = source_module(&db, file);
         let prepared = prepare_module(&db, source);
@@ -2133,7 +2133,7 @@ contract C { function ping() public { let x = 2; } }
             .exprs(&db)
             .iter()
             .filter(|(_, expr)| {
-                let ExprKind::Conversion { ty, .. } = expr.kind else {
+                let ExprKind::TypeAscription { ty, .. } = expr.kind else {
                     return false;
                 };
                 let TypeRefKind::Named { name, args, .. } = ty.kind(&db) else {

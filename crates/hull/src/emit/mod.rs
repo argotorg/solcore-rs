@@ -18,8 +18,8 @@ use hir::{
     span::{Span, Spanned, SpannedElem},
 };
 use hir_ty::{
-    BinderEnv, BuiltinTyCtor, Ty as SemTy, TyCtor, TyKind as SemTyKind, TypeLowering,
-    UserTyCtorKind, contract::FrontendTransform,
+    BinderEnv, BuiltinTyCtor, ConversionKind, Ty as SemTy, TyCtor, TyKind as SemTyKind,
+    TypeLowering, UserTyCtorKind, contract::FrontendTransform,
 };
 use parser::parse_file_to_hir;
 use specialize::{

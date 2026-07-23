@@ -6,7 +6,7 @@ use hir::{
     },
     span::Span,
 };
-use hir_ty::{BuiltinTyCtor, Db, TyKind};
+use hir_ty::{BuiltinTyCtor, ConversionKind, Db, TyKind};
 use nameres::{LibraryId, module_key_for_path};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -845,20 +845,6 @@ impl<'db> Evaluator<'db> {
                     target,
                 )
             }
-            MonoExprKind::Conversion { expr, ty: annot_ty } => {
-                let (expr, target) = self.eval_lvalue(env, comptime_env, *expr);
-                (
-                    MonoExpr {
-                        span,
-                        ty,
-                        kind: MonoExprKind::Conversion {
-                            expr: Box::new(expr),
-                            ty: annot_ty,
-                        },
-                    },
-                    target,
-                )
-            }
             kind => (MonoExpr { span, ty, kind }, None),
         }
     }
@@ -1053,7 +1039,11 @@ impl<'db> Evaluator<'db> {
                 ty,
                 kind: MonoExprKind::Proxy(proxy_ty),
             },
-            MonoExprKind::Conversion { expr, ty: annot_ty } => {
+            MonoExprKind::Conversion {
+                expr,
+                ty: annot_ty,
+                kind: ConversionKind::Identity,
+            } => {
                 let expr = self.eval_expr(env, comptime_env, *expr);
                 if self.expr_is_known_value(&expr) {
                     MonoExpr {
@@ -1068,6 +1058,7 @@ impl<'db> Evaluator<'db> {
                         kind: MonoExprKind::Conversion {
                             expr: Box::new(expr),
                             ty: annot_ty,
+                            kind: ConversionKind::Identity,
                         },
                     }
                 }

@@ -57,11 +57,11 @@ contract Uint {
 
 
   function withdraw(src: address, amt: uint256) returns () {
-    balances[src] = Num.sub(balances[src], amt) as uint256;
+    balances[src] = Num.sub(balances[src], amt);
   }
 
   function deposit(dst: address, amt: uint256) returns () {
-    balances[dst] = Num.add(balances[dst], amt) as uint256;
+    balances[dst] = Num.add(balances[dst], amt);
   }
 
   function init() returns () {
@@ -77,6 +77,6 @@ contract Uint {
     let src: address = owner;
     transferFrom(owner, msg_sender, uint256.uint256(42));
 
-    return balances[msg_sender]  as uint256;
+    return balances[msg_sender];
   }
 }

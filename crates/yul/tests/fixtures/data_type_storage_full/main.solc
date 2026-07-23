@@ -4,7 +4,7 @@ enum Box { Box(word) }
 
 impl StorageType<Box> {
   function load(ptr: word) returns (Box) {
-    return Box.Box(StorageType.load(ptr) as word);
+    return Box.Box(StorageType.load(ptr));
   }
 
   function store(ptr: word, value: Box) returns () {
@@ -14,7 +14,8 @@ impl StorageType<Box> {
 
 impl CanStore<Box storage, Box> {
   function load(ptr: Box storage) returns (Box) {
-    return StorageType.load(Typedef.rep(ptr)) as Box;
+    let result: Box = StorageType.load(Typedef.rep(ptr));
+    return result;
   }
 
   function store(ptr: Box storage, value: Box) returns () {

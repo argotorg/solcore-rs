@@ -60,9 +60,10 @@ contract Mini {
 //  function transferFrom(src: address, dst: address, amt: uint256) returns (bool) {
   function transferFrom(src: address, dst: address, amt: uint256) returns (bool) {
      require1(ge(balances[src], amt));
+     let maxAllowance: uint256 = Num.maxVal();
 
      match (Eq.eq(src, msg_sender)) {
-       case true { match (ne(allowance[src][msg_sender], Num.maxVal() as uint256)) { case true { require1(false); } case false { (); } } }
+       case true { match (ne(allowance[src][msg_sender], maxAllowance)) { case true { require1(false); } case false { (); } } }
        case false { (); }
      }
 
@@ -72,7 +73,7 @@ contract Mini {
      }
 */
      balances[src] = Num.sub(balances[src], amt);
-     balances[dst] = Num.add(balances[dst], amt) as uint256;
+     balances[dst] = Num.add(balances[dst], amt);
      return true;
   }
 
@@ -98,6 +99,6 @@ contract Mini {
     allowance[owner][msg_sender] = uint256.uint256(10000);
     transferFrom(owner, msg_sender, uint256.uint256(42));
 
-    return balances[msg_sender]  as uint256;
+    return balances[msg_sender];
   }
 }

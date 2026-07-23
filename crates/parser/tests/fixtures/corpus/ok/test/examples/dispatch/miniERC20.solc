@@ -63,8 +63,9 @@ contract MiniERC20 {
   function transferFrom(src: address, dst: address, amt: uint256) public returns (bool) {
      let msg_sender = caller();
      require(balances[src] >= amt, Error.Error(0xf4d678b8)); // InsufficientBalance()
+     let maxAllowance: uint256 = Num.maxVal();
 
-     if (src != msg_sender && allowance[src][msg_sender] != (Num.maxVal() as uint256)) {
+     if (src != msg_sender && allowance[src][msg_sender] != maxAllowance) {
         require(allowance[src][msg_sender] >= amt, Error.Error(0x13be252b)); // InsufficientAllowance()
 
         allowance[src][msg_sender] -= amt;

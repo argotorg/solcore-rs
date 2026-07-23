@@ -3,7 +3,7 @@ use hir::{
     ast::function::{AssignOp, BinOp, LitKind, UnOp, YulStmt},
     span::Span,
 };
-use hir_ty::{AbiType, BuiltinTyCtor, FrontendDesugarPlan, Ty, TyCtor, TyKind};
+use hir_ty::{AbiType, BuiltinTyCtor, ConversionKind, FrontendDesugarPlan, Ty, TyCtor, TyKind};
 
 pub(crate) mod visit;
 
@@ -426,6 +426,7 @@ pub enum MonoExprKind<'db> {
     Conversion {
         expr: Box<MonoExpr<'db>>,
         ty: MonoTy<'db>,
+        kind: ConversionKind,
     },
     Match {
         scrutinee: Box<MonoExpr<'db>>,

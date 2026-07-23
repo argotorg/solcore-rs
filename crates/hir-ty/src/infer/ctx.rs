@@ -1,5 +1,5 @@
 use super::*;
-use crate::display::{display_pred_source, display_type_ref_source};
+use crate::display::{display_pred_source, display_ty_source, display_type_ref_source};
 
 pub(super) enum PoisonTarget<'db> {
     Expr(FuncBody<'db>, Id<Expr<'db>>),
@@ -24,6 +24,7 @@ pub(super) struct InferCtx<'db> {
     pub(super) param_tys: FxHashMap<(FuncBody<'db>, u32), InferTy<'db>>,
     pub(super) let_tys: FxHashMap<(FuncBody<'db>, Id<Stmt<'db>>), InferTy<'db>>,
     pub(super) adt_field_selections: Vec<AdtFieldSelection<'db>>,
+    pub(super) pending_conversions: Vec<PendingConversion<'db>>,
     pub(super) pat_tys_for_locals: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), InferTy<'db>>,
     pub(super) sail_scopes: Vec<FxHashMap<String, InferTy<'db>>>,
     pub(super) return_stack: Vec<InferTy<'db>>,
@@ -102,6 +103,7 @@ impl<'db> InferCtx<'db> {
             param_tys,
             let_tys: FxHashMap::default(),
             adt_field_selections: Vec::new(),
+            pending_conversions: Vec::new(),
             pat_tys_for_locals: FxHashMap::default(),
             sail_scopes: vec![root_scope],
             return_stack: vec![ret_ty],
@@ -139,6 +141,7 @@ impl<'db> InferCtx<'db> {
             self.check_ambiguous_integer_literals();
         }
         self.default_root_integer_literals();
+        let checked_conversions = self.finish_pending_conversions();
         let poisoned_exprs = self.poisoned_exprs.clone();
         let poisoned_pats = self.poisoned_pats.clone();
         let root_scheme = self.inferred_root_scheme();
@@ -217,6 +220,7 @@ impl<'db> InferCtx<'db> {
             pat_tys,
             let_tys,
             adt_field_selections: self.adt_field_selections,
+            checked_conversions,
             obligations,
             obligation_evidence: solved.evidence,
             call_site_evidence: solved.call_site_evidence,
@@ -225,6 +229,45 @@ impl<'db> InferCtx<'db> {
         };
         result.diagnostics.extend(solved.diagnostics);
         result
+    }
+
+    fn finish_pending_conversions(&mut self) -> Vec<CheckedConversion<'db>> {
+        let pending = std::mem::take(&mut self.pending_conversions);
+        let mut checked = Vec::with_capacity(pending.len());
+        for conversion in pending {
+            if self
+                .poisoned_exprs
+                .contains(&(conversion.body, conversion.expr))
+            {
+                continue;
+            }
+            let source = self.normalize_aliases(conversion.source);
+            let target = self.normalize_aliases(conversion.target);
+            let source = self.engine.ground_ty(source);
+            let target = self.engine.ground_ty(target);
+            if !ty_is_resolved_for_conversion(self.db, source)
+                || !ty_is_resolved_for_conversion(self.db, target)
+            {
+                continue;
+            }
+            if source == target {
+                checked.push(CheckedConversion {
+                    body: conversion.body,
+                    expr: conversion.expr,
+                    source,
+                    target,
+                    kind: ConversionKind::Identity,
+                });
+                continue;
+            }
+            self.diagnostics.push(TypeckDiagnostic::InvalidConversion {
+                target_span: self.label_span(conversion.target_ref.span(self.db)),
+                operand_span: self.expr_label_span(conversion.body, conversion.operand),
+                source: display_ty_source(self.db, source, &self.type_var_names),
+                target: display_ty_source(self.db, target, &self.type_var_names),
+            });
+        }
+        checked
     }
 
     fn inferred_root_scheme(&mut self) -> TyScheme<'db> {

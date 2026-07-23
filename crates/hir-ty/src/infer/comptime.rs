@@ -397,7 +397,9 @@ impl<'db> ComptimeChecker<'db> {
                     self.classify_expr(body, *base)
                 }
             }
-            ExprKind::Conversion { expr, .. } => self.classify_expr(body, *expr),
+            ExprKind::Conversion { expr, .. } | ExprKind::TypeAscription { expr, .. } => {
+                self.classify_expr(body, *expr)
+            }
             ExprKind::UnaryOp { expr, .. } => self.classify_expr(body, *expr),
             ExprKind::If {
                 cond,

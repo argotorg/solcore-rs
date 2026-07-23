@@ -129,6 +129,19 @@ impl<'db> InferCtx<'db> {
                 }
             }
             ExprKind::Conversion { expr, ty } => {
+                let target = self.lower_type_ref(*ty);
+                let source = self.infer_expr(body, *expr);
+                self.pending_conversions.push(PendingConversion {
+                    body,
+                    expr: expr_id,
+                    operand: *expr,
+                    target_ref: *ty,
+                    source,
+                    target: target.clone(),
+                });
+                target
+            }
+            ExprKind::TypeAscription { expr, ty } => {
                 let annot = self.lower_type_ref(*ty);
                 let expr_ty = self.infer_expr_expected(body, *expr, Some(annot.clone()));
                 self.unify_expr(body, *expr, annot.clone(), expr_ty);

@@ -54,6 +54,15 @@ impl<'db> InferCtx<'db> {
 
     fn infer_stmt(&mut self, body: FuncBody<'db>, stmt_id: Id<Stmt<'db>>) -> InferTy<'db> {
         let stmt = body.stmts(self.db).get(stmt_id);
+        if let StmtKind::Assign { lhs, .. } = &stmt.kind
+            && let Some(conversion) = self.conversion_in_assignment_target(body, *lhs)
+        {
+            self.diagnostics
+                .push(TypeckDiagnostic::ConversionAssignmentTarget {
+                    span: self.expr_label_span(body, conversion),
+                });
+            self.poison_expr(body, conversion);
+        }
         match &stmt.kind {
             StmtKind::Let {
                 comptime,
@@ -246,6 +255,22 @@ impl<'db> InferCtx<'db> {
             }
             StmtKind::Break | StmtKind::Continue => self.unit(),
             StmtKind::Error => InferTy::Error,
+        }
+    }
+
+    fn conversion_in_assignment_target(
+        &self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+    ) -> Option<Id<Expr<'db>>> {
+        match &body.exprs(self.db).get(expr).kind {
+            ExprKind::Conversion { .. } => Some(expr),
+            ExprKind::Index { base, .. }
+            | ExprKind::Field { base, .. }
+            | ExprKind::TypeAscription { expr: base, .. } => {
+                self.conversion_in_assignment_target(body, *base)
+            }
+            _ => None,
         }
     }
 

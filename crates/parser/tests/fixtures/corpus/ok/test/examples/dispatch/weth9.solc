@@ -65,9 +65,10 @@ contract WETH9 {
 
     function transferFrom(src: address, dst: address, wad: uint256) public returns (bool) {
         let sender = caller();
+        let unlimited: uint256 = maxVal();
         require(balances[src] >= wad, Error.Error(0xf4d678b8)); // InsufficientBalance()
 
-        if (src != sender && allowance[src][sender] != (maxVal() as uint256)) {
+        if (src != sender && allowance[src][sender] != unlimited) {
             require(allowance[src][sender] >= wad, Error.Error(0x13be252b)); // InsufficientAllowance()
             allowance[src][sender] -= wad;
         }

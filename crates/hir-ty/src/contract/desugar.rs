@@ -510,7 +510,9 @@ impl<'db> DesugarCollector<'db> {
             ExprKind::Field { base, .. } => {
                 self.expr(*base);
             }
-            ExprKind::Conversion { expr, .. } | ExprKind::UnaryOp { expr, .. } => self.expr(*expr),
+            ExprKind::Conversion { expr, .. }
+            | ExprKind::TypeAscription { expr, .. }
+            | ExprKind::UnaryOp { expr, .. } => self.expr(*expr),
             ExprKind::If {
                 cond,
                 then_expr,

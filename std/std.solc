@@ -1128,7 +1128,8 @@ impl<ty> ABIAttribs<ty calldata> where ty: ABIAttribs {
 // abi encodes a `ty` value and returns a pointer to the result
 function abi_encode<ty>(val: ty) returns (bytes memory) where ty: ABIAttribs, ty: ABIEncode {
     let free = get_free_memory();
-    let tail = ABIEncode.encodeInto(val, free, 0, free + ABIAttribs.headSize(Proxy.Proxy  as Proxy<ty>));
+    let valueProxy: Proxy<ty> = Proxy.Proxy;
+    let tail = ABIEncode.encodeInto(val, free, 0, free + ABIAttribs.headSize(valueProxy));
     set_free_memory(tail);
     return memory.memory(free);
 }
@@ -1237,7 +1238,8 @@ impl<tuple> ABIEncode<ABITuple<tuple>> where tuple: ABIEncode, tuple: ABIAttribs
             mstore(basePtr, tail - basePtr);
 
             // encode the underlying tuple into the tail
-            let headSize = ABIAttribs.headSize(Proxy.Proxy  as Proxy<tuple>);
+            let tupleProxy: Proxy<tuple> = Proxy.Proxy;
+            let headSize = ABIAttribs.headSize(tupleProxy);
             basePtr = tail;
             tail = tail + headSize;
             return ABIEncode.encodeInto(Typedef.rep(x), basePtr, 0, tail);
@@ -1280,14 +1282,14 @@ impl<ty, reader> WordReader<ABIDecoder<ty, reader>> where reader: WordReader {
 // ABI Decoding for uint256
 impl<reader> ABIDecode<ABIDecoder<uint256, reader>, uint256> where reader: WordReader {
     function decode(ptr: ABIDecoder<uint256, reader>, currentHeadOffset: word) returns (uint256) {
-        return Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset)))  as uint256;
+        return Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset)));
     }
 }
 
 // ABI Decoding for bytes32
 impl<reader> ABIDecode<ABIDecoder<bytes32, reader>, bytes32> where reader: WordReader {
     function decode(ptr: ABIDecoder<bytes32, reader>, currentHeadOffset: word) returns (bytes32) {
-        return Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset)))  as bytes32;
+        return Typedef.abs(WordReader.read(WordReader.advance(ptr, currentHeadOffset)));
     }
 }
 
@@ -1296,7 +1298,7 @@ impl<reader> ABIDecode<ABIDecoder<address, reader>, address> where reader: WordR
     function decode(ptr: ABIDecoder<address, reader>, currentHeadOffset: word) returns (address) {
         let raw = WordReader.read(WordReader.advance(ptr, currentHeadOffset));
         require(shr(160, raw) == 0, Error.Error(0x7cc04fa7)); // DirtyHigherBitsForAddress()
-        return Typedef.abs(raw)  as address;
+        return Typedef.abs(raw);
     }
 }
 
@@ -1492,8 +1494,10 @@ impl StorageSize<bytes memory> {
 
 impl<a, b> StorageSize<(a, b)> where a: StorageSize, b: StorageSize {
     function size(x: Proxy<(a, b)>) returns (word) {
-        let a_sz: word = StorageSize.size(Proxy.Proxy as Proxy<a>);
-        let b_sz: word = StorageSize.size(Proxy.Proxy as Proxy<b>);
+        let aProxy: Proxy<a> = Proxy.Proxy;
+        let bProxy: Proxy<b> = Proxy.Proxy;
+        let a_sz: word = StorageSize.size(aProxy);
+        let b_sz: word = StorageSize.size(bProxy);
         return a_sz + b_sz;
     }
 }
@@ -1513,18 +1517,18 @@ impl StorageType<word> {
 }
 
 impl StorageType<uint256> {
-  function load(ptr: word) returns (uint256) { return uint256.uint256(StorageType.load(ptr) as word); }
-  function store(ptr: word, value: uint256) returns () { StorageType.store(ptr, Typedef.rep(value) as word); }
+  function load(ptr: word) returns (uint256) { return uint256.uint256(StorageType.load(ptr)); }
+  function store(ptr: word, value: uint256) returns () { StorageType.store(ptr, Typedef.rep(value)); }
 }
 
 impl StorageType<bytes32> {
-  function load(ptr: word) returns (bytes32) { return bytes32.bytes32(StorageType.load(ptr) as word); }
-  function store(ptr: word, value: bytes32) returns () { StorageType.store(ptr, Typedef.rep(value) as word); }
+  function load(ptr: word) returns (bytes32) { return bytes32.bytes32(StorageType.load(ptr)); }
+  function store(ptr: word, value: bytes32) returns () { StorageType.store(ptr, Typedef.rep(value)); }
 }
 
 impl StorageType<address> {
-  function load(ptr: word) returns (address) { return address.address(StorageType.load(ptr) as word); }
-  function store(ptr: word, value: address) returns () { StorageType.store(ptr, Typedef.rep(value) as word); }
+  function load(ptr: word) returns (address) { return address.address(StorageType.load(ptr)); }
+  function store(ptr: word, value: address) returns () { StorageType.store(ptr, Typedef.rep(value)); }
 }
 
 // -- structure fields (including contract fields)
@@ -1546,15 +1550,20 @@ function memberAccessBase<a, field, fieldType, storageType, offset>(x: MemberAcc
 
 impl<cxt, fieldSelector, loadType, offsetType, storageType> LVA<MemberAccessProxy<ContractStorage<cxt>, fieldSelector, loadType, offsetType>, storageType storage> where StructField<ContractStorage<cxt>, fieldSelector>: CStructField<storageType storage, offsetType>, offsetType: StorageSize, storageType storage: CanStore<loadType> {
    function acc(x: MemberAccessProxy<ContractStorage<cxt>, fieldSelector, loadType, offsetType>) returns (storageType storage) {
-      let offset: word = StorageSize.size(Proxy.Proxy  as Proxy<offsetType>) ;
-      return storage.storage(offset) as storageType storage;
+      let offsetProxy: Proxy<offsetType> = Proxy.Proxy;
+      let offset: word = StorageSize.size(offsetProxy);
+      let result: storageType storage = storage.storage(offset);
+      return result;
    }
 }
 
 impl<cxt, fieldSelector, loadType, offsetType, storageType> RVA<MemberAccessProxy<ContractStorage<cxt>, fieldSelector, loadType, offsetType>, loadType> where StructField<ContractStorage<cxt>, fieldSelector>: CStructField<storageType storage, offsetType>, storageType storage: CanStore<loadType>, offsetType: StorageSize {
     function acc(x: MemberAccessProxy<ContractStorage<cxt>, fieldSelector, loadType, offsetType>) returns (loadType) {
-        let offset: word = StorageSize.size(Proxy.Proxy as Proxy<offsetType>);
-        return CanStore.load(storage.storage(offset) as storageType storage) as loadType;
+        let offsetProxy: Proxy<offsetType> = Proxy.Proxy;
+        let offset: word = StorageSize.size(offsetProxy);
+        let storageRef: storageType storage = storage.storage(offset);
+        let result: loadType = CanStore.load(storageRef);
+        return result;
     }
 }
 

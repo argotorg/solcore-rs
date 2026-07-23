@@ -209,7 +209,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     self.map.record_expr(body, expr_id, resolution);
                 }
             }
-            ExprKind::Conversion { expr, ty } => {
+            ExprKind::Conversion { expr, ty } | ExprKind::TypeAscription { expr, ty } => {
                 self.expr(body, *expr);
                 self.ty(*ty);
             }
