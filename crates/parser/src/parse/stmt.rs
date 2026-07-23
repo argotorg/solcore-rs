@@ -4,7 +4,7 @@ use hir::ast::function;
 use super::{
     common::*,
     expr_pat::{parsed_expr_parser, parsed_pat_parser},
-    types::{parsed_ty_comptime_span, type_parser},
+    types::type_parser,
     yul::parsed_yul_stmt_parser,
 };
 use crate::{lexer::Token, types::*};
@@ -74,28 +74,156 @@ fn compound_bin_op(op: ParsedAssignOp) -> Option<function::BinOp> {
     }
 }
 
-fn parsed_for_let_parser<'src, I>() -> impl Parser<'src, I, ParsedStmt<'src>, ParserErr<'src>>
+fn parsed_binding_pat_parser<'src, I>() -> impl Parser<'src, I, ParsedPat<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    recursive(|pat| {
+        let var = ident_parser().map(|name| ParsedPat {
+            span: name.1,
+            kind: ParsedPatKind::Var(name),
+        });
+        let tuple_or_paren = pat
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map_with(|pats, e| match <[_; 1]>::try_from(pats) {
+                Ok([pat]) => pat,
+                Err(pats) => ParsedPat {
+                    span: e.span(),
+                    kind: ParsedPatKind::Tuple(pats),
+                },
+            })
+            .boxed();
+
+        tuple_or_paren.or(var).boxed()
+    })
+    .labelled("binding pattern")
+    .as_context()
+}
+
+fn parsed_let_binding_parser<'src, I>() -> impl Parser<'src, I, ParsedStmt<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     just(Token::Let)
-        .ignore_then(ident_parser())
+        .ignore_then(comptime_kw_parser().or_not())
+        .then(parsed_binding_pat_parser())
         .then(just(Token::Colon).ignore_then(type_parser()).or_not())
-        .then(
-            just(Token::Eq)
-                .or(just(Token::ColonEq))
-                .ignore_then(parsed_expr_parser())
-                .or_not(),
-        )
-        .map_with(|((name, ty), init), e| ParsedStmt {
-            span: e.span(),
-            kind: ParsedStmtKind::Let {
-                comptime: ty.as_ref().and_then(parsed_ty_comptime_span),
-                name,
-                ty,
-                init,
-            },
+        .then(just(Token::Eq).ignore_then(parsed_expr_parser()).or_not())
+        .validate(|(((comptime, pat), ty), init), e, emitter| {
+            let span = e.span();
+            let kind = match pat.kind {
+                ParsedPatKind::Var(name) => ParsedStmtKind::Let {
+                    comptime,
+                    name,
+                    ty,
+                    init,
+                },
+                ParsedPatKind::Tuple(elems) => {
+                    if let Some(comptime) = comptime {
+                        emitter.emit(Rich::custom(
+                            comptime,
+                            "`comptime` tuple destructuring is not supported",
+                        ));
+                        ParsedStmtKind::Error
+                    } else if let Some(init) = init {
+                        ParsedStmtKind::LetPattern {
+                            pat: ParsedPat {
+                                span: pat.span,
+                                kind: ParsedPatKind::Tuple(elems),
+                            },
+                            ty,
+                            init,
+                        }
+                    } else {
+                        emitter.emit(Rich::custom(
+                            pat.span,
+                            "tuple destructuring binding requires an initializer",
+                        ));
+                        ParsedStmtKind::Error
+                    }
+                }
+                _ => {
+                    emitter.emit(Rich::custom(
+                        pat.span,
+                        "let binding must use an identifier or tuple pattern",
+                    ));
+                    ParsedStmtKind::Error
+                }
+            };
+            ParsedStmt { span, kind }
         })
+}
+
+#[derive(Debug, Clone)]
+enum ParsedSurfaceMatchArm<'src> {
+    Case {
+        span: LexSpan,
+        pat: ParsedPat<'src>,
+        body: Vec<ParsedStmt<'src>>,
+    },
+    Default {
+        span: LexSpan,
+        kw: LexSpan,
+        body: Vec<ParsedStmt<'src>>,
+    },
+}
+
+fn lower_surface_match_arm<'src>(
+    scrutinee_count: usize,
+    arm: ParsedSurfaceMatchArm<'src>,
+) -> ParsedMatchArm<'src> {
+    match arm {
+        ParsedSurfaceMatchArm::Case { span, pat, body } => {
+            let pats = if scrutinee_count > 1 {
+                match pat {
+                    ParsedPat {
+                        kind: ParsedPatKind::Tuple(elems),
+                        ..
+                    } => elems,
+                    pat => vec![pat],
+                }
+            } else {
+                vec![pat]
+            };
+            ParsedMatchArm { span, pats, body }
+        }
+        ParsedSurfaceMatchArm::Default { span, kw, body } => ParsedMatchArm {
+            span,
+            pats: (0..scrutinee_count)
+                .map(|_| ParsedPat {
+                    span: kw,
+                    kind: ParsedPatKind::Wildcard,
+                })
+                .collect(),
+            body,
+        },
+    }
+}
+
+fn parsed_empty_revert<'src>(span: LexSpan) -> ParsedStmt<'src> {
+    let zero = || ParsedYulExpr {
+        span,
+        kind: ParsedYulExprKind::Lit(ParsedYulLitKind::Number("0")),
+    };
+    let call = ParsedYulExpr {
+        span,
+        kind: ParsedYulExprKind::Call {
+            name: ("revert", span),
+            args: vec![zero(), zero()],
+        },
+    };
+    ParsedStmt {
+        span,
+        kind: ParsedStmtKind::Assembly {
+            body: vec![ParsedYulStmt {
+                span,
+                kind: ParsedYulStmtKind::Expr(call),
+            }],
+        },
+    }
 }
 
 fn parsed_for_assign_or_expr_parser<'src, I>()
@@ -117,40 +245,37 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     recursive(|stmt| {
-        let match_arm = just(Token::Pipe)
-            .ignore_then(
-                parsed_pat_parser()
-                    .separated_by(just(Token::Comma))
-                    .at_least(1)
-                    .collect::<Vec<_>>(),
-            )
-            .then_ignore(just(Token::FatArrow))
-            .then(stmt.clone().repeated().collect::<Vec<_>>())
-            .map_with(|(pats, body), e| ParsedMatchArm {
+        let match_arm_body = stmt
+            .clone()
+            .repeated()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LBrace), just(Token::RBrace))
+            .boxed();
+        let case_arm = just(Token::Case)
+            .ignore_then(parsed_pat_parser())
+            .then(match_arm_body.clone())
+            .map_with(|(pat, body), e| ParsedSurfaceMatchArm::Case {
                 span: e.span(),
-                pats,
+                pat,
                 body,
             })
             .boxed();
-
-        let let_stmt = just(Token::Let)
-            .ignore_then(ident_parser())
-            .then(just(Token::Colon).ignore_then(type_parser()).or_not())
-            .then(
-                just(Token::Eq)
-                    .or(just(Token::ColonEq))
-                    .ignore_then(parsed_expr_parser())
-                    .or_not(),
-            )
-            .then_ignore(just(Token::Semi))
-            .map_with(|((name, ty), init), e| ParsedStmt {
+        let default_arm = just(Token::Default)
+            .map_with(|_, e| e.span())
+            .then(match_arm_body)
+            .map_with(|(kw, body), e| ParsedSurfaceMatchArm::Default {
                 span: e.span(),
-                kind: ParsedStmtKind::Let {
-                    comptime: ty.as_ref().and_then(parsed_ty_comptime_span),
-                    name,
-                    ty,
-                    init,
-                },
+                kw,
+                body,
+            })
+            .boxed();
+        let match_arm = choice((case_arm, default_arm)).boxed();
+
+        let let_stmt = parsed_let_binding_parser()
+            .then_ignore(just(Token::Semi))
+            .map_with(|mut stmt, e| {
+                stmt.span = e.span();
+                stmt
             })
             .boxed();
 
@@ -168,7 +293,8 @@ where
                 parsed_expr_parser()
                     .separated_by(just(Token::Comma))
                     .at_least(1)
-                    .collect::<Vec<_>>(),
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LParen), just(Token::RParen)),
             )
             .then(
                 match_arm
@@ -177,14 +303,20 @@ where
                     .collect::<Vec<_>>()
                     .delimited_by(just(Token::LBrace), just(Token::RBrace)),
             )
-            .map_with(|(scrutinees, arms), e| ParsedStmt {
-                span: e.span(),
-                kind: ParsedStmtKind::Match { scrutinees, arms },
+            .map_with(|(scrutinees, arms), e| {
+                let scrutinee_count = scrutinees.len();
+                let arms = arms
+                    .into_iter()
+                    .map(|arm| lower_surface_match_arm(scrutinee_count, arm))
+                    .collect();
+                ParsedStmt {
+                    span: e.span(),
+                    kind: ParsedStmtKind::Match { scrutinees, arms },
+                }
             })
-            .then_ignore(just(Token::Semi).or_not())
             .boxed();
 
-        let for_item = parsed_for_let_parser()
+        let for_item = parsed_let_binding_parser()
             .or(parsed_for_assign_or_expr_parser())
             .boxed();
         let for_items = for_item
@@ -218,8 +350,31 @@ where
             })
             .boxed();
 
+        let while_stmt = just(Token::While)
+            .ignore_then(
+                parsed_expr_parser().delimited_by(just(Token::LParen), just(Token::RParen)),
+            )
+            .then(
+                stmt.clone()
+                    .repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map_with(|(cond, body), e| ParsedStmt {
+                span: e.span(),
+                kind: ParsedStmtKind::For {
+                    init: Vec::new(),
+                    cond,
+                    post: Vec::new(),
+                    body,
+                },
+            })
+            .boxed();
+
         let if_stmt = just(Token::If)
-            .ignore_then(parsed_expr_parser())
+            .ignore_then(
+                parsed_expr_parser().delimited_by(just(Token::LParen), just(Token::RParen)),
+            )
             .then(
                 stmt.clone()
                     .repeated()
@@ -246,6 +401,19 @@ where
             })
             .boxed();
 
+        let unchecked_stmt = just(Token::Unchecked)
+            .ignore_then(
+                stmt.clone()
+                    .repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map_with(|body, e| ParsedStmt {
+                span: e.span(),
+                kind: ParsedStmtKind::Block { body },
+            })
+            .boxed();
+
         let assembly_stmt = just(Token::Assembly)
             .ignore_then(
                 parsed_yul_stmt_parser()
@@ -257,6 +425,11 @@ where
                 span: e.span(),
                 kind: ParsedStmtKind::Assembly { body },
             })
+            .boxed();
+
+        let revert_stmt = just(Token::Revert)
+            .then_ignore(just(Token::Semi))
+            .map_with(|_, e| parsed_empty_revert(e.span()))
             .boxed();
 
         let block_stmt = stmt
@@ -286,18 +459,10 @@ where
             .boxed();
         let assign_or_expr = parsed_expr_parser()
             .then(assign_op_parser().then(parsed_expr_parser()).or_not())
-            .then(just(Token::Semi).or_not())
-            .validate(|((lhs, rhs), semi), e, emitter| {
-                if rhs.is_some() && semi.is_none() {
-                    emitter.emit(Rich::custom(
-                        e.span(),
-                        "assignment statement requires trailing `;`",
-                    ));
-                }
-                ParsedStmt {
-                    span: e.span(),
-                    kind: assign_stmt_kind(lhs, rhs),
-                }
+            .then_ignore(just(Token::Semi))
+            .map_with(|(lhs, rhs), e| ParsedStmt {
+                span: e.span(),
+                kind: assign_stmt_kind(lhs, rhs),
             })
             .boxed();
 
@@ -306,8 +471,11 @@ where
             return_stmt,
             match_stmt,
             for_stmt,
+            while_stmt,
             if_stmt,
+            unchecked_stmt,
             assembly_stmt,
+            revert_stmt,
             block_stmt,
             break_stmt,
             continue_stmt,

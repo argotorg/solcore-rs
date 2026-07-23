@@ -208,7 +208,7 @@ fn instance_symbol<'db>(
         db,
         line_index,
         uri,
-        format!("instance {}", class.atom().text(db)),
+        format!("impl {}", class.atom().text(db)),
         SymbolKind::OBJECT,
         class.span(db),
         None,
@@ -274,8 +274,8 @@ mod tests {
 
     #[test]
     fn query_returns_matching_functions_from_each_open_document() {
-        let main_source = "function target_main() -> word {\n  return 1;\n}\n";
-        let util_source = "function target_util() -> word {\n  return 2;\n}\n";
+        let main_source = "function target_main() returns (word) {\n  return 1;\n}\n";
+        let util_source = "function target_util() returns (word) {\n  return 2;\n}\n";
         let (mut world, main_uri) = world_with_main(main_source);
         let util_uri = Url::parse("file:///main/util.solc").expect("uri");
         assert!(world.open_document(util_uri.clone(), util_source.to_owned()));
@@ -313,11 +313,11 @@ mod tests {
                 [
                     (
                         main_uri,
-                        "function main_symbol() -> word { return 1; }\n".to_owned()
+                        "function main_symbol() returns (word) { return 1; }\n".to_owned()
                     ),
                     (
                         util_uri.clone(),
-                        "function unopened_symbol() -> word { return 2; }\n".to_owned()
+                        "function unopened_symbol() returns (word) { return 2; }\n".to_owned()
                     ),
                 ]
             ),
@@ -336,13 +336,13 @@ mod tests {
     #[test]
     fn empty_query_returns_top_level_symbols_and_non_matching_query_is_empty() {
         let source = "\
-function alpha() -> word {
+function alpha() returns (word) {
   return 1;
 }
 
-type Alias = word;
+alias Alias = word;
 
-data Choice = One | Two;
+enum Choice { One, Two }
 
 contract Vault {}
 ";
@@ -375,7 +375,7 @@ contract Vault {}
         let source = "\
 contract Vault {
   balance: word;
-  function read() -> word {
+  function read() returns (word) {
     return balance;
   }
 }

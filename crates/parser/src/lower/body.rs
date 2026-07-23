@@ -12,24 +12,10 @@ use super::{
     span::{lower_qualifier_path, lower_spanned_ident, span_from_absolute},
     yul::lower_parsed_yul_stmt,
 };
-use crate::{parse::parse_body_statements, types::*};
-
-// Lowering and HIR consumers have substantially larger recursion frames than
-// token parsing. A 128-deep conditional overflowed a native test thread; keep
-// enough headroom for wasm's smaller shadow stack.
-const MAX_EXPRESSION_NESTING: usize = 32;
-
-fn apply_implicit_return(stmts: &mut Vec<ParsedStmt<'_>>) {
-    let [stmt] = stmts.as_mut_slice() else {
-        return;
-    };
-
-    let kind = std::mem::replace(&mut stmt.kind, ParsedStmtKind::Error);
-    stmt.kind = match kind {
-        ParsedStmtKind::Expr(expr) => ParsedStmtKind::Return(Some(expr)),
-        other => other,
-    };
-}
+use crate::{
+    parse::{MAX_EXPRESSION_NESTING, parse_body_statements},
+    types::*,
+};
 
 fn lower_parsed_lit(lit: ParsedLitKind<'_>) -> function::LitKind {
     match lit {
@@ -86,15 +72,21 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         expr: ParsedExpr<'_>,
         arenas: &mut BodyArenas<'db>,
     ) -> hir::arena::Id<function::Expr<'db>> {
+        if self.expression_nesting == 0 {
+            self.expression_nesting_error_reported = false;
+        }
         if self.expression_nesting >= MAX_EXPRESSION_NESTING {
             let span = expr.span;
             drop_parsed_expr_iteratively(expr);
-            self.parse_errors.push(ParsedError::new(
-                span,
-                format!(
-                    "expression nesting exceeds the compiler limit of {MAX_EXPRESSION_NESTING}"
-                ),
-            ));
+            if !self.expression_nesting_error_reported {
+                self.parse_errors.push(ParsedError::new(
+                    span,
+                    format!(
+                        "expression nesting exceeds the compiler limit of {MAX_EXPRESSION_NESTING}"
+                    ),
+                ));
+                self.expression_nesting_error_reported = true;
+            }
             return arenas.exprs.alloc(function::Expr {
                 span: span_from_absolute(anchor, span, base_start),
                 kind: function::ExprKind::Error,
@@ -120,12 +112,6 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedExprKind::Ident(name) => {
                 function::ExprKind::Ident(lower_spanned_ident(self.db, anchor, base_start, name))
             }
-            ParsedExprKind::DotCtor { dot, name, args } => {
-                let dot = span_from_absolute(anchor, dot, base_start);
-                let name = lower_spanned_ident(self.db, anchor, base_start, name);
-                let args = self.lower_exprs(anchor, base_start, args, arenas);
-                function::ExprKind::DotCtor { dot, name, args }
-            }
             ParsedExprKind::Proxy { at, ty } => function::ExprKind::Proxy {
                 at: span_from_absolute(anchor, at, base_start),
                 ty: lower_type_ref(self.db, anchor, base_start, ty),
@@ -148,8 +134,8 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedExprKind::Field { base, field } => {
                 self.lower_field_expr(anchor, base_start, *base, field, arenas)
             }
-            ParsedExprKind::TypeAnnot { expr, ty } => {
-                self.lower_type_annot_expr(anchor, base_start, *expr, ty, arenas)
+            ParsedExprKind::Conversion { expr, ty } => {
+                self.lower_conversion_expr(anchor, base_start, *expr, ty, arenas)
             }
             ParsedExprKind::UnaryOp { op, expr } => {
                 self.lower_unary_expr(anchor, base_start, op, *expr, arenas)
@@ -237,7 +223,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         function::ExprKind::Field { base, field }
     }
 
-    fn lower_type_annot_expr(
+    fn lower_conversion_expr(
         &mut self,
         anchor: AnchorId<'db>,
         base_start: usize,
@@ -247,7 +233,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
     ) -> function::ExprKind<'db> {
         let expr = self.lower_expr(anchor, base_start, expr, arenas);
         let ty = lower_type_ref(self.db, anchor, base_start, ty);
-        function::ExprKind::TypeAnnot { expr, ty }
+        function::ExprKind::Conversion { expr, ty }
     }
 
     fn lower_unary_expr(
@@ -406,6 +392,10 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
                 ty: ty.map(|ty| lower_type_ref(self.db, anchor, base_start, ty)),
                 init: init.map(|expr| self.lower_expr(anchor, base_start, expr, arenas)),
             },
+            // Every tuple binding is rewritten by `lower_stmt_block`, which
+            // needs the remainder of the lexical block to preserve the
+            // binding's scope.
+            ParsedStmtKind::LetPattern { .. } => function::StmtKind::Error,
             ParsedStmtKind::Return(expr) => function::StmtKind::Return(
                 expr.map(|expr| self.lower_expr(anchor, base_start, expr, arenas)),
             ),
@@ -464,10 +454,60 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         stmts: Vec<ParsedStmt<'_>>,
         arenas: &mut BodyArenas<'db>,
     ) -> Vec<hir::arena::Id<function::Stmt<'db>>> {
-        stmts
-            .into_iter()
-            .map(|stmt| self.lower_stmt(anchor, base_start, stmt, arenas))
-            .collect()
+        let mut stmts = stmts.into_iter();
+        let mut lowered = Vec::new();
+
+        while let Some(stmt) = stmts.next() {
+            let stmt_span = stmt.span;
+            let (pat, ty, init) = match stmt.kind {
+                ParsedStmtKind::LetPattern { pat, ty, init } => (pat, ty, init),
+                kind => {
+                    lowered.push(self.lower_stmt(
+                        anchor,
+                        base_start,
+                        ParsedStmt {
+                            span: stmt_span,
+                            kind,
+                        },
+                        arenas,
+                    ));
+                    continue;
+                }
+            };
+
+            // `let (a, b): (A, B) = value; rest` is equivalent to an
+            // irrefutable tuple match whose arm contains `rest`. The existing
+            // match resolver already scopes pattern variables over the arm,
+            // so this representation keeps the binding visible for every
+            // following statement in the lexical block.
+            let scrutinee = match ty {
+                Some(ty) => ParsedExpr {
+                    span: init.span,
+                    kind: ParsedExprKind::Conversion {
+                        expr: Box::new(init),
+                        ty,
+                    },
+                },
+                None => init,
+            };
+            let tail = stmts.collect::<Vec<_>>();
+            let end = tail.last().map_or(stmt_span.end, |tail| tail.span.end);
+            let match_stmt = ParsedStmt {
+                span: LexSpan::from(stmt_span.start..end),
+                kind: ParsedStmtKind::Match {
+                    scrutinees: vec![scrutinee],
+                    arms: vec![ParsedMatchArm {
+                        span: LexSpan::from(stmt_span.start..end),
+                        pats: vec![pat],
+                        body: tail,
+                    }],
+                },
+            };
+            lowered.push(self.lower_stmt(anchor, base_start, match_stmt, arenas));
+            break;
+        }
+
+        lowered
     }
 
     fn lower_match_stmt(
@@ -519,20 +559,11 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         anchor: AnchorId<'db>,
         body_span: LexSpan,
         arenas: &mut BodyArenas<'db>,
-        implicit_return: bool,
     ) -> Vec<hir::arena::Id<function::Stmt<'db>>> {
-        let mut parsed = parse_body_statements(self.source, body_span);
+        let parsed = parse_body_statements(self.source, body_span);
         self.parse_errors.extend(parsed.errors);
 
-        if implicit_return {
-            apply_implicit_return(&mut parsed.output);
-        }
-
-        let mut lowered = Vec::with_capacity(parsed.output.len());
-        for stmt in parsed.output {
-            lowered.push(self.lower_stmt(anchor, body_span.start, stmt, arenas));
-        }
-        lowered
+        self.lower_stmt_block(anchor, body_span.start, parsed.output, arenas)
     }
 }
 
@@ -540,7 +571,7 @@ fn drop_parsed_expr_iteratively(root: ParsedExpr<'_>) {
     let mut pending = vec![root];
     while let Some(expr) = pending.pop() {
         match expr.kind {
-            ParsedExprKind::DotCtor { args, .. } | ParsedExprKind::Tuple(args) => {
+            ParsedExprKind::Tuple(args) => {
                 pending.extend(args);
             }
             ParsedExprKind::BinOp { lhs, rhs, .. } => {
@@ -556,7 +587,7 @@ fn drop_parsed_expr_iteratively(root: ParsedExpr<'_>) {
                 pending.extend(args);
             }
             ParsedExprKind::Field { base, .. } => pending.push(*base),
-            ParsedExprKind::TypeAnnot { expr, .. } | ParsedExprKind::UnaryOp { expr, .. } => {
+            ParsedExprKind::Conversion { expr, .. } | ParsedExprKind::UnaryOp { expr, .. } => {
                 pending.push(*expr);
             }
             ParsedExprKind::If {

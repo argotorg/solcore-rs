@@ -497,7 +497,7 @@ fn generated_constructor_copy_arguments<'db>(
             body: constructor_copy_yul(db, constructor.span, contract_name),
         });
         let offset = builder.ident("memoryDataOffset");
-        let memory_value = builder.call_ident("memory", vec![offset]);
+        let memory_value = builder.call_path(&["memory", "memory"], vec![offset]);
         let source_ty = named_ty(
             db,
             constructor.span,
@@ -1243,8 +1243,10 @@ fn generated_dispatch_main<'db>(
         // `allowance` cannot resolve to the field, nor can `C.Foo` resolve to a
         // same-named constructor of a contract-local ADT.
         let implementation = builder.ident(&compiler_contract_method_ref(&method.name));
-        method_values
-            .push(builder.call_ident("Method", vec![name, payability, args, rets, implementation]));
+        method_values.push(builder.call_path(
+            &["Method", "Method"],
+            vec![name, payability, args, rets, implementation],
+        ));
     }
     let methods = builder.product_expr(&method_values);
     let fallback = match fallback {
@@ -1263,17 +1265,23 @@ fn generated_dispatch_main<'db>(
             let args = builder.proxy(args_ty);
             let rets = builder.proxy(fallback.ret);
             let implementation = builder.ident(&compiler_contract_method_ref(&fallback.name));
-            builder.call_ident("Fallback", vec![payability, args, rets, implementation])
+            builder.call_path(
+                &["Fallback", "Fallback"],
+                vec![payability, args, rets, implementation],
+            )
         }
         None => {
             let payability = builder.proxy(named_ty(db, span, "NonPayable", Vec::new()));
             let args = builder.proxy(unit_ty(db, span));
             let rets = builder.proxy(unit_ty(db, span));
             let implementation = builder.ident("fallback_default_implementation");
-            builder.call_ident("Fallback", vec![payability, args, rets, implementation])
+            builder.call_path(
+                &["Fallback", "Fallback"],
+                vec![payability, args, rets, implementation],
+            )
         }
     };
-    let contract_value = builder.call_ident("Contract", vec![methods, fallback]);
+    let contract_value = builder.call_path(&["Contract", "Contract"], vec![methods, fallback]);
     let run = builder.call_path(&["RunContract", "exec"], vec![contract_value]);
     let run_stmt = builder.alloc_stmt(StmtKind::Expr(run));
     let unit = builder.alloc_expr(ExprKind::Tuple(Vec::new()));
@@ -1417,9 +1425,9 @@ impl<'db> BodyBuilder<'db> {
     }
 
     fn proxy(&mut self, ty: TypeRef<'db>) -> Id<Expr<'db>> {
-        let proxy = self.ident("Proxy");
+        let proxy = self.path(&["Proxy", "Proxy"]);
         let proxy_ty = named_ty(self.db, self.span, "Proxy", vec![ty]);
-        self.alloc_expr(ExprKind::TypeAnnot {
+        self.alloc_expr(ExprKind::Conversion {
             expr: proxy,
             ty: proxy_ty,
         })
@@ -1723,8 +1731,8 @@ mod tests {
     #[test]
     fn preserves_source_and_builds_effective_dispatch_overlay() {
         let src = r#"
-import std.dispatch.{*};
-contract C { public function answer(x:uint256) -> uint256 { return x; } }
+import std.dispatch;
+contract C { function answer(x: uint256) public returns (uint256) { return x; } }
 "#;
         let (db, file) = db_with_main(src);
         let source = source_module(&db, file);
@@ -1756,8 +1764,8 @@ contract C { public function answer(x:uint256) -> uint256 { return x; } }
     #[test]
     fn preparation_preserves_contract_and_field_comments() {
         let src = r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 // contract documentation
 contract C {
   // stored value documentation
@@ -1765,7 +1773,7 @@ contract C {
   // constructor documentation
   constructor() {}
   // method documentation
-  public function answer(x:uint256) -> uint256 { return x; }
+  function answer(x: uint256) public returns (uint256) { return x; }
 }
 "#;
         let (db, file) = db_with_main(src);
@@ -1856,7 +1864,7 @@ contract C {
     #[test]
     fn runtime_dispatch_is_implicit_and_existing_main_suppresses_it() {
         let (db, file) = db_with_main(
-            "contract C { public function answer() -> uint256 { return uint256(1); } }",
+            "contract C { function answer() public returns (uint256) { return 1 as uint256; } }",
         );
         let source = source_module(&db, file);
         let prepared = prepare_module(&db, source);
@@ -1875,8 +1883,8 @@ contract C {
 
         let (db, file) = db_with_main(
             r#"
-import std.dispatch.{*};
-contract C { function main() -> () {} }
+import std.dispatch;
+contract C { function main() returns () {} }
 "#,
         );
         let source = source_module(&db, file);
@@ -1898,7 +1906,7 @@ contract C { function main() -> () {} }
     #[test]
     fn nonempty_constructor_is_prepared_without_injecting_imports() {
         let (db, file) =
-            db_with_main("contract C { constructor(x:word) {} function main() -> () {} }");
+            db_with_main("contract C { constructor(x: word) {} function main() returns () {} }");
         let source = source_module(&db, file);
         let prepared = prepare_module(&db, source);
         assert_ne!(prepared.module(&db), source);
@@ -1917,11 +1925,11 @@ contract C { function main() -> () {} }
     fn constructor_overlay_preserves_source_and_generates_deployment_entry() {
         let (db, file) = db_with_main(
             r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 contract C {
-  payable constructor(x:word, y:word) { let z = x; }
-  function main() -> () { return (); }
+  constructor(x: word, y: word) payable { let z = x; }
+  function main() returns () { return (); }
 }
 "#,
         );
@@ -1974,10 +1982,10 @@ contract C {
     fn explicit_constructor_overlay_is_idempotent() {
         let (db, file) = db_with_main(
             r#"
-import std.{*};
+import std;
 contract C {
-  payable constructor(x:word) { let saved = x; }
-  function main() -> () { return (); }
+  constructor(x: word) payable { let saved = x; }
+  function main() returns () { return (); }
 }
 "#,
         );
@@ -2014,19 +2022,19 @@ contract C {
     #[test]
     fn constructor_body_edit_keeps_generated_wrapper_identity() {
         let before = r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 contract C {
-  constructor(x:word) { let z = 1; }
-  function main() -> () { return (); }
+  constructor(x: word) { let z = 1; }
+  function main() returns () { return (); }
 }
 "#;
         let after = r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 contract C {
-  constructor(x:word) { let z = 2; }
-  function main() -> () { return (); }
+  constructor(x: word) { let z = 2; }
+  function main() returns () { return (); }
 }
 "#;
         let (mut db, file) = db_with_main(before);
@@ -2068,10 +2076,10 @@ contract C {
     fn deduplicates_overloaded_method_name_declarations() {
         let (db, file) = db_with_main(
             r#"
-import std.dispatch.{*};
+import std.dispatch;
 contract C {
-  public function get(x:uint256) -> uint256 { return x; }
-  public function get(x:bool) -> bool { return x; }
+  function get(x: uint256) public returns (uint256) { return x; }
+  function get(x: bool) public returns (bool) { return x; }
 }
 "#,
         );
@@ -2089,12 +2097,12 @@ contract C {
     #[test]
     fn omitted_return_uses_unit_and_body_edit_keeps_generated_identity() {
         let before = r#"
-import std.dispatch.{*};
-contract C { public function ping() { let x = 1; } }
+import std.dispatch;
+contract C { function ping() public { let x = 1; } }
 "#;
         let after = r#"
-import std.dispatch.{*};
-contract C { public function ping() { let x = 2; } }
+import std.dispatch;
+contract C { function ping() public { let x = 2; } }
 "#;
         let (mut db, file) = db_with_main(before);
         let source = source_module(&db, file);
@@ -2120,7 +2128,7 @@ contract C { public function ping() { let x = 2; } }
             .exprs(&db)
             .iter()
             .filter(|(_, expr)| {
-                let ExprKind::TypeAnnot { ty, .. } = expr.kind else {
+                let ExprKind::Conversion { ty, .. } = expr.kind else {
                     return false;
                 };
                 let TypeRefKind::Named { name, args, .. } = ty.kind(&db) else {

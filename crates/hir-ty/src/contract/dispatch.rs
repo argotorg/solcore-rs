@@ -251,9 +251,10 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
             let sig = function.sig(db);
             let abi_context = match function.kind(db) {
                 FuncKind::Constructor => Some("constructor".to_owned()),
-                FuncKind::Function if sig.public.is_some() && dispatch_generated => {
-                    Some(format!("public function `{}`", ident_text(db, &sig.name)))
-                }
+                FuncKind::Function if sig.public.is_some() && dispatch_generated => Some(format!(
+                    "function `{}` declared public",
+                    ident_text(db, &sig.name)
+                )),
                 FuncKind::Function | FuncKind::Fallback => None,
             };
             let Some(abi_context) = abi_context else {
@@ -299,13 +300,13 @@ pub(crate) fn module_manual_generic_abi_diagnostics<'db>(
                         Some("external ABI evidence must be compiler-owned and canonical"),
                     )
                     .with_note(format!(
-                        "instance `{}` can override canonical `{class_name}` behavior",
+                        "impl `{}` can override canonical `{class_name}` behavior",
                         instance
                             .name(db)
                             .unwrap_or_else(|| class_name.to_string())
                     ))
                     .with_help(
-                        "remove the visible manual ABI instance or keep this declaration out of the external ABI",
+                        "remove the visible manual ABI impl or keep this declaration out of the external ABI",
                     ),
                 );
             }
@@ -643,7 +644,7 @@ fn contract_diag_unsupported_fallback_shape<'db>(
     db: &'db dyn Db,
     span: hir::span::Span<'db>,
 ) -> Diagnostic {
-    Diagnostic::error("fallback ABI must be unit -> unit")
+    Diagnostic::error("fallback ABI must have type `function()`")
         .with_code("SC0231")
         .with_primary_label(db, span, Some("unsupported fallback ABI"))
 }

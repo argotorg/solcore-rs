@@ -31,7 +31,7 @@ pub(super) fn import_fingerprint(
 
     if let Some(selector) = selector {
         match selector {
-            ParsedImportSelector::Wildcard => fingerprint.push_str(".{*}"),
+            ParsedImportSelector::Wildcard => fingerprint.push_str(".*"),
             ParsedImportSelector::Names(names) => {
                 fingerprint.push_str(".{");
                 fingerprint.push_str(&sorted_fingerprints(names, selected_fingerprint));

@@ -25,10 +25,9 @@ impl<'db> InferCtx<'db> {
                     }
                     self.infer_ctor_pat(body, pat_id, &[], expected.clone())
                 }
-                // Unqualified same-name constructors and unqualified
-                // constructor misuse already reported by nameres also follow
-                // nullary constructor-pattern inference instead of binding a
-                // fresh local.
+                // Unqualified constructor misuse already reported by nameres
+                // follows nullary constructor-pattern inference instead of
+                // binding a fresh local.
                 Some(hir_nameres::Resolution::Ctor { .. } | hir_nameres::Resolution::Err) => {
                     self.infer_ctor_pat(body, pat_id, &[], expected.clone())
                 }

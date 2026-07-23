@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn renaming_parameter_edits_declaration_and_uses() {
-        let source = "function id(x: word) -> word {\n  let y = x;\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let declaration = source.find("x: word").expect("declaration") as u32;
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn prepare_rename_returns_user_symbol_range_but_not_builtin_or_keyword() {
-        let source = "function id(x: word) -> word {\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let use_offset = (source.find("return x").expect("use") + "return ".len()) as u32;
@@ -213,7 +213,7 @@ mod tests {
 
     #[test]
     fn rename_rejects_invalid_new_name() {
-        let source = "function id(x: word) -> word {\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let use_offset = (source.find("return x").expect("use") + "return ".len()) as u32;
@@ -229,8 +229,10 @@ mod tests {
 
     #[test]
     fn renaming_exported_function_edits_import_and_export_names() {
-        let main = "import math.{double};\nfunction main() -> word { return double(21); }\n";
-        let math = "function double(x: word) -> word { return x + x; }\nexport { double };\n";
+        let main =
+            "import {double} from math;\nfunction main() returns (word) { return double(21); }\n";
+        let math =
+            "function double(x: word) returns (word) { return x + x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let main_index = world.line_index(&main_uri).expect("main line index");
         let math_index = world.line_index(&math_uri).expect("math line index");
@@ -271,7 +273,7 @@ mod tests {
 
     #[test]
     fn embedded_std_symbol_is_not_offered_for_rename() {
-        let source = "import std.{addWord};\nfunction main() -> word { return addWord(1, 2); }\n";
+        let source = "import {addWord} from std;\nfunction main() returns (word) { return addWord(1, 2); }\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let call = source.rfind("addWord").expect("call") as u32;
@@ -286,10 +288,11 @@ mod tests {
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
-        let main = "import math.{double};\nfunction main() -> word { return double(21); }\n";
+        let main =
+            "import {double} from math;\nfunction main() returns (word) { return double(21); }\n";
         let math = "\
-function double(x: word) -> word { return x + x; }
-function local() -> word { return double(2); }
+function double(x: word) returns (word) { return x + x; }
+function local() returns (word) { return double(2); }
 export { double };
 ";
         assert!(world.open_document(math_uri.clone(), math.to_owned()));
@@ -335,9 +338,8 @@ export { double };
 
     #[test]
     fn renaming_selected_import_alias_only_edits_local_alias_uses() {
-        let main =
-            "import math.{double as twice};\nfunction main() -> word { return twice(21); }\n";
-        let math = "function double(x: word) -> word { return x; }\nexport { double };\n";
+        let main = "import {double as twice} from math;\nfunction main() returns (word) { return twice(21); }\n";
+        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main index");
         let alias = main.find("twice").expect("alias declaration") as u32;
@@ -368,11 +370,12 @@ export { double };
 
     #[test]
     fn renaming_explicit_module_alias_edits_alias_and_qualifiers() {
-        let main = "import math as M;\nfunction main() -> word { return M.value(); }\n";
-        let math = "function value() -> word { return 1; }\nexport { value };\n";
+        let main =
+            "import * as M from math;\nfunction main() returns (word) { return M.value(); }\n";
+        let math = "function value() returns (word) { return 1; }\nexport { value };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main index");
-        let alias = main.find("M;").expect("alias declaration") as u32;
+        let alias = main.find("M from").expect("alias declaration") as u32;
         let use_offset = main.rfind("M.value").expect("alias use") as u32;
 
         let edit = handle_rename(
@@ -399,18 +402,15 @@ export { double };
     #[test]
     fn renaming_module_alias_updates_type_and_pattern_qualifiers() {
         let main = "\
-import math as M;
-function unwrap(token: M.Token) -> word {
-  match token {
-  | M.Token.Ok(value) => return value;
-  | M.Token.Err(value) => return value;
-  }
+import * as M from math;
+function unwrap(token: M.Token) returns (word) {
+  match (token) { case M.Token.Ok(value) { return value; } case M.Token.Err(value) { return value; } }
 }
 ";
-        let model = "data Token = Ok(word) | Err(word);\nexport { Token(Ok, Err) };\n";
+        let model = "enum Token { Ok(word), Err(word) }\nexport { Token(Ok, Err) };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, model);
         let index = world.line_index(&main_uri).expect("main index");
-        let declaration = main.find("M;").expect("alias declaration") as u32;
+        let declaration = main.find("M from").expect("alias declaration") as u32;
         let type_qualifier = main.find("M.Token").expect("type qualifier") as u32;
         let ok_qualifier = main.find("M.Token.Ok").expect("Ok qualifier") as u32;
         let err_qualifier = main.find("M.Token.Err").expect("Err qualifier") as u32;
@@ -441,11 +441,11 @@ function unwrap(token: M.Token) -> word {
     #[test]
     fn exported_selected_alias_is_not_offered_an_incomplete_text_rename() {
         let main = "\
-import math.{double as twice};
+import {double as twice} from math;
 export { twice };
-function main() -> word { return twice(21); }
+function main() returns (word) { return twice(21); }
 ";
-        let math = "function double(x: word) -> word { return x; }\nexport { double };\n";
+        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main index");
         let use_offset = main.rfind("twice").expect("alias use") as u32;
@@ -462,11 +462,10 @@ function main() -> word { return twice(21); }
         let facade_uri = Url::parse("file:///main/facade.solc").expect("facade uri");
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let consumer_uri = Url::parse("file:///main/consumer.solc").expect("consumer uri");
-        let util = "function value() -> word { return 1; }\nexport { value };\n";
+        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
         let facade = "export util as Tools;\n";
-        let main = "import facade;\nfunction main() -> word { return facade.Tools.value(); }\n";
-        let consumer =
-            "import facade;\nfunction consume() -> word { return facade.Tools.value(); }\n";
+        let main = "import * as facade from facade;\nfunction main() returns (word) { return facade.Tools.value(); }\n";
+        let consumer = "import * as facade from facade;\nfunction consume() returns (word) { return facade.Tools.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri.clone(), facade.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -520,9 +519,10 @@ function main() -> word { return twice(21); }
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
         let bridge_uri = Url::parse("file:///main/bridge.solc").expect("bridge uri");
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
-        let math = "function double(x: word) -> word { return x; }\nexport { double };\n";
-        let bridge = "import math.{double as twice};\nexport { twice };\n";
-        let main = "import bridge.{twice};\nfunction main() -> word { return twice(1); }\n";
+        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
+        let bridge = "import {double as twice} from math;\nexport { twice };\n";
+        let main =
+            "import {twice} from bridge;\nfunction main() returns (word) { return twice(1); }\n";
         assert!(world.open_document(math_uri.clone(), math.to_owned()));
         assert!(world.open_document(bridge_uri, bridge.to_owned()));
         assert!(world.open_document(main_uri, main.to_owned()));
@@ -545,11 +545,12 @@ function main() -> word { return twice(21); }
         let left_math = Url::from_file_path(left_path.join("math.solc")).expect("left math");
         let right_main = Url::from_file_path(right_path.join("main.solc")).expect("right main");
         let right_math = Url::from_file_path(right_path.join("math.solc")).expect("right math");
-        let left_source = "import lib.math.{value};\nfunction left() -> word { return value(); }\n";
+        let left_source =
+            "import {value} from lib.math;\nfunction left() returns (word) { return value(); }\n";
         let right_source =
-            "import lib.math.{value};\nfunction right() -> word { return value(); }\n";
-        let left_library = "function value() -> word { return 1; }\nexport { value };\n";
-        let right_library = "function value() -> word { return 2; }\nexport { value };\n";
+            "import {value} from lib.math;\nfunction right() returns (word) { return value(); }\n";
+        let left_library = "function value() returns (word) { return 1; }\nexport { value };\n";
+        let right_library = "function value() returns (word) { return 2; }\nexport { value };\n";
         let mut world = WorldState::new();
         world.load_workspace_roots([
             (
@@ -593,11 +594,10 @@ function main() -> word { return twice(21); }
         let facade_uri = Url::parse("file:///main/facade.solc").expect("facade uri");
         let bridge_uri = Url::parse("file:///main/bridge.solc").expect("bridge uri");
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
-        let util = "function value() -> word { return 1; }\nexport { value };\n";
+        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
         let facade = "export util as Tools;\n";
         let bridge = "export facade;\n";
-        let main =
-            "import bridge;\nfunction main() -> word { return bridge.facade.Tools.value(); }\n";
+        let main = "import * as bridge from bridge;\nfunction main() returns (word) { return bridge.facade.Tools.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri.clone(), facade.to_owned()));
         assert!(world.open_document(bridge_uri.clone(), bridge.to_owned()));
@@ -638,9 +638,9 @@ function main() -> word { return twice(21); }
         let util_uri = Url::parse("file:///main/util.solc").expect("util uri");
         let facade_uri = Url::parse("file:///main/facade.solc").expect("facade uri");
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
-        let util = "function value() -> word { return 1; }\nexport { value };\n";
+        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
         let facade = "export util;\n";
-        let main = "import facade;\nfunction main() -> word { return facade.util.value(); }\n";
+        let main = "import * as facade from facade;\nfunction main() returns (word) { return facade.util.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri, facade.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -657,9 +657,8 @@ function main() -> word { return twice(21); }
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let model_uri = Url::parse("file:///main/model.solc").expect("model uri");
-        let main =
-            "import model.{Token};\nfunction make(x: word) -> Token { return Token.Ok(x); }\n";
-        let model = "data Token = Ok(word) | Err(word);\nexport { Token(Ok, Err) };\n";
+        let main = "import {Token} from model;\nfunction make(x: word) returns (Token) { return Token.Ok(x); }\n";
+        let model = "enum Token { Ok(word), Err(word) }\nexport { Token(Ok, Err) };\n";
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         assert!(world.open_document(model_uri.clone(), model.to_owned()));
         let main_index = world.line_index(&main_uri).expect("main index");

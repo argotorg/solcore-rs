@@ -505,7 +505,7 @@ fn namespace_name(namespace: Namespace) -> &'static str {
     match namespace {
         Namespace::Term => "term",
         Namespace::Type => "type",
-        Namespace::Class => "class",
+        Namespace::Class => "trait",
     }
 }
 

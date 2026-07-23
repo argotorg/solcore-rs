@@ -219,7 +219,7 @@ fn definition_hover<'db>(db: &'db vfs::AnalysisHost, def: DefId<'db>) -> Option<
             let params = type_parameter_list(db, alias.ty_param_elems(db));
             Some(HoverInfo {
                 code: format!(
-                    "type {name}{params} = {}",
+                    "alias {name}{params} = {}",
                     display_type_ref(db, alias.ty(db))
                 ),
                 documentation: comments_markdown(alias.leading_comments(db)),
@@ -229,14 +229,29 @@ fn definition_hover<'db>(db: &'db vfs::AnalysisHost, def: DefId<'db>) -> Option<
             code: format_adt_declaration(db, found.adt),
             documentation: comments_markdown(found.adt.leading_comments(db)),
         }),
-        Definition::Class(class) => Some(HoverInfo {
-            code: format!("class {}", display_pred_ref(db, class.head(db))),
-            documentation: comments_markdown(class.leading_comments(db)),
-        }),
-        Definition::Instance(instance) => Some(HoverInfo {
-            code: format!("instance {}", display_pred_ref(db, instance.head(db))),
-            documentation: comments_markdown(instance.leading_comments(db)),
-        }),
+        Definition::Class(class) => {
+            let mut code = format!("trait {}", display_trait_ref(db, class.head(db)));
+            append_where_clause(db, &mut code, class.super_preds(db));
+            Some(HoverInfo {
+                code,
+                documentation: comments_markdown(class.leading_comments(db)),
+            })
+        }
+        Definition::Instance(instance) => {
+            let mut code = String::new();
+            if instance.default_kw(db).is_some() {
+                code.push_str("default ");
+            }
+            code.push_str("impl");
+            code.push_str(&type_parameter_list(db, instance.type_var_elems(db)));
+            code.push(' ');
+            code.push_str(&display_trait_ref(db, instance.head(db)));
+            append_where_clause(db, &mut code, instance.preds(db));
+            Some(HoverInfo {
+                code,
+                documentation: comments_markdown(instance.leading_comments(db)),
+            })
+        }
         Definition::Contract(contract) => {
             let name = contract.name_elem(db).atom().text(db);
             Some(HoverInfo {
@@ -377,11 +392,22 @@ fn format_source_function_signature<'db>(db: &'db dyn hir_ty::Db, sig: &FuncSig<
         .map(|param| format_source_param(db, param))
         .collect::<Vec<_>>()
         .join(", ");
-    let ret = sig
-        .ret
-        .map(|ret| display_type_ref(db, ret))
-        .unwrap_or_else(|| "_".to_owned());
-    format!("{}({params}) -> {ret}", sig.name.atom().text(db))
+    let mut signature = sig.name.atom().text(db).to_owned();
+    signature.push_str(&type_parameter_list(db, &sig.type_vars));
+    signature.push('(');
+    signature.push_str(&params);
+    signature.push(')');
+    if sig.public.is_some() {
+        signature.push_str(" public");
+    }
+    if sig.payable.is_some() {
+        signature.push_str(" payable");
+    }
+    if let Some(ret) = sig.ret {
+        signature.push_str(&display_type_ref_return_suffix(db, ret));
+    }
+    append_where_clause(db, &mut signature, &sig.preds);
+    signature
 }
 
 fn format_source_param<'db>(db: &'db dyn hir_ty::Db, param: &FuncParam<'db>) -> String {
@@ -422,11 +448,11 @@ fn format_adt_declaration<'db>(db: &'db dyn hir_ty::Db, adt: AdtDef<'db>) -> Str
             }
         })
         .collect::<Vec<_>>()
-        .join(" | ");
+        .join(", ");
     if ctors.is_empty() {
-        format!("data {name}{params}")
+        format!("enum {name}{params} {{}}")
     } else {
-        format!("data {name}{params} = {ctors}")
+        format!("enum {name}{params} {{ {ctors} }}")
     }
 }
 
@@ -437,7 +463,7 @@ fn type_parameter_list<'db>(
     if params.is_empty() {
         String::new()
     } else {
-        format!("({})", ident_names(db, params).join(", "))
+        format!("<{}>", ident_names(db, params).join(", "))
     }
 }
 
@@ -886,8 +912,8 @@ fn format_callable_scheme<'db>(
         .collect::<Vec<_>>()
         .join(", ");
     let mut signature = format!(
-        "{name}({params}) -> {}",
-        display_ty(db, ret, type_var_names)
+        "{name}({params}){}",
+        display_ty_return_suffix(db, ret, type_var_names)
     );
     let predicates = scheme
         .body(db)
@@ -928,9 +954,20 @@ fn display_ty<'db>(db: &'db dyn hir_ty::Db, ty: Ty<'db>, names: &[String]) -> St
             };
             if args.is_empty() {
                 name
+            } else if name == "DynArray" && args.len() == 1 {
+                format!("{}[]", display_ty(db, args[0], names))
+            } else if matches!(name.as_str(), "memory" | "storage" | "calldata") && args.len() == 1
+            {
+                format!("{} {name}", display_ty(db, args[0], names))
+            } else if name == "mapping" && args.len() == 2 {
+                format!(
+                    "mapping({} => {})",
+                    display_ty(db, args[0], names),
+                    display_ty(db, args[1], names)
+                )
             } else {
                 format!(
-                    "{name}({})",
+                    "{name}<{}>",
                     args.iter()
                         .map(|arg| display_ty(db, *arg, names))
                         .collect::<Vec<_>>()
@@ -939,13 +976,13 @@ fn display_ty<'db>(db: &'db dyn hir_ty::Db, ty: Ty<'db>, names: &[String]) -> St
             }
         }
         TyKind::Function { params, ret } => format!(
-            "({}) -> {}",
+            "function({}){}",
             params
                 .iter()
                 .map(|param| display_ty(db, *param, names))
                 .collect::<Vec<_>>()
                 .join(", "),
-            display_ty(db, *ret, names)
+            display_ty_return_suffix(db, *ret, names)
         ),
         TyKind::Tuple(elems) => {
             if elems.is_empty() {
@@ -965,6 +1002,25 @@ fn display_ty<'db>(db: &'db dyn hir_ty::Db, ty: Ty<'db>, names: &[String]) -> St
     }
 }
 
+fn display_ty_return_suffix<'db>(
+    db: &'db dyn hir_ty::Db,
+    ret: Ty<'db>,
+    names: &[String],
+) -> String {
+    match ret.kind(db) {
+        TyKind::Tuple(elems) if elems.is_empty() => String::new(),
+        TyKind::Tuple(elems) => format!(
+            " returns ({})",
+            elems
+                .iter()
+                .map(|elem| display_ty(db, *elem, names))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => format!(" returns ({})", display_ty(db, ret, names)),
+    }
+}
+
 fn display_pred<'db>(db: &'db dyn hir_ty::Db, pred: hir_ty::Pred<'db>, names: &[String]) -> String {
     match pred.kind(db) {
         PredKind::InClass { class, main, args } => {
@@ -978,7 +1034,7 @@ fn display_pred<'db>(db: &'db dyn hir_ty::Db, pred: hir_ty::Pred<'db>, names: &[
                 format!("{}: {class}", display_ty(db, *main, names))
             } else {
                 format!(
-                    "{}: {class}({})",
+                    "{}: {class}<{}>",
                     display_ty(db, *main, names),
                     args.iter()
                         .map(|arg| display_ty(db, *arg, names))
@@ -1004,34 +1060,50 @@ fn display_type_ref<'db>(db: &'db dyn hir_ty::Db, ty: TypeRef<'db>) -> String {
             args,
         } => {
             let mut out = String::new();
+            let is_qualified = qualifier.is_some();
             if let Some(qualifier) = qualifier {
                 out.push_str(qualifier.atom().text(db));
                 out.push('.');
             }
-            out.push_str(name.atom().text(db));
-            if !args.atom().is_empty() {
-                out.push('(');
+            let name = name.atom().text(db);
+            let args = args.atom();
+            if !is_qualified && name == "DynArray" && args.len() == 1 {
+                return format!("{}[]", display_type_ref(db, args[0]));
+            }
+            if !is_qualified && matches!(name, "memory" | "storage" | "calldata") && args.len() == 1
+            {
+                return format!("{} {name}", display_type_ref(db, args[0]));
+            }
+            if !is_qualified && name == "mapping" && args.len() == 2 {
+                return format!(
+                    "mapping({} => {})",
+                    display_type_ref(db, args[0]),
+                    display_type_ref(db, args[1])
+                );
+            }
+            out.push_str(name);
+            if !args.is_empty() {
+                out.push('<');
                 out.push_str(
                     &args
-                        .atom()
                         .iter()
                         .map(|arg| display_type_ref(db, *arg))
                         .collect::<Vec<_>>()
                         .join(", "),
                 );
-                out.push(')');
+                out.push('>');
             }
             out
         }
         TypeRefKind::Fn { params, ret } => format!(
-            "({}) -> {}",
+            "function({}){}",
             params
                 .atom()
                 .iter()
                 .map(|param| display_type_ref(db, *param))
                 .collect::<Vec<_>>()
                 .join(", "),
-            display_type_ref(db, *ret)
+            display_type_ref_return_suffix(db, *ret)
         ),
         TypeRefKind::Comptime { inner, .. } => {
             format!("comptime {}", display_type_ref(db, *inner))
@@ -1049,6 +1121,22 @@ fn display_type_ref<'db>(db: &'db dyn hir_ty::Db, ty: TypeRef<'db>) -> String {
     }
 }
 
+fn display_type_ref_return_suffix<'db>(db: &'db dyn hir_ty::Db, ret: TypeRef<'db>) -> String {
+    match ret.kind(db) {
+        TypeRefKind::Tuple { elems } if elems.atom().is_empty() => String::new(),
+        TypeRefKind::Tuple { elems } => format!(
+            " returns ({})",
+            elems
+                .atom()
+                .iter()
+                .map(|elem| display_type_ref(db, *elem))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => format!(" returns ({})", display_type_ref(db, ret)),
+    }
+}
+
 fn display_pred_ref<'db>(db: &'db dyn hir_ty::Db, pred: PredRef<'db>) -> String {
     let kind = pred.kind(db);
     let ty = display_type_ref(db, kind.ty);
@@ -1057,7 +1145,7 @@ fn display_pred_ref<'db>(db: &'db dyn hir_ty::Db, pred: PredRef<'db>) -> String 
         format!("{ty}: {class}")
     } else {
         format!(
-            "{ty}: {class}({})",
+            "{ty}: {class}<{}>",
             kind.args
                 .atom()
                 .iter()
@@ -1066,6 +1154,33 @@ fn display_pred_ref<'db>(db: &'db dyn hir_ty::Db, pred: PredRef<'db>) -> String 
                 .join(", ")
         )
     }
+}
+
+fn display_trait_ref<'db>(db: &'db dyn hir_ty::Db, pred: PredRef<'db>) -> String {
+    let kind = pred.kind(db);
+    let mut args = Vec::with_capacity(kind.args.atom().len() + 1);
+    args.push(display_type_ref(db, kind.ty));
+    args.extend(
+        kind.args
+            .atom()
+            .iter()
+            .map(|arg| display_type_ref(db, *arg)),
+    );
+    format!("{}<{}>", kind.class.atom().text(db), args.join(", "))
+}
+
+fn append_where_clause<'db>(db: &'db dyn hir_ty::Db, out: &mut String, preds: &[PredRef<'db>]) {
+    if preds.is_empty() {
+        return;
+    }
+    out.push_str(" where ");
+    out.push_str(
+        &preds
+            .iter()
+            .map(|pred| display_pred_ref(db, *pred))
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
 }
 
 #[cfg(test)]
@@ -1122,7 +1237,7 @@ mod tests {
 
     #[test]
     fn hovers_integer_literal_type() {
-        let source = "function main() -> word {\n  return 42;\n}\n";
+        let source = "function main() returns (word) {\n  return 42;\n}\n";
         let (world, uri) = world_with_main(source);
         let literal_offset = source.find("42").expect("literal");
 
@@ -1148,11 +1263,11 @@ mod tests {
     fn function_and_parameter_references_show_signatures_and_identifier_ranges() {
         let source = "\
 // Returns its input.
-function id(x: word) -> word {
+function id(x: word) returns (word) {
   return x;
 }
 
-function main() -> word {
+function main() returns (word) {
   return id(42);
 }
 ";
@@ -1162,7 +1277,7 @@ function main() -> word {
         let call = source.rfind("id(42)").expect("call");
         let function_hover = hover_at(source, &world, &uri, call);
         assert!(
-            hover_code(&function_hover).contains("id(x: word) -> word"),
+            hover_code(&function_hover).contains("id(x: word) returns (word)"),
             "unexpected function hover: {:?}",
             function_hover.contents
         );
@@ -1187,7 +1302,7 @@ function main() -> word {
     #[test]
     fn inferred_local_reference_hover_uses_local_name_range() {
         let source = "\
-function main() -> word {
+function main() returns (word) {
   let result = 42;
   return result;
 }
@@ -1212,9 +1327,9 @@ function main() -> word {
     #[test]
     fn type_and_constructor_references_have_rich_hover_and_leaf_ranges() {
         let source = "\
-data Maybe = None | Some(word);
+enum Maybe { None, Some(word) }
 
-function main() -> Maybe {
+function main() returns (Maybe) {
   return Maybe.Some(42);
 }
 ";
@@ -1224,7 +1339,7 @@ function main() -> Maybe {
         let ty_reference = source.rfind("Maybe").expect("type reference");
         let ty_hover = hover_at(source, &world, &uri, ty_reference);
         assert!(
-            hover_code(&ty_hover).contains("data Maybe = None | Some(word)"),
+            hover_code(&ty_hover).contains("enum Maybe { None, Some(word) }"),
             "unexpected type hover: {:?}",
             ty_hover.contents
         );
@@ -1237,7 +1352,7 @@ function main() -> Maybe {
         let ctor_hover = hover_at(source, &world, &uri, ctor_reference);
         let ctor_code = hover_code(&ctor_hover);
         assert!(
-            ctor_code.contains("Some(word) -> Maybe"),
+            ctor_code.contains("Some(word) returns (Maybe)"),
             "unexpected constructor hover: {ctor_code}"
         );
         assert_eq!(

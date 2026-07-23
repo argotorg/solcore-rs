@@ -91,7 +91,7 @@ pub(super) fn import_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'sr
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let path = just(Token::At)
+    let module_path = just(Token::At)
         .map_with(|_, e| e.span())
         .or_not()
         .then(
@@ -102,64 +102,50 @@ where
         )
         .boxed();
 
-    let selected_item = import_name_parser()
+    let selected_item = ident_parser()
         .then(just(Token::As).ignore_then(ident_parser()).or_not())
-        .map(|(name, alias)| ParsedSelectedName {
-            name,
+        .map(|((name, span), alias)| ParsedSelectedName {
+            name: ParsedImportName {
+                name: name.to_owned(),
+                span,
+                is_operator: false,
+            },
             alias,
             constructors: None,
         });
-    let selected_or_wildcard = just(Token::Star).to(None).or(selected_item.map(Some));
-    let named_selector = selected_or_wildcard
+    let named_selector = selected_item
         .separated_by(just(Token::Comma))
         .at_least(1)
+        .allow_trailing()
         .collect::<Vec<_>>()
-        .map(|entries| {
-            if entries.iter().any(Option::is_none) {
-                ParsedImportSelector::Wildcard
-            } else {
-                ParsedImportSelector::Names(entries.into_iter().flatten().collect())
-            }
-        });
-    let selector = named_selector
+        .map(ParsedImportSelector::Names)
         .delimited_by(just(Token::LBrace), just(Token::RBrace))
         .boxed();
-    let hiding = hiding_kw_parser()
-        .ignore_then(
-            import_name_parser()
-                .separated_by(just(Token::Comma))
-                .allow_trailing()
-                .collect::<Vec<_>>()
-                .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-        )
-        .or_not()
-        .map(Option::unwrap_or_default);
 
     let selective = just(Token::Import)
-        .ignore_then(path.clone())
-        .then_ignore(just(Token::Dot))
-        .then(selector)
-        .then(hiding)
+        .ignore_then(named_selector)
+        .then_ignore(just(Token::From))
+        .then(module_path.clone())
         .then_ignore(top_level_semicolon_parser("import declaration"))
-        .map_with(
-            |(((external, path), selector), hiding), e| ParsedTopItem::Import {
-                span: e.span(),
-                leading_comments: Vec::new(),
-                external,
-                path,
-                alias: None,
-                selector: Some(selector),
-                hiding,
-            },
-        )
+        .map_with(|(selector, (external, path)), e| ParsedTopItem::Import {
+            span: e.span(),
+            leading_comments: Vec::new(),
+            external,
+            path,
+            alias: None,
+            selector: Some(selector),
+            hiding: Vec::new(),
+        })
         .boxed();
 
-    let with_alias = just(Token::Import)
-        .ignore_then(path.clone())
-        .then_ignore(just(Token::As))
-        .then(ident_parser())
+    let namespace_alias = just(Token::Import)
+        .ignore_then(just(Token::Star))
+        .ignore_then(just(Token::As))
+        .ignore_then(ident_parser())
+        .then_ignore(just(Token::From))
+        .then(module_path.clone())
         .then_ignore(top_level_semicolon_parser("import declaration"))
-        .map_with(|((external, path), alias), e| ParsedTopItem::Import {
+        .map_with(|(alias, (external, path)), e| ParsedTopItem::Import {
             span: e.span(),
             leading_comments: Vec::new(),
             external,
@@ -171,7 +157,7 @@ where
         .boxed();
 
     let plain = just(Token::Import)
-        .ignore_then(path)
+        .ignore_then(module_path)
         .then_ignore(top_level_semicolon_parser("import declaration"))
         .map_with(|(external, path), e| ParsedTopItem::Import {
             span: e.span(),
@@ -179,17 +165,26 @@ where
             external,
             path,
             alias: None,
-            selector: None,
+            // Like Solidity's bare import, `import M;` brings M's public
+            // surface into the current module. Namespace imports use the
+            // explicit `import * as name from M;` spelling above.
+            selector: Some(ParsedImportSelector::Wildcard),
             hiding: Vec::new(),
         })
         .boxed();
 
-    choice((selective, with_alias, plain))
+    choice((namespace_alias, selective, plain))
         .labelled("import declaration")
         .as_context()
         .boxed()
 }
 
+/// Parses the legacy export surface as a temporary compatibility extension.
+///
+/// `new_syntax.md` intentionally leaves Core's public-interface and re-export
+/// policy unspecified. Keeping this parser is not an endorsement of any of
+/// these spellings as canonical syntax; it only avoids coupling the import
+/// migration to that still-open design decision.
 pub(super) fn export_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -282,15 +277,36 @@ pub(super) fn pragma_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'sr
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let items = ident_parser()
+    let solcore_namespace =
+        select! { Token::Ident(name) if name == "solcore" => () }.labelled("solcore");
+    let solcore_items = ident_parser()
         .separated_by(just(Token::Comma))
         .allow_trailing()
         .collect::<Vec<_>>();
 
-    just(Token::Pragma)
-        .ignore_then(pragma_ident_parser())
-        .then(items)
+    let solcore = solcore_namespace
+        .ignore_then(ident_parser())
+        .then(solcore_items)
         .then_ignore(just(Token::Semi))
+        .boxed();
+
+    // Solidity pragmas are accepted for source-level interoperability, but
+    // their version/configuration payload is intentionally opaque to Core.
+    // Preserve only the pragma family in HIR and skip tokens through `;`.
+    let opaque_name = select! {
+        Token::Ident(name) if matches!(name, "solidity" | "abicoder") => name,
+    }
+    .map_with(|name, e| (name, e.span()))
+    .labelled("solidity or abicoder");
+    let opaque_payload = any().and_is(just(Token::Semi).not()).repeated().ignored();
+    let opaque = opaque_name
+        .then_ignore(opaque_payload)
+        .then_ignore(just(Token::Semi))
+        .map(|name| (name, Vec::new()))
+        .boxed();
+
+    just(Token::Pragma)
+        .ignore_then(choice((solcore, opaque)))
         .map_with(|(name, items), e| ParsedTopItem::Pragma {
             span: e.span(),
             leading_comments: Vec::new(),

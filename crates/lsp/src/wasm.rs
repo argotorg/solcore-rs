@@ -660,7 +660,7 @@ mod tests {
     #[test]
     fn did_open_publishes_diagnostics() {
         let mut world = WorldState::new();
-        let source = "function f() -> word {\n  return true;\n}\n";
+        let source = "function f() returns (word) {\n  return true;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
 
         assert_eq!(outgoing.len(), 1);
@@ -679,10 +679,10 @@ mod tests {
     #[test]
     fn did_change_republishes_importer_diagnostics_when_sibling_exports_change() {
         let mut world = WorldState::new();
-        let main = "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n";
-        let math_no_export = "function double(x: word) -> word { return x; }\n";
+        let main = "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n";
+        let math_no_export = "function double(x: word) returns (word) { return x; }\n";
         let math_with_export =
-            "function double(x: word) -> word { return x; }\n\nexport { double };\n";
+            "function double(x: word) returns (word) { return x; }\n\nexport { double };\n";
 
         let _ = dispatch(&mut world, &did_open_uri_message(URI, main));
         let opened_math = dispatch(&mut world, &did_open_uri_message(MATH_URI, math_no_export));
@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn hover_and_document_symbol_requests_return_results() {
         let mut world = WorldState::new();
-        let source = "function main() -> word {\n  return 42;\n}\n";
+        let source = "function main() returns (word) {\n  return 42;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -768,7 +768,7 @@ mod tests {
     #[test]
     fn completion_request_returns_items() {
         let mut world = WorldState::new();
-        let source = "function helper() -> word { return 1; }\nfunction main(x: word) -> word { return x; }\n";
+        let source = "function helper() returns (word) { return 1; }\nfunction main(x: word) returns (word) { return x; }\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
         let character = source
@@ -807,7 +807,7 @@ mod tests {
     #[test]
     fn references_request_returns_locations() {
         let mut world = WorldState::new();
-        let source = "function id(x: word) -> word {\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -842,7 +842,7 @@ mod tests {
     #[test]
     fn signature_help_request_returns_active_parameter() {
         let mut world = WorldState::new();
-        let source = "function f(a: word, b: word) -> word {\n  return a;\n}\n\nfunction main() -> word {\n  return f(1, 2);\n}\n";
+        let source = "function f(a: word, b: word) returns (word) {\n  return a;\n}\n\nfunction main() returns (word) {\n  return f(1, 2);\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -877,7 +877,7 @@ mod tests {
     #[test]
     fn semantic_tokens_full_request_returns_tokens() {
         let mut world = WorldState::new();
-        let source = "function main(x: word) -> word {\n  return x;\n}\n";
+        let source = "function main(x: word) returns (word) {\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn inlay_hint_request_returns_results() {
         let mut world = WorldState::new();
-        let source = "function main() -> word {\n  let x = 42;\n  return x;\n}\n";
+        let source = "function main() returns (word) {\n  let x = 42;\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -941,7 +941,7 @@ mod tests {
     #[test]
     fn workspace_symbol_request_returns_matching_symbols() {
         let mut world = WorldState::new();
-        let source = "function target() -> word {\n  return 42;\n}\n";
+        let source = "function target() returns (word) {\n  return 42;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -971,7 +971,7 @@ mod tests {
     #[test]
     fn code_action_formatting_folding_and_selection_requests_return_results() {
         let mut world = WorldState::new();
-        let source = "function value() -> word { return 1; }\nfunction main() -> word {\n/* 😀 */ return vaue();\n}\n";
+        let source = "function value() returns (word) { return 1; }\nfunction main() returns (word) {\n/* 😀 */ return vaue();\n}\n";
         let opened = dispatch(&mut world, &did_open_message(source));
         let notification = diagnostic_notification_for_uri(&opened, URI);
         let diagnostic = notification["params"]["diagnostics"]
@@ -1077,8 +1077,8 @@ mod tests {
     #[test]
     fn missing_import_code_action_round_trips_over_wasm_dispatch() {
         let mut world = WorldState::new();
-        let provider = "function value() -> word { return 1; }\n\nexport { value };\n";
-        let main = "function main() -> word { return value(); }\n";
+        let provider = "function value() returns (word) { return 1; }\n\nexport { value };\n";
+        let main = "function main() returns (word) { return value(); }\n";
 
         let _ = dispatch(&mut world, &did_open_uri_message(MATH_URI, provider));
         let opened = dispatch(&mut world, &did_open_uri_message(URI, main));
@@ -1124,7 +1124,7 @@ mod tests {
                     "start": { "line": 0, "character": 0 },
                     "end": { "line": 0, "character": 0 }
                 },
-                "newText": "import lib.math.{value};\n"
+                "newText": "import {value} from lib.math;\n"
             })
         );
     }
@@ -1133,16 +1133,16 @@ mod tests {
     fn qualified_import_code_actions_round_trip_over_wasm_dispatch() {
         let cases = [
             (
-                "data Option = None | Some(word);\nexport { Option(*) };\n",
-                "function main() -> word { let option = Option.Some(1); return 1; }\n",
+                "enum Option { None, Some(word) }\nexport { Option(*) };\n",
+                "function main() returns (word) { let option = Option.Some(1); return 1; }\n",
                 "Import `Option` from `lib.math`",
-                "import lib.math.{Option};\n",
+                "import {Option} from lib.math;\n",
             ),
             (
-                "function value() -> word { return 1; }\nexport { value };\n",
-                "function main() -> word { return math.value(); }\n",
+                "function value() returns (word) { return 1; }\nexport { value };\n",
+                "function main() returns (word) { return math.value(); }\n",
                 "Import module `math` from `lib.math`",
-                "import lib.math;\n",
+                "import * as math from lib.math;\n",
             ),
         ];
 
@@ -1193,7 +1193,7 @@ mod tests {
     #[test]
     fn standard_library_missing_import_round_trips_over_wasm_dispatch() {
         let mut world = WorldState::new();
-        let source = "function main() -> word { assert(true); return 1; }\n";
+        let source = "function main() returns (word) { assert(true); return 1; }\n";
         let opened = dispatch(&mut world, &did_open_message(source));
         let notification = diagnostic_notification_for_uri(&opened, URI);
         let diagnostic = notification["params"]["diagnostics"]
@@ -1232,7 +1232,7 @@ mod tests {
         assert_eq!(actions[0]["title"], "Import `assert` from `std`");
         assert_eq!(
             actions[0]["edit"]["changes"][URI][0]["newText"],
-            "import std.{assert};\n"
+            "import {assert} from std;\n"
         );
     }
 
@@ -1240,7 +1240,7 @@ mod tests {
     fn closing_untitled_document_removes_it_from_workspace_symbols() {
         let mut world = WorldState::new();
         let uri = "untitled:Untitled-1";
-        let source = "function ghost() -> word { return 42; }\n";
+        let source = "function ghost() returns (word) { return 42; }\n";
         let _ = dispatch(&mut world, &did_open_uri_message(uri, source));
 
         let _ = dispatch(
@@ -1276,7 +1276,7 @@ mod tests {
     fn closing_workspace_document_removes_it_from_workspace_symbols() {
         let mut world = WorldState::new();
         let uri = "file:///main/ghost.solc";
-        let source = "function ghost() -> word { return 42; }\n";
+        let source = "function ghost() returns (word) { return 42; }\n";
         let _ = dispatch(&mut world, &did_open_uri_message(uri, source));
 
         let _ = dispatch(
@@ -1328,7 +1328,7 @@ mod tests {
         );
         let _ = dispatch(
             &mut world,
-            &did_open_uri_message(uri, "function ghost() -> word { return 42; }\n"),
+            &did_open_uri_message(uri, "function ghost() returns (word) { return 42; }\n"),
         );
         let _ = dispatch(
             &mut world,
@@ -1367,7 +1367,7 @@ mod tests {
     #[test]
     fn document_highlight_request_returns_highlights() {
         let mut world = WorldState::new();
-        let source = "function id(x: word) -> word {\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 
@@ -1405,7 +1405,7 @@ mod tests {
     #[test]
     fn rename_requests_return_workspace_edit_and_prepare_range() {
         let mut world = WorldState::new();
-        let source = "function id(x: word) -> word {\n  let y = x;\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
         let outgoing = dispatch(&mut world, &did_open_message(source));
         assert_eq!(outgoing.len(), 1);
 

@@ -541,12 +541,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 let ty = self.subst.apply_ty(self.driver.db, ty);
                 MonoExprKind::Proxy(self.driver.mono_ty(ty, "proxy", expr.span)?)
             }
-            ExprKind::TypeAnnot { expr: inner, ty } => {
+            ExprKind::Conversion { expr: inner, ty } => {
                 let ty = self.lower_body_ty(*ty)?;
                 let ty = self.subst.apply_ty(self.driver.db, ty);
-                MonoExprKind::TypeAnnot {
+                MonoExprKind::Conversion {
                     expr: Box::new(self.expr(*inner)?),
-                    ty: self.driver.mono_ty(ty, "type annotation", expr.span)?,
+                    ty: self.driver.mono_ty(ty, "explicit conversion", expr.span)?,
                 }
             }
             ExprKind::If {
@@ -1078,7 +1078,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         }
         match &self.body.exprs(self.driver.db).get(expr).kind {
             ExprKind::Index { base, .. } => self.is_storage_index_expr(*base),
-            ExprKind::TypeAnnot { expr, .. } => self.is_storage_index_expr(*expr),
+            ExprKind::Conversion { expr, .. } => self.is_storage_index_expr(*expr),
             _ => false,
         }
     }

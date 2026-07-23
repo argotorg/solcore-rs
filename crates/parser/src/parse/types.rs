@@ -8,18 +8,18 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     recursive(|ty| {
-        let args = ty
+        let angle_args = ty
             .clone()
             .separated_by(just(Token::Comma))
             .allow_trailing()
             .collect::<Vec<_>>()
-            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .delimited_by(just(Token::Less), just(Token::Greater))
             .map_with(|args, e| (args, e.span()))
             .or_not()
             .boxed();
 
         let named_type = qualified_ident_parser()
-            .then(args)
+            .then(angle_args)
             .map_with(|(mut path, args), e| {
                 let name = path.pop().expect("qualified path has at least one segment");
                 let (args, args_span) = args
@@ -37,7 +37,7 @@ where
             })
             .boxed();
 
-        let paren_types = ty
+        let grouped_types = ty
             .clone()
             .separated_by(just(Token::Comma))
             .allow_trailing()
@@ -46,6 +46,99 @@ where
             .map_with(|elems, e| (elems, e.span()))
             .boxed();
 
+        let tuple_type = grouped_types
+            .clone()
+            .map(|(elems, paren_span)| ParsedTy {
+                span: paren_span,
+                kind: ParsedTyKind::Tuple { elems },
+            })
+            .boxed();
+
+        // `mapping` remains an ordinary type constructor in HIR. The surface
+        // syntax merely changes its two arguments from `mapping(K, V)` to
+        // Solidity's `mapping(K => V)`.
+        let mapping_kw = select! {
+            Token::Ident(name) if name == "mapping" => name,
+        }
+        .map_with(|name, e| (name, e.span()))
+        .boxed();
+        let mapping_type = mapping_kw
+            .clone()
+            .then_ignore(just(Token::LParen))
+            .rewind()
+            .ignore_then(mapping_kw)
+            .then(
+                ty.clone()
+                    .then_ignore(just(Token::FatArrow))
+                    .then(ty.clone())
+                    .delimited_by(just(Token::LParen), just(Token::RParen))
+                    .map_with(|types, e| (types, e.span())),
+            )
+            .map_with(
+                |((name, name_span), ((key, value), args_span)), e| ParsedTy {
+                    span: e.span(),
+                    kind: ParsedTyKind::Named {
+                        qualifiers: Vec::new(),
+                        name: (name, name_span),
+                        args: vec![key, value],
+                        args_span: Some(args_span),
+                    },
+                },
+            )
+            .boxed();
+
+        let function_visibility = choice((just(Token::Internal), just(Token::External)))
+            .ignored()
+            .or_not()
+            .boxed();
+        let function_mutability =
+            choice((just(Token::Pure), just(Token::View), just(Token::Payable)))
+                .ignored()
+                .or_not()
+                .boxed();
+        let function_returns = just(Token::Returns)
+            .ignore_then(grouped_types.clone())
+            .or_not()
+            .boxed();
+        let function_type = just(Token::Function)
+            .ignore_then(grouped_types.clone())
+            .then(function_visibility)
+            .then(function_mutability)
+            .then(function_returns)
+            .map_with(
+                |((((params, params_span), _visibility), _mutability), returns), e| {
+                    let function_span: LexSpan = e.span();
+                    let ret = match returns {
+                        Some((elems, span)) => match <[_; 1]>::try_from(elems) {
+                            Ok([ret]) => ret,
+                            Err(elems) => ParsedTy {
+                                span,
+                                kind: ParsedTyKind::Tuple { elems },
+                            },
+                        },
+                        None => {
+                            let end = function_span.end;
+                            ParsedTy {
+                                span: LexSpan::from(end..end),
+                                kind: ParsedTyKind::Tuple { elems: Vec::new() },
+                            }
+                        }
+                    };
+                    ParsedTy {
+                        span: function_span,
+                        kind: ParsedTyKind::Fn {
+                            params,
+                            params_span,
+                            ret: Box::new(ret),
+                        },
+                    }
+                },
+            )
+            .boxed();
+
+        // `comptime T` and proxy types are retained as noncanonical Solcore
+        // extensions because they carry semantics that the new surface-syntax
+        // proposal does not replace.
         let comptime_type = comptime_kw_parser()
             .then(ty.clone())
             .map_with(|(kw, inner), e| ParsedTy {
@@ -54,13 +147,6 @@ where
                     kw,
                     inner: Box::new(inner),
                 },
-            })
-            .boxed();
-
-        let tuple_type = paren_types
-            .map(|(elems, paren_span)| ParsedTy {
-                span: paren_span,
-                kind: ParsedTyKind::Tuple { elems },
             })
             .boxed();
 
@@ -77,182 +163,160 @@ where
                 })
                 .boxed();
 
-            proxy_type.or(tuple_type).or(named_type)
+            proxy_type
+                .or(function_type)
+                .or(mapping_type)
+                .or(tuple_type)
+                .or(named_type)
         })
         .boxed();
 
         let atom_type = comptime_type.or(atom_type).boxed();
 
-        atom_type
-            .clone()
-            .then(just(Token::Arrow).ignore_then(ty.clone()).or_not())
-            .map_with(|(domain, ret), e| match ret {
-                Some(ret) => ParsedTy {
+        let dynamic_array_suffix = just(Token::LBracket)
+            .then_ignore(just(Token::RBracket))
+            .map_with(|_, e| e.span());
+        // ParsedTy/HIR currently has no type-level integer with which to
+        // retain a fixed array length. Accept Solidity's `[N]` surface for
+        // now and lower it through the existing DynArray representation;
+        // semantic fixed-length support must replace this temporary erasure.
+        let fixed_array_suffix = just(Token::LBracket)
+            .ignore_then(select! {
+                Token::Number(length) => length,
+                Token::HexLit(length) => length,
+            })
+            .then_ignore(just(Token::RBracket))
+            .map_with(|_, e| e.span());
+        let array_suffix = choice((dynamic_array_suffix, fixed_array_suffix));
+        let array_type = atom_type
+            .foldl_with(array_suffix.repeated(), |inner, brackets_span, e| {
+                ParsedTy {
                     span: e.span(),
-                    // Arrow types are right-associative over atom domains.
-                    // A parenthesized tuple domain remains one unary domain,
-                    // matching the Haskell reference parser.
-                    kind: ParsedTyKind::Fn {
-                        params_span: domain.span,
-                        params: vec![domain],
-                        ret: Box::new(ret),
+                    kind: ParsedTyKind::Named {
+                        qualifiers: Vec::new(),
+                        // Solidity arrays use the existing standard library's
+                        // nominal `DynArray<T>` representation.
+                        name: ("DynArray", brackets_span),
+                        args_span: Some(inner.span),
+                        args: vec![inner],
                     },
-                },
-                None => domain,
+                }
+            })
+            .boxed();
+
+        let location = select! {
+            Token::Ident(name) if matches!(name, "memory" | "storage" | "calldata") => name,
+        }
+        .map_with(|name, e| (name, e.span()))
+        .or_not();
+
+        array_type
+            .then(location)
+            .map_with(|(inner, location), e| match location {
+                Some((name, name_span)) => {
+                    let args_span = inner.span;
+                    ParsedTy {
+                        span: e.span(),
+                        kind: ParsedTyKind::Named {
+                            qualifiers: Vec::new(),
+                            name: (name, name_span),
+                            args: vec![inner],
+                            args_span: Some(args_span),
+                        },
+                    }
+                }
+                None => inner,
             })
     })
     .labelled("type")
     .as_context()
 }
 
-pub(super) fn parsed_ty_comptime_span(ty: &ParsedTy<'_>) -> Option<LexSpan> {
-    match ty.kind {
-        ParsedTyKind::Comptime { kw, .. } => Some(kw),
-        _ => None,
-    }
-}
-
 pub(super) fn pred_parser<'src, I>() -> impl Parser<'src, I, ParsedPred<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let class_args = type_parser()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .collect::<Vec<_>>()
-        .delimited_by(just(Token::LParen), just(Token::RParen))
-        .map_with(|args, e| (args, e.span()))
-        .or_not()
-        .boxed();
-
     type_parser()
         .then_ignore(just(Token::Colon))
-        .then(ident_parser())
-        .then(class_args)
-        .map(|((ty, class), args)| {
-            let (args, args_span) = args
-                .map(|(args, span)| (args, Some(span)))
-                .unwrap_or_else(|| (Vec::new(), None));
-            ParsedPred {
-                ty,
-                class,
-                args,
-                args_span,
-            }
+        .then(trait_ref_parser())
+        .map(|(ty, (class, args, args_span))| ParsedPred {
+            ty,
+            class,
+            args,
+            args_span,
         })
-        .labelled("predicate")
+        .labelled("trait constraint")
         .as_context()
         .boxed()
 }
 
-pub(super) fn pred_list_parser<'src, I>()
+/// Parses an optional generic binder list such as `<T, E>`.
+///
+/// The empty vector represents an absent list. An explicitly empty `<>` list
+/// is rejected so callers do not need to distinguish two spellings.
+pub(super) fn type_param_list_parser<'src, I>()
+-> impl Parser<'src, I, Vec<SpannedStr<'src>>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    ident_parser()
+        .separated_by(just(Token::Comma))
+        .at_least(1)
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::Less), just(Token::Greater))
+        .or_not()
+        .map(Option::unwrap_or_default)
+        .labelled("type parameter list")
+        .as_context()
+}
+
+/// Parses a trait reference such as `Eq` or `Convert<T, U>`.
+///
+/// The returned tuple contains the trait name, its type arguments, and the
+/// span of the optional angle-bracketed argument list.
+pub(super) fn trait_ref_parser<'src, I>()
+-> impl Parser<'src, I, (SpannedStr<'src>, Vec<ParsedTy<'src>>, Option<LexSpan>), ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let args = type_parser()
+        .separated_by(just(Token::Comma))
+        .at_least(1)
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::Less), just(Token::Greater))
+        .map_with(|args, e| (args, e.span()))
+        .or_not();
+
+    ident_parser()
+        .then(args)
+        .map(|(name, args)| {
+            let (args, args_span) = args
+                .map(|(args, span)| (args, Some(span)))
+                .unwrap_or_else(|| (Vec::new(), None));
+            (name, args, args_span)
+        })
+        .labelled("trait reference")
+        .as_context()
+}
+
+/// Parses an optional `where` clause.
+pub(super) fn where_clause_parser<'src, I>()
 -> impl Parser<'src, I, Vec<ParsedPred<'src>>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let bare = pred_parser()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .collect::<Vec<_>>()
-        .boxed();
-    bare.clone()
-        .delimited_by(just(Token::LParen), just(Token::RParen))
-        .or(bare)
-}
-
-#[derive(Debug, Clone)]
-enum ParsedForallBinder<'src> {
-    Var(SpannedStr<'src>),
-    Bound {
-        var: SpannedStr<'src>,
-        pred: ParsedPred<'src>,
-    },
-}
-
-fn forall_binder_parser<'src, I>() -> impl Parser<'src, I, ParsedForallBinder<'src>, ParserErr<'src>>
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
-{
-    let class_args = type_parser()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .collect::<Vec<_>>()
-        .delimited_by(just(Token::LParen), just(Token::RParen))
-        .map_with(|args, e| (args, e.span()))
-        .or_not()
-        .boxed();
-
-    let bounded = ident_parser()
-        .then_ignore(just(Token::Colon))
-        .then(ident_parser())
-        .then(class_args)
-        .map(|((var, class), args)| {
-            let (args, args_span) = args
-                .map(|(args, span)| (args, Some(span)))
-                .unwrap_or_else(|| (Vec::new(), None));
-            let ty = ParsedTy {
-                span: var.1,
-                kind: ParsedTyKind::Named {
-                    qualifiers: Vec::new(),
-                    name: var,
-                    args: Vec::new(),
-                    args_span: None,
-                },
-            };
-            let pred = ParsedPred {
-                ty,
-                class,
-                args,
-                args_span,
-            };
-            ParsedForallBinder::Bound { var, pred }
-        });
-
-    let bare = ident_parser().map(ParsedForallBinder::Var);
-
-    choice((bounded, bare))
-}
-
-pub(super) fn forall_clause_parser<'src, I>()
--> impl Parser<'src, I, (Vec<SpannedStr<'src>>, Vec<ParsedPred<'src>>), ParserErr<'src>>
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
-{
-    let binder = forall_binder_parser().boxed();
-    let binders = binder
-        .clone()
-        .then(
-            just(Token::Comma)
-                .or_not()
-                .ignore_then(binder)
-                .repeated()
+    just(Token::Where)
+        .ignore_then(
+            pred_parser()
+                .separated_by(just(Token::Comma))
+                .at_least(1)
+                .allow_trailing()
                 .collect::<Vec<_>>(),
         )
-        .map(|(first, mut rest)| {
-            let mut all = Vec::with_capacity(rest.len() + 1);
-            all.push(first);
-            all.append(&mut rest);
-            all
-        });
-
-    just(Token::Forall)
-        .ignore_then(binders)
-        .then_ignore(just(Token::Dot))
         .or_not()
-        .map(|binders| {
-            let mut type_vars = Vec::new();
-            let mut preds = Vec::new();
-            if let Some(binders) = binders {
-                for binder in binders {
-                    match binder {
-                        ParsedForallBinder::Var(var) => type_vars.push(var),
-                        ParsedForallBinder::Bound { var, pred } => {
-                            type_vars.push(var);
-                            preds.push(pred);
-                        }
-                    }
-                }
-            }
-            (type_vars, preds)
-        })
+        .map(Option::unwrap_or_default)
+        .labelled("where clause")
+        .as_context()
 }

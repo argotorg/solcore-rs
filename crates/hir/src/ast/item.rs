@@ -253,7 +253,8 @@ impl<'db> FunctionDef<'db> {
     }
 }
 
-/// Type alias definition: `type Name(T, U) = Type`.
+/// Type alias or value-type definition: `alias Name<T, U> = Type` or
+/// `type Name is Type`.
 #[salsa::tracked(debug)]
 pub struct TypeAlias<'db> {
     /// Stable structural identity of the alias.
@@ -369,7 +370,7 @@ impl<'db> ClassDef<'db> {
         assert_eq!(
             self.methods(db).len(),
             self.method_comments(db).len(),
-            "class methods and method comments must remain aligned"
+            "trait methods and method comments must remain aligned"
         );
     }
 
@@ -751,8 +752,9 @@ pub enum ImportSelector<'db> {
 
 /// Module import declaration.
 ///
-/// Imports can bind a module name, import selected items, hide names, and
-/// reference external library roots through `external`.
+/// Plain imports and selected imports bind public items directly. An explicit
+/// namespace alias binds a module name. External library roots use an `@`
+/// prefix.
 #[salsa::tracked(debug)]
 pub struct Import<'db> {
     /// Stable structural identity of the import.

@@ -27,7 +27,10 @@ use super::{
         literal_from_known_expr, lvalue_root_name, match_arms_with, match_expr_arms_with,
         remove_assigned, remove_comptime_assigned, string_expr,
     },
-    value::{BigInt, bitand_word, bitor_word, bitxor_word, word_div, word_low_byte, word_mod},
+    value::{
+        BigInt, bitand_word, bitor_word, bitxor_word, shl_word, shr_word, word_div, word_low_byte,
+        word_mod,
+    },
     yul_const::{
         eval_yul_op, merge_yul_state, subst_yul_block, venv_to_yul_state, venv_to_yul_subst,
         yul_written_names,
@@ -202,7 +205,7 @@ impl<'db> Evaluator<'db> {
             MonoExprKind::Con { args, .. } => {
                 args.iter().all(|expr| self.expr_is_known_value(expr))
             }
-            MonoExprKind::TypeAnnot { expr, .. } => self.expr_is_known_value(expr),
+            MonoExprKind::Conversion { expr, .. } => self.expr_is_known_value(expr),
             _ => false,
         }
     }
@@ -336,7 +339,7 @@ impl<'db> Evaluator<'db> {
                     && !self.expr_is_comptime(expr, &comptime_env)
                 {
                     self.comptime_failed(
-                        "function annotated '-> comptime' returns a runtime expression",
+                        "function with a comptime return type returns a runtime expression",
                         Some(span),
                     );
                 }
@@ -743,7 +746,7 @@ impl<'db> Evaluator<'db> {
             MonoExprKind::Con { args, .. } => args
                 .iter()
                 .all(|expr| self.expr_survives_unknown_write(expr)),
-            MonoExprKind::TypeAnnot { expr, .. } => self.expr_survives_unknown_write(expr),
+            MonoExprKind::Conversion { expr, .. } => self.expr_survives_unknown_write(expr),
             _ => false,
         }
     }
@@ -842,13 +845,13 @@ impl<'db> Evaluator<'db> {
                     target,
                 )
             }
-            MonoExprKind::TypeAnnot { expr, ty: annot_ty } => {
+            MonoExprKind::Conversion { expr, ty: annot_ty } => {
                 let (expr, target) = self.eval_lvalue(env, comptime_env, *expr);
                 (
                     MonoExpr {
                         span,
                         ty,
-                        kind: MonoExprKind::TypeAnnot {
+                        kind: MonoExprKind::Conversion {
                             expr: Box::new(expr),
                             ty: annot_ty,
                         },
@@ -966,6 +969,24 @@ impl<'db> Evaluator<'db> {
             }
             MonoExprKind::BinOp { lhs, op, rhs } => {
                 let lhs = self.eval_expr(env, comptime_env, *lhs);
+                if matches!(op, BinOp::And | BinOp::Or) {
+                    return match (op, known_bool(self.db, &lhs)) {
+                        (BinOp::And, Some(false)) => bool_expr(false, ty, span),
+                        (BinOp::Or, Some(true)) => bool_expr(true, ty, span),
+                        (BinOp::And, Some(true)) | (BinOp::Or, Some(false)) => {
+                            self.eval_expr(env, comptime_env, *rhs)
+                        }
+                        _ => MonoExpr {
+                            span,
+                            ty,
+                            kind: MonoExprKind::BinOp {
+                                lhs: Box::new(lhs),
+                                op,
+                                rhs,
+                            },
+                        },
+                    };
+                }
                 let rhs = self.eval_expr(env, comptime_env, *rhs);
                 if let Some(result) = self.eval_binop(&lhs, op, &rhs, ty, span) {
                     return result;
@@ -1032,7 +1053,7 @@ impl<'db> Evaluator<'db> {
                 ty,
                 kind: MonoExprKind::Proxy(proxy_ty),
             },
-            MonoExprKind::TypeAnnot { expr, ty: annot_ty } => {
+            MonoExprKind::Conversion { expr, ty: annot_ty } => {
                 let expr = self.eval_expr(env, comptime_env, *expr);
                 if self.expr_is_known_value(&expr) {
                     MonoExpr {
@@ -1044,7 +1065,7 @@ impl<'db> Evaluator<'db> {
                     MonoExpr {
                         span,
                         ty,
-                        kind: MonoExprKind::TypeAnnot {
+                        kind: MonoExprKind::Conversion {
                             expr: Box::new(expr),
                             ty: annot_ty,
                         },
@@ -1216,7 +1237,7 @@ impl<'db> Evaluator<'db> {
                     }
                 }
             }
-            MonoExprKind::TypeAnnot { expr, .. } => {
+            MonoExprKind::Conversion { expr, .. } => {
                 self.eval_closure_dispatch(expr, args, ty, span)
             }
             _ => None,
@@ -1491,6 +1512,8 @@ impl<'db> Evaluator<'db> {
                 BinOp::BitAnd => Some(int_expr(bitand_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitOr => Some(int_expr(bitor_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitXor => Some(int_expr(bitxor_word(&lhs_int, &rhs_int), ty, span)),
+                BinOp::Shl => Some(int_expr(shl_word(&lhs_int, &rhs_int), ty, span)),
+                BinOp::Shr => Some(int_expr(shr_word(&lhs_int, &rhs_int), ty, span)),
                 _ => None,
             };
         }
@@ -2005,7 +2028,7 @@ impl<'db> Evaluator<'db> {
             }
             MonoExprKind::StorageIndex { .. } => false,
             MonoExprKind::Field { base, .. } => self.expr_is_comptime(base, comptime_env),
-            MonoExprKind::TypeAnnot { expr, .. } => self.expr_is_comptime(expr, comptime_env),
+            MonoExprKind::Conversion { expr, .. } => self.expr_is_comptime(expr, comptime_env),
             MonoExprKind::Match { scrutinee, arms } => {
                 self.expr_is_comptime(scrutinee, comptime_env)
                     && arms

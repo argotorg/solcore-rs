@@ -745,8 +745,8 @@ mod tests {
     fn open_change_and_close_document() {
         let mut world = WorldState::new();
         let uri = Url::parse("file:///main/main.solc").expect("uri");
-        let clean = "function main() -> word {\n  return 1;\n}\n";
-        let changed = "function main() -> word {\n  return 2;\n}\n";
+        let clean = "function main() returns (word) {\n  return 1;\n}\n";
+        let changed = "function main() returns (word) {\n  return 2;\n}\n";
 
         assert!(world.open_document(uri.clone(), clean.to_owned()));
         assert_eq!(world.document_text(&uri), Some(clean));
@@ -808,11 +808,11 @@ mod tests {
                 [
                     (
                         main_uri.clone(),
-                        "function main() -> word { return 1; }\n".to_owned()
+                        "function main() returns (word) { return 1; }\n".to_owned()
                     ),
                     (
                         util_uri.clone(),
-                        "function util() -> word { return 2; }\n".to_owned()
+                        "function util() returns (word) { return 2; }\n".to_owned()
                     ),
                 ],
             ),
@@ -828,7 +828,7 @@ mod tests {
         );
         assert!(world.open_document(
             main_uri.clone(),
-            "function main() -> word { return 1; }\n".to_owned()
+            "function main() returns (word) { return 1; }\n".to_owned()
         ));
         assert_eq!(world.open_document_uris(), vec![main_uri]);
         assert_eq!(world.workspace_document_uris().len(), 2);
@@ -845,7 +845,7 @@ mod tests {
                 root,
                 [(
                     uri.clone(),
-                    "function value() -> word { return 1; }\n".to_owned()
+                    "function value() returns (word) { return 1; }\n".to_owned()
                 )]
             ),
             1
@@ -869,7 +869,7 @@ mod tests {
         let right_root = Url::from_directory_path(&right_path).expect("right root uri");
         let left_uri = Url::from_file_path(left_path.join("src/main.solc")).expect("left uri");
         let right_uri = Url::from_file_path(right_path.join("src/main.solc")).expect("right uri");
-        let source = "function value() -> word { return 1; }\n";
+        let source = "function value() returns (word) { return 1; }\n";
 
         let mut world = WorldState::new();
         assert_eq!(
@@ -946,7 +946,7 @@ mod tests {
         let mut world = WorldState::new();
         assert!(world.open_document(
             main_uri.clone(),
-            "function value() -> word { return 1; }\n".to_owned()
+            "function value() returns (word) { return 1; }\n".to_owned()
         ));
         assert_eq!(
             world.vfs_path_for_uri(&main_uri),
@@ -977,12 +977,12 @@ mod tests {
         let left_math = Url::from_file_path(left_path.join("math.solc")).expect("left math uri");
         let right_main = Url::from_file_path(right_path.join("main.solc")).expect("right main uri");
         let right_math = Url::from_file_path(right_path.join("math.solc")).expect("right math uri");
-        let left_source =
-            "import lib.math.{leftValue};\nfunction runLeft() -> word { return leftValue(); }\n";
-        let left_library = "function leftValue() -> word { return 1; }\nexport { leftValue };\n";
-        let right_source =
-            "import lib.math.{rightValue};\nfunction runRight() -> word { return rightValue(); }\n";
-        let right_library = "function rightValue() -> word { return 2; }\nexport { rightValue };\n";
+        let left_source = "import {leftValue} from lib.math;\nfunction runLeft() returns (word) { return leftValue(); }\n";
+        let left_library =
+            "function leftValue() returns (word) { return 1; }\nexport { leftValue };\n";
+        let right_source = "import {rightValue} from lib.math;\nfunction runRight() returns (word) { return rightValue(); }\n";
+        let right_library =
+            "function rightValue() returns (word) { return 2; }\nexport { rightValue };\n";
 
         let mut world = WorldState::new();
         world.load_workspace_roots([
@@ -1086,8 +1086,8 @@ mod tests {
         let left_main = Url::from_file_path(left_path.join("main.solc")).expect("left main uri");
         let left_util = Url::from_file_path(left_path.join("util.solc")).expect("left util uri");
         let right_main = Url::from_file_path(right_path.join("main.solc")).expect("right main uri");
-        let disk_source = "function value() -> word { return 1; }\n";
-        let unsaved_source = "function value() -> word { return 99; }\n";
+        let disk_source = "function value() returns (word) { return 1; }\n";
+        let unsaved_source = "function value() returns (word) { return 99; }\n";
 
         let mut world = WorldState::new();
         world.load_workspace_roots([
@@ -1168,10 +1168,11 @@ mod tests {
         let left_math = Url::from_file_path(left_path.join("math.solc")).expect("left math");
         let right_math = Url::from_file_path(right_path.join("math.solc")).expect("right math");
         let third_file = Url::from_file_path(third_path.join("third.solc")).expect("third file");
-        let main_source =
-            "import lib.math.{leftValue};\nfunction main() -> word { return leftValue(); }\n";
-        let left_source = "function leftValue() -> word { return 1; }\nexport { leftValue };\n";
-        let right_source = "function rightValue() -> word { return 2; }\nexport { rightValue };\n";
+        let main_source = "import {leftValue} from lib.math;\nfunction main() returns (word) { return leftValue(); }\n";
+        let left_source =
+            "function leftValue() returns (word) { return 1; }\nexport { leftValue };\n";
+        let right_source =
+            "function rightValue() returns (word) { return 2; }\nexport { rightValue };\n";
 
         let mut world = WorldState::new();
         world.load_workspace_roots([
@@ -1207,7 +1208,7 @@ mod tests {
                 third_root,
                 vec![(
                     third_file,
-                    "function third() -> word { return 3; }\n".to_owned(),
+                    "function third() returns (word) { return 3; }\n".to_owned(),
                 )],
             )],
         );
@@ -1261,7 +1262,7 @@ mod tests {
 
         assert!(world.open_document(
             uri.clone(),
-            "function main() -> word { return 1; }\n".to_owned()
+            "function main() returns (word) { return 1; }\n".to_owned()
         ));
 
         assert!(world.has_workspace_root());
@@ -1277,7 +1278,7 @@ mod tests {
         let uri = Url::parse("untitled:Untitled-1").expect("untitled uri");
         assert!(world.open_document(
             uri.clone(),
-            "function main() -> word { return 1; }\n".to_owned()
+            "function main() returns (word) { return 1; }\n".to_owned()
         ));
         assert_eq!(
             world.vfs_path_for_uri(&uri),
@@ -1295,7 +1296,7 @@ mod tests {
         let uri = Url::parse("untitled:Untitled-1").expect("untitled uri");
         assert!(world.open_document(
             uri.clone(),
-            "function main() -> word { return 1; }\n".to_owned()
+            "function main() returns (word) { return 1; }\n".to_owned()
         ));
 
         world.close_document(&uri);

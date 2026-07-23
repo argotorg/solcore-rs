@@ -204,7 +204,7 @@ fn resolve_fixture_directives(
             }
             Item::InstanceDef(instance) => {
                 for function in instance.methods(db) {
-                    reject_non_dispatch_directives(db, *function, "instance method")?;
+                    reject_non_dispatch_directives(db, *function, "impl method")?;
                 }
             }
             Item::ContractDef(contract) => {

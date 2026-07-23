@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn folds_imports_comments_items_and_nested_blocks() {
-        let source = "// first\n// second\nimport alpha;\nimport beta;\n\n/* block\n   comment */\ncontract Box {\n  function get() -> word {\n    if true {\n      return 1;\n    }\n  }\n}\n";
+        let source = "// first\n// second\nimport * as alpha from alpha;\nimport * as beta from beta;\n\n/* block\n   comment */\ncontract Box {\n  function get() returns (word) {\n    if (true) {\n      return 1;\n    }\n  }\n}\n";
         let (world, uri) = world_with_main(source);
         let folds = handle_folding_range(&world, &uri).expect("folding ranges");
 
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn nested_blocks_with_the_same_line_extent_remain_distinct() {
-        let source = "function main() { if true {\n  return 1;\n} }\n";
+        let source = "function main() { if (true) {\n  return 1;\n} }\n";
         let (world, uri) = world_with_main(source);
         let folds = handle_folding_range(&world, &uri).expect("folding ranges");
         let structural = folds

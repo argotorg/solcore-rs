@@ -134,7 +134,7 @@ fn yul_lit_from_known_expr<'db>(db: &'db dyn Db, expr: &MonoExpr<'db>) -> Option
         MonoExprKind::Lit(LitKind::Number(text)) => YulLitKind::Number(text.clone()),
         MonoExprKind::Lit(LitKind::Hex(text)) => YulLitKind::Hex(text.clone()),
         MonoExprKind::Lit(LitKind::String(text)) => YulLitKind::String(text.clone()),
-        MonoExprKind::TypeAnnot { expr, .. } => return yul_lit_from_known_expr(db, expr),
+        MonoExprKind::Conversion { expr, .. } => return yul_lit_from_known_expr(db, expr),
         _ => return None,
     };
     let _ = db;

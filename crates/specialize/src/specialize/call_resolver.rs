@@ -12,10 +12,18 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             | BinOp::BitXor
             | BinOp::BitOr
             | BinOp::Eq
-            | BinOp::Gt => self.overloaded_bin_op_expr(expr),
-            BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::GtEq | BinOp::And | BinOp::Or => {
+            | BinOp::Gt
+            | BinOp::Pow => self.overloaded_bin_op_expr(expr),
+            BinOp::Shl | BinOp::Shr | BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::GtEq => {
                 self.operator_function_bin_op_expr(expr)
             }
+            // Preserve logical operators in monomorphic IR. Hull lowers these
+            // nodes to conditionals, which keeps the RHS short-circuited.
+            BinOp::And | BinOp::Or => Some(MonoExprKind::BinOp {
+                lhs: Box::new(self.expr(expr.lhs)?),
+                op: expr.op,
+                rhs: Box::new(self.expr(expr.rhs)?),
+            }),
             _ => Some(MonoExprKind::BinOp {
                 lhs: Box::new(self.expr(expr.lhs)?),
                 op: expr.op,
@@ -163,9 +171,16 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         let lhs_expr = self.expr(expr.lhs)?;
         let rhs_expr = self.expr(expr.rhs)?;
         let name = plain_operator_function(expr.op)?;
+        let fallback_lhs = lhs_expr.clone();
+        let fallback_rhs = rhs_expr.clone();
+        let (first_expr, second_expr) = if matches!(expr.op, BinOp::Shl | BinOp::Shr) {
+            (rhs_expr, lhs_expr)
+        } else {
+            (lhs_expr, rhs_expr)
+        };
         let callee_ty = Ty::function(
             self.driver.db,
-            vec![lhs_expr.ty.ty(), rhs_expr.ty.ty()],
+            vec![first_expr.ty.ty(), second_expr.ty.ty()],
             expr.result_ty,
         );
         let mono_callee_ty = self
@@ -179,9 +194,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 span: Some(expr.span),
             });
             return Some(MonoExprKind::BinOp {
-                lhs: Box::new(lhs_expr),
+                lhs: Box::new(fallback_lhs),
                 op: expr.op,
-                rhs: Box::new(rhs_expr),
+                rhs: Box::new(fallback_rhs),
             });
         };
 
@@ -204,7 +219,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         span: expr.span,
                     },
                     origin,
-                    args: vec![lhs_expr, rhs_expr],
+                    args: vec![first_expr, second_expr],
                 })
             }
             hir_nameres::Resolution::Builtin(kind) => {
@@ -218,7 +233,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                         span: expr.span,
                     },
                     origin,
-                    args: vec![lhs_expr, rhs_expr],
+                    args: vec![first_expr, second_expr],
                 })
             }
             _ => {
@@ -229,9 +244,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                     span: Some(expr.span),
                 });
                 Some(MonoExprKind::BinOp {
-                    lhs: Box::new(lhs_expr),
+                    lhs: Box::new(fallback_lhs),
                     op: expr.op,
-                    rhs: Box::new(rhs_expr),
+                    rhs: Box::new(fallback_rhs),
                 })
             }
         }

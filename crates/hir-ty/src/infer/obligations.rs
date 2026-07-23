@@ -501,7 +501,7 @@ impl<'db> InferCtx<'db> {
                             index,
                             TypeckDiagnostic::AmbiguousInferredType {
                                 span: self.body_label_span(self.root_body),
-                                scheme: format!("forall _ . {pred_text} => {root_ty}"),
+                                scheme: format!("<_> {root_ty} where {pred_text}"),
                             },
                         ));
                     }
@@ -839,10 +839,10 @@ impl<'db> InferCtx<'db> {
 
         let preds = ambiguous
             .into_iter()
-            .map(|main| format!("{main} : Int"))
+            .map(|main| format!("{main}: Int"))
             .collect::<Vec<_>>()
             .join(", ");
-        let scheme = format!("forall _ . {preds} => {}", self.display_infer_ty(root_ty));
+        let scheme = format!("<_> {} where {preds}", self.display_infer_ty(root_ty));
         self.diagnostics
             .push(TypeckDiagnostic::AmbiguousInferredType {
                 span: self.body_label_span(self.root_body),

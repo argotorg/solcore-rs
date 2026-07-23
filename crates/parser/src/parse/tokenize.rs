@@ -1,6 +1,8 @@
 use logos::Logos;
 
-use super::{MAX_SYNTAX_NESTING, errors::lex_error, recovery::trace_recovery};
+use super::{
+    MAX_EXPRESSION_NESTING, MAX_SYNTAX_NESTING, errors::lex_error, recovery::trace_recovery,
+};
 use crate::{
     lexer::{LexedCommentKind, Token},
     types::*,
@@ -35,15 +37,15 @@ fn truncate_excessive_nesting(
     let mut conditional_bases = Vec::new();
     for (token, span) in tokens.iter() {
         match token {
-            Token::If => {
+            Token::Question => {
                 conditional_depth += 1;
-                if conditional_depth > MAX_SYNTAX_NESTING {
+                if conditional_depth > MAX_EXPRESSION_NESTING {
                     let span = *span;
                     trace_recovery("nesting_limit", span);
                     errors.push(ParsedError::new(
                         span,
                         format!(
-                            "conditional expression nesting exceeds the compiler limit of {MAX_SYNTAX_NESTING}"
+                            "conditional expression nesting exceeds the compiler limit of {MAX_EXPRESSION_NESTING}"
                         ),
                     ));
                     tokens.clear();

@@ -18,13 +18,15 @@ impl<'db> Evidence<'db> {
                     .map(|arg| arg.display(db))
                     .collect::<Vec<_>>()
                     .join(", ");
-                if sub_evidence.is_empty() {
-                    format!("instance {name}({args})")
+                let head = if args.is_empty() {
+                    name
                 } else {
-                    format!(
-                        "instance {name}({args}) with {} subproof(s)",
-                        sub_evidence.len()
-                    )
+                    format!("{name}<{args}>")
+                };
+                if sub_evidence.is_empty() {
+                    format!("impl {head}")
+                } else {
+                    format!("impl {head} with {} subproof(s)", sub_evidence.len())
                 }
             }
             Evidence::Builtin { pred } => format!("builtin {}", pred.display(db)),
@@ -34,7 +36,7 @@ impl<'db> Evidence<'db> {
                     .filter(|name| !name.is_empty())
                     .unwrap_or_else(|| format!("{:?}", class.kind(db)));
                 format!(
-                    "superclass {name} => {} via {}",
+                    "supertrait {name}: {} via {}",
                     pred.display(db),
                     child.display(db)
                 )

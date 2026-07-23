@@ -125,7 +125,7 @@ impl<'db> InferCtx<'db> {
                 };
                 self.infer_resolution(body, expr_id, resolution)
             }
-            ExprKind::TypeAnnot { expr, ty } => {
+            ExprKind::Conversion { expr, ty } => {
                 let annot = self.lower_type_ref(*ty);
                 let expr_ty = self.infer_expr_expected(body, *expr, Some(annot.clone()));
                 self.unify_expr(body, *expr, annot.clone(), expr_ty);
@@ -900,6 +900,17 @@ impl<'db> InferCtx<'db> {
             BinOp::Mod => self.infer_operator_call_expected(
                 body, expr, lhs_expr, rhs_expr, "Mod", "mod", expected,
             ),
+            BinOp::Pow => self.infer_operator_call_expected(
+                body, expr, lhs_expr, rhs_expr, "Pow", "pow", expected,
+            ),
+            // EVM/Yul shift helpers take `(shift, value)`, while the source
+            // operators spell `value << shift` and `value >> shift`.
+            BinOp::Shl => self.infer_operator_function_call_expected(
+                body, expr, rhs_expr, lhs_expr, "bshlWord", expected,
+            ),
+            BinOp::Shr => self.infer_operator_function_call_expected(
+                body, expr, rhs_expr, lhs_expr, "bshrWord", expected,
+            ),
             BinOp::BitAnd => self.infer_operator_call_expected(
                 body, expr, lhs_expr, rhs_expr, "BitAnd", "band", expected,
             ),
@@ -978,15 +989,14 @@ impl<'db> InferCtx<'db> {
                 )
             }
             BinOp::And | BinOp::Or => {
+                // Logical operators are language-level control flow, not
+                // overloadable calls. Keeping both operands as explicit bool
+                // expressions lets specialization preserve the RHS until Hull
+                // lowers the operator to a conditional.
                 let bool_ty = self.bool();
-                self.infer_operator_function_call_expected(
-                    body,
-                    expr,
-                    lhs_expr,
-                    rhs_expr,
-                    if op == BinOp::And { "and" } else { "or" },
-                    Some(bool_ty),
-                )
+                self.infer_expr_expected(body, lhs_expr, Some(bool_ty.clone()));
+                self.infer_expr_expected(body, rhs_expr, Some(bool_ty.clone()));
+                bool_ty
             }
             BinOp::Error => InferTy::Error,
         }

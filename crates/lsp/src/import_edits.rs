@@ -26,7 +26,7 @@ pub struct ImportEdit {
 
 /// Plans one deterministic edit that brings `public_name` into scope.
 ///
-/// When the target already has a safe explicit `.{...}` import, the name is
+/// When the target already has a safe explicit `{...} from` import, the name is
 /// appended to that selector. Otherwise a separate selective import is placed
 /// after the existing import block, or after leading pragmas/header comments.
 /// Malformed source, stale parse metadata, and text that cannot be represented
@@ -146,69 +146,14 @@ pub fn plan_import_edit<'db>(
     )
 }
 
-/// Plans an import that exposes every public name from `target_import_path`.
+/// Plans a deterministic namespace import such as
+/// `import * as math from lib.math;`.
 ///
-/// When a selective import for the same target already exists, `*` is appended
-/// to its selector. The parser treats a selector containing `*` as a wildcard,
-/// which preserves comments and formatting inside the existing declaration.
-/// Otherwise a new `import path.{*};` declaration is inserted.
-pub fn plan_wildcard_import_edit<'db>(
-    db: &'db dyn parser::Db,
-    source: &str,
-    parsed: parser::ParseHirOutput<'db>,
-    target_import_path: &str,
-) -> Option<ImportEdit> {
-    let source_len = u32::try_from(source.len()).ok()?;
-    if !is_valid_import_path(target_import_path) || !parsed.diagnostics(db).is_empty() {
-        return None;
-    }
-
-    let module = parsed.module(db);
-    if !metadata_matches_source(db, module, source, source_len) {
-        return None;
-    }
-
-    let imports = module
-        .items(db)
-        .iter()
-        .filter_map(|item| match item {
-            Item::Import(import) => Some(*import),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    for import in imports
-        .iter()
-        .copied()
-        .filter(|import| import_path_text(db, *import).as_deref() == Some(target_import_path))
-    {
-        match import.selector(db) {
-            Some(ImportSelector::Wildcard) => return None,
-            Some(ImportSelector::Names(names))
-                if import.alias_elem(db).is_none() && import.hiding(db).is_empty() =>
-            {
-                let offset = selector_append_offset(db, source, import, names)?;
-                return Some(insertion(offset, ", *".to_owned()));
-            }
-            _ => {}
-        }
-    }
-
-    plan_new_import_declaration(
-        db,
-        source,
-        module,
-        &imports,
-        &format!("import {target_import_path}.{{*}};"),
-    )
-}
-
-/// Plans a deterministic plain module import such as `import lib.math;`.
-///
-/// Plain imports are never merged with selective, wildcard, aliased, or
-/// hiding imports. An identical plain import already present in the source
-/// needs no edit. Validation, stale-source rejection, and insertion placement
-/// are shared with [`plan_import_edit`].
+/// The local namespace name is the target path's leaf. Namespace imports are
+/// never merged with bare or selective imports. An identical namespace import
+/// already present in the source needs no edit.
+/// Validation, stale-source rejection, and insertion placement are shared with
+/// [`plan_import_edit`].
 pub fn plan_module_import_edit<'db>(
     db: &'db dyn parser::Db,
     source: &str,
@@ -216,7 +161,12 @@ pub fn plan_module_import_edit<'db>(
     target_import_path: &str,
 ) -> Option<ImportEdit> {
     let source_len = u32::try_from(source.len()).ok()?;
-    if !is_valid_import_path(target_import_path) || !parsed.diagnostics(db).is_empty() {
+    let leaf = target_import_path.rsplit('.').next()?;
+    let alias = leaf.strip_prefix('@').unwrap_or(leaf);
+    if !is_valid_import_path(target_import_path)
+        || !parser::is_valid_identifier(alias)
+        || !parsed.diagnostics(db).is_empty()
+    {
         return None;
     }
 
@@ -237,7 +187,9 @@ pub fn plan_module_import_edit<'db>(
     if imports.iter().copied().any(|import| {
         import_path_text(db, import).as_deref() == Some(target_import_path)
             && import.selector(db).is_none()
-            && import.alias_elem(db).is_none()
+            && import
+                .alias_elem(db)
+                .is_some_and(|existing| existing.atom().text(db) == alias)
             && import.hiding(db).is_empty()
     }) {
         return None;
@@ -248,7 +200,7 @@ pub fn plan_module_import_edit<'db>(
         source,
         module,
         &imports,
-        &format!("import {target_import_path};"),
+        &format!("import * as {alias} from {target_import_path};"),
     )
 }
 
@@ -384,7 +336,7 @@ fn plan_new_import(
     target_import_path: &str,
     public_name: &str,
 ) -> Option<ImportEdit> {
-    let declaration = format!("import {target_import_path}.{{{public_name}}};");
+    let declaration = format!("import {{{public_name}}} from {target_import_path};");
     plan_new_import_declaration(db, source, module, imports, &declaration)
 }
 
@@ -607,17 +559,6 @@ mod tests {
         plan_module_import_edit(db, source, parsed, target)
     }
 
-    fn plan_wildcard(source: &str, target: &str) -> Option<ImportEdit> {
-        let mut world = WorldState::new();
-        let uri = Url::parse("file:///main/main.solc").expect("uri");
-        assert!(world.open_document(uri.clone(), source.to_owned()));
-        let db = world.db();
-        let path = world.vfs_path_for_uri(&uri).expect("VFS path");
-        let file = db.source_file(&path).expect("source file");
-        let parsed = parser::parse_file_to_hir(db, file);
-        plan_wildcard_import_edit(db, source, parsed, target)
-    }
-
     fn apply(source: &str, edit: &ImportEdit) -> String {
         let start = edit.start as usize;
         let end = edit.end as usize;
@@ -626,201 +567,139 @@ mod tests {
 
     #[test]
     fn appends_to_matching_selective_import() {
-        let source = "import lib.math.{old};\nfunction main() { value; }\n";
+        let source = "import {old} from lib.math;\nfunction main() { value; }\n";
         let edit = plan(source, "lib.math", "value").expect("edit");
 
         assert_eq!(edit.start, edit.end);
         assert_eq!(edit.replacement, ", value");
         assert_eq!(
             apply(source, &edit),
-            "import lib.math.{old, value};\nfunction main() { value; }\n"
+            "import {old, value} from lib.math;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
-    fn wildcard_upgrade_preserves_an_existing_selective_import() {
-        let source = "import std.dispatch.{NonPayable, SigString};\nfunction main() {}\n";
-        let edit = plan_wildcard(source, "std.dispatch").expect("edit");
-
-        assert_eq!(
-            apply(source, &edit),
-            "import std.dispatch.{NonPayable, SigString, *};\nfunction main() {}\n"
-        );
-    }
-
-    #[test]
-    fn wildcard_import_is_inserted_when_target_is_not_selected() {
-        let source = "import std.{*};\nfunction main() {}\n";
-        let edit = plan_wildcard(source, "std.dispatch").expect("edit");
-
-        assert_eq!(
-            apply(source, &edit),
-            "import std.{*};\nimport std.dispatch.{*};\nfunction main() {}\n"
-        );
-    }
-
-    #[test]
-    fn existing_wildcard_import_needs_no_edit() {
-        let source = "import std.dispatch.{*};\nfunction main() {}\n";
-        assert_eq!(plan_wildcard(source, "std.dispatch"), None);
-    }
-
-    #[test]
-    fn appends_after_the_last_alias_without_disturbing_operator_or_hiding() {
-        let source =
-            "import lib.{(^^), source as local} hiding {hidden};\nfunction main() { value; }\n";
+    fn appends_after_the_last_alias() {
+        let source = "import {source as local} from lib;\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import lib.{(^^), source as local, value} hiding {hidden};\nfunction main() { value; }\n"
+            "import {source as local, value} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn appending_keeps_selector_comments_and_crlf_layout() {
-        let source = "import lib.{old // keep old\r\n}; // keep import\r\n\r\nfunction main() { value; }\r\n";
+        let source = "import {old // keep old\r\n} from lib; // keep import\r\n\r\nfunction main() { value; }\r\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import lib.{old, value // keep old\r\n}; // keep import\r\n\r\nfunction main() { value; }\r\n"
+            "import {old, value // keep old\r\n} from lib; // keep import\r\n\r\nfunction main() { value; }\r\n"
         );
     }
 
     #[test]
     fn appending_skips_a_nested_selector_comment() {
-        let source =
-            "import lib.{old /* outer /* inner */ still outer */};\nfunction main() { value; }\n";
+        let source = "import {old /* outer /* inner */ still outer */} from lib;\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import lib.{old, value /* outer /* inner */ still outer */};\nfunction main() { value; }\n"
+            "import {old, value /* outer /* inner */ still outer */} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn does_not_duplicate_an_existing_unaliased_name() {
-        let source = "import lib.{value};\nfunction main() { value; }\n";
+        let source = "import {value} from lib;\nfunction main() { value; }\n";
         assert_eq!(plan(source, "lib", "value"), None);
     }
 
     #[test]
     fn existing_source_alias_gets_a_separate_import() {
-        let source = "import lib.{value as renamed};\nfunction main() { value; }\n";
+        let source = "import {value as renamed} from lib;\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import lib.{value as renamed};\nimport lib.{value};\nfunction main() { value; }\n"
-        );
-    }
-
-    #[test]
-    fn selector_hiding_the_name_gets_a_separate_import() {
-        let source = "import lib.{old} hiding {value};\nfunction main() { value; }\n";
-        let edit = plan(source, "lib", "value").expect("edit");
-
-        assert_eq!(
-            apply(source, &edit),
-            "import lib.{old} hiding {value};\nimport lib.{value};\nfunction main() { value; }\n"
-        );
-    }
-
-    #[test]
-    fn hidden_selected_name_does_not_suppress_a_clean_import() {
-        let source = "import lib.{Option} hiding {Option};\nfunction main() { Option; }\n";
-        let edit = plan(source, "lib", "Option").expect("edit");
-
-        assert_eq!(
-            apply(source, &edit),
-            "import lib.{Option} hiding {Option};\nimport lib.{Option};\nfunction main() { Option; }\n"
-        );
-    }
-
-    #[test]
-    fn hidden_aliased_source_does_not_create_a_local_name_collision() {
-        let source = "import lib.{Other as Option} hiding {Other};\nfunction main() { Option; }\n";
-        let edit = plan(source, "lib", "Option").expect("edit");
-
-        assert_eq!(
-            apply(source, &edit),
-            "import lib.{Other as Option} hiding {Other};\nimport lib.{Option};\nfunction main() { Option; }\n"
+            "import {value as renamed} from lib;\nimport {value} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn active_alias_still_suppresses_an_ambiguous_selective_import() {
-        let source = "import lib.{Other as Option};\nfunction main() { Option; }\n";
+        let source = "import {Other as Option} from lib;\nfunction main() { Option; }\n";
         assert_eq!(plan(source, "lib", "Option"), None);
     }
 
     #[test]
-    fn wildcard_plain_and_module_alias_imports_get_separate_imports() {
-        for existing in ["import lib.{*};", "import lib;", "import lib as L;"] {
+    fn namespace_and_plain_imports_get_separate_selective_imports() {
+        for existing in ["import * as allLib from lib;", "import * as lib from lib;"] {
             let source = format!("{existing}\nfunction main() {{ value; }}\n");
             let edit = plan(&source, "lib", "value").expect("edit");
             assert_eq!(
                 apply(&source, &edit),
-                format!("{existing}\nimport lib.{{value}};\nfunction main() {{ value; }}\n")
+                format!("{existing}\nimport {{value}} from lib;\nfunction main() {{ value; }}\n")
             );
         }
     }
 
     #[test]
     fn new_import_follows_the_complete_import_block_and_keeps_blank_lines() {
-        let source =
-            "import first.{a};\nimport second.{b}; // second\n\nfunction main() { value; }\n";
+        let source = "import {a} from first;\nimport {b} from second; // second\n\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import first.{a};\nimport second.{b}; // second\nimport lib.{value};\n\nfunction main() { value; }\n"
+            "import {a} from first;\nimport {b} from second; // second\nimport {value} from lib;\n\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn new_import_does_not_split_a_multiline_trailing_block_comment() {
-        let source = "import first.{a}; /* trailing\n   block */\nfunction main() { value; }\n";
+        let source =
+            "import {a} from first; /* trailing\n   block */\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import first.{a}; /* trailing\n   block */\nimport lib.{value};\nfunction main() { value; }\n"
+            "import {a} from first; /* trailing\n   block */\nimport {value} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn new_import_does_not_split_a_nested_trailing_block_comment() {
-        let source = "import first.{a}; /* outer\n  /* inner */\n  still outer */\nfunction main() { value; }\n";
+        let source = "import {a} from first; /* outer\n  /* inner */\n  still outer */\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import first.{a}; /* outer\n  /* inner */\n  still outer */\nimport lib.{value};\nfunction main() { value; }\n"
+            "import {a} from first; /* outer\n  /* inner */\n  still outer */\nimport {value} from lib;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn new_import_preserves_crlf_and_trailing_line_comment() {
-        let source = "import first.{a}; // first\r\n\r\nfunction main() { value; }\r\n";
+        let source = "import {a} from first; // first\r\n\r\nfunction main() { value; }\r\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import first.{a}; // first\r\nimport lib.{value};\r\n\r\nfunction main() { value; }\r\n"
+            "import {a} from first; // first\r\nimport {value} from lib;\r\n\r\nfunction main() { value; }\r\n"
         );
     }
 
     #[test]
     fn new_import_follows_leading_pragmas() {
-        let source = "// license\npragma no-patterson-condition;\n\nfunction main() { value; }\n";
+        let source =
+            "// license\npragma solcore noPattersonCondition;\n\nfunction main() { value; }\n";
         let edit = plan(source, "lib", "value").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "// license\npragma no-patterson-condition;\nimport lib.{value};\n\nfunction main() { value; }\n"
+            "// license\npragma solcore noPattersonCondition;\nimport {value} from lib;\n\nfunction main() { value; }\n"
         );
     }
 
@@ -831,7 +710,7 @@ mod tests {
 
         assert_eq!(
             apply(source, &edit),
-            "// Copyright\n/* License */\nimport lib.{value};\n\nfunction main() { value; }\n"
+            "// Copyright\n/* License */\nimport {value} from lib;\n\nfunction main() { value; }\n"
         );
     }
 
@@ -842,23 +721,26 @@ mod tests {
 
         assert_eq!(
             apply(source, &edit),
-            "/* outer /* inner */ still outer */\nimport lib.{value};\n\nfunction main() { value; }\n"
+            "/* outer /* inner */ still outer */\nimport {value} from lib;\n\nfunction main() { value; }\n"
         );
     }
 
     #[test]
     fn empty_source_gets_a_top_level_import() {
         let edit = plan("", "lib.math", "value").expect("edit");
-        assert_eq!(edit, insertion(0, "import lib.math.{value};\n".to_owned()));
+        assert_eq!(
+            edit,
+            insertion(0, "import {value} from lib.math;\n".to_owned())
+        );
     }
 
     #[test]
     fn import_at_eof_stays_on_its_own_line() {
-        let source = "import first.{a}; // first";
+        let source = "import {a} from first; // first";
         let edit = plan(source, "lib", "value").expect("edit");
         assert_eq!(
             apply(source, &edit),
-            "import first.{a}; // first\nimport lib.{value};"
+            "import {a} from first; // first\nimport {value} from lib;"
         );
     }
 
@@ -868,71 +750,72 @@ mod tests {
         let edit = plan(source, "@dep.util", "value").expect("edit");
         assert_eq!(
             apply(source, &edit),
-            "import @dep.util.{value};\nfunction main() { value; }\n"
+            "import {value} from @dep.util;\nfunction main() { value; }\n"
         );
     }
 
     #[test]
-    fn plans_a_plain_module_import() {
-        let source = "function main() { lib.value; }\n";
+    fn plans_a_leaf_named_namespace_import() {
+        let source = "function main() { math.value; }\n";
         let edit = plan_module(source, "lib.math").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import lib.math;\nfunction main() { lib.value; }\n"
+            "import * as math from lib.math;\nfunction main() { math.value; }\n"
         );
     }
 
     #[test]
-    fn identical_plain_module_import_needs_no_edit() {
-        let source = "import lib.math; // already imported\nfunction main() { lib.value; }\n";
+    fn identical_namespace_import_needs_no_edit() {
+        let source = "import * as math from lib.math; // already imported\nfunction main() { math.value; }\n";
         assert_eq!(plan_module(source, "lib.math"), None);
     }
 
     #[test]
-    fn selected_wildcard_and_aliased_imports_do_not_count_as_plain() {
+    fn bare_selective_and_differently_aliased_imports_do_not_count_as_namespace() {
         for existing in [
-            "import lib.math.{value};",
-            "import lib.math.{other} hiding {other};",
-            "import lib.math.{*};",
-            "import lib.math as Math;",
+            "import {value} from lib.math;",
+            "import lib.math;",
+            "import * as Math from lib.math;",
         ] {
-            let source = format!("{existing}\nfunction main() {{ lib.value; }}\n");
+            let source = format!("{existing}\nfunction main() {{ math.value; }}\n");
             let edit =
                 plan_module(&source, "lib.math").unwrap_or_else(|| panic!("edit for {existing}"));
             assert_eq!(
                 apply(&source, &edit),
-                format!("{existing}\nimport lib.math;\nfunction main() {{ lib.value; }}\n")
+                format!(
+                    "{existing}\nimport * as math from lib.math;\nfunction main() {{ math.value; }}\n"
+                )
             );
         }
     }
 
     #[test]
-    fn plain_module_import_preserves_crlf_after_nested_trailing_comment() {
-        let source = "import first; /* outer\r\n  /* inner */\r\n  still outer */\r\n\r\nfunction main() { lib.value; }\r\n";
+    fn namespace_import_preserves_crlf_after_nested_trailing_comment() {
+        let source = "import * as first from first; /* outer\r\n  /* inner */\r\n  still outer */\r\n\r\nfunction main() { math.value; }\r\n";
         let edit = plan_module(source, "lib.math").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "import first; /* outer\r\n  /* inner */\r\n  still outer */\r\nimport lib.math;\r\n\r\nfunction main() { lib.value; }\r\n"
+            "import * as first from first; /* outer\r\n  /* inner */\r\n  still outer */\r\nimport * as math from lib.math;\r\n\r\nfunction main() { math.value; }\r\n"
         );
     }
 
     #[test]
-    fn plain_module_import_follows_nested_header_comments() {
+    fn namespace_import_follows_nested_header_comments() {
         let source =
-            "/* license /* generated detail */ remains */\n\nfunction main() { lib.value; }\n";
+            "/* license /* generated detail */ remains */\n\nfunction main() { math.value; }\n";
         let edit = plan_module(source, "@dep.math").expect("edit");
 
         assert_eq!(
             apply(source, &edit),
-            "/* license /* generated detail */ remains */\nimport @dep.math;\n\nfunction main() { lib.value; }\n"
+            "/* license /* generated detail */ remains */\nimport * as math from @dep.math;\n\nfunction main() { math.value; }\n"
         );
     }
 
     #[test]
-    fn plain_module_import_rejects_invalid_paths_and_stale_metadata() {
-        let source = "function main() { lib.value; }\n";
+    fn namespace_import_rejects_invalid_paths_and_stale_metadata() {
+        let source = "function main() { math.value; }\n";
         assert_eq!(plan_module(source, "lib; export secret"), None);
         assert_eq!(plan_module(source, ""), None);
 
@@ -952,7 +835,7 @@ mod tests {
 
     #[test]
     fn rejects_malformed_source_and_invalid_generated_syntax() {
-        assert_eq!(plan("import lib.{", "lib", "value"), None);
+        assert_eq!(plan("import {value", "lib", "value"), None);
         assert_eq!(
             plan("function main() {}\n", "lib; export secret", "value"),
             None

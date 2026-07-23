@@ -270,7 +270,7 @@ fn generated_dispatch_is_synthesized_before_import_resolution() {
         &db,
         r#"
 contract Answer {
-  public function add(x: word) -> word { return x; }
+  function add(x: word) public returns (word) { return x; }
 }
 "#,
     );
@@ -289,7 +289,7 @@ contract Answer {
         &manual_db,
         r#"
 contract Answer {
-  function main() -> () { return (); }
+  function main() returns () { return (); }
 }
 "#,
     );
@@ -303,7 +303,7 @@ contract Answer {
     let parameterized_main = diagnostics(
         r#"
 contract Answer {
-  public function main(x: word) -> word { return x; }
+  function main(x: word) public returns (word) { return x; }
 }
 "#,
     );
@@ -319,11 +319,11 @@ contract Answer {
 fn prepared_dispatch_uses_its_synthetic_sigstring_instance_during_typeck() {
     let (mut db, key) = db_with_main(
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract Answer {
-  public function ping(x: word) -> word { return x; }
+  function ping(x: word) public returns (word) { return x; }
 }
 "#,
     );
@@ -336,8 +336,8 @@ contract Answer {
         "/std/std.solc",
         r#"
 export { Proxy(*), string };
-data Proxy(t) = Proxy;
-data string;
+enum Proxy<t> { Proxy }
+enum string {}
 "#,
     );
     insert_module_source(
@@ -348,7 +348,7 @@ data string;
         },
         "/std/dispatch.solc",
         r#"
-import std.{*};
+import std;
 
 export {
   Contract(*),
@@ -361,31 +361,27 @@ export {
   fallback_default_implementation
 };
 
-data Contract(methods, fb) = Contract(methods, fb);
-data Method(name, payability, args, rets, fn) =
-  Method(Proxy(name), Proxy(payability), Proxy(args), Proxy(rets), fn);
-data Fallback(payability, args, rets, fn) =
-  Fallback(Proxy(payability), Proxy(args), Proxy(rets), fn);
-data Payable;
-data NonPayable;
+enum Contract<methods, fb> { Contract(methods, fb) }
+enum Method<name, payability, args, rets, fn> { Method(Proxy<name>, Proxy<payability>, Proxy<args>, Proxy<rets>, fn) }
+enum Fallback<payability, args, rets, fn> { Fallback(Proxy<payability>, Proxy<args>, Proxy<rets>, fn) }
+enum Payable {}
+enum NonPayable {}
 
-forall t . class t:SigString {
-  function sigStr(value: Proxy(t)) -> string;
+trait SigString<t> {
+  function sigStr(value: Proxy<t>) returns (string) ;
 }
 
-forall c . class c:RunContract {
-  function exec(value: c) -> ();
+trait RunContract<c> {
+  function exec(value: c) returns () ;
 }
 
-forall name payability args rets fn fb
-  . name:SigString
-=> instance Contract(Method(name, payability, args, rets, fn), fb):RunContract {
-  function exec(value: Contract(Method(name, payability, args, rets, fn), fb)) -> () {
+impl<name, payability, args, rets, fn, fb> RunContract<Contract<Method<name, payability, args, rets, fn>, fb>> where name: SigString {
+  function exec(value: Contract<Method<name, payability, args, rets, fn>, fb>) returns () {
     return ();
   }
 }
 
-function fallback_default_implementation() -> () { return (); }
+function fallback_default_implementation() returns () { return (); }
 "#,
     );
 
@@ -410,7 +406,7 @@ function fallback_default_implementation() -> () { return (); }
     let diagnostics = diagnostics_for_module(&db, &key);
     assert!(
         diagnostics.is_empty(),
-        "the local generated SigString instance must be in the prepared trait environment: {diagnostics:?}"
+        "the local generated SigString impl must be in the prepared trait environment: {diagnostics:?}"
     );
 }
 
@@ -421,15 +417,15 @@ fn dispatch_surface_tracks_public_private_constructor_and_fallback() {
         &db,
         r#"
 contract Token {
-  payable constructor(amount: word) {}
+  constructor(amount: word) payable {}
 
-  function hidden(x: word) -> word { return x; }
+  function hidden(x: word) returns (word) { return x; }
 
-  public payable function pay(to: word) -> (word, bool) {
+  function pay(to: word) public payable returns (word, bool) {
     return (to, true);
   }
 
-  payable fallback() -> () {}
+  fallback() payable returns () {}
 }
 "#,
     );
@@ -466,8 +462,8 @@ fn abi_json_matches_reference_public_function_shape() {
         &db,
         r#"
 contract Sample {
-  public function get() -> word { return 1; }
-  function secret() -> word { return 0; }
+  function get() public returns (word) { return 1; }
+  function secret() returns (word) { return 0; }
 }
 "#,
     );
@@ -503,7 +499,7 @@ fn abi_json_matches_reference_constructor_payable_and_tuple_outputs() {
 contract Token {
   constructor(amount: word) {}
 
-  public payable function pay(to: word) -> (word, bool) {
+  function pay(to: word) public payable returns (word, bool) {
     return (to, true);
   }
 }
@@ -525,10 +521,10 @@ fn abi_json_preserves_source_declaration_order() {
         &db,
         r#"
 contract Order {
-  public function a() -> word { return 1; }
+  function a() public returns (word) { return 1; }
   constructor(seed: word) {}
-  payable fallback() -> () {}
-  public function b(x: word) -> word { return x; }
+  fallback() payable returns () {}
+  function b(x: word) public returns (word) { return x; }
 }
 "#,
     );
@@ -553,12 +549,12 @@ fn constructor_and_fallback_abi_lowering_normalizes_aliases() {
     let module = parse_module(
         &db,
         r#"
-type U = word;
-type UnitAlias = ();
+alias U = word;
+alias UnitAlias = ();
 
 contract AliasDispatch {
   constructor(seed: U) {}
-  fallback() -> UnitAlias {}
+  fallback() returns (UnitAlias) {}
 }
 "#,
     );
@@ -587,20 +583,12 @@ contract AliasDispatch {
 fn dispatch_signature_spelling_matches_reference_sigstring_shape() {
     let (mut db, key) = db_with_main(
         r#"
-import std.{*};
+import std;
 
-type U = word;
+alias U = word;
 
 contract Signatures {
-  public function spell(
-    a: word,
-    b: (word, bool),
-    c: memory(string),
-    d: memory(bytes),
-    e: bytes32,
-    f: address,
-    g: U
-  ) -> word {
+  function spell(a: word, b: (word, bool), c: string memory, d: bytes memory, e: bytes32, f: address, g: U) public returns (word) {
     return a;
   }
 }
@@ -615,11 +603,11 @@ contract Signatures {
         "/std/std.solc",
         r#"
 export { string, address(*), bytes, bytes32(*), memory(*) };
-data string;
-data address = address(word);
-data bytes;
-data bytes32 = bytes32(word);
-data memory(t) = memory(word);
+enum string {}
+enum address { address(word) }
+enum bytes {}
+enum bytes32 { bytes32(word) }
+enum memory<t> { memory(word) }
 "#,
     );
     let file = db.module_files[&key];
@@ -639,10 +627,10 @@ fn single_constructor_adt_is_rejected_from_the_canonical_abi() {
     let module = parse_module(
         &db,
         r#"
-data Point(a) = Point(a, bool);
+enum Point<a> { Point(a, bool) }
 
 contract Shapes {
-  public function roundtrip(p: Point(word)) -> Point(word) { return p; }
+  function roundtrip(p: Point<word>) public returns (Point<word>) { return p; }
 }
 "#,
     );
@@ -672,10 +660,10 @@ fn tuple_typed_constructor_field_does_not_make_a_user_adt_abi_safe() {
     let module = parse_module(
         &db,
         r#"
-data Wrap = Wrap((word, bool));
+enum Wrap { Wrap((word, bool)) }
 
 contract Shapes {
-  public function roundtrip(value: Wrap) -> Wrap { return value; }
+  function roundtrip(value: Wrap) public returns (Wrap) { return value; }
 }
 "#,
     );
@@ -702,11 +690,11 @@ fn user_defined_location_name_does_not_make_an_adt_abi_safe() {
     let module = parse_module(
         &db,
         r#"
-data memory(a) = memory(word);
-data Wrap = Wrap(memory((word, bool)));
+enum memory<a> { memory(word) }
+enum Wrap { Wrap((word, bool) memory) }
 
 contract Shapes {
-  public function roundtrip(value: Wrap) -> Wrap { return value; }
+  function roundtrip(value: Wrap) public returns (Wrap) { return value; }
 }
 "#,
     );
@@ -733,10 +721,10 @@ fn multi_constructor_adt_is_rejected_from_the_canonical_abi() {
     let module = parse_module(
         &db,
         r#"
-data Choice = Left(word) | Right(bool);
+enum Choice { Left(word), Right(bool) }
 
 contract Shapes {
-  public function choose(x: Choice) -> word { return 0; }
+  function choose(x: Choice) public returns (word) { return 0; }
 }
 "#,
     );
@@ -761,17 +749,17 @@ contract Shapes {
 fn visible_orphan_generic_instance_is_rejected_from_constructor_abi() {
     let (mut db, key) = db_with_main(
         r#"
-import std.{*};
-import std.dispatch.{*};
-import model.{*};
+import std;
+import std.dispatch;
+import model;
 
-pragma no-generic-instance-for Payload;
+pragma solcore noGenericInstanceFor Payload;
 
-instance Payload:Generic(word) {}
+impl Generic<Payload, word> {}
 
 contract C {
-  constructor(payload:Payload) {}
-  public function roundtrip(payload:Payload) -> Payload { return payload; }
+  constructor(payload: Payload) {}
+  function roundtrip(payload: Payload) public returns (Payload) { return payload; }
 }
 "#,
     );
@@ -783,12 +771,12 @@ contract C {
         },
         "/std/std.solc",
         r#"
-pragma no-patterson-condition;
-pragma no-bounded-variable-condition;
+pragma solcore noPattersonCondition;
+pragma solcore noBoundVariableCondition;
 export { Generic };
-forall a rep. class a:Generic(rep) {
-  function from(x:a) -> rep;
-  function to(x:rep) -> a;
+trait Generic<a, rep> {
+  function from(x: a) returns (rep) ;
+  function to(x: rep) returns (a) ;
 }
 "#,
     );
@@ -809,9 +797,9 @@ forall a rep. class a:Generic(rep) {
         },
         "/main/model.solc",
         r#"
-import std.{*};
+import std;
 export { Payload(*) };
-        data Payload = Payload(word, bool);
+        enum Payload { Payload(word, bool) }
 "#,
     );
 
@@ -837,10 +825,10 @@ export { Payload(*) };
 fn unsupported_std_leaf_is_not_reinterpreted_as_a_structural_user_adt() {
     let (mut db, key) = db_with_main(
         r#"
-import std.{*};
+import std;
 
 contract C {
-  public function echo(value:bytes4) -> word { return 0; }
+  function echo(value: bytes4) public returns (word) { return 0; }
 }
 "#,
     );
@@ -868,10 +856,10 @@ fn abi_like_user_type_names_are_not_treated_as_canonical_types() {
     let module = parse_module(
         &db,
         r#"
-data bytes16 = bytes16(word);
+enum bytes16 { bytes16(word) }
 
 contract C {
-  public function echo(value:bytes16) -> bytes16 { return value; }
+  function echo(value: bytes16) public returns (bytes16) { return value; }
 }
 "#,
     );
@@ -897,10 +885,10 @@ fn parameterized_abi_type_fails_loudly_and_duplicate_signatures_are_diagnosed() 
     let module = parse_module(
         &db,
         r#"
-data Mapping(a, b) = Mapping;
+enum Mapping<a, b> { Mapping }
 
 contract Store {
-  public function put(m: Mapping(word, word)) -> word { return 0; }
+  function put(m: Mapping<word, word>) public returns (word) { return 0; }
 }
 "#,
     );
@@ -922,10 +910,10 @@ contract Store {
     assert!(
         diagnostics(
             r#"
-data Mapping(a, b) = Mapping;
+enum Mapping<a, b> { Mapping }
 
 contract Store {
-  public function put(m: Mapping(word, word)) -> word { return 0; }
+  function put(m: Mapping<word, word>) public returns (word) { return 0; }
 }
 "#
         )
@@ -937,8 +925,8 @@ contract Store {
         &db,
         r#"
 contract Dup {
-  public function f(x: word) -> word { return x; }
-  public function f(x: word) -> word { return x; }
+  function f(x: word) public returns (word) { return x; }
+  function f(x: word) public returns (word) { return x; }
 }
 "#,
     );
@@ -963,9 +951,9 @@ contract Dup {
 fn different_signatures_with_the_same_selector_are_diagnosed() {
     let src = r#"
 contract Collision {
-  public function collision_8764(x: word) -> () { return (); }
-  public function collision_99992(x: word) -> () { return (); }
-  function main() -> () { return (); }
+  function collision_8764(x: word) public returns () { return (); }
+  function collision_99992(x: word) public returns () { return (); }
+  function main() returns () { return (); }
 }
 "#;
     let db = TestDb::default();
@@ -1013,8 +1001,8 @@ fn frontend_desugar_plan_records_if_bool_and_storage_field_hooks() {
 contract C {
   flag: word;
 
-  public function f() -> word {
-    if true {
+  function f() public returns (word) {
+    if (true) {
       flag = 1;
     } else {
       return flag;
@@ -1063,24 +1051,19 @@ fn pre_typeck_desugar_plan_records_tuple_product_shapes_and_origins() {
         &db,
         r#"
 contract C {
-  seed: (word, bool) = if (true) then (1, true) else (2, false);
+  seed: (word, bool) =((true) ?(1, true) :(2, false));
 
-  public function f(x : word, y : bool, z : word) -> (word, bool, word) {
-    let t : (word, bool, word) = (x, y, z);
-    let b : bool = true;
-    match b {
-    | true => return (x, y, z);
-    | false => return (z, y, x);
-    }
-    let w : word = if (y) then x else z;
+  function f(x: word, y: bool, z: word) public returns (word, bool, word) {
+    let t: (word, bool, word) = (x, y, z);
+    let b: bool = true;
+    match (b) { case true { return (x, y, z); } case false { return (z, y, x); } }
+    let w: word = ((y) ? x : z);
     if (y) {
       return (w, y, z);
     } else {
       return (z, y, w);
     }
-    match t {
-    | (a, b, c) => return (a, b, c);
-    }
+    match (t) { case (a, b, c) { return (a, b, c); } }
   }
 }
 "#,
@@ -1244,7 +1227,7 @@ contract C {
 fn typeck_lowers_tuple_return_type_to_right_nested_product() {
     let (db, key) = db_with_main(
         r#"
-function triple(x : word, y : bool, z : word) -> (word, bool, word) {
+function triple(x: word, y: bool, z: word) returns (word, bool, word) {
   return (x, y, z);
 }
 "#,
@@ -1289,8 +1272,7 @@ fn frontend_desugar_plan_records_indirect_call_shape_and_evidence() {
     let module = parse_module(
         &db,
         r#"
-forall c . c : invokable(pair(word, word), word) =>
-function apply2(f : c, a : word, b : word) -> word {
+function apply2<c>(f: c, a: word, b: word) returns (word) where c: invokable<pair<word, word>, word> {
   return f(a, b);
 }
 "#,
@@ -1391,7 +1373,7 @@ fn frontend_desugar_plan_records_captured_zero_arg_closure_call() {
     let module = parse_module(
         &db,
         r#"
-function inc(x : word) -> word {
+function inc(x: word) returns (word) {
   let f = lam () { return x; };
   return f();
 }
@@ -1424,7 +1406,7 @@ fn derived_generic_plan_uses_right_nested_product_rep_for_tree() {
     let module = parse_module(
         &db,
         r#"
-data Tree(a) = Leaf | Node(Tree(a), a, Tree(a));
+enum Tree<a> { Leaf, Node(Tree<a>, a, Tree<a>) }
 "#,
     );
     let tree = adt_named(&db, module, "Tree");
@@ -1455,17 +1437,17 @@ fn derived_generic_instance_plan_respects_excluded_and_manual_instances() {
     let module = parse_module(
         &db,
         r#"
-pragma no-patterson-condition;
-pragma no-bounded-variable-condition;
-pragma no-generic-instance-for Excluded;
+pragma solcore noPattersonCondition;
+pragma solcore noBoundVariableCondition;
+pragma solcore noGenericInstanceFor Excluded;
 
-forall a rep . class a:Generic(rep) {}
+trait Generic<a, rep> {}
 
-data Eligible = Eligible(word);
-data Excluded = Excluded(word);
-data Manual = Manual(word);
+enum Eligible { Eligible(word) }
+enum Excluded { Excluded(word) }
+enum Manual { Manual(word) }
 
-instance Manual:Generic(word) {}
+impl Generic<Manual, word> {}
 "#,
     );
     let generic = module
@@ -1475,7 +1457,7 @@ instance Manual:Generic(word) {}
             Item::ClassDef(class) => Some(class.def_id_value(&db)),
             _ => None,
         })
-        .expect("Generic class");
+        .expect("Generic trait");
 
     assert!(
         derived_generic_instance_plan(&db, module, adt_named(&db, module, "Eligible"), generic)

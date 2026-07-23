@@ -180,7 +180,7 @@ fn contract_without_runtime_main_defers_dispatch_to_specialization() {
         "dispatch_word",
         r#"
 contract C {
-  function main() -> () {}
+  function main() returns () {}
 }
 "#,
     );
@@ -303,7 +303,7 @@ fn importless_nullary_constructor_uses_overlay_deployment_entry() {
 contract C {
   constructor() {}
 
-  function main() -> () {
+  function main() returns () {
     return ();
   }
 }
@@ -329,15 +329,15 @@ fn std_constructor_overlay_decodes_appended_arguments_in_deployment_closure() {
     let (db, output) = specialize_src_with_std(
         "std_ctor_overlay_args",
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract C {
-  constructor(config : uint256) {
+  constructor(config: uint256) {
     let saved_config = config;
   }
 
-  public function echo(config : uint256) -> uint256 { return config; }
+  function echo(config: uint256) public returns (uint256) { return config; }
 }
 "#,
     );
@@ -380,11 +380,11 @@ fn std_dispatch_address_decode_rejects_dirty_high_bits() {
     let (db, output) = specialize_src_with_std(
         "std_address_dispatch",
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract C {
-  public function id_address(a : address) -> address { return a; }
+  function id_address(a: address) public returns (address) { return a; }
 }
 "#,
     );
@@ -408,12 +408,12 @@ fn std_dispatch_explicit_fallback_stops_after_execution() {
     let (db, output) = specialize_src_with_std(
         "std_fallback_dispatch",
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract C {
-  public function answer() -> uint256 { return uint256(42); }
-  fallback() -> () {}
+  function answer() public returns (uint256) { return 42 as uint256; }
+  fallback() external {}
 }
 "#,
     );
@@ -453,6 +453,57 @@ fn for_loop_emits_hull_for_and_loop_control() {
             matches!(diagnostic.kind, CheckDiagnosticKind::ExpectedBool { .. })
         }),
         "{checked:?}"
+    );
+}
+
+#[test]
+fn logical_operators_emit_short_circuit_conditionals() {
+    let (db, output) = specialize_src(
+        "logical_short_circuit",
+        r#"
+function rhs(value: bool) returns (bool) {
+  return value;
+}
+
+function main(lhs: bool, rhsValue: bool) returns (bool) {
+  return (lhs && rhs(rhsValue)) || rhs(rhsValue);
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+
+    let hull = pretty_program(db, &emitted.program);
+    assert!(
+        hull.matches("if<").count() >= 2,
+        "logical operators must lower to conditional Hull:\n{hull}"
+    );
+    assert!(
+        !hull.contains("and(lhs,") && !hull.contains("or(lhs,"),
+        "logical operators must not become eager calls:\n{hull}"
+    );
+}
+
+#[test]
+fn exponentiation_resolves_through_the_pow_trait() {
+    let hull = pretty_src_hull_with_std(
+        "pow_operator",
+        r#"
+import std;
+
+contract C {
+  function main() public returns (word) {
+    return 2 ** 3;
+  }
+}
+"#,
+    );
+    assert!(
+        hull.contains("8") || hull.contains("exp("),
+        "exponentiation did not reach the Pow implementation:\n{hull}"
     );
 }
 
@@ -508,21 +559,14 @@ fn decision_tree_shape_preserves_specific_constructors_before_wildcard_defaults(
         "dwarves_runtime_shape",
         r#"
 contract Dwarves {
-  data Dwarf = Doc | Grumpy | Sleepy | Bashful | Happy | Sneezy | Dopey;
+  enum Dwarf { Doc, Grumpy, Sleepy, Bashful, Happy, Sneezy, Dopey }
 
-  public function fromEnum(c : Dwarf) -> word {
+  function fromEnum(c: Dwarf) public returns (word) {
     assembly { mstore(0, 0) }
-    match c {
-      | Dwarf.Doc => return 1;
-      | Dwarf.Grumpy => return 2;
-      | Dwarf.Sleepy => return 3;
-      | Dwarf.Bashful => return 4;
-      | Dwarf.Happy => return 5;
-      | _ => return 0;
-    }
+    match (c) { case Dwarf.Doc { return 1; } case Dwarf.Grumpy { return 2; } case Dwarf.Sleepy { return 3; } case Dwarf.Bashful { return 4; } case Dwarf.Happy { return 5; } default { return 0; } }
   }
 
-  function main() -> word { return fromEnum(Dwarf.Happy); }
+  function main() returns (word) { return fromEnum(Dwarf.Happy); }
 }
 "#,
     );
@@ -554,20 +598,16 @@ contract Dwarves {
     let food0_shape = pretty_src_hull(
         "food0_runtime_shape",
         r#"
-data Food = Curry | Beans | Other;
-data CFood = Red(Food) | Green(Food) | Nocolor;
+enum Food { Curry, Beans, Other }
+enum CFood { Red(Food), Green(Food), Nocolor }
 
-function fromEnum(x : CFood) -> word {
+function fromEnum(x: CFood) returns (word) {
   assembly { mstore(0, 0) }
-  match x {
-    | CFood.Red(Food.Curry) => return 1;
-    | CFood.Green(Food.Beans) => return 42;
-    | _ => return 3;
-  }
+  match (x) { case CFood.Red(Food.Curry) { return 1; } case CFood.Green(Food.Beans) { return 42; } default { return 3; } }
 }
 
 contract FoodContract {
-  function main() -> word { return fromEnum(CFood.Green(Food.Beans)); }
+  function main() returns (word) { return fromEnum(CFood.Green(Food.Beans)); }
 }
 "#,
     );
@@ -593,18 +633,15 @@ contract FoodContract {
     let wildcard_after_ctor = pretty_src_hull(
         "wildcard_after_ctor",
         r#"
-data Tiny = A | B | C;
+enum Tiny { A, B, C }
 
 contract C {
-  public function pick(t : Tiny) -> word {
+  function pick(t: Tiny) public returns (word) {
     assembly { mstore(0, 0) }
-    match t {
-      | Tiny.B => return 2;
-      | _ => return 9;
-    }
+    match (t) { case Tiny.B { return 2; } default { return 9; } }
   }
 
-  function main() -> word { return pick(Tiny.B); }
+  function main() returns (word) { return pick(Tiny.B); }
 }
 "#,
     );
@@ -644,11 +681,8 @@ fn unsupported_match_rows_produce_an_explicit_emit_diagnostic() {
     let (db, output) = specialize_src(
         "string_literal_match",
         r#"
-function main(s : string) -> word {
-  match s {
-    | "a" => return 1;
-    | _ => return 2;
-  }
+function main(s: string) returns (word) {
+  match (s) { case "a" { return 1; } default { return 2; } }
 }
 "#,
     );
@@ -677,28 +711,28 @@ fn out_of_range_word_literals_wrap_in_hull_exprs_and_patterns() {
         "word_literal_wrap",
         &format!(
             r#"
-import std.{{*}};
-import std.dispatch.{{*}};
+import std;
+import std.dispatch;
 
 contract C {{
-  function exact() -> word {{
+  function exact() returns (word) {{
     return {TWO_256};
   }}
 
-  function plus() -> word {{
+  function plus() returns (word) {{
     return {TWO_256_PLUS_ONE};
   }}
 
-  function pick(x : word) -> word {{
-    match x {{
-      | {TWO_256} => return 10;
-      | {TWO_256_PLUS_ONE} => return 11;
-      | _ => return 12;
+  function pick(x: word) returns (word) {{
+    match (x) {{
+      case {TWO_256} {{ return 10; }}
+      case {TWO_256_PLUS_ONE} {{ return 11; }}
+      default {{ return 12; }}
     }}
   }}
 
-  public function main() -> word {{
-    let x : word = 0;
+  function main() public returns (word) {{
+    let x: word = 0;
     assembly {{ x := calldataload(0) }}
     return exact() + plus() + pick(x);
   }}
@@ -736,16 +770,12 @@ fn value_equal_word_patterns_share_one_canonical_switch_branch() {
         "equal_literal_spellings",
         r#"
 contract C {
-  function pick(x : word) -> word {
-    match x {
-      | 0x2a => return 111;
-      | 0042 => return 222;
-      | _ => return 333;
-    }
+  function pick(x: word) returns (word) {
+    match (x) { case 0x2a { return 111; } case 0042 { return 222; } default { return 333; } }
   }
 
-  function main() -> word {
-    let x : word = 0;
+  function main() returns (word) {
+    let x: word = 0;
     assembly { x := calldataload(0) }
     return pick(x);
   }
@@ -771,24 +801,21 @@ fn evaluator_does_not_fold_past_unknown_return() {
     let hull = pretty_src_hull_with_std(
         "eval_return_unknown_abort",
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract RetUnknown {
-  function pick(flag: bool, y: word) -> word {
-    match flag {
-      | true => return y;
-      | false => return 5;
-    }
+  function pick(flag: bool, y: word) returns (word) {
+    match (flag) { case true { return y; } case false { return 5; } }
     return 0;
   }
 
-  function get(x: word) -> word {
+  function get(x: word) returns (word) {
     return pick(true, x);
   }
 
-  public function main() -> word {
-    let x : word = 0;
+  function main() public returns (word) {
+    let x: word = 0;
     assembly { x := calldataload(0) }
     return get(x);
   }
@@ -806,18 +833,18 @@ fn evaluator_does_not_inline_storage_writing_helpers() {
     let mapping_hull = pretty_src_hull_with_std(
         "eval_storage_writer_mapping",
         r#"
-import std.{*};
+import std;
 
 contract MappingWriter {
-  m: mapping(word, word);
+  m: mapping(word => word);
 
-  function set(k: word, v: word) -> word {
+  function set(k: word, v: word) returns (word) {
     m[k] = v;
     return v;
   }
 
-  public function main() -> word {
-    let a : word = set(1, 42);
+  function main() public returns (word) {
+    let a: word = set(1, 42);
     return m[1];
   }
 }
@@ -837,18 +864,18 @@ contract MappingWriter {
     let direct_hull = pretty_src_hull_with_std(
         "eval_storage_writer_direct",
         r#"
-import std.{*};
+import std;
 
 contract DirectWriter {
   x: word;
 
-  function setv(v: word) -> word {
+  function setv(v: word) returns (word) {
     x = v;
     return v;
   }
 
-  public function main() -> word {
-    let a : word = setv(9);
+  function main() public returns (word) {
+    let a: word = setv(9);
     return x;
   }
 }
@@ -875,13 +902,13 @@ fn storage_index_assignment_materializes_slot_before_rhs() {
     let hull = pretty_src_hull_with_std(
         "storage_index_order",
         r#"
-import std.{*};
+import std;
 
 contract StorageIndexOrder {
   counter: word;
-  m: mapping(word, word);
+  m: mapping(word => word);
 
-  function next() -> word {
+  function next() returns (word) {
     let cur: word = counter;
     let res: word;
     assembly {
@@ -891,7 +918,7 @@ contract StorageIndexOrder {
     return res;
   }
 
-  public function main() -> word {
+  function main() public returns (word) {
     counter = 0;
     m[next()] = next();
     return m[1];
@@ -913,13 +940,13 @@ contract StorageIndexOrder {
     let compound_hull = pretty_src_hull_with_std(
         "storage_index_compound",
         r#"
-import std.{*};
+import std;
 
 contract StorageIndexCompound {
   counter: word;
-  m: mapping(word, word);
+  m: mapping(word => word);
 
-  function next() -> word {
+  function next() returns (word) {
     let cur: word = counter;
     let res: word;
     assembly {
@@ -929,7 +956,7 @@ contract StorageIndexCompound {
     return res;
   }
 
-  public function main() -> word {
+  function main() public returns (word) {
     counter = 0;
     m[1] = 10;
     m[next()] += next();
@@ -966,11 +993,11 @@ fn evaluator_invalidates_storage_bindings_after_residual_calls() {
 contract StaleCall {
   x: word;
 
-  function setx() -> () {
+  function setx() returns () {
     x = 8;
   }
 
-  public function main() -> word {
+  function main() public returns (word) {
     x = 7;
     setx();
     return x;
@@ -992,23 +1019,23 @@ fn audit_p0_match_scrutinees_are_materialized_exactly_once_even_for_default_bind
     for (name, arms) in [
         (
             "match_call_default_binding",
-            "| 0 => return 0; | n => return n;",
+            "case 0 { return 0; } case n { return n; }",
         ),
-        ("match_call_wildcard", "| _ => return 7;"),
+        ("match_call_wildcard", "default { return 7; }"),
     ] {
         let hull = pretty_src_hull(
             name,
             &format!(
                 r#"
-function read(x: word) -> word {{
+function read(x: word) returns (word) {{
   let value: word;
   assembly {{ value := sload(x) }}
   return value;
 }}
 
 contract C {{
-  public function main() -> word {{
-    match read(0) {{ {arms} }}
+  function main() public returns (word) {{
+    match (read(0)) {{ {arms} }}
   }}
 }}
 "#
@@ -1028,7 +1055,7 @@ fn audit_p0_shadowing_let_materializes_its_initializer_before_declaration() {
 contract C {
   balance: word;
 
-  public function main() -> word {
+  function main() public returns (word) {
     let balance: word = balance;
     return balance;
   }
@@ -1057,7 +1084,7 @@ fn audit_p0_for_initializer_let_remains_visible_after_the_loop() {
 contract C {
   i: word;
 
-  public function main() -> word {
+  function main() public returns (word) {
     for (let i: word; false; ) {}
     return i;
   }
@@ -1074,19 +1101,19 @@ fn audit_p0_if_branch_let_is_hoisted_and_remains_a_local() {
     let hull = pretty_src_hull_with_std(
         "if_branch_let_scope",
         r#"
-import std.{*};
+import std;
 
 contract C {
   x: word;
 
-  function f(flag: bool) -> word {
+  function f(flag: bool) returns (word) {
     if (flag && true) {
       let x: word = 7;
     }
     return x;
   }
 
-  public function main() -> word { return f(tobool(x)); }
+  function main() public returns (word) { return f(tobool(x)); }
 }
 "#,
     );
@@ -1104,17 +1131,9 @@ contract C {
     );
     assert!(!main.contains("return sload(0)"), "{main}\n{hull}");
 
-    let and = hull_function(&hull, "std_and_");
-    assert_contains_in_order(
-        "match binder shadowing",
-        and,
-        &[
-            "let $match_bind",
-            "$match_bind",
-            ":= y",
-            "let y",
-            "y := $match_bind",
-        ],
+    assert!(
+        !hull.contains("std_and_"),
+        "logical conjunction must not lower to an eager std function:\n{hull}"
     );
 }
 
@@ -1123,22 +1142,22 @@ fn evaluator_invalidates_residual_assembly_branch_assignments() {
     let if_hull = pretty_src_hull_with_std(
         "eval_if_asm_assignment",
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract IfAsm {
-  function f(b: bool) -> word {
-    let x : word = 1;
+  function f(b: bool) returns (word) {
+    let x: word = 1;
     if (b) {
       assembly { x := 5 }
     }
     return x;
   }
 
-  public function main() -> word {
-    let raw : word = 0;
+  function main() public returns (word) {
+    let raw: word = 0;
     assembly { raw := calldataload(0) }
-    let b : bool = tobool(raw);
+    let b: bool = tobool(raw);
     return f(b);
   }
 
@@ -1153,23 +1172,20 @@ contract IfAsm {
     let match_hull = pretty_src_hull_with_std(
         "eval_match_asm_assignment",
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract MatchAsm {
-  function g(b: bool) -> word {
-    let x : word = 1;
-    match b {
-      | true => assembly { x := 5 }
-      | false => {}
-    }
+  function g(b: bool) returns (word) {
+    let x: word = 1;
+    match (b) { case true { assembly { x := 5 } } case false {} }
     return x;
   }
 
-  public function main() -> word {
-    let raw : word = 0;
+  function main() public returns (word) {
+    let raw: word = 0;
     assembly { raw := calldataload(0) }
-    let b : bool = tobool(raw);
+    let b: bool = tobool(raw);
     return g(b);
   }
 
@@ -1228,28 +1244,28 @@ fn check_fixture_kinds(fixture: &str) -> Vec<CheckDiagnosticKind> {
 #[test]
 fn mapping_field_in_value_position_lowers_to_unimplemented_trap() {
     // The reference compiles whole-mapping reads/stores via the
-    // `storage(mapping(k, v)) : CanStore` instance, whose load/store are
+    // `mapping(k => v) storage: CanStore` impl, whose load/store are
     // `unimplemented()` runtime traps. This must not escape as an internal
     // hull-check error (previously: UndefinedVariable { name: "bal" }).
     let read_src = r#"
-data mapping(key, value) = mapping(word);
+enum mapping<key, value> { mapping(word) }
 
 contract C {
-  bal : mapping(word, word);
+  bal: mapping(word => word);
 
-  public function main() -> word {
+  function main() public returns (word) {
     let b = bal;
     return 7;
   }
 }
 "#;
     let store_src = r#"
-data mapping(key, value) = mapping(word);
+enum mapping<key, value> { mapping(word) }
 
 contract C {
-  bal : mapping(word, word);
+  bal: mapping(word => word);
 
-  public function main() -> word {
+  function main() public returns (word) {
     bal = bal;
     return 7;
   }
@@ -1469,109 +1485,99 @@ fn overloaded_binary_operators_emit_instance_results() {
         pretty_src_hull_with_std("operator-custom-uint-add", OPERATOR_CUSTOM_UINT_ADD);
     assert!(
         custom_uint.contains("42"),
-        "custom uint Add instance was not reflected in Hull:\n{custom_uint}"
+        "custom uint Add impl was not reflected in Hull:\n{custom_uint}"
     );
 
     let meters = pretty_src_hull_with_std("operator-meters-add", OPERATOR_METERS_ADD);
     assert!(
         meters.contains("3"),
-        "meters Add instance did not emit the expected result:\n{meters}"
+        "meters Add impl did not emit the expected result:\n{meters}"
     );
 
     let meters_ord = pretty_src_hull_with_std("operator-meters-ord", OPERATOR_METERS_ORD);
     assert!(
         meters_ord.contains("42"),
-        "meters Ord instance did not emit the expected result:\n{meters_ord}"
+        "meters Ord impl did not emit the expected result:\n{meters_ord}"
     );
 
     let word = pretty_src_hull_with_std("operator-word-add", OPERATOR_WORD_ADD);
     assert!(
         word.contains("3"),
-        "word Add instance changed observable Hull result:\n{word}"
+        "word Add impl changed observable Hull result:\n{word}"
     );
 }
 
 const OPERATOR_CUSTOM_UINT_ADD: &str = r#"
-import std.{*};
+import std;
 
-data uint = u(word);
+enum uint { u(word) }
 
-instance uint:Add {
-  function add(x:uint, y:uint) -> uint {
+impl Add<uint> {
+  function add(x: uint, y: uint) returns (uint) {
     return uint.u(42);
   }
 }
 
-function unwrap(x:uint) -> word {
-  match x {
-  | uint.u(w) => return w;
-  }
+function unwrap(x: uint) returns (word) {
+  match (x) { case uint.u(w) { return w; } }
 }
 
 contract C {
-  public function main() -> word {
-    let a:uint = uint.u(1);
-    let b:uint = uint.u(2);
-    let c:uint = a + b;
+  function main() public returns (word) {
+    let a: uint = uint.u(1);
+    let b: uint = uint.u(2);
+    let c: uint = a + b;
     return unwrap(c);
   }
 }
 "#;
 
 const OPERATOR_METERS_ADD: &str = r#"
-import std.{*};
+import std;
 
-data meters = meters(word);
+enum meters { meters(word) }
 
-instance meters:Add {
-  function add(x:meters, y:meters) -> meters {
-    match x, y {
-    | meters(xw), meters(yw) => return meters(addWord(xw, yw));
-    }
+impl Add<meters> {
+  function add(x: meters, y: meters) returns (meters) {
+    match (x, y) { case (meters.meters(xw), meters.meters(yw)) { return meters.meters(addWord(xw, yw)); } }
   }
 }
 
-function unwrap(x:meters) -> word {
-  match x {
-  | meters(w) => return w;
-  }
+function unwrap(x: meters) returns (word) {
+  match (x) { case meters.meters(w) { return w; } }
 }
 
 contract C {
-  public function main() -> word {
-    let a:meters = meters(1);
-    let b:meters = meters(2);
-    let c:meters = a + b;
+  function main() public returns (word) {
+    let a: meters = meters.meters(1);
+    let b: meters = meters.meters(2);
+    let c: meters = a + b;
     return unwrap(c);
   }
 }
 "#;
 
 const OPERATOR_METERS_ORD: &str = r#"
-import std.{*};
+import std;
 
-data meters = meters(word);
+enum meters { meters(word) }
 
-instance meters:Eq {
-  function eq(x:meters, y:meters) -> bool {
-    match x, y {
-    | meters(xw), meters(yw) => return eqWord(xw, yw);
-    }
+impl Eq<meters> {
+  function eq(x: meters, y: meters) returns (bool) {
+    match (x, y) { case (meters.meters(xw), meters.meters(yw)) { return eqWord(xw, yw); } }
   }
 }
 
-instance meters:Ord {
-  function gt(x:meters, y:meters) -> bool {
-    match x, y {
-    | meters(xw), meters(yw) => return gtWord(xw, yw);
-    }
+impl Ord<meters> {
+  function gt(x: meters, y: meters) returns (bool) {
+    match (x, y) { case (meters.meters(xw), meters.meters(yw)) { return gtWord(xw, yw); } }
   }
 }
 
 contract C {
-  public function main() -> word {
-    let a:meters = meters(1);
-    let b:meters = meters(2);
+  function main() public returns (word) {
+    let a: meters = meters.meters(1);
+    let b: meters = meters.meters(2);
     if (a < b) {
       return 42;
     } else {
@@ -1582,10 +1588,10 @@ contract C {
 "#;
 
 const OPERATOR_WORD_ADD: &str = r#"
-import std.{*};
+import std;
 
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     return 1 + 2;
   }
 }

@@ -34,6 +34,10 @@ use crate::types::*;
 /// This bounds stack use in lowering and later HIR consumers on every target,
 /// including wasm workers whose stack cannot be enlarged at runtime.
 pub(crate) const MAX_SYNTAX_NESTING: usize = 128;
+// HIR lowering has substantially larger recursion frames than token parsing.
+// Keep enough headroom for native default stacks and wasm's smaller shadow
+// stack, and stop ternary parsing at the same boundary before Chumsky recurses.
+pub(crate) const MAX_EXPRESSION_NESTING: usize = 32;
 
 /// Parses the top-level items currently supported by the front end.
 ///
@@ -220,6 +224,14 @@ fn attach_adt_constructor_comments<'src>(
         let introducer = ctor
             .introducer
             .expect("ADT parser must retain each constructor introducer");
+        if introducer.start >= ctor.span.start {
+            // Solidity-style enum constructors begin directly at their name
+            // (and a struct's implicit constructor spans the outer item), so
+            // there is no separate `=`/`|` introducer before the constructor
+            // span as there was in the Classic surface.
+            ctor.leading_comments = comments_directly_before(source, comments, introducer.start);
+            continue;
+        }
         let trailing_comments =
             comments_directly_after_introducer(source, comments, introducer, ctor.span.start);
         let next_start = trailing_comments
@@ -497,7 +509,7 @@ mod tests {
 
     #[test]
     fn unicode_identifier_parses() {
-        let source = "function fλ(x: word) -> word { return x; }";
+        let source = "function fλ(x: word) returns (word) { return x; }";
         let parsed = parse_supported_items(source);
         assert!(
             parsed.errors.is_empty(),
@@ -512,7 +524,13 @@ mod tests {
 
     #[test]
     fn parenthesized_single_pattern_parses_as_grouping() {
-        let source = "{ match p { | (y) => return y; | ((), (x, z)) => return x; } }";
+        let source = "\
+{
+  match (p) {
+    case (y) { return y; }
+    case ((), (x, z)) { return x; }
+  }
+}";
         let body = parse_body_statements(source, (0..source.len()).into());
         assert!(body.errors.is_empty(), "body errors: {:?}", body.errors);
 
@@ -534,11 +552,13 @@ mod tests {
     #[test]
     fn qualified_constructor_patterns_parse() {
         let source = "\
-{ match mmx {
-| Option.None => return x;
-| Option.Some(Option.None) => return x;
-| y => return y;
-} }";
+{
+  match (mmx) {
+    case Option.None { return x; }
+    case Option.Some(Option.None) { return x; }
+    case y { return y; }
+  }
+}";
         let body = parse_body_statements(source, (0..source.len()).into());
         assert!(body.errors.is_empty(), "body errors: {:?}", body.errors);
 
@@ -580,7 +600,7 @@ mod tests {
 
     #[test]
     fn import_with_alias_parses() {
-        let parsed = parse_supported_items("import math.bits as Bits;");
+        let parsed = parse_supported_items("import * as Bits from math.bits;");
         assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
 
         match parsed.output.as_slice() {
@@ -608,8 +628,28 @@ mod tests {
     }
 
     #[test]
+    fn plain_import_uses_unqualified_public_surface() {
+        let parsed = parse_supported_items("import math.bits;");
+        assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
+
+        let [
+            ParsedTopItem::Import {
+                alias, selector, ..
+            },
+        ] = parsed.output.as_slice()
+        else {
+            panic!("unexpected parse output: {:?}", parsed.output);
+        };
+        assert!(alias.is_none(), "plain import must not bind a namespace");
+        assert!(
+            matches!(selector, Some(ParsedImportSelector::Wildcard)),
+            "plain import must import the public surface"
+        );
+    }
+
+    #[test]
     fn import_with_selected_items_parses() {
-        let parsed = parse_supported_items("import math.words.{addWord, subWord};");
+        let parsed = parse_supported_items("import {addWord, subWord} from math.words;");
         assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
 
         match parsed.output.as_slice() {
@@ -633,7 +673,7 @@ mod tests {
                 let ParsedImportSelector::Names(selected) =
                     selector.as_ref().expect("expected selector")
                 else {
-                    panic!("expected selected names");
+                    panic!("expected selected-name import");
                 };
                 assert_eq!(
                     selected
@@ -648,38 +688,114 @@ mod tests {
     }
 
     #[test]
-    fn import_with_wildcard_and_hiding_parses() {
-        let parsed = parse_supported_items("import glob.{*} hiding {drop};");
-        assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
+    fn legacy_wildcard_and_hiding_import_is_rejected() {
+        let parsed = parse_supported_items(
+            "// migrate-syntax: keep-legacy-negative\nimport glob.{*} hiding {drop};",
+        );
+        assert!(
+            !parsed.errors.is_empty(),
+            "legacy import unexpectedly parsed"
+        );
+    }
 
-        match parsed.output.as_slice() {
-            [
-                ParsedTopItem::Import {
-                    selector, hiding, ..
-                },
-            ] => {
-                assert!(matches!(selector, Some(ParsedImportSelector::Wildcard)));
-                assert_eq!(
-                    hiding
-                        .iter()
-                        .map(|name| name.name.as_str())
-                        .collect::<Vec<_>>(),
-                    vec!["drop"]
-                );
-            }
-            other => panic!("unexpected parse output: {other:?}"),
+    #[test]
+    fn legacy_import_and_export_operator_names_are_rejected() {
+        let parsed = parse_supported_items(
+            "// migrate-syntax: keep-legacy-negative\nimport math.{pow, (^^)};\nexport { f, (^^) };",
+        );
+        assert!(
+            !parsed.errors.is_empty(),
+            "legacy syntax unexpectedly parsed"
+        );
+    }
+
+    #[test]
+    fn legacy_declaration_spellings_are_rejected() {
+        for source in [
+            "// migrate-syntax: keep-legacy-negative\nfunction id<T>(x: T) -> T { return x; }",
+            "// migrate-syntax: keep-legacy-negative\npublic function f() {}",
+            "// migrate-syntax: keep-legacy-negative\nforall T. function id(x: T) returns (T) { return x; }",
+            "// migrate-syntax: keep-legacy-negative\ndata Option(T) = None | Some(T);",
+            "// migrate-syntax: keep-legacy-negative\nforall T. class T: Eq {}",
+            "// migrate-syntax: keep-legacy-negative\ninstance word: Eq {}",
+        ] {
+            let parsed = parse_supported_items(source);
+            assert!(
+                !parsed.errors.is_empty(),
+                "legacy declaration unexpectedly parsed: {source}"
+            );
         }
     }
 
     #[test]
-    fn import_and_export_operator_names_parse() {
-        let parsed = parse_supported_items("import math.{pow, (^^)};\nexport { f, (^^) };");
-        assert!(parsed.errors.is_empty(), "errors: {:?}", parsed.errors);
+    fn top_level_function_attributes_are_accepted() {
+        for attribute in [
+            "public", "external", "internal", "private", "pure", "view", "payable",
+        ] {
+            let source = format!("function f() {attribute} {{}}");
+            let parsed = parse_supported_items(&source);
+            assert!(
+                parsed.errors.is_empty(),
+                "top-level `{attribute}` should use the Solidity-style postfix spelling: {:?}",
+                parsed.errors
+            );
+        }
+    }
 
-        assert!(matches!(
-            parsed.output.as_slice(),
-            [ParsedTopItem::Import { .. }, ParsedTopItem::Export { .. }]
-        ));
+    #[test]
+    fn reserved_entrypoint_and_literal_names_are_rejected_for_functions() {
+        for name in ["fallback", "true", "false"] {
+            let source = format!("function {name}() {{}}");
+            let parsed = parse_supported_items(&source);
+            assert!(
+                parsed
+                    .errors
+                    .iter()
+                    .any(|error| error.message.contains("reserved")),
+                "`{name}` unexpectedly parsed as an ordinary function name: {:?}",
+                parsed.errors
+            );
+        }
+    }
+
+    #[test]
+    fn removed_legacy_keywords_are_available_as_identifiers() {
+        let parsed = parse_supported_items(
+            "function class(data: word) returns (word) { let forall = data; let instance = forall; return instance; }",
+        );
+        assert!(
+            parsed.errors.is_empty(),
+            "removed syntax words should not stay reserved: {:?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
+    fn from_is_contextual_to_imports() {
+        let parsed = parse_supported_items(
+            "function from(x: word) returns (word) { return Generic.from(x); }",
+        );
+        assert!(
+            parsed.errors.is_empty(),
+            "`from` should remain usable as a function or member name: {:?}",
+            parsed.errors
+        );
+    }
+
+    #[test]
+    fn legacy_body_spellings_are_rejected() {
+        for source in [
+            "{ let value = raw : word; }",
+            "{ match value { | _ => return 0; } }",
+            "{ if condition { return 0; } }",
+            "{ let value = .Some(1); }",
+        ] {
+            let parsed = parse_body_statements(source, (0..source.len()).into());
+            assert!(
+                !parsed.errors.is_empty(),
+                "legacy statement unexpectedly parsed: {source}"
+            );
+        }
     }
 
     #[test]
@@ -816,6 +932,17 @@ mod tests {
                 .contains("delimiter nesting exceeds the compiler limit")),
             "missing body-local nesting diagnostic: {:#?}",
             parsed.errors
+        );
+    }
+
+    #[test]
+    fn expression_statement_requires_trailing_semicolon() {
+        let source = "{ f() }";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+
+        assert!(
+            !parsed.errors.is_empty(),
+            "semicolon-less expression statement unexpectedly parsed"
         );
     }
 

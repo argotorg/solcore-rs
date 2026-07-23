@@ -969,7 +969,7 @@ mod tests {
 
     #[test]
     fn main_only_clean_program_has_driver_ordered_diagnostics() {
-        let source = "function main() -> word {\n  return 1;\n}\n";
+        let source = "function main() returns (word) {\n  return 1;\n}\n";
         let workspace = workspace_with_main(source);
 
         assert_eq!(messages(&workspace), driver_style_messages(source));
@@ -978,8 +978,7 @@ mod tests {
 
     #[test]
     fn owned_diagnostics_preserve_heuristic_suggestion_applicability() {
-        let source =
-            "function value() -> word { return 1; }\nfunction main() -> word { return vaue(); }\n";
+        let source = "function value() returns (word) { return 1; }\nfunction main() returns (word) { return vaue(); }\n";
         let workspace = workspace_with_main(source);
         let diagnostic = workspace
             .diagnostics()
@@ -1015,7 +1014,7 @@ mod tests {
 
     #[test]
     fn owned_diagnostics_preserve_exact_suggestion_applicability() {
-        let source = "data Option = None | Some(word);\nfunction main(x: word) -> Option { return Some(x); }\n";
+        let source = "enum Option { None, Some(word) }\nfunction main(x: word) returns (Option) { return Some(x); }\n";
         let workspace = workspace_with_main(source);
         let diagnostic = workspace
             .diagnostics()
@@ -1051,7 +1050,7 @@ mod tests {
 
     #[test]
     fn main_only_type_error_matches_lowered_driver_messages() {
-        let source = "function f() -> word {\n  return true;\n}\n";
+        let source = "function f() returns (word) {\n  return true;\n}\n";
         let workspace = workspace_with_main(source);
         let diagnostics = workspace.diagnostics();
 
@@ -1066,7 +1065,7 @@ mod tests {
 
     #[test]
     fn main_only_name_resolution_error_matches_lowered_driver_messages() {
-        let source = "function addOne(x: word) -> word {\n  return x + missingVar;\n}\n";
+        let source = "function addOne(x: word) returns (word) {\n  return x + missingVar;\n}\n";
         let workspace = workspace_with_main(source);
         let diagnostics = workspace.diagnostics();
 
@@ -1089,7 +1088,7 @@ mod tests {
     #[test]
     fn std_import_resolves_from_embedded_files() {
         let workspace = workspace_with_main(
-            "import std.{addWord};\n\nfunction main() -> word {\n  return addWord(1, 2);\n}\n",
+            "import {addWord} from std;\n\nfunction main() returns (word) {\n  return addWord(1, 2);\n}\n",
         );
 
         assert!(workspace.diagnostics().is_empty());
@@ -1102,11 +1101,12 @@ mod tests {
         let mut workspace = Workspace::new();
         workspace.set_file(
             "foo.solc",
-            "function value() -> word { return 1; }\nexport { value };\n".to_owned(),
+            "function value() returns (word) { return 1; }\nexport { value };\n".to_owned(),
         );
         workspace.set_file(
             "main.solc",
-            "import foo.{value};\nfunction main() -> word { return value(); }\n".to_owned(),
+            "import {value} from foo;\nfunction main() returns (word) { return value(); }\n"
+                .to_owned(),
         );
         workspace.set_entry("main.solc");
         assert!(workspace.diagnostics().is_empty());
@@ -1123,12 +1123,13 @@ mod tests {
         let mut workspace = Workspace::new();
         workspace.set_file(
             "main.solc",
-            "import math.{double};\n\nfunction main() -> word {\n  return double(21);\n}\n"
+            "import {double} from math;\n\nfunction main() returns (word) {\n  return double(21);\n}\n"
                 .to_owned(),
         );
         workspace.set_file(
             "math.solc",
-            "function double(x: word) -> word { return x; }\n\nexport { double };\n".to_owned(),
+            "function double(x: word) returns (word) { return x; }\n\nexport { double };\n"
+                .to_owned(),
         );
         workspace.set_entry("main.solc");
 
@@ -1161,7 +1162,7 @@ mod tests {
 
     #[test]
     fn incremental_file_updates_reanalyze_existing_source_file() {
-        let clean = "function main() -> word {\n  return 1;\n}\n";
+        let clean = "function main() returns (word) {\n  return 1;\n}\n";
         let mut workspace = workspace_with_main(clean);
         assert!(workspace.diagnostics().is_empty());
 
@@ -1171,7 +1172,7 @@ mod tests {
             .expect("main source file");
         workspace.set_file(
             "main.solc",
-            "function addOne(x: word) -> word {\n  return x + missingVar;\n}\n".to_owned(),
+            "function addOne(x: word) returns (word) {\n  return x + missingVar;\n}\n".to_owned(),
         );
         let after_file = workspace
             .db()
@@ -1191,7 +1192,7 @@ mod tests {
 
     #[test]
     fn removed_virtual_file_is_revived_with_the_same_salsa_identity() {
-        let source = "function main() -> word { return 1; }\n";
+        let source = "function main() returns (word) { return 1; }\n";
         let mut host = AnalysisHost::new();
         let path = main_path("main.solc");
         let original = host.set_virtual_file(path.clone(), source.to_owned());
@@ -1209,7 +1210,7 @@ mod tests {
 
     #[test]
     fn identical_virtual_and_workspace_updates_do_not_reexecute_queries() {
-        let source = "function main() -> word { return 1; }\n";
+        let source = "function main() returns (word) { return 1; }\n";
         let (mut host, executed) = host_with_execution_log();
         let file = host.set_virtual_file(main_path("main.solc"), source.to_owned());
         let _ = parser::parse_file_to_hir(&host, file);
@@ -1246,17 +1247,18 @@ mod tests {
 
     #[test]
     fn incremental_diagnostics_match_a_fresh_workspace_across_batch_changes() {
-        let initial_main = "import util.{value};\nfunction main() -> word { return value(); }\n";
-        let initial_util = "function value() -> word { return 1; }\nexport { value };\n";
+        let initial_main =
+            "import {value} from util;\nfunction main() returns (word) { return value(); }\n";
+        let initial_util = "function value() returns (word) { return 1; }\nexport { value };\n";
         let mut incremental = workspace_from_files(
             &[("main.solc", initial_main), ("util.solc", initial_util)],
             "main.solc",
         );
         assert!(incremental.diagnostics().is_empty());
 
-        let broken_main =
-            "import helper.{answer};\nfunction main() -> word { return answer(missing); }\n";
-        let broken_helper = "function answer(x: bool) -> word { return x; }\nexport { answer };\n";
+        let broken_main = "import {answer} from helper;\nfunction main() returns (word) { return answer(missing); }\n";
+        let broken_helper =
+            "function answer(x: bool) returns (word) { return x; }\nexport { answer };\n";
         incremental.apply_file_changes([
             WorkspaceFileChange::Set {
                 path: "main.solc".to_owned(),
@@ -1276,9 +1278,9 @@ mod tests {
         );
         assert_eq!(incremental.diagnostics(), fresh.diagnostics());
 
-        let fixed_main =
-            "import helper.{answer};\nfunction main() -> word { return answer(true); }\n";
-        let fixed_helper = "function answer(x: bool) -> word { return 1; }\nexport { answer };\n";
+        let fixed_main = "import {answer} from helper;\nfunction main() returns (word) { return answer(true); }\n";
+        let fixed_helper =
+            "function answer(x: bool) returns (word) { return 1; }\nexport { answer };\n";
         incremental.apply_file_changes([
             WorkspaceFileChange::Set {
                 path: "main.solc".to_owned(),
@@ -1303,15 +1305,15 @@ mod tests {
             &[
                 (
                     "main.solc",
-                    "import a.{fromA};\nfunction main() -> word { return fromA(); }\n",
+                    "import {fromA} from a;\nfunction main() returns (word) { return fromA(); }\n",
                 ),
                 (
                     "a.solc",
-                    "import b.{value};\nfunction fromA() -> word { return value(); }\nexport { fromA };\n",
+                    "import {value} from b;\nfunction fromA() returns (word) { return value(); }\nexport { fromA };\n",
                 ),
                 (
                     "b.solc",
-                    "function value() -> word { return 42; }\nexport { value };\n",
+                    "function value() returns (word) { return 42; }\nexport { value };\n",
                 ),
             ],
             "main.solc",
@@ -1343,7 +1345,7 @@ mod tests {
         let mut workspace = Workspace::new();
         workspace.set_file(
             "nested/数 学#1.solc",
-            "function value() -> word { return 1; }\n".to_owned(),
+            "function value() returns (word) { return 1; }\n".to_owned(),
         );
 
         let file = workspace
@@ -1364,11 +1366,11 @@ mod tests {
             let mut source = String::new();
             for index in 0..256 {
                 source.push_str(&format!(
-                    "function value{index}(x: word) -> word {{ return x; }}\n"
+                    "function value{index}(x: word) returns (word) {{ return x; }}\n"
                 ));
             }
             source.push_str(&format!(
-                "function main() -> word {{ return value255({revision}); }}\n"
+                "function main() returns (word) {{ return value255({revision}); }}\n"
             ));
             source
         }

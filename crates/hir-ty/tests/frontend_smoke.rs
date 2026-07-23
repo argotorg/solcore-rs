@@ -298,7 +298,7 @@ fn generated_dispatch_reuses_std_instance_facts_per_module() {
     let module_fact_executions = query_executions(&outcome.executed, "module_instance_facts");
     let per_origin_executions = query_executions(&outcome.executed, "instance_origin_clause_set");
     let report = format!(
-        "generated dispatch + std instance facts\n  module facts: {module_fact_executions}\n  per-origin clauses: {per_origin_executions}\n  frontend diagnostics: {:#?}\n  typeck diagnostics: {:#?}",
+        "generated dispatch + std impl facts\n  module facts: {module_fact_executions}\n  per-origin clauses: {per_origin_executions}\n  frontend diagnostics: {:#?}\n  typeck diagnostics: {:#?}",
         outcome.frontend_diagnostics, outcome.typeck_diagnostics,
     );
     eprintln!("{report}");

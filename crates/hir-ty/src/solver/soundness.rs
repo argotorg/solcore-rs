@@ -88,13 +88,13 @@ impl InstanceSoundnessPragmas {
             };
             let name = (*pragma.name(db).atom()).text(db);
             match name {
-                "no-coverage-condition" => {
+                "noCoverageCondition" => {
                     pragmas.coverage.add_items(db, pragma.items(db));
                 }
-                "no-patterson-condition" => {
+                "noPattersonCondition" => {
                     pragmas.patterson.add_items(db, pragma.items(db));
                 }
-                "no-bounded-variable-condition" => {
+                "noBoundVariableCondition" => {
                     pragmas.bounded_variable.add_items(db, pragma.items(db));
                 }
                 _ => {}
@@ -409,7 +409,7 @@ fn check_instance_methods<'db>(
         .class
         .def_id_value(db)
         .name(db)
-        .unwrap_or_else(|| "<class>".to_owned());
+        .unwrap_or_else(|| "<trait>".to_owned());
     let methods = instance.methods(db);
     let method_names = methods
         .iter()

@@ -6,7 +6,7 @@ use super::{
     expr_pat::parsed_expr_parser,
     imports::{export_parser, import_parser, pragma_parser},
     recovery::trace_recovery,
-    types::{forall_clause_parser, pred_list_parser, pred_parser, type_parser},
+    types::{trait_ref_parser, type_param_list_parser, type_parser, where_clause_parser},
 };
 use crate::{lexer::Token, types::*};
 
@@ -17,8 +17,6 @@ where
     let comptime_typed = comptime_kw_parser()
         .then(ident_parser())
         .then_ignore(just(Token::Colon))
-        // First probe the longer `comptime name: Type` shape. Rewinding keeps
-        // the actual parser branch from consuming input during the lookahead.
         .rewind()
         .ignore_then(comptime_kw_parser())
         .then(ident_parser())
@@ -35,8 +33,6 @@ where
     let comptime_untyped = comptime_kw_parser()
         .then(ident_parser())
         .then_ignore(param_end.rewind())
-        // `comptime name` is accepted only at a parameter boundary; otherwise
-        // `comptime name: Type` must be parsed by the typed branch above.
         .rewind()
         .ignore_then(comptime_kw_parser())
         .then(ident_parser())
@@ -83,7 +79,19 @@ where
 #[derive(Debug, Clone, Copy, Default)]
 struct ParsedFuncModifiers {
     public: Option<LexSpan>,
+    external: Option<LexSpan>,
     payable: Option<LexSpan>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ParsedFuncModifier {
+    Public(LexSpan),
+    External(LexSpan),
+    Internal,
+    Private,
+    Payable(LexSpan),
+    Pure,
+    View,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,74 +100,128 @@ enum FunctionContext {
     Contract,
 }
 
-impl FunctionContext {
-    fn allows_contract_modifiers(self) -> bool {
-        matches!(self, Self::Contract)
-    }
-}
-
-fn contract_modifiers_parser<'src, I>(
-    context: FunctionContext,
+fn function_modifiers_parser<'src, I>(
+    _context: FunctionContext,
 ) -> impl Parser<'src, I, ParsedFuncModifiers, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let public = just(Token::Public).map_with(|_, e| e.span()).or_not();
-    let payable = just(Token::Payable).map_with(|_, e| e.span()).or_not();
+    let modifier = choice((
+        just(Token::Public)
+            .map_with(|_, e| ParsedFuncModifier::Public(e.span()))
+            .boxed(),
+        just(Token::External)
+            .map_with(|_, e| ParsedFuncModifier::External(e.span()))
+            .boxed(),
+        just(Token::Internal)
+            .to(ParsedFuncModifier::Internal)
+            .boxed(),
+        just(Token::Private).to(ParsedFuncModifier::Private).boxed(),
+        just(Token::Payable)
+            .map_with(|_, e| ParsedFuncModifier::Payable(e.span()))
+            .boxed(),
+        just(Token::Pure).to(ParsedFuncModifier::Pure).boxed(),
+        just(Token::View).to(ParsedFuncModifier::View).boxed(),
+    ));
 
-    public
-        .then(payable)
-        .validate(move |(public, payable), _, emitter| {
-            if !context.allows_contract_modifiers() {
-                if let Some(span) = public {
-                    emitter.emit(Rich::custom(
-                        span,
-                        "'public' is only allowed on functions declared inside a contract",
-                    ));
-                }
-                if let Some(span) = payable {
-                    emitter.emit(Rich::custom(
-                        span,
-                        "`payable` is only allowed on a function, constructor, or fallback inside a contract",
-                    ));
+    modifier
+        .repeated()
+        .collect::<Vec<_>>()
+        .validate(move |modifiers, _, _emitter| {
+            let mut parsed = ParsedFuncModifiers::default();
+            for modifier in modifiers {
+                match modifier {
+                    ParsedFuncModifier::Public(span) => {
+                        parsed.public.get_or_insert(span);
+                    }
+                    ParsedFuncModifier::External(span) => {
+                        parsed.external.get_or_insert(span);
+                    }
+                    ParsedFuncModifier::Internal | ParsedFuncModifier::Private => {}
+                    ParsedFuncModifier::Payable(span) => {
+                        parsed.payable.get_or_insert(span);
+                    }
+                    ParsedFuncModifier::Pure | ParsedFuncModifier::View => {}
                 }
             }
-            ParsedFuncModifiers { public, payable }
+            parsed
         })
 }
 
 fn implicit_public_modifiers_parser<'src, I>(
     context: FunctionContext,
     decl_name: &'static str,
+    allow_external: bool,
 ) -> impl Parser<'src, I, ParsedFuncModifiers, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let public = just(Token::Public).map_with(|_, e| e.span()).or_not();
-    let payable = just(Token::Payable).map_with(|_, e| e.span()).or_not();
+    function_modifiers_parser(context).validate(move |mut modifiers, _, emitter| {
+        if let Some(span) = modifiers.public.take() {
+            emitter.emit(Rich::custom(
+                span,
+                format!("{decl_name} is implicitly public; remove the visibility keyword"),
+            ));
+        }
+        if let Some(span) = modifiers.external.take()
+            && !allow_external
+        {
+            emitter.emit(Rich::custom(
+                span,
+                format!("`external` is not allowed on {decl_name}"),
+            ));
+        }
+        modifiers
+    })
+}
 
-    public
-        .then(payable)
-        .validate(move |(public, payable), _, emitter| {
-            if let Some(span) = public {
-                emitter.emit(Rich::custom(
+fn return_type_parser<'src, I>() -> impl Parser<'src, I, Option<ParsedTy<'src>>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let named = ident_parser()
+        .then_ignore(just(Token::Colon))
+        .rewind()
+        .ignore_then(ident_parser())
+        .then_ignore(just(Token::Colon))
+        .ignore_then(type_parser())
+        .boxed();
+    let result = named.or(type_parser()).boxed();
+    let results = result
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LParen), just(Token::RParen))
+        .map_with(|results, e| {
+            let span = e.span();
+            match <[_; 1]>::try_from(results) {
+                Ok([result]) => result,
+                Err(elems) => ParsedTy {
                     span,
-                    format!("{decl_name} is implicitly public; remove the 'public' keyword"),
-                ));
+                    kind: ParsedTyKind::Tuple { elems },
+                },
             }
-            if !context.allows_contract_modifiers()
-                && let Some(span) = payable
-            {
-                emitter.emit(Rich::custom(
-                    span,
-                    "`payable` is only allowed on a function, constructor, or fallback inside a contract",
-                ));
-            }
-            ParsedFuncModifiers {
-                public: None,
-                payable,
-            }
-        })
+        });
+
+    just(Token::Returns).ignore_then(results).or_not()
+}
+
+fn function_name_parser<'src, I>() -> impl Parser<'src, I, SpannedStr<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    ident_parser().validate(|name, _, emitter| {
+        if matches!(name.0, "fallback" | "true" | "false") {
+            emitter.emit(Rich::custom(
+                name.1,
+                format!(
+                    "`{}` is reserved and cannot be used as a function name",
+                    name.0
+                ),
+            ));
+        }
+        name
+    })
 }
 
 fn signature_parser<'src, I>(
@@ -168,16 +230,6 @@ fn signature_parser<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let forall = forall_clause_parser().boxed();
-
-    let preds = pred_list_parser()
-        .then_ignore(just(Token::FatArrow))
-        .or_not()
-        .map(|preds| preds.unwrap_or_default())
-        .boxed();
-
-    let modifiers = contract_modifiers_parser(context).boxed();
-
     let params = param_parser()
         .separated_by(just(Token::Comma))
         .allow_trailing()
@@ -186,27 +238,20 @@ where
         .map_with(|params, e| (params, e.span()))
         .boxed();
 
-    let ret = just(Token::Arrow)
-        .ignore_then(type_parser())
-        .or_not()
-        .boxed();
-
-    forall
-        .then(preds)
-        .then(modifiers)
-        .then_ignore(just(Token::Function))
-        .then(ident_parser())
+    just(Token::Function)
+        .ignore_then(function_name_parser())
+        .then(type_param_list_parser())
         .then(params)
-        .then(ret)
+        .then(function_modifiers_parser(context))
+        .then(return_type_parser())
+        .then(where_clause_parser())
         .map_with(
-            |(((((forall_info, mut preds), modifiers), name), (params, params_span)), ret), e| {
-                let (type_vars, mut forall_preds) = forall_info;
-                forall_preds.append(&mut preds);
+            |(((((name, type_vars), (params, params_span)), modifiers), ret), preds), e| {
                 ParsedFuncSig {
                     span: e.span(),
                     type_vars,
-                    preds: forall_preds,
-                    public: modifiers.public,
+                    preds,
+                    public: modifiers.public.or(modifiers.external),
                     payable: modifiers.payable,
                     name,
                     params,
@@ -267,13 +312,33 @@ where
         .boxed()
 }
 
+fn function_member_parser<'src, I>(
+    context: FunctionContext,
+) -> impl Parser<'src, I, ParsedFunctionDef<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let body_or_semi = body_span_parser().or(just(Token::Semi).map_with(|_, e| e.span()));
+    signature_parser(context)
+        .then(body_or_semi)
+        .map_with(|(sig, body_span), e| ParsedFunctionDef {
+            span: e.span(),
+            kind: FuncKind::Function,
+            leading_comments: Vec::new(),
+            sig,
+            body_span,
+        })
+        .labelled("contract function")
+        .as_context()
+        .boxed()
+}
+
 fn constructor_def_parser<'src, I>(
     context: FunctionContext,
 ) -> impl Parser<'src, I, ParsedFunctionDef<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let modifiers = implicit_public_modifiers_parser(context, "constructor").boxed();
     let params = param_parser()
         .separated_by(just(Token::Comma))
         .allow_trailing()
@@ -282,12 +347,17 @@ where
         .map_with(|params, e| (params, e.span()))
         .boxed();
 
-    modifiers
-        .then(just(Token::Constructor).map_with(|_, e| e.span()))
+    just(Token::Constructor)
+        .map_with(|_, e| e.span())
         .then(params)
+        .then(implicit_public_modifiers_parser(
+            context,
+            "constructor",
+            false,
+        ))
         .then(body_span_parser())
         .map_with(
-            |(((modifiers, name_span), (params, params_span)), body_span), e| ParsedFunctionDef {
+            |(((name_span, (params, params_span)), modifiers), body_span), e| ParsedFunctionDef {
                 span: e.span(),
                 kind: FuncKind::Constructor,
                 leading_comments: Vec::new(),
@@ -295,7 +365,7 @@ where
                     span: e.span(),
                     type_vars: Vec::new(),
                     preds: Vec::new(),
-                    public: modifiers.public,
+                    public: None,
                     payable: modifiers.payable,
                     name: ("constructor", name_span),
                     params,
@@ -324,16 +394,6 @@ fn fallback_def_parser<'src, I>(
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let forall = forall_clause_parser().boxed();
-
-    let preds = pred_list_parser()
-        .then_ignore(just(Token::FatArrow))
-        .or_not()
-        .map(|preds| preds.unwrap_or_default())
-        .boxed();
-
-    let modifiers = implicit_public_modifiers_parser(context, "fallback").boxed();
-
     let params = param_parser()
         .separated_by(just(Token::Comma))
         .allow_trailing()
@@ -342,27 +402,20 @@ where
         .map_with(|params, e| (params, e.span()))
         .boxed();
 
-    let ret = just(Token::Arrow)
-        .ignore_then(type_parser())
-        .or_not()
-        .boxed();
-
-    forall
-        .then(preds)
-        .then(modifiers)
-        .then(just(Token::Fallback).map_with(|_, e| e.span()))
+    just(Token::Fallback)
+        .map_with(|_, e| e.span())
         .then(params)
         .validate(|value, _, emitter| {
-            let ((((_, _), _), _), (params, params_span)) = &value;
-            if !params.is_empty() {
+            if !value.1.0.is_empty() {
                 emitter.emit(Rich::custom(
-                    *params_span,
+                    value.1.1,
                     "fallback function must not declare input parameters",
                 ));
             }
             value
         })
-        .then(ret)
+        .then(implicit_public_modifiers_parser(context, "fallback", true))
+        .then(return_type_parser())
         .validate(|value, _, emitter| {
             if let Some(ret_ty) = &value.1
                 && !parsed_ty_is_unit(ret_ty)
@@ -376,22 +429,16 @@ where
         })
         .then(body_span_parser())
         .map_with(
-            |(
-                (((((forall_info, mut preds), modifiers), name_span), (params, params_span)), ret),
-                body_span,
-            ),
-             e| {
-                let (type_vars, mut forall_preds) = forall_info;
-                forall_preds.append(&mut preds);
+            |((((name_span, (params, params_span)), modifiers), ret), body_span), e| {
                 ParsedFunctionDef {
                     span: e.span(),
                     kind: FuncKind::Fallback,
                     leading_comments: Vec::new(),
                     sig: ParsedFuncSig {
                         span: e.span(),
-                        type_vars,
-                        preds: forall_preds,
-                        public: modifiers.public,
+                        type_vars: Vec::new(),
+                        preds: Vec::new(),
+                        public: None,
                         payable: modifiers.payable,
                         name: ("fallback", name_span),
                         params,
@@ -428,15 +475,6 @@ fn type_alias_payload_parser<'src, I>()
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let ty_params = ident_parser()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .collect::<Vec<_>>()
-        .delimited_by(just(Token::LParen), just(Token::RParen))
-        .or_not()
-        .map(|params| params.unwrap_or_default())
-        .boxed();
-
     let type_recovery = any()
         .and_is(just(Token::Semi).not())
         .repeated()
@@ -450,10 +488,16 @@ where
             }
         });
 
-    just(Token::Type)
+    let alias = just(Token::Alias)
         .ignore_then(ident_parser())
-        .then(ty_params)
-        .then_ignore(just(Token::Eq))
+        .then(type_param_list_parser())
+        .then_ignore(just(Token::Eq));
+    let value_type = just(Token::Type)
+        .ignore_then(ident_parser())
+        .then(type_param_list_parser())
+        .then_ignore(just(Token::Is));
+
+    choice((alias, value_type))
         .then(type_parser().recover_with(via_parser(type_recovery)))
         .then_ignore(just(Token::Semi))
         .map(|((name, ty_params), ty)| (name, ty_params, ty))
@@ -471,29 +515,28 @@ where
             ty_params,
             ty,
         })
-        .labelled("type alias declaration")
+        .labelled("type declaration")
         .as_context()
         .boxed()
 }
 
-fn data_ctor_parser<'src, I>() -> impl Parser<'src, I, ParsedAdtCtor<'src>, ParserErr<'src>>
+fn enum_ctor_parser<'src, I>() -> impl Parser<'src, I, ParsedAdtCtor<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     let fields = type_parser()
         .separated_by(just(Token::Comma))
+        .allow_trailing()
         .collect::<Vec<_>>()
         .delimited_by(just(Token::LParen), just(Token::RParen))
         .or_not()
-        .map(|fields| fields.unwrap_or_default());
+        .map(Option::unwrap_or_default);
 
     ident_parser()
         .then(fields)
         .map_with(|(name, fields), e| ParsedAdtCtor {
             span: e.span(),
-            // Filled by `adt_payload_parser`, which owns the introducing
-            // `=`/`|` token.
-            introducer: None,
+            introducer: Some(name.1),
             leading_comments: Vec::new(),
             name,
             fields,
@@ -501,11 +544,71 @@ where
         .boxed()
 }
 
-fn data_terminator_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
+fn enum_payload_parser<'src, I>() -> impl Parser<
+    'src,
+    I,
+    (
+        SpannedStr<'src>,
+        Vec<SpannedStr<'src>>,
+        Vec<ParsedAdtCtor<'src>>,
+    ),
+    ParserErr<'src>,
+>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    just(Token::Semi).ignored()
+    let ctors = enum_ctor_parser()
+        .separated_by(just(Token::Comma))
+        .allow_trailing()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LBrace), just(Token::RBrace));
+
+    just(Token::Enum)
+        .ignore_then(ident_parser())
+        .then(type_param_list_parser())
+        .then(ctors)
+        .then_ignore(just(Token::Semi).or_not())
+        .map(|((name, ty_params), ctors)| (name, ty_params, ctors))
+}
+
+fn struct_payload_parser<'src, I>() -> impl Parser<
+    'src,
+    I,
+    (
+        SpannedStr<'src>,
+        Vec<SpannedStr<'src>>,
+        Vec<ParsedAdtCtor<'src>>,
+    ),
+    ParserErr<'src>,
+>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    let field = ident_parser()
+        .then_ignore(just(Token::Colon))
+        .then(type_parser())
+        .then_ignore(just(Token::Semi))
+        .map(|(_, ty)| ty);
+    let fields = field
+        .repeated()
+        .collect::<Vec<_>>()
+        .delimited_by(just(Token::LBrace), just(Token::RBrace));
+
+    just(Token::Struct)
+        .ignore_then(ident_parser())
+        .then(type_param_list_parser())
+        .then(fields)
+        .then_ignore(just(Token::Semi).or_not())
+        .map_with(|((name, ty_params), fields), e| {
+            let ctor = ParsedAdtCtor {
+                span: e.span(),
+                introducer: Some(name.1),
+                leading_comments: Vec::new(),
+                name,
+                fields,
+            };
+            (name, ty_params, vec![ctor])
+        })
 }
 
 fn adt_payload_parser<'src, I>() -> impl Parser<
@@ -521,50 +624,7 @@ fn adt_payload_parser<'src, I>() -> impl Parser<
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let ty_params = ident_parser()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .collect::<Vec<_>>()
-        .delimited_by(just(Token::LParen), just(Token::RParen))
-        .or_not()
-        .map(|params| params.unwrap_or_default())
-        .boxed();
-
-    let following_ctor = just(Token::Pipe)
-        .map_with(|_, e| e.span())
-        .then(data_ctor_parser())
-        .map(|(introducer, mut ctor)| {
-            ctor.introducer = Some(introducer);
-            ctor
-        });
-    let ctor_list = data_ctor_parser()
-        .then(following_ctor.repeated().collect::<Vec<_>>())
-        .map(|(first, mut rest)| {
-            let mut ctors = Vec::with_capacity(rest.len() + 1);
-            ctors.push(first);
-            ctors.append(&mut rest);
-            ctors
-        });
-    let ctors = just(Token::Eq)
-        .map_with(|_, e| e.span())
-        .then(ctor_list)
-        .map(|(introducer, mut ctors)| {
-            ctors
-                .first_mut()
-                .expect("constructor list parser always returns one constructor")
-                .introducer = Some(introducer);
-            ctors
-        })
-        .or_not()
-        .map(|ctors| ctors.unwrap_or_default())
-        .boxed();
-
-    just(Token::Data)
-        .ignore_then(ident_parser())
-        .then(ty_params)
-        .then(ctors)
-        .then_ignore(data_terminator_parser())
-        .map(|((name, ty_params), ctors)| (name, ty_params, ctors))
+    choice((enum_payload_parser(), struct_payload_parser()))
 }
 
 fn adt_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
@@ -579,7 +639,7 @@ where
             ty_params,
             ctors,
         })
-        .labelled("data declaration")
+        .labelled("enum or struct declaration")
         .as_context()
         .boxed()
 }
@@ -597,118 +657,127 @@ where
         .boxed()
 }
 
-fn class_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
+fn named_ty(name: SpannedStr<'_>) -> ParsedTy<'_> {
+    ParsedTy {
+        span: name.1,
+        kind: ParsedTyKind::Named {
+            qualifiers: Vec::new(),
+            name,
+            args: Vec::new(),
+            args_span: None,
+        },
+    }
+}
+
+fn trait_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let forall = forall_clause_parser().boxed();
-
-    let super_preds = pred_list_parser()
-        .then_ignore(just(Token::FatArrow))
-        .or_not()
-        .map(|preds| preds.unwrap_or_default())
-        .boxed();
-
     let methods = method_sig_parser()
         .repeated()
         .collect::<Vec<_>>()
         .delimited_by(just(Token::LBrace), just(Token::RBrace))
         .boxed();
 
-    forall
-        .then(super_preds)
-        .then_ignore(just(Token::Class))
-        .then(pred_parser())
+    just(Token::Trait)
+        .ignore_then(ident_parser())
+        .then(type_param_list_parser())
+        .then(where_clause_parser())
         .then(methods)
-        .map_with(|(((forall_info, mut super_preds), head), methods), e| {
-            let (type_vars, mut forall_preds) = forall_info;
-            forall_preds.append(&mut super_preds);
+        .validate(|value, e, emitter| {
+            if value.0.0.1.is_empty() {
+                emitter.emit(Rich::custom(
+                    e.span(),
+                    "a trait must declare at least one type parameter",
+                ));
+            }
+            value
+        })
+        .map_with(|(((class, type_vars), super_preds), methods), e| {
+            let mut args = type_vars.iter().copied().map(named_ty).collect::<Vec<_>>();
+            let ty = if args.is_empty() {
+                ParsedTy {
+                    span: class.1,
+                    kind: ParsedTyKind::Error,
+                }
+            } else {
+                args.remove(0)
+            };
+            let head = ParsedPred {
+                ty,
+                class,
+                args,
+                args_span: None,
+            };
             ParsedTopItem::Class {
                 span: e.span(),
                 leading_comments: Vec::new(),
                 type_vars,
-                super_preds: forall_preds,
+                super_preds,
                 head,
                 methods,
             }
         })
-        .labelled("class declaration")
+        .labelled("trait declaration")
         .as_context()
         .boxed()
 }
 
-fn instance_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
+fn impl_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let forall = forall_clause_parser().boxed();
-
-    let preds = pred_list_parser()
-        .then_ignore(just(Token::FatArrow))
-        .or_not()
-        .map(|preds| preds.unwrap_or_default())
-        .boxed();
-
-    let default_kw = just(Token::Default)
-        .map_with(|_, e| e.span())
-        .or_not()
-        .boxed();
-
+    let default_kw = just(Token::Default).map_with(|_, e| e.span()).or_not();
     let methods = function_def_parser(FunctionContext::Module)
         .repeated()
         .collect::<Vec<_>>()
         .delimited_by(just(Token::LBrace), just(Token::RBrace))
         .boxed();
 
-    let pre_instance_preds = forall
-        .clone()
-        .then(preds.clone())
-        .then(default_kw.clone())
-        .then_ignore(just(Token::Instance))
-        .then(pred_parser())
-        .then(methods.clone())
-        .map_with(
-            |((((forall_info, mut preds), default_kw), head), methods), e| {
-                let (type_vars, mut forall_preds) = forall_info;
-                forall_preds.append(&mut preds);
-                ParsedTopItem::Instance {
-                    span: e.span(),
-                    leading_comments: Vec::new(),
-                    type_vars,
-                    preds: forall_preds,
-                    default_kw,
-                    head,
-                    methods,
-                }
-            },
-        )
-        .boxed();
-
-    let post_instance_preds = forall
-        .then(default_kw)
-        .then_ignore(just(Token::Instance))
-        .then(preds)
-        .then(pred_parser())
+    default_kw
+        .then_ignore(just(Token::Impl))
+        .then(type_param_list_parser())
+        .then(trait_ref_parser())
+        .then(where_clause_parser())
         .then(methods)
+        .validate(|value, e, emitter| {
+            if value.0.0.1.1.is_empty() {
+                emitter.emit(Rich::custom(
+                    e.span(),
+                    "an impl trait reference must have at least one type argument",
+                ));
+            }
+            value
+        })
         .map_with(
-            |((((forall_info, default_kw), mut preds), head), methods), e| {
-                let (type_vars, mut forall_preds) = forall_info;
-                forall_preds.append(&mut preds);
+            |((((default_kw, type_vars), (class, mut head_args, args_span)), preds), methods),
+             e| {
+                let ty = if head_args.is_empty() {
+                    ParsedTy {
+                        span: class.1,
+                        kind: ParsedTyKind::Error,
+                    }
+                } else {
+                    head_args.remove(0)
+                };
+                let head = ParsedPred {
+                    ty,
+                    class,
+                    args: head_args,
+                    args_span,
+                };
                 ParsedTopItem::Instance {
                     span: e.span(),
                     leading_comments: Vec::new(),
                     type_vars,
-                    preds: forall_preds,
+                    preds,
                     default_kw,
                     head,
                     methods,
                 }
             },
         )
-        .boxed();
-
-    choice((pre_instance_preds, post_instance_preds))
-        .labelled("instance declaration")
+        .labelled("impl declaration")
         .as_context()
         .boxed()
 }
@@ -747,16 +816,15 @@ fn contract_item_parser<'src, I>() -> impl Parser<'src, I, ParsedContractItem<'s
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let function_def = function_def_parser(FunctionContext::Contract)
+    let function = function_member_parser(FunctionContext::Contract)
         .map(ParsedContractItem::Function)
         .boxed();
-    let constructor_def = constructor_def_parser(FunctionContext::Contract)
+    let constructor = constructor_def_parser(FunctionContext::Contract)
         .map(ParsedContractItem::Function)
         .boxed();
-    let fallback_def = fallback_def_parser(FunctionContext::Contract)
+    let fallback = fallback_def_parser(FunctionContext::Contract)
         .map(ParsedContractItem::Function)
         .boxed();
-
     let type_alias = type_alias_payload_parser()
         .map_with(|(name, ty_params, ty), e| ParsedContractItem::TypeAlias {
             span: e.span(),
@@ -766,8 +834,7 @@ where
             ty,
         })
         .boxed();
-
-    let adt_def = adt_payload_parser()
+    let adt = adt_payload_parser()
         .map_with(|(name, ty_params, ctors), e| ParsedContractItem::Adt {
             span: e.span(),
             leading_comments: Vec::new(),
@@ -777,13 +844,13 @@ where
         })
         .boxed();
 
-    let item_start = just(Token::Public)
-        .or(just(Token::Payable))
-        .or(just(Token::Function))
+    let item_start = just(Token::Function)
         .or(just(Token::Constructor))
         .or(just(Token::Fallback))
+        .or(just(Token::Alias))
         .or(just(Token::Type))
-        .or(just(Token::Data))
+        .or(just(Token::Enum))
+        .or(just(Token::Struct))
         .or(just(Token::RBrace));
     let recovery = any()
         .and_is(item_start.not())
@@ -798,16 +865,10 @@ where
             }
         });
 
-    choice((
-        function_def,
-        constructor_def,
-        fallback_def,
-        type_alias,
-        adt_def,
-    ))
-    .recover_with(via_parser(recovery))
-    .labelled("contract member")
-    .as_context()
+    choice((function, constructor, fallback, type_alias, adt))
+        .recover_with(via_parser(recovery))
+        .labelled("contract member")
+        .as_context()
 }
 
 fn contract_member_parser<'src, I>()
@@ -825,25 +886,20 @@ fn contract_parser<'src, I>() -> impl Parser<'src, I, ParsedTopItem<'src>, Parse
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    let ty_params = ident_parser()
-        .separated_by(just(Token::Comma))
-        .allow_trailing()
-        .collect::<Vec<_>>()
-        .delimited_by(just(Token::LParen), just(Token::RParen))
-        .or_not()
-        .map(|params| params.unwrap_or_default())
-        .boxed();
-
+    let shell = choice((
+        just(Token::Contract),
+        just(Token::Interface),
+        just(Token::Library),
+    ));
     let members = contract_member_parser()
         .repeated()
         .collect::<Vec<_>>()
-        .boxed();
-    let body = members.delimited_by(just(Token::LBrace), just(Token::RBrace));
+        .delimited_by(just(Token::LBrace), just(Token::RBrace));
 
-    just(Token::Contract)
+    shell
         .ignore_then(ident_parser())
-        .then(ty_params)
-        .then(body)
+        .then(type_param_list_parser())
+        .then(members)
         .map_with(|((name, ty_params), members), e| {
             let mut fields = Vec::new();
             let mut items = Vec::new();
@@ -862,7 +918,7 @@ where
                 items,
             }
         })
-        .labelled("contract declaration")
+        .labelled("contract, interface, or library declaration")
         .as_context()
         .boxed()
 }
@@ -875,15 +931,16 @@ where
     let item_start = just(Token::Import)
         .or(just(Token::Export))
         .or(just(Token::Pragma))
+        .or(just(Token::Alias))
         .or(just(Token::Type))
-        .or(just(Token::Data))
-        .or(just(Token::Class))
-        .or(just(Token::Instance))
+        .or(just(Token::Enum))
+        .or(just(Token::Struct))
+        .or(just(Token::Trait))
+        .or(just(Token::Impl))
         .or(just(Token::Contract))
-        .or(just(Token::Public))
-        .or(just(Token::Payable))
+        .or(just(Token::Interface))
+        .or(just(Token::Library))
         .or(just(Token::Function))
-        .or(just(Token::Forall))
         .or(just(Token::Default));
     let recovery = any()
         .and_is(item_start.not())
@@ -904,8 +961,8 @@ where
         pragma_parser(),
         type_alias_parser(),
         adt_parser(),
-        class_parser(),
-        instance_parser(),
+        trait_parser(),
+        impl_parser(),
         contract_parser(),
         function_parser(),
     ))

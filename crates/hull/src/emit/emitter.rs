@@ -494,7 +494,7 @@ impl<'db> Emitter<'db> {
                     args: vec![self.emit_storage_slot_expr(expr)],
                 },
             },
-            MonoExprKind::TypeAnnot { expr: inner, .. } => self.emit_expr(inner),
+            MonoExprKind::Conversion { expr: inner, .. } => self.emit_expr(inner),
             MonoExprKind::Match { scrutinee, arms } => {
                 self.emit_match_expr(expr, &ty, scrutinee, arms)
             }
@@ -647,7 +647,7 @@ impl<'db> Emitter<'db> {
         let name = match &callee.kind {
             MonoExprKind::Var(id) => &id.name,
             MonoExprKind::Lambda { name, .. } => name,
-            MonoExprKind::TypeAnnot { expr, .. } => return self.closure_callee_name(expr),
+            MonoExprKind::Conversion { expr, .. } => return self.closure_callee_name(expr),
             _ => return None,
         };
         self.function_names.contains(name).then(|| name.clone())
@@ -679,7 +679,7 @@ impl<'db> Emitter<'db> {
                     args: vec![self.emit_storage_slot_expr(base), self.emit_expr(index)],
                 },
             },
-            MonoExprKind::TypeAnnot { expr: inner, .. } => self.emit_storage_slot_expr(inner),
+            MonoExprKind::Conversion { expr: inner, .. } => self.emit_storage_slot_expr(inner),
             _ => self.emit_expr(expr),
         }
     }
@@ -896,7 +896,11 @@ impl<'db> Emitter<'db> {
             ty,
             kind: ExprKind::Call {
                 callee: callee.into(),
-                args: vec![self.emit_expr(lhs), self.emit_expr(rhs)],
+                args: if matches!(op, BinOp::Shl | BinOp::Shr) {
+                    vec![self.emit_expr(rhs), self.emit_expr(lhs)]
+                } else {
+                    vec![self.emit_expr(lhs), self.emit_expr(rhs)]
+                },
             },
         }
     }
@@ -1090,6 +1094,9 @@ fn bin_op_name(op: BinOp) -> Option<&'static str> {
         BinOp::Mul => Some("mul"),
         BinOp::Div => Some("div"),
         BinOp::Mod => Some("mod"),
+        BinOp::Pow => Some("exp"),
+        BinOp::Shl => Some("shl"),
+        BinOp::Shr => Some("shr"),
         BinOp::BitAnd => Some("and"),
         BinOp::BitXor => Some("xor"),
         BinOp::BitOr => Some("or"),

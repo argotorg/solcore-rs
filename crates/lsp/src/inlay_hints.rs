@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn unannotated_let_gets_type_hint() {
-        let source = "function main() -> word {\n  let x = 42;\n  return x;\n}\n";
+        let source = "function main() returns (word) {\n  let x = 42;\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let range = line_index.range(0, source.len() as u32);
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn annotated_let_gets_no_type_hint() {
-        let source = "function main() -> word {\n  let y: word = 42;\n  return y;\n}\n";
+        let source = "function main() returns (word) {\n  let y: word = 42;\n  return y;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let range = line_index.range(0, source.len() as u32);
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn range_filters_binding_names() {
         let source = "\
-function main() -> word {
+function main() returns (word) {
   let a = 1;
   let b = 2;
   return b;

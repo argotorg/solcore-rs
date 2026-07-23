@@ -32,8 +32,7 @@ fn preview_span_source(source: &str, span: LexSpan, max_chars: usize) -> Option<
 }
 
 pub(super) fn top_level_recovery_message(source: &str, span: LexSpan) -> String {
-    let expected =
-        "`import`, `pragma`, `type`, `data`, `class`, `instance`, `contract`, or `function`";
+    let expected = "`import`, `pragma`, `type`, `alias`, `enum`, `struct`, `trait`, `impl`, `contract`, `interface`, `library`, or `function`";
     match preview_span_source(source, span, 48) {
         Some(preview) => format!(
             "could not parse top-level item near `{preview}`; expected a declaration starting with {expected}"
@@ -94,11 +93,14 @@ fn is_statement_start_token(token: &Token<'_>) -> bool {
             | Token::Return
             | Token::Match
             | Token::For
+            | Token::While
             | Token::If
+            | Token::Unchecked
             | Token::Assembly
             | Token::LBrace
             | Token::Break
             | Token::Continue
+            | Token::Revert
     )
 }
 
@@ -172,7 +174,7 @@ fn refine_match_parse_error<'src>(
             "match statement requires at least one arm",
         )
         .with_label("empty match arm list")
-        .with_note("add a `| pattern =>` arm"),
+        .with_note("add a `case pattern { ... }` or `default { ... }` arm"),
     )
 }
 

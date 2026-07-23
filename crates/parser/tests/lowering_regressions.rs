@@ -127,7 +127,7 @@ contract C {
   // ordinary documentation
   // #[(0, 1) -> 1]
   /* block /* nested */ documentation */
-  public function add(x: word, y: word) -> word { return x; }
+  function add(x: word, y: word) public returns (word) { return x; }
 
   function body_comment() {
     // this belongs to the body
@@ -185,46 +185,49 @@ fn hir_retains_comments_for_every_item_like_declaration() {
         "all-item-comments",
         r#"
 // top import
-import dependency;
+import * as dependency from dependency;
 // top export
 export dependency;
 // top pragma
-pragma feature Example;
+pragma solidity ^0.8.23;
 // top alias
-type Alias = word;
-// top data
-data TopData = // first constructor after equals
-  First
-  // second constructor before separator
-  | Second;
-// top class
-class a:Documented {
-  // class method
-  function describe(x: a) -> word;
+alias Alias = word;
+// top enum
+enum TopData {
+  // first constructor
+  First,
+  // second constructor
+  Second
 }
-// top instance
-instance word:Documented {
-  // instance method
-  function describe(x: word) -> word { return x; }
+// top trait
+trait Documented<a> {
+  // trait method
+  function describe(x: a) returns (word);
+}
+// top impl
+impl Documented<word> {
+  // impl method
+  function describe(x: word) returns (word) { return x; }
 }
 // top contract
 contract C {
   // contract field
   value: word;
   // contract alias
-  type LocalAlias = word;
-  // contract data
-  data LocalData =
+  alias LocalAlias = word;
+  // contract enum
+  enum LocalData {
     // local first constructor
-    LocalFirst
-    | // local second constructor after separator
-      LocalSecond;
+    LocalFirst,
+    // local second constructor
+    LocalSecond
+  }
   // contract constructor
   constructor() {}
   // contract fallback
-  fallback() -> () {}
+  fallback() external {}
   // contract function
-  function get() -> word { return value; }
+  function get() returns (word) { return value; }
 }
 // top function
 function top() {}
@@ -241,9 +244,9 @@ function top() {}
         " top export",
         " top pragma",
         " top alias",
-        " top data",
-        " top class",
-        " top instance",
+        " top enum",
+        " top trait",
+        " top impl",
         " top contract",
         " top function",
     ];
@@ -263,11 +266,11 @@ function top() {}
     assert_eq!(top_adt.ctors_with_comments(&db).len(), 2);
     assert_comment_texts(
         top_adt.ctor_leading_comments(&db, 0).expect("first ctor"),
-        &[" first constructor after equals"],
+        &[" first constructor"],
     );
     assert_comment_texts(
         top_adt.ctor_leading_comments(&db, 1).expect("second ctor"),
-        &[" second constructor before separator"],
+        &[" second constructor"],
     );
 
     let class = module
@@ -281,7 +284,7 @@ function top() {}
     assert_eq!(class.methods_with_comments(&db).len(), 1);
     assert_comment_texts(
         class.method_leading_comments(&db, 0).expect("class method"),
-        &[" class method"],
+        &[" trait method"],
     );
 
     let instance = module
@@ -294,7 +297,7 @@ function top() {}
         .expect("instance");
     assert_comment_texts(
         instance.methods(&db)[0].leading_comments(&db),
-        &[" instance method"],
+        &[" impl method"],
     );
 
     let contract = module
@@ -315,7 +318,7 @@ function top() {}
 
     let expected_contract_item_comments = [
         " contract alias",
-        " contract data",
+        " contract enum",
         " contract constructor",
         " contract fallback",
         " contract function",
@@ -351,7 +354,7 @@ function top() {}
         local_adt
             .ctor_leading_comments(&db, 1)
             .expect("local second ctor"),
-        &[" local second constructor after separator"],
+        &[" local second constructor"],
     );
 }
 
@@ -362,31 +365,32 @@ fn item_comments_do_not_cross_blank_lines_trailing_code_or_bodies() {
         &db,
         "item-comment-boundaries",
         r#"
-type Owner = word; // trailing top-level comment
-data AfterTrailing;
+alias Owner = word; // trailing top-level comment
+enum AfterTrailing {}
 // separated top-level comment
 
-class a:Boundary {
+trait Boundary<a> {
   // separated method comment
 
-  function method(x: a) -> word;
+  function method(x: a) returns (word);
 }
 contract C {
   first: word; // trailing field comment
-  type AfterTrailingField = word;
+  alias AfterTrailingField = word;
   // separated field comment
 
   second: word;
-  data Nested = First // trailing constructor comment
-    | Second
-    // separated from the constructor name by a blank line after `|`
-    |
+  enum Nested {
+    First, // trailing constructor comment
+    Second,
+    // separated from the constructor name by a blank line
 
-    Third;
+    Third
+  }
   function body_owner() {
     // body-only comment
   }
-  type AfterBody = word;
+  alias AfterBody = word;
 }
 "#,
     );
@@ -507,11 +511,11 @@ fn equivalent_type_and_predicate_refs_share_semantic_shapes_without_sharing_occu
     let (_, module) = parse_module(
         &db,
         "type-ref-shapes",
-        "class self:C {}
+        "trait C<self> {}
          function a(x: word) {}
          function b(y: word) {}
-         forall t . t:C => function c(x: t) {}
-         forall t . t:C => function d(x: t) {}",
+         function c<t>(x: t) where t: C {}
+         function d<t>(x: t) where t: C {}",
     );
 
     let a = top_function(&db, module, "a");
@@ -536,34 +540,32 @@ fn equivalent_type_and_predicate_refs_share_semantic_shapes_without_sharing_occu
 }
 
 #[test]
-fn implicit_return_applies_to_function_definitions_but_not_lambdas() {
+fn expression_statements_stay_expressions_and_explicit_returns_stay_returns() {
     let db = TestDb::default();
-    let (_, module) = parse_module(
+    let (file, module) = parse_module(
         &db,
-        "implicit-return",
-        "function id(x: word) -> word { x }
-         function make() { return lam (x: word) { x }; }",
+        "explicit-return",
+        "function expression() returns (word) { 1; }
+         function explicit() returns (word) { return 1; }",
+    );
+    assert!(
+        diagnostics(&db, file).is_empty(),
+        "unexpected parse diagnostics"
     );
 
-    let id = top_function(&db, module, "id");
-    let id_body = id.body(&db).expect("body");
-    let id_stmt = id_body.stmts(&db).get(id_body.top_level_stmts(&db)[0]);
-    assert!(matches!(&id_stmt.kind, StmtKind::Return(_)));
-
-    let make = top_function(&db, module, "make");
-    let make_body = make.body(&db).expect("body");
-    let lambda_body = make_body
-        .exprs(&db)
-        .iter()
-        .find_map(|(_, expr)| match &expr.kind {
-            ExprKind::Lambda { body, .. } => Some(*body),
-            _ => None,
-        })
-        .expect("lambda expression");
-    let lambda_stmt = lambda_body
+    let expression = top_function(&db, module, "expression");
+    let expression_body = expression.body(&db).expect("body");
+    let expression_stmt = expression_body
         .stmts(&db)
-        .get(lambda_body.top_level_stmts(&db)[0]);
-    assert!(matches!(&lambda_stmt.kind, StmtKind::Expr(_)));
+        .get(expression_body.top_level_stmts(&db)[0]);
+    assert!(matches!(&expression_stmt.kind, StmtKind::Expr(_)));
+
+    let explicit = top_function(&db, module, "explicit");
+    let explicit_body = explicit.body(&db).expect("body");
+    let explicit_stmt = explicit_body
+        .stmts(&db)
+        .get(explicit_body.top_level_stmts(&db)[0]);
+    assert!(matches!(&explicit_stmt.kind, StmtKind::Return(Some(_))));
 }
 
 #[test]
@@ -630,15 +632,15 @@ function good() {}";
 }
 
 #[test]
-fn arrow_types_preserve_source_arity_and_explicit_tuple_domains() {
+fn function_types_preserve_source_arity_and_explicit_tuple_domains() {
     let db = TestDb::default();
     let (_, module) = parse_module(
         &db,
-        "arrow-types",
-        "type F = word -> word -> bool;
-         type G = (word, bool) -> uint;
-         type H = ((word, bool)) -> uint;
-         type I = () -> uint;",
+        "function-types",
+        "alias F = function(word) returns (function(word) returns (bool));
+         alias G = function(word, bool) returns (uint);
+         alias H = function((word, bool)) returns (uint);
+         alias I = function() returns (uint);",
     );
     let aliases = module
         .items(&db)
@@ -651,14 +653,14 @@ fn arrow_types_preserve_source_arity_and_explicit_tuple_domains() {
 
     let f = aliases[0].ty(&db);
     let TypeRefKind::Fn { params, ret } = f.kind(&db) else {
-        panic!("F should be an arrow type");
+        panic!("F should be a function type");
     };
     assert_eq!(params.atom().len(), 1);
     assert!(matches!(ret.kind(&db), TypeRefKind::Fn { .. }));
 
     let g = aliases[1].ty(&db);
     let TypeRefKind::Fn { params, .. } = g.kind(&db) else {
-        panic!("G should be an arrow type");
+        panic!("G should be a function type");
     };
     assert_eq!(params.atom().len(), 2);
     assert!(
@@ -670,7 +672,7 @@ fn arrow_types_preserve_source_arity_and_explicit_tuple_domains() {
 
     let h = aliases[2].ty(&db);
     let TypeRefKind::Fn { params, .. } = h.kind(&db) else {
-        panic!("H should be an arrow type");
+        panic!("H should be a function type");
     };
     assert_eq!(params.atom().len(), 1);
     assert!(matches!(
@@ -680,7 +682,7 @@ fn arrow_types_preserve_source_arity_and_explicit_tuple_domains() {
 
     let i = aliases[3].ty(&db);
     let TypeRefKind::Fn { params, .. } = i.kind(&db) else {
-        panic!("I should be an arrow type");
+        panic!("I should be a function type");
     };
     assert!(params.atom().is_empty());
 }
@@ -688,9 +690,9 @@ fn arrow_types_preserve_source_arity_and_explicit_tuple_domains() {
 #[test]
 fn type_and_predicate_argument_list_spans_are_precise() {
     let db = TestDb::default();
-    let src = "class self:C(arg) {}
-type T = Map(word, bool);
-forall t . t:C(word) => function f(x: t) {}";
+    let src = "trait C<self, arg> {}
+alias T = Map<word, bool>;
+function f<t>(x: t) where t: C<word> {}";
     let (_, module) = parse_module(&db, "precise-type-spans", src);
 
     let alias = module
@@ -705,21 +707,21 @@ forall t . t:C(word) => function f(x: t) {}";
         panic!("alias target should be named");
     };
     let args_abs = args.span(&db).resolve_to_absolute(&db);
-    let expected_args_start = src.find("(word, bool)").expect("type args") as u32;
+    let expected_args_start = src.find("<word, bool>").expect("type args") as u32;
     assert_eq!(args_abs.start().as_u32(), expected_args_start);
     assert_eq!(
         args_abs.end().as_u32(),
-        expected_args_start + "(word, bool)".len() as u32
+        expected_args_start + "<word, bool>".len() as u32
     );
 
     let function = top_function(&db, module, "f");
     let pred = function.sig(&db).preds[0].kind(&db);
     let pred_args_abs = pred.args.span(&db).resolve_to_absolute(&db);
-    let expected_pred_start = src.find("(word) =>").expect("predicate args") as u32;
+    let expected_pred_start = src.find("<word>").expect("predicate args") as u32;
     assert_eq!(pred_args_abs.start().as_u32(), expected_pred_start);
     assert_eq!(
         pred_args_abs.end().as_u32(),
-        expected_pred_start + "(word)".len() as u32
+        expected_pred_start + "<word>".len() as u32
     );
 }
 
@@ -729,7 +731,7 @@ fn ternary_expression_lowers_to_conditional_expression() {
     let (_, module) = parse_module(
         &db,
         "ternary",
-        "function f(x: bool) -> word { return x ? 1 : 0; }",
+        "function f(x: bool) returns (word) { return x ? 1 : 0; }",
     );
     let function = top_function(&db, module, "f");
     let body = function.body(&db).expect("body");

@@ -520,11 +520,11 @@ mod tests {
     fn clean_program_emits_all_playground_outputs() {
         let result = compile_impl(input(
             concat!(
-                "import std.{*};\n",
-                "import std.dispatch.{*};\n",
+                "import std;\n",
+                "import std.dispatch;\n",
                 "contract Main {\n",
-                "  public function answer() -> uint256 {\n",
-                "    return uint256(42);\n",
+                "  function answer() public returns (uint256) {\n",
+                "    return 42 as uint256;\n",
                 "  }\n",
                 "}\n",
             ),
@@ -557,7 +557,7 @@ mod tests {
     #[test]
     fn sonatina_only_runs_the_shared_hull_pipeline() {
         let result = compile_impl(input(
-            "contract Main {\n  public function main() -> word {\n    return 1;\n  }\n}\n",
+            "contract Main {\n  function main() public returns (word) {\n    return 1;\n  }\n}\n",
             Options {
                 emit_hull: false,
                 emit_yul: false,
@@ -581,8 +581,8 @@ mod tests {
     fn combined_artifacts_follow_cli_fail_fast_order() {
         let result = compile_impl(input(
             concat!(
-                "contract A { public function main() -> word { return 1; } }\n",
-                "contract B { public function main() -> word { return 2; } }\n",
+                "contract A { function main() public returns (word) { return 1; } }\n",
+                "contract B { function main() public returns (word) { return 2; } }\n",
             ),
             Options {
                 emit_hull: false,
@@ -613,11 +613,11 @@ mod tests {
     fn abi_only_emits_contract_json() {
         let result = compile_impl(input(
             concat!(
-                "import std.{*};\n",
-                "import std.dispatch.{*};\n",
+                "import std;\n",
+                "import std.dispatch;\n",
                 "contract Main {\n",
-                "  public function answer() -> uint256 {\n",
-                "    return uint256(42);\n",
+                "  function answer() public returns (uint256) {\n",
+                "    return 42 as uint256;\n",
                 "  }\n",
                 "}\n",
             ),
@@ -645,18 +645,19 @@ mod tests {
             files: vec![
                 FileInput {
                     path: "main.solc".to_owned(),
-                    content: "import a; import b; function main() -> word { return 0; }\n"
-                        .to_owned(),
+                    content: "import * as a from a; import * as b from b; function main() returns (word) { return 0; }\n".to_owned(),
                 },
                 FileInput {
                     path: "a.solc".to_owned(),
-                    content: "contract Token { public function main() -> word { return 1; } }\n"
-                        .to_owned(),
+                    content:
+                        "contract Token { function main() public returns (word) { return 1; } }\n"
+                            .to_owned(),
                 },
                 FileInput {
                     path: "b.solc".to_owned(),
-                    content: "contract Token { public function main() -> word { return 2; } }\n"
-                        .to_owned(),
+                    content:
+                        "contract Token { function main() public returns (word) { return 2; } }\n"
+                            .to_owned(),
                 },
             ],
             entry: "main.solc".to_owned(),
@@ -687,12 +688,12 @@ mod tests {
         workspace.set_external_file(
             "pkg",
             "token.solc",
-            "contract ExternalToken { public function main() -> word { return 7; } }\n".to_owned(),
+            "contract ExternalToken { function main() public returns (word) { return 7; } }\n"
+                .to_owned(),
         );
         workspace.set_file(
             "main.solc",
-            "import @pkg.token; contract Local { public function main() -> word { return 1; } }\n"
-                .to_owned(),
+            "import * as token from @pkg.token; contract Local { function main() public returns (word) { return 1; } }\n".to_owned(),
         );
         workspace.set_entry("main.solc");
         assert!(workspace.diagnostics().is_empty());
@@ -722,9 +723,9 @@ mod tests {
     fn backend_diagnostic_uses_shared_vfs_conversion() {
         let result = compile_impl(input(
             concat!(
-                "import std.{string};\n",
+                "import {string} from std;\n",
                 "contract Main {\n",
-                "  public function main() -> string { return \"nope\"; }\n",
+                "  function main() public returns (string) { return \"nope\"; }\n",
                 "}\n",
             ),
             Options {
@@ -748,7 +749,7 @@ mod tests {
     #[test]
     fn bad_program_reports_position_and_skips_backend() {
         let result = compile_impl(input(
-            "function f() -> word {\n  return true;\n}\n",
+            "function f() returns (word) {\n  return true;\n}\n",
             Options {
                 emit_hull: true,
                 emit_yul: true,

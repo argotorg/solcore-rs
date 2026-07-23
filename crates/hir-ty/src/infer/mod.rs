@@ -282,7 +282,7 @@ pub enum ComptimeObligationKind<'db> {
         /// Binding name.
         name: String,
     },
-    /// Return expression of a `-> comptime` body.
+    /// Return expression of a `returns (comptime T)` body.
     Return {
         /// Function or lambda context.
         context: String,

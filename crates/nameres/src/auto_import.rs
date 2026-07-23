@@ -60,10 +60,10 @@ pub fn auto_import_constructor_candidates<'db>(
 /// This intentionally handles only one ordinary identifier as the qualifier.
 /// Alias synthesis and nested missing-prefix repair require choosing new local
 /// spellings and are left to a higher-level refactoring. Every module binding
-/// introduced by the canonical path is checked, including full-path prefixes:
-/// `import lib.one.math;` exposes `math`, `one`, and `one.math`. A candidate is
-/// suppressed if any of those names would conflict with a local/imported item
-/// or another plain module import.
+/// introduced by the canonical namespace form is checked. For example,
+/// `import * as math from lib.one.math;` exposes `math`. A candidate is
+/// suppressed if that name would conflict with a local/imported item or
+/// another namespace import.
 pub fn auto_import_module_candidates<'db>(
     db: &'db dyn Db,
     importing: ModuleId<'db>,

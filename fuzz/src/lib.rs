@@ -115,8 +115,8 @@ fn source_file(db: &ParserDb, source: &str) -> SourceFile {
 mod tests {
     use super::*;
 
-    const ACCEPTED: &[u8] = b"function id(x: word) -> word { return x; }\n";
-    const REJECTED: &[u8] = b"function main() -> word { return true; }\n";
+    const ACCEPTED: &[u8] = b"function id(x: word) returns (word) { return x; }\n";
+    const REJECTED: &[u8] = b"function main() returns (word) { return true; }\n";
 
     #[test]
     fn every_target_accepts_compiler_diagnostics_normally() {

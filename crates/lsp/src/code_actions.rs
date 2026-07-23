@@ -19,7 +19,7 @@ use vfs::{DiagnosticSuggestion, DiagnosticTextEdit, SuggestionApplicability};
 use crate::{
     analysis::with_analysis_stack,
     diagnostics::{compute_vfs_diagnostics, to_lsp_diagnostic},
-    import_edits::{plan_import_edit, plan_module_import_edit, plan_wildcard_import_edit},
+    import_edits::{plan_import_edit, plan_module_import_edit},
     resolve::module_id_for_uri,
     state::WorldState,
 };
@@ -165,16 +165,6 @@ fn auto_import_suggestions<'db>(
                 nameres::auto_import_candidates(db, current_module, &name, namespace),
                 &mut planned,
             );
-            if namespace == nameres::Namespace::Term {
-                extend_constructor_wildcard_imports(
-                    db,
-                    current_module,
-                    source,
-                    parsed,
-                    &name,
-                    &mut planned,
-                );
-            }
         }
         MissingImport::QualifiedConstructor {
             type_name,
@@ -289,29 +279,6 @@ fn extend_symbol_imports<'db>(
                 "Import `{}` from `{}`",
                 candidate.public_name, candidate.import_path
             ),
-            edit,
-        });
-    }
-}
-
-fn extend_constructor_wildcard_imports<'db>(
-    db: &'db vfs::AnalysisHost,
-    current_module: nameres::ModuleId<'db>,
-    source: &str,
-    parsed: parser::ParseHirOutput<'db>,
-    name: &str,
-    planned: &mut Vec<PlannedImport>,
-) {
-    for candidate in nameres::auto_import_constructor_candidates(db, current_module, name, name) {
-        if planned.len() == MAX_AUTO_IMPORT_CANDIDATES {
-            return;
-        }
-        let Some(edit) = plan_wildcard_import_edit(db, source, parsed, &candidate.import_path)
-        else {
-            continue;
-        };
-        planned.push(PlannedImport {
-            title: format!("Import all from `{}`", candidate.import_path),
             edit,
         });
     }
@@ -671,8 +638,7 @@ mod tests {
 
     #[test]
     fn typo_diagnostic_becomes_nonpreferred_quick_fix() {
-        let source =
-            "function value() -> word { return 1; }\nfunction main() -> word { return vaue(); }\n";
+        let source = "function value() returns (word) { return 1; }\nfunction main() returns (word) { return vaue(); }\n";
         let (world, uri) = world_with_main(source);
         let diagnostic = undefined_name_diagnostic(&world, &uri);
         let requested_range = diagnostic.range;
@@ -699,7 +665,7 @@ mod tests {
 
     #[test]
     fn real_uri_and_utf16_range_are_preserved() {
-        let source = "// 😀\nfunction value() -> word { return 1; }\nfunction main() -> word { return vaue(); }\n";
+        let source = "// 😀\nfunction value() returns (word) { return 1; }\nfunction main() returns (word) { return vaue(); }\n";
         let root = Url::parse("file:///tmp/solcore%20project/").expect("root uri");
         let uri =
             Url::parse("file:///tmp/solcore%20project/src/%E6%95%B0.solc").expect("document uri");
@@ -726,8 +692,7 @@ mod tests {
 
     #[test]
     fn stale_code_or_range_does_not_receive_a_fix() {
-        let source =
-            "function value() -> word { return 1; }\nfunction main() -> word { return vaue(); }\n";
+        let source = "function value() returns (word) { return 1; }\nfunction main() returns (word) { return vaue(); }\n";
         let (world, uri) = world_with_main(source);
         let diagnostic = undefined_name_diagnostic(&world, &uri);
 
@@ -748,7 +713,7 @@ mod tests {
 
     #[test]
     fn typed_missing_import_lookup_requires_the_same_diagnostic_code() {
-        let (world, uri) = world_with_main("function main() -> word { return missing; }\n");
+        let (world, uri) = world_with_main("function main() returns (word) { return missing; }\n");
         let db = world.db();
         let module = module_id_for_uri(&world, db, &uri).expect("main module");
         let mut diagnostic = compute_vfs_diagnostics(&world, &uri)
@@ -773,8 +738,7 @@ mod tests {
 
     #[test]
     fn request_range_and_only_filter_are_respected() {
-        let source =
-            "function value() -> word { return 1; }\nfunction main() -> word { return vaue(); }\n";
+        let source = "function value() returns (word) { return 1; }\nfunction main() returns (word) { return vaue(); }\n";
         let (world, uri) = world_with_main(source);
         let diagnostic = undefined_name_diagnostic(&world, &uri);
 
@@ -813,8 +777,9 @@ mod tests {
 
     #[test]
     fn unknown_import_item_uses_compiler_suggestion() {
-        let main = "import math.{doubl};\nfunction main() -> word { return 1; }\n";
-        let math = "function double(x: word) -> word { return x + x; }\nexport { double };\n";
+        let main = "import {doubl} from math;\nfunction main() returns (word) { return 1; }\n";
+        let math =
+            "function double(x: word) returns (word) { return x + x; }\nexport { double };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
@@ -856,8 +821,9 @@ mod tests {
 
     #[test]
     fn module_path_typo_is_nonpreferred() {
-        let main = "import mth;\nfunction main() -> word { return 1; }\n";
-        let math = "function double(x: word) -> word { return x + x; }\nexport { double };\n";
+        let main = "import * as mth from mth;\nfunction main() returns (word) { return 1; }\n";
+        let math =
+            "function double(x: word) returns (word) { return x + x; }\nexport { double };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
@@ -899,8 +865,8 @@ mod tests {
 
     #[test]
     fn qualified_name_suggestion_replaces_only_the_leaf() {
-        let main = "import math;\nfunction main(x: math.Vaue) -> word { return 1; }\n";
-        let math = "data Value = Value(word);\nexport { Value(*) };\n";
+        let main = "import * as math from math;\nfunction main(x: math.Vaue) returns (word) { return 1; }\n";
+        let math = "enum Value { Value(word) }\nexport { Value(*) };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
@@ -942,8 +908,9 @@ mod tests {
 
     #[test]
     fn qualified_name_with_wrong_qualifier_has_no_partial_fix() {
-        let main = "import math as M;\nfunction main(x: N.Value) -> word { return 1; }\n";
-        let math = "data Value = Value(word);\nexport { Value(*) };\n";
+        let main =
+            "import * as M from math;\nfunction main(x: N.Value) returns (word) { return 1; }\n";
+        let math = "enum Value { Value(word) }\nexport { Value(*) };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
@@ -973,8 +940,9 @@ mod tests {
 
     #[test]
     fn qualified_name_with_wrong_qualifier_and_leaf_has_no_partial_fix() {
-        let main = "import math as M;\nfunction main(x: N.Vaue) -> word { return 1; }\n";
-        let math = "data Value = Value(word);\nexport { Value(*) };\n";
+        let main =
+            "import * as M from math;\nfunction main(x: N.Vaue) returns (word) { return 1; }\n";
+        let math = "enum Value { Value(word) }\nexport { Value(*) };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
@@ -1004,7 +972,7 @@ mod tests {
 
     #[test]
     fn exact_constructor_qualification_is_preferred() {
-        let source = "data Option = None | Some(word);\nfunction main(x: word) -> Option { return Some(x); }\n";
+        let source = "enum Option { None, Some(word) }\nfunction main(x: word) returns (Option) { return Some(x); }\n";
         let (world, uri) = world_with_main(source);
         let diagnostic = compute_diagnostics(&world, &uri)
             .into_iter()
@@ -1038,7 +1006,7 @@ mod tests {
 
     #[test]
     fn no_op_suggestion_edits_are_not_emitted() {
-        let source = "function main() -> word { return 1; }\n";
+        let source = "function main() returns (word) { return 1; }\n";
         let (world, uri) = world_with_main(source);
         let suggestion = DiagnosticSuggestion {
             title: "No change".to_owned(),
@@ -1058,8 +1026,8 @@ mod tests {
 
     #[test]
     fn unique_exported_term_gets_a_preferred_auto_import() {
-        let main = "function main() -> word { return value(); }\n";
-        let math = "function value() -> word { return 1; }\nexport { value };\n";
+        let main = "function main() returns (word) { return value(); }\n";
+        let math = "function value() returns (word) { return 1; }\nexport { value };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
@@ -1086,11 +1054,11 @@ mod tests {
                 .and_then(|changes| changes.get(&main_uri)),
             Some(&vec![TextEdit {
                 range: Range::new(Position::new(0, 0), Position::new(0, 0)),
-                new_text: "import lib.math.{value};\n".to_owned(),
+                new_text: "import {value} from lib.math;\n".to_owned(),
             }])
         );
 
-        let fixed = format!("import lib.math.{{value}};\n{main}");
+        let fixed = format!("import {{value}} from lib.math;\n{main}");
         let mut fixed_world = WorldState::new();
         assert!(fixed_world.open_document(main_uri.clone(), fixed));
         assert!(fixed_world.open_document(math_uri, math.to_owned()));
@@ -1104,8 +1072,8 @@ mod tests {
 
     #[test]
     fn multiple_auto_import_providers_are_sorted_and_nonpreferred() {
-        let main = "function main() -> word { return value(); }\n";
-        let provider = "function value() -> word { return 1; }\nexport { value };\n";
+        let main = "function main() returns (word) { return value(); }\n";
+        let provider = "function value() returns (word) { return 1; }\nexport { value };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -1157,8 +1125,9 @@ mod tests {
     }
 
     fn auto_import_extends_an_existing_selective_import_inner() {
-        let main = "import lib.math.{other};\nfunction main() -> word { return value(); }\n";
-        let math = "function other() -> word { return 0; }\nfunction value() -> word { return 1; }\nexport { other, value };\n";
+        let main =
+            "import {other} from lib.math;\nfunction main() returns (word) { return value(); }\n";
+        let math = "function other() returns (word) { return 0; }\nfunction value() returns (word) { return 1; }\nexport { other, value };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -1193,8 +1162,8 @@ mod tests {
 
     #[test]
     fn exported_types_and_classes_are_auto_importable() {
-        let type_main = "function keep(x: Token) -> Token { return x; }\n";
-        let type_provider = "data Token = Token(word);\nexport { Token };\n";
+        let type_main = "function keep(x: Token) returns (Token) { return x; }\n";
+        let type_provider = "enum Token { Token(word) }\nexport { Token };\n";
         let mut type_world = WorldState::new();
         let type_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(type_world.open_document(type_uri.clone(), type_main.to_owned()));
@@ -1219,8 +1188,8 @@ mod tests {
             "Import `Token` from `lib.model`"
         );
 
-        let class_main = "forall a. a:Comparable =>\nfunction keep(x: a) -> a { return x; }\n";
-        let class_provider = "forall a. class a:Comparable {\n  function compare(x: a, y: a) -> word;\n}\nexport { Comparable };\n";
+        let class_main = "function keep<a>(x: a) returns (a) where a: Comparable { return x; }\n";
+        let class_provider = "trait Comparable<a> {\n  function compare(x: a, y: a) returns (word);\n}\nexport { Comparable };\n";
         let mut class_world = WorldState::new();
         let class_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(class_world.open_document(class_uri.clone(), class_main.to_owned()));
@@ -1239,7 +1208,7 @@ mod tests {
             class_diagnostic.range,
             &context(class_diagnostic),
         )
-        .expect("class code actions");
+        .expect("trait code actions");
         assert_eq!(
             action(&class_actions).title,
             "Import `Comparable` from `lib.classes`"
@@ -1248,12 +1217,12 @@ mod tests {
 
     #[test]
     fn generated_dispatch_missing_type_and_class_have_auto_import_candidates() {
-        let source = r#"import std.{*};
-import std.opcodes.{address as address_};
+        let source = r#"import std;
+import {address as address_} from std.opcodes;
 
 contract C {
   constructor() {}
-  public function nothing() -> () {}
+  function nothing() public {}
 }
 "#;
         let (world, uri) = world_with_main(source);
@@ -1279,13 +1248,13 @@ contract C {
 
     #[test]
     fn generated_dispatch_missing_terms_have_auto_import_candidates() {
-        let source = r#"import std.{*};
-import std.opcodes.{address as address_};
-import std.dispatch.{NonPayable, SigString};
+        let source = r#"import std;
+import {address as address_} from std.opcodes;
+import {NonPayable, SigString} from std.dispatch;
 
 contract C {
   constructor() {}
-  public function nothing() -> () {}
+  function nothing() public {}
 }
 "#;
         let (world, uri) = world_with_main(source);
@@ -1303,10 +1272,30 @@ contract C {
             "expected generated term diagnostics"
         );
 
+        for message in [
+            "undefined name: Contract",
+            "undefined name: Fallback",
+            "undefined name: Method",
+        ] {
+            let diagnostic = diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.message.starts_with(message))
+                .unwrap_or_else(|| panic!("missing diagnostic `{message}`"))
+                .clone();
+            let actions =
+                handle_code_action(&world, &uri, diagnostic.range, &context(diagnostic.clone()))
+                    .expect("code actions");
+            assert!(
+                actions.iter().all(|action| !matches!(
+                    action,
+                    CodeActionOrCommand::CodeAction(action)
+                        if action.title.starts_with("Import all from ")
+                )),
+                "unqualified constructor `{message}` must not receive a wildcard import: {actions:#?}"
+            );
+        }
+
         for (message, expected_title) in [
-            ("undefined name: Contract", "Import all from `std.dispatch`"),
-            ("undefined name: Fallback", "Import all from `std.dispatch`"),
-            ("undefined name: Method", "Import all from `std.dispatch`"),
             (
                 "undefined name: RunContract",
                 "Import `RunContract` from `std.dispatch`",
@@ -1345,8 +1334,9 @@ contract C {
     #[test]
     fn resolved_member_errors_do_not_offer_term_imports() {
         let field_main =
-            "data Local = Present;\nfunction main() -> word { return Local.missing; }\n";
-        let exported_missing = "function missing() -> word { return 1; }\nexport { missing };\n";
+            "enum Local { Present }\nfunction main() returns (word) { return Local.missing; }\n";
+        let exported_missing =
+            "function missing() returns (word) { return 1; }\nexport { missing };\n";
         let mut field_world = WorldState::new();
         let field_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(field_world.open_document(field_uri.clone(), field_main.to_owned()));
@@ -1368,17 +1358,17 @@ contract C {
 
     #[test]
     fn resolved_module_member_does_not_offer_a_constructor_import() {
-        let main = "import lib.foo as Math;\nfunction main() -> word { return Math.Value(1); }\n";
+        let main = "import * as Math from lib.foo;\nfunction main() returns (word) { return Math.Value(1); }\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         assert!(world.open_document(
             Url::parse("file:///main/foo.solc").expect("foo uri"),
-            "function other() -> word { return 0; }\nexport { other };\n".to_owned()
+            "function other() returns (word) { return 0; }\nexport { other };\n".to_owned()
         ));
         assert!(world.open_document(
             Url::parse("file:///main/model.solc").expect("model uri"),
-            "data Math = Value(word);\nexport { Math(*) };\n".to_owned()
+            "enum Math { Value(word) }\nexport { Math(*) };\n".to_owned()
         ));
         let diagnostic = undefined_name_diagnostic(&world, &main_uri);
 
@@ -1392,8 +1382,8 @@ contract C {
 
     #[test]
     fn qualified_constructor_expression_imports_the_visible_type() {
-        let main = "function main() -> word { let option = Option.Some(1); return 1; }\n";
-        let provider = "data Option = None | Some(word);\nexport { Option(*) };\n";
+        let main = "function main() returns (word) { let option = Option.Some(1); return 1; }\n";
+        let provider = "enum Option { None, Some(word) }\nexport { Option(*) };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let model_uri = Url::parse("file:///main/model.solc").expect("model uri");
@@ -1420,14 +1410,14 @@ contract C {
                 .and_then(|changes| changes.get(&main_uri)),
             Some(&vec![TextEdit {
                 range: Range::new(Position::new(0, 0), Position::new(0, 0)),
-                new_text: "import lib.model.{Option};\n".to_owned(),
+                new_text: "import {Option} from lib.model;\n".to_owned(),
             }])
         );
 
         let mut fixed_world = WorldState::new();
         assert!(fixed_world.open_document(
             main_uri.clone(),
-            format!("import lib.model.{{Option}};\n{main}"),
+            format!("import {{Option}} from lib.model;\n{main}"),
         ));
         assert!(fixed_world.open_document(model_uri, provider.to_owned()));
         assert!(compute_diagnostics(&fixed_world, &main_uri).iter().all(
@@ -1440,8 +1430,8 @@ contract C {
 
     #[test]
     fn qualified_constructor_pattern_imports_the_visible_type() {
-        let main = "function main(x: word) -> word {\n  match x {\n  | Option.Some(value) => return value;\n  | _ => return 0;\n  }\n}\n";
-        let provider = "data Option = None | Some(word);\nexport { Option(*) };\n";
+        let main = "function main(x: word) returns (word) {\n  match (x) { case Option.Some(value) { return value; } default { return 0; } }\n}\n";
+        let provider = "enum Option { None, Some(word) }\nexport { Option(*) };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let model_uri = Url::parse("file:///main/model.solc").expect("model uri");
@@ -1457,8 +1447,8 @@ contract C {
 
     #[test]
     fn resolved_pattern_type_does_not_import_a_conflicting_constructor_owner() {
-        let main = "data Option = None;\nfunction main(x: word) -> word {\n  match x {\n  | Option.Some(value) => return value;\n  | _ => return 0;\n  }\n}\n";
-        let provider = "data Option = None | Some(word);\nexport { Option(*) };\n";
+        let main = "enum Option { None }\nfunction main(x: word) returns (word) {\n  match (x) { case Option.Some(value) { return value; } default { return 0; } }\n}\n";
+        let provider = "enum Option { None, Some(word) }\nexport { Option(*) };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -1478,8 +1468,8 @@ contract C {
 
     #[test]
     fn qualified_constructor_import_requires_that_constructor_to_be_exported() {
-        let main = "function main() -> word { let option = Option.Some(1); return 1; }\n";
-        let provider = "data Option = None | Some(word);\nexport { Option(None) };\n";
+        let main = "function main() returns (word) { let option = Option.Some(1); return 1; }\n";
+        let provider = "enum Option { None, Some(word) }\nexport { Option(None) };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -1497,8 +1487,8 @@ contract C {
 
     #[test]
     fn module_import_requires_an_immediate_term_member() {
-        let main = "function main() -> word { return math.Value; }\n";
-        let provider = "data Value = Value(word);\nexport { Value };\n";
+        let main = "function main() returns (word) { return math.Value; }\n";
+        let provider = "enum Value { Value(word) }\nexport { Value };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -1517,9 +1507,9 @@ contract C {
     }
 
     #[test]
-    fn missing_module_qualifier_gets_a_plain_module_import() {
-        let main = "function main() -> word { return math.value(); }\n";
-        let provider = "function value() -> word { return 1; }\nexport { value };\n";
+    fn missing_module_qualifier_gets_a_namespace_import() {
+        let main = "function main() returns (word) { return math.value(); }\n";
+        let provider = "function value() returns (word) { return 1; }\nexport { value };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
@@ -1546,12 +1536,15 @@ contract C {
                 .and_then(|changes| changes.get(&main_uri)),
             Some(&vec![TextEdit {
                 range: Range::new(Position::new(0, 0), Position::new(0, 0)),
-                new_text: "import lib.math;\n".to_owned(),
+                new_text: "import * as math from lib.math;\n".to_owned(),
             }])
         );
 
         let mut fixed_world = WorldState::new();
-        assert!(fixed_world.open_document(main_uri.clone(), format!("import lib.math;\n{main}"),));
+        assert!(fixed_world.open_document(
+            main_uri.clone(),
+            format!("import * as math from lib.math;\n{main}"),
+        ));
         assert!(fixed_world.open_document(math_uri, provider.to_owned()));
         assert!(compute_diagnostics(&fixed_world, &main_uri).iter().all(
             |diagnostic| diagnostic.code
@@ -1562,9 +1555,9 @@ contract C {
     }
 
     #[test]
-    fn module_import_stays_separate_from_an_existing_selective_import() {
-        let main = "import lib.math.{other};\nfunction main() -> word { return math.value(); }\n";
-        let provider = "function other() -> word { return 0; }\nfunction value() -> word { return 1; }\nexport { other, value };\n";
+    fn namespace_import_stays_separate_from_an_existing_selective_import() {
+        let main = "import {other} from lib.math;\nfunction main() returns (word) { return math.value(); }\n";
+        let provider = "function other() returns (word) { return 0; }\nfunction value() returns (word) { return 1; }\nexport { other, value };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -1590,15 +1583,15 @@ contract C {
                 .and_then(|changes| changes.get(&main_uri)),
             Some(&vec![TextEdit {
                 range: expected_range,
-                new_text: "import lib.math;\n".to_owned(),
+                new_text: "import * as math from lib.math;\n".to_owned(),
             }])
         );
     }
 
     #[test]
-    fn module_import_does_not_conflict_with_an_unqualified_term() {
-        let main = "import lib.math.{other};\nfunction math() -> word { return 0; }\nfunction main() -> word { return math.value(); }\n";
-        let provider = "function other() -> word { return 0; }\nfunction value() -> word { return 1; }\nexport { other, value };\n";
+    fn namespace_import_does_not_conflict_with_an_unqualified_term() {
+        let main = "import {other} from lib.math;\nalias math = word;\nfunction main() returns (word) { return math.value(); }\n";
+        let provider = "function other() returns (word) { return 0; }\nfunction value() returns (word) { return 1; }\nexport { other, value };\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -1615,27 +1608,42 @@ contract C {
     }
 
     #[test]
-    fn module_import_does_not_override_an_existing_path_prefix() {
-        let main = "import lib.math.deep;\nfunction main() -> word { return math.value(); }\n";
+    fn bare_import_path_does_not_suppress_a_namespace_import() {
+        let main = "import * as deep from lib.math.deep;\nfunction main() returns (word) { return math.value(); }\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         assert!(world.open_document(
             Url::parse("file:///main/math/deep.solc").expect("deep uri"),
-            "function old() -> word { return 0; }\nexport { old };\n".to_owned()
+            "function old() returns (word) { return 0; }\nexport { old };\n".to_owned()
         ));
         assert!(world.open_document(
             Url::parse("file:///main/other/math.solc").expect("candidate uri"),
-            "function value() -> word { return 1; }\nexport { value };\n".to_owned()
+            "function value() returns (word) { return 1; }\nexport { value };\n".to_owned()
         ));
         let diagnostic = undefined_name_diagnostic(&world, &main_uri);
+        let insertion = main.find('\n').expect("import line end") as u32 + 1;
+        let expected_range = world
+            .line_index(&main_uri)
+            .expect("line index")
+            .range(insertion, insertion);
 
         let actions = handle_code_action(&world, &main_uri, diagnostic.range, &context(diagnostic))
             .expect("code actions");
-        assert!(actions.iter().all(|action| match action {
-            CodeActionOrCommand::CodeAction(action) => !action.title.starts_with("Import "),
-            CodeActionOrCommand::Command(_) => true,
-        }));
+        let action = action(&actions);
+
+        assert_eq!(action.title, "Import module `math` from `lib.other.math`");
+        assert_eq!(
+            action
+                .edit
+                .as_ref()
+                .and_then(|edit| edit.changes.as_ref())
+                .and_then(|changes| changes.get(&main_uri)),
+            Some(&vec![TextEdit {
+                range: expected_range,
+                new_text: "import * as math from lib.other.math;\n".to_owned(),
+            }])
+        );
     }
 
     #[test]
@@ -1652,8 +1660,8 @@ contract C {
         let left_main = Url::from_file_path(left_path.join("main.solc")).expect("left main");
         let left_math = Url::from_file_path(left_path.join("math.solc")).expect("left math");
         let right_extra = Url::from_file_path(right_path.join("extra.solc")).expect("right extra");
-        let main = "function main() -> word { return value(); }\n";
-        let provider = "function value() -> word { return 1; }\nexport { value };\n";
+        let main = "function main() returns (word) { return value(); }\n";
+        let provider = "function value() returns (word) { return 1; }\nexport { value };\n";
         let mut world = WorldState::new();
         world.load_workspace_roots([
             (

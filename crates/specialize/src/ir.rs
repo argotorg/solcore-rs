@@ -423,7 +423,7 @@ pub enum MonoExprKind<'db> {
         field: String,
     },
     Proxy(MonoTy<'db>),
-    TypeAnnot {
+    Conversion {
         expr: Box<MonoExpr<'db>>,
         ty: MonoTy<'db>,
     },

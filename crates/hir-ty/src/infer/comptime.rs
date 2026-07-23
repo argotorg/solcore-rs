@@ -397,7 +397,7 @@ impl<'db> ComptimeChecker<'db> {
                     self.classify_expr(body, *base)
                 }
             }
-            ExprKind::TypeAnnot { expr, .. } => self.classify_expr(body, *expr),
+            ExprKind::Conversion { expr, .. } => self.classify_expr(body, *expr),
             ExprKind::UnaryOp { expr, .. } => self.classify_expr(body, *expr),
             ExprKind::If {
                 cond,
@@ -636,7 +636,7 @@ impl<'db> ComptimeChecker<'db> {
             .find(|method| ident_text(self.db, &method.name) == name)?;
         let type_vars = class_method_type_vars(self.db, class_info.class, method);
         let mut sig = callable_sig_from_func_sig(self.db, method, &type_vars);
-        let class_name = class.name(self.db).unwrap_or_else(|| "class".to_owned());
+        let class_name = class.name(self.db).unwrap_or_else(|| "trait".to_owned());
         sig.name = format!("{class_name}.{name}");
         Some(sig)
     }
@@ -966,10 +966,6 @@ impl<'db> TypeckDiagnosticCollector<'db> {
         class: ClassDef<'db>,
         inherited_type_vars: &[hir_nameres::TypeVarBinding<'db>],
     ) {
-        if let Some(diagnostic) = implicit_class_head_binder_diagnostic(self.db, class) {
-            self.diagnostics
-                .push(AnyDiagnostic::Typeck(diagnostic.lower()));
-        }
         let mut type_vars = inherited_type_vars.to_vec();
         type_vars.extend(type_var_bindings(
             class.def_id_value(self.db),

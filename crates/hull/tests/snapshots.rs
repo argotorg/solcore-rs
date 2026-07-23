@@ -1,3 +1,5 @@
+// migrate-syntax: keep-rust-file
+
 use hir::{
     anchor::DefLocationTable,
     ast::{

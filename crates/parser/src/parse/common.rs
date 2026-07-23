@@ -8,6 +8,10 @@ where
 {
     select! {
         Token::Ident(name) => name,
+        // `from` is contextual: it separates a selective/namespace import,
+        // but remains available as an ordinary name elsewhere (for example
+        // `Generic.from`).
+        Token::From => "from",
         Token::True => "true",
         Token::False => "false",
         Token::Fallback => "fallback",
@@ -21,14 +25,6 @@ where
         }
         (name, e.span())
     })
-}
-
-pub(super) fn pragma_ident_parser<'src, I>()
--> impl Parser<'src, I, SpannedStr<'src>, ParserErr<'src>>
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
-{
-    select! { Token::Ident(name) => name }.map_with(|name, e| (name, e.span()))
 }
 
 pub(super) fn non_comptime_param_name_parser<'src, I>()
@@ -62,21 +58,7 @@ pub(super) fn comptime_kw_parser<'src, I>() -> impl Parser<'src, I, LexSpan, Par
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
-    select! { Token::Ident(name) if name == "comptime" => () }.map_with(|_, e| e.span())
-}
-
-pub(super) fn hiding_kw_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
-{
-    select! { Token::Ident(name) if name == "hiding" => () }
-}
-
-pub(super) fn then_kw_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
-where
-    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
-{
-    select! { Token::Ident(name) if name == "then" => () }.labelled("then")
+    just(Token::Comptime).map_with(|_, e| e.span())
 }
 
 fn top_level_item_start_token_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
@@ -84,10 +66,10 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
 {
     select! {
-        Token::Import | Token::Export | Token::Pragma | Token::Type | Token::Data
-        | Token::Class | Token::Instance | Token::Contract | Token::Public
-        | Token::Payable | Token::Function | Token::Constructor | Token::Fallback
-        | Token::Forall | Token::Default => (),
+        Token::Import | Token::Export | Token::Pragma | Token::Type | Token::Alias
+        | Token::Enum | Token::Struct | Token::Trait | Token::Impl | Token::Contract
+        | Token::Interface | Token::Library | Token::Function | Token::Constructor
+        | Token::Fallback | Token::Default => (),
     }
 }
 

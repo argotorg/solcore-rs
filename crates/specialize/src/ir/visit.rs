@@ -122,7 +122,7 @@ where
             visitor.visit_expr(index);
         }
         MonoExprKind::Field { base, .. } => visitor.visit_expr(base),
-        MonoExprKind::TypeAnnot { expr, .. } => visitor.visit_expr(expr),
+        MonoExprKind::Conversion { expr, .. } => visitor.visit_expr(expr),
         MonoExprKind::Match { scrutinee, arms } => {
             visitor.visit_expr(scrutinee);
             for arm in arms {

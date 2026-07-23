@@ -249,7 +249,6 @@ fn is_two_byte_operator(bytes: Option<&[u8]>) -> bool {
         bytes,
         Some(
             b":="
-                | b"->"
                 | b"=>"
                 | b"=="
                 | b"!="
@@ -393,8 +392,7 @@ mod tests {
 
     #[test]
     fn builds_unicode_safe_leaf_to_module_chain() {
-        let source =
-            "function main(value: word) -> word {\n  let café = (value + 1);\n  return café;\n}\n";
+        let source = "function main(value: word) returns (word) {\n  let café = (value + 1);\n  return café;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let leaf_start = source.find("café").expect("unicode identifier");
@@ -454,7 +452,7 @@ mod tests {
     #[test]
     fn overlapping_source_line_does_not_hide_multiline_call_selection() {
         let source = "\
-function main() -> word {
+function main() returns (word) {
   let x = add(
     1,
     2); // trailing
@@ -479,10 +477,10 @@ function main() -> word {
 
     #[test]
     fn leaf_ranges_follow_identifier_and_operator_token_boundaries() {
-        let source = "pragma no-bounded-variable-condition;\nfunction main() -> word {\n  let value = 1;\n  return value-1;\n}\n";
+        let source = "pragma solcore noBoundVariableCondition;\nfunction main() returns (word) {\n  let value = 1;\n  return value-1;\n}\n";
         let (world, uri) = world_with_main(source);
         let index = world.line_index(&uri).unwrap();
-        let pragma = source.find("no-bounded").unwrap();
+        let pragma = source.find("noBoundVariableCondition").unwrap();
         let value = source.rfind("value-1").unwrap();
         let positions = [
             index.byte_to_position((pragma + 3) as u32),
@@ -494,7 +492,7 @@ function main() -> word {
             selections[0].range,
             index.range(
                 pragma as u32,
-                (pragma + "no-bounded-variable-condition".len()) as u32
+                (pragma + "noBoundVariableCondition".len()) as u32
             )
         );
         assert_eq!(

@@ -159,13 +159,13 @@ pub(crate) enum ParsedTopItem<'src> {
         /// Constructors.
         ctors: Vec<ParsedAdtCtor<'src>>,
     },
-    /// Class declaration.
+    /// Trait declaration (stored in the existing class representation).
     Class {
         /// Span covering the declaration.
         span: LexSpan,
         /// Consecutive comments directly preceding the declaration.
         leading_comments: Vec<ParsedSourceComment<'src>>,
-        /// Type variables introduced by `forall`.
+        /// Declared type parameters.
         type_vars: Vec<SpannedStr<'src>>,
         /// Superclass predicates.
         super_preds: Vec<ParsedPred<'src>>,
@@ -174,13 +174,13 @@ pub(crate) enum ParsedTopItem<'src> {
         /// Method signature declarations.
         methods: Vec<ParsedClassMethod<'src>>,
     },
-    /// Instance declaration.
+    /// Impl declaration (stored in the existing instance representation).
     Instance {
         /// Span covering the declaration.
         span: LexSpan,
         /// Consecutive comments directly preceding the declaration.
         leading_comments: Vec<ParsedSourceComment<'src>>,
-        /// Type variables introduced by `forall`.
+        /// Declared type parameters.
         type_vars: Vec<SpannedStr<'src>>,
         /// Context predicates.
         preds: Vec<ParsedPred<'src>>,
@@ -251,7 +251,7 @@ pub(crate) struct ParsedSelectedName<'src> {
 /// Import selector payload.
 #[derive(Debug, Clone)]
 pub(crate) enum ParsedImportSelector<'src> {
-    /// Wildcard import.
+    /// Import every public name through the canonical plain-import spelling.
     Wildcard,
     /// Explicit selected names.
     Names(Vec<ParsedSelectedName<'src>>),
@@ -308,7 +308,7 @@ pub(crate) enum ParsedTyKind<'src> {
         name: SpannedStr<'src>,
         /// Type arguments.
         args: Vec<ParsedTy<'src>>,
-        /// Span of the parenthesized argument list, if present.
+        /// Span of the source type-argument syntax, if present.
         args_span: Option<LexSpan>,
     },
     /// Proxy type sugar introduced by `@`.
@@ -343,16 +343,16 @@ pub(crate) enum ParsedTyKind<'src> {
     Error,
 }
 
-/// Parsed class predicate.
+/// Parsed trait constraint (stored in the existing class-predicate shape).
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedPred<'src> {
     /// Main constrained type.
     pub(crate) ty: ParsedTy<'src>,
-    /// Class name.
+    /// Trait name.
     pub(crate) class: SpannedStr<'src>,
-    /// Additional class arguments.
+    /// Additional trait arguments.
     pub(crate) args: Vec<ParsedTy<'src>>,
-    /// Span of the parenthesized class-argument list, if present.
+    /// Span of the angle-bracketed trait-argument list, if present.
     pub(crate) args_span: Option<LexSpan>,
 }
 
@@ -371,7 +371,7 @@ pub(crate) struct ParsedAdtCtor<'src> {
     pub(crate) fields: Vec<ParsedTy<'src>>,
 }
 
-/// Parsed method signature declared by a class.
+/// Parsed method signature declared by a trait.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedClassMethod<'src> {
     /// Consecutive comments directly preceding the method signature.
@@ -411,7 +411,7 @@ pub(crate) enum ParsedFuncParam<'src> {
 pub(crate) struct ParsedFuncSig<'src> {
     /// Span covering the signature.
     pub(crate) span: LexSpan,
-    /// Type variables from `forall`.
+    /// Declared type parameters.
     pub(crate) type_vars: Vec<SpannedStr<'src>>,
     /// Qualifying predicates.
     pub(crate) preds: Vec<ParsedPred<'src>>,
@@ -526,15 +526,6 @@ pub(crate) enum ParsedExprKind<'src> {
     Lit(ParsedLitKind<'src>),
     /// Identifier expression.
     Ident(SpannedStr<'src>),
-    /// Leading-dot constructor expression.
-    DotCtor {
-        /// Span of the leading dot.
-        dot: LexSpan,
-        /// Constructor name.
-        name: SpannedStr<'src>,
-        /// Argument expressions.
-        args: Vec<ParsedExpr<'src>>,
-    },
     /// Type proxy expression.
     Proxy {
         /// Span of the `@`.
@@ -583,11 +574,11 @@ pub(crate) enum ParsedExprKind<'src> {
         /// Field name.
         field: SpannedStr<'src>,
     },
-    /// Type annotation expression.
-    TypeAnnot {
-        /// Annotated expression.
+    /// Explicit type conversion written with `as`.
+    Conversion {
+        /// Converted expression.
         expr: Box<ParsedExpr<'src>>,
-        /// Annotation type.
+        /// Conversion target type.
         ty: ParsedTy<'src>,
     },
     /// Unary operator expression.
@@ -706,6 +697,19 @@ pub(crate) enum ParsedStmtKind<'src> {
         ty: Option<ParsedTy<'src>>,
         /// Optional initializer expression.
         init: Option<ParsedExpr<'src>>,
+    },
+    /// Tuple destructuring binding.
+    ///
+    /// Lowering rewrites this and the remainder of its lexical block into a
+    /// single-arm tuple match so the existing pattern binder and scope
+    /// machinery can represent the declaration without losing scope.
+    LetPattern {
+        /// Tuple binding pattern.
+        pat: ParsedPat<'src>,
+        /// Optional type annotation for the complete pattern.
+        ty: Option<ParsedTy<'src>>,
+        /// Required initializer expression.
+        init: ParsedExpr<'src>,
     },
     /// Return statement.
     Return(Option<ParsedExpr<'src>>),

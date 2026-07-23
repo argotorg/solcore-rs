@@ -478,7 +478,7 @@ fn generic_derivation_is_excluded(db: &dyn Db, module: Module<'_>, adt_name: &st
         let Item::Pragma(pragma) = item else {
             return false;
         };
-        (*pragma.name(db).atom()).text(db) == "no-generic-instance-for"
+        (*pragma.name(db).atom()).text(db) == "noGenericInstanceFor"
             && pragma
                 .items(db)
                 .iter()

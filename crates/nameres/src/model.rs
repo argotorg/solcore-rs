@@ -199,10 +199,10 @@ impl<'db> AutoImportCandidate<'db> {
 
 /// One module that can be brought into scope under its default qualifier.
 ///
-/// Unlike [`AutoImportCandidate`], this candidate represents an unselected
-/// module import (`import lib.foo;`). `member` is retained as evidence that the
-/// requested immediate qualified term lookup is present in the provider's
-/// public interface.
+/// Unlike [`AutoImportCandidate`], this candidate represents a namespace
+/// import (`import * as foo from lib.foo;`). `member` is retained as evidence
+/// that the requested immediate qualified term lookup is present in the
+/// provider's public interface.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, salsa::Update)]
 pub struct AutoImportModuleCandidate<'db> {
     /// Loaded module named by the generated import.

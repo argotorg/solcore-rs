@@ -272,21 +272,6 @@ pub(super) fn lower_type_ref<'db>(
             params_span,
             ret,
         } => {
-            // A comma-separated outer domain denotes source parameters, while
-            // another grouping keeps a tuple-valued unary domain:
-            // `(a, b) -> c` versus `((a, b)) -> c`.
-            // Keep the raw parser's unary domain node so the grouping remains
-            // observable until this lowering boundary.
-            let params = match params.len() {
-                1 => match params.into_iter().next().expect("single arrow domain") {
-                    ParsedTy {
-                        kind: ParsedTyKind::Tuple { elems },
-                        ..
-                    } if elems.len() != 1 => elems,
-                    param => vec![param],
-                },
-                _ => params,
-            };
             let params = params
                 .into_iter()
                 .map(|param| lower_type_ref(db, anchor, base_start, param))
@@ -512,14 +497,13 @@ pub(super) fn lower_class<'db, 'src>(
     ctx: &mut LoweringCtx<'db, '_>,
     span: LexSpan,
     leading_comments: Vec<ParsedSourceComment<'src>>,
-    mut type_vars: Vec<SpannedStr<'src>>,
+    type_vars: Vec<SpannedStr<'src>>,
     super_preds: Vec<ParsedPred<'src>>,
     head: ParsedPred<'src>,
     methods: Vec<ParsedClassMethod<'src>>,
 ) -> item::ClassDef<'db> {
     let class_name = head.class.0;
     let class_def = ctx.alloc_def_with_location(DefKind::Class, Some(class_name), span.start);
-    add_implicit_class_head_binder(&mut type_vars, &head);
 
     let anchor = AnchorId::def(ctx.db, class_def);
     let type_vars = type_vars
@@ -552,35 +536,6 @@ pub(super) fn lower_class<'db, 'src>(
         head,
         methods,
         method_comments,
-    )
-}
-
-fn add_implicit_class_head_binder<'src>(
-    type_vars: &mut Vec<SpannedStr<'src>>,
-    head: &ParsedPred<'src>,
-) {
-    if !type_vars.is_empty() {
-        return;
-    }
-    let ParsedTyKind::Named {
-        qualifiers,
-        name,
-        args,
-        ..
-    } = &head.ty.kind
-    else {
-        return;
-    };
-    if !qualifiers.is_empty() || !args.is_empty() || is_builtin_type_name(name.0) {
-        return;
-    }
-    type_vars.push(*name);
-}
-
-fn is_builtin_type_name(name: &str) -> bool {
-    matches!(
-        name,
-        "word" | "bool" | "string" | "integer" | "()" | "pair" | "sum"
     )
 }
 
@@ -620,9 +575,8 @@ pub(super) fn lower_function<'db>(
     let body_anchor = AnchorId::def(ctx.db, body_def);
 
     let mut arenas = BodyArenas::new();
-    let implicit_return = matches!(kind, item::FuncKind::Function | item::FuncKind::Fallback);
     let top_level_stmts = ctx.with_owner(body_def, |ctx| {
-        ctx.lower_body_statements(body_anchor, body_span, &mut arenas, implicit_return)
+        ctx.lower_body_statements(body_anchor, body_span, &mut arenas)
     });
     let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
     let (stmts, exprs, pats) = arenas.into_parts();

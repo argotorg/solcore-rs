@@ -26,7 +26,7 @@ pub(super) fn display_scheme_source<'db>(
     let qualified = if preds.is_empty() {
         ty
     } else {
-        format!("{} => {ty}", preds.join(", "))
+        format!("{ty} where {}", preds.join(", "))
     };
     if scheme.binder_count(db) == 0 {
         qualified
@@ -35,6 +35,6 @@ pub(super) fn display_scheme_source<'db>(
             .map(|index| display_var_name(index, &names))
             .collect::<Vec<_>>()
             .join(", ");
-        format!("forall {vars}. {qualified}")
+        format!("<{vars}> {qualified}")
     }
 }

@@ -219,9 +219,9 @@ impl<'db> Visitor<'db> for Evaluator<'db> {
             MonoExprKind::Proxy(ty) => {
                 self.check_erasure_ty("proxy", ty.ty(), Some(expr.span));
             }
-            MonoExprKind::TypeAnnot { expr: inner, ty } => {
+            MonoExprKind::Conversion { expr: inner, ty } => {
                 self.visit_expr(inner);
-                self.check_erasure_ty("type annotation", ty.ty(), Some(expr.span));
+                self.check_erasure_ty("explicit conversion", ty.ty(), Some(expr.span));
             }
             MonoExprKind::Lit(_) | MonoExprKind::Lambda { .. } | MonoExprKind::Error => {}
             _ => walk_expr(self, expr),

@@ -22,31 +22,50 @@ use crate::{
 
 const KEYWORDS: &[&str] = &[
     "contract",
+    "interface",
+    "library",
     "import",
+    "from",
     "export",
     "as",
     "let",
-    "data",
-    "class",
-    "forall",
-    "instance",
+    "comptime",
+    "alias",
+    "enum",
+    "struct",
+    "trait",
+    "impl",
+    "where",
     "if",
     "else",
     "for",
+    "while",
     "switch",
     "type",
+    "is",
     "case",
     "default",
     "match",
     "public",
+    "external",
+    "internal",
+    "private",
     "payable",
+    "pure",
+    "view",
+    "memory",
+    "storage",
+    "calldata",
     "function",
+    "returns",
     "constructor",
     "fallback",
     "return",
+    "revert",
     "leave",
     "continue",
     "break",
+    "unchecked",
     "lam",
     "assembly",
     "pragma",
@@ -520,7 +539,7 @@ fn detail_for_resolution(resolution: &Resolution<'_>) -> &'static str {
         Resolution::Def {
             kind: DefResolutionKind::Adt,
             ..
-        } => "data",
+        } => "enum",
         Resolution::Def {
             kind: DefResolutionKind::TypeAlias,
             ..
@@ -528,23 +547,23 @@ fn detail_for_resolution(resolution: &Resolution<'_>) -> &'static str {
         Resolution::Def {
             kind: DefResolutionKind::Class,
             ..
-        } => "class",
+        } => "trait",
         Resolution::Def {
             kind: DefResolutionKind::Instance,
             ..
-        } => "instance",
+        } => "impl",
         Resolution::Ctor { .. } => "constructor",
         Resolution::Local(LocalBinding::TypeVar(_)) => "type parameter",
         Resolution::Local(_) => "local",
         Resolution::Param(_) => "parameter",
         Resolution::Field(_) => "field",
-        Resolution::ClassMethod { .. } => "class method",
+        Resolution::ClassMethod { .. } => "trait method",
         Resolution::Module(_) => "module",
         Resolution::Builtin(BuiltinKind::Type(_)) => "builtin type",
-        Resolution::Builtin(BuiltinKind::Class(_)) => "builtin class",
+        Resolution::Builtin(BuiltinKind::Class(_)) => "builtin trait",
         Resolution::Builtin(BuiltinKind::Constructor(_)) => "builtin constructor",
         Resolution::Builtin(BuiltinKind::Function(_)) => "builtin function",
-        Resolution::Builtin(BuiltinKind::ClassMethod(_)) => "builtin class method",
+        Resolution::Builtin(BuiltinKind::ClassMethod(_)) => "builtin trait method",
         Resolution::DotCtorDeferred => "constructor",
         Resolution::Err => "unresolved",
     }
@@ -597,11 +616,11 @@ mod tests {
     #[test]
     fn function_body_completion_includes_params_locals_and_top_level_items() {
         let source = "\
-function helper() -> word {
+function helper() returns (word) {
   return 1;
 }
 
-function main(input: word) -> word {
+function main(input: word) returns (word) {
   let local = input;
   return local;
 }
@@ -623,7 +642,7 @@ function main(input: word) -> word {
 
     #[test]
     fn completion_includes_language_keywords() {
-        let source = "function main() -> word {\n  return 1;\n}\n";
+        let source = "function main() returns (word) {\n  return 1;\n}\n";
         let (world, uri) = world_with_main(source);
         let offset = source.find('1').expect("literal") as u32;
         let position = world
@@ -635,15 +654,19 @@ function main(input: word) -> word {
             completion_items(handle_completion(&world, &uri, position).expect("completion"));
 
         assert_completion(&items, "function", CompletionItemKind::KEYWORD);
+        assert_completion(&items, "returns", CompletionItemKind::KEYWORD);
+        assert_completion(&items, "trait", CompletionItemKind::KEYWORD);
+        assert_completion(&items, "is", CompletionItemKind::KEYWORD);
+        assert_completion(&items, "storage", CompletionItemKind::KEYWORD);
+        assert_completion(&items, "while", CompletionItemKind::KEYWORD);
+        assert_no_completion(&items, "forall");
     }
 
     #[test]
     fn completion_uses_requested_module_when_unrelated_document_opened_first() {
-        let unrelated = "function unrelated() -> word { return 0; }\n";
-        let math =
-            "function combine(a: word, b: word) -> word { return a + b; }\n\nexport { combine };\n";
-        let main =
-            "import math.{combine};\n\nfunction main() -> word {\n  return combine(1, 2);\n}\n";
+        let unrelated = "function unrelated() returns (word) { return 0; }\n";
+        let math = "function combine(a: word, b: word) returns (word) { return a + b; }\n\nexport { combine };\n";
+        let main = "import {combine} from math;\n\nfunction main() returns (word) {\n  return combine(1, 2);\n}\n";
         let unrelated_uri = Url::parse("file:///main/unrelated.solc").expect("unrelated uri");
         let math_uri = Url::parse("file:///main/math.solc").expect("math uri");
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
@@ -667,14 +690,14 @@ function main(input: word) -> word {
     #[test]
     fn trailing_dot_module_completion_is_member_only_and_respects_exports() {
         let math = "\
-function visible() -> word { return 1; }
-function hidden() -> word { return 2; }
-data Color = Red | Green;
+function visible() returns (word) { return 1; }
+function hidden() returns (word) { return 2; }
+enum Color { Red, Green }
 export { visible, Color(Red, Green) };
 ";
         let main = "\
-import math;
-function main() -> word {
+import * as math from math;
+function main() returns (word) {
   return math.;
 }
 ";
@@ -695,13 +718,13 @@ function main() -> word {
     #[test]
     fn qualified_completion_filters_a_typed_member_prefix() {
         let math = "\
-function visible() -> word { return 1; }
-function value() -> word { return 2; }
+function visible() returns (word) { return 1; }
+function value() returns (word) { return 2; }
 export { visible, value };
 ";
         let main = "\
-import math;
-function main() -> word {
+import * as math from math;
+function main() returns (word) {
   return math.vis;
 }
 ";
@@ -716,9 +739,9 @@ function main() -> word {
     fn qualified_completion_includes_contract_local_adt_constructors() {
         let source = "\
 contract Palette {
-  data Color = Red | Green;
+  enum Color { Red, Green }
 
-  function main() -> word {
+  function main() returns (word) {
     return Color.;
   }
 }
@@ -732,17 +755,17 @@ contract Palette {
     }
 
     #[test]
-    fn qualified_completion_includes_imported_class_methods() {
+    fn qualified_completion_includes_imported_trait_methods() {
         let classes = "\
-forall a . class a : Eq {
-  function eq(x: a, y: a) -> bool;
-  function unequal(x: a, y: a) -> bool;
+trait Eq<a> {
+  function eq(x: a, y: a) returns (bool);
+  function unequal(x: a, y: a) returns (bool);
 }
 export { Eq };
 ";
         let main = "\
-import classes.{Eq};
-function main() -> word {
+import {Eq} from classes;
+function main() returns (word) {
   return Eq.;
 }
 ";

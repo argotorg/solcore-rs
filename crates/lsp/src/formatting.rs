@@ -293,8 +293,8 @@ mod tests {
 
     #[test]
     fn formats_whole_document_without_touching_braces_in_trivia() {
-        let source = "function main() -> word {   \nreturn \"{\";\n/* } { */\nif true {\nreturn 1; // }\n}\n}\n\n";
-        let expected = "function main() -> word {\n  return \"{\";\n  /* } { */\n  if true {\n    return 1; // }\n  }\n}\n";
+        let source = "function main() returns (word) {   \nreturn \"{\";\n/* } { */\nif (true) {\nreturn 1; // }\n}\n}\n\n";
+        let expected = "function main() returns (word) {\n  return \"{\";\n  /* } { */\n  if (true) {\n    return 1; // }\n  }\n}\n";
         let (world, uri) = world_with_main(source);
 
         let edits = handle_formatting(&world, &uri, &options(2, true)).expect("formatting");

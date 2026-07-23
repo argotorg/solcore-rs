@@ -109,11 +109,11 @@ fn doc_id_yul_snapshot() {
         render_source(
             "doc_id",
             r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract IdDoc {
-  public function id(x : uint256) -> uint256 {
+  function id(x: uint256) public returns (uint256) {
     return x;
   }
 }
@@ -130,16 +130,13 @@ fn doc_option_maybe_yul_snapshot() {
             "doc_option_maybe",
             r#"
 contract OptionDoc {
-  data Option(a) = None | Some(a);
+  enum Option<a> { None, Some(a) }
 
-  function maybe(n : word, o : Option(word)) -> word {
-    match o {
-      | Option.None => return n;
-      | Option.Some(x) => return x;
-    }
+  function maybe(n: word, o: Option<word>) returns (word) {
+    match (o) { case Option.None { return n; } case Option.Some(x) { return x; } }
   }
 
-  public function main() -> word {
+  function main() public returns (word) {
     return maybe(0, Option.Some(42));
   }
 }
@@ -169,16 +166,16 @@ fn dispatch_basic_shape_yul_snapshot() {
         render_source(
             "dispatch_basic_shape",
             r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract DispatchBasicShape {
-  public function id(x : uint256) -> uint256 {
+  function id(x: uint256) public returns (uint256) {
     return x;
   }
 
-  public function answer() -> uint256 {
-    return uint256(42);
+  function answer() public returns (uint256) {
+    return 42 as uint256;
   }
 }
 "#,
@@ -549,9 +546,9 @@ fn assembly_let_shadowing_does_not_substitute_shadowed_name() {
         "assembly_let_shadowing",
         r#"
 contract AssemblyLetShadowing {
-  public function main() -> word {
-    let x : bool = false;
-    let r : word = 0;
+  function main() public returns (word) {
+    let x: bool = false;
+    let r: word = 0;
     assembly {
       let x := 1
       r := x
@@ -585,9 +582,9 @@ fn assembly_nested_block_shadowing_is_block_local() {
         "assembly_nested_block_shadowing",
         r#"
 contract AssemblyNestedBlockShadowing {
-  public function main() -> word {
-    let x : bool = false;
-    let r : word = 0;
+  function main() public returns (word) {
+    let x: bool = false;
+    let r: word = 0;
     assembly {
       {
         let x := 1
@@ -619,10 +616,10 @@ fn assembly_function_params_and_returns_shadow_hull_locals() {
         "assembly_function_shadowing",
         r#"
 contract AssemblyFunctionShadowing {
-  public function main() -> word {
-    let x : bool = false;
-    let y : bool = true;
-    let r : word = 0;
+  function main() public returns (word) {
+    let x: bool = false;
+    let y: bool = true;
+    let r: word = 0;
     assembly {
       function f(x) -> y {
         y := x
@@ -693,7 +690,7 @@ fn object_less_source_calls_its_mangled_main_before_returning() {
     let yul = render_source(
         "object_less_main",
         r#"
-function main() -> word { return 42; }
+function main() returns (word) { return 42; }
 "#,
     );
 
@@ -711,16 +708,12 @@ fn value_equal_literal_spellings_emit_one_yul_case() {
         "equal_literal_spellings",
         r#"
 contract C {
-  function pick(x : word) -> word {
-    match x {
-      | 0x2a => return 111;
-      | 0042 => return 222;
-      | _ => return 333;
-    }
+  function pick(x: word) returns (word) {
+    match (x) { case 0x2a { return 111; } case 0042 { return 222; } default { return 333; } }
   }
 
-  function main() -> word {
-    let x : word = 0;
+  function main() returns (word) {
+    let x: word = 0;
     assembly { x := calldataload(0) }
     return pick(x);
   }
@@ -750,8 +743,8 @@ fn hygienic_names_canonical_literals_and_break_validation() {
         "reserved_add_name",
         r#"
 contract ReservedAddName {
-  public function main() -> word {
-    let add : word = 1;
+  function main() public returns (word) {
+    let add: word = 1;
     return add;
   }
 }
@@ -764,9 +757,9 @@ contract ReservedAddName {
         "asm_shadow",
         r#"
 contract AsmShadow {
-  public function main() -> word {
-    let x : bool = false;
-    let r : word = 0;
+  function main() public returns (word) {
+    let x: bool = false;
+    let r: word = 0;
     assembly {
       let x := 1
       r := x
@@ -783,7 +776,7 @@ contract AsmShadow {
         "leading_zero_decimal",
         r#"
 contract LeadingZeroDecimal {
-  public function main() -> word {
+  function main() public returns (word) {
     return 01;
   }
 }
@@ -810,7 +803,7 @@ contract LeadingZeroDecimal {
         "asm_break_outside_loop",
         r#"
 contract BadBreak {
-  public function main() -> word {
+  function main() public returns (word) {
     assembly { break }
     return 0;
   }
@@ -826,7 +819,7 @@ contract BadBreak {
         "asm_continue_post",
         r#"
 contract BadContinuePost {
-  public function main() -> word {
+  function main() public returns (word) {
     assembly { for {} 1 { continue } {} }
     return 0;
   }
@@ -843,11 +836,11 @@ contract BadContinuePost {
 fn strict_assembly_artifact_requires_one_top_level_object_or_selection() {
     let multi_contract = r#"
 contract A {
-  public function main() -> word { return 1; }
+  function main() public returns (word) { return 1; }
 }
 
 contract B {
-  public function main() -> word { return 2; }
+  function main() public returns (word) { return 2; }
 }
 "#;
     let error = render_source_error("multi_contract_yul", multi_contract);
@@ -887,8 +880,8 @@ fn solc_strict_assembly_compiles_snapshots_and_repros_when_present() {
             "repro_reserved_add_name",
             r#"
 contract C {
-  public function main() -> word {
-    let add : word = 1;
+  function main() public returns (word) {
+    let add: word = 1;
     return add;
   }
 }
@@ -901,7 +894,7 @@ contract C {
             "repro_decimal_leading_zero",
             r#"
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     return 01;
   }
 }
@@ -914,9 +907,9 @@ contract C {
             "repro_assembly_shadow_lvalue",
             r#"
 contract C {
-  public function main() -> word {
-    let x : bool = false;
-    let r : word = 0;
+  function main() public returns (word) {
+    let x: bool = false;
+    let r: word = 0;
     assembly { let x := 1 r := x }
     return r;
   }
@@ -935,21 +928,17 @@ fn nested_pair_tail_binding_preserves_the_tail_product() {
     let yul = render_source(
         "nested_pair_tail_binding",
         r#"
-forall a b . function nestedSnd(p: (a, b)) -> b {
+function nestedSnd<a, b>(p: (a, b)) returns (b) {
   assembly { mstore(0, 0) }
-  match p {
-    | (_, tail) => return tail;
-  }
+  match (p) { case (_, tail) { return tail; } }
 }
 
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     let x: word;
     assembly { x := sload(0) }
     let tail = nestedSnd((x, (x, x)));
-    match tail {
-      | (head, _) => return head;
-    }
+    match (tail) { case (head, _) { return head; } }
   }
 }
 "#,
@@ -1237,11 +1226,11 @@ fn snapshot_yul_cases() -> Vec<(String, String)> {
             render_source(
                 "doc_id",
                 r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract IdDoc {
-  public function id(x : uint256) -> uint256 {
+  function id(x: uint256) public returns (uint256) {
     return x;
   }
 }
@@ -1254,16 +1243,13 @@ contract IdDoc {
                 "doc_option_maybe",
                 r#"
 contract OptionDoc {
-  data Option(a) = None | Some(a);
+  enum Option<a> { None, Some(a) }
 
-  function maybe(n : word, o : Option(word)) -> word {
-    match o {
-      | Option.None => return n;
-      | Option.Some(x) => return x;
-    }
+  function maybe(n: word, o: Option<word>) returns (word) {
+    match (o) { case Option.None { return n; } case Option.Some(x) { return x; } }
   }
 
-  public function main() -> word {
+  function main() public returns (word) {
     return maybe(0, Option.Some(42));
   }
 }
@@ -1287,16 +1273,16 @@ contract OptionDoc {
             render_source(
                 "dispatch_basic_shape",
                 r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract DispatchBasicShape {
-  public function id(x : uint256) -> uint256 {
+  function id(x: uint256) public returns (uint256) {
     return x;
   }
 
-  public function answer() -> uint256 {
-    return uint256(42);
+  function answer() public returns (uint256) {
+    return 42 as uint256;
   }
 }
 "#,

@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn parameter_highlights_declaration_and_uses_in_current_file() {
-        let source = "function id(x: word) -> word {\n  let y = x;\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let first_use = (source.find("let y = x").expect("first use") + "let y = ".len()) as u32;
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn whitespace_returns_none() {
-        let source = "function id(x: word) -> word {\n  let y = x;\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let whitespace = (source.find("let y = x").expect("let statement") + "let".len()) as u32;

@@ -155,38 +155,38 @@ fn parse_recovery_suppression_policy_silences_name_lookup_cascades() {
     let cases = [
         (
             "body_expr_error",
-            "function f() -> word {
+            "function f() returns (word) {
                let x = ;
                return missing;
              }",
         ),
         (
             "lost_function_signature",
-            "lost(x: word) -> word { return 0; }
-             function caller() -> word { return lost(0); }",
+            "lost(x: word) returns (word) { return 0; }
+             function caller() returns (word) { return lost(0); }",
         ),
         (
             "broken_import",
             "impoort util;
-             function caller() -> word { return missing; }",
+             function caller() returns (word) { return missing; }",
         ),
         (
             "broken_type_annotation",
             "typeish Alias = word;
-             function caller(x: Alias) -> word { return 0; }",
+             function caller(x: Alias) returns (word) { return 0; }",
         ),
         (
             "top_level_item_error",
             "function first() {}
              unknown nonsense tokens
              function second() {}
-             function caller() -> word { return missing; }",
+             function caller() returns (word) { return missing; }",
         ),
         (
             "broken_contract_member",
             "contract C {
-               broken :
-               function get() -> word { return broken; }
+               broken nonsense;
+               function get() returns (word) { return broken; }
              }",
         ),
     ];
@@ -231,18 +231,15 @@ fn undefined_name_kind_distinguishes_bare_terms_from_path_lookups() {
     let (file, module) = parse_and_module(
         &db,
         "undefined_name_kinds",
-        "data Local = Present;
-         function bare() -> word { return missing; }
-         function qualified() -> word { return math.value(); }
-         function ctorExpr() -> word { return Option.Some(0); }
-         function ctorPat(x: word) -> word {
-           match x {
-           | Option.Some(y) => return y;
-           | _ => return 0;
-           }
+        "enum Local { Present }
+         function bare() returns (word) { return missing; }
+         function qualified() returns (word) { return math.value(); }
+         function ctorExpr() returns (word) { return Option.Some(0); }
+         function ctorPat(x: word) returns (word) {
+           match (x) { case Option.Some(y) { return y; } default { return 0; } }
          }
-         function valueMember(x: word) -> word { return x.absent; }
-         function member() -> word { return Local.absent; }",
+         function valueMember(x: word) returns (word) { return x.absent; }
+         function member() returns (word) { return Local.absent; }",
     );
     assert!(parse_diagnostics(&db, file).is_empty());
 
@@ -291,8 +288,8 @@ fn missing_resolved_module_member_has_qualified_lookup_context() {
     let (file, module) = parse_and_module(
         &db,
         "missing_module_member",
-        "data Local = Present;
-         function missing() -> word {
+        "enum Local { Present }
+         function missing() returns (word) {
            let fromModule = math.value();
            return Local.absent;
          }",
@@ -339,12 +336,9 @@ fn missing_constructor_on_resolved_type_is_not_an_import_context() {
     let (file, module) = parse_and_module(
         &db,
         "missing_local_constructor",
-        "data Option = None;
-         function missing(value: Option) -> word {
-           match value {
-           | Option.Some => return 1;
-           | _ => return 0;
-           }
+        "enum Option { None }
+         function missing(value: Option) returns (word) {
+           match (value) { case Option.Some { return 1; } default { return 0; } }
          }",
     );
     assert!(parse_diagnostics(&db, file).is_empty());
@@ -400,7 +394,7 @@ fn let_initializer_resolves_before_binder_and_then_shadows() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "function f(x: word) -> word {
+        "function f(x: word) returns (word) {
            let x = x;
            return x;
          }",
@@ -425,7 +419,7 @@ fn explicit_blocks_scope_locals_but_for_body_lets_leak() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "function f(x: word) -> word {
+        "function f(x: word) returns (word) {
            {
              let x = x;
            }
@@ -455,11 +449,11 @@ fn contract_fields_beat_top_level_functions_and_params_shadow_fields() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "function balance() -> word { return 0; }
+        "function balance() returns (word) { return 0; }
          contract C {
            balance: word;
-           function f() -> word { return balance; }
-           function g(balance: word) -> word { return balance; }
+           function f() returns (word) { return balance; }
+           function g(balance: word) returns (word) { return balance; }
          }",
     );
     assert!(diagnostic_codes(&db, module).is_empty());
@@ -484,9 +478,9 @@ fn unqualified_call_callee_prefers_contract_function_over_same_name_field() {
         &db,
         "contract C {
            balance: word;
-           function balance() -> word { return 7; }
-           function call() -> word { return balance(); }
-           function bare() -> word { return balance; }
+           function balance() returns (word) { return 7; }
+           function call() returns (word) { return balance(); }
+           function bare() returns (word) { return balance; }
          }",
     );
     assert!(diagnostic_codes(&db, module).is_empty());
@@ -519,17 +513,17 @@ fn unqualified_call_callee_prefers_contract_function_over_same_name_field() {
 }
 
 #[test]
-fn qualified_ctor_class_method_and_dot_ctor_resolve_as_expected() {
+fn qualified_ctor_and_class_method_resolve_as_expected() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "data Option = None | Some(word);
-         data Foo = Foo(word);
-         forall self . class self:Show { function show(x: self) -> word; }
-         function good(x: word) -> Option { return Option.Some(x); }
-         function classCall(x: word) -> word { return Show.show(x); }
-         function dot(x: word) -> Option { return .Some(x); }
-         function sameName(x: word) -> Foo { return Foo(x); }",
+        "enum Option { None, Some(word) }
+         enum Foo { Foo(word) }
+         trait Show<self> { function show(x: self) returns (word); }
+         function good(x: word) returns (Option) { return Option.Some(x); }
+         function classCall(x: word) returns (word) { return Show.show(x); }
+         function qualified(x: word) returns (Option) { return Option.Some(x); }
+         function sameName(x: word) returns (Foo) { return Foo.Foo(x); }",
     );
     let codes = diagnostic_codes(&db, module);
     assert!(codes.is_empty());
@@ -547,12 +541,15 @@ fn qualified_ctor_class_method_and_dot_ctor_resolve_as_expected() {
     assert!(class_map.exprs.iter().any(|entry| entry.body == class_body
         && matches!(entry.resolution, Resolution::ClassMethod { .. })));
 
-    let dot = top_function(&db, module, "dot");
-    let dot_body = dot.body(&db).expect("body");
-    let dot_map = body_map(&db, module, dot_body);
+    let qualified = top_function(&db, module, "qualified");
+    let qualified_body = qualified.body(&db).expect("body");
+    let qualified_map = body_map(&db, module, qualified_body);
     assert!(
-        dot_map.exprs.iter().any(|entry| entry.body == dot_body
-            && matches!(entry.resolution, Resolution::DotCtorDeferred))
+        qualified_map
+            .exprs
+            .iter()
+            .any(|entry| entry.body == qualified_body
+                && matches!(entry.resolution, Resolution::Ctor { .. }))
     );
 }
 
@@ -563,21 +560,18 @@ fn self_qualified_contract_methods_do_not_shadow_same_named_local_adt_constructo
         &db,
         r#"
 contract Option {
-  data Option(a) = None | Some(a);
+  enum Option<a> { None, Some(a) }
 
-  function some(x : word) -> Option(word) {
+  function some(x: word) returns (Option<word>) {
     return Option.Some(x);
   }
 
-  function none() -> Option(word) {
+  function none() returns (Option<word>) {
     return Option.None;
   }
 
-  function read(o : Option(word)) -> word {
-    match o {
-    | Option.Some(x) => return x;
-    | Option.None => return 0;
-    }
+  function read(o: Option<word>) returns (word) {
+    match (o) { case Option.Some(x) { return x; } case Option.None { return 0; } }
   }
 }
 "#,
@@ -612,11 +606,13 @@ contract Option {
 }
 
 #[test]
-fn definite_same_name_constructor_beats_unknown_wildcard_import() {
+fn unqualified_same_name_constructor_is_rejected_with_unknown_wildcard_import() {
     let db = TestDb::default();
     let module = parse_module(
         &db,
-        "data Unit = Unit; function make() -> Unit { return Unit; }",
+        "// migrate-syntax: keep-unqualified-constructor
+         enum Unit { Unit }
+         function make() returns (Unit) { return Unit; }",
     );
     let function = top_function(&db, module, "make");
     let body = function.body(&db).expect("body");
@@ -638,9 +634,19 @@ fn definite_same_name_constructor_beats_unknown_wildcard_import() {
     assert!(
         events
             .iter()
-            .any(|(name, resolution)| *name == "Unit"
-                && matches!(resolution, Resolution::Ctor { .. })),
-        "same-name constructor should remain definite: {events:#?}"
+            .any(|(name, resolution)| *name == "Unit" && matches!(resolution, Resolution::Err)),
+        "unqualified same-name constructor should be rejected: {events:#?}"
     );
-    assert!(resolution.diagnostics.is_empty());
+    assert!(
+        resolution.diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic,
+            NameresDiagnostic::UnqualifiedConstructor {
+                name,
+                qualification: Some(qualification),
+                ..
+            } if name == "Unit" && qualification == "Unit.Unit"
+        )),
+        "expected an actionable qualification diagnostic: {:#?}",
+        resolution.diagnostics
+    );
 }

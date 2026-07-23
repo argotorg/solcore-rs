@@ -72,28 +72,44 @@ fn invalid_string_escape_message(source: &str, start: usize, end: usize) -> Stri
 fn token_spelling(token: &Token<'_>) -> &'static str {
     match token {
         Token::Contract => "contract",
+        Token::Interface => "interface",
+        Token::Library => "library",
         Token::Import => "import",
+        Token::From => "from",
         Token::Export => "export",
         Token::As => "as",
         Token::Let => "let",
-        Token::Data => "data",
-        Token::Class => "class",
-        Token::Forall => "forall",
-        Token::Instance => "instance",
+        Token::Comptime => "comptime",
+        Token::Enum => "enum",
+        Token::Struct => "struct",
+        Token::Trait => "trait",
+        Token::Impl => "impl",
+        Token::Alias => "alias",
+        Token::Is => "is",
+        Token::Where => "where",
+        Token::Returns => "returns",
         Token::If => "if",
         Token::Else => "else",
         Token::For => "for",
+        Token::While => "while",
+        Token::Unchecked => "unchecked",
         Token::Switch => "switch",
         Token::Type => "type",
         Token::Case => "case",
         Token::Default => "default",
         Token::Match => "match",
         Token::Public => "public",
+        Token::External => "external",
+        Token::Internal => "internal",
+        Token::Private => "private",
+        Token::Pure => "pure",
+        Token::View => "view",
         Token::Payable => "payable",
         Token::Function => "function",
         Token::Constructor => "constructor",
         Token::Fallback => "fallback",
         Token::Return => "return",
+        Token::Revert => "revert",
         Token::Leave => "leave",
         Token::Continue => "continue",
         Token::Break => "break",
@@ -278,27 +294,42 @@ fn is_reserved_keyword(token: &Token<'_>) -> bool {
     matches!(
         token,
         Token::Contract
+            | Token::Interface
+            | Token::Library
             | Token::Import
             | Token::Export
             | Token::As
             | Token::Let
-            | Token::Data
-            | Token::Class
-            | Token::Forall
-            | Token::Instance
+            | Token::Comptime
+            | Token::Enum
+            | Token::Struct
+            | Token::Trait
+            | Token::Impl
+            | Token::Alias
+            | Token::Is
+            | Token::Where
+            | Token::Returns
             | Token::If
             | Token::Else
             | Token::For
+            | Token::While
+            | Token::Unchecked
             | Token::Switch
             | Token::Type
             | Token::Case
             | Token::Default
             | Token::Match
             | Token::Public
+            | Token::External
+            | Token::Internal
+            | Token::Private
+            | Token::Pure
+            | Token::View
             | Token::Payable
             | Token::Function
             | Token::Constructor
             | Token::Return
+            | Token::Revert
             | Token::Leave
             | Token::Continue
             | Token::Break

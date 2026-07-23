@@ -3,6 +3,17 @@ use chumsky::{input::ValueInput, prelude::*};
 use super::{common::*, recovery::trace_recovery};
 use crate::{lexer::Token, types::*};
 
+fn yul_expr_ident_parser<'src, I>() -> impl Parser<'src, I, SpannedStr<'src>, ParserErr<'src>>
+where
+    I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
+{
+    ident_parser().or(
+        // `revert` is a Solidity statement keyword in Core source but remains
+        // an ordinary Yul builtin function name inside `assembly`.
+        just(Token::Revert).map_with(|_, e| ("revert", e.span())),
+    )
+}
+
 fn parsed_yul_lit_parser<'src, I>() -> impl Parser<'src, I, ParsedYulLitKind<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -30,7 +41,7 @@ where
             })
             .boxed();
 
-        let ident_or_call = ident_parser()
+        let ident_or_call = yul_expr_ident_parser()
             .then(
                 expr.clone()
                     .separated_by(just(Token::Comma))

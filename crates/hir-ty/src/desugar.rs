@@ -457,7 +457,7 @@ impl<'a, 'db> BodyDesugarView<'a, 'db> {
 pub struct PreTypeckDesugarPlan<'db> {
     /// Tuple type references from item signatures, aliases, and fields.
     ///
-    /// Body-local type annotations live in [`BodyPreTypeckDesugarPlan::types`]
+    /// Body-local conversion target types live in [`BodyPreTypeckDesugarPlan::types`]
     /// so type checking can depend on one body at a time.
     pub types: Vec<TypeProductDesugar<'db>>,
     /// Type-checker input views inside function and lambda bodies.
@@ -966,7 +966,7 @@ impl<'db> BodyCollector<'db> {
                 }
             }
             ExprKind::Field { base, .. } => self.expr(*base),
-            ExprKind::TypeAnnot { expr, ty } => {
+            ExprKind::Conversion { expr, ty } => {
                 self.expr(*expr);
                 self.type_ref(*ty);
             }
@@ -1125,7 +1125,7 @@ impl<'a, 'db> FieldInitCollector<'a, 'db> {
                 }
             }
             ExprKind::Field { base, .. } => self.expr(*base),
-            ExprKind::TypeAnnot { expr, .. } | ExprKind::UnaryOp { expr, .. } => self.expr(*expr),
+            ExprKind::Conversion { expr, .. } | ExprKind::UnaryOp { expr, .. } => self.expr(*expr),
             ExprKind::If {
                 cond,
                 then_expr,

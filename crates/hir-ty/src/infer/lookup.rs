@@ -352,7 +352,7 @@ pub(super) fn expr_is_literal_comptime<'db>(
         ExprKind::Tuple(elems) | ExprKind::DotCtor { args: elems, .. } => elems
             .iter()
             .all(|elem| expr_is_literal_comptime(db, body, *elem)),
-        ExprKind::TypeAnnot { expr, .. } | ExprKind::UnaryOp { expr, .. } => {
+        ExprKind::Conversion { expr, .. } | ExprKind::UnaryOp { expr, .. } => {
             expr_is_literal_comptime(db, body, *expr)
         }
         ExprKind::BinOp { lhs, rhs, .. } => {

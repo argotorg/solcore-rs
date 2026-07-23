@@ -32,10 +32,10 @@ use crate::{
 /// Semantic identity used by references, highlights, and future rename support.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ReferenceTarget<'db> {
-    /// A named user definition such as a function, type, contract, class, or
-    /// instance.
+    /// A named user definition such as a function, type, contract, trait, or
+    /// impl.
     Def(DefId<'db>),
-    /// A data constructor identified by its owning type and constructor index.
+    /// An enum constructor identified by its owning type and constructor index.
     Ctor {
         /// The ADT that owns the constructor.
         ty: DefId<'db>,
@@ -48,16 +48,16 @@ pub enum ReferenceTarget<'db> {
     Local(LocalBinding<'db>),
     /// A contract field.
     Field(FieldId<'db>),
-    /// A type-class method.
+    /// A trait method.
     ClassMethod {
-        /// The class that declares the method.
+        /// The trait that declares the method.
         class: DefId<'db>,
         /// The method name.
         name: String,
     },
     /// A module qualifier binding local to one source module.
     Module(ModuleRef<'db>),
-    /// A local alias introduced by `import m.{source as alias}`.
+    /// A local alias introduced by `import {source as alias} from m`.
     ImportAlias {
         /// Module definition that owns the import declaration.
         owner: DefId<'db>,
@@ -1994,7 +1994,7 @@ fn expr_reference_span<'db>(db: &'db dyn hir_ty::Db, expr: &Expr<'db>) -> Option
         | ExprKind::BinOp { .. }
         | ExprKind::Index { .. }
         | ExprKind::Call { .. }
-        | ExprKind::TypeAnnot { .. }
+        | ExprKind::Conversion { .. }
         | ExprKind::UnaryOp { .. }
         | ExprKind::If { .. }
         | ExprKind::Tuple(_) => None,
@@ -2222,7 +2222,7 @@ mod tests {
 
     #[test]
     fn parameter_references_include_uses_and_optional_declaration() {
-        let source = "function id(x: word) -> word {\n  let y = x;\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  let y = x;\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let first_use = (source.find("let y = x").expect("first use") + "let y = ".len()) as u32;
@@ -2254,11 +2254,11 @@ mod tests {
     #[test]
     fn top_level_function_declaration_finds_call_site() {
         let source = "\
-function target() -> word {
+function target() returns (word) {
   return 1;
 }
 
-function caller() -> word {
+function caller() returns (word) {
   return target();
 }
 ";
@@ -2277,7 +2277,7 @@ function caller() -> word {
 
     #[test]
     fn std_references_exclude_the_unopenable_embedded_declaration() {
-        let source = "import std.{addWord};\nfunction main() -> word { return addWord(1, 2); }\n";
+        let source = "import {addWord} from std;\nfunction main() returns (word) { return addWord(1, 2); }\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let import = source.find("addWord").expect("import") as u32;
@@ -2298,8 +2298,10 @@ function caller() -> word {
 
     #[test]
     fn import_and_export_names_are_references_to_exported_item() {
-        let main = "import math.{double};\nfunction main() -> word { return double(21); }\n";
-        let math = "function double(x: word) -> word { return x + x; }\nexport { double };\n";
+        let main =
+            "import {double} from math;\nfunction main() returns (word) { return double(21); }\n";
+        let math =
+            "function double(x: word) returns (word) { return x + x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let main_index = world.line_index(&main_uri).expect("main line index");
         let math_index = world.line_index(&math_uri).expect("math line index");
@@ -2330,9 +2332,8 @@ function caller() -> word {
 
     #[test]
     fn selected_import_alias_references_do_not_rename_the_source_symbol() {
-        let main =
-            "import math.{double as twice};\nfunction main() -> word { return twice(21); }\n";
-        let math = "function double(x: word) -> word { return x; }\nexport { double };\n";
+        let main = "import {double as twice} from math;\nfunction main() returns (word) { return twice(21); }\n";
+        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let main_index = world.line_index(&main_uri).expect("main line index");
         let math_index = world.line_index(&math_uri).expect("math line index");
@@ -2379,11 +2380,12 @@ function caller() -> word {
 
     #[test]
     fn module_alias_references_include_declaration_and_qualifier() {
-        let main = "import math as M;\nfunction main() -> word { return M.value(); }\n";
-        let math = "function value() -> word { return 1; }\nexport { value };\n";
+        let main =
+            "import * as M from math;\nfunction main() returns (word) { return M.value(); }\n";
+        let math = "function value() returns (word) { return 1; }\nexport { value };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main line index");
-        let declaration = main.find("M;").expect("module alias") as u32;
+        let declaration = main.find("M from").expect("module alias") as u32;
         let qualifier = main.rfind("M.value").expect("module qualifier") as u32;
 
         let references =
@@ -2402,18 +2404,15 @@ function caller() -> word {
     #[test]
     fn module_alias_references_include_type_and_pattern_qualifiers() {
         let main = "\
-import math as M;
-function unwrap(token: M.Token) -> word {
-  match token {
-  | M.Token.Ok(value) => return value;
-  | M.Token.Err(value) => return value;
-  }
+import * as M from math;
+function unwrap(token: M.Token) returns (word) {
+  match (token) { case M.Token.Ok(value) { return value; } case M.Token.Err(value) { return value; } }
 }
 ";
-        let model = "data Token = Ok(word) | Err(word);\nexport { Token(Ok, Err) };\n";
+        let model = "enum Token { Ok(word), Err(word) }\nexport { Token(Ok, Err) };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, model);
         let index = world.line_index(&main_uri).expect("main line index");
-        let declaration = main.find("M;").expect("module alias") as u32;
+        let declaration = main.find("M from").expect("module alias") as u32;
         let type_qualifier = main.find("M.Token").expect("type qualifier") as u32;
         let ok_qualifier = main.find("M.Token.Ok").expect("Ok qualifier") as u32;
         let err_qualifier = main.find("M.Token.Err").expect("Err qualifier") as u32;
@@ -2440,11 +2439,11 @@ function unwrap(token: M.Token) -> word {
     #[test]
     fn local_reexport_of_selected_alias_is_a_local_reference() {
         let main = "\
-import math.{double as twice};
+import {double as twice} from math;
 export { twice };
-function main() -> word { return twice(21); }
+function main() returns (word) { return twice(21); }
 ";
-        let math = "function double(x: word) -> word { return x; }\nexport { double };\n";
+        let math = "function double(x: word) returns (word) { return x; }\nexport { double };\n";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
         let index = world.line_index(&main_uri).expect("main index");
         let declaration = main.find("twice").expect("alias declaration") as u32;
@@ -2482,11 +2481,10 @@ function main() -> word { return twice(21); }
         let facade_uri = Url::parse("file:///main/facade.solc").expect("facade uri");
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let consumer_uri = Url::parse("file:///main/consumer.solc").expect("consumer uri");
-        let util = "function value() -> word { return 1; }\nexport { value };\n";
+        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
         let facade = "export util as Tools;\n";
-        let main = "import facade;\nfunction main() -> word { return facade.Tools.value(); }\n";
-        let consumer =
-            "import facade;\nfunction consume() -> word { return facade.Tools.value(); }\n";
+        let main = "import * as facade from facade;\nfunction main() returns (word) { return facade.Tools.value(); }\n";
+        let consumer = "import * as facade from facade;\nfunction consume() returns (word) { return facade.Tools.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri.clone(), facade.to_owned()));
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
@@ -2522,10 +2520,10 @@ function main() -> word { return twice(21); }
 
     #[test]
     fn ambiguous_term_and_type_selector_has_no_single_reference_target() {
-        let main = "import math.{Thing};\nfunction use(x: Thing) -> word { return Thing(); }\n";
+        let main = "import {Thing} from math;\nfunction use(x: Thing) returns (word) { return Thing.Thing(); }\n";
         let math = "\
-data Thing = MakeThing;
-function Thing() -> word { return 1; }
+enum Thing { MakeThing }
+function Thing() returns (word) { return 1; }
 export { Thing };
 ";
         let (world, main_uri, _) = world_with_main_and_math(main, math);
@@ -2545,11 +2543,10 @@ export { Thing };
         let facade_uri = Url::parse("file:///main/facade.solc").expect("facade uri");
         let bridge_uri = Url::parse("file:///main/bridge.solc").expect("bridge uri");
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
-        let util = "function value() -> word { return 1; }\nexport { value };\n";
+        let util = "function value() returns (word) { return 1; }\nexport { value };\n";
         let facade = "export util as Tools;\n";
         let bridge = "export facade;\n";
-        let main =
-            "import bridge;\nfunction main() -> word { return bridge.facade.Tools.value(); }\n";
+        let main = "import * as bridge from bridge;\nfunction main() returns (word) { return bridge.facade.Tools.value(); }\n";
         assert!(world.open_document(util_uri, util.to_owned()));
         assert!(world.open_document(facade_uri.clone(), facade.to_owned()));
         assert!(world.open_document(bridge_uri.clone(), bridge.to_owned()));
@@ -2583,10 +2580,9 @@ export { Thing };
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let bridge_uri = Url::parse("file:///main/bridge.solc").expect("bridge uri");
         let model_uri = Url::parse("file:///main/model.solc").expect("model uri");
-        let main =
-            "import bridge.{Token};\nfunction make(x: word) -> Token { return Token.Ok(x); }\n";
+        let main = "import {Token} from bridge;\nfunction make(x: word) returns (Token) { return Token.Ok(x); }\n";
         let bridge = "export model.{Token(Ok)};\n";
-        let model = "data Token = Ok(word) | Err(word);\nexport { Token(Ok, Err) };\n";
+        let model = "enum Token { Ok(word), Err(word) }\nexport { Token(Ok, Err) };\n";
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         assert!(world.open_document(bridge_uri.clone(), bridge.to_owned()));
         assert!(world.open_document(model_uri.clone(), model.to_owned()));

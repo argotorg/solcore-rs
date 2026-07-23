@@ -106,7 +106,7 @@ pub(super) fn no_generic_instance_for<'db>(
         let Item::Pragma(pragma) = item else {
             continue;
         };
-        if (*pragma.name(db).atom()).text(db) != "no-generic-instance-for" {
+        if (*pragma.name(db).atom()).text(db) != "noGenericInstanceFor" {
             continue;
         }
         excluded.extend(
@@ -242,7 +242,7 @@ pub fn derived_generic_plan<'db>(
 /// is eligible for `adt` and the selected `Generic` class.
 ///
 /// Unlike [`derived_generic_plan`], this query respects both
-/// `no-generic-instance-for` and an explicit instance for the same ADT. Callers
+/// `pragma solcore noGenericInstanceFor` and an explicit impl for the same ADT. Callers
 /// that manufacture solver evidence must use this eligibility-aware form.
 #[salsa::tracked]
 pub fn derived_generic_instance_plan<'db>(

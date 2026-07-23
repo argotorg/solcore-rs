@@ -355,7 +355,7 @@ impl<'db> Ty<'db> {
                     name
                 } else {
                     format!(
-                        "{name}({})",
+                        "{name}<{}>",
                         args.iter()
                             .map(|arg| arg.display(db))
                             .collect::<Vec<_>>()
@@ -369,7 +369,12 @@ impl<'db> Ty<'db> {
                     .map(|param| param.display(db))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("({params}) -> {}", ret.display(db))
+                let ret = ret.display(db);
+                if ret == "()" {
+                    format!("function({params})")
+                } else {
+                    format!("function({params}) returns ({ret})")
+                }
             }
             TyKind::Tuple(elems) => {
                 if elems.is_empty() {
@@ -430,17 +435,17 @@ impl<'db> Pred<'db> {
                     ClassId::Builtin(class) => class.name().to_owned(),
                     ClassId::User(def) => {
                         format!(
-                            "class:{}",
+                            "trait:{}",
                             def.name(db)
                                 .unwrap_or_else(|| format!("{:?}", def.kind(db)))
                         )
                     }
                 };
                 if args.is_empty() {
-                    format!("{}:{class}", main.display(db))
+                    format!("{}: {class}", main.display(db))
                 } else {
                     format!(
-                        "{}:{class}({})",
+                        "{}: {class}<{}>",
                         main.display(db),
                         args.iter()
                             .map(|arg| arg.display(db))
@@ -479,7 +484,7 @@ impl<'db> TyScheme<'db> {
         let qualified = if preds.is_empty() {
             body.ty(db).display(db)
         } else {
-            format!("{} => {}", preds.join(", "), body.ty(db).display(db))
+            format!("{} where {}", body.ty(db).display(db), preds.join(", "))
         };
         if self.binder_count(db) == 0 {
             qualified
@@ -488,7 +493,7 @@ impl<'db> TyScheme<'db> {
                 .map(|_| "_".to_owned())
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("forall {vars}. {qualified}")
+            format!("<{vars}> {qualified}")
         }
     }
 }

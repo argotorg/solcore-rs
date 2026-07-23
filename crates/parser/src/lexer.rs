@@ -55,9 +55,18 @@ pub enum Token<'a> {
     /// `contract`.
     #[token("contract")]
     Contract,
+    /// `interface`.
+    #[token("interface")]
+    Interface,
+    /// `library`.
+    #[token("library")]
+    Library,
     /// `import`.
     #[token("import")]
     Import,
+    /// `from`.
+    #[token("from")]
+    From,
     /// `export`.
     #[token("export")]
     Export,
@@ -67,18 +76,33 @@ pub enum Token<'a> {
     /// `let`.
     #[token("let")]
     Let,
-    /// `data`.
-    #[token("data")]
-    Data,
-    /// `class`.
-    #[token("class")]
-    Class,
-    /// `forall`.
-    #[token("forall")]
-    Forall,
-    /// `instance`.
-    #[token("instance")]
-    Instance,
+    /// `comptime`.
+    #[token("comptime")]
+    Comptime,
+    /// `enum`.
+    #[token("enum")]
+    Enum,
+    /// `struct`.
+    #[token("struct")]
+    Struct,
+    /// `trait`.
+    #[token("trait")]
+    Trait,
+    /// `impl`.
+    #[token("impl")]
+    Impl,
+    /// `alias`.
+    #[token("alias")]
+    Alias,
+    /// `is`.
+    #[token("is")]
+    Is,
+    /// `where`.
+    #[token("where")]
+    Where,
+    /// `returns`.
+    #[token("returns")]
+    Returns,
     /// `if`.
     #[token("if")]
     If,
@@ -88,6 +112,12 @@ pub enum Token<'a> {
     /// `for`.
     #[token("for")]
     For,
+    /// `while`.
+    #[token("while")]
+    While,
+    /// `unchecked`.
+    #[token("unchecked")]
+    Unchecked,
     /// `switch`.
     #[token("switch")]
     Switch,
@@ -106,6 +136,21 @@ pub enum Token<'a> {
     /// `public`.
     #[token("public")]
     Public,
+    /// `external`.
+    #[token("external")]
+    External,
+    /// `internal`.
+    #[token("internal")]
+    Internal,
+    /// `private`.
+    #[token("private")]
+    Private,
+    /// `pure`.
+    #[token("pure")]
+    Pure,
+    /// `view`.
+    #[token("view")]
+    View,
     /// `payable`.
     #[token("payable")]
     Payable,
@@ -121,6 +166,9 @@ pub enum Token<'a> {
     /// `return`.
     #[token("return")]
     Return,
+    /// `revert`.
+    #[token("revert")]
+    Revert,
     /// `leave`.
     #[token("leave")]
     Leave,
@@ -377,28 +425,48 @@ mod tests {
     #[test]
     fn test_keywords() {
         assert_eq!(tokenize("contract"), vec![Token::Contract]);
+        assert_eq!(tokenize("interface"), vec![Token::Interface]);
+        assert_eq!(tokenize("library"), vec![Token::Library]);
         assert_eq!(tokenize("import"), vec![Token::Import]);
+        assert_eq!(tokenize("from"), vec![Token::From]);
         assert_eq!(tokenize("export"), vec![Token::Export]);
         assert_eq!(tokenize("as"), vec![Token::As]);
         assert_eq!(tokenize("let"), vec![Token::Let]);
-        assert_eq!(tokenize("data"), vec![Token::Data]);
-        assert_eq!(tokenize("class"), vec![Token::Class]);
-        assert_eq!(tokenize("forall"), vec![Token::Forall]);
-        assert_eq!(tokenize("instance"), vec![Token::Instance]);
+        assert_eq!(tokenize("comptime"), vec![Token::Comptime]);
+        assert_eq!(tokenize("data"), vec![Token::Ident("data")]);
+        assert_eq!(tokenize("enum"), vec![Token::Enum]);
+        assert_eq!(tokenize("struct"), vec![Token::Struct]);
+        assert_eq!(tokenize("trait"), vec![Token::Trait]);
+        assert_eq!(tokenize("impl"), vec![Token::Impl]);
+        assert_eq!(tokenize("class"), vec![Token::Ident("class")]);
+        assert_eq!(tokenize("forall"), vec![Token::Ident("forall")]);
+        assert_eq!(tokenize("instance"), vec![Token::Ident("instance")]);
+        assert_eq!(tokenize("alias"), vec![Token::Alias]);
+        assert_eq!(tokenize("is"), vec![Token::Is]);
+        assert_eq!(tokenize("where"), vec![Token::Where]);
+        assert_eq!(tokenize("returns"), vec![Token::Returns]);
         assert_eq!(tokenize("if"), vec![Token::If]);
         assert_eq!(tokenize("else"), vec![Token::Else]);
         assert_eq!(tokenize("for"), vec![Token::For]);
+        assert_eq!(tokenize("while"), vec![Token::While]);
+        assert_eq!(tokenize("unchecked"), vec![Token::Unchecked]);
         assert_eq!(tokenize("switch"), vec![Token::Switch]);
         assert_eq!(tokenize("type"), vec![Token::Type]);
         assert_eq!(tokenize("case"), vec![Token::Case]);
         assert_eq!(tokenize("default"), vec![Token::Default]);
         assert_eq!(tokenize("match"), vec![Token::Match]);
         assert_eq!(tokenize("public"), vec![Token::Public]);
+        assert_eq!(tokenize("external"), vec![Token::External]);
+        assert_eq!(tokenize("internal"), vec![Token::Internal]);
+        assert_eq!(tokenize("private"), vec![Token::Private]);
+        assert_eq!(tokenize("pure"), vec![Token::Pure]);
+        assert_eq!(tokenize("view"), vec![Token::View]);
         assert_eq!(tokenize("payable"), vec![Token::Payable]);
         assert_eq!(tokenize("function"), vec![Token::Function]);
         assert_eq!(tokenize("constructor"), vec![Token::Constructor]);
         assert_eq!(tokenize("fallback"), vec![Token::Fallback]);
         assert_eq!(tokenize("return"), vec![Token::Return]);
+        assert_eq!(tokenize("revert"), vec![Token::Revert]);
         assert_eq!(tokenize("leave"), vec![Token::Leave]);
         assert_eq!(tokenize("continue"), vec![Token::Continue]);
         assert_eq!(tokenize("break"), vec![Token::Break]);
@@ -529,7 +597,7 @@ mod tests {
         assert_eq!(tokenize("foo_bar"), vec![Token::Ident("foo_bar")]);
         // Mixed underscores and hyphens.
         assert_eq!(tokenize("foo_bar-baz"), vec![Token::Ident("foo_bar-baz")]);
-        assert_eq!(tokenize("comptime"), vec![Token::Ident("comptime")]);
+        assert_eq!(tokenize("comptime"), vec![Token::Comptime]);
     }
 
     #[test]
@@ -609,17 +677,23 @@ mod tests {
         );
 
         assert_eq!(
-            tokenize("function foo(a, b) -> c"),
+            tokenize("function foo(a: A, b: B) returns (C)"),
             vec![
                 Token::Function,
                 Token::Ident("foo"),
                 Token::LParen,
                 Token::Ident("a"),
+                Token::Colon,
+                Token::Ident("A"),
                 Token::Comma,
                 Token::Ident("b"),
+                Token::Colon,
+                Token::Ident("B"),
                 Token::RParen,
-                Token::Arrow,
-                Token::Ident("c"),
+                Token::Returns,
+                Token::LParen,
+                Token::Ident("C"),
+                Token::RParen,
             ]
         );
     }
@@ -628,9 +702,9 @@ mod tests {
     fn test_contract_snippet() {
         let input = r#"
             contract Foo {
-                function bar() -> u256 {
-                    let x := 0x1234;
-                    return x
+                function bar() returns (u256) {
+                    let x = 0x1234;
+                    return x;
                 }
             }
         "#;
@@ -646,16 +720,19 @@ mod tests {
                 Token::Ident("bar"),
                 Token::LParen,
                 Token::RParen,
-                Token::Arrow,
+                Token::Returns,
+                Token::LParen,
                 Token::Ident("u256"),
+                Token::RParen,
                 Token::LBrace,
                 Token::Let,
                 Token::Ident("x"),
-                Token::ColonEq,
+                Token::Eq,
                 Token::HexLit("0x1234"),
                 Token::Semi,
                 Token::Return,
                 Token::Ident("x"),
+                Token::Semi,
                 Token::RBrace,
                 Token::RBrace,
             ]

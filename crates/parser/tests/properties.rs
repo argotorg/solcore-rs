@@ -71,16 +71,28 @@ proptest! {
 }
 
 #[test]
-fn right_nested_else_if_chain_uses_the_default_stack() {
+fn right_nested_ternary_chain_uses_the_default_stack() {
     let depth = 96;
-    let mut source = "function main() -> word { return ".to_owned();
-    source.push_str(&"if true then 0 else ".repeat(depth));
+    let mut source = "function main() returns (word) { return ".to_owned();
+    source.push_str(&"true ? 0 : ".repeat(depth));
     source.push_str("0; }");
     let diagnostics = parse_without_large_test_stack(source);
     assert!(
         diagnostics
             .iter()
             .any(|message| message.contains("expression nesting exceeds the compiler limit")),
-        "the valid conditional chain should parse before bounded HIR lowering: {diagnostics:#?}"
+        "the conditional chain should be bounded before recursive parsing exhausts the default stack: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn sequential_if_statements_do_not_count_as_nested_expressions() {
+    let mut source = "function main() returns (word) { ".to_owned();
+    source.push_str(&"if (true) {} ".repeat(48));
+    source.push_str("return 0; }");
+    let diagnostics = parse_without_large_test_stack(source);
+    assert!(
+        diagnostics.is_empty(),
+        "sequential statements are not expression nesting: {diagnostics:#?}"
     );
 }

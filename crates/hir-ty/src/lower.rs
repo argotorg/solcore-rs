@@ -446,7 +446,7 @@ impl<'db> TypeLowering<'db> {
             hir_nameres::Resolution::Def {
                 def,
                 kind: hir_nameres::DefResolutionKind::Class,
-            } => Some(def.name(self.db).unwrap_or_else(|| "class".to_owned())),
+            } => Some(def.name(self.db).unwrap_or_else(|| "trait".to_owned())),
             _ => None,
         }
     }
@@ -470,8 +470,8 @@ impl<'db> TypeLowering<'db> {
 
 /// Returns the complete binder environment for a class method signature.
 ///
-/// Method-local `forall` variables are indexed after the enclosing class
-/// binders because both are owned by the class definition in name resolution.
+/// Method-local generic parameters are indexed after the enclosing trait
+/// binders because both are owned by the trait definition in name resolution.
 pub fn class_method_type_vars<'db>(
     db: &'db dyn HirDb,
     class: ClassDef<'db>,

@@ -55,7 +55,7 @@ pub(super) fn known_int(expr: &MonoExpr<'_>) -> Option<BigInt> {
     match &expr.kind {
         MonoExprKind::Lit(LitKind::Number(text)) => BigInt::from_decimal_str(text),
         MonoExprKind::Lit(LitKind::Hex(text)) => BigInt::from_hex_str(text),
-        MonoExprKind::TypeAnnot { expr, .. } => known_int(expr),
+        MonoExprKind::Conversion { expr, .. } => known_int(expr),
         _ => None,
     }
 }
@@ -63,7 +63,7 @@ pub(super) fn known_int(expr: &MonoExpr<'_>) -> Option<BigInt> {
 pub(super) fn known_string(expr: &MonoExpr<'_>) -> Option<String> {
     match &expr.kind {
         MonoExprKind::Lit(LitKind::String(text)) => decode_string_lit(text),
-        MonoExprKind::TypeAnnot { expr, .. } => known_string(expr),
+        MonoExprKind::Conversion { expr, .. } => known_string(expr),
         _ => None,
     }
 }
@@ -75,7 +75,7 @@ pub(super) fn known_bool<'db>(db: &'db dyn hir_ty::Db, expr: &MonoExpr<'db>) -> 
             Some(MonoBuiltinCtor::False | MonoBuiltinCtor::Inl) => Some(false),
             _ => None,
         },
-        MonoExprKind::TypeAnnot { expr, .. } => known_bool(db, expr),
+        MonoExprKind::Conversion { expr, .. } => known_bool(db, expr),
         _ => None,
     }
 }
@@ -83,7 +83,7 @@ pub(super) fn known_bool<'db>(db: &'db dyn hir_ty::Db, expr: &MonoExpr<'db>) -> 
 pub(super) fn literal_from_known_expr(expr: &MonoExpr<'_>) -> Option<LitKind> {
     match &expr.kind {
         MonoExprKind::Lit(lit) => Some(lit.clone()),
-        MonoExprKind::TypeAnnot { expr, .. } => literal_from_known_expr(expr),
+        MonoExprKind::Conversion { expr, .. } => literal_from_known_expr(expr),
         _ => None,
     }
 }
@@ -273,7 +273,7 @@ pub(super) fn lvalue_root_name(expr: &MonoExpr<'_>) -> Option<String> {
         MonoExprKind::Index { base, .. }
         | MonoExprKind::StorageIndex { base, .. }
         | MonoExprKind::Field { base, .. }
-        | MonoExprKind::TypeAnnot { expr: base, .. } => lvalue_root_name(base),
+        | MonoExprKind::Conversion { expr: base, .. } => lvalue_root_name(base),
         _ => None,
     }
 }

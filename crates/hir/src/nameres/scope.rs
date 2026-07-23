@@ -185,9 +185,10 @@ impl<'db> ItemScopeBuilder<'db> {
             Item::ClassDef(def) => self.add_class(def),
             Item::InstanceDef(def) => self.instances.push(def),
             Item::ContractDef(def) => self.add_contract(def),
-            Item::Import(def) => {
+            Item::Import(def) if def.selector(self.db).is_none() => {
                 self.add_import_modules(def.path_elems(self.db), def.alias_elem(self.db))
             }
+            Item::Import(_) => {}
             Item::Export(_) | Item::Pragma(_) | Item::Error { .. } => {}
         }
     }

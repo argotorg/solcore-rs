@@ -209,7 +209,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     self.map.record_expr(body, expr_id, resolution);
                 }
             }
-            ExprKind::TypeAnnot { expr, ty } => {
+            ExprKind::Conversion { expr, ty } => {
                 self.expr(body, *expr);
                 self.ty(*ty);
             }
@@ -247,14 +247,10 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 ) = builtin_term(leaf)
                 {
                     res
-                } else if let Some(res) = self.same_name_constructor_resolution(leaf) {
-                    // A constructor sharing its type's name may be referenced
-                    // without a qualifier, mirroring the reference resolver.
-                    res
                 } else if self.has_user_constructor_leaf(leaf) {
-                    // Any other in-scope constructor must be written qualified;
-                    // silently binding it as a variable would turn the arm into
-                    // a catch-all.
+                    // Every in-scope user constructor must be written
+                    // qualified; silently binding it as a variable would turn
+                    // the arm into a catch-all.
                     self.map.diagnostics.push(unqualified_constructor(
                         self.db,
                         leaf,
@@ -304,33 +300,28 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     }
                     PatCtorHead::Unqualified { name } => {
                         let leaf = ident_text_str(self.db, name);
-                        if self.imports.may_contain_unknown_unqualified(
+                        if self.has_user_constructor_leaf(leaf) {
+                            self.map.diagnostics.push(unqualified_constructor(
+                                self.db,
+                                leaf,
+                                name.span(self.db),
+                                self.constructor_qualification(leaf),
+                            ));
+                            Resolution::Err
+                        } else if matches!(
+                            builtin_term(leaf),
+                            Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
+                        ) {
+                            // Primitive constructors (`pair`, `inl`, ...) stay
+                            // legal unqualified; their concrete constructor is
+                            // picked from the expected type during inference.
+                            Resolution::DotCtorDeferred
+                        } else if self.imports.may_contain_unknown_unqualified(
                             self.db,
                             Namespace::Term,
                             leaf,
                         ) {
                             Resolution::Err
-                        } else if self.has_constructor_leaf(leaf) {
-                            self.same_name_constructor_resolution(leaf)
-                                .unwrap_or_else(|| {
-                                    if matches!(
-                                        builtin_term(leaf),
-                                        Some(Resolution::Builtin(BuiltinKind::Constructor(_)))
-                                    ) {
-                                        // Primitive constructors (`pair`, `inl`, ...) stay
-                                        // legal unqualified; their concrete constructor is
-                                        // picked from the expected type during inference.
-                                        Resolution::DotCtorDeferred
-                                    } else {
-                                        self.map.diagnostics.push(unqualified_constructor(
-                                            self.db,
-                                            leaf,
-                                            name.span(self.db),
-                                            self.constructor_qualification(leaf),
-                                        ));
-                                        Resolution::Err
-                                    }
-                                })
                         } else if args.is_empty() {
                             let resolution =
                                 Resolution::Local(LocalBinding::Pattern { body, pat: pat_id });
@@ -420,31 +411,29 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
 
     fn resolve_ident(&mut self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
         let text = ident_text_str(self.db, name);
-        self.lookup_local(text)
+        if let Some(resolution) = self
+            .lookup_local(text)
             // Contract fields intentionally beat same-name functions in the
             // contract term surface.
             .or_else(|| self.lookup_field(text))
             .or_else(|| self.lookup_qualified_term(text))
             .or_else(|| self.lookup_unqualified_class_method(text))
-            .or_else(|| self.same_name_constructor_resolution(text))
-            .or_else(|| self.lookup_type(text))
+        {
+            if matches!(&resolution, Resolution::Ctor { .. }) {
+                return self.reject_unqualified_constructor(name);
+            }
+            return resolution;
+        }
+        if self.has_user_constructor_leaf(text) {
+            return self.reject_unqualified_constructor(name);
+        }
+        self.lookup_type(text)
             .or_else(|| self.lookup_module(text))
             .unwrap_or_else(|| {
                 if self
                     .imports
                     .may_contain_unknown_unqualified(self.db, Namespace::Term, text)
                 {
-                    return Resolution::Err;
-                }
-                if self.has_user_constructor_leaf(text) {
-                    // The name is visible only as a constructor of some type;
-                    // referencing it without its type qualifier is an error.
-                    self.map.diagnostics.push(unqualified_constructor(
-                        self.db,
-                        text,
-                        name.span(self.db),
-                        self.constructor_qualification(text),
-                    ));
                     return Resolution::Err;
                 }
                 self.map.diagnostics.push(self.undefined_name_diag(
@@ -469,12 +458,32 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
 
     fn resolve_call_ident(&mut self, name: &SpannedElem<'db, Ident<'db>>) -> Resolution<'db> {
         let text = ident_text_str(self.db, name);
-        self.lookup_local(text)
+        if let Some(resolution) = self
+            .lookup_local(text)
             .or_else(|| self.lookup_qualified_term(text))
             .or_else(|| self.lookup_field(text))
             .or_else(|| self.lookup_unqualified_class_method(text))
-            .or_else(|| self.same_name_constructor_resolution(text))
-            .unwrap_or_else(|| self.resolve_ident(name))
+        {
+            if matches!(&resolution, Resolution::Ctor { .. }) {
+                return self.reject_unqualified_constructor(name);
+            }
+            return resolution;
+        }
+        self.resolve_ident(name)
+    }
+
+    fn reject_unqualified_constructor(
+        &mut self,
+        name: &SpannedElem<'db, Ident<'db>>,
+    ) -> Resolution<'db> {
+        let text = ident_text_str(self.db, name);
+        self.map.diagnostics.push(unqualified_constructor(
+            self.db,
+            text,
+            name.span(self.db),
+            self.constructor_qualification(text),
+        ));
+        Resolution::Err
     }
 
     fn expr_as_qualifier(
@@ -798,10 +807,6 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             || self.imports.has_constructor_leaf(self.db, leaf)
     }
 
-    fn same_name_constructor_resolution(&self, name: &str) -> Option<Resolution<'db>> {
-        self.lookup_ctor(&qualify(name, name))
-    }
-
     fn is_namespace_qualifier(&self, body: FuncBody<'db>, expr: Id<Expr<'db>>) -> bool {
         let Some(path) = expr_path(self.db, body, expr) else {
             return false;
@@ -822,7 +827,6 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
             || self.lookup_field(first).is_some()
             || self.lookup_qualified_term(first).is_some()
             || self.lookup_unqualified_class_method(first).is_some()
-            || self.same_name_constructor_resolution(first).is_some()
         {
             return false;
         }

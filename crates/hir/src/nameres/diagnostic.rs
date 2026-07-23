@@ -180,9 +180,9 @@ impl NameresDiagnostic {
                 diagnostic
             }
             NameresDiagnostic::UndefinedClass { name, span } => {
-                Diagnostic::error(format!("undefined class: {name}"))
+                Diagnostic::error(format!("undefined trait: {name}"))
                     .with_code(DiagnosticCode::NAMERES_UNDEFINED_CLASS)
-                    .with_primary_label_span(span.clone(), Some("undefined class"))
+                    .with_primary_label_span(span.clone(), Some("undefined trait"))
             }
             NameresDiagnostic::UnqualifiedConstructor {
                 name,

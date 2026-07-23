@@ -14,20 +14,20 @@ use lsp_types::Url;
 use serde_json::{Value, json};
 
 const MAIN_SOURCE: &str = "\
-import math.{double};
+import {double} from math;
 
-function f() -> word {
+function f() returns (word) {
   return double(true);
 }
 ";
 const MATH_SOURCE: &str = "\
-function double(x: word) -> word {
+function double(x: word) returns (word) {
   return x;
 }
 
 export { double };
 ";
-const SECONDARY_SOURCE: &str = "function secondaryValue() -> word { return 2; }\n";
+const SECONDARY_SOURCE: &str = "function secondaryValue() returns (word) { return 2; }\n";
 
 struct TestWorkspace {
     root: PathBuf,

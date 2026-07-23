@@ -223,7 +223,7 @@ fn top_level_error_item_has_recovery_span() {
 fn relative_span_query_backdates_after_edit_above_def() {
     let mut db = TestDb::default();
     let url = "memory:///incr.solc".parse().expect("valid url");
-    let src = "function id(x: word) -> word {\n  return x;\n}\n";
+    let src = "function id(x: word) returns (word) {\n  return x;\n}\n";
     let file = SourceFile::new(&db, url, Some(src.to_owned()));
 
     // Baseline: execute the semantic-style query once, then drop all `'db`
@@ -272,7 +272,7 @@ fn editing_leading_comment_invalidates_only_comment_consumers() {
     let file = SourceFile::new(
         &db,
         url,
-        Some("// one\nfunction id(x: word) -> word { return x; }\n".to_owned()),
+        Some("// one\nfunction id(x: word) returns (word) { return x; }\n".to_owned()),
     );
 
     let (before_identity, before_span) = {
@@ -292,7 +292,7 @@ fn editing_leading_comment_invalidates_only_comment_consumers() {
     };
 
     file.set_content(&mut db).to(Some(
-        "// two\nfunction id(x: word) -> word { return x; }\n".to_owned(),
+        "// two\nfunction id(x: word) returns (word) { return x; }\n".to_owned(),
     ));
 
     let function = first_function(&db, file);
@@ -320,12 +320,13 @@ fn editing_nested_item_comments_preserves_semantic_fields() {
     let url = "memory:///nested-comment-incr.solc"
         .parse()
         .expect("valid url");
-    let before_src = "data Choice =
+    let before_src = "enum Choice {
   // alpha
-  First;
-class a:Documented {
+  First
+}
+trait Documented<a> {
   // alpha
-  function describe(x: a) -> word;
+  function describe(x: a) returns (word);
 }
 contract C {
   // alpha
@@ -364,12 +365,13 @@ contract C {
     // Keep the payload byte length unchanged so every nested declaration keeps
     // the same owner-relative span. Only the parallel comment fields change.
     file.set_content(&mut db).to(Some(
-        "data Choice =
+        "enum Choice {
   // bravo
-  First;
-class a:Documented {
+  First
+}
+trait Documented<a> {
   // bravo
-  function describe(x: a) -> word;
+  function describe(x: a) returns (word);
 }
 contract C {
   // bravo
@@ -402,8 +404,8 @@ contract C {
 fn lambda_body_relative_span_backdates_after_cosmetic_signature_edit() {
     let mut db = TestDb::default();
     let url = "memory:///lambda-incr.solc".parse().expect("valid url");
-    let before_src = "function make(z: word) -> word {
-  let n = lam (x: word) -> word {
+    let before_src = "function make(z: word) returns (word) {
+  let n = lam (x: word) returns (word) {
     return x;
   };
   return n(z);
@@ -421,10 +423,10 @@ fn lambda_body_relative_span_backdates_after_cosmetic_signature_edit() {
     };
 
     file.set_content(&mut db).to(Some(
-        "function make(z: word) -> word {
+        "function make(z: word) returns (word) {
   let n = lam (
-    x /* same binder */ : /* same parameter type */ word
-  ) -> /* same return type */ word {
+    x /* same binder */: /* same parameter type */ word
+  ) returns (/* same return type */ word) {
     return x;
   };
   return n(z);
@@ -445,8 +447,8 @@ fn lambda_body_relative_span_backdates_after_cosmetic_signature_edit() {
     assert_eq!(after_cosmetic_fact, before_fact);
 
     file.set_content(&mut db).to(Some(
-        "function make(z: word) -> word {
-  let n = lam (x: uint) -> word {
+        "function make(z: word) returns (word) {
+  let n = lam (x: uint) returns (word) {
     return x;
   };
   return n(z);

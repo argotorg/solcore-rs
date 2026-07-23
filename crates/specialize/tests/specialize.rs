@@ -177,7 +177,7 @@ fn function_names(output: &SpecializeOutput<'_>) -> Vec<String> {
 fn specializes_large_linear_body_with_indexed_frontend_lookups() {
     use std::fmt::Write as _;
 
-    let mut source = "function main() -> word {\n  let value0 : word = 0;\n".to_owned();
+    let mut source = "function main() returns (word) {\n  let value0: word = 0;\n".to_owned();
     for index in 1..2_000 {
         writeln!(
             &mut source,
@@ -267,7 +267,7 @@ fn naming_matches_reference_mangling() {
 fn specialized_name_hash_is_independent_of_absolute_module_root() {
     let src = r#"
 contract C {
-  public function main() -> word { return 42; }
+  function main() public returns (word) { return 42; }
 }
 "#;
     let left = specialize_source_at_root(Path::new("/workspace-a/project"), "src/main.solc", src);
@@ -282,10 +282,10 @@ contract C {
 fn deduplicates_identical_instantiations() {
     let (_db, output) = specialize_src(
         r#"
-forall a . function id(x:a) -> a { return x; }
+function id<a>(x: a) returns (a) { return x; }
 
 contract C {
-  public function main(x:word) -> word {
+  function main(x: word) public returns (word) {
     let a = id(x);
     let b = id(a);
     return b;
@@ -309,30 +309,30 @@ contract C {
 fn evidence_replay_resolves_instance_and_superclass_methods() {
     let (_db, output) = specialize_src(
         r#"
-data Bool = True | False;
+enum Bool { True, False }
 
-forall a . class a:Eq {
-  function eq(x:a, y:a) -> Bool;
+trait Eq<a> {
+  function eq(x: a, y: a) returns (Bool);
 }
 
-forall a . a:Eq => class a:Ord {
-  function lt(x:a, y:a) -> Bool;
+trait Ord<a> where a: Eq {
+  function lt(x: a, y: a) returns (Bool);
 }
 
-instance word:Eq {
-  function eq(x:word, y:word) -> Bool { return primEqWord(x, y); }
+impl Eq<word> {
+  function eq(x: word, y: word) returns (Bool) { return primEqWord(x, y); }
 }
 
-instance word:Ord {
-  function lt(x:word, y:word) -> Bool { return Bool.False; }
+impl Ord<word> {
+  function lt(x: word, y: word) returns (Bool) { return Bool.False; }
 }
 
-forall a . a:Ord => function same(x:a) -> Bool {
+function same<a>(x: a) returns (Bool) where a: Ord {
   return Eq.eq(x, x);
 }
 
 contract C {
-  public function main(x:word) -> Bool {
+  function main(x: word) public returns (Bool) {
     return same(x);
   }
 }
@@ -359,18 +359,18 @@ contract C {
 fn evidence_replay_preserves_class_method_local_forall_binders() {
     let (_db, output) = specialize_src(
         r#"
-forall b . class b:IsA {
-  forall a . function ais(x : a, witness : b) -> a;
+trait IsA<b> {
+  function ais<a>(x: a, witness: b) returns (a);
 }
 
-instance word:IsA {
-  forall a . function ais(x : a, witness : word) -> a {
+impl IsA<word> {
+  function ais<a>(x: a, witness: word) returns (a) {
     return x;
   }
 }
 
 contract C {
-  public function main(x : word) -> word {
+  function main(x: word) public returns (word) {
     return IsA.ais(x, 0);
   }
 }
@@ -406,12 +406,12 @@ fn evidence_replay_resolves_imported_instance_methods() {
         r#"
 export { Boxed };
 
-forall a . class a:Boxed {
-  function id(x:a) -> a;
+trait Boxed<a> {
+  function id(x: a) returns (a);
 }
 
-instance word:Boxed {
-  function id(x:word) -> word { return x; }
+impl Boxed<word> {
+  function id(x: word) returns (word) { return x; }
 }
 "#,
     );
@@ -419,10 +419,10 @@ instance word:Boxed {
         db,
         &main_path,
         r#"
-import lib.{Boxed};
+import {Boxed} from lib;
 
 contract C {
-  public function main(x:word) -> word {
+  function main(x: word) public returns (word) {
     return Boxed.id(x);
   }
 }
@@ -464,19 +464,19 @@ fn same_named_classes_in_different_modules_get_distinct_method_symbols() {
             r#"
 export { left };
 
-forall a . class a:Pick {
-  function choose(x:a) -> word;
+trait Pick<a> {
+  function choose(x: a) returns (word);
 }
 
-instance word:Pick {
-  function choose(x:word) -> word {
-    let y : word;
+impl Pick<word> {
+  function choose(x: word) returns (word) {
+    let y: word;
     assembly { y := sload(x) }
     return y;
   }
 }
 
-function left(x:word) -> word { return Pick.choose(x); }
+function left(x: word) returns (word) { return Pick.choose(x); }
 "#,
         ),
         (
@@ -484,29 +484,29 @@ function left(x:word) -> word { return Pick.choose(x); }
             r#"
 export { right };
 
-forall a . class a:Pick {
-  function choose(x:a) -> word;
+trait Pick<a> {
+  function choose(x: a) returns (word);
 }
 
-instance word:Pick {
-  function choose(x:word) -> word {
-    let y : word;
+impl Pick<word> {
+  function choose(x: word) returns (word) {
+    let y: word;
     assembly { y := sload(x) }
     return x;
   }
 }
 
-function right(x:word) -> word { return Pick.choose(x); }
+function right(x: word) returns (word) { return Pick.choose(x); }
 "#,
         ),
         (
             "main.solc",
             r#"
-import left.{left};
-import right.{right};
+import {left} from left;
+import {right} from right;
 
 contract C {
-  public function main(x:word) -> word {
+  function main(x: word) public returns (word) {
     let unused = right(x);
     return left(x);
   }
@@ -554,40 +554,40 @@ fn same_named_adts_in_different_modules_get_distinct_generic_symbols() {
             "common.solc",
             r#"
 export { id };
-forall a . function id(x:a) -> a { return x; }
+function id<a>(x: a) returns (a) { return x; }
 "#,
         ),
         (
             "left.solc",
             r#"
-import common.{id};
+import {id} from common;
 export { left };
-data Foo = Foo(word);
-function left(x:word) -> word {
-  let value : Foo = id(Foo(x));
-  match value { | Foo(result) => return result; }
+enum Foo { Foo(word) }
+function left(x: word) returns (word) {
+  let value: Foo = id(Foo.Foo(x));
+  match (value) { case Foo.Foo(result) { return result; } }
 }
 "#,
         ),
         (
             "right.solc",
             r#"
-import common.{id};
+import {id} from common;
 export { right };
-data Foo = Foo(word);
-function right(x:word) -> word {
-  let value : Foo = id(Foo(x));
-  match value { | Foo(result) => return result; }
+enum Foo { Foo(word) }
+function right(x: word) returns (word) {
+  let value: Foo = id(Foo.Foo(x));
+  match (value) { case Foo.Foo(result) { return result; } }
 }
 "#,
         ),
         (
             "main.solc",
             r#"
-import left.{left};
-import right.{right};
+import {left} from left;
+import {right} from right;
 contract C {
-  public function main(x:word) -> word {
+  function main(x: word) public returns (word) {
     let unused = right(x);
     return left(x);
   }
@@ -636,20 +636,20 @@ fn derived_generic_specialization_uses_the_imported_adt_definition_module() {
         db,
         &lib_path,
         r#"
-pragma no-patterson-condition;
-pragma no-bounded-variable-condition;
+pragma solcore noPattersonCondition;
+pragma solcore noBoundVariableCondition;
 
 export { Box(*), exercise };
 
-forall a rep . class a:Generic(rep) {
-  function from(x:a) -> rep;
-  function to(x:rep) -> a;
+trait Generic<a, rep> {
+  function from(x: a) returns (rep);
+  function to(x: rep) returns (a);
 }
 
-data Box = Box(word, bool);
+enum Box { Box(word, bool) }
 
-function exercise(x:Box) -> Box {
-  let rep : (word, bool) = Generic.from(x);
+function exercise(x: Box) returns (Box) {
+  let rep: (word, bool) = Generic.from(x);
   return Generic.to(rep);
 }
 "#,
@@ -658,10 +658,10 @@ function exercise(x:Box) -> Box {
         db,
         &main_path,
         r#"
-import lib.{*};
+import lib;
 
 contract C {
-  function main(x:Box) -> Box { return exercise(x); }
+  function main(x: Box) returns (Box) { return exercise(x); }
 }
 "#,
     );
@@ -693,27 +693,27 @@ contract C {
 fn invokable_invoke_replays_call_site_evidence() {
     let (_db, output) = specialize_src(
         r#"
-forall a b c . c : invokable(a, b) => function app(f : c, x : a) -> b {
+function app<a, b, c>(f: c, x: a) returns (b) where c: invokable<a, b> {
   return invokable.invoke(f, x);
 }
 
-data t_id = t_id;
+enum t_id { t_id }
 
-function impure(x : word) -> word {
-  let y : word;
+function impure(x: word) returns (word) {
+  let y: word;
   assembly { y := sload(x) }
   return y;
 }
 
-instance t_id : invokable(word, word) {
-  function invoke(self : t_id, x : word) -> word {
+impl invokable<t_id, word, word> {
+  function invoke(self: t_id, x: word) returns (word) {
     return impure(x);
   }
 }
 
 contract C {
-  public function main(x : word) -> word {
-    return app(t_id, x);
+  function main(x: word) public returns (word) {
+    return app(t_id.t_id, x);
   }
 }
 "#,
@@ -743,43 +743,40 @@ contract C {
 fn mptc_phantom_extras_recovered_before_naming_and_body_lowering() {
     let (_db, output) = specialize_src(
         r#"
-data Foo = Foo(word);
+enum Foo { Foo(word) }
 
-forall self rep.
-class self:Encoder(rep) {
-  function encode(x:self, hint:word) -> rep;
+trait Encoder<self, rep> {
+  function encode(x: self, hint: word) returns (rep);
 }
 
-forall rep r.
-class rep:Sink(r) {
-  function sink(x:rep) -> r;
+trait Sink<rep, r> {
+  function sink(x: rep) returns (r);
 }
 
-instance Foo:Encoder(word) {
-  function encode(x:Foo, hint:word) -> word {
-    let y : word;
+impl Encoder<Foo, word> {
+  function encode(x: Foo, hint: word) returns (word) {
+    let y: word;
     assembly { y := sload(hint) }
-    match x { | Foo(v) => return v; }
+    match (x) { case Foo.Foo(v) { return v; } }
   }
 }
 
-instance word:Sink(word) {
-  function sink(x:word) -> word {
-    let y : word;
+impl Sink<word, word> {
+  function sink(x: word) returns (word) {
+    let y: word;
     assembly { y := sload(x) }
     return x;
   }
 }
 
-forall a rep . a:Encoder(rep), rep:Sink(word) =>
-function f(x:a) -> word {
-  let r : rep = Encoder.encode(x, 0);
+function f<a, rep>(x: a) returns (word) where a: Encoder<rep>, rep: Sink<word> {
+  let r: rep = Encoder.encode(x, 0);
   return Sink.sink(r);
 }
 
 contract C {
-  public function main(x : word) -> word {
-    return f(Foo(x));
+  function main(x: word) public returns (word) {
+    return f(Foo.Foo(x));
   }
 }
 "#,
@@ -811,33 +808,31 @@ contract C {
 fn instance_method_names_include_the_complete_class_head() {
     let (_db, output) = specialize_src(
         r#"
-data Box = Box(word);
+enum Box { Box(word) }
 
-forall self rep.
-class self:Convert(rep) {
-    function toRep(x:self) -> rep;
-    function fromRep(x:rep) -> self;
+trait Convert<self, rep> {
+    function toRep(x: self) returns (rep);
+    function fromRep(x: rep) returns (self);
 }
 
-instance Box:Convert(word) {
-    function toRep(x:Box) -> word {
-        match x { | Box(w) => return w; }
+impl Convert<Box, word> {
+    function toRep(x: Box) returns (word) {
+        match (x) { case Box.Box(w) { return w; } }
     }
-    function fromRep(x:word) -> Box {
-        return Box(x);
+    function fromRep(x: word) returns (Box) {
+        return Box.Box(x);
     }
 }
 
-forall a rep . a:Convert(rep) =>
-function roundtrip(x:a) -> a {
-    let r : rep = Convert.toRep(x);
+function roundtrip<a, rep>(x: a) returns (a) where a: Convert<rep> {
+    let r: rep = Convert.toRep(x);
     return Convert.fromRep(r);
 }
 
 contract C {
-    public function main(x:word) -> word {
-        let b : Box = roundtrip(Box(x));
-        match b { | Box(w) => return w; }
+    function main(x: word) public returns (word) {
+        let b: Box = roundtrip(Box.Box(x));
+        match (b) { case Box.Box(w) { return w; } }
     }
 }
 "#,
@@ -865,13 +860,13 @@ contract C {
 fn ensure_closed_failure_aborts_that_specialization() {
     let (_db, output) = specialize_src(
         r#"
-forall a . function leak() -> a {
-  let y : a;
+function leak<a>() returns (a) {
+  let y: a;
   return y;
 }
 
 contract C {
-  public function main() -> () {
+  function main() public returns () {
     let x = leak();
     return ();
   }
@@ -899,11 +894,11 @@ contract C {
 #[test]
 fn generated_contract_dispatch_uses_explicit_std_dispatch_import() {
     let source = r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract C {
-  public function answer() -> uint256 { return uint256(1); }
+  function answer() public returns (uint256) { return 1 as uint256; }
 }
 "#;
     let output = specialize_src_with_std(source);
@@ -936,11 +931,11 @@ contract C {
 fn generated_contract_dispatch_rejects_public_comptime_params_before_runtime_rooting() {
     let output = specialize_src_with_std(
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract C {
-  public function answer(comptime x: word) -> word {
+  function answer(comptime x: word) public returns (word) {
     return x;
   }
 }
@@ -982,12 +977,12 @@ contract C {
 #[test]
 fn generated_contract_dispatch_keeps_the_original_source_file() {
     let src = r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract C {
-  public function answer() -> uint256 {
-    return uint256(1);
+  function answer() public returns (uint256) {
+    return 1 as uint256;
   }
 }
 "#;
@@ -1051,12 +1046,12 @@ contract C {
 #[test]
 fn already_prepared_input_keeps_std_dispatch_origin() {
     let src = r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract C {
-  payable constructor(seed: uint256) { let saved = seed; }
-  public function answer() -> uint256 { return uint256(1); }
+  constructor(seed: uint256) payable { let saved = seed; }
+  function answer() public returns (uint256) { return 1 as uint256; }
 }
 "#;
     let (db, file, _) = specialize_src_with_std_and_db(src);
@@ -1090,8 +1085,8 @@ contract C {
 fn source_names_are_qualified_across_contracts() {
     let (_db, output) = specialize_src(
         r#"
-contract A { public function main() -> word { return 1; } }
-contract B { public function main() -> word { return 2; } }
+contract A { function main() public returns (word) { return 1; } }
+contract B { function main() public returns (word) { return 2; } }
 "#,
     );
 
@@ -1134,13 +1129,13 @@ contract B { public function main() -> word { return 2; } }
 fn dispatch_abi_shape_is_preserved_in_std_dispatch_mono_ir() {
     let output = specialize_src_with_std(
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract PayableTest {
   constructor() {}
-  public payable function deposit() -> uint256 { return uint256(1); }
-  payable fallback() -> () {}
+  function deposit() public payable returns (uint256) { return 1 as uint256; }
+  fallback() external payable {}
 }
 "#,
     );
@@ -1201,11 +1196,11 @@ contract PayableTest {
 fn tuple_dispatch_uses_the_canonical_abi_selector() {
     let output = specialize_src_with_std(
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract TupleSelector {
-  public function pack(point: (uint256, uint256), tag: uint256) -> uint256 {
+  function pack(point: (uint256, uint256), tag: uint256) public returns (uint256) {
     return tag;
   }
 }
@@ -1241,12 +1236,12 @@ contract TupleSelector {
 fn constructor_overlay_roots_three_argument_deployment_main() {
     let output = specialize_src_with_std(
         r#"
-import std.{*};
-import std.dispatch.{*};
+import std;
+import std.dispatch;
 
 contract C {
-  constructor(x : uint256, y : uint256, z : uint256) { let saved = x; }
-  function main() -> () { return (); }
+  constructor(x: uint256, y: uint256, z: uint256) { let saved = x; }
+  function main() returns () { return (); }
 }
 "#,
     );
@@ -1303,7 +1298,7 @@ fn mono_ir_carries_frontend_desugar_hook_plan() {
     let (_if_db, if_output) = specialize_src(
         r#"
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     if (true) { return 1; } else { return 0; }
   }
 }
@@ -1356,11 +1351,9 @@ fn tuple_syntax_specializes_through_product_constructors() {
     let (_db, output) = specialize_src(
         r#"
 contract C {
-  public function main(x:word, y:word, z:word) -> pair(word, pair(word, word)) {
+  function main(x: word, y: word, z: word) public returns (pair<word, pair<word, word>>) {
     let t = (x, y, z);
-    match t {
-      | (a, b, c) => return (a, b, c);
-    }
+    match (t) { case (a, b, c) { return (a, b, c); } }
   }
 }
 "#,
@@ -1485,86 +1478,76 @@ fn folds_direct_function_compose_closure_fixture() {
 }
 
 const OPERATOR_CUSTOM_UINT_ADD: &str = r#"
-import std.{*};
+import std;
 
-data uint = u(word);
+enum uint { u(word) }
 
-instance uint:Add {
-  function add(x:uint, y:uint) -> uint {
+impl Add<uint> {
+  function add(x: uint, y: uint) returns (uint) {
     return uint.u(42);
   }
 }
 
-function unwrap(x:uint) -> word {
-  match x {
-  | uint.u(w) => return w;
-  }
+function unwrap(x: uint) returns (word) {
+  match (x) { case uint.u(w) { return w; } }
 }
 
 contract C {
-  public function main() -> word {
-    let a:uint = uint.u(1);
-    let b:uint = uint.u(2);
-    let c:uint = a + b;
+  function main() public returns (word) {
+    let a: uint = uint.u(1);
+    let b: uint = uint.u(2);
+    let c: uint = a + b;
     return unwrap(c);
   }
 }
 "#;
 
 const OPERATOR_METERS_ADD: &str = r#"
-import std.{*};
+import std;
 
-data meters = meters(word);
+enum meters { meters(word) }
 
-instance meters:Add {
-  function add(x:meters, y:meters) -> meters {
-    match x, y {
-    | meters(xw), meters(yw) => return meters(addWord(xw, yw));
-    }
+impl Add<meters> {
+  function add(x: meters, y: meters) returns (meters) {
+    match (x, y) { case (meters.meters(xw), meters.meters(yw)) { return meters.meters(addWord(xw, yw)); } }
   }
 }
 
-function unwrap(x:meters) -> word {
-  match x {
-  | meters(w) => return w;
-  }
+function unwrap(x: meters) returns (word) {
+  match (x) { case meters.meters(w) { return w; } }
 }
 
 contract C {
-  public function main() -> word {
-    let a:meters = meters(1);
-    let b:meters = meters(2);
-    let c:meters = a + b;
+  function main() public returns (word) {
+    let a: meters = meters.meters(1);
+    let b: meters = meters.meters(2);
+    let c: meters = a + b;
     return unwrap(c);
   }
 }
 "#;
 
 const OPERATOR_METERS_ORD: &str = r#"
-import std.{*};
+import std;
 
-data meters = meters(word);
+enum meters { meters(word) }
 
-instance meters:Eq {
-  function eq(x:meters, y:meters) -> bool {
-    match x, y {
-    | meters(xw), meters(yw) => return eqWord(xw, yw);
-    }
+impl Eq<meters> {
+  function eq(x: meters, y: meters) returns (bool) {
+    match (x, y) { case (meters.meters(xw), meters.meters(yw)) { return eqWord(xw, yw); } }
   }
 }
 
-instance meters:Ord {
-  function gt(x:meters, y:meters) -> bool {
-    match x, y {
-    | meters(xw), meters(yw) => return gtWord(xw, yw);
-    }
+impl Ord<meters> {
+  function gt(x: meters, y: meters) returns (bool) {
+    match (x, y) { case (meters.meters(xw), meters.meters(yw)) { return gtWord(xw, yw); } }
   }
 }
 
 contract C {
-  public function main() -> word {
-    let a:meters = meters(1);
-    let b:meters = meters(2);
+  function main() public returns (word) {
+    let a: meters = meters.meters(1);
+    let b: meters = meters.meters(2);
     if (a < b) {
       return 42;
     } else {
@@ -1575,59 +1558,59 @@ contract C {
 "#;
 
 const OPERATOR_CUSTOM_MUL: &str = r#"
-import std.{*};
+import std;
 
-data Weird = Weird(word);
+enum Weird { Weird(word) }
 
-instance Weird:Mul {
-  function mul(x:Weird, y:Weird) -> Weird {
-    return Weird(99);
+impl Mul<Weird> {
+  function mul(x: Weird, y: Weird) returns (Weird) {
+    return Weird.Weird(99);
   }
 }
 
 contract C {
-  public function main() -> word {
-    let result : Weird = Weird(2) * Weird(3);
-    match result { | Weird(value) => return value; }
+  function main() public returns (word) {
+    let result: Weird = Weird.Weird(2) * Weird.Weird(3);
+    match (result) { case Weird.Weird(value) { return value; } }
   }
 }
 "#;
 
 const OPERATOR_CUSTOM_EQ: &str = r#"
-import std.{*};
+import std;
 
-data Weird = Weird(word);
+enum Weird { Weird(word) }
 
-instance Weird:Eq {
-  function eq(x:Weird, y:Weird) -> bool {
+impl Eq<Weird> {
+  function eq(x: Weird, y: Weird) returns (bool) {
     return false;
   }
 }
 
 contract C {
-  public function main() -> word {
-    if (Weird(1) == Weird(1)) { return 0; } else { return 99; }
+  function main() public returns (word) {
+    if (Weird.Weird(1) == Weird.Weird(1)) { return 0; } else { return 99; }
   }
 }
 "#;
 
 const OPERATOR_VISIBLE_BOOL_FUNCTIONS: &str = r#"
-function and(x:bool, y:bool) -> bool { return false; }
-function or(x:bool, y:bool) -> bool { return false; }
-function not(x:bool) -> bool { return true; }
+function and(x: bool, y: bool) returns (bool) { return false; }
+function or(x: bool, y: bool) returns (bool) { return false; }
+function not(x: bool) returns (bool) { return true; }
 
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     if ((true && true) || !true) { return 0; } else { return 99; }
   }
 }
 "#;
 
 const OPERATOR_WORD_ADD: &str = r#"
-import std.{*};
+import std;
 
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     return 1 + 2;
   }
 }
@@ -1656,8 +1639,8 @@ fn overloaded_binary_operators_specialize_through_instances() {
     assert_eq!(output.diagnostics, Vec::new(), "visible boolean functions");
     assert_eq!(
         main_return_number(&output),
-        Some("99".to_owned()),
-        "visible boolean functions"
+        Some("0".to_owned()),
+        "logical operators use short-circuit semantics instead of visible functions"
     );
 }
 
@@ -1672,15 +1655,15 @@ fn every_audited_operator_uses_its_selected_semantics() {
     ] {
         let src = format!(
             r#"
-import std.{{*}};
-data Weird = Weird(word);
-instance Weird:{class} {{
-  function {method}(x:Weird, y:Weird) -> Weird {{ return Weird({expected}); }}
+import std;
+enum Weird {{ Weird(word) }}
+impl {class}<Weird> {{
+  function {method}(x: Weird, y: Weird) returns (Weird) {{ return Weird.Weird({expected}); }}
 }}
 contract C {{
-  public function main() -> word {{
-    let result : Weird = Weird(8) {operator} Weird(3);
-    match result {{ | Weird(value) => return value; }}
+  function main() public returns (word) {{
+    let result: Weird = Weird.Weird(8) {operator} Weird.Weird(3);
+    match (result) {{ case Weird.Weird(value) {{ return value; }} }}
   }}
 }}
 "#
@@ -1696,14 +1679,14 @@ contract C {{
 
     let not_eq = specialize_src_with_std(
         r#"
-import std.{*};
-data Weird = Weird(word);
-instance Weird:Eq {
-  function eq(x:Weird, y:Weird) -> bool { return true; }
+import std;
+enum Weird { Weird(word) }
+impl Eq<Weird> {
+  function eq(x: Weird, y: Weird) returns (bool) { return true; }
 }
 contract C {
-  public function main() -> word {
-    if (Weird(1) != Weird(2)) { return 0; } else { return 96; }
+  function main() public returns (word) {
+    if (Weird.Weird(1) != Weird.Weird(2)) { return 0; } else { return 96; }
   }
 }
 "#,
@@ -1714,19 +1697,19 @@ contract C {
     for (label, definition, expression, expected) in [
         (
             "And",
-            "function and(x:bool, y:bool) -> bool { return false; }",
+            "function and(x: bool, y: bool) returns (bool) { return false; }",
             "true && true",
-            "0",
+            "97",
         ),
         (
             "Or",
-            "function or(x:bool, y:bool) -> bool { return false; }",
+            "function or(x: bool, y: bool) returns (bool) { return false; }",
             "false || true",
-            "0",
+            "97",
         ),
         (
             "Not",
-            "function not(x:bool) -> bool { return true; }",
+            "function not(x: bool) returns (bool) { return true; }",
             "!true",
             "97",
         ),
@@ -1735,7 +1718,7 @@ contract C {
             r#"
 {definition}
 contract C {{
-  public function main() -> word {{
+  function main() public returns (word) {{
     if ({expression}) {{ return 97; }} else {{ return 0; }}
   }}
 }}
@@ -1755,10 +1738,10 @@ contract C {{
 fn comptime_obligations_are_carried_into_mono_side_table() {
     let (_db, output) = specialize_src(
         r#"
-function need(comptime x : word) -> word { return x; }
+function need(comptime x: word) returns (word) { return x; }
 
 contract C {
-  public function main(x : word) -> comptime word {
+  function main(x: word) public returns (comptime word) {
     return need(x);
   }
 }
@@ -1794,15 +1777,15 @@ contract C {
 fn derived_generic_evidence_generates_from_body() {
     let (_db, output) = specialize_src(
         r#"
-data Pair = Pair(word, word);
+enum Pair { Pair(word, word) }
 
-forall a rep . class a:Generic(rep) {
-  function from(x:a) -> rep;
-  function to(x:rep) -> a;
+trait Generic<a, rep> {
+  function from(x: a) returns (rep);
+  function to(x: rep) returns (a);
 }
 
 contract C {
-  public function main(x:Pair) -> pair(word, word) {
+  function main(x: Pair) public returns (pair<word, word>) {
     return Generic.from(x);
   }
 }
@@ -1821,23 +1804,20 @@ contract C {
 fn generic_abi_decoder_evidence_specializes_for_internal_sum_adt() {
     let output = specialize_src_with_std(
         r#"
-import std.{*};
-import std.Generic.{*};
-import std.ABIGeneric.{*};
+import std;
+import std.Generic;
+import std.ABIGeneric;
 
-data Choice = Left(uint256) | Right(address);
+enum Choice { Left(uint256), Right(address) }
 
 contract C {
-  function main() -> word {
+  function main() returns (word) {
     let buf = allocate_zeroed_memory(64);
-    let rdr : MemoryWordReader = MemoryWordReader(buf);
-    let dec : ABIDecoder(Choice, MemoryWordReader) =
-        ABIDecoder(rdr) : ABIDecoder(Choice, MemoryWordReader);
-    let value : Choice = decode(dec, 0);
-    match value {
-    | Choice.Left(x) => return Typedef.rep(x);
-    | Choice.Right(_) => return 0;
-    }
+    let rdr: MemoryWordReader = MemoryWordReader.MemoryWordReader(buf);
+    let dec: ABIDecoder<Choice, MemoryWordReader> =
+        ABIDecoder.ABIDecoder(rdr) as ABIDecoder<Choice, MemoryWordReader>;
+    let value: Choice = decode(dec, 0);
+    match (value) { case Choice.Left(x) { return Typedef.rep(x); } case Choice.Right(_) { return 0; } }
   }
 }
 "#,
@@ -1861,10 +1841,10 @@ contract C {
 fn snapshot_small_specialized_module() {
     let (db, output) = specialize_src(
         r#"
-forall a . function id(x:a) -> a { return x; }
+function id<a>(x: a) returns (a) { return x; }
 
 contract C {
-  public function main(x:word) -> word {
+  function main(x: word) public returns (word) {
     return id(x);
   }
 }
@@ -1936,7 +1916,7 @@ fn specializes_comptime_evaluation_corpus_verdicts() {
 fn folds_recursive_comptime_integer_function() {
     let (_db, output) = specialize_src(
         r#"
-function fib(comptime n : integer) -> comptime integer {
+function fib(comptime n: integer) returns (comptime integer) {
   if (integerLt(n, 2)) {
     return n;
   } else {
@@ -1945,7 +1925,7 @@ function fib(comptime n : integer) -> comptime integer {
 }
 
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     return wordFromInteger(fib(10));
   }
 }
@@ -1970,8 +1950,8 @@ contract C {
 fn folds_comptime_yul_mstore_mload_subset() {
     let (_db, output) = specialize_src(
         r#"
-function storeLoad(x : word) -> word {
-  let r : word;
+function storeLoad(x: word) returns (word) {
+  let r: word;
   assembly {
     mstore(0, x)
     r := mload(0)
@@ -1980,8 +1960,8 @@ function storeLoad(x : word) -> word {
 }
 
 contract C {
-  public function main() -> word {
-    let res : comptime word = storeLoad(42);
+  function main() public returns (word) {
+    let comptime res: word = storeLoad(42);
     return res;
   }
 }
@@ -1997,7 +1977,7 @@ fn assembly_substitution_does_not_reuse_values_after_an_in_block_write() {
     let (db, output) = specialize_src(
         r#"
 contract C {
-  public function main(x: word) -> word {
+  function main(x: word) public returns (word) {
     let a: word = 1;
     assembly {
       a := add(a, x)
@@ -2042,12 +2022,12 @@ contract C {
 fn does_not_fold_user_function_shadowing_std_literal_intrinsic() {
     let (_db, output) = specialize_src(
         r#"
-function keccakLit(a:string) -> word {
+function keccakLit(a: string) returns (word) {
   return 0;
 }
 
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     return keccakLit("abc");
   }
 }
@@ -2080,14 +2060,14 @@ fn folds_resolved_std_string_keccak_literal_intrinsic() {
 fn does_not_fold_user_addword_shadowing_builtin_wrapper_name() {
     let (_db, output) = specialize_src(
         r#"
-function addWord(x: word, y: word) -> word {
-  let r : word;
+function addWord(x: word, y: word) returns (word) {
+  let r: word;
   assembly { r := sload(0) }
   return r;
 }
 
 contract C {
-  public function main() -> word {
+  function main() public returns (word) {
     return addWord(1, 2);
   }
 }
@@ -2113,21 +2093,21 @@ fn assignment_lhs_root_is_not_substituted() {
 fn compound_assignment_invalidates_lhs_root() {
     let (_db, output) = specialize_src(
         r#"
-forall t . class t:Add {
-  function add(l:t, r:t) -> t;
+trait Add<t> {
+  function add(l: t, r: t) returns (t);
 }
 
-instance word:Add {
-  function add(l:word, r:word) -> word {
-    let result : word;
+impl Add<word> {
+  function add(l: word, r: word) returns (word) {
+    let result: word;
     assembly { result := sload(0) }
     return result;
   }
 }
 
 contract C {
-  public function main() -> word {
-    let x : word = 1;
+  function main() public returns (word) {
+    let x: word = 1;
     x += 2;
     return x;
   }
@@ -2144,8 +2124,8 @@ fn unknown_if_invalidates_assignments_from_both_branches() {
     let (_db, output) = specialize_src(
         r#"
 contract C {
-  public function main(c: bool) -> word {
-    let x : word = 1;
+  function main(c: bool) public returns (word) {
+    let x: word = 1;
     if (c) {
     } else {
       x = 2;
@@ -2165,8 +2145,8 @@ fn if_statement_specializes_through_pre_typeck_match_view() {
     let (_db, output) = specialize_src(
         r#"
 contract C {
-  public function main(c: bool) -> word {
-    let x : word = 1;
+  function main(c: bool) public returns (word) {
+    let x: word = 1;
     if (c) {
       x = 2;
     } else {
@@ -2209,8 +2189,8 @@ fn if_expression_specializes_through_pre_typeck_match_view() {
     let (_db, output) = specialize_src(
         r#"
 contract C {
-  public function main(c: bool) -> word {
-    let x : word = if (c) then 2 else 3;
+  function main(c: bool) public returns (word) {
+    let x: word = ((c) ? 2 : 3);
     return x;
   }
 }
@@ -2249,7 +2229,7 @@ fn bool_constructors_specialize_through_pre_typeck_unit_sum_view() {
     let (_true_db, true_output) = specialize_src(
         r#"
 contract C {
-  public function main() -> bool {
+  function main() public returns (bool) {
     return true;
   }
 }
@@ -2258,7 +2238,7 @@ contract C {
     let (_false_db, false_output) = specialize_src(
         r#"
 contract C {
-  public function main() -> bool {
+  function main() public returns (bool) {
     return false;
   }
 }
@@ -2278,15 +2258,63 @@ contract C {
 }
 
 #[test]
+fn logical_binops_short_circuit_runtime_rhs_in_comptime_lets() {
+    let (_db, output) = specialize_src(
+        r#"
+contract C {
+  function main(flag: bool) public returns (bool) {
+    let comptime andResult: bool = false && flag;
+    let comptime orResult: bool = true || flag;
+    return andResult || orResult;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(
+        function_return_ctor(&output, "main"),
+        Some("true".to_owned())
+    );
+}
+
+#[test]
+fn logical_binops_do_not_evaluate_unreachable_rhs() {
+    let db = Box::leak(Box::new(TestDb::default()));
+    let module = parse_module(
+        db,
+        r#"
+function rhs() returns (bool) { return true; }
+
+function main() returns (bool) {
+  return (false && rhs()) || (true || rhs());
+}
+"#,
+    );
+    let output = specialize_module(
+        db,
+        module,
+        SpecializeOptions {
+            eval_fuel: 0,
+            ..SpecializeOptions::default()
+        },
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(
+        function_return_ctor(&output, "main"),
+        Some("true".to_owned())
+    );
+}
+
+#[test]
 fn unknown_match_pattern_binders_shadow_outer_constants() {
     let (_db, output) = specialize_src(
         r#"
 contract C {
-  public function main(n: word) -> word {
-    let x : word = 1;
-    match n {
-      | x => return x;
-    }
+  function main(n: word) public returns (word) {
+    let x: word = 1;
+    match (n) { case x { return x; } }
   }
 }
 "#,
@@ -2450,7 +2478,7 @@ fn expr_has_number_literal(expr: &MonoExpr<'_>, expected: &str) -> bool {
         MonoExprKind::BinOp { lhs, rhs, .. } => {
             expr_has_number_literal(lhs, expected) || expr_has_number_literal(rhs, expected)
         }
-        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
+        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::Conversion { expr, .. } => {
             expr_has_number_literal(expr, expected)
         }
         MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index } => {
@@ -2535,7 +2563,7 @@ fn expr_has_closure_dispatch(expr: &MonoExpr<'_>) -> bool {
         MonoExprKind::BinOp { lhs, rhs, .. } => {
             expr_has_closure_dispatch(lhs) || expr_has_closure_dispatch(rhs)
         }
-        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
+        MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::Conversion { expr, .. } => {
             expr_has_closure_dispatch(expr)
         }
         MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index } => {
@@ -2786,17 +2814,14 @@ fn repo_root() -> PathBuf {
 fn constructor_fold_is_not_confused_by_underscored_names() {
     let (_db, output) = specialize_src(
         r#"
-data D = Suf | Pre_Suf;
+enum D { Suf, Pre_Suf }
 
-function pick(d:D) -> word {
-  match d {
-  | D.Suf => return 1;
-  | D.Pre_Suf => return 2;
-  };
+function pick(d: D) returns (word) {
+  match (d) { case D.Suf { return 1; } case D.Pre_Suf { return 2; } }
 }
 
 contract C {
-  function main() -> word {
+  function main() returns (word) {
     return pick(D.Pre_Suf);
   }
 }
@@ -2816,18 +2841,15 @@ contract C {
 fn for_loop_post_assignments_are_not_folded_to_preloop_constants() {
     let (_db, output) = specialize_src(
         r#"
-data Flag = On | Off;
+enum Flag { On, Off }
 
-function isOn(f: Flag) -> bool {
-  match f {
-  | Flag.On => return true;
-  | Flag.Off => return false;
-  };
+function isOn(f: Flag) returns (bool) {
+  match (f) { case Flag.On { return true; } case Flag.Off { return false; } }
 }
 
 contract C {
-  function main() -> word {
-    let f : Flag = Flag.On;
+  function main() returns (word) {
+    let f: Flag = Flag.On;
     for (; isOn(f); f = Flag.Off) {
     }
     return 1;
@@ -2861,8 +2883,8 @@ contract C {
 fn non_contract_main_survives_dead_function_elimination_after_name_mangling() {
     let (_db, output) = specialize_src(
         r#"
-function answer() -> word { return 42; }
-function main() -> word { return answer(); }
+function answer() returns (word) { return 42; }
+function main() returns (word) { return answer(); }
 "#,
     );
 
@@ -2888,12 +2910,12 @@ fn evaluator_fuel_bounds_total_inline_fanout_work() {
     let module = parse_module(
         db,
         r#"
-function g2() -> word { return 1; }
-function g1() -> word { return g2() + g2(); }
-function g0() -> word { return g1() + g1(); }
+function g2() returns (word) { return 1; }
+function g1() returns (word) { return g2() + g2(); }
+function g0() returns (word) { return g1() + g1(); }
 
 contract C {
-  function main() -> word { return g0(); }
+  function main() returns (word) { return g0(); }
 }
 "#,
     );
@@ -2920,16 +2942,16 @@ contract C {
 fn dead_function_elimination_traces_calls_inside_residual_lambdas() {
     let (_db, output) = specialize_src(
         r#"
-data Box(f) = Box(f);
+enum Box<f> { Box(f) }
 
-function target(x : word) -> word {
-  let result : word;
+function target(x: word) returns (word) {
+  let result: word;
   assembly { result := add(x, 1) }
   return result;
 }
 
-function main() -> Box(word -> word) {
-  return Box(lam (x : word) -> word { return target(x); });
+function main() returns (Box<function(word) returns (word)>) {
+  return Box.Box(lam (x: word) returns (word) { return target(x); });
 }
 "#,
     );
@@ -2948,16 +2970,16 @@ function main() -> Box(word -> word) {
 fn dead_function_elimination_keeps_function_values_nested_in_constructors() {
     let (_db, output) = specialize_src(
         r#"
-data Box(f) = Box(f);
+enum Box<f> { Box(f) }
 
-function target(x : word) -> word {
-  let result : word;
+function target(x: word) returns (word) {
+  let result: word;
   assembly { result := add(x, 1) }
   return result;
 }
 
-function main() -> Box(word -> word) {
-  return Box(target);
+function main() returns (Box<function(word) returns (word)>) {
+  return Box.Box(target);
 }
 "#,
     );
@@ -2996,13 +3018,13 @@ fn user_path_suffix_does_not_grant_std_dispatch_inlining() {
         Path::new("/main"),
         "mystd/dispatch.solc",
         r#"
-function clobber(value : word) -> () {
-  let observed : word;
+function clobber(value: word) returns () {
+  let observed: word;
   assembly { observed := callvalue() }
   return ();
 }
 
-function main() -> word {
+function main() returns (word) {
   clobber(0);
   return 7;
 }
@@ -3040,13 +3062,13 @@ fn std_dispatch_statement_inlining_preserves_lexical_scope() {
         db,
         &path,
         r#"
-function clobber() -> () {
-  let x : word = 1;
+function clobber() returns () {
+  let x: word = 1;
   assembly { mstore(x, x) }
   return ();
 }
 
-function main(x : word) -> word {
+function main(x: word) returns (word) {
   clobber();
   return x;
 }
@@ -3089,20 +3111,20 @@ function main(x : word) -> word {
 fn class_method_values_resolve_to_the_specialized_instance_method() {
     let (_db, output) = specialize_src(
         r#"
-forall t . class t:Pick {
-  function pick(x : t) -> t;
+trait Pick<t> {
+  function pick(x: t) returns (t);
 }
 
-instance word:Pick {
-  function pick(x : word) -> word {
-    let result : word;
+impl Pick<word> {
+  function pick(x: word) returns (word) {
+    let result: word;
     assembly { result := add(x, 1) }
     return result;
   }
 }
 
-function main(x : word) -> word {
-  let f : word -> word = Pick.pick;
+function main(x: word) returns (word) {
+  let f: function(word) returns (word) = Pick.pick;
   return f(x);
 }
 "#,

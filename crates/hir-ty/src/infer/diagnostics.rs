@@ -1,5 +1,8 @@
 use super::*;
-use crate::display::{display_ty_source, display_type_ref_source};
+use crate::display::{
+    display_ty_return_suffix, display_ty_source, display_type_ref_return_suffix,
+    display_type_ref_source,
+};
 
 /// User-facing information about a callable definition.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
@@ -84,8 +87,8 @@ pub enum TypeckDiagnostic {
         /// Actual argument count.
         actual: usize,
     },
-    /// `SC0102`: a class head relies on a type variable that was not declared
-    /// by an explicit `forall`.
+    /// `SC0102`: a trait or impl head relies on a type variable that was not
+    /// declared by an explicit generic parameter list.
     UndefinedTypeVariables {
         /// Undeclared variables with their source spans.
         vars: Vec<(LabelSpan, String)>,
@@ -368,7 +371,7 @@ pub enum TypeckDiagnostic {
         /// Binding name.
         name: String,
     },
-    /// `SC0242`: a function annotated `-> comptime` returns runtime data.
+    /// `SC0242`: a function with a comptime return type returns runtime data.
     ComptimeReturnRuntime {
         /// Source span for the runtime return expression.
         span: LabelSpan,
@@ -485,7 +488,7 @@ impl TypeckDiagnostic {
                     .with_code(DiagnosticCode::TYPECK_AMBIGUOUS_INFERENCE_OR_TYPE_CONSTRUCTOR_ARITY)
                     .with_primary_label_span(span.clone(), Some("ambiguous inferred type"))
                     .with_note(scheme.clone())
-                    .with_help("add a type annotation or a matching instance to fix the ambiguous type variable")
+                    .with_help("add a type annotation or a matching impl to fix the ambiguous type variable")
             }
             TypeckDiagnostic::TypeConstructorArity {
                 span,
@@ -575,7 +578,7 @@ impl TypeckDiagnostic {
             } => {
                 let subject = match namespace {
                     ValueNamespace::Type => "type name",
-                    ValueNamespace::Class => "class name",
+                    ValueNamespace::Class => "trait name",
                     ValueNamespace::Module => "module",
                     ValueNamespace::TypeVariable => "type variable",
                 };
@@ -589,9 +592,9 @@ impl TypeckDiagnostic {
                     .with_help("use a constructor or value binding here, not a namespace name")
             }
             TypeckDiagnostic::ClassAsType { span, class } => {
-                Diagnostic::error(format!("class name used as type: `{class}`"))
+                Diagnostic::error(format!("trait name used as type: `{class}`"))
                     .with_code(DiagnosticCode::TYPECK_CLASS_AS_TYPE)
-                    .with_primary_label_span(span.clone(), Some("class is not a type"))
+                    .with_primary_label_span(span.clone(), Some("trait is not a type"))
             }
             TypeckDiagnostic::DuplicateType {
                 span,
@@ -607,39 +610,38 @@ impl TypeckDiagnostic {
                         Some("existing definition"),
                     )
                 } else {
-                    diagnostic.with_note(format!("existing definition: data {name}"))
+                    diagnostic.with_note(format!("existing definition: enum {name}"))
                 };
                 diagnostic.with_note("rename or remove the duplicate type definition")
             }
             TypeckDiagnostic::UnsatisfiedConstraint { span, pred } => {
-                Diagnostic::error(format!("cannot satisfy class constraint: {pred}"))
+                Diagnostic::error(format!("cannot satisfy trait constraint: {pred}"))
                     .with_code(DiagnosticCode::TYPECK_UNSATISFIED_CONSTRAINT)
                     .with_primary_label_span(span.clone(), Some("constraint originates here"))
-                    .with_note(format!("no visible instance matches `{pred}`"))
-                    .with_help("add a matching instance or strengthen the surrounding type context")
+                    .with_note(format!("no visible impl matches `{pred}`"))
+                    .with_help("add a matching impl or strengthen the surrounding type context")
             }
             TypeckDiagnostic::AmbiguousConstraint {
                 span,
                 pred,
                 candidates,
             } => {
-                let mut diagnostic = Diagnostic::error(format!(
-                    "ambiguous class constraint: {pred}"
-                ))
+                let mut diagnostic =
+                    Diagnostic::error(format!("ambiguous trait constraint: {pred}"))
                     .with_code(DiagnosticCode::TYPECK_AMBIGUOUS_CONSTRAINT)
                     .with_primary_label_span(span.clone(), Some("ambiguous constraint here"))
-                    .with_help("make the type more specific or remove overlapping instances");
+                    .with_help("make the type more specific or remove overlapping impls");
                 for candidate in candidates {
                     diagnostic = diagnostic.with_note(candidate.clone());
                 }
                 diagnostic
             }
             TypeckDiagnostic::SolverFuelExhausted { span, pred } => Diagnostic::error(format!(
-                "cannot solve class constraint `{pred}`: solver exceeded its iteration bound"
+                "cannot solve trait constraint `{pred}`: solver exceeded its iteration bound"
             ))
             .with_code(DiagnosticCode::TYPECK_SOLVER_FUEL_EXHAUSTED)
             .with_primary_label_span(span.clone(), Some("constraint originates here"))
-            .with_help("simplify the instance chain or add a more direct instance"),
+            .with_help("simplify the impl chain or add a more direct impl"),
             TypeckDiagnostic::NonFinalReturn { span } => {
                 Diagnostic::error("illegal return statement")
                     .with_code(DiagnosticCode::TYPECK_NON_FINAL_RETURN_OR_INVALID_CONSTRUCTOR_PATTERN)
@@ -657,22 +659,22 @@ impl TypeckDiagnostic {
                 main,
                 undetermined,
             } => Diagnostic::error(format!(
-                "Coverage condition fails for class:\n{class}\n- the type:\n{main}\ndoes not determine:\n{}",
+                "Coverage condition fails for trait:\n{class}\n- the type:\n{main}\ndoes not determine:\n{}",
                 undetermined.join(", ")
             ))
             .with_code(DiagnosticCode::TYPECK_COVERAGE_CONDITION)
-            .with_primary_label_span(span.clone(), Some("instance head does not determine these variables")),
+            .with_primary_label_span(span.clone(), Some("impl head does not determine these variables")),
             TypeckDiagnostic::PattersonCondition { span, head } => Diagnostic::error(format!(
-                "instance `{head}` does not satisfy the Patterson conditions"
+                "impl `{head}` does not satisfy the Patterson conditions"
             ))
             .with_code(DiagnosticCode::TYPECK_PATTERSON_CONDITION)
-            .with_primary_label_span(span.clone(), Some("instance head violates Patterson condition"))
-            .with_note("each instance context must be structurally smaller than the instance head")
-            .with_help("remove the recursive context, add a more specific instance, or use the Patterson-condition pragma intentionally"),
+            .with_primary_label_span(span.clone(), Some("impl head violates Patterson condition"))
+            .with_note("each impl constraint must be structurally smaller than the impl head")
+            .with_help("remove the recursive constraint, add a more specific impl, or use the Patterson-condition pragma intentionally"),
             TypeckDiagnostic::BoundedVariableCondition { span } => {
                 Diagnostic::error("Bounded variable condition fails!")
                     .with_code(DiagnosticCode::TYPECK_BOUNDED_VARIABLE_CONDITION)
-                    .with_primary_label_span(span.clone(), Some("instance head is missing context variables"))
+                    .with_primary_label_span(span.clone(), Some("impl head is missing constraint variables"))
             }
             TypeckDiagnostic::TypeAliasCycle { span, alias } => {
                 Diagnostic::error(format!("recursive type alias `{alias}`"))
@@ -700,10 +702,10 @@ impl TypeckDiagnostic {
                 expected,
                 actual,
             } => Diagnostic::error(format!(
-                "class arity mismatch for `{class}`: expected {expected}, got {actual}"
+                "trait arity mismatch for `{class}`: expected {expected}, got {actual}"
             ))
             .with_code(DiagnosticCode::TYPECK_CLASS_ARITY)
-            .with_primary_label_span(span.clone(), Some("class predicate arity mismatch")),
+            .with_primary_label_span(span.clone(), Some("trait constraint arity mismatch")),
             TypeckDiagnostic::OverlappingInstance {
                 instance_span,
                 overlaps_span,
@@ -711,34 +713,34 @@ impl TypeckDiagnostic {
                 overlaps,
             } => {
                 let diagnostic = Diagnostic::error(format!(
-                    "Overlapping instances are not supported\ninstance:\n{instance}\noverlaps with:\n{overlaps}"
+                    "Overlapping impls are not supported\nimpl:\n{instance}\noverlaps with:\n{overlaps}"
                 ))
                 .with_code(DiagnosticCode::TYPECK_OVERLAPPING_INSTANCE)
-                .with_primary_label_span(instance_span.clone(), Some("overlapping instance"));
+                .with_primary_label_span(instance_span.clone(), Some("overlapping impl"));
                 if let Some(overlaps_span) = overlaps_span {
                     diagnostic.with_secondary_label_span(
                         overlaps_span.clone(),
-                        Some("previous overlapping instance"),
+                        Some("previous overlapping impl"),
                     )
                 } else {
                     diagnostic
                 }
             }
             TypeckDiagnostic::InvalidDefaultInstance { span, head } => Diagnostic::error(format!(
-                "Cannot have a default instance whose main argument contains no type variable: {head}"
+                "Cannot have a default impl whose main argument contains no type variable: {head}"
             ))
             .with_code(DiagnosticCode::TYPECK_INVALID_DEFAULT_INSTANCE)
-            .with_primary_label_span(span.clone(), Some("invalid default instance head")),
+            .with_primary_label_span(span.clone(), Some("invalid default impl head")),
             TypeckDiagnostic::IncompleteInstance {
                 span,
                 class,
                 missing,
             } => Diagnostic::error(format!(
-                "Incomplete definition for class:\n{class}\nmissing definitions for:\n{}",
+                "Incomplete impl for trait:\n{class}\nmissing definitions for:\n{}",
                 missing.join(", ")
             ))
             .with_code(DiagnosticCode::TYPECK_INCOMPLETE_INSTANCE)
-            .with_primary_label_span(span.clone(), Some("incomplete instance")),
+            .with_primary_label_span(span.clone(), Some("incomplete impl")),
             TypeckDiagnostic::UnknownInstanceMethod {
                 span,
                 name,
@@ -750,7 +752,7 @@ impl TypeckDiagnostic {
                 if let Some(class_span) = class_span {
                     diagnostic.with_secondary_label_span(
                         class_span.clone(),
-                        Some("class defined here"),
+                        Some("trait defined here"),
                     )
                 } else {
                     diagnostic
@@ -762,9 +764,9 @@ impl TypeckDiagnostic {
             .with_code(DiagnosticCode::TYPECK_INCOMPLETE_SIGNATURE)
             .with_primary_label_span(span.clone(), Some("incomplete signature"))
             .with_note(format!("signature: {signature}"))
-            .with_note("annotate every parameter (name : Type) and provide a return type (-> Type)"),
+            .with_note("annotate every parameter (`name: Type`) and provide a return type (`returns (Type)`)"),
             TypeckDiagnostic::IncompleteMethodSignature { span, signature } => Diagnostic::error(
-                "class and instance methods must have complete type signatures",
+                "trait and impl methods must have complete type signatures",
             )
             .with_code(DiagnosticCode::TYPECK_INCOMPLETE_METHOD_SIGNATURE)
             .with_primary_label_span(span.clone(), Some("incomplete method signature"))
@@ -776,11 +778,11 @@ impl TypeckDiagnostic {
                 reason,
             } => {
                 Diagnostic::error(format!(
-                    "invalid instance member signature for `{method}`: {reason}"
+                    "invalid impl member signature for `{method}`: {reason}"
                 ))
                 .with_code(DiagnosticCode::TYPECK_INVALID_INSTANCE_METHOD_SIGNATURE)
-                .with_primary_label_span(span.clone(), Some("invalid instance method signature"))
-                .with_note("the instance method must match the class method after substituting the instance head")
+                .with_primary_label_span(span.clone(), Some("invalid impl method signature"))
+                .with_note("the impl method must match the trait method after substituting the impl head")
             }
             TypeckDiagnostic::InvalidConstructorPattern { span, name } => Diagnostic::error(format!(
                 "constructor pattern `{name}` does not resolve to a constructor"
@@ -798,10 +800,10 @@ impl TypeckDiagnostic {
             .with_code(DiagnosticCode::TYPECK_SHORTHAND_CONSTRUCTOR)
             .with_primary_label_span(span.clone(), Some("shorthand constructor")),
             TypeckDiagnostic::GenericDeriveConflict { span, ty } => Diagnostic::error(format!(
-                "type '{ty}' has a manual Generic instance but no 'pragma no-generic-instance-for {ty}'; add the pragma to suppress auto-derivation"
+                "type '{ty}' has a manual Generic impl but no 'pragma solcore noGenericInstanceFor {ty};'; add the pragma to suppress auto-derivation"
             ))
             .with_code(DiagnosticCode::TYPECK_GENERIC_DERIVE_CONFLICT)
-            .with_primary_label_span(span.clone(), Some("manual Generic instance conflicts with auto-derivation")),
+            .with_primary_label_span(span.clone(), Some("manual Generic impl conflicts with auto-derivation")),
             TypeckDiagnostic::RuntimeToComptimeParam {
                 span,
                 function,
@@ -814,12 +816,12 @@ impl TypeckDiagnostic {
                 .with_primary_label_span(span.clone(), Some("runtime value passed here"))
             }
             TypeckDiagnostic::ComptimeLetRuntime { span, name } => Diagnostic::error(format!(
-                "comptime let '{name}' is bound to a runtime expression"
+                "`let comptime {name}` is bound to a runtime expression"
             ))
             .with_code(DiagnosticCode::TYPECK_COMPTIME_LET_RUNTIME)
             .with_primary_label_span(span.clone(), Some("runtime initializer")),
             TypeckDiagnostic::ComptimeReturnRuntime { span, context } => Diagnostic::error(format!(
-                "{context}: function annotated '-> comptime' returns a runtime expression"
+                "{context}: function with a comptime return type returns a runtime expression"
             ))
             .with_code(DiagnosticCode::TYPECK_COMPTIME_RETURN_RUNTIME)
             .with_primary_label_span(span.clone(), Some("runtime return expression")),
@@ -1077,9 +1079,9 @@ fn signature_from_scheme<'db>(
         })
         .collect::<Vec<_>>();
     format!(
-        "{name}({}) -> {}",
+        "{name}({}){}",
         parameters.join(", "),
-        display_ty_source(db, ret, type_var_names)
+        display_ty_return_suffix(db, ret, type_var_names)
     )
 }
 
@@ -1104,9 +1106,9 @@ fn source_signature_from_func_sig<'db>(
     }
     let ret = sig.ret?;
     Some(format!(
-        "{name}({}) -> {}",
+        "{name}({}){}",
         params.join(", "),
-        display_type_ref_source(db, ret)
+        display_type_ref_return_suffix(db, ret)
     ))
 }
 
@@ -1472,7 +1474,7 @@ fn collect_uninitialized_let_type_refs_from_expr<'db>(
             collect_uninitialized_let_type_refs_from_expr(db, body, *lhs, out);
             collect_uninitialized_let_type_refs_from_expr(db, body, *rhs, out);
         }
-        ExprKind::UnaryOp { expr, .. } | ExprKind::TypeAnnot { expr, .. } => {
+        ExprKind::UnaryOp { expr, .. } | ExprKind::Conversion { expr, .. } => {
             collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
         }
         ExprKind::Call { callee, args } => {
@@ -1631,44 +1633,6 @@ fn type_ref_constructor_name<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>) -> Strin
         }
         _ => format_type_ref(db, ty),
     }
-}
-
-pub(super) fn implicit_class_head_binder_diagnostic<'db>(
-    db: &'db dyn HirDb,
-    class: ClassDef<'db>,
-) -> Option<TypeckDiagnostic> {
-    let vars = class.type_var_elems(db);
-    let [var] = vars.as_slice() else {
-        return None;
-    };
-    let head = class.head(db).kind(db);
-    let TypeRefKind::Named {
-        qualifier: None,
-        name,
-        args,
-    } = head.ty.kind(db)
-    else {
-        return None;
-    };
-    if !args.atom().is_empty() || builtin_type_name(ident_text(db, name).as_str()) {
-        return None;
-    }
-    if ident_text(db, var) != ident_text(db, name) || var.span(db) != name.span(db) {
-        return None;
-    }
-    Some(TypeckDiagnostic::UndefinedTypeVariables {
-        vars: vec![(
-            LabelSpan::from_span(db, name.span(db)),
-            ident_text(db, name),
-        )],
-    })
-}
-
-fn builtin_type_name(name: &str) -> bool {
-    matches!(
-        name,
-        "word" | "Word" | "bool" | "()" | "pair" | "sum" | "integer"
-    )
 }
 
 #[derive(Clone)]
@@ -2208,35 +2172,19 @@ pub(super) fn is_complete_signature(sig: &FuncSig<'_>) -> bool {
 
 pub(super) fn format_func_sig<'db>(db: &'db dyn HirDb, sig: &FuncSig<'db>) -> String {
     let mut out = String::new();
+    out.push_str("function ");
+    out.push_str(&ident_text(db, &sig.name));
     if !sig.type_vars.is_empty() {
-        out.push_str("forall ");
+        out.push('<');
         out.push_str(
             &sig.type_vars
                 .iter()
                 .map(|var| ident_text(db, var))
                 .collect::<Vec<_>>()
-                .join(" "),
-        );
-        out.push_str(". ");
-    }
-    if !sig.preds.is_empty() {
-        out.push_str(
-            &sig.preds
-                .iter()
-                .map(|pred| format_pred_ref(db, *pred))
-                .collect::<Vec<_>>()
                 .join(", "),
         );
-        out.push_str(" => ");
+        out.push('>');
     }
-    if sig.public.is_some() {
-        out.push_str("public ");
-    }
-    if sig.payable.is_some() {
-        out.push_str("payable ");
-    }
-    out.push_str("function ");
-    out.push_str(&ident_text(db, &sig.name));
     out.push('(');
     out.push_str(
         &sig.params
@@ -2247,9 +2195,24 @@ pub(super) fn format_func_sig<'db>(db: &'db dyn HirDb, sig: &FuncSig<'db>) -> St
             .join(", "),
     );
     out.push(')');
+    if sig.public.is_some() {
+        out.push_str(" public");
+    }
+    if sig.payable.is_some() {
+        out.push_str(" payable");
+    }
     if let Some(ret) = sig.ret {
-        out.push_str(" -> ");
-        out.push_str(&format_type_ref(db, ret));
+        out.push_str(&display_type_ref_return_suffix(db, ret));
+    }
+    if !sig.preds.is_empty() {
+        out.push_str(" where ");
+        out.push_str(
+            &sig.preds
+                .iter()
+                .map(|pred| format_pred_ref(db, *pred))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
     }
     out
 }
@@ -2262,7 +2225,7 @@ fn format_func_param<'db>(db: &'db dyn HirDb, param: &FuncParam<'db>) -> String 
                 out.push_str("comptime ");
             }
             out.push_str(&ident_text(db, name));
-            out.push_str(" : ");
+            out.push_str(": ");
             out.push_str(&format_type_ref(db, *ty));
             out
         }
@@ -2281,12 +2244,12 @@ fn format_func_param<'db>(db: &'db dyn HirDb, param: &FuncParam<'db>) -> String 
 fn format_pred_ref<'db>(db: &'db dyn HirDb, pred: hir::ast::ty::PredRef<'db>) -> String {
     let pred = pred.kind(db);
     let mut out = format!(
-        "{} : {}",
+        "{}: {}",
         format_type_ref(db, pred.ty),
         ident_text(db, &pred.class)
     );
     if !pred.args.atom().is_empty() {
-        out.push('(');
+        out.push('<');
         out.push_str(
             &pred
                 .args
@@ -2296,7 +2259,7 @@ fn format_pred_ref<'db>(db: &'db dyn HirDb, pred: hir::ast::ty::PredRef<'db>) ->
                 .collect::<Vec<_>>()
                 .join(", "),
         );
-        out.push(')');
+        out.push('>');
     }
     out
 }

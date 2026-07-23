@@ -1147,7 +1147,7 @@ fn replace_selector_value(expr: &mut MonoExpr<'_>, replacement: &str) -> bool {
             *value = replacement.to_owned();
             true
         }
-        MonoExprKind::TypeAnnot { expr, .. } => replace_selector_value(expr, replacement),
+        MonoExprKind::Conversion { expr, .. } => replace_selector_value(expr, replacement),
         _ => false,
     }
 }

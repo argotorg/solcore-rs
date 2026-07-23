@@ -381,7 +381,7 @@ fn source_main_lowers_through_hull_to_verified_ir() {
     let (_, ir) = lower_source(
         r#"
 contract SimpleMain {
-  function main() -> word {
+  function main() returns (word) {
     return 42;
   }
 }
@@ -399,18 +399,15 @@ fn source_bool_product_sum_and_branches_lower_to_verified_ir() {
     let (_, ir) = lower_source(
         r#"
 contract AggregateContract {
-  data Choice = Left(word, word) | Right(word);
+  enum Choice { Left(word, word), Right(word) }
 
-  function runtime_flag() -> bool {
-    let raw : word;
+  function runtime_flag() returns (bool) {
+    let raw: word;
     assembly { raw := callvalue() }
-    match raw {
-      | 0 => return false;
-      | _ => return true;
-    }
+    match (raw) { case 0 { return false; } default { return true; } }
   }
 
-  function choose(flag : bool, x : word, y : word) -> Choice {
+  function choose(flag: bool, x: word, y: word) returns (Choice) {
     if (flag) {
       return Choice.Left(x, y);
     } else {
@@ -418,14 +415,11 @@ contract AggregateContract {
     }
   }
 
-  function unwrap(value : Choice) -> word {
-    match value {
-      | Choice.Left(x, y) => return x;
-      | Choice.Right(x) => return x;
-    }
+  function unwrap(value: Choice) returns (word) {
+    match (value) { case Choice.Left(x, y) { return x; } case Choice.Right(x) { return x; } }
   }
 
-  function main() -> word {
+  function main() returns (word) {
     return unwrap(choose(runtime_flag(), 1, 42));
   }
 }
@@ -446,8 +440,8 @@ fn contract_object_data_symbols_and_inline_evm_lower_to_verified_ir() {
     let (_, ir) = lower_source(
         r#"
 contract MemoryContract {
-  function main() -> word {
-    let result : word;
+  function main() returns (word) {
+    let result: word;
     assembly {
       mstore(0, 42)
       result := mload(0)
@@ -474,12 +468,12 @@ fn contract_storage_load_and_store_lower_to_snapshotted_verified_ir() {
 contract StorageContract {
   value: word;
 
-  function update(next: word) -> word {
+  function update(next: word) returns (word) {
     value = next;
     return value;
   }
 
-  function main() -> word {
+  function main() returns (word) {
     return update(42);
   }
 }
@@ -496,8 +490,8 @@ fn inline_yul_for_init_binding_remains_in_loop_scope() {
     let (_, ir) = lower_source(
         r#"
 contract LoopContract {
-  function main() -> word {
-    let result : word;
+  function main() returns (word) {
+    let result: word;
     assembly {
       result := 0
       for { let i := 0 } lt(i, 3) { i := add(i, 1) } {

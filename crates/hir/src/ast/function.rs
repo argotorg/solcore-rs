@@ -28,9 +28,9 @@ use crate::{
 pub struct FuncSig<'db> {
     /// Span covering the complete signature syntax.
     pub span: Span<'db>,
-    /// Explicit type variables introduced by `forall`.
+    /// Explicit type parameters introduced by the function's `<...>` list.
     pub type_vars: Vec<SpannedElem<'db, Ident<'db>>>,
-    /// Class predicates that qualify this signature.
+    /// Trait constraints that qualify this signature.
     pub preds: Vec<PredRef<'db>>,
     /// Span of the `public` keyword when written.
     pub public: Option<Span<'db>>,
@@ -265,11 +265,11 @@ pub enum ExprKind<'db> {
         /// Selected field or path segment.
         field: SpannedElem<'db, Ident<'db>>,
     },
-    /// Type annotation expression.
-    TypeAnnot {
-        /// Annotated expression.
+    /// Explicit `expression as Type` conversion.
+    Conversion {
+        /// Converted expression.
         expr: Id<Expr<'db>>,
-        /// Annotation type.
+        /// Conversion target type.
         ty: TypeRef<'db>,
     },
     /// Unary operator expression.
@@ -406,6 +406,12 @@ pub enum BinOp {
     Div,
     /// Remainder.
     Mod,
+    /// Exponentiation.
+    Pow,
+    /// Left shift.
+    Shl,
+    /// Logical right shift.
+    Shr,
     /// Bitwise and.
     BitAnd,
     /// Bitwise xor.

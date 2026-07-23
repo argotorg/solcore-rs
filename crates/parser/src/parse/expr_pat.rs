@@ -84,9 +84,23 @@ where
             .map_with(|params, e| (params, e.span()))
             .boxed();
 
+        let lambda_return = type_parser()
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .delimited_by(just(Token::LParen), just(Token::RParen))
+            .map_with(|elems, e| match <[_; 1]>::try_from(elems) {
+                Ok([ty]) => ty,
+                Err(elems) => ParsedTy {
+                    span: e.span(),
+                    kind: ParsedTyKind::Tuple { elems },
+                },
+            })
+            .boxed();
+
         let lambda_expr = just(Token::Lam)
             .ignore_then(lambda_params)
-            .then(just(Token::Arrow).ignore_then(type_parser()).or_not())
+            .then(just(Token::Returns).ignore_then(lambda_return).or_not())
             .then(body_span_parser())
             .map_with(|(((params, params_span), ret), body_span), e| ParsedExpr {
                 span: e.span(),
@@ -99,49 +113,12 @@ where
             })
             .boxed();
 
-        // Parse a right-nested `else if ...` chain as a flat list of heads.
-        // Recursing through the complete expression grammar once per `else`
-        // gives each level a very large Chumsky stack frame; folding the heads
-        // back into the same AST keeps ordinary else-if chains stack-bounded.
-        let if_head = just(Token::If)
-            .ignore_then(expr.clone())
-            .then_ignore(then_kw_parser())
-            .then(expr.clone())
-            .then_ignore(just(Token::Else))
-            .map_with(|(cond, then_expr), e| (e.span(), cond, then_expr))
-            .boxed();
-        let if_expr = if_head
-            .repeated()
-            .at_least(1)
-            .collect::<Vec<_>>()
-            .then(expr.clone())
-            .map(|(heads, tail)| {
-                heads.into_iter().rev().fold(
-                    tail,
-                    |else_expr,
-                     (head_span, cond, then_expr): (
-                        LexSpan,
-                        ParsedExpr<'src>,
-                        ParsedExpr<'src>,
-                    )| ParsedExpr {
-                        span: LexSpan::from(head_span.start..else_expr.span.end),
-                        kind: ParsedExprKind::If {
-                            cond: Box::new(cond),
-                            then_expr: Box::new(then_expr),
-                            else_expr: Box::new(else_expr),
-                        },
-                    },
-                )
-            })
-            .boxed();
-
         let boundary = choice((
             just(Token::Semi).ignored(),
             just(Token::Comma).ignored(),
             just(Token::RParen).ignored(),
             just(Token::RBracket).ignored(),
             just(Token::RBrace).ignored(),
-            then_kw_parser(),
             just(Token::Else).ignored(),
             just(Token::Question).ignored(),
             just(Token::Colon).ignored(),
@@ -190,21 +167,6 @@ where
                 span: e.span(),
                 kind: ParsedExprKind::Lit(lit),
             })
-            .or(just(Token::Dot)
-                .map_with(|_, e| e.span())
-                .then(ident_parser())
-                .then(
-                    expr.clone()
-                        .separated_by(just(Token::Comma))
-                        .collect::<Vec<_>>()
-                        .delimited_by(just(Token::LParen), just(Token::RParen))
-                        .or_not()
-                        .map(Option::unwrap_or_default),
-                )
-                .map_with(|((dot, name), args), e| ParsedExpr {
-                    span: e.span(),
-                    kind: ParsedExprKind::DotCtor { dot, name, args },
-                }))
             .or(ident_parser().map(|ident| ParsedExpr {
                 span: ident.1,
                 kind: ParsedExprKind::Ident(ident),
@@ -212,7 +174,6 @@ where
             .or(proxy_expr)
             .or(tuple_or_paren_expr)
             .or(lambda_expr)
-            .or(if_expr)
             .recover_with(via_parser(atom_recovery))
             .boxed();
 
@@ -267,16 +228,46 @@ where
             })
             .boxed();
 
+        let conversion = unary
+            .clone()
+            .foldl_with(
+                just(Token::As).ignore_then(type_parser()).repeated(),
+                |expr, ty, e| ParsedExpr {
+                    span: e.span(),
+                    kind: ParsedExprKind::Conversion {
+                        expr: Box::new(expr),
+                        ty,
+                    },
+                },
+            )
+            .boxed();
+
+        let pow_op = just(Token::Star)
+            .then_ignore(just(Token::Star))
+            .to(function::BinOp::Pow)
+            .map_with(|op, e| ParsedSpanned::new(op, e.span()));
+        let pow = recursive(|pow| {
+            conversion
+                .clone()
+                .then(pow_op.then(pow).or_not())
+                .map_with(|(lhs, rhs), e| match rhs {
+                    Some((op, rhs)) => parsed_bin_op_expr(lhs, op, rhs, e.span()),
+                    None => lhs,
+                })
+        })
+        .boxed();
+
         let mul_op = select! {
             Token::Star => function::BinOp::Mul,
             Token::Slash => function::BinOp::Div,
             Token::Percent => function::BinOp::Mod,
         }
         .map_with(|op, e| ParsedSpanned::new(op, e.span()));
-        let mul = unary.clone().foldl_with(
-            mul_op.then(unary.clone()).repeated(),
-            |lhs, (op, rhs), e| parsed_bin_op_expr(lhs, op, rhs, e.span()),
-        );
+        let mul = pow
+            .clone()
+            .foldl_with(mul_op.then(pow).repeated(), |lhs, (op, rhs), e| {
+                parsed_bin_op_expr(lhs, op, rhs, e.span())
+            });
 
         let add_op = select! {
             Token::Plus => function::BinOp::Add,
@@ -289,12 +280,27 @@ where
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
             });
 
+        let shift_op = choice((
+            just(Token::Less)
+                .then_ignore(just(Token::Less))
+                .to(function::BinOp::Shl),
+            just(Token::Greater)
+                .then_ignore(just(Token::Greater))
+                .to(function::BinOp::Shr),
+        ))
+        .map_with(|op, e| ParsedSpanned::new(op, e.span()));
+        let shift = add
+            .clone()
+            .foldl_with(shift_op.then(add).repeated(), |lhs, (op, rhs), e| {
+                parsed_bin_op_expr(lhs, op, rhs, e.span())
+            });
+
         let bit_and_op = just(Token::Amp)
             .to(function::BinOp::BitAnd)
             .map_with(|op, e| ParsedSpanned::new(op, e.span()));
-        let bit_and = add
+        let bit_and = shift
             .clone()
-            .foldl_with(bit_and_op.then(add).repeated(), |lhs, (op, rhs), e| {
+            .foldl_with(bit_and_op.then(shift).repeated(), |lhs, (op, rhs), e| {
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
             });
 
@@ -307,20 +313,7 @@ where
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
             });
 
-        let match_arm_separator = just(Token::Pipe)
-            .ignore_then(
-                pat.clone()
-                    .separated_by(just(Token::Comma))
-                    .at_least(1)
-                    .collect::<Vec<_>>(),
-            )
-            .then_ignore(just(Token::FatArrow))
-            .ignored();
         let bit_or_op = just(Token::Pipe)
-            // In a match body, `| pat =>` starts the next arm; without this
-            // guard the expression parser could consume the separator as a
-            // bitwise-or operator while recovering from the previous arm body.
-            .and_is(match_arm_separator.not())
             .to(function::BinOp::BitOr)
             .map_with(|op, e| ParsedSpanned::new(op, e.span()));
         let bit_or = bit_xor
@@ -401,20 +394,7 @@ where
         })
         .boxed();
 
-        let type_annot = just(Token::Colon).ignore_then(type_parser()).or_not();
         ternary
-            .then(type_annot)
-            .map_with(|(expr, ty), e| match ty {
-                Some(ty) => ParsedExpr {
-                    span: e.span(),
-                    kind: ParsedExprKind::TypeAnnot {
-                        expr: Box::new(expr),
-                        ty,
-                    },
-                },
-                None => expr,
-            })
-            .boxed()
     });
 
     pat.define({
@@ -456,21 +436,6 @@ where
             .or_not()
             .boxed();
 
-        let dot_ctor = just(Token::Dot)
-            .map_with(|_, e| e.span())
-            .then(ident_parser())
-            .then(ctor_args.clone())
-            .map_with(|((dot, name), args), e| ParsedPat {
-                span: e.span(),
-                kind: ParsedPatKind::Ctor {
-                    leading_dot: Some(dot),
-                    qualifiers: Vec::new(),
-                    name,
-                    args: args.unwrap_or_default(),
-                },
-            })
-            .boxed();
-
         let comptime_pat = comptime_kw_parser()
             .then(expr.clone())
             .map_with(|(kw, expr), e| ParsedPat {
@@ -508,6 +473,9 @@ where
 
         let boundary = just(Token::Comma)
             .or(just(Token::RParen))
+            .or(just(Token::LBrace))
+            .or(just(Token::Case))
+            .or(just(Token::Default))
             .or(just(Token::FatArrow))
             .or(just(Token::Pipe))
             .or(just(Token::RBrace));
@@ -527,7 +495,6 @@ where
         wildcard
             .or(lit_pat)
             .or(tuple_or_paren_pat)
-            .or(dot_ctor)
             .or(comptime_pat)
             .or(ctor_or_var)
             .recover_with(via_parser(recovery))

@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn definition_of_parameter_use_points_to_parameter_name() {
-        let source = "function id(x: word) -> word {\n  return x;\n}\n";
+        let source = "function id(x: word) returns (word) {\n  return x;\n}\n";
         let (world, uri) = world_with_main(source);
         let use_offset = (source.find("return x").expect("return") + "return ".len()) as u32;
         let param_offset = source.find("x: word").expect("param") as u32;
@@ -550,8 +550,10 @@ mod tests {
 
     #[test]
     fn definition_of_import_selector_name_points_to_imported_declaration() {
-        let main = "import math.{double};\nfunction main() -> word { return double(21); }\n";
-        let math = "function double(x: word) -> word { return x + x; }\nexport { double };\n";
+        let main =
+            "import {double} from math;\nfunction main() returns (word) { return double(21); }\n";
+        let math =
+            "function double(x: word) returns (word) { return x + x; }\nexport { double };\n";
         let (world, main_uri, math_uri) = world_with_main_and_math(main, math);
         let main_index = world.line_index(&main_uri).expect("main line index");
         let math_index = world.line_index(&math_uri).expect("math line index");
@@ -573,7 +575,7 @@ mod tests {
 
     #[test]
     fn definition_in_embedded_std_is_not_returned_as_an_unopenable_uri() {
-        let source = "import std.{addWord};\nfunction main() -> word { return addWord(1, 2); }\n";
+        let source = "import {addWord} from std;\nfunction main() returns (word) { return addWord(1, 2); }\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let call = source.rfind("addWord").expect("call") as u32;
@@ -587,13 +589,13 @@ mod tests {
     #[test]
     fn definition_of_cross_file_type_ref_points_to_type_declaration() {
         let main = "\
-import models.{Box};
-function wrap(value: word) -> Box {
-  let boxed: Box = Box(value);
+import {Box} from models;
+function wrap(value: word) returns (Box) {
+  let boxed: Box = Box.Box(value);
   return boxed;
 }
 ";
-        let models = "data Box = Box(word);\nexport { Box };\n";
+        let models = "enum Box { Box(word) }\nexport { Box(*) };\n";
         let (world, main_uri, models_uri) = world_with_main_and_nested(main, "models", models);
         let models_index = world.line_index(&models_uri).expect("models line index");
         let type_ref = (main.find("boxed: Box").expect("local type") + "boxed: ".len()) as u32;
@@ -610,7 +612,7 @@ function wrap(value: word) -> Box {
 
     #[test]
     fn definition_on_type_declaration_points_to_itself() {
-        let source = "data Choice = Left | Right;\n";
+        let source = "enum Choice { Left, Right }\n";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
         let declaration = source.find("Choice").expect("declaration") as u32;
@@ -627,16 +629,15 @@ function wrap(value: word) -> Box {
     #[test]
     fn definition_of_predicate_points_to_class_declaration() {
         let source = "\
-forall a. class a:Comparable {
-  function compare(x: a, y: a) -> word;
+trait Comparable<a> {
+  function compare(x: a, y: a) returns (word);
 }
 
-forall a. a:Comparable =>
-function keep(x: a) -> a { return x; }
+function keep<a>(x: a) returns (a) where a: Comparable { return x; }
 ";
         let (world, uri) = world_with_main(source);
         let line_index = world.line_index(&uri).expect("line index");
-        let declaration = source.find("Comparable").expect("class declaration") as u32;
+        let declaration = source.find("Comparable").expect("trait declaration") as u32;
         let predicate = source.rfind("Comparable").expect("predicate") as u32;
 
         let location = scalar_definition(&world, &uri, predicate);
@@ -651,13 +652,10 @@ function keep(x: a) -> a { return x; }
     #[test]
     fn definition_of_constructor_pattern_points_to_constructor_declaration() {
         let source = "\
-data Choice = Left(word) | Right;
+enum Choice { Left(word), Right }
 
-function unwrap(value: Choice) -> word {
-  match value {
-  | Choice.Left(x) => return x;
-  | Choice.Right => return 0;
-  }
+function unwrap(value: Choice) returns (word) {
+  match (value) { case Choice.Left(x) { return x; } case Choice.Right { return 0; } }
 }
 ";
         let (world, uri) = world_with_main(source);
@@ -676,17 +674,17 @@ function unwrap(value: Choice) -> word {
 
     #[test]
     fn definition_of_import_path_and_module_qualifier_points_to_module_start() {
-        let main = "import foo.bar;\nfunction main() -> word { return foo.bar.value(); }\n";
-        let bar = "export { value };\nfunction value() -> word { return 7; }\n";
+        let main = "import * as bar from foo.bar;\nfunction main() returns (word) { return bar.value(); }\n";
+        let bar = "export { value };\nfunction value() returns (word) { return 7; }\n";
         let (world, main_uri, bar_uri) = world_with_main_and_nested(main, "foo/bar", bar);
         let bar_index = world.line_index(&bar_uri).expect("bar line index");
         let expected = bar_index.range(0, 0);
         let import_foo = main.find("foo.bar").expect("import path") as u32;
         let import_bar = import_foo + "foo.".len() as u32;
-        let qualifier_foo = main.rfind("foo.bar").expect("module qualifier") as u32;
-        let qualifier_bar = qualifier_foo + "foo.".len() as u32;
+        let alias_bar = main.find("bar from").expect("module alias") as u32;
+        let qualifier_bar = main.rfind("bar.value").expect("module qualifier") as u32;
 
-        for offset in [import_foo, import_bar, qualifier_foo, qualifier_bar] {
+        for offset in [import_foo, import_bar, alias_bar, qualifier_bar] {
             let location = scalar_definition(&world, &main_uri, offset);
             assert_eq!(location.uri, bar_uri, "offset {offset}");
             assert_eq!(location.range, expected, "offset {offset}");
@@ -695,10 +693,9 @@ function unwrap(value: Choice) -> word {
 
     #[test]
     fn definition_of_exact_module_qualifier_wins_over_shared_navigation_origin() {
-        let main =
-            "import foo.bar;\nimport foo;\nfunction main() -> word { return foo.value(); }\n";
-        let foo = "export { value };\nfunction value() -> word { return 1; }\n";
-        let bar = "export { value };\nfunction value() -> word { return 2; }\n";
+        let main = "import * as bar from foo.bar;\nimport * as foo from foo;\nfunction main() returns (word) { return foo.value(); }\n";
+        let foo = "export { value };\nfunction value() returns (word) { return 1; }\n";
+        let bar = "export { value };\nfunction value() returns (word) { return 2; }\n";
         let mut world = WorldState::new();
         let main_uri = Url::parse("file:///main/main.solc").expect("main uri");
         let foo_uri = Url::parse("file:///main/foo.solc").expect("foo uri");

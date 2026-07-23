@@ -166,7 +166,7 @@ fn instance_symbol<'db>(
     Some(document_symbol(
         db,
         line_index,
-        format!("instance {}", class.atom().text(db)),
+        format!("impl {}", class.atom().text(db)),
         SymbolKind::OBJECT,
         instance.span(db),
         class.span(db),
@@ -222,17 +222,17 @@ mod tests {
     #[test]
     fn document_symbols_include_top_level_items_and_contract_children() {
         let source = "\
-function foo(x: word) -> word {
+function foo(x: word) returns (word) {
   return x;
 }
 
-type Pair = pair(word, word);
+alias Pair = pair<word, word>;
 
-data Maybe = None | Some(word);
+enum Maybe { None, Some(word) }
 
 contract Box {
   item: word;
-  function get() -> word {
+  function get() returns (word) {
     return item;
   }
 }
