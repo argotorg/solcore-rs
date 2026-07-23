@@ -764,14 +764,14 @@ impl TypeckDiagnostic {
             .with_code(DiagnosticCode::TYPECK_INCOMPLETE_SIGNATURE)
             .with_primary_label_span(span.clone(), Some("incomplete signature"))
             .with_note(format!("signature: {signature}"))
-            .with_note("annotate every parameter (`name: Type`) and provide a return type (`returns (Type)`)"),
+            .with_note("annotate every parameter (`name: Type`); omit `returns` for a function that returns no value"),
             TypeckDiagnostic::IncompleteMethodSignature { span, signature } => Diagnostic::error(
                 "trait and impl methods must have complete type signatures",
             )
             .with_code(DiagnosticCode::TYPECK_INCOMPLETE_METHOD_SIGNATURE)
             .with_primary_label_span(span.clone(), Some("incomplete method signature"))
             .with_note(format!("signature: {signature}"))
-            .with_note("annotate every method parameter and provide a return type"),
+            .with_note("annotate every method parameter; omit `returns` for a method that returns no value"),
             TypeckDiagnostic::InvalidInstanceMethodSignature {
                 span,
                 method,
@@ -2162,12 +2162,10 @@ pub(super) fn pred_mentions_alias<'db>(db: &'db dyn Db, pred: Pred<'db>) -> bool
 }
 
 pub(super) fn is_complete_signature(sig: &FuncSig<'_>) -> bool {
-    sig.ret.is_some()
-        && sig
-            .params
-            .atom()
-            .iter()
-            .all(|param| matches!(param, FuncParam::Typed { .. }))
+    sig.params
+        .atom()
+        .iter()
+        .all(|param| matches!(param, FuncParam::Typed { .. }))
 }
 
 pub(super) fn format_func_sig<'db>(db: &'db dyn HirDb, sig: &FuncSig<'db>) -> String {

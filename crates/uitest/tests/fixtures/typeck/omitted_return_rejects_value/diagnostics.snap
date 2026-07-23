@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/omitted_return_rejects_value/main.solc
+---
+error[SC0201]: type mismatch: expected numeric, found ()
+ --> /main/main.solc:2:10
+  |
+1 | function invalid() {
+2 |   return 1;
+  |          ^ expression has mismatched type
+3 | }
+  |
+  = note: expected type: numeric
+  = note: found type: ()

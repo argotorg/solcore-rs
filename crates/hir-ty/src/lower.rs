@@ -7,7 +7,7 @@ use hir::{
     anchor::DefId,
     ast::{
         function::{FuncParam, FuncSig},
-        item::{AdtCtor, AdtDef, ClassDef, FieldDef, FuncKind, FunctionDef, TypeAlias},
+        item::{AdtCtor, AdtDef, ClassDef, FieldDef, FunctionDef, TypeAlias},
         ty::{PredRef, TypeRef, TypeRefKind},
     },
     diag::LabelSpan,
@@ -253,7 +253,7 @@ impl<'db> TypeLowering<'db> {
         let ret = sig
             .ret
             .map(|ret| self.lower_type(ret))
-            .unwrap_or_else(|| Ty::unknown(self.db));
+            .unwrap_or_else(|| Ty::unit(self.db));
         let fn_ty = Ty::function(self.db, params.clone(), ret);
         let preds = sig
             .preds
@@ -274,31 +274,7 @@ impl<'db> TypeLowering<'db> {
 
     /// Lowers a function definition to a scheme.
     pub fn lower_function(&self, function: FunctionDef<'db>) -> LoweredFunction<'db> {
-        let mut lowered = self.lower_func_sig(function.sig(self.db));
-        if function.sig(self.db).ret.is_none()
-            && matches!(
-                function.kind(self.db),
-                FuncKind::Constructor | FuncKind::Fallback
-            )
-        {
-            lowered.ret = Ty::unit(self.db);
-            let preds = function
-                .sig(self.db)
-                .preds
-                .iter()
-                .map(|pred| self.lower_pred(*pred))
-                .collect::<Vec<_>>();
-            lowered.scheme = TyScheme::new(
-                self.db,
-                self.binders.binder_count(),
-                QualTy::new(
-                    self.db,
-                    preds,
-                    Ty::function(self.db, lowered.params.clone(), lowered.ret),
-                ),
-            );
-        }
-        lowered
+        self.lower_func_sig(function.sig(self.db))
     }
 
     /// Lowers a class method signature to the scheme visible at call sites.
@@ -316,7 +292,7 @@ impl<'db> TypeLowering<'db> {
         let ret = method
             .ret
             .map(|ret| self.lower_type(ret))
-            .unwrap_or_else(|| Ty::unknown(self.db));
+            .unwrap_or_else(|| Ty::unit(self.db));
         let mut preds = Vec::new();
         preds.push(self.lower_pred(class.head(self.db)));
         preds.extend(method.preds.iter().map(|pred| self.lower_pred(*pred)));

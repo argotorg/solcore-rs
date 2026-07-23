@@ -12,4 +12,4 @@ error[SC0220]: top-level function must have complete type annotations
 3 |     return x;
   |
   = note: signature: function id(x) public
-  = note: annotate every parameter (`name: Type`) and provide a return type (`returns (Type)`)
+  = note: annotate every parameter (`name: Type`); omit `returns` for a function that returns no value

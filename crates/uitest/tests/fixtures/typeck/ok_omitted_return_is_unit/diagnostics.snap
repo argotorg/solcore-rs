@@ -1,0 +1,6 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ok_omitted_return_is_unit/main.solc
+---
+no diagnostics

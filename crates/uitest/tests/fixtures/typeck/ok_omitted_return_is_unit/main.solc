@@ -1,0 +1,13 @@
+function nop() {
+  return;
+}
+
+trait Hook<t> {
+  function run(value: t) ;
+}
+
+impl Hook<word> {
+  function run(value: word) {
+    return;
+  }
+}

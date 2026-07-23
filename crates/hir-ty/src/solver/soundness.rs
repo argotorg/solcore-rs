@@ -563,10 +563,7 @@ fn check_instance_method_signature<'db>(
             scheme: display_scheme_source(db, actual_scheme, &inherited),
         });
     }
-    let mut actual = actual_scheme.body(db).ty(db);
-    if instance_method.sig(db).ret.is_none() {
-        actual = fill_missing_instance_return(db, expected, actual);
-    }
+    let actual = actual_scheme.body(db).ty(db);
     diagnostics.extend(
         actual_normalizer
             .take_errors()
@@ -597,9 +594,6 @@ fn incomplete_class_method_signature_reason<'db>(sig: &FuncSig<'db>) -> Option<S
     {
         return Some("all parameters must have explicit types".to_owned());
     }
-    if sig.ret.is_none() {
-        return Some("missing return type".to_owned());
-    }
     None
 }
 
@@ -613,22 +607,6 @@ fn incomplete_instance_method_signature_reason<'db>(sig: &FuncSig<'db>) -> Optio
         return Some("all parameters must have explicit types".to_owned());
     }
     None
-}
-
-fn fill_missing_instance_return<'db>(
-    db: &'db dyn Db,
-    expected: Ty<'db>,
-    actual: Ty<'db>,
-) -> Ty<'db> {
-    match (expected.kind(db), actual.kind(db)) {
-        (
-            TyKind::Function {
-                ret: expected_ret, ..
-            },
-            TyKind::Function { params, .. },
-        ) => Ty::function(db, params.clone(), *expected_ret),
-        _ => actual,
-    }
 }
 
 fn scheme_is_ambiguous<'db>(db: &'db dyn Db, scheme: TyScheme<'db>) -> bool {

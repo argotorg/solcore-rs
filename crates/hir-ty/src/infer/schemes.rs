@@ -369,9 +369,10 @@ fn function_scheme_in_module<'db>(
     )
 }
 
-/// Lowers a legacy-inferred function signature, replacing omitted parameter or
-/// return pieces with the generalized type inferred from its body when that
-/// inference is clean. Complete-signature diagnostics are owned by
+/// Lowers a legacy-inferred function signature, replacing omitted parameter
+/// types with the generalized type inferred from its body when that inference
+/// is clean. An omitted return type is the unit type. Complete-signature
+/// diagnostics are owned by
 /// `TypeckDiagnosticCollector` through `SignatureRequirement`; current
 /// reference-aligned diagnostics reject incomplete top-level and contract
 /// function signatures before this fallback is user-visible.
@@ -475,12 +476,10 @@ fn uses_legacy_inferred_signature<'db>(db: &'db dyn HirDb, function: FunctionDef
         return false;
     }
     let sig = function.sig(db);
-    sig.ret.is_none()
-        || sig
-            .params
-            .atom()
-            .iter()
-            .any(|param| matches!(param, FuncParam::Untyped { .. } | FuncParam::Error { .. }))
+    sig.params
+        .atom()
+        .iter()
+        .any(|param| matches!(param, FuncParam::Untyped { .. } | FuncParam::Error { .. }))
 }
 
 pub(super) fn body_resolution_for_function_with_imports<'db>(
