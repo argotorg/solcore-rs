@@ -20,12 +20,12 @@ export const examples: PlaygroundExample[] = [
     files: [
       {
         path: "main.solc",
-        content: `import std.{*};
-import std.dispatch.{*};
+        content: `import {uint256} from std;
+import std.dispatch;
 
 contract Answer {
-  public function main() -> uint256 {
-    return uint256(42);
+  function main() public returns (uint256) {
+    return 42 as uint256;
   }
 }
 `,
@@ -40,7 +40,7 @@ contract Answer {
     files: [
       {
         path: "main.solc",
-        content: `function main() -> word {
+        content: `function main() returns (word) {
   return 42;
 }
 `,
@@ -55,9 +55,9 @@ contract Answer {
     files: [
       {
         path: "main.solc",
-        content: `import std.{addWord};
+        content: `import {addWord} from std;
 
-function main() -> word {
+function main() returns (word) {
   return addWord(1, 2);
 }
 `,
@@ -72,16 +72,16 @@ function main() -> word {
     files: [
       {
         path: "main.solc",
-        content: `import math.{double};
+        content: `import {double} from math;
 
-function main() -> word {
+function main() returns (word) {
   return double(21);
 }
 `,
       },
       {
         path: "math.solc",
-        content: `function double(x: word) -> word {
+        content: `function double(x: word) returns (word) {
   let res: word;
   assembly {
     res := add(x, x)

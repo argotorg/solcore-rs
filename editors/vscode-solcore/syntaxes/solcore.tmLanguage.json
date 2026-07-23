@@ -67,7 +67,7 @@
       "patterns": [
         {
           "name": "meta.declaration.contract.solcore",
-          "match": "(?<![\\p{L}\\p{N}_-])(contract)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
+          "match": "(?<![\\p{L}\\p{N}_-])(contract|interface|library)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
           "captures": {
             "1": { "name": "keyword.declaration.contract.solcore" },
             "3": { "name": "entity.name.type.contract.solcore" }
@@ -83,7 +83,7 @@
         },
         {
           "name": "meta.declaration.type.solcore",
-          "match": "(?<![\\p{L}\\p{N}_-])(data|class|type)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
+          "match": "(?<![\\p{L}\\p{N}_-])(alias|enum|struct|trait|type)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
           "captures": {
             "1": { "name": "keyword.declaration.type.solcore" },
             "3": { "name": "entity.name.type.declaration.solcore" }
@@ -91,10 +91,11 @@
         },
         {
           "name": "meta.declaration.variable.solcore",
-          "match": "(?<![\\p{L}\\p{N}_-])(let)(\\s+)(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
+          "match": "(?<![\\p{L}\\p{N}_-])(let)(\\s+)(?:(comptime)(\\s+))?(\\p{L}[\\p{L}\\p{N}_]*(?:-\\p{L}[\\p{L}\\p{N}_]*)*)",
           "captures": {
             "1": { "name": "keyword.declaration.variable.solcore" },
-            "3": { "name": "variable.other.declaration.solcore" }
+            "3": { "name": "storage.modifier.comptime.solcore" },
+            "5": { "name": "variable.other.declaration.solcore" }
           }
         },
         {
@@ -123,15 +124,15 @@
       "patterns": [
         {
           "name": "keyword.control.solcore",
-          "match": "(?<![\\p{L}\\p{N}_-])(?:if|else|for|switch|case|default|match|return|leave|continue|break)(?![\\p{L}\\p{N}_-])"
+          "match": "(?<![\\p{L}\\p{N}_-])(?:if|else|for|while|switch|case|default|match|return|revert|leave|continue|break|unchecked)(?![\\p{L}\\p{N}_-])"
         },
         {
           "name": "keyword.declaration.solcore",
-          "match": "(?<![\\p{L}\\p{N}_-])(?:contract|import|export|as|let|data|class|forall|instance|type|function|constructor|fallback|assembly|pragma|lam)(?![\\p{L}\\p{N}_-])"
+          "match": "(?<![\\p{L}\\p{N}_-])(?:contract|interface|library|import|from|export|as|let|alias|enum|struct|trait|impl|where|type|is|function|returns|constructor|fallback|assembly|pragma|lam)(?![\\p{L}\\p{N}_-])"
         },
         {
           "name": "storage.modifier.solcore",
-          "match": "(?<![\\p{L}\\p{N}_-])(?:public|payable)(?![\\p{L}\\p{N}_-])"
+          "match": "(?<![\\p{L}\\p{N}_-])(?:public|external|internal|private|payable|pure|view|comptime|memory|storage|calldata)(?![\\p{L}\\p{N}_-])"
         }
       ]
     },
@@ -139,7 +140,7 @@
       "patterns": [
         {
           "name": "support.type.primitive.solcore",
-          "match": "(?<![\\p{L}\\p{N}_-])(?:word|bool|unit)(?![\\p{L}\\p{N}_-])"
+          "match": "(?<![\\p{L}\\p{N}_-])(?:address|bool|byte|bytes(?:[1-9]|[12][0-9]|3[0-2])?|int(?:[0-9]+)?|mapping|string|uint(?:[0-9]+)?|unit|word)(?![\\p{L}\\p{N}_-])"
         },
         {
           "name": "entity.name.type.identifier.solcore",

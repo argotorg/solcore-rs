@@ -55,19 +55,21 @@ program name followed by arguments."
   "Characters that keep a Solcore identifier or keyword going.")
 
 (defconst solcore--control-keywords
-  '("if" "else" "for" "switch" "case" "default" "match" "return"
-    "leave" "continue" "break"))
+  '("if" "else" "for" "while" "switch" "case" "default" "match"
+    "return" "revert" "leave" "continue" "break" "unchecked"))
 
 (defconst solcore--declaration-keywords
-  '("contract" "import" "export" "as" "let" "data" "class" "forall"
-    "instance" "type" "function" "constructor" "fallback" "assembly"
-    "pragma" "lam"))
+  '("contract" "interface" "library" "import" "from" "export" "as" "let"
+    "alias" "enum" "struct" "trait" "impl" "where" "type" "is" "function"
+    "returns" "constructor" "fallback" "assembly" "pragma" "lam"))
 
 (defconst solcore--modifier-keywords
-  '("public" "payable"))
+  '("public" "external" "internal" "private" "payable" "pure" "view"
+    "comptime" "memory" "storage" "calldata"))
 
 (defconst solcore--primitive-types
-  '("word" "bool" "unit"))
+  '("address" "bool" "byte" "bytes" "bytes32" "int" "int256" "mapping" "string"
+    "uint" "uint256" "unit" "word"))
 
 (defconst solcore--constants
   '("true" "false" "_"))
@@ -87,7 +89,7 @@ left to the caller so declaration patterns can consume whitespace once."
           "\\(" (regexp-opt keywords) "\\)"))
 
 (defconst solcore-font-lock-keywords
-  `((,(concat (solcore--keyword-prefix-regexp '("contract"))
+  `((,(concat (solcore--keyword-prefix-regexp '("contract" "interface" "library"))
               "\\s-+\\(" solcore--identifier-re "\\)")
      (1 font-lock-keyword-face)
      (2 font-lock-type-face nil t))
@@ -95,12 +97,12 @@ left to the caller so declaration patterns can consume whitespace once."
               "\\s-+\\(" solcore--identifier-re "\\)")
      (1 font-lock-keyword-face)
      (2 font-lock-function-name-face nil t))
-    (,(concat (solcore--keyword-prefix-regexp '("data" "class" "type"))
+    (,(concat (solcore--keyword-prefix-regexp '("alias" "enum" "struct" "trait" "type"))
               "\\s-+\\(" solcore--identifier-re "\\)")
      (1 font-lock-keyword-face)
      (2 font-lock-type-face nil t))
     (,(concat (solcore--keyword-prefix-regexp '("let"))
-              "\\s-+\\(" solcore--identifier-re "\\)")
+              "\\s-+\\(?:comptime\\s-+\\)?\\(" solcore--identifier-re "\\)")
      (1 font-lock-keyword-face)
      (2 font-lock-variable-name-face nil t))
     (,(concat (solcore--keyword-prefix-regexp '("pragma"))
@@ -147,8 +149,9 @@ left to the caller so declaration patterns can consume whitespace once."
 
 (defvar solcore-imenu-generic-expression
   `((nil ,(concat "^\\s-*function\\s-+\\(" solcore--identifier-re "\\)") 1)
-    ("Contracts" ,(concat "^\\s-*contract\\s-+\\(" solcore--identifier-re "\\)") 1)
-    ("Types" ,(concat "^\\s-*\\(?:data\\|class\\|type\\)\\s-+\\("
+    ("Contracts" ,(concat "^\\s-*\\(?:contract\\|interface\\|library\\)\\s-+\\("
+                           solcore--identifier-re "\\)") 1)
+    ("Types" ,(concat "^\\s-*\\(?:alias\\|enum\\|struct\\|trait\\|type\\)\\s-+\\("
                        solcore--identifier-re "\\)") 1))
   "Imenu expressions for `solcore-mode'.")
 

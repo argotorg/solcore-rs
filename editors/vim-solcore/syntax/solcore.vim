@@ -13,20 +13,20 @@ syntax match solcoreEscape +\\[nt"\\]+ contained
 syntax match solcoreInvalidEscape +\\.+ contained
 syntax region solcoreString start=+"+ skip=+\\\\\|\\"+ end=+"+ contains=solcoreEscape,solcoreInvalidEscape
 
-syntax match solcoreContractDeclaration #\v(^|[^[:alnum:]_-])contract\s+\zs[[:alpha:]][[:alnum:]_]*(-[[:alpha:]][[:alnum:]_]*)*#
+syntax match solcoreContractDeclaration #\v(^|[^[:alnum:]_-])(contract|interface|library)\s+\zs[[:alpha:]][[:alnum:]_]*(-[[:alpha:]][[:alnum:]_]*)*#
 syntax match solcoreFunctionDeclaration #\v(^|[^[:alnum:]_-])function\s+\zs[[:alpha:]][[:alnum:]_]*(-[[:alpha:]][[:alnum:]_]*)*#
-syntax match solcoreTypeDeclaration #\v(^|[^[:alnum:]_-])(data|class|type)\s+\zs[[:alpha:]][[:alnum:]_]*(-[[:alpha:]][[:alnum:]_]*)*#
-syntax match solcoreVariableDeclaration #\v(^|[^[:alnum:]_-])let\s+\zs[[:alpha:]][[:alnum:]_]*(-[[:alpha:]][[:alnum:]_]*)*#
+syntax match solcoreTypeDeclaration #\v(^|[^[:alnum:]_-])(alias|enum|struct|trait|type)\s+\zs[[:alpha:]][[:alnum:]_]*(-[[:alpha:]][[:alnum:]_]*)*#
+syntax match solcoreVariableDeclaration #\v(^|[^[:alnum:]_-])let\s+(comptime\s+)?\zs[[:alpha:]][[:alnum:]_]*(-[[:alpha:]][[:alnum:]_]*)*#
 syntax match solcorePragmaDeclaration #\v(^|[^[:alnum:]_-])pragma\s+\zs[[:alpha:]][[:alnum:]_]*(-[[:alpha:]][[:alnum:]_]*)*#
 
-syntax match solcoreControlKeyword #\v(^|[^[:alnum:]_-])\zs(if|else|for|switch|case|default|match|return|leave|continue|break)\ze([^[:alnum:]_-]|$)#
-syntax match solcoreDeclarationKeyword #\v(^|[^[:alnum:]_-])\zs(contract|import|export|as|let|data|class|forall|instance|type|function|constructor|fallback|assembly|pragma|lam)\ze([^[:alnum:]_-]|$)#
-syntax match solcoreStorageModifier #\v(^|[^[:alnum:]_-])\zs(public|payable)\ze([^[:alnum:]_-]|$)#
+syntax match solcoreControlKeyword #\v(^|[^[:alnum:]_-])\zs(if|else|for|while|switch|case|default|match|return|revert|leave|continue|break|unchecked)\ze([^[:alnum:]_-]|$)#
+syntax match solcoreDeclarationKeyword #\v(^|[^[:alnum:]_-])\zs(contract|interface|library|import|from|export|as|let|alias|enum|struct|trait|impl|where|type|is|function|returns|constructor|fallback|assembly|pragma|lam)\ze([^[:alnum:]_-]|$)#
+syntax match solcoreStorageModifier #\v(^|[^[:alnum:]_-])\zs(public|external|internal|private|payable|pure|view|comptime|memory|storage|calldata)\ze([^[:alnum:]_-]|$)#
 
 syntax match solcoreBoolean #\v(^|[^[:alnum:]_-])\zs(true|false)\ze([^[:alnum:]_-]|$)#
 syntax match solcoreWildcard #\v(^|[^[:alnum:]_-])\zs_\ze([^[:alnum:]_-]|$)#
 
-syntax match solcorePrimitiveType #\v(^|[^[:alnum:]_-])\zs(word|bool|unit)\ze([^[:alnum:]_-]|$)#
+syntax match solcorePrimitiveType #\v(^|[^[:alnum:]_-])\zs(address|bool|byte|bytes([1-9]|[12][0-9]|3[0-2])?|int[0-9]*|mapping|string|uint[0-9]*|unit|word)\ze([^[:alnum:]_-]|$)#
 syntax match solcoreTypeIdentifier #\v(^|[^[:alnum:]_-])\zs[A-Z][[:alnum:]_]*(-[[:alpha:]][[:alnum:]_]*)*#
 
 syntax match solcoreHexNumber #\v(^|[^[:alnum:]_])\zs0x[0-9a-fA-F]+\ze([^[:alnum:]_]|$)#
