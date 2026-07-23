@@ -679,6 +679,200 @@ contract Vault {
 }
 
 #[test]
+fn fixed_array_storage_fails_closed_in_the_emitter() {
+    let (db, output) = specialize_src(
+        "fixed_array_storage",
+        r#"
+contract Vault {
+  alias Values = word[3];
+  values: Values;
+
+  function main() public returns (word) {
+    return 0;
+  }
+}
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert!(
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedType { ty } if ty.contains("word[3]")
+        )),
+        "{:?}",
+        emitted.diagnostics
+    );
+    let hull = pretty_program(db, &emitted.program);
+    assert!(!hull.contains("sload("), "{hull}");
+    assert!(!hull.contains("sstore("), "{hull}");
+}
+
+#[test]
+fn mapping_with_fixed_array_value_fails_closed_before_storage_fast_path() {
+    let (db, output) = specialize_src_with_std(
+        "mapping_fixed_array_storage",
+        r#"
+import std;
+
+contract Vault {
+  values: mapping(word => word[3]);
+
+  function main() public returns (word) {
+    return 0;
+  }
+}
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert!(
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedType { ty } if ty.contains("word[3]")
+        )),
+        "{:?}",
+        emitted.diagnostics
+    );
+    let hull = pretty_program(db, &emitted.program);
+    assert!(!hull.contains("sload("), "{hull}");
+    assert!(!hull.contains("sstore("), "{hull}");
+    assert!(!hull.contains("__storage_mapping_value"), "{hull}");
+}
+
+#[test]
+fn generic_contract_alias_with_fixed_array_fails_closed_before_mapping_fast_path() {
+    let (db, output) = specialize_src_with_std(
+        "generic_contract_alias_fixed_array_storage",
+        r#"
+import std;
+
+contract C<t> {
+  alias Values = word[3];
+  values: mapping(word => Values);
+
+  function main() public returns (word) {
+    return 0;
+  }
+}
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert!(
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedType { ty } if ty.contains("word[3]")
+        )),
+        "{:?}",
+        emitted.diagnostics
+    );
+    let hull = pretty_program(db, &emitted.program);
+    assert!(!hull.contains("__storage_mapping_value"), "{hull}");
+}
+
+#[test]
+fn mapping_with_adt_hidden_fixed_array_fails_closed_before_storage_fast_path() {
+    let (db, output) = specialize_src_with_std(
+        "mapping_adt_fixed_array_storage",
+        r#"
+import std;
+
+struct Box {
+  values: word[3];
+}
+
+contract Vault {
+  values: mapping(word => Box);
+
+  function main() public returns (word) {
+    return 0;
+  }
+}
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert!(
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedType { ty } if ty.contains("Box")
+        )),
+        "{:?}",
+        emitted.diagnostics
+    );
+    let hull = pretty_program(db, &emitted.program);
+    assert!(!hull.contains("__storage_mapping_value"), "{hull}");
+}
+
+#[test]
+fn direct_adt_hidden_fixed_array_is_rejected_before_layout_fallback() {
+    let (db, output) = specialize_src(
+        "direct_adt_fixed_array_storage",
+        r#"
+struct Box {
+  values: word[3];
+}
+
+contract Vault {
+  boxed: Box;
+
+  function main() public returns (word) {
+    return 0;
+  }
+}
+"#,
+    );
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert!(
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedType { ty } if ty.contains("Box")
+        )),
+        "{:?}",
+        emitted.diagnostics
+    );
+    let hull = pretty_program(db, &emitted.program);
+    assert!(!hull.contains("sload("), "{hull}");
+    assert!(!hull.contains("sstore("), "{hull}");
+}
+
+#[test]
+fn recursive_generic_adt_checks_type_arguments_before_cycle_cutoff() {
+    let (db, output) = specialize_src_with_std(
+        "recursive_generic_adt_fixed_array_storage",
+        r#"
+import std;
+
+struct Loop<t> {
+  next: Loop<word[3]>;
+}
+
+contract Vault {
+  values: mapping(word => Loop<word>);
+
+  function main() public returns (word) {
+    return 0;
+  }
+}
+"#,
+    );
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert!(
+        emitted.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            EmitDiagnosticKind::UnsupportedType { ty } if ty.contains("Loop")
+        )),
+        "specialize={:?}, emit={:?}",
+        output.diagnostics,
+        emitted.diagnostics
+    );
+    let hull = pretty_program(db, &emitted.program);
+    assert!(!hull.contains("__storage_mapping_value"), "{hull}");
+}
+
+#[test]
 fn single_constructor_matches_project_payloads_from_scrutinee() {
     assert_fixture_emits_and_checks("cases/encoder1.solc");
     assert_fixture_has_no_unbound_alt("cases/mptc-multi-instance.solc");

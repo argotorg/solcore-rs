@@ -67,6 +67,13 @@ pub enum TypeRefShapeKind<'db> {
         /// Type arguments.
         args: Vec<TypeRefShape<'db>>,
     },
+    /// Fixed-length array type.
+    FixedArray {
+        /// Array element shape.
+        element: TypeRefShape<'db>,
+        /// Strictly positive element count.
+        length: u64,
+    },
     /// Function type from parameter types to a return type.
     Fn {
         /// Parameter type shapes.
@@ -111,6 +118,15 @@ pub enum TypeRefKind<'db> {
         /// Argument list and its source span.
         args: SpannedElem<'db, Vec<TypeRef<'db>>>,
     },
+    /// Solidity fixed-length array type: `Element[N]`.
+    FixedArray {
+        /// Array element type.
+        element: TypeRef<'db>,
+        /// Strictly positive element count.
+        length: u64,
+        /// Span of the complete `[N]` suffix.
+        brackets: Span<'db>,
+    },
     /// Function type from parameter types to a return type.
     Fn {
         /// Parameter type list and the span of the parameter group.
@@ -151,6 +167,9 @@ impl<'db> Spanned<'db> for TypeRefKind<'db> {
                     .unwrap_or_else(|| name.span(db));
                 head + args.span(db)
             }
+            Self::FixedArray {
+                element, brackets, ..
+            } => element.span(db) + *brackets,
             Self::Fn { params, ret } => params.span(db) + ret.span(db),
             Self::Comptime { kw, inner } => *kw + inner.span(db),
             Self::Tuple { elems } => elems.span(db),
@@ -169,6 +188,12 @@ fn type_shape_from_occurrence<'db>(kind: &TypeRefKind<'db>) -> TypeRefShapeKind<
             qualifier: qualifier.as_ref().map(|it| *it.atom()),
             name: *name.atom(),
             args: args.atom().iter().map(|arg| arg.semantic_shape()).collect(),
+        },
+        TypeRefKind::FixedArray {
+            element, length, ..
+        } => TypeRefShapeKind::FixedArray {
+            element: element.semantic_shape(),
+            length: *length,
         },
         TypeRefKind::Fn { params, ret } => TypeRefShapeKind::Fn {
             params: params

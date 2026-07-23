@@ -17,11 +17,11 @@ use parser::parse_file_to_hir;
 use rustc_hash::FxHashMap;
 use salsa::Setter;
 use solcore_hir_ty::{
-    BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback,
+    BinderEnv, BuiltinTyCtor, CallSiteCallee, DispatchConstructor, DispatchFallback,
     FieldInitPreTypeckTransform, FrontendTransform, IndirectArgShape, PreTypeckTransform,
-    ProductShape, SourceOriginKind, Ty, TyCtor, TyKind, contract_abi_json,
+    ProductShape, SourceOriginKind, Ty, TyCtor, TyKind, TypeLowering, contract_abi_json,
     contract_dispatch_surface, derived_generic_instance_plan, derived_generic_plan,
-    frontend_desugar_plan, function_scheme, infer::module_typeck_diagnostics,
+    frontend_desugar_plan, function_scheme, infer::module_typeck_diagnostics, normalize_ty_aliases,
     pre_typeck_desugar_plan, prepare_module,
 };
 
@@ -118,6 +118,79 @@ fn source_file_at(db: &TestDb, path: &str, src: &str) -> SourceFile {
 
 fn parse_module<'db>(db: &'db TestDb, src: &str) -> Module<'db> {
     parse_file_to_hir(db, source_file(db, "contract_semantics", src)).module(db)
+}
+
+#[test]
+fn contract_local_alias_normalization_separates_inherited_and_explicit_type_vars() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+contract C<t> {
+  alias Fixed = word[3];
+  alias Element = t[3];
+  alias Generic<a> = a[3];
+
+  fixed: Fixed;
+  element: Element;
+  generic: Generic<word>;
+}
+"#,
+    );
+    let contract = module
+        .items(&db)
+        .iter()
+        .find_map(|item| match item {
+            Item::ContractDef(contract) => Some(*contract),
+            _ => None,
+        })
+        .expect("contract");
+    let resolutions = hir::nameres::resolve_item_types(&db, module);
+    let type_vars =
+        hir::nameres::type_var_bindings(contract.def_id_value(&db), contract.ty_param_elems(&db));
+    let lowerer = TypeLowering::from_item_resolutions(
+        &db,
+        &resolutions,
+        BinderEnv::from_type_vars(&type_vars),
+    );
+
+    for field in contract.fields(&db) {
+        let normalized =
+            normalize_ty_aliases(&db, module, &resolutions, lowerer.lower_field(field).ty);
+        assert!(
+            normalized.errors.is_empty(),
+            "{}: {:?}",
+            field.name().atom().text(&db),
+            normalized.errors
+        );
+        let TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::FixedArray(length)),
+            args,
+        } = normalized.value.kind(&db)
+        else {
+            panic!(
+                "{} did not normalize to a fixed array: {}",
+                field.name().atom().text(&db),
+                normalized.value.display(&db)
+            );
+        };
+        assert_eq!(*length, 3);
+        assert_eq!(args.len(), 1);
+        match field.name().atom().text(&db) {
+            "fixed" | "generic" => assert!(matches!(
+                args[0].kind(&db),
+                TyKind::Named {
+                    ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
+                    args
+                } if args.is_empty()
+            )),
+            "element" => assert!(matches!(
+                args[0].kind(&db),
+                TyKind::BoundVar(var) if var.index == 0
+            )),
+            other => panic!("unexpected field {other}"),
+        }
+    }
 }
 
 fn db_with_main(src: &str) -> (TestDb, ModuleKey) {
@@ -523,6 +596,51 @@ contract Vault {
     assert!(
         contract_abi_json(&db, module, contract)
             .expect_err("UDVT must fail closed in ABI JSON")
+            .contains("unsupported type")
+    );
+}
+
+#[test]
+fn fixed_arrays_fail_closed_in_nested_and_wrapped_external_abi_positions() {
+    let (db, key) = db_with_main(
+        r#"
+enum memory<t> { memory(t) }
+
+contract Arrays {
+  constructor(seed: word[4] memory) {}
+
+  function roundtrip(value: (word, bool[2])) public returns (word[3] memory) {
+    revert;
+  }
+}
+"#,
+    );
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "Arrays");
+    let surface = contract_dispatch_surface(&db, module, contract);
+
+    let DispatchConstructor::Explicit { inputs, .. } = &surface.constructor else {
+        panic!("expected explicit constructor: {:?}", surface.constructor);
+    };
+    assert_eq!(inputs[0].ty.to_string(), "<unsupported>");
+    assert_eq!(surface.methods[0].signature, "roundtrip(<unsupported>)");
+    assert_eq!(surface.methods[0].inputs[0].ty.to_string(), "<unsupported>");
+    assert_eq!(
+        surface.methods[0].outputs[0].ty.to_string(),
+        "<unsupported>"
+    );
+    assert!(
+        surface.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code.as_deref() == Some("SC0231")
+                && diagnostic.message.contains("fixed-length arrays")
+        }),
+        "{:?}",
+        surface.diagnostics
+    );
+    assert!(
+        contract_abi_json(&db, module, contract)
+            .expect_err("fixed arrays must fail closed in ABI JSON")
             .contains("unsupported type")
     );
 }

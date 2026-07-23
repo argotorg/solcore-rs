@@ -117,6 +117,7 @@ impl DiagnosticCode {
     pub const TYPECK_UNSUPPORTED_STORAGE_FIELD_PROJECTION: &'static str = "SC0246";
     pub const TYPECK_INVALID_VALUE_TYPE_DEFINITION: &'static str = "SC0247";
     pub const TYPECK_UNSUPPORTED_VALUE_TYPE_STORAGE: &'static str = "SC0248";
+    pub const TYPECK_UNSUPPORTED_FIXED_ARRAY_STORAGE: &'static str = "SC0249";
     pub const TYPECK_AMBIGUOUS_INFERENCE_OR_TYPE_CONSTRUCTOR_ARITY: &'static str = "SC0299";
     pub const TYPECK_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
     pub const EMIT_NON_EXHAUSTIVE_MATCH: &'static str = "SC0302";
@@ -138,6 +139,7 @@ impl DiagnosticCode {
     pub const SPECIALIZE_PUBLIC_COMPTIME_PARAM: &'static str = "SC0413";
     pub const SPECIALIZE_REDUCTION_RECURSION: &'static str = "SC0414";
     pub const SPECIALIZE_REDUCTION_FUEL_EXHAUSTED: &'static str = "SC0415";
+    pub const SPECIALIZE_UNSUPPORTED_RUNTIME_TYPE: &'static str = "SC0416";
 
     pub const EMIT_UNSUPPORTED_TYPE: &'static str = "SC0420";
     pub const EMIT_UNSUPPORTED_LITERAL: &'static str = "SC0421";
@@ -306,6 +308,10 @@ impl DiagnosticCode {
             Self::TYPECK_UNSUPPORTED_VALUE_TYPE_STORAGE,
         ),
         DiagnosticCodeEntry::new(
+            "TYPECK_UNSUPPORTED_FIXED_ARRAY_STORAGE",
+            Self::TYPECK_UNSUPPORTED_FIXED_ARRAY_STORAGE,
+        ),
+        DiagnosticCodeEntry::new(
             "TYPECK_INCOMPLETE_SIGNATURE",
             Self::TYPECK_INCOMPLETE_SIGNATURE,
         ),
@@ -426,6 +432,10 @@ impl DiagnosticCode {
         DiagnosticCodeEntry::new(
             "SPECIALIZE_REDUCTION_FUEL_EXHAUSTED",
             Self::SPECIALIZE_REDUCTION_FUEL_EXHAUSTED,
+        ),
+        DiagnosticCodeEntry::new(
+            "SPECIALIZE_UNSUPPORTED_RUNTIME_TYPE",
+            Self::SPECIALIZE_UNSUPPORTED_RUNTIME_TYPE,
         ),
         DiagnosticCodeEntry::new("EMIT_UNSUPPORTED_TYPE", Self::EMIT_UNSUPPORTED_TYPE),
         DiagnosticCodeEntry::new("EMIT_UNSUPPORTED_LITERAL", Self::EMIT_UNSUPPORTED_LITERAL),

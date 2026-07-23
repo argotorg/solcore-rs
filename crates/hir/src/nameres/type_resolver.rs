@@ -101,6 +101,7 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                 );
             }
             Item::ContractDef(def) => {
+                self.contract = Some(def.def_id_value(self.db));
                 self.with_item_type_vars(
                     def.def_id_value(self.db),
                     def.ty_param_elems(self.db),
@@ -214,6 +215,7 @@ impl<'db, 'a> TypeResolver<'db, 'a> {
                 };
                 self.map.types.push(TypeResolution { ty, resolution });
             }
+            TypeRefKind::FixedArray { element, .. } => self.ty(*element),
             TypeRefKind::Fn { params, ret } => {
                 for param in params.atom() {
                     self.ty(*param);

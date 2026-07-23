@@ -227,6 +227,10 @@ fn canonical_ty_fingerprint(ty: &ParsedTy<'_>, type_vars: &[(&str, usize)]) -> O
                 Some(format!("{name}({})", args.join(",")))
             }
         }
+        ParsedTyKind::FixedArray {
+            element, length, ..
+        } => canonical_ty_fingerprint(element, type_vars)
+            .map(|element| format!("fixed-array({length};{element})")),
         ParsedTyKind::Proxy { inner, .. } => {
             canonical_ty_fingerprint(inner, type_vars).map(|inner| format!("Proxy({inner})"))
         }

@@ -198,6 +198,9 @@ impl<'db> TypeLowering<'db> {
                     .collect();
                 Ty::named(self.db, ctor, args)
             }
+            TypeRefKind::FixedArray {
+                element, length, ..
+            } => Ty::fixed_array(self.db, self.lower_type(*element), *length),
             TypeRefKind::Fn { params, ret } => Ty::function(
                 self.db,
                 params

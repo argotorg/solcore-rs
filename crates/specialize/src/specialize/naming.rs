@@ -35,6 +35,11 @@ pub(crate) fn display_backend_ty<'db>(db: &'db dyn Db, ty: Ty<'db>) -> String {
         TyKind::Error => "<error>".to_owned(),
         TyKind::Unknown | TyKind::BoundVar(_) => "_".to_owned(),
         TyKind::Named { ctor, args } => {
+            if let TyCtor::Builtin(BuiltinTyCtor::FixedArray(length)) = ctor
+                && let [element] = args.as_slice()
+            {
+                return format!("{}[{length}]", display_backend_ty(db, *element));
+            }
             let name = match ctor {
                 TyCtor::Builtin(ctor) => ctor.name().to_owned(),
                 TyCtor::User(user) => user.def.name(db).unwrap_or_else(|| user.kind.to_string()),
@@ -352,7 +357,13 @@ impl NameMangler {
                             self.out.push_str("unit");
                             return;
                         }
-                        (ctor.name().to_owned(), None)
+                        let name = match ctor {
+                            BuiltinTyCtor::FixedArray(length) => {
+                                format!("fixed_array_{length}")
+                            }
+                            _ => ctor.name().to_owned(),
+                        };
+                        (name, None)
                     }
                     TyCtor::User(user) => (
                         user.def

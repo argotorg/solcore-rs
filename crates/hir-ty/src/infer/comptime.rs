@@ -802,6 +802,9 @@ fn type_ref_mentions_type_var<'db>(
                     .iter()
                     .any(|arg| type_ref_mentions_type_var(db, *arg, type_vars))
         }
+        TypeRefKind::FixedArray { element, .. } => {
+            type_ref_mentions_type_var(db, *element, type_vars)
+        }
         TypeRefKind::Fn { params, ret } => {
             params
                 .atom()

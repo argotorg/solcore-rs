@@ -314,7 +314,7 @@ impl<'a, 'db> AliasNormalizer<'a, 'db> {
             return T::alias_named(self.db, ctor, args);
         };
 
-        let expected = info.type_vars.len();
+        let expected = info.explicit_type_var_count;
         if expected != args.len() {
             self.errors.push(AliasError::Arity {
                 span: alias_label_span(self.db, self.module, def),
@@ -326,7 +326,11 @@ impl<'a, 'db> AliasNormalizer<'a, 'db> {
         }
 
         self.expanding.push(def);
-        let body = T::from_alias_body(self.db, info.ty, &args);
+        let captured_args = (0..info.inherited_type_var_count)
+            .map(|index| T::alias_bound(self.db, index as u32))
+            .chain(args)
+            .collect::<Vec<_>>();
+        let body = T::from_alias_body(self.db, info.ty, &captured_args);
         let expanded = self.normalize_ty(body);
         self.expanding.pop();
         expanded
@@ -440,12 +444,14 @@ pub fn type_alias_normalization_errors<'db>(
 
 struct LoweredAliasInfo<'db> {
     ty: Ty<'db>,
-    type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+    inherited_type_var_count: usize,
+    explicit_type_var_count: usize,
 }
 
 struct TypeAliasInfo<'db> {
     alias: TypeAlias<'db>,
     type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+    inherited_type_var_count: usize,
 }
 
 fn alias_label_span<'db>(db: &'db dyn Db, module: Module<'db>, def: DefId<'db>) -> LabelSpan {
@@ -476,7 +482,8 @@ fn lower_type_alias_info<'db>(
         .ty;
         return Some(LoweredAliasInfo {
             ty,
-            type_vars: info.type_vars,
+            inherited_type_var_count: info.inherited_type_var_count,
+            explicit_type_var_count: info.type_vars.len() - info.inherited_type_var_count,
         });
     }
 
@@ -492,7 +499,8 @@ fn lower_type_alias_info<'db>(
     .ty;
     Some(LoweredAliasInfo {
         ty,
-        type_vars: info.type_vars,
+        inherited_type_var_count: info.inherited_type_var_count,
+        explicit_type_var_count: info.type_vars.len() - info.inherited_type_var_count,
     })
 }
 
@@ -516,12 +524,17 @@ fn collect_type_alias_infos<'db>(
 ) {
     match item {
         Item::TypeAlias(alias) => {
+            let inherited_type_var_count = inherited.len();
             let mut type_vars = inherited.to_vec();
             type_vars.extend(type_var_bindings(
                 alias.def_id_value(db),
                 alias.ty_param_elems(db),
             ));
-            result.push(TypeAliasInfo { alias, type_vars });
+            result.push(TypeAliasInfo {
+                alias,
+                type_vars,
+                inherited_type_var_count,
+            });
         }
         Item::ContractDef(contract) => {
             let mut inherited = inherited.to_vec();
@@ -559,12 +572,17 @@ fn find_type_alias_in_item<'db>(
 ) -> Option<TypeAliasInfo<'db>> {
     match item {
         Item::TypeAlias(alias) if alias.def_id_value(db) == def => {
+            let inherited_type_var_count = inherited.len();
             let mut type_vars = inherited.to_vec();
             type_vars.extend(type_var_bindings(
                 alias.def_id_value(db),
                 alias.ty_param_elems(db),
             ));
-            Some(TypeAliasInfo { alias, type_vars })
+            Some(TypeAliasInfo {
+                alias,
+                type_vars,
+                inherited_type_var_count,
+            })
         }
         Item::ContractDef(contract) => {
             let mut inherited = inherited.to_vec();

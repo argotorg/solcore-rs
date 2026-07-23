@@ -684,6 +684,13 @@ impl<'db> Driver<'db> {
         ) {
             return;
         }
+        if self.reject_unsupported_runtime_type(
+            ret,
+            "function return type",
+            info.function.span(self.db),
+        ) {
+            return;
+        }
         let Some(body_map) = self.body_resolution_for(body).cloned() else {
             self.diagnostics.push(SpecializeDiagnostic {
                 kind: SpecializeDiagnosticKind::MissingResolution {
@@ -771,6 +778,9 @@ impl<'db> Driver<'db> {
         for (index, (param, ty)) in params.iter().zip(&lowered.params).enumerate() {
             let ty = self.specialized_param_ty(*ty, subst, key_ty, index);
             if !self.ensure_closed(ty, "parameter", Some(param.span(self.db))) {
+                return None;
+            }
+            if self.reject_unsupported_runtime_type(ty, "function parameter", param.span(self.db)) {
                 return None;
             }
             out.push(MonoParam {
@@ -1072,8 +1082,137 @@ impl<'db> Driver<'db> {
         context: &str,
         span: Span<'db>,
     ) -> Option<MonoTy<'db>> {
+        if self.reject_unsupported_runtime_type(ty, context, span) {
+            return None;
+        }
         self.ensure_closed(ty, context, Some(span))
             .then(|| MonoTy::new_unchecked(ty))
+    }
+
+    fn reject_unsupported_runtime_type(
+        &mut self,
+        ty: Ty<'db>,
+        context: &str,
+        span: Span<'db>,
+    ) -> bool {
+        if !self.ty_contains_fixed_array_in_layout(ty, &mut FxHashSet::default()) {
+            return false;
+        }
+        self.diagnostics.push(SpecializeDiagnostic {
+            kind: SpecializeDiagnosticKind::UnsupportedRuntimeType {
+                context: context.to_owned(),
+                ty: display_backend_ty(self.db, ty),
+            },
+            span: Some(span),
+        });
+        true
+    }
+
+    fn ty_contains_fixed_array_in_layout(
+        &self,
+        ty: Ty<'db>,
+        visiting: &mut FxHashSet<DefId<'db>>,
+    ) -> bool {
+        match ty.kind(self.db) {
+            TyKind::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::FixedArray(_)),
+                ..
+            } => true,
+            TyKind::Named { ctor, args } => {
+                if args
+                    .iter()
+                    .any(|arg| self.ty_contains_fixed_array_in_layout(*arg, visiting))
+                {
+                    return true;
+                }
+                let TyCtor::User(user) = ctor else {
+                    return false;
+                };
+                if user.kind != UserTyCtorKind::Adt || !visiting.insert(user.def) {
+                    return false;
+                }
+                let contains = self
+                    .adt_fixed_array_field_types(user.def, args)
+                    .into_iter()
+                    .any(|field| self.ty_contains_fixed_array_in_layout(field, visiting));
+                visiting.remove(&user.def);
+                contains
+            }
+            TyKind::Function { params, ret } => {
+                params
+                    .iter()
+                    .any(|param| self.ty_contains_fixed_array_in_layout(*param, visiting))
+                    || self.ty_contains_fixed_array_in_layout(*ret, visiting)
+            }
+            TyKind::Tuple(args) => args
+                .iter()
+                .any(|arg| self.ty_contains_fixed_array_in_layout(*arg, visiting)),
+            TyKind::Comptime(inner) => self.ty_contains_fixed_array_in_layout(*inner, visiting),
+            TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => false,
+        }
+    }
+
+    fn adt_fixed_array_field_types(&self, def: DefId<'db>, args: &[Ty<'db>]) -> Vec<Ty<'db>> {
+        let Some(info) = self.adts.get(&def) else {
+            return Vec::new();
+        };
+        let Some(resolution) = self
+            .module_resolutions
+            .get(&info.module.def_id_value(self.db))
+        else {
+            return Vec::new();
+        };
+        let type_vars = type_var_bindings(
+            info.adt.def_id_value(self.db),
+            info.adt.ty_param_elems(self.db),
+        );
+        let lowerer = TypeLowering::from_item_resolutions(
+            self.db,
+            &resolution.item_resolutions,
+            BinderEnv::from_type_vars(&type_vars),
+        );
+        let mut fields = Vec::new();
+        for ctor in info.adt.ctors(self.db) {
+            let lowered = lowerer.lower_adt_ctor(info.adt, ctor);
+            let mut normalizer =
+                AliasNormalizer::new(self.db, info.module, &resolution.item_resolutions);
+            fields.extend(lowered.params.into_iter().map(|field| {
+                let field = normalizer.normalize_ty(field);
+                substitute_bound_ty(self.db, field, args)
+            }));
+        }
+        fields
+    }
+}
+
+fn substitute_bound_ty<'db>(db: &'db dyn Db, ty: Ty<'db>, args: &[Ty<'db>]) -> Ty<'db> {
+    match ty.kind(db) {
+        TyKind::BoundVar(var) => args.get(var.index as usize).copied().unwrap_or(ty),
+        TyKind::Named { ctor, args: inner } => Ty::named(
+            db,
+            *ctor,
+            inner
+                .iter()
+                .map(|arg| substitute_bound_ty(db, *arg, args))
+                .collect(),
+        ),
+        TyKind::Function { params, ret } => Ty::function(
+            db,
+            params
+                .iter()
+                .map(|param| substitute_bound_ty(db, *param, args))
+                .collect(),
+            substitute_bound_ty(db, *ret, args),
+        ),
+        TyKind::Tuple(elems) => Ty::tuple(
+            db,
+            elems
+                .iter()
+                .map(|elem| substitute_bound_ty(db, *elem, args))
+                .collect(),
+        ),
+        TyKind::Comptime(inner) => Ty::comptime(db, substitute_bound_ty(db, *inner, args)),
+        TyKind::Error | TyKind::Unknown => ty,
     }
 }
 

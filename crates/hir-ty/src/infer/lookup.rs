@@ -23,6 +23,7 @@ pub(super) struct AdtLookup<'db> {
 pub(super) struct TypeAliasLookup<'db> {
     pub(super) alias: TypeAlias<'db>,
     pub(super) type_vars: Vec<hir_nameres::TypeVarBinding<'db>>,
+    pub(super) inherited_type_var_count: usize,
 }
 
 pub(super) struct ClassLookup<'db> {
@@ -173,12 +174,17 @@ fn find_type_alias_in_item<'db>(
 ) -> Option<TypeAliasLookup<'db>> {
     match item {
         Item::TypeAlias(alias) if alias.def_id_value(db) == def => {
+            let inherited_type_var_count = inherited.len();
             let mut type_vars = inherited.to_vec();
             type_vars.extend(type_var_bindings(
                 alias.def_id_value(db),
                 alias.ty_param_elems(db),
             ));
-            Some(TypeAliasLookup { alias, type_vars })
+            Some(TypeAliasLookup {
+                alias,
+                type_vars,
+                inherited_type_var_count,
+            })
         }
         Item::ContractDef(contract) => {
             let mut inherited = inherited.to_vec();

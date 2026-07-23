@@ -34,10 +34,31 @@ impl<'db> Emitter<'db> {
             TypeLowering::from_item_resolutions(self.db, &resolutions, BinderEnv::empty());
         let mut fields = BTreeMap::new();
         for (slot, field) in contract.fields(self.db).iter().enumerate() {
-            let kind = field_storage_kind(self.db, field.ty()).or_else(|| {
-                let ty = lowerer.lower_field(field).ty;
-                self.user_adt_storage_field_kind(ty, field.ty().span(self.db))
-            });
+            let source_ty = field.ty();
+            let ty = lowerer.lower_field(field).ty;
+            let normalized = normalize_ty_aliases(self.db, module, &resolutions, ty).value;
+            let source_contains_fixed_array = type_ref_contains_fixed_array(self.db, source_ty);
+            let semantic_contains_fixed_array = self.storage_sem_ty_contains_fixed_array(
+                normalized,
+                &mut std::collections::HashSet::new(),
+            );
+            let kind = if source_contains_fixed_array || semantic_contains_fixed_array {
+                self.push(
+                    source_ty.span(self.db),
+                    EmitDiagnosticKind::UnsupportedType {
+                        ty: if semantic_contains_fixed_array {
+                            normalized.display(self.db)
+                        } else {
+                            "fixed-length array nested in a contract-storage field".to_owned()
+                        },
+                    },
+                );
+                None
+            } else if let Some(kind) = field_storage_kind(self.db, source_ty) {
+                Some(kind)
+            } else {
+                self.user_adt_storage_field_kind(normalized, source_ty.span(self.db))
+            };
             if let Some(kind) = kind {
                 fields.insert(
                     field.name().atom().text(self.db).to_owned(),
@@ -53,6 +74,21 @@ impl<'db> Emitter<'db> {
         ty: SemTy<'db>,
         span: Span<'db>,
     ) -> Option<StorageFieldKind> {
+        if matches!(
+            ty.kind(self.db),
+            SemTyKind::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::FixedArray(_)),
+                ..
+            }
+        ) {
+            self.push(
+                span,
+                EmitDiagnosticKind::UnsupportedType {
+                    ty: ty.display(self.db),
+                },
+            );
+            return None;
+        }
         let SemTyKind::Named {
             ctor: TyCtor::User(user),
             args,
@@ -83,6 +119,63 @@ impl<'db> Emitter<'db> {
                 (hull_ty_word_slots(&ty) == Some(1)).then_some(StorageFieldKind::DirectWord)
             }
             UserTyCtorKind::Alias | UserTyCtorKind::Contract | UserTyCtorKind::ValueType => None,
+        }
+    }
+
+    fn storage_sem_ty_contains_fixed_array(
+        &self,
+        ty: SemTy<'db>,
+        visiting_adts: &mut std::collections::HashSet<DefId<'db>>,
+    ) -> bool {
+        match ty.kind(self.db) {
+            SemTyKind::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::FixedArray(_)),
+                ..
+            } => true,
+            SemTyKind::Named {
+                ctor: TyCtor::User(user),
+                args,
+            } if matches!(user.kind, UserTyCtorKind::Adt) => {
+                if args
+                    .iter()
+                    .any(|arg| self.storage_sem_ty_contains_fixed_array(*arg, visiting_adts))
+                {
+                    return true;
+                }
+                if !visiting_adts.insert(user.def) {
+                    return false;
+                }
+                let module = parse_file_to_hir(self.db, user.def.file(self.db)).module(self.db);
+                let contains = layout::find_adt(self.db, module, user.def)
+                    .and_then(|adt| hir_ty::derived_generic_plan(self.db, module, adt))
+                    .is_some_and(|plan| {
+                        let rep = layout::subst_sem_ty(self.db, plan.rep, args);
+                        self.storage_sem_ty_contains_fixed_array(rep, visiting_adts)
+                    });
+                visiting_adts.remove(&user.def);
+                contains
+            }
+            SemTyKind::Named {
+                ctor: TyCtor::User(user),
+                args,
+            } if matches!(user.kind, UserTyCtorKind::ValueType) && args.is_empty() => {
+                value_type_underlying(self.db, user.def).is_ok_and(|underlying| {
+                    self.storage_sem_ty_contains_fixed_array(underlying, visiting_adts)
+                })
+            }
+            SemTyKind::Named { args, .. } | SemTyKind::Tuple(args) => args
+                .iter()
+                .any(|arg| self.storage_sem_ty_contains_fixed_array(*arg, visiting_adts)),
+            SemTyKind::Function { params, ret } => {
+                params
+                    .iter()
+                    .any(|param| self.storage_sem_ty_contains_fixed_array(*param, visiting_adts))
+                    || self.storage_sem_ty_contains_fixed_array(*ret, visiting_adts)
+            }
+            SemTyKind::Comptime(inner) => {
+                self.storage_sem_ty_contains_fixed_array(*inner, visiting_adts)
+            }
+            SemTyKind::Error | SemTyKind::Unknown | SemTyKind::BoundVar(_) => false,
         }
     }
 
@@ -217,6 +310,29 @@ impl<'db> Emitter<'db> {
                 },
             ],
         }
+    }
+}
+
+fn type_ref_contains_fixed_array(db: &dyn HirDb, ty: hir::ast::ty::TypeRef<'_>) -> bool {
+    match ty.kind(db) {
+        TypeRefKind::FixedArray { .. } => true,
+        TypeRefKind::Named { args, .. } => args
+            .atom()
+            .iter()
+            .any(|arg| type_ref_contains_fixed_array(db, *arg)),
+        TypeRefKind::Fn { params, ret } => {
+            params
+                .atom()
+                .iter()
+                .any(|param| type_ref_contains_fixed_array(db, *param))
+                || type_ref_contains_fixed_array(db, *ret)
+        }
+        TypeRefKind::Comptime { inner, .. } => type_ref_contains_fixed_array(db, *inner),
+        TypeRefKind::Tuple { elems } => elems
+            .atom()
+            .iter()
+            .any(|elem| type_ref_contains_fixed_array(db, *elem)),
+        TypeRefKind::Error { .. } => false,
     }
 }
 

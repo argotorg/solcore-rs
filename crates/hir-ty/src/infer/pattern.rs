@@ -670,7 +670,13 @@ impl<'db> InferCtx<'db> {
                 }
                 let expanded = self
                     .lower_type_alias_infer(user.def)
-                    .map(|body| substitute_infer_alias_args(body, &args))
+                    .map(|(body, inherited_type_var_count)| {
+                        let captured_args = (0..inherited_type_var_count)
+                            .map(|index| InferTy::BoundVar(index as u32))
+                            .chain(args.iter().cloned())
+                            .collect::<Vec<_>>();
+                        substitute_infer_alias_args(body, &captured_args)
+                    })
                     .map(|body| self.expand_infer_aliases(body, expanding))
                     .unwrap_or(InferTy::Named {
                         ctor: TyCtor::User(user),
@@ -699,7 +705,7 @@ impl<'db> InferCtx<'db> {
         }
     }
 
-    fn lower_type_alias_infer(&mut self, def: DefId<'db>) -> Option<InferTy<'db>> {
+    fn lower_type_alias_infer(&mut self, def: DefId<'db>) -> Option<(InferTy<'db>, usize)> {
         if let Some(info) = find_type_alias_info(self.db, self.module, def, &[]) {
             let item_resolutions = hir_nameres::resolve_item_types(self.db, self.module);
             let lowered = TypeLowering::from_item_resolutions(
@@ -709,7 +715,7 @@ impl<'db> InferCtx<'db> {
             )
             .lower_type_alias(info.alias)
             .ty;
-            return Some(self.engine.from_ty(lowered));
+            return Some((self.engine.from_ty(lowered), info.inherited_type_var_count));
         }
 
         let entry = self.entry_module?;
@@ -724,7 +730,7 @@ impl<'db> InferCtx<'db> {
         )
         .lower_type_alias(info.alias)
         .ty;
-        Some(self.engine.from_ty(lowered))
+        Some((self.engine.from_ty(lowered), info.inherited_type_var_count))
     }
 
     fn builtin_ctor_for_expected(

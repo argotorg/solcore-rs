@@ -3,6 +3,15 @@ use chumsky::{input::ValueInput, prelude::*};
 use super::common::*;
 use crate::{lexer::Token, types::*};
 
+#[derive(Debug, Clone, Copy)]
+enum ParsedArraySuffix {
+    Dynamic(LexSpan),
+    Fixed {
+        length: Option<u64>,
+        brackets_span: LexSpan,
+    },
+}
+
 pub(super) fn type_parser<'src, I>() -> impl Parser<'src, I, ParsedTy<'src>, ParserErr<'src>>
 where
     I: ValueInput<'src, Token = Token<'src>, Span = LexSpan>,
@@ -175,30 +184,73 @@ where
 
         let dynamic_array_suffix = just(Token::LBracket)
             .then_ignore(just(Token::RBracket))
-            .map_with(|_, e| e.span());
-        // ParsedTy/HIR currently has no type-level integer with which to
-        // retain a fixed array length. Accept Solidity's `[N]` surface for
-        // now and lower it through the existing DynArray representation;
-        // semantic fixed-length support must replace this temporary erasure.
+            .map_with(|_, e| ParsedArraySuffix::Dynamic(e.span()));
         let fixed_array_suffix = just(Token::LBracket)
             .ignore_then(select! {
                 Token::Number(length) => length,
                 Token::HexLit(length) => length,
             })
             .then_ignore(just(Token::RBracket))
-            .map_with(|_, e| e.span());
+            .validate(|literal, e, emitter| {
+                let brackets_span = e.span();
+                let parsed = literal.strip_prefix("0x").map_or_else(
+                    || literal.parse::<u64>(),
+                    |hex| u64::from_str_radix(hex, 16),
+                );
+                let length = match parsed {
+                    Ok(0) => {
+                        emitter.emit(Rich::custom(
+                            brackets_span,
+                            "fixed array length must be greater than zero",
+                        ));
+                        None
+                    }
+                    Ok(length) => Some(length),
+                    Err(_) => {
+                        emitter.emit(Rich::custom(
+                            brackets_span,
+                            format!(
+                                "fixed array length `{literal}` exceeds the supported u64 range"
+                            ),
+                        ));
+                        None
+                    }
+                };
+                ParsedArraySuffix::Fixed {
+                    length,
+                    brackets_span,
+                }
+            });
         let array_suffix = choice((dynamic_array_suffix, fixed_array_suffix));
         let array_type = atom_type
-            .foldl_with(array_suffix.repeated(), |inner, brackets_span, e| {
-                ParsedTy {
-                    span: e.span(),
-                    kind: ParsedTyKind::Named {
-                        qualifiers: Vec::new(),
-                        // Solidity arrays use the existing standard library's
-                        // nominal `DynArray<T>` representation.
-                        name: ("DynArray", brackets_span),
-                        args_span: Some(inner.span),
-                        args: vec![inner],
+            .foldl_with(array_suffix.repeated(), |inner, suffix, e| {
+                let span = e.span();
+                match suffix {
+                    ParsedArraySuffix::Dynamic(brackets_span) => ParsedTy {
+                        span,
+                        kind: ParsedTyKind::Named {
+                            qualifiers: Vec::new(),
+                            // Dynamic Solidity arrays keep the standard
+                            // library's nominal `DynArray<T>` representation.
+                            name: ("DynArray", brackets_span),
+                            args_span: Some(inner.span),
+                            args: vec![inner],
+                        },
+                    },
+                    ParsedArraySuffix::Fixed {
+                        length: Some(length),
+                        brackets_span,
+                    } => ParsedTy {
+                        span,
+                        kind: ParsedTyKind::FixedArray {
+                            element: Box::new(inner),
+                            length,
+                            brackets_span,
+                        },
+                    },
+                    ParsedArraySuffix::Fixed { length: None, .. } => ParsedTy {
+                        span,
+                        kind: ParsedTyKind::Error,
                     },
                 }
             })

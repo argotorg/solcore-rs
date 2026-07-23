@@ -936,6 +936,68 @@ impl IsA<word> {
 }
 
 #[test]
+fn fixed_array_lengths_survive_semantic_lowering_and_type_equality() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+function same(x: word[4]) returns (word[4]) {
+  return x;
+}
+
+function different(x: word[4]) returns (word[5]) {
+  return x;
+}
+"#,
+    );
+    let same = function_info_named(&db, module, "same");
+    let scheme = function_scheme_in_hir_module(&db, module, same.function.def_id_value(&db))
+        .expect("fixed-array function scheme");
+    let TyKind::Function { params, ret } = scheme.body(&db).ty(&db).kind(&db) else {
+        panic!("expected function scheme");
+    };
+    assert!(matches!(
+        params[0].kind(&db),
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::FixedArray(4)),
+            args,
+        } if matches!(
+            args.as_slice(),
+            [element] if matches!(
+                element.kind(&db),
+                TyKind::Named {
+                    ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
+                    args,
+                } if args.is_empty()
+            )
+        )
+    ));
+    assert_eq!(params[0], *ret);
+    assert_eq!(
+        crate::display::display_ty_source(&db, params[0], &[]),
+        "word[4]"
+    );
+
+    let (_, same_result) = infer_function(&db, module, "same");
+    assert_no_typeck(&same_result);
+
+    let (_, different_result) = infer_function(&db, module, "different");
+    assert!(
+        different_result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| matches!(
+                diagnostic,
+                TypeckDiagnostic::Mismatch {
+                    expected,
+                    actual,
+                    ..
+                } if expected == "word[5]" && actual == "word[4]"
+            ))
+    );
+}
+
+#[test]
 fn comptime_numeric_scrutinees_accept_integer_literal_patterns() {
     let db = TestDb::default();
     let module = parse_module(
@@ -985,6 +1047,27 @@ function alias_identity(x: WordAlias2) returns (word) {
         assert_eq!(result.checked_conversions.len(), 1, "{name}: {result:?}");
         assert_eq!(result.checked_conversions[0].kind, ConversionKind::Identity);
     }
+}
+
+#[test]
+fn shorthand_pattern_expands_contract_alias_with_captured_type_var() {
+    let diagnostics = lowered_module_typeck_diagnostics(
+        r#"
+contract C<t> {
+  enum Either<a, b> { Left(a), Right(b) }
+  alias Captured<a> = Either<t, a>;
+
+  function unwrap(x: Captured<word>, fallback: t) returns (t) {
+    match (x) {
+      case Either.Left(value) { return value; }
+      default { return fallback; }
+    }
+  }
+}
+"#,
+    );
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
 #[test]
@@ -1579,6 +1662,104 @@ contract C {
             result.diagnostics
         );
     }
+}
+
+#[test]
+fn storage_rejects_fixed_arrays_with_a_dedicated_diagnostic() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+enum storage<t> { storage(word) }
+
+contract C {
+  values: word[3];
+
+  function get() returns (word[3]) {
+    return values;
+  }
+
+  function set(next: word[3]) {
+    values = next;
+  }
+}
+"#,
+    );
+
+    for function in ["get", "set"] {
+        let (_, result) = infer_function(&db, module, function);
+        let diagnostic = result
+            .diagnostics
+            .iter()
+            .find(|diagnostic| {
+                matches!(
+                    diagnostic,
+                    TypeckDiagnostic::UnsupportedFixedArrayStorage { ty, .. } if ty == "word[3]"
+                )
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{function}: missing fixed-array storage diagnostic: {:?}",
+                    result.diagnostics
+                )
+            });
+        let lowered = diagnostic.lower();
+        assert_eq!(
+            lowered.code.as_deref(),
+            Some(hir::diag::DiagnosticCode::TYPECK_UNSUPPORTED_FIXED_ARRAY_STORAGE)
+        );
+        assert!(
+            lowered.message.contains("fixed-length array")
+                && lowered.message.contains("cannot be stored"),
+            "{function}: {lowered:?}"
+        );
+    }
+}
+
+#[test]
+fn storage_rejects_fixed_arrays_hidden_in_nominal_adt_layouts() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+enum storage<t> { storage(word) }
+
+struct Box {
+  values: word[3];
+}
+
+contract C {
+  boxed: Box;
+
+  function get() returns (Box) {
+    return boxed;
+  }
+}
+"#,
+    );
+
+    let (_, result) = infer_function(&db, module, "get");
+    let diagnostic = result
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            matches!(
+                diagnostic,
+                TypeckDiagnostic::UnsupportedFixedArrayStorage { ty, .. } if ty == "Box"
+            )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "missing nominal fixed-array storage diagnostic: {:?}",
+                result.diagnostics
+            )
+        });
+    let lowered = diagnostic.lower();
+    assert_eq!(
+        lowered.code.as_deref(),
+        Some(hir::diag::DiagnosticCode::TYPECK_UNSUPPORTED_FIXED_ARRAY_STORAGE)
+    );
+    assert!(lowered.message.contains("fixed-length array"));
 }
 
 #[test]

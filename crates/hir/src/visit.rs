@@ -162,6 +162,7 @@ impl<'db> ErrorCollector<'db> {
                     self.ty(*arg);
                 }
             }
+            TypeRefKind::FixedArray { element, .. } => self.ty(*element),
             TypeRefKind::Fn { params, ret } => {
                 for param in params.atom() {
                     self.ty(*param);

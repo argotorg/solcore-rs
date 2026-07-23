@@ -97,6 +97,9 @@ fn signature_type_string<'db>(
     ty: Ty<'db>,
     adt_stack: &mut Vec<DefId<'db>>,
 ) -> Result<String, String> {
+    if ty_contains_fixed_array(db, ty) {
+        return Err(unsupported_fixed_array_abi_type(db, ty));
+    }
     match ty.kind(db) {
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
@@ -247,6 +250,9 @@ fn abi_type_of<'db>(
     ty: Ty<'db>,
     adt_stack: &mut Vec<DefId<'db>>,
 ) -> Result<(AbiType, Vec<AbiParam>), String> {
+    if ty_contains_fixed_array(db, ty) {
+        return Err(unsupported_fixed_array_abi_type(db, ty));
+    }
     match ty.kind(db) {
         TyKind::Named {
             ctor: TyCtor::Builtin(BuiltinTyCtor::Word),
@@ -419,6 +425,33 @@ fn unsupported_value_type_abi_type<'db>(
         "{} (user-defined value types are not supported by the canonical external ABI)",
         crate::display::display_ty_source(db, ty, &[])
     )
+}
+
+fn unsupported_fixed_array_abi_type(db: &dyn Db, ty: Ty<'_>) -> String {
+    format!(
+        "{} (fixed-length arrays are not yet supported by the canonical external ABI)",
+        crate::display::display_ty_source(db, ty, &[])
+    )
+}
+
+fn ty_contains_fixed_array(db: &dyn Db, ty: Ty<'_>) -> bool {
+    match ty.kind(db) {
+        TyKind::Named {
+            ctor: TyCtor::Builtin(BuiltinTyCtor::FixedArray(_)),
+            ..
+        } => true,
+        TyKind::Named { args, .. } | TyKind::Tuple(args) => {
+            args.iter().any(|arg| ty_contains_fixed_array(db, *arg))
+        }
+        TyKind::Function { params, ret } => {
+            params
+                .iter()
+                .any(|param| ty_contains_fixed_array(db, *param))
+                || ty_contains_fixed_array(db, *ret)
+        }
+        TyKind::Comptime(inner) => ty_contains_fixed_array(db, *inner),
+        TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => false,
+    }
 }
 
 fn user_adt_product_fields<'db>(

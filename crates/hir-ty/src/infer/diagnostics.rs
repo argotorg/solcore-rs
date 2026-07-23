@@ -419,6 +419,14 @@ pub enum TypeckDiagnostic {
         /// User-defined value-type name.
         ty: String,
     },
+    /// `SC0249`: a fixed-length array was read from or written to contract
+    /// storage before the backend has a sound layout for it.
+    UnsupportedFixedArrayStorage {
+        /// Source span for the storage read or write.
+        span: LabelSpan,
+        /// Fixed-length array type.
+        ty: String,
+    },
     /// `SC0302`: a match does not cover every possible scrutinee value.
     NonExhaustiveMatch {
         /// Source span for the match scrutinee.
@@ -930,6 +938,19 @@ impl TypeckDiagnostic {
                 )
                 .with_note(
                     "contract storage currently supports only value types with a one-word representation",
+                )
+            }
+            TypeckDiagnostic::UnsupportedFixedArrayStorage { span, ty } => {
+                Diagnostic::error(format!(
+                    "fixed-length array `{ty}` cannot be stored by this backend"
+                ))
+                .with_code(DiagnosticCode::TYPECK_UNSUPPORTED_FIXED_ARRAY_STORAGE)
+                .with_primary_label_span(
+                    span.clone(),
+                    Some("fixed-length array storage is unsupported"),
+                )
+                .with_note(
+                    "fixed-length arrays require a dedicated contract-storage layout and load/store lowering",
                 )
             }
             TypeckDiagnostic::NonExhaustiveMatch { span, missing } => {
@@ -1626,6 +1647,7 @@ fn collect_type_ref_tree<'db>(
                 collect_type_ref_tree(db, *arg, out);
             }
         }
+        TypeRefKind::FixedArray { element, .. } => collect_type_ref_tree(db, *element, out),
         TypeRefKind::Fn { params, ret } => {
             for param in params.atom() {
                 collect_type_ref_tree(db, *param, out);
@@ -2033,6 +2055,9 @@ fn collect_data_cycle_edges<'db>(
             for arg in args.atom() {
                 collect_data_cycle_edges(db, from, *arg, resolutions, local_defs, names, edges);
             }
+        }
+        TypeRefKind::FixedArray { element, .. } => {
+            collect_data_cycle_edges(db, from, *element, resolutions, local_defs, names, edges);
         }
         TypeRefKind::Fn { params, ret } => {
             for param in params.atom() {

@@ -94,6 +94,8 @@ pub enum BuiltinTyCtor {
     Pair,
     /// Binary sum constructor.
     Sum,
+    /// Fixed-length array constructor carrying its element count.
+    FixedArray(u64),
 }
 
 /// User-defined type constructor.
@@ -203,6 +205,7 @@ impl BuiltinTyCtor {
     pub const fn arity(self) -> usize {
         match self {
             Self::Word | Self::Unit | Self::Bool | Self::String | Self::Integer => 0,
+            Self::FixedArray(_) => 1,
             Self::Pair | Self::Sum => 2,
         }
     }
@@ -233,6 +236,7 @@ impl BuiltinTyCtor {
             Self::Integer => "integer",
             Self::Pair => "pair",
             Self::Sum => "sum",
+            Self::FixedArray(_) => "fixed_array",
         }
     }
 }
@@ -324,6 +328,15 @@ impl<'db> Ty<'db> {
         Self::builtin(db, BuiltinTyCtor::Integer)
     }
 
+    /// Creates a fixed-length array type.
+    pub fn fixed_array(db: &'db dyn Db, element: Ty<'db>, length: u64) -> Self {
+        Self::named(
+            db,
+            TyCtor::Builtin(BuiltinTyCtor::FixedArray(length)),
+            vec![element],
+        )
+    }
+
     /// Returns a structural size measure for termination checks.
     pub fn measure(self, db: &'db dyn Db) -> usize {
         match self.kind(db) {
@@ -343,6 +356,11 @@ impl<'db> Ty<'db> {
             TyKind::Error => "<error>".to_owned(),
             TyKind::Unknown | TyKind::BoundVar(_) => "_".to_owned(),
             TyKind::Named { ctor, args } => {
+                if let TyCtor::Builtin(BuiltinTyCtor::FixedArray(length)) = ctor
+                    && let [element] = args.as_slice()
+                {
+                    return format!("{}[{length}]", element.display(db));
+                }
                 let name = match ctor {
                     TyCtor::Builtin(ctor) => ctor.name().to_owned(),
                     TyCtor::User(user) => {

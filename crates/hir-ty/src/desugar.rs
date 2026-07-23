@@ -804,6 +804,7 @@ impl<'db> ModuleCollector<'db> {
                     self.type_ref(*arg);
                 }
             }
+            TypeRefKind::FixedArray { element, .. } => self.type_ref(*element),
             TypeRefKind::Fn { params, ret } => {
                 for param in params.atom() {
                     self.type_ref(*param);
@@ -1055,6 +1056,7 @@ impl<'db> BodyCollector<'db> {
                     self.type_ref(*arg);
                 }
             }
+            TypeRefKind::FixedArray { element, .. } => self.type_ref(*element),
             TypeRefKind::Fn { params, ret } => {
                 for param in params.atom() {
                     self.type_ref(*param);

@@ -19,6 +19,11 @@ pub(crate) fn display_ty_source<'db>(db: &'db dyn Db, ty: Ty<'db>, names: &[Stri
         TyKind::Unknown => "_".to_owned(),
         TyKind::BoundVar(var) => display_var_name(var.index, names),
         TyKind::Named { ctor, args } => {
+            if let TyCtor::Builtin(crate::BuiltinTyCtor::FixedArray(length)) = ctor
+                && let [element] = args.as_slice()
+            {
+                return format!("{}[{length}]", display_ty_source(db, *element, names));
+            }
             let name = display_ty_ctor_source(db, *ctor);
             if args.is_empty() {
                 name
@@ -184,6 +189,9 @@ pub(crate) fn display_type_ref_source<'db>(db: &'db dyn HirDb, ty: TypeRef<'db>)
             }
             out
         }
+        TypeRefKind::FixedArray {
+            element, length, ..
+        } => format!("{}[{length}]", display_type_ref_source(db, *element)),
         TypeRefKind::Fn { params, ret } => format!(
             "function({}){}",
             params

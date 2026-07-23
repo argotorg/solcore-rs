@@ -957,6 +957,11 @@ fn display_ty<'db>(db: &'db dyn hir_ty::Db, ty: Ty<'db>, names: &[String]) -> St
             .cloned()
             .unwrap_or_else(|| "_".to_owned()),
         TyKind::Named { ctor, args } => {
+            if let TyCtor::Builtin(hir_ty::BuiltinTyCtor::FixedArray(length)) = ctor
+                && let [element] = args.as_slice()
+            {
+                return format!("{}[{length}]", display_ty(db, *element, names));
+            }
             let name = match ctor {
                 TyCtor::Builtin(ctor) => ctor.name().to_owned(),
                 TyCtor::User(user) => user
@@ -1107,6 +1112,9 @@ fn display_type_ref<'db>(db: &'db dyn hir_ty::Db, ty: TypeRef<'db>) -> String {
             }
             out
         }
+        TypeRefKind::FixedArray {
+            element, length, ..
+        } => format!("{}[{length}]", display_type_ref(db, *element)),
         TypeRefKind::Fn { params, ret } => format!(
             "function({}){}",
             params
@@ -1399,15 +1407,20 @@ function main() returns (Maybe) {
     fn type_declaration_hover_preserves_alias_and_value_type_spelling() {
         let source = "\
 alias WordAlias = word;
+alias Words = word[4];
 type Wad is word;
 
-function expose(alias_value: WordAlias, wad_value: Wad) {}
+function expose(alias_value: WordAlias, words: Words, wad_value: Wad) {}
 ";
         let (world, uri) = world_with_main(source);
 
         let alias_reference = source.rfind("WordAlias").expect("alias reference");
         let alias_hover = hover_at(source, &world, &uri, alias_reference);
         assert_eq!(hover_code(&alias_hover), "alias WordAlias = word");
+
+        let words_reference = source.rfind("Words").expect("fixed-array alias reference");
+        let words_hover = hover_at(source, &world, &uri, words_reference);
+        assert_eq!(hover_code(&words_hover), "alias Words = word[4]");
 
         let value_type_reference = source.rfind("Wad").expect("value type reference");
         let value_type_hover = hover_at(source, &world, &uri, value_type_reference);

@@ -2044,6 +2044,7 @@ where
             qualifier: Some(qualifier),
             ..
         } => Some(qualifier),
+        TypeRefKind::FixedArray { element, .. } => type_ref_module_qualifier(db, *element),
         TypeRefKind::Named {
             qualifier: None, ..
         }
@@ -2134,6 +2135,7 @@ fn module_qualifier_occurrences<'db>(
 fn type_ref_name_span<'db>(db: &'db dyn hir_ty::Db, ty: TypeRef<'db>) -> Option<Span<'db>> {
     match ty.kind(db) {
         TypeRefKind::Named { name, .. } => Some(name.span(db)),
+        TypeRefKind::FixedArray { element, .. } => type_ref_name_span(db, *element),
         TypeRefKind::Error { span } => Some(*span),
         TypeRefKind::Fn { .. } | TypeRefKind::Comptime { .. } | TypeRefKind::Tuple { .. } => None,
     }
@@ -2219,6 +2221,43 @@ mod tests {
         assert!(world.open_document(main_uri.clone(), main.to_owned()));
         assert!(world.open_document(math_uri.clone(), math.to_owned()));
         (world, main_uri, math_uri)
+    }
+
+    #[test]
+    fn fixed_array_type_reference_helpers_reach_the_element_name() {
+        let source = "function use(value: M.Word[4][2]) {}\n";
+        let (world, uri) = world_with_main(source);
+        let db = world.db();
+        let path = world.vfs_path_for_uri(&uri).expect("main path");
+        let file = db.source_file(&path).expect("main source");
+        let module = parser::parse_file_to_hir(db, file).module(db);
+        let ty = module
+            .items(db)
+            .iter()
+            .find_map(|item| match item {
+                Item::FunctionDef(function) => {
+                    function
+                        .sig(db)
+                        .params
+                        .atom()
+                        .iter()
+                        .find_map(|param| match param {
+                            FuncParam::Typed { ty, .. } => Some(*ty),
+                            FuncParam::Untyped { .. } | FuncParam::Error { .. } => None,
+                        })
+                }
+                _ => None,
+            })
+            .expect("fixed-array parameter type");
+
+        let qualifier = type_ref_module_qualifier(db, ty).expect("element qualifier");
+        assert_eq!(qualifier.atom().text(db), "M");
+        let name_span = type_ref_name_span(db, ty)
+            .expect("element name span")
+            .resolve_to_absolute(db);
+        let expected = source.find("Word").expect("element name") as u32;
+        assert_eq!(name_span.start().as_u32(), expected);
+        assert_eq!(name_span.end().as_u32(), expected + "Word".len() as u32);
     }
 
     #[test]

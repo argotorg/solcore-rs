@@ -718,6 +718,93 @@ fn alias_and_value_type_declarations_remain_distinct_in_hir() {
 }
 
 #[test]
+fn fixed_array_lengths_survive_parsing_and_hir_lowering() {
+    let db = TestDb::default();
+    let (_, module) = parse_module(
+        &db,
+        "fixed-array-types",
+        "alias Nested = word[4][2];
+         alias Mixed = word[4][];
+         alias FixedFour = word[4];
+         alias FixedFive = word[5];
+         alias HexFour = word[0x4];",
+    );
+    let aliases = module
+        .items(&db)
+        .iter()
+        .filter_map(|item| match item {
+            Item::TypeAlias(alias) => Some(*alias),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    let TypeRefKind::FixedArray {
+        element, length: 2, ..
+    } = aliases[0].ty(&db).kind(&db)
+    else {
+        panic!("outer fixed-array length should survive HIR lowering");
+    };
+    assert!(matches!(
+        element.kind(&db),
+        TypeRefKind::FixedArray { length: 4, .. }
+    ));
+
+    let TypeRefKind::Named { name, args, .. } = aliases[1].ty(&db).kind(&db) else {
+        panic!("dynamic array should retain its nominal DynArray representation");
+    };
+    assert_eq!((*name.atom()).text(&db), "DynArray");
+    assert!(matches!(
+        args.atom().as_slice(),
+        [element] if matches!(
+            element.kind(&db),
+            TypeRefKind::FixedArray { length: 4, .. }
+        )
+    ));
+
+    assert_ne!(
+        aliases[2].ty(&db).semantic_shape(),
+        aliases[3].ty(&db).semantic_shape(),
+        "fixed-array lengths must participate in HIR type identity"
+    );
+    assert!(matches!(
+        aliases[4].ty(&db).kind(&db),
+        TypeRefKind::FixedArray { length: 4, .. }
+    ));
+    assert_eq!(
+        aliases[2].ty(&db).semantic_shape(),
+        aliases[4].ty(&db).semantic_shape(),
+        "decimal and hexadecimal spellings of the same length must share one type shape"
+    );
+}
+
+#[test]
+fn fixed_array_lengths_reject_zero_and_u64_overflow() {
+    let db = TestDb::default();
+    let (file, _) = parse_module(
+        &db,
+        "invalid-fixed-array-lengths",
+        "alias Zero = word[0]; alias Huge = word[18446744073709551616];",
+    );
+    let messages = diagnostics(&db, file)
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect::<Vec<_>>();
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("fixed array length must be greater than zero")),
+        "{messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("exceeds the supported u64 range")),
+        "{messages:#?}"
+    );
+}
+
+#[test]
 fn type_and_predicate_argument_list_spans_are_precise() {
     let db = TestDb::default();
     let src = "trait C<self, arg> {}

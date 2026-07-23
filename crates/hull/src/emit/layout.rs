@@ -47,6 +47,10 @@ impl<'db> Emitter<'db> {
                 self.hull_ty(args[1], span),
             )),
             SemTyKind::Named {
+                ctor: TyCtor::Builtin(BuiltinTyCtor::FixedArray(_)),
+                ..
+            } => None,
+            SemTyKind::Named {
                 ctor: TyCtor::User(user),
                 args,
             } if matches!(user.kind, UserTyCtorKind::ValueType) && args.is_empty() => {
@@ -356,7 +360,11 @@ pub(super) fn sum_right_ty<'db>(ty: &Ty<'db>) -> Ty<'db> {
     }
 }
 
-fn find_adt<'db>(db: &'db dyn HirDb, module: Module<'db>, def: DefId<'db>) -> Option<AdtDef<'db>> {
+pub(super) fn find_adt<'db>(
+    db: &'db dyn HirDb,
+    module: Module<'db>,
+    def: DefId<'db>,
+) -> Option<AdtDef<'db>> {
     module
         .items(db)
         .iter()
@@ -378,7 +386,11 @@ fn find_adt_in_item<'db>(
     }
 }
 
-fn subst_sem_ty<'db>(db: &'db dyn hir_ty::Db, ty: SemTy<'db>, args: &[SemTy<'db>]) -> SemTy<'db> {
+pub(super) fn subst_sem_ty<'db>(
+    db: &'db dyn hir_ty::Db,
+    ty: SemTy<'db>,
+    args: &[SemTy<'db>],
+) -> SemTy<'db> {
     match ty.kind(db) {
         SemTyKind::BoundVar(var) => args.get(var.index as usize).copied().unwrap_or(ty),
         SemTyKind::Named { ctor, args: inner } => SemTy::named(

@@ -253,6 +253,15 @@ pub(super) fn lower_type_ref<'db>(
                 args: SpannedElem::new(args, args_span),
             }
         }
+        ParsedTyKind::FixedArray {
+            element,
+            length,
+            brackets_span,
+        } => ty::TypeRefKind::FixedArray {
+            element: lower_type_ref(db, anchor, base_start, *element),
+            length,
+            brackets: span_from_absolute(anchor, brackets_span, base_start),
+        },
         ParsedTyKind::Proxy { at, inner } => {
             let inner = lower_type_ref(db, anchor, base_start, *inner);
             ty::TypeRefKind::Named {

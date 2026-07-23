@@ -493,7 +493,8 @@ impl<'db> TraitClauseBuilder<'db> {
                 } => {
                     let alias_module =
                         parse_file_to_hir(self.db, def.file(self.db)).module(self.db);
-                    let Some(binder_count) = type_alias_binder_count(self.db, alias_module, *def)
+                    let Some((inherited_count, explicit_count)) =
+                        type_alias_binder_counts(self.db, alias_module, *def)
                     else {
                         continue;
                     };
@@ -503,8 +504,8 @@ impl<'db> TraitClauseBuilder<'db> {
                             def: *def,
                             kind: crate::UserTyCtorKind::Alias,
                         }),
-                        (0..binder_count)
-                            .map(|index| Ty::bound(self.db, index))
+                        (0..explicit_count)
+                            .map(|index| Ty::bound(self.db, inherited_count + index))
                             .collect(),
                     );
                     let normalized =
@@ -573,32 +574,32 @@ impl<'db> TraitClauseBuilder<'db> {
     }
 }
 
-fn type_alias_binder_count<'db>(
+fn type_alias_binder_counts<'db>(
     db: &'db dyn Db,
     module: Module<'db>,
     def: DefId<'db>,
-) -> Option<u32> {
+) -> Option<(u32, u32)> {
     module
         .items(db)
         .iter()
-        .find_map(|item| type_alias_binder_count_in_item(db, *item, def, 0))
+        .find_map(|item| type_alias_binder_counts_in_item(db, *item, def, 0))
 }
 
-fn type_alias_binder_count_in_item<'db>(
+fn type_alias_binder_counts_in_item<'db>(
     db: &'db dyn Db,
     item: Item<'db>,
     def: DefId<'db>,
     inherited: u32,
-) -> Option<u32> {
+) -> Option<(u32, u32)> {
     match item {
         Item::TypeAlias(alias) if alias.def_id_value(db) == def => {
-            Some(inherited + alias.ty_param_elems(db).len() as u32)
+            Some((inherited, alias.ty_param_elems(db).len() as u32))
         }
         Item::ContractDef(contract) => {
             let inherited = inherited + contract.ty_param_elems(db).len() as u32;
             contract.items(db).iter().find_map(|item| match *item {
                 ContractItem::TypeAlias(alias) => {
-                    type_alias_binder_count_in_item(db, Item::TypeAlias(alias), def, inherited)
+                    type_alias_binder_counts_in_item(db, Item::TypeAlias(alias), def, inherited)
                 }
                 ContractItem::FunctionDef(_)
                 | ContractItem::AdtDef(_)

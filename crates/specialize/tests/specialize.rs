@@ -343,6 +343,74 @@ function main(x: word, b: bool) returns (word) {
 }
 
 #[test]
+fn specialization_rejects_fixed_array_runtime_types() {
+    let (db, output) = specialize_src(
+        r#"
+function main(values: word[3]) returns (word[3]) {
+  return values;
+}
+"#,
+    );
+
+    let diagnostic = output
+        .diagnostics
+        .iter()
+        .find(|diagnostic| matches!(
+            &diagnostic.kind,
+            SpecializeDiagnosticKind::UnsupportedRuntimeType { ty, .. } if ty.contains("word[3]")
+        ))
+        .expect("fixed-array runtime diagnostic");
+    let lowered = diagnostic.lower(db);
+    assert_eq!(lowered.code.as_deref(), Some("SC0416"));
+    assert!(lowered.message.contains("cannot represent `word[3]`"));
+    assert!(
+        output.module.items.iter().all(|item| !matches!(
+            item,
+            MonoItem::Function(function) if function.name.contains("main")
+        )),
+        "{:#?}",
+        output.module.items
+    );
+}
+
+#[test]
+fn specialization_rejects_fixed_arrays_hidden_in_nominal_adt_layouts() {
+    let (db, output) = specialize_src(
+        r#"
+struct Box {
+  values: word[3];
+}
+
+function main(value: Box) returns (Box) {
+  return value;
+}
+"#,
+    );
+
+    let diagnostic = output
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            matches!(
+                &diagnostic.kind,
+                SpecializeDiagnosticKind::UnsupportedRuntimeType { ty, .. } if ty.contains("Box")
+            )
+        })
+        .expect("nominal fixed-array layout diagnostic");
+    let lowered = diagnostic.lower(db);
+    assert_eq!(lowered.code.as_deref(), Some("SC0416"));
+    assert!(lowered.message.contains("cannot represent"));
+    assert!(
+        output.module.items.iter().all(|item| !matches!(
+            item,
+            MonoItem::Function(function) if function.name.contains("main")
+        )),
+        "{:#?}",
+        output.module.items
+    );
+}
+
+#[test]
 fn specialization_erases_internal_type_ascription() {
     let (_db, output) = specialize_src(
         r#"
@@ -479,6 +547,14 @@ fn naming_matches_reference_mangling() {
         specialize_name(&db, "apply", &[word_to_word]),
         specialize_name(&db, "apply", &[bool_to_word])
     );
+
+    let fixed_four = Ty::fixed_array(&db, word, 4);
+    let fixed_five = Ty::fixed_array(&db, word, 5);
+    let fixed_four_name = specialize_name(&db, "map", &[fixed_four]);
+    let fixed_five_name = specialize_name(&db, "map", &[fixed_five]);
+    assert_ne!(fixed_four_name, fixed_five_name);
+    assert!(fixed_four_name.contains('4'), "{fixed_four_name}");
+    assert!(fixed_five_name.contains('5'), "{fixed_five_name}");
 }
 
 #[test]

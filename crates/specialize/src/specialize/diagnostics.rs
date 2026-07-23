@@ -60,6 +60,10 @@ pub enum SpecializeDiagnosticKind<'db> {
         context: String,
         ty: String,
     },
+    UnsupportedRuntimeType {
+        context: String,
+        ty: String,
+    },
     PublicComptimeParam {
         function: String,
         param: String,
@@ -109,6 +113,9 @@ impl SpecializeDiagnosticKind<'_> {
                 DiagnosticCode::SPECIALIZE_REDUCTION_FUEL_EXHAUSTED
             }
             Self::IntegerErasure { .. } => DiagnosticCode::SPECIALIZE_INTEGER_ERASURE,
+            Self::UnsupportedRuntimeType { .. } => {
+                DiagnosticCode::SPECIALIZE_UNSUPPORTED_RUNTIME_TYPE
+            }
             Self::PublicComptimeParam { .. } => DiagnosticCode::SPECIALIZE_PUBLIC_COMPTIME_PARAM,
         }
     }
@@ -131,7 +138,9 @@ impl SpecializeDiagnosticKind<'_> {
             Self::ReductionFuelExhausted { .. } => {
                 "compile-time reduction depth limit reached here"
             }
-            Self::IntegerErasure { .. } => "not representable at runtime",
+            Self::IntegerErasure { .. } | Self::UnsupportedRuntimeType { .. } => {
+                "not representable at runtime"
+            }
             Self::PublicComptimeParam { .. } => "public entry parameter is runtime",
         }
     }
@@ -198,6 +207,11 @@ impl SpecializeDiagnosticKind<'_> {
                 "help: evaluate the value at comptime or change it to a runtime-representable type"
                     .to_owned(),
             ],
+            Self::UnsupportedRuntimeType { .. } => vec![
+                "fixed-length arrays do not yet have a runtime representation".to_owned(),
+                "help: avoid fixed-length arrays until backend layout support is implemented"
+                    .to_owned(),
+            ],
             Self::PublicComptimeParam { .. } => vec![
                 "public function parameters are supplied from calldata at runtime".to_owned(),
                 "help: remove `comptime` from the public parameter or call a private comptime helper with a compile-time value"
@@ -260,6 +274,9 @@ impl fmt::Display for SpecializeDiagnosticKind<'_> {
                 "compile-time reduction fuel exhausted in {function} at {limit} unfold steps"
             ),
             Self::IntegerErasure { context, ty } => {
+                write!(f, "runtime lowering cannot represent `{ty}` in {context}")
+            }
+            Self::UnsupportedRuntimeType { context, ty } => {
                 write!(f, "runtime lowering cannot represent `{ty}` in {context}")
             }
             Self::PublicComptimeParam { function, param } => write!(

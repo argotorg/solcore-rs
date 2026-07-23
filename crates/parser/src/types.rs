@@ -322,6 +322,15 @@ pub(crate) enum ParsedTyKind<'src> {
         /// Span of the source type-argument syntax, if present.
         args_span: Option<LexSpan>,
     },
+    /// Solidity fixed-length array suffix: `Element[N]`.
+    FixedArray {
+        /// Array element type.
+        element: Box<ParsedTy<'src>>,
+        /// Strictly positive array length.
+        length: u64,
+        /// Span of the complete `[N]` suffix.
+        brackets_span: LexSpan,
+    },
     /// Proxy type sugar introduced by `@`.
     Proxy {
         /// Span of the `@`.
