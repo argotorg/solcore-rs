@@ -158,6 +158,25 @@ pub struct LetTy<'db> {
     pub ty: Ty<'db>,
 }
 
+/// Type-directed selection of a named struct field.
+///
+/// Name resolution cannot choose this field until the base expression type is
+/// known, so inference records the semantic owner and positional index for
+/// downstream lowering.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
+pub struct AdtFieldSelection<'db> {
+    /// Body containing the field access.
+    pub body: FuncBody<'db>,
+    /// Field-access expression ID.
+    pub expr: Id<Expr<'db>>,
+    /// Struct ADT that owns the field.
+    pub adt: DefId<'db>,
+    /// Constructor containing the struct fields.
+    pub constructor: hir_nameres::CtorIndex,
+    /// Zero-based field index in source order.
+    pub index: u32,
+}
+
 /// Source of a deferred obligation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::Update)]
 pub enum ObligationSource<'db> {
@@ -316,6 +335,8 @@ pub struct InferenceResult<'db> {
     pub pat_tys: Vec<PatTy<'db>>,
     /// Let binding type table.
     pub let_tys: Vec<LetTy<'db>>,
+    /// Named struct fields selected after the base expression type was known.
+    pub adt_field_selections: Vec<AdtFieldSelection<'db>>,
     /// Deferred obligations that the future solver must resolve.
     pub obligations: Vec<DeferredObligation<'db>>,
     /// Evidence for obligations solved by the trait solver.

@@ -413,6 +413,18 @@ impl<'db> InferCtx<'db> {
         }
     }
 
+    pub(super) fn lookup_adt_field_index(
+        &self,
+        ty: DefId<'db>,
+        name: &str,
+    ) -> Option<(hir_nameres::CtorIndex, u32)> {
+        if let Some(entry_module) = self.entry_module {
+            adt_field_index_for_entry(self.db, entry_module, ty, name)
+        } else {
+            adt_field_index_in_hir_module(self.db, self.module, ty, name)
+        }
+    }
+
     fn lookup_class_method_scheme(&self, class: DefId<'db>, name: &str) -> Option<TyScheme<'db>> {
         if let Some(entry_module) = self.entry_module {
             class_method_scheme_for_entry(self.db, entry_module, class, name.to_owned())

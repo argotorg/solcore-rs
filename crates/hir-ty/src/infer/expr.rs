@@ -106,12 +106,16 @@ impl<'db> InferCtx<'db> {
                 }
             }
             ExprKind::Field { base, .. } => {
-                if !self.is_namespace_expr(body, *base) {
-                    self.infer_expr(body, *base);
-                }
+                let base_ty =
+                    (!self.is_namespace_expr(body, *base)).then(|| self.infer_expr(body, *base));
                 let resolution = self.expr_resolutions.get(&(body, expr_id)).cloned();
-                let resolution = if let Some(resolution) = resolution {
-                    resolution
+                if let Some(resolution) = resolution {
+                    self.infer_resolution(body, expr_id, resolution)
+                } else if let Some(base_ty) = base_ty
+                    && let Some(field_ty) =
+                        self.infer_adt_field_access(body, expr_id, *base, base_ty)
+                {
+                    field_ty
                 } else {
                     self.emit_expr_error(
                         body,
@@ -121,9 +125,8 @@ impl<'db> InferCtx<'db> {
                             field: self.field_name(body, expr_id),
                         },
                     );
-                    hir_nameres::Resolution::Err
-                };
-                self.infer_resolution(body, expr_id, resolution)
+                    InferTy::Error
+                }
             }
             ExprKind::Conversion { expr, ty } => {
                 let annot = self.lower_type_ref(*ty);
@@ -171,6 +174,51 @@ impl<'db> InferCtx<'db> {
         }
         self.expr_tys.push((body, expr_id, ty.clone()));
         ty
+    }
+
+    fn infer_adt_field_access(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        base: Id<Expr<'db>>,
+        base_ty: InferTy<'db>,
+    ) -> Option<InferTy<'db>> {
+        let normalized = self.normalize_aliases(base_ty.clone());
+        let InferTy::Named {
+            ctor:
+                TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: crate::UserTyCtorKind::Adt,
+                }),
+            ..
+        } = self.engine.resolve(normalized)
+        else {
+            return None;
+        };
+        let field_name = self.field_name(body, expr);
+        let (constructor, index) = self.lookup_adt_field_index(def, &field_name)?;
+        let ctor_ty = self.instantiate_adt_ctor(def, constructor, ObligationSource::Scheme);
+        let InferTy::Function { params, ret } = self.engine.resolve(ctor_ty) else {
+            return None;
+        };
+        let field_ty = params.get(index as usize)?.clone();
+        if !self.unify_expr(body, base, *ret, base_ty) {
+            return Some(InferTy::Error);
+        }
+        if !self
+            .adt_field_selections
+            .iter()
+            .any(|selection| selection.body == body && selection.expr == expr)
+        {
+            self.adt_field_selections.push(AdtFieldSelection {
+                body,
+                expr,
+                adt: def,
+                constructor,
+                index,
+            });
+        }
+        Some(self.engine.resolve(field_ty))
     }
 
     fn report_numeric_if_branch_mismatch(
@@ -530,12 +578,23 @@ impl<'db> InferCtx<'db> {
                 )
             }
             ExprKind::Field { base, .. } => {
-                if !self.is_namespace_expr(body, *base) {
-                    self.infer_expr(body, *base);
-                }
+                let base_ty =
+                    (!self.is_namespace_expr(body, *base)).then(|| self.infer_expr(body, *base));
                 let resolution = self.expr_resolutions.get(&(body, callee_expr)).cloned();
-                let resolution = if let Some(resolution) = resolution {
-                    resolution
+                if let Some(resolution) = resolution {
+                    let source = self.call_site_source(body, call_expr, callee_expr, &resolution);
+                    self.infer_resolution_with_source(
+                        body,
+                        callee_expr,
+                        resolution,
+                        source,
+                        ValuePosition::Callee,
+                    )
+                } else if let Some(base_ty) = base_ty
+                    && let Some(field_ty) =
+                        self.infer_adt_field_access(body, callee_expr, *base, base_ty)
+                {
+                    field_ty
                 } else {
                     self.emit_expr_error(
                         body,
@@ -545,16 +604,8 @@ impl<'db> InferCtx<'db> {
                             field: self.field_name(body, callee_expr),
                         },
                     );
-                    hir_nameres::Resolution::Err
-                };
-                let source = self.call_site_source(body, call_expr, callee_expr, &resolution);
-                self.infer_resolution_with_source(
-                    body,
-                    callee_expr,
-                    resolution,
-                    source,
-                    ValuePosition::Callee,
-                )
+                    InferTy::Error
+                }
             }
             _ => self.infer_expr(body, callee_expr),
         }

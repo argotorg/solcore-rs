@@ -509,6 +509,31 @@ fn contract_fields_beat_top_level_functions_and_params_shadow_fields() {
 }
 
 #[test]
+fn duplicate_struct_fields_are_diagnosed_in_the_field_namespace() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        "struct Pair {
+           value: word;
+           value: bool;
+         }",
+    );
+
+    let resolution = resolve_module(&db, module);
+    assert!(resolution.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic,
+            NameresDiagnostic::DuplicateDeclaration {
+                namespace: Namespace::Field,
+                name,
+                context: Some(context),
+                ..
+            } if name == "value" && context == "struct Pair"
+        )
+    }));
+}
+
+#[test]
 fn unqualified_call_callee_prefers_contract_function_over_same_name_field() {
     let db = TestDb::default();
     let module = parse_module(

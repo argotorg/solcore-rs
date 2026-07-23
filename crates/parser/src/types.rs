@@ -369,6 +369,10 @@ pub(crate) struct ParsedAdtCtor<'src> {
     pub(crate) name: SpannedStr<'src>,
     /// Field types.
     pub(crate) fields: Vec<ParsedTy<'src>>,
+    /// Struct field names in source order.
+    ///
+    /// Enum constructor payloads are positional and therefore use `None`.
+    pub(crate) field_names: Option<Vec<SpannedStr<'src>>>,
 }
 
 /// Parsed method signature declared by a trait.

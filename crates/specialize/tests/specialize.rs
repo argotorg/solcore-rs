@@ -194,6 +194,42 @@ fn specializes_large_linear_body_with_indexed_frontend_lookups() {
     assert!(!function_names(&output).is_empty());
 }
 
+#[test]
+fn named_struct_field_specializes_to_its_source_index() {
+    let (_db, output) = specialize_src(
+        r#"
+struct Pair {
+  first: word;
+  second: word;
+}
+
+function main(p: Pair) returns (word) {
+  return p.second;
+}
+"#,
+    );
+
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    let main = output
+        .module
+        .items
+        .iter()
+        .find_map(|item| match item {
+            MonoItem::Function(function) if function.name.contains("main") => Some(function),
+            _ => None,
+        })
+        .expect("specialized main function");
+    assert!(main.body.iter().any(|stmt| {
+        matches!(
+            &stmt.kind,
+            MonoStmtKind::Return(Some(MonoExpr {
+                kind: MonoExprKind::Field { field, .. },
+                ..
+            })) if field == "1"
+        )
+    }));
+}
+
 fn specialize_source_at_root(root: &Path, rel_path: &str, src: &str) -> SpecializeOutput<'static> {
     let db = Box::leak(Box::new(TestDb::default()));
     let std_root = PathBuf::from("/std");

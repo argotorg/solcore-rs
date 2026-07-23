@@ -300,6 +300,28 @@ impl<'db> ItemScopeBuilder<'db> {
         let ty_name = ident_text_str(self.db, &def.name_elem(self.db)).to_owned();
         let ty_def = def.def_id_value(self.db);
         let mut ctor_entries = Vec::new();
+        for ctor in def.ctors(self.db) {
+            let Some(field_names) = &ctor.field_names else {
+                continue;
+            };
+            let mut names = FxHashMap::default();
+            let context = format!("struct {ty_name}");
+            for field in field_names {
+                let name = ident_text_str(self.db, field).to_owned();
+                if let Some(previous) = names.get(&name).copied() {
+                    self.diagnostics.push(duplicate_diagnostic(
+                        self.db,
+                        Namespace::Field,
+                        &name,
+                        field.span(self.db),
+                        previous,
+                        Some(&context),
+                    ));
+                } else {
+                    names.insert(name, field.span(self.db));
+                }
+            }
+        }
         self.add_type(
             def.name_elem(self.db),
             Resolution::Def {

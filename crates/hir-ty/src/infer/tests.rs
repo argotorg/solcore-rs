@@ -992,6 +992,58 @@ function main() returns (Foo<word>) {
 }
 
 #[test]
+fn named_struct_field_access_infers_its_generic_field_type() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+struct Pair<T> {
+  x: T;
+  flag: bool;
+}
+
+function project(p: Pair<word>) returns (word) {
+  return p.x;
+}
+"#,
+    );
+    let (body, result) = infer_function(&db, module, "project");
+
+    assert_no_typeck(&result);
+    let expr = return_expr(&db, body);
+    assert_eq!(result.expr_ty(body, expr), Some(Ty::word(&db)));
+    assert!(result.adt_field_selections.iter().any(|selection| {
+        selection.body == body && selection.expr == expr && selection.index == 0
+    }));
+}
+
+#[test]
+fn unknown_named_struct_field_is_diagnosed() {
+    let db = TestDb::default();
+    let module = parse_module(
+        &db,
+        r#"
+struct Pair {
+  x: word;
+}
+
+function project(p: Pair) returns (word) {
+  return p.missing;
+}
+"#,
+    );
+    let (_, result) = infer_function(&db, module, "project");
+
+    assert!(result.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic,
+            TypeckDiagnostic::UnknownField { field, .. } if field == "missing"
+        )
+    }));
+    assert!(result.adt_field_selections.is_empty());
+}
+
+#[test]
 fn storage_word_field_read_loads_as_word_without_context() {
     let db = TestDb::default();
     let module = parse_module(

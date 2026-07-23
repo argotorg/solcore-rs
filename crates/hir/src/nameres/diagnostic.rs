@@ -222,7 +222,8 @@ impl NameresDiagnostic {
                 let namespace_text = match namespace {
                     Namespace::Type => "type namespace",
                     Namespace::Term => "term namespace",
-                    Namespace::Field | Namespace::Module => "namespace",
+                    Namespace::Field => "field namespace",
+                    Namespace::Module => "namespace",
                 };
                 let mut diagnostic = Diagnostic::error(format!(
                     "duplicate declaration `{name}` in {namespace_text}"

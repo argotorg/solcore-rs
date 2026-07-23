@@ -125,6 +125,10 @@ pub struct AdtCtor<'db> {
     pub name: SpannedElem<'db, Ident<'db>>,
     /// Constructor field type list and span.
     pub fields: SpannedElem<'db, TypeRef<'db>>,
+    /// Struct field names in source order, parallel to the constructor fields.
+    ///
+    /// Positional enum constructor payloads use `None`.
+    pub field_names: Option<Vec<SpannedElem<'db, Ident<'db>>>>,
     /// Number of fields in the source constructor parameter list.
     ///
     /// This is kept separately because the lowered type reference intentionally
@@ -138,11 +142,13 @@ impl<'db> AdtCtor<'db> {
     pub fn new(
         name: SpannedElem<'db, Ident<'db>>,
         fields: SpannedElem<'db, TypeRef<'db>>,
+        field_names: Option<Vec<SpannedElem<'db, Ident<'db>>>>,
         field_count: usize,
     ) -> Self {
         Self {
             name,
             fields,
+            field_names,
             field_count,
         }
     }

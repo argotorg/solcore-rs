@@ -555,6 +555,7 @@ where
             leading_comments: Vec::new(),
             name,
             fields,
+            field_names: None,
         })
         .boxed()
 }
@@ -602,8 +603,7 @@ where
     let field = ident_parser()
         .then_ignore(just(Token::Colon))
         .then(type_parser())
-        .then_ignore(just(Token::Semi))
-        .map(|(_, ty)| ty);
+        .then_ignore(just(Token::Semi));
     let fields = field
         .repeated()
         .collect::<Vec<_>>()
@@ -615,12 +615,14 @@ where
         .then(fields)
         .then_ignore(just(Token::Semi).or_not())
         .map_with(|((name, ty_params), fields), e| {
+            let (field_names, fields) = fields.into_iter().unzip();
             let ctor = ParsedAdtCtor {
                 span: e.span(),
                 introducer: Some(name.1),
                 leading_comments: Vec::new(),
                 name,
                 fields,
+                field_names: Some(field_names),
             };
             (name, ty_params, vec![ctor])
         })

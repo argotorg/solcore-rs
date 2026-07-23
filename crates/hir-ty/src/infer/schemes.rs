@@ -135,6 +135,25 @@ pub(super) fn adt_ctor_scheme_for_entry<'db>(
     adt_ctor_scheme(db, module_for_def(db, entry, ty)?, ty, index)
 }
 
+pub(super) fn adt_field_index_for_entry<'db>(
+    db: &'db dyn Db,
+    entry: ModuleId<'db>,
+    ty: DefId<'db>,
+    name: &str,
+) -> Option<(hir_nameres::CtorIndex, u32)> {
+    let module = module_hir(db, module_for_def(db, entry, ty)?)?;
+    adt_field_index_in_module(db, module, ty, name)
+}
+
+pub(super) fn adt_field_index_in_hir_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    ty: DefId<'db>,
+    name: &str,
+) -> Option<(hir_nameres::CtorIndex, u32)> {
+    adt_field_index_in_module(db, module, ty, name)
+}
+
 pub(super) fn class_method_scheme_for_entry<'db>(
     db: &'db dyn Db,
     entry: ModuleId<'db>,
@@ -544,6 +563,30 @@ fn adt_ctor_scheme_in_module<'db>(
     )
     .lower_adt_ctor(info.adt, ctor);
     Some(AliasNormalizer::new(db, module, item_resolutions).normalize_scheme(lowered.scheme))
+}
+
+fn adt_field_index_in_module<'db>(
+    db: &'db dyn Db,
+    module: Module<'db>,
+    ty: DefId<'db>,
+    name: &str,
+) -> Option<(hir_nameres::CtorIndex, u32)> {
+    let info = find_adt_info(db, module, ty)?;
+    info.adt
+        .ctors(db)
+        .iter()
+        .enumerate()
+        .find_map(|(constructor, ctor)| {
+            let field_names = ctor.field_names.as_ref()?;
+            debug_assert_eq!(field_names.len(), ctor.field_count);
+            let index = field_names
+                .iter()
+                .position(|field| hir_nameres::ident_text(db, field) == name)?;
+            Some((
+                hir_nameres::CtorIndex::from_usize(constructor),
+                u32::try_from(index).expect("ADT field index exceeds u32::MAX"),
+            ))
+        })
 }
 
 fn class_method_scheme_in_module<'db>(

@@ -37,11 +37,12 @@ pub use hir::sema::ty::{
     TyScheme, UserTyCtor, UserTyCtorKind,
 };
 pub use infer::{
-    AdtCtorScheme, BodyTyContext, CallSiteCallee, CallSiteEvidence, CalleeDiagnostic,
-    ComptimeObligationKind, DeferredObligation, ExprTy, InferResultExt, InferTable, InferTy,
-    InferenceResult, Instantiated, LetTy, ObligationEvidence, ObligationSource,
-    ParameterDiagnostic, PatTy, TyVid, TypeckDiagnostic, UnifyError, VarValue, body_ty_diagnostics,
-    function_scheme, infer_body, lower_normalized_function_with_inferred_signature,
+    AdtCtorScheme, AdtFieldSelection, BodyTyContext, CallSiteCallee, CallSiteEvidence,
+    CalleeDiagnostic, ComptimeObligationKind, DeferredObligation, ExprTy, InferResultExt,
+    InferTable, InferTy, InferenceResult, Instantiated, LetTy, ObligationEvidence,
+    ObligationSource, ParameterDiagnostic, PatTy, TyVid, TypeckDiagnostic, UnifyError, VarValue,
+    body_ty_diagnostics, function_scheme, infer_body,
+    lower_normalized_function_with_inferred_signature,
 };
 pub use lower::{
     BinderEnv, LoweredAdtCtor, LoweredField, LoweredFunction, LoweredTypeAlias, TypeLowering,

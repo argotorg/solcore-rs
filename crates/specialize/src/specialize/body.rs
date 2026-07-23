@@ -18,6 +18,7 @@ pub(super) struct BodyIndex<'db> {
     expr_tys: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Ty<'db>>,
     pat_tys: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), Ty<'db>>,
     let_tys: FxHashMap<(FuncBody<'db>, Id<Stmt<'db>>), Ty<'db>>,
+    adt_field_indices: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), u32>,
     expr_resolutions: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), hir_nameres::Resolution<'db>>,
     pat_resolutions: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), hir_nameres::Resolution<'db>>,
     call_evidence: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>, Id<Expr<'db>>), CallSiteEvidence<'db>>,
@@ -38,6 +39,7 @@ impl<'db> BodyIndex<'db> {
             expr_tys: FxHashMap::default(),
             pat_tys: FxHashMap::default(),
             let_tys: FxHashMap::default(),
+            adt_field_indices: FxHashMap::default(),
             expr_resolutions: FxHashMap::default(),
             pat_resolutions: FxHashMap::default(),
             call_evidence: FxHashMap::default(),
@@ -64,6 +66,12 @@ impl<'db> BodyIndex<'db> {
                 .let_tys
                 .entry((entry.body, entry.stmt))
                 .or_insert(entry.ty);
+        }
+        for selection in &result.adt_field_selections {
+            index
+                .adt_field_indices
+                .entry((selection.body, selection.expr))
+                .or_insert(selection.index);
         }
         for entry in &body_map.exprs {
             let key = (entry.body, entry.expr);
@@ -172,6 +180,18 @@ impl<'db> BodyIndex<'db> {
             .collect::<FxHashSet<_>>();
         debug_assert_eq!(self.let_tys.len(), let_ty_keys.len());
         debug_assert!(let_ty_keys.iter().all(|key| self.let_tys.contains_key(key)));
+
+        let adt_field_keys = result
+            .adt_field_selections
+            .iter()
+            .map(|selection| (selection.body, selection.expr))
+            .collect::<FxHashSet<_>>();
+        debug_assert_eq!(self.adt_field_indices.len(), adt_field_keys.len());
+        debug_assert!(
+            adt_field_keys
+                .iter()
+                .all(|key| self.adt_field_indices.contains_key(key))
+        );
 
         let expr_resolution_keys = body_map
             .exprs
@@ -427,7 +447,12 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                 self.call_expr(expr_id, *callee, args, ty, expr.span)?
             }
             ExprKind::Field { base, field } => {
-                if let Some(resolution) = self.expr_resolution(expr_id) {
+                if let Some(index) = self.adt_field_index(expr_id) {
+                    MonoExprKind::Field {
+                        base: Box::new(self.expr(*base)?),
+                        field: index.to_string(),
+                    }
+                } else if let Some(resolution) = self.expr_resolution(expr_id) {
                     match resolution {
                         hir_nameres::Resolution::Ctor { ty: adt, index } => MonoExprKind::Con {
                             ctor: MonoId {
@@ -808,6 +833,13 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
 
     pub(super) fn expr_ty(&self, expr: Id<Expr<'db>>) -> Option<Ty<'db>> {
         self.index.expr_tys.get(&(self.body, expr)).copied()
+    }
+
+    fn adt_field_index(&self, expr: Id<Expr<'db>>) -> Option<u32> {
+        self.index
+            .adt_field_indices
+            .get(&(self.body, expr))
+            .copied()
     }
 
     fn function_value_ty(&mut self, def: DefId<'db>) -> Option<Ty<'db>> {
