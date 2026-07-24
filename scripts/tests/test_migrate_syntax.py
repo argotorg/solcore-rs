@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -5460,6 +5461,21 @@ const TOKENS: &str = stringify!(
         self.assertIsNone(invocations[0].literals)
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
 
+    def test_mismatched_outer_macro_stays_opaque_to_eof(self) -> None:
+        rust = r'''
+const TOKENS: &str = stringify!([ ) ]);
+const SOURCE: &str = concat!(
+    "function f(",
+    "x: word) -> word { return x; }",
+);
+'''
+
+        invocations = MIGRATE._rust_concat_invocations(rust)
+
+        self.assertEqual(len(invocations), 1)
+        self.assertIsNone(invocations[0].literals)
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
     def test_unary_not_parentheses_do_not_hide_concat(self) -> None:
         rust = r'''
 pub fn is_empty() -> bool {
@@ -6217,6 +6233,29 @@ pub const SOURCE: &str = concat!(
         self.assertFalse(MIGRATE._rust_has_explicit_concat_shadow(child))
         self.assertEqual(migrated_parent, parent)
         self.assertEqual(migrated_child, child)
+
+    def test_concat_scanning_remains_linear_at_scale(self) -> None:
+        wide = "".join(
+            f'const S{index}: &str = concat!("hello", "world");\n'
+            for index in range(2_000)
+        )
+        started = time.perf_counter()
+        self.assertEqual(MIGRATE.migrate_rust_strings(wide), wide)
+        wide_elapsed = time.perf_counter() - started
+
+        depth = 2_000
+        nested = (
+            "stringify!(" * depth
+            + 'concat!("function f(", '
+            + '"x: word) -> word { return x; }")'
+            + ")" * depth
+        )
+        started = time.perf_counter()
+        self.assertEqual(MIGRATE.migrate_rust_strings(nested), nested)
+        nested_elapsed = time.perf_counter() - started
+
+        self.assertLess(wide_elapsed, 5.0)
+        self.assertLess(nested_elapsed, 5.0)
 
     def test_cli_deduplicates_relative_and_absolute_rust_paths(
         self,

@@ -11928,39 +11928,6 @@ def _rust_unicode_string_literal(
     )
 
 
-def _rust_code_suffix(source: str, end: int, length: int) -> str:
-    """Return significant Rust spelling before an offset, skipping trivia."""
-
-    suffix = ""
-    cursor = min(end, _rust_file_code_start(source))
-    while cursor < end:
-        if source.startswith("//", cursor):
-            newline = source.find("\n", cursor + 2, end)
-            cursor = end if newline < 0 else newline + 1
-            continue
-        if source.startswith("/*", cursor):
-            cursor = min(end, _rust_block_comment_end(source, cursor))
-            continue
-        if source[cursor] == "'":
-            char_end = _rust_char_end(source, cursor)
-            if char_end is not None and char_end <= end:
-                suffix = (suffix + "?")[-length:]
-                cursor = char_end
-                continue
-
-        literal = _rust_raw_literal(source, cursor)
-        if literal is None:
-            literal = _rust_ordinary_literal(source, cursor)
-        if literal is not None and literal[2] <= end:
-            suffix = (suffix + "?")[-length:]
-            cursor = literal[2]
-            continue
-        if source[cursor] not in RUST_PATTERN_WHITESPACE:
-            suffix = (suffix + source[cursor])[-length:]
-        cursor += 1
-    return suffix
-
-
 def _rust_identifier_token_end(source: str, start: int) -> int | None:
     """Return the end of one Rust identifier, including a raw identifier."""
 
@@ -11985,7 +11952,9 @@ def _rust_identifier_token_end(source: str, start: int) -> int | None:
 
 
 def _rust_concat_invocation_at(
-    source: str, start: int
+    source: str,
+    start: int,
+    preceding_code: str,
 ) -> RustConcatInvocation | None:
     """Parse a bare ``concat!`` and its direct string-literal operands."""
 
@@ -12003,7 +11972,7 @@ def _rust_concat_invocation_at(
 
     # Qualified and raw-identifier macro names are not proven to be the
     # built-in concat macro. Protect their contents from literal fallback.
-    if _rust_code_suffix(source, start, 2) in {"::", "r#"}:
+    if preceding_code in {"::", "r#"}:
         return RustConcatInvocation(start, end, None)
 
     literals: list[RustStringLiteral] = []
@@ -12074,7 +12043,10 @@ def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
         "where",
         "while",
     }
+    closing = {"(": ")", "[": "]", "{": "}"}
     ranges: list[tuple[int, int]] = []
+    macro_openings: dict[int, int] = {}
+    delimiter_stack: list[tuple[str, int | None]] = []
     cursor = _rust_file_code_start(source)
     previous_identifier: str | None = None
     while cursor < len(source):
@@ -12127,15 +12099,38 @@ def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
                     open_start = _rust_skip_trivia(source, name_end)
             if (
                 open_start < len(source)
-                and source[open_start] in "([{"
+                and source[open_start] in closing
             ):
-                end = _rust_token_tree_end(source, open_start)
-                ranges.append(
-                    (cursor, len(source) if end is None else end)
+                macro_openings[open_start] = cursor
+            previous_identifier = None
+            cursor += 1
+            continue
+
+        token = source[cursor]
+        if token in closing:
+            delimiter_stack.append(
+                (closing[token], macro_openings.get(cursor))
+            )
+        elif token in closing.values():
+            if delimiter_stack and delimiter_stack[-1][0] == token:
+                _, bang = delimiter_stack.pop()
+                if bang is not None:
+                    ranges.append((bang, cursor + 1))
+            elif delimiter_stack:
+                ranges.extend(
+                    (bang, len(source))
+                    for _, bang in delimiter_stack
+                    if bang is not None
                 )
+                delimiter_stack.clear()
         previous_identifier = None
         cursor += 1
-    return ranges
+    ranges.extend(
+        (bang, len(source))
+        for _, bang in delimiter_stack
+        if bang is not None
+    )
+    return sorted(set(ranges))
 
 
 def _rust_has_explicit_concat_shadow(source: str) -> bool:
@@ -12249,14 +12244,28 @@ def _rust_concat_invocations(
 ) -> list[RustConcatInvocation]:
     """Locate non-overlapping ``concat!`` token trees outside Rust trivia."""
 
-    macro_ranges = _rust_macro_token_tree_ranges(source)
+    macro_ranges: list[tuple[int, int]] = []
+    for start, end in _rust_macro_token_tree_ranges(source):
+        if macro_ranges and start <= macro_ranges[-1][1]:
+            previous_start, previous_end = macro_ranges[-1]
+            macro_ranges[-1] = (
+                previous_start,
+                max(previous_end, end),
+            )
+        else:
+            macro_ranges.append((start, end))
     concat_is_shadowed = (
         assume_concat_shadowed
         or _rust_has_explicit_concat_shadow(source)
     )
     invocations: list[RustConcatInvocation] = []
     cursor = _rust_file_code_start(source)
+    preceding_code = ""
+    macro_range_index = 0
     while cursor < len(source):
+        if source[cursor] in RUST_PATTERN_WHITESPACE:
+            cursor += 1
+            continue
         if source.startswith("//", cursor):
             newline = source.find("\n", cursor + 2)
             cursor = len(source) if newline < 0 else newline + 1
@@ -12267,6 +12276,7 @@ def _rust_concat_invocations(
         if source[cursor] == "'":
             char_end = _rust_char_end(source, cursor)
             if char_end is not None:
+                preceding_code = "?"
                 cursor = char_end
                 continue
 
@@ -12274,6 +12284,7 @@ def _rust_concat_invocations(
         if literal is None:
             literal = _rust_ordinary_literal(source, cursor)
         if literal is not None:
+            preceding_code = "?"
             cursor = literal[2]
             continue
 
@@ -12290,11 +12301,23 @@ def _rust_concat_invocations(
                 )
             )
         ):
-            invocation = _rust_concat_invocation_at(source, cursor)
+            invocation = _rust_concat_invocation_at(
+                source,
+                cursor,
+                preceding_code,
+            )
             if invocation is not None:
-                if concat_is_shadowed or any(
-                    bang < cursor < end for bang, end in macro_ranges
+                while (
+                    macro_range_index < len(macro_ranges)
+                    and macro_ranges[macro_range_index][1] <= cursor
                 ):
+                    macro_range_index += 1
+                nested = (
+                    macro_range_index < len(macro_ranges)
+                    and macro_ranges[macro_range_index][0] < cursor
+                    < macro_ranges[macro_range_index][1]
+                )
+                if concat_is_shadowed or nested:
                     invocation = RustConcatInvocation(
                         invocation.start,
                         invocation.end,
@@ -12302,7 +12325,9 @@ def _rust_concat_invocations(
                     )
                 invocations.append(invocation)
                 cursor = invocation.end
+                preceding_code = "?"
                 continue
+        preceding_code = (preceding_code + source[cursor])[-2:]
         cursor += 1
     return invocations
 
@@ -13178,6 +13203,8 @@ def _rust_solcore_literals(
             (invocation.start, invocation.end)
             for invocation in _rust_concat_invocations(source)
         ]
+    ordered_excluded_spans = sorted(excluded_spans)
+    excluded_index = 0
 
     literals: list[tuple[int, int, bool, str]] = []
     cursor = _rust_file_code_start(source)
@@ -13211,9 +13238,16 @@ def _rust_solcore_literals(
             is_raw,
             literal_kind,
         )
-        excluded = any(
-            span_start <= body_start < span_end
-            for span_start, span_end in excluded_spans
+        while (
+            excluded_index < len(ordered_excluded_spans)
+            and ordered_excluded_spans[excluded_index][1] <= body_start
+        ):
+            excluded_index += 1
+        excluded = (
+            excluded_index < len(ordered_excluded_spans)
+            and ordered_excluded_spans[excluded_index][0]
+            <= body_start
+            < ordered_excluded_spans[excluded_index][1]
         )
         if (
             valid
