@@ -6150,9 +6150,36 @@ def migrate_functions(source: str) -> str:
 
         params = render_params(tokens[cursor + 1 : close])
         replacement = f"function {name_token.text}"
-        variables = list(dict.fromkeys([*existing_variables, *variables]))
         if variables:
-            replacement += "<" + ", ".join(variables) + ">"
+            duplicate_classic = next(
+                (
+                    variable
+                    for position, variable in enumerate(variables)
+                    if variable in variables[:position]
+                ),
+                None,
+            )
+            overlapping = next(
+                (
+                    variable
+                    for variable in variables
+                    if variable in existing_variables
+                ),
+                None,
+            )
+            duplicate = duplicate_classic or overlapping
+            if duplicate is not None:
+                line, column = _source_line_column(
+                    source, name_token.start
+                )
+                raise ValueError(
+                    "cannot migrate duplicate Classic generic binder "
+                    f"`{duplicate}` on function `{name_token.text}` at "
+                    f"line {line}, column {column}"
+                )
+        merged_variables = [*existing_variables, *variables]
+        if merged_variables:
+            replacement += "<" + ", ".join(merged_variables) + ">"
         replacement += f"({params})"
         if modifiers:
             replacement += " " + " ".join(modifiers)

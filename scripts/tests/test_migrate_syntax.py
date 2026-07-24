@@ -5800,6 +5800,73 @@ const NORMAL: &str = "function f(x: word) { return x as Box<function(word) -> bo
 
 
 class FunctionMigrationTests(unittest.TestCase):
+    def test_rejects_duplicate_classic_generic_binders(self) -> None:
+        cases = (
+            "forall T, T. function f(x: T) -> T { return x; }\n",
+            "forall T. function f<T>(x: T) -> T { return x; }\n",
+        )
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"duplicate Classic generic binder `T`",
+                ):
+                    MIGRATE.migrate_source(classic)
+
+    def test_preserves_canonical_duplicate_generic_binders(self) -> None:
+        canonical = (
+            "function f<T, T>(x: T) returns (T) { return x; }\n"
+        )
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_rejects_duplicate_generic_binders_in_rust_literals(
+        self,
+    ) -> None:
+        rust = (
+            'const SOURCE: &str = r#"forall T, T. '
+            'function f(x: T) -> T { return x; }"#;\n'
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"duplicate Classic generic binder `T`",
+        ):
+            MIGRATE.migrate_rust_strings(rust)
+
+    def test_duplicate_generic_binder_cli_failure_is_atomic(self) -> None:
+        good_source = "alias Good = A -> B;\n"
+        bad_source = (
+            "forall T, T. "
+            "function f(x: T) -> T { return x; }\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            good = root / "good.solc"
+            bad = root / "bad.solc"
+            good.write_text(good_source)
+            bad.write_text(bad_source)
+
+            migration = subprocess.run(
+                [sys.executable, str(SCRIPT), str(root)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            good_after = good.read_text()
+            bad_after = bad.read_text()
+
+        self.assertEqual(migration.returncode, 2)
+        self.assertEqual(good_after, good_source)
+        self.assertEqual(bad_after, bad_source)
+        self.assertIn("0 file(s) migrated", migration.stdout)
+        self.assertIn(
+            "duplicate Classic generic binder `T`",
+            migration.stderr,
+        )
+
     def test_preserves_duplicate_function_modifiers(self) -> None:
         classic = """\
 public public function first(x: word) -> word { return x; }
