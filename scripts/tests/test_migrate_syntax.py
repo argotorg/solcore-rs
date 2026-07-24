@@ -1803,14 +1803,6 @@ function f(left: Option</* payload */ word>, right: pair</* first */ word, /* se
                 "import foo /* one */ .{/* two */ *};\n",
                 "import foo /* one */  /* two */ ;\n",
             ),
-            (
-                "function f(value: word) -> word {"
-                " return value : /* type */ Option(/* arg */ word);"
-                " }\n",
-                "function f(value: word) returns (word) {"
-                " return (value) as /* type */ Option</* arg */ word>;"
-                " }\n",
-            ),
         ]
 
         for classic, expected in cases:
@@ -1941,6 +1933,132 @@ const ORDINARY: &str =
 
         self.assertEqual(migrated.count("match (x < y)"), 2)
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+
+class ExpressionAnnotationMigrationTests(unittest.TestCase):
+    def test_moves_complete_let_initializer_annotations_to_bindings(
+        self,
+    ) -> None:
+        classic = """\
+function annotate(c: bool) {
+  let simple = value : word;
+  let (left, right) = pairValue : (word, bool);
+  let choice = c ? left : right : Option(word);
+  let callback = value : word -> bool;
+  let table = value : mapping(word, Option(word));
+  let buffer = value : memory(bytes);
+  let powered = value : comptime Option(word);
+}
+"""
+        expected = """\
+function annotate(c: bool) {
+  let simple: word = value;
+  let (left, right): (word, bool) = pairValue;
+  let choice: Option<word> = c ? left : right;
+  let callback: function(word) returns (bool) = value;
+  let table: mapping(word => Option<word>) = value;
+  let buffer: bytes memory = value;
+  let comptime powered: Option<word> = value;
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_annotation_comments_when_reordering_a_let(self) -> None:
+        classic = (
+            "function f() {"
+            " let x /* binding */ = value /* operand */"
+            " : /* type */ Box(word) /* tail */;"
+            " }\n"
+        )
+        expected = (
+            "function f() {"
+            " let x /* binding */ : /* type */ Box<word> /* tail */"
+            " = value /* operand */ ;"
+            " }\n"
+        )
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_line_endings_and_line_comments(self) -> None:
+        classic = (
+            "function f() {\r\n"
+            "  let x = value // operand\r\n"
+            "    : // type\r\n"
+            "    Option(word) // tail\r\n"
+            "    ;\r\n"
+            "}\r\n"
+        )
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertIn("let x: // type\r\n", migrated)
+        self.assertIn("Option<word> // tail\r\n", migrated)
+        self.assertIn("= value // operand\r\n", migrated)
+        self.assertNotIn("\n", migrated.replace("\r\n", ""))
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_migrates_isolated_let_annotations_in_rust_literals(self) -> None:
+        rust = r'''
+const RAW: &str = r#"let x = value : Option(word);"#;
+const ORDINARY: &str =
+    "let choice = c ? left : right : word;";
+'''
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 2)
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn('r#"let x: Option<word> = value;"#', migrated)
+        self.assertIn(
+            '"let choice: word = c ? left : right;"',
+            migrated,
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+    def test_rejects_annotations_that_need_manual_typed_bindings(self) -> None:
+        cases = [
+            "function f() { return value : word; }\n",
+            "function f() { call(value : word); }\n",
+            "function f() { value : word; }\n",
+            "function f() { target = value : word; }\n",
+            "function f() { target : word = value; }\n",
+            "function f() { if value : bool {} }\n",
+            "function f() { match value : word { | _ => return; } }\n",
+            "function f() { let x = call(value : word); }\n",
+            "contract C { value: word = source : word; }\n",
+            "function f() { let x: word = value : bool; }\n",
+            "function f() { let x = value : word : word; }\n",
+            (
+                "function f() {"
+                " let (x, y) = value : comptime (word, word);"
+                " }\n"
+            ),
+        ]
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot safely migrate Classic expression annotation",
+                ):
+                    MIGRATE.migrate_source(classic)
+
+    def test_keeps_canonical_conversions_bindings_and_ternaries(self) -> None:
+        canonical = """\
+function f(c: bool) {
+  let typed: word = value;
+  let converted = value as word;
+  let choice = c ? left : right;
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
 
 
 class ComptimeLetMigrationTests(unittest.TestCase):
@@ -2628,7 +2746,6 @@ contract C {
     ) -> None:
         classic = """\
 function use(x: word) {
-  return x : Box<function(word) -> bool>;
   return x as function(word) -> bool;
   return x as Box<function(word) -> bool>;
   return @function(word) -> bool;
@@ -2644,10 +2761,6 @@ enum Callback {
         migrated = MIGRATE.migrate_source(classic)
 
         self.assertNotIn("->", migrated)
-        self.assertIn(
-            "return (x) as Box<function(function(word)) returns (bool)>;",
-            migrated,
-        )
         self.assertIn(
             "return x as function(function(word)) returns (bool);",
             migrated,
@@ -2715,28 +2828,20 @@ function proxy() {
         self.assertEqual(migrated, expected)
         self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
-    def test_migrates_statement_annotations_inside_executable_bodies(
+    def test_rejects_statement_annotations_inside_executable_bodies(
         self,
     ) -> None:
-        classic = """\
-function annotate() {
-  x : function();
-  y : A -> B;
-  z : function() + y;
-}
-"""
-        expected = """\
-function annotate() {
-  (x) as function();
-  (y) as function(A) returns (B);
-  (z) as function() + y;
-}
-"""
-
-        migrated = MIGRATE.migrate_source(classic)
-
-        self.assertEqual(migrated, expected)
-        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+        for classic in [
+            "function annotate() { x : function(); }\n",
+            "function annotate() { y : A -> B; }\n",
+            "function annotate() { z : function() + y; }\n",
+        ]:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot safely migrate Classic expression annotation",
+                ):
+                    MIGRATE.migrate_source(classic)
 
     def test_rejects_arrows_in_unterminated_parameter_lists(self) -> None:
         for source in [
@@ -2883,23 +2988,19 @@ function compare(x: word) {
                 ):
                     MIGRATE.migrate_source(source)
 
-    def test_parenthesizes_complete_classic_expression_annotations(
+    def test_moves_whole_initializer_annotations_to_let_bindings(
         self,
     ) -> None:
         classic = """\
 function annotate(c: bool) {
-  return c ? x : y : word -> bool;
-  return x + y : word;
-  return call(c ? x : y : word);
   let z = a + b : word;
+  let result = c ? x : y : word -> bool;
 }
 """
         expected = """\
 function annotate(c: bool) {
-  return (c ? x : y) as function(word) returns (bool);
-  return (x + y) as word;
-  return call((c ? x : y) as word);
-  let z = (a + b) as word;
+  let z: word = a + b;
+  let result: function(word) returns (bool) = c ? x : y;
 }
 """
 
@@ -2916,7 +3017,6 @@ alias Wrapped = Box(word);
 alias GenericMemory = memory<word>;
 alias GenericMapping = mapping<word, bool>;
 function use(x: word) {
-  return x : Box(word);
   return x as Box(word);
   return x as memory<word>;
   return @Box(function(word) -> bool);
@@ -2932,7 +3032,6 @@ alias Wrapped = Box<word>;
 alias GenericMemory = memory<word>;
 alias GenericMapping = mapping<word, bool>;
 function use(x: word) {
-  return (x) as Box<word>;
   return x as Box<word>;
   return x as memory<word>;
   return @Box<function(function(word)) returns (bool)>;
@@ -3079,22 +3178,18 @@ alias Third = mapping(comptime function() view returns (word)[] memory storage =
         self.assertEqual(migrated, expected)
         self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
-    def test_preserves_comparisons_while_migrating_annotations(
+    def test_preserves_comparisons_without_treating_ternary_as_annotation(
         self,
     ) -> None:
         classic = """\
 function annotate(c: bool) {
-  return a >= b : T;
   return c ? a >= b : d;
-  return c ? a >= b : d : T;
   return @pkg.T -> bool;
 }
 """
         expected = """\
 function annotate(c: bool) {
-  return (a >= b) as T;
   return c ? a >= b : d;
-  return (c ? a >= b : d) as T;
   return @function(pkg.T) returns (bool);
 }
 """

@@ -5894,59 +5894,123 @@ def _annotation_expression_start(
     return 0
 
 
-def migrate_expression_annotations(source: str) -> str:
+def migrate_let_initializer_annotations(source: str) -> str:
+    """Move a whole-initializer annotation onto its untyped ``let`` binding."""
+
     tokens = significant(source)
     executable_bodies = _executable_regions(tokens)[0]
     replacements: list[tuple[int, int, str]] = []
+    for let_index, token in enumerate(tokens):
+        if token.text != "let":
+            continue
+
+        stack: list[str] = []
+        equals: int | None = None
+        terminator: int | None = None
+        for cursor in range(let_index + 1, len(tokens)):
+            text = tokens[cursor].text
+            if not stack and text == "=" and equals is None:
+                equals = cursor
+            elif not stack and text == ";":
+                terminator = cursor
+                break
+            _depth_step(stack, text, angles=False)
+        if (
+            equals is None
+            or terminator is None
+            or equals + 1 >= terminator
+        ):
+            continue
+
+        binding_tokens = list(tokens[let_index + 1 : equals])
+        if (
+            not binding_tokens
+            or find_top(binding_tokens, ":", angles=False) is not None
+        ):
+            continue
+
+        root_colons: list[int] = []
+        stack = []
+        for cursor in range(equals + 1, terminator):
+            text = tokens[cursor].text
+            if (
+                not stack
+                and text == ":"
+                and _is_expression_annotation_colon(
+                    tokens, cursor, executable_bodies
+                )
+            ):
+                root_colons.append(cursor)
+            _depth_step(stack, text, angles=False)
+        if len(root_colons) != 1:
+            continue
+
+        colon = root_colons[0]
+        if (
+            colon <= equals + 1
+            or _annotation_expression_start(tokens, colon) != equals + 1
+        ):
+            continue
+        type_tokens = list(tokens[colon + 1 : terminator])
+        if not type_tokens:
+            continue
+
+        already_comptime = binding_tokens[0].text == "comptime"
+        move_comptime = (
+            type_tokens[0].text == "comptime" and not already_comptime
+        )
+        if already_comptime and type_tokens[0].text == "comptime":
+            continue
+        if move_comptime:
+            if binding_tokens[0].text == "(":
+                continue
+            type_tokens = type_tokens[1:]
+        if not type_tokens:
+            continue
+        try:
+            rendered_type = render_type(type_tokens)
+        except ValueError:
+            continue
+        if not rendered_type:
+            continue
+
+        binding = join_tokens(binding_tokens)
+        expression = join_tokens(tokens[equals + 1 : colon])
+        if not binding or not expression:
+            continue
+        replacement = "let "
+        if move_comptime:
+            replacement += "comptime "
+        replacement += f"{binding}: {rendered_type} = {expression}"
+        replacement = _with_preserved_comments(
+            source,
+            token.start,
+            tokens[terminator].start,
+            replacement,
+        )
+        replacements.append(
+            (token.start, tokens[terminator].start, replacement)
+        )
+    return replace_spans(source, replacements)
+
+
+def reject_remaining_expression_annotations(source: str) -> None:
+    """Fail closed where Classic inference guidance needs a manual binding."""
+
+    tokens = significant(source)
+    executable_bodies = _executable_regions(tokens)[0]
     for index, token in enumerate(tokens):
         if not _is_expression_annotation_colon(
             tokens, index, executable_bodies
         ):
             continue
-
-        type_tail = _split_type_angle_operator_tokens(
-            tokens[index + 1 :]
+        line, column = _source_line_column(source, token.start)
+        raise ValueError(
+            "cannot safely migrate Classic expression annotation at "
+            f"line {line}, column {column}: `expression : Type` guides "
+            "inference but `as` performs a checked conversion; introduce a "
+            "typed binding such as `let value: Type = expression`"
         )
-        end = _type_expression_end(
-            type_tail,
-            0,
-            FUNCTION_TYPE_CONVERSION_BOUNDARIES | {"else", "then", "{"},
-            word_boundaries={"as", "else", "then"},
-        )
-        type_tokens = list(type_tail[:end])
-        if not type_tokens:
-            continue
-        _reject_dangling_type_comparison(type_tail, end)
-        rendered = render_type(type_tokens)
-        if not rendered:
-            continue
-        expression_start = _annotation_expression_start(tokens, index)
-        if expression_start >= index:
-            continue
-        replacement_start = token.start
-        preceding_end = tokens[index - 1].end
-        if not source[preceding_end:token.start].strip():
-            replacement_start = preceding_end
-        replacement = _with_preserved_comments(
-            source,
-            replacement_start,
-            type_tokens[-1].end,
-            ") as " + rendered,
-        )
-        replacement = _separate_following_type_token(
-            source, type_tokens[-1].end, replacement
-        )
-        replacements.append(
-            (
-                tokens[expression_start].start,
-                tokens[expression_start].start,
-                "(",
-            )
-        )
-        replacements.append(
-            (replacement_start, type_tokens[-1].end, replacement)
-        )
-    return replace_spans(source, replacements)
 
 
 def _migrate_expression_types(
@@ -6560,7 +6624,7 @@ def migrate_source(
         migrate_let_initializers,
         migrate_let_types,
         migrate_field_types,
-        migrate_expression_annotations,
+        migrate_let_initializer_annotations,
         migrate_conversion_types,
         migrate_proxy_types,
         migrate_enum_payload_types,
@@ -6581,6 +6645,7 @@ def migrate_source(
             source, global_constructor_owners
         )
         if source == before:
+            reject_remaining_expression_annotations(source)
             reject_remaining_classic_arrows(source)
             return source
     raise RuntimeError("syntax migration did not reach a fixed point")
@@ -7159,6 +7224,14 @@ def _rust_migratable_let_is_source_like(
         )
     ):
         return True
+    equals = find_top(declaration, "=", angles=False)
+    if equals is not None:
+        for cursor in range(equals + 1, len(declaration)):
+            if (
+                declaration[cursor].text == ":"
+                and not _is_ternary_colon(declaration, cursor)
+            ):
+                return True
     colon = find_top(declaration, ":", angles=False)
     if colon is None or colon == 0 or colon + 1 >= len(declaration):
         return False
