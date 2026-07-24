@@ -1,9 +1,14 @@
 enum First {
-  FirstValue(word),
+  First(word),
 }
 
 enum Second {
-  SecondValue,
+  Second,
 }
+
+export mod;
+export mod as M;
+export mod.{a};
+export { T(*) };
 
 import {T} from m;

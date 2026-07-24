@@ -1,6 +1,5 @@
-struct Pair<A, B> {
-  first: A;
-  second: B;
+enum Pair<A, B> {
+  Pair(A, B),
 }
 
 function fst<A, B>(p: (A, B)) returns (A) {

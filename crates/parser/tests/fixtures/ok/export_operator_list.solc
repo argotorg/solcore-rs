@@ -1,1 +1,1 @@
-import {f} from operators;
+export { f };
