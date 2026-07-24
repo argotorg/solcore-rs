@@ -12024,13 +12024,21 @@ def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
         )
         if source[cursor] == "!" and is_macro_name:
             open_start = _rust_skip_trivia(source, cursor + 1)
+            if previous_identifier == "macro_rules":
+                name_end = _rust_identifier_token_end(
+                    source,
+                    open_start,
+                )
+                if name_end is not None:
+                    open_start = _rust_skip_trivia(source, name_end)
             if (
                 open_start < len(source)
                 and source[open_start] in "([{"
             ):
                 end = _rust_token_tree_end(source, open_start)
-                if end is not None:
-                    ranges.append((cursor, end))
+                ranges.append(
+                    (cursor, len(source) if end is None else end)
+                )
         previous_identifier = None
         cursor += 1
     return ranges

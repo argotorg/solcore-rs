@@ -5256,6 +5256,38 @@ const TOKENS: &str = stringify!(
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
         self.assert_rust_syntax(rust)
 
+    def test_concat_in_macro_rules_definition_stays_opaque(self) -> None:
+        rust = r'''
+macro_rules! detect {
+    (concat!(
+        "function f(",
+        "x: word) -> word { return x; }",
+    )) => { "sentinel" };
+}
+'''
+
+        invocations = MIGRATE._rust_concat_invocations(rust)
+
+        self.assertEqual(len(invocations), 1)
+        self.assertIsNone(invocations[0].literals)
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+        self.assert_rust_syntax(rust)
+
+    def test_concat_in_unterminated_outer_macro_stays_opaque(self) -> None:
+        rust = r'''
+const TOKENS: &str = stringify!(
+    concat!(
+        "function f(",
+        "x: word) -> word { return x; }",
+    )
+'''
+
+        invocations = MIGRATE._rust_concat_invocations(rust)
+
+        self.assertEqual(len(invocations), 1)
+        self.assertIsNone(invocations[0].literals)
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
     def test_unary_not_parentheses_do_not_hide_concat(self) -> None:
         rust = r'''
 pub fn is_empty() -> bool {
