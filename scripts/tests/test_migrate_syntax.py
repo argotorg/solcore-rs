@@ -86,6 +86,35 @@ function choose(flag: bool, x: word) -> Option(word) {
             migrated,
         )
 
+    def test_rewrites_dot_constructor_after_spaced_comparisons(self) -> None:
+        source = """\
+enum T { T(word) }
+function compare(a: word, b: word, x: word) returns (bool) {
+  return a < b > .T(x);
+}
+"""
+        expected = """\
+enum T { T(word) }
+function compare(a: word, b: word, x: word) returns (bool) {
+  return a < b > T.T(x);
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_spaced_proxy_type_member_access(self) -> None:
+        source = """\
+enum member { member(word) }
+function project() {
+  return @pkg.Box < word > .member;
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(source), source)
+
     def test_does_not_rewrite_member_access(self) -> None:
         canonical = """\
 enum Option<T> { None, Some(T) }

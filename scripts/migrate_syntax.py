@@ -5246,10 +5246,23 @@ def _closes_type_arguments(
         elif text == "<":
             depth -= 1
             if depth == 0:
-                return (
-                    index > 0
-                    and tokens[index - 1].kind == "word"
+                if index == 0 or tokens[index - 1].kind != "word":
+                    return False
+                root = index - 1
+                while (
+                    root >= 2
+                    and tokens[root - 1].text == "."
+                    and tokens[root - 2].kind == "word"
+                ):
+                    root -= 2
+                context = tokens[root - 1].text if root else ""
+                tightly_bound = (
+                    tokens[index - 1].end == tokens[index].start
+                    and close_index + 1 < len(tokens)
+                    and tokens[close_index].end
+                    == tokens[close_index + 1].start
                 )
+                return tightly_bound or context in {"@", ":", "as"}
     return False
 
 
