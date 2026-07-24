@@ -5800,6 +5800,36 @@ const NORMAL: &str = "function f(x: word) { return x as Box<function(word) -> bo
 
 
 class FunctionMigrationTests(unittest.TestCase):
+    def test_preserves_duplicate_function_modifiers(self) -> None:
+        classic = """\
+public public function first(x: word) -> word { return x; }
+public function second(x: word) public -> word { return x; }
+"""
+        expected = """\
+function first(x: word) public public returns (word) { return x; }
+function second(x: word) public public returns (word) { return x; }
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_duplicate_special_function_modifiers(self) -> None:
+        classic = """\
+public public constructor() {}
+fallback() view view {}
+"""
+        expected = """\
+constructor() public public {}
+fallback() view view {}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
     def test_moves_classic_prefix_before_canonical_return_clause(self) -> None:
         classic = """\
 public function f(x: word) returns (word) { return x; }

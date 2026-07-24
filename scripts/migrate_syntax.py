@@ -6155,7 +6155,7 @@ def migrate_functions(source: str) -> str:
             replacement += "<" + ", ".join(variables) + ">"
         replacement += f"({params})"
         if modifiers:
-            replacement += " " + " ".join(dict.fromkeys(modifiers))
+            replacement += " " + " ".join(modifiers)
         if arrow is not None or has_returns:
             rendered_return = (
                 render_return_clause_items(return_tokens)
@@ -6308,7 +6308,7 @@ def migrate_special_functions(source: str) -> str:
         params = render_params(tokens[open_index + 1 : close])
         replacement = f"{token.text}({params})"
         if modifiers:
-            replacement += " " + " ".join(dict.fromkeys(modifiers))
+            replacement += " " + " ".join(modifiers)
         if arrow is not None or has_returns:
             rendered_return = (
                 render_return_clause_items(return_tokens)
