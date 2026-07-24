@@ -1300,33 +1300,38 @@ function use(x: word) { Some(x); }
             migrated,
         )
 
-    def test_unresolved_import_blocks_terms_but_not_local_patterns(
+    def test_unresolved_import_blocks_local_terms_and_patterns(
         self,
     ) -> None:
-        sources, surfaces = self.surfaces(
-            {
-                "main.solc": """\
-import missing;
-enum T { T(word) }
-function use(x: T, y: word) {
-  T(y);
-  match (x) { case T(value) { return; } }
-}
+        for unresolved in (
+            "import missing;",
+            "import {Unknown} from missing;",
+            "import * as P from missing;",
+        ):
+            with self.subTest(unresolved=unresolved):
+                sources, surfaces = self.surfaces(
+                    {
+                        "main.solc": f"""\
+{unresolved}
+enum Option {{ Some(word) }}
+function use(x: Option, y: word) {{
+  Some(y);
+  match (x) {{ case Some(value) {{ return; }} }}
+}}
 """,
-            }
-        )
-        main = Path("/workspace/main.solc")
+                    }
+                )
+                main = Path("/workspace/main.solc")
 
-        migrated = MIGRATE.migrate_source(
-            sources[main],
-            constructor_import_surface=surfaces[main],
-        )
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
 
-        self.assertIn("  T(y);", migrated)
-        self.assertIn("case T.T(value)", migrated)
-        self.assertTrue(
-            surfaces[main].has_unknown_unqualified_terms
-        )
+                self.assertEqual(migrated, sources[main])
+                self.assertTrue(
+                    surfaces[main].has_unknown_unqualified_constructors
+                )
 
     def test_unresolved_import_blocks_matching_imported_owner(
         self,

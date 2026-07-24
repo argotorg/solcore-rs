@@ -5449,6 +5449,12 @@ def migrate_qualified_constructors(
         *,
         respect_term_shadowing: bool = True,
     ) -> tuple[str | None, bool, bool]:
+        if surface.has_unknown_unqualified_constructors:
+            # Classic constructor leaves are resolved across every visible
+            # imported type namespace.  An unresolved open, selective, or
+            # namespace import can therefore collide even with a declaration
+            # in this source; do not guess that the local owner wins.
+            return None, leaf in module_owners, False
         scoped = {
             owner
             for start, end, owner in scoped_candidates.get(leaf, [])
