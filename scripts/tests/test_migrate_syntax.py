@@ -5121,6 +5121,37 @@ const BRACE: &str = concat! {
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
         self.assert_rust_syntax(migrated)
 
+    def test_concat_uses_rust_pattern_whitespace(self) -> None:
+        for whitespace in ("\u200e", "\u200f"):
+            with self.subTest(codepoint=ord(whitespace)):
+                rust = (
+                    "const SOURCE: &str = concat"
+                    + whitespace
+                    + '!(\n    "function f(",\n'
+                    '    "x: word) -> word { return x; }",\n);\n'
+                )
+
+                migrated = MIGRATE.migrate_rust_strings(rust)
+
+                self.assertEqual(
+                    self.concat_values(migrated),
+                    [
+                        "function f(x: word) "
+                        "returns (word) { return x; }"
+                    ],
+                )
+                self.assert_rust_syntax(migrated)
+
+        invalid_nbsp = (
+            "const SOURCE: &str = concat\u00a0!(\n"
+            '    "function f(",\n'
+            '    "x: word) -> word { return x; }",\n);\n'
+        )
+        self.assertEqual(
+            MIGRATE.migrate_rust_strings(invalid_nbsp),
+            invalid_nbsp,
+        )
+
     def test_concat_joined_context_keeps_opaque_fragments(self) -> None:
         rust = r'''
 const BLOCK_COMMENT: &str = concat!(

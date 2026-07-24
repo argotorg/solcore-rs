@@ -265,6 +265,9 @@ KEEP_UNQUALIFIED_CONSTRUCTOR_MARKER = (
 KEEP_LEGACY_NEGATIVE_MARKER = "migrate-syntax: keep-legacy-negative"
 KEEP_RUST_FILE_MARKER = "migrate-syntax: keep-rust-file"
 KEEP_RUST_CONCAT_MARKER = "migrate-syntax: keep-rust-concat"
+RUST_PATTERN_WHITESPACE = frozenset(
+    " \t\n\v\f\r\u0085\u200e\u200f\u2028\u2029"
+)
 BUILTIN_CONSTRUCTORS = {"true", "false", "pair", "inl", "inr"}
 
 
@@ -11761,7 +11764,7 @@ class RustConcatInvocation:
 def _rust_skip_trivia(source: str, start: int) -> int:
     cursor = start
     while cursor < len(source):
-        if source[cursor].isspace():
+        if source[cursor] in RUST_PATTERN_WHITESPACE:
             cursor += 1
             continue
         if source.startswith("//", cursor):
@@ -11881,7 +11884,7 @@ def _rust_code_suffix(source: str, end: int, length: int) -> str:
             suffix = (suffix + "?")[-length:]
             cursor = literal[2]
             continue
-        if not source[cursor].isspace():
+        if source[cursor] not in RUST_PATTERN_WHITESPACE:
             suffix = (suffix + source[cursor])[-length:]
         cursor += 1
     return suffix
@@ -12004,7 +12007,7 @@ def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
     cursor = _rust_file_code_start(source)
     previous_identifier: str | None = None
     while cursor < len(source):
-        if source[cursor].isspace():
+        if source[cursor] in RUST_PATTERN_WHITESPACE:
             cursor += 1
             continue
         if source.startswith("//", cursor):
@@ -12106,7 +12109,7 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
 
     cursor = _rust_file_code_start(source)
     while cursor < len(source):
-        if source[cursor].isspace():
+        if source[cursor] in RUST_PATTERN_WHITESPACE:
             cursor += 1
             continue
         if source.startswith("//", cursor):
