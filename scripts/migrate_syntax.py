@@ -9420,26 +9420,31 @@ def _rust_migratable_let_is_source_like(
         return False
     declaration = tokens[index + 1 : end]
     walrus = find_top(declaration, ":=", angles=False)
-    walrus_binding_end = (
+    walrus_type_colon = (
         find_top(declaration[:walrus], ":", angles=False)
         if walrus is not None
         else None
     )
-    if (
-        walrus is not None
-        and walrus > 0
-        and walrus + 1 < len(declaration)
-        and _rust_let_binding_is_source_like(
-            declaration[
-                : (
-                    walrus
-                    if walrus_binding_end is None
-                    else walrus_binding_end
-                )
-            ]
+    if walrus is not None:
+        if (
+            walrus_type_colon is None
+            or walrus_type_colon == 0
+            or walrus_type_colon + 1 >= walrus
+            or walrus + 1 >= len(declaration)
+            or not _rust_let_binding_is_source_like(
+                declaration[:walrus_type_colon]
+            )
+        ):
+            # An untyped standalone walrus declaration is valid Yul syntax.
+            # Require a Classic-only type signal before classifying the
+            # literal as Solcore; an enclosing Solcore fragment is detected
+            # independently and still migrates its complete source.
+            return False
+        type_tokens = declaration[walrus_type_colon + 1 : walrus]
+        return (
+            type_tokens[0].text == "comptime"
+            or _rust_classic_type_signal(type_tokens)
         )
-    ):
-        return True
     equals = find_top(declaration, "=", angles=False)
     if equals is not None:
         binding_end = find_top(

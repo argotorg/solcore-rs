@@ -4007,17 +4007,20 @@ function f(v: Option<word>) {
 
         self.assertEqual(MIGRATE.migrate_source(classic), expected)
 
-    def test_rewrites_isolated_walrus_lets_in_rust_literals(self) -> None:
+    def test_preserves_standalone_yul_walrus_literals(self) -> None:
         rust = r'''
-const RAW: &str = r#"let x := 1;"#;
+const YUL: &str = r#"let x := add(1, 2);"#;
 const ORDINARY: &str = "let x: Option(word) := value;";
+const SOURCE: &str =
+    r#"function f() { let x := 1; }"#;
 '''
 
         self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 2)
         migrated = MIGRATE.migrate_rust_strings(rust)
 
-        self.assertIn('r#"let x = 1;"#', migrated)
+        self.assertIn('r#"let x := add(1, 2);"#', migrated)
         self.assertIn('"let x: Option<word> = value;"', migrated)
+        self.assertIn("function f() { let x = 1; }", migrated)
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
 
 
