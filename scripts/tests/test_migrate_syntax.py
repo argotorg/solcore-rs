@@ -316,6 +316,33 @@ function make(x: word) returns (U) { return T(x); }
 
         self.assertIn("return U.T(x);", migrated)
 
+    def test_selective_import_allows_a_trailing_comma(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { T(word), Some(word) }
+export {T(*)};
+""",
+                "main.solc": """\
+import {T,} from provider;
+function make(x: word) returns (T) {
+  T(x);
+  return .Some(x);
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("  T.T(x);", migrated)
+        self.assertIn("return T.Some(x);", migrated)
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+
     def test_namespace_import_uses_the_full_type_qualifier(self) -> None:
         sources, surfaces = self.surfaces(
             {
@@ -588,7 +615,7 @@ function make(x: word) { T(x); }
                     "enum T { T(word) }\nexport {T(*)};\n"
                 ),
                 "main.solc": """\
-import {T,} from provider;
+import {,T} from provider;
 function make(x: word) { T(x); }
 """,
             },

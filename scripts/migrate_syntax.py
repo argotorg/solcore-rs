@@ -7765,6 +7765,8 @@ def _parse_import_specs(
                 ",",
                 angles=False,
             )
+            if parts and not parts[-1]:
+                parts = parts[:-1]
             if any(not part for part in parts):
                 malformed = True
                 continue
