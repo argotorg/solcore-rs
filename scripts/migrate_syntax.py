@@ -2050,6 +2050,13 @@ def _classic_shadow_ranges(
             and (boundary := _header_boundary(tokens, index + 1)) is not None
             and tokens[boundary].text == "{"
         }
+        contract_scope_opens = {
+            boundary
+            for index, token in enumerate(tokens)
+            if token.text in {"contract", "interface", "library"}
+            and (boundary := _header_boundary(tokens, index + 1)) is not None
+            and tokens[boundary].text == "{"
+        }
         class_method_counts: dict[str, int] = {}
         for index, token in enumerate(tokens[:-1]):
             if (
@@ -2072,17 +2079,53 @@ def _classic_shadow_ranges(
                 continue
             name = tokens[index + 1].text
             scope_open = enclosing[index]
+            boundary = _header_boundary(tokens, index + 2)
+            cursor = index + 2
+            if cursor < len(tokens) and tokens[cursor].text == "<":
+                generic_close = matching_index(tokens, cursor)
+                cursor = (
+                    generic_close + 1
+                    if generic_close is not None
+                    else len(tokens)
+                )
+            parameter_close = (
+                matching_index(tokens, cursor)
+                if cursor < len(tokens) and tokens[cursor].text == "("
+                else None
+            )
+            modifier_start = (
+                parameter_close + 1
+                if parameter_close is not None
+                else boundary
+            )
+            visibility: str | None = None
+            if modifier_start is not None and boundary is not None:
+                for item in tokens[modifier_start:boundary]:
+                    if item.text not in MODIFIERS:
+                        break
+                    if item.text in {
+                        "public",
+                        "external",
+                        "internal",
+                        "private",
+                    }:
+                        visibility = item.text
+            is_self_external = (
+                scope_open in contract_scope_opens
+                and visibility == "external"
+            )
             if scope_open is None:
                 add({name}, 0, len(tokens))
             elif scope_open in class_scope_opens:
                 if class_method_counts.get(name) == 1:
                     add({name}, 0, len(tokens))
             elif scope_open not in implementation_scope_opens:
-                add(
-                    {name},
-                    scope_open + 1,
-                    brace_pairs.get(scope_open, len(tokens)),
-                )
+                if not is_self_external:
+                    add(
+                        {name},
+                        scope_open + 1,
+                        brace_pairs.get(scope_open, len(tokens)),
+                    )
 
     # A contract field is visible in every executable body in that contract.
     for index, token in enumerate(tokens):
@@ -4477,8 +4520,12 @@ def migrate_data_declarations(source: str) -> str:
 
 def _constructor_owner_candidates(
     tokens: Sequence[Token],
-) -> tuple[dict[str, set[str]], set[int]]:
-    """Collect constructor owners and their declaration tokens.
+) -> tuple[
+    dict[str, set[str]],
+    dict[str, list[tuple[int, int, str]]],
+    set[int],
+]:
+    """Collect module/scoped constructor owners and declaration tokens.
 
     Constructor use sites cannot be inferred safely from capitalization:
     declarations such as ``enum memory<a> { memory(word) }`` are valid source
@@ -4489,8 +4536,33 @@ def _constructor_owner_candidates(
     just like algebraic-data constructors.
     """
 
-    candidates: dict[str, set[str]] = {}
+    module_candidates: dict[str, set[str]] = {}
+    scoped_candidates: dict[str, list[tuple[int, int, str]]] = {}
     declarations: set[int] = set()
+    brace_pairs, enclosing = _classic_brace_context(tokens)
+    contract_scope_opens = {
+        boundary
+        for item_index, item in enumerate(tokens)
+        if item.text in {"contract", "interface", "library"}
+        and (boundary := _header_boundary(tokens, item_index + 1)) is not None
+        and tokens[boundary].text == "{"
+    }
+
+    def add_owner(leaf: str, owner: str, declaration_index: int) -> None:
+        scope_open = enclosing[declaration_index]
+        if scope_open is None:
+            module_candidates.setdefault(leaf, set()).add(owner)
+            return
+        if scope_open not in contract_scope_opens:
+            return
+        scoped_candidates.setdefault(leaf, []).append(
+            (
+                scope_open + 1,
+                brace_pairs.get(scope_open, len(tokens)),
+                owner,
+            )
+        )
+
     for index, token in enumerate(tokens):
         if (
             token.text not in {"enum", "struct"}
@@ -4513,7 +4585,7 @@ def _constructor_owner_candidates(
         declarations.update(range(index, close + 1))
         if token.text == "struct":
             if name not in BUILTIN_CONSTRUCTORS:
-                candidates.setdefault(name, set()).add(name)
+                add_owner(name, name, index)
             continue
         constructors = split_top(tokens[cursor + 1 : close], ",")
         for constructor in constructors:
@@ -4529,13 +4601,17 @@ def _constructor_owner_candidates(
             leaf = constructor[0].text
             if leaf != name or leaf in BUILTIN_CONSTRUCTORS:
                 continue
-            candidates.setdefault(leaf, set()).add(name)
-    return candidates, declarations
+            add_owner(leaf, name, index)
+            break
+    return module_candidates, scoped_candidates, declarations
 
 
 def _dot_constructor_owner_candidates(
     tokens: Sequence[Token],
-) -> dict[str, set[str]]:
+) -> tuple[
+    dict[str, set[str]],
+    dict[str, list[tuple[int, int, str]]],
+]:
     """Collect every enum constructor owner for Classic ``.Leaf`` uses.
 
     The older bare-constructor fallback intentionally considers only
@@ -4545,7 +4621,32 @@ def _dot_constructor_owner_candidates(
     contribute their implicit same-name constructor as well.
     """
 
-    candidates: dict[str, set[str]] = {}
+    module_candidates: dict[str, set[str]] = {}
+    scoped_candidates: dict[str, list[tuple[int, int, str]]] = {}
+    brace_pairs, enclosing = _classic_brace_context(tokens)
+    contract_scope_opens = {
+        boundary
+        for item_index, item in enumerate(tokens)
+        if item.text in {"contract", "interface", "library"}
+        and (boundary := _header_boundary(tokens, item_index + 1)) is not None
+        and tokens[boundary].text == "{"
+    }
+
+    def add_owner(leaf: str, owner: str, declaration_index: int) -> None:
+        scope_open = enclosing[declaration_index]
+        if scope_open is None:
+            module_candidates.setdefault(leaf, set()).add(owner)
+            return
+        if scope_open not in contract_scope_opens:
+            return
+        scoped_candidates.setdefault(leaf, []).append(
+            (
+                scope_open + 1,
+                brace_pairs.get(scope_open, len(tokens)),
+                owner,
+            )
+        )
+
     for index, token in enumerate(tokens):
         if (
             token.text not in {"enum", "struct"}
@@ -4566,7 +4667,7 @@ def _dot_constructor_owner_candidates(
         if close is None:
             continue
         if token.text == "struct":
-            candidates.setdefault(owner, set()).add(owner)
+            add_owner(owner, owner, index)
             continue
         for constructor in split_top(tokens[cursor + 1 : close], ","):
             if not (
@@ -4578,8 +4679,8 @@ def _dot_constructor_owner_candidates(
                 )
             ):
                 continue
-            candidates.setdefault(constructor[0].text, set()).add(owner)
-    return candidates
+            add_owner(constructor[0].text, owner, index)
+    return module_candidates, scoped_candidates
 
 
 def _unique_constructor_owners(
@@ -4862,20 +4963,38 @@ def migrate_qualified_constructors(
         return source
 
     tokens = significant(source)
-    local_candidates, declaration_tokens = _constructor_owner_candidates(tokens)
-    local_owners = _unique_constructor_owners(local_candidates)
+    (
+        module_candidates,
+        scoped_candidates,
+        declaration_tokens,
+    ) = _constructor_owner_candidates(tokens)
+    module_owners = _unique_constructor_owners(module_candidates)
     constructor_owners = dict(global_owners or {})
     for namespace_name in _declared_type_and_module_names(tokens):
         constructor_owners.pop(namespace_name, None)
     # A declaration in this source is more precise than a repository-wide
     # spelling.  A locally ambiguous leaf must remain untouched.
-    constructor_owners.update(local_owners)
-    for leaf, candidates in local_candidates.items():
+    constructor_owners.update(module_owners)
+    for leaf, candidates in module_candidates.items():
         if len(candidates) != 1:
             constructor_owners.pop(leaf, None)
-    if not constructor_owners:
+    constructor_leaves = set(constructor_owners) | set(scoped_candidates)
+    if not constructor_leaves:
         return source
-    constructor_leaves = set(constructor_owners)
+
+    def owner_at(index: int, leaf: str) -> tuple[str | None, bool]:
+        scoped = {
+            owner
+            for start, end, owner in scoped_candidates.get(leaf, [])
+            if start <= index < end
+        }
+        if scoped:
+            return (
+                next(iter(scoped)) if len(scoped) == 1 else None,
+                True,
+            )
+        return constructor_owners.get(leaf), leaf in module_owners
+
     shadow_ranges = _classic_shadow_ranges(
         tokens,
         constructor_leaves,
@@ -4900,7 +5019,7 @@ def migrate_qualified_constructors(
             leaf = token.text
             if (
                 token.kind != "word"
-                or leaf not in constructor_owners
+                or leaf not in constructor_leaves
                 or (
                     index not in constructor_pattern_tokens
                     and any(
@@ -4913,12 +5032,15 @@ def migrate_qualified_constructors(
                 or index in binding_tokens
             ):
                 continue
+            owner, is_local_owner = owner_at(index, leaf)
+            if owner is None:
+                continue
             previous = tokens[index - 1].text if index else ""
             following = tokens[index + 1].text if index + 1 < len(tokens) else ""
             if previous == "." or following == ".":
                 continue
             if (
-                leaf not in local_owners
+                not is_local_owner
                 and following == "("
                 and matching_index(tokens, index + 1) == index + 2
             ):
@@ -4927,7 +5049,7 @@ def migrate_qualified_constructors(
                 # constructor.  Only a local declaration can disambiguate it.
                 continue
             if (
-                leaf not in local_owners
+                not is_local_owner
                 and previous == "case"
                 and following not in {"(", "as"}
             ):
@@ -4938,7 +5060,7 @@ def migrate_qualified_constructors(
                 # that rewrite.
                 continue
             if (
-                leaf not in local_owners
+                not is_local_owner
                 and following not in {"(", "as"}
                 and previous not in {"return", "=", ":=", "case"}
             ):
@@ -4947,7 +5069,6 @@ def migrate_qualified_constructors(
                 # example `case Nat.Succ(m)`).  Limit nullary rewrites to
                 # positions that explicitly introduce a value.
                 continue
-            owner = constructor_owners[leaf]
             replacements[index] = (
                 token.start,
                 token.end,
@@ -4961,7 +5082,7 @@ def migrate_qualified_constructors(
     for index, token in enumerate(tokens):
         if (
             token.kind != "word"
-            or token.text not in constructor_owners
+            or token.text not in constructor_leaves
             or index in body_tokens
             or index in nonterm_tokens
             or any(
@@ -4976,12 +5097,14 @@ def migrate_qualified_constructors(
         if previous not in {"return", "=", ":=", "case"}:
             continue
         leaf = token.text
+        owner, is_local_owner = owner_at(index, leaf)
+        if owner is None:
+            continue
         if (
-            leaf not in local_owners
+            not is_local_owner
             and matching_index(tokens, index + 1) == index + 2
         ):
             continue
-        owner = constructor_owners[leaf]
         replacements[index] = (token.start, token.end, f"{owner}.{leaf}")
     return replace_spans(source, replacements.values())
 
@@ -5097,7 +5220,9 @@ def migrate_legacy_dot_constructors(
         return source
 
     tokens = significant(source)
-    local_candidates = _dot_constructor_owner_candidates(tokens)
+    module_candidates, scoped_candidates = (
+        _dot_constructor_owner_candidates(tokens)
+    )
     candidates = {
         leaf: set(owners)
         for leaf, owners in (global_candidates or {}).items()
@@ -5105,7 +5230,7 @@ def migrate_legacy_dot_constructors(
     # A source-local declaration is more precise than the CLI-wide table,
     # while two local declarations with the same leaf remain ambiguous.
     candidates.update(
-        {leaf: set(owners) for leaf, owners in local_candidates.items()}
+        {leaf: set(owners) for leaf, owners in module_candidates.items()}
     )
 
     replacements: list[tuple[int, int, str]] = []
@@ -5114,7 +5239,13 @@ def migrate_legacy_dot_constructors(
         if not _is_legacy_dot_constructor(tokens, index):
             continue
         leaf = tokens[index + 1].text
-        owners = candidates.get(leaf, set())
+        scoped_owners = {
+            owner
+            for start, end, owner in scoped_candidates.get(leaf, [])
+            if start <= index < end
+        }
+        owners = set(candidates.get(leaf, set()))
+        owners.update(scoped_owners)
         line, column = _source_line_column(source, token.start)
         location = f"line {line}, column {column}"
         if len(owners) == 1:
@@ -7141,7 +7272,9 @@ def collect_global_constructor_owners(sources: Iterable[str]) -> dict[str, str]:
         canonical = migrate_incomplete_data_heads(
             migrate_data_declarations(source)
         )
-        candidates, _ = _constructor_owner_candidates(significant(canonical))
+        candidates, _, _ = _constructor_owner_candidates(
+            significant(canonical)
+        )
         for leaf, owners in candidates.items():
             merged.setdefault(leaf, set()).update(owners)
     return _unique_constructor_owners(merged)
@@ -7157,7 +7290,9 @@ def collect_global_dot_constructor_candidates(
         canonical = migrate_incomplete_data_heads(
             migrate_data_declarations(source)
         )
-        candidates = _dot_constructor_owner_candidates(significant(canonical))
+        candidates, _ = _dot_constructor_owner_candidates(
+            significant(canonical)
+        )
         for leaf, owners in candidates.items():
             merged.setdefault(leaf, set()).update(owners)
     return merged

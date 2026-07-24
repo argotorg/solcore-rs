@@ -992,6 +992,224 @@ function use(x: t) {
                 self.assertEqual(migrated, expected)
                 self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
+    def test_contract_local_constructor_owners_stay_in_their_contract(
+        self,
+    ) -> None:
+        source = """\
+function outsideBefore(x: word) returns (word) { return T(x); }
+contract A {
+  function before(x: word) returns (T) { return T(x); }
+  enum T { T(word) }
+  function after(x: word) returns (T) { return T(x); }
+}
+contract B {
+  function sibling(x: word) returns (word) { return T(x); }
+}
+function outsideAfter(x: word) returns (word) { return T(x); }
+"""
+        expected = """\
+function outsideBefore(x: word) returns (word) { return T(x); }
+contract A {
+  function before(x: word) returns (T) { return T.T(x); }
+  enum T { T(word) }
+  function after(x: word) returns (T) { return T.T(x); }
+}
+contract B {
+  function sibling(x: word) returns (word) { return T(x); }
+}
+function outsideAfter(x: word) returns (word) { return T(x); }
+"""
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_external_contract_method_does_not_shadow_local_owner(
+        self,
+    ) -> None:
+        source = """\
+contract A {
+  enum T { T(word) }
+  function T(x: word) external returns (word);
+  function make(x: word) returns (T) { return T(x); }
+}
+"""
+        expected = """\
+contract A {
+  enum T { T(word) }
+  function T(x: word) external returns (word);
+  function make(x: word) returns (T) { return T.T(x); }
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_function_type_external_does_not_hide_internal_method(
+        self,
+    ) -> None:
+        source = """\
+contract A {
+  enum T { T(word) }
+  function T(cb: function(word) external returns (word))
+    returns (word) { return 0; }
+  function make(x: word) returns (T) { return T(x); }
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, source)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_generic_function_type_external_does_not_hide_method(
+        self,
+    ) -> None:
+        source = """\
+enum Box<a> { Box(a) }
+trait C<a> {}
+contract A {
+  enum T { T(word) }
+  function T<a>(x: a) returns (word)
+    where Box<function(word) external returns (word)>: C { return 0; }
+  function make(x: word) returns (T) { return T(x); }
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, source)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_where_subject_external_does_not_hide_public_method(
+        self,
+    ) -> None:
+        source = """\
+trait C<a> {}
+contract A {
+  enum T { T(word) }
+  function T(x: word) public returns (word)
+    where function(word) external returns (word): C { return 0; }
+  function make(x: word) returns (T) { return T(x); }
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, source)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_contract_local_struct_owner_stays_in_its_library(self) -> None:
+        source = """\
+library L {
+  function before(x: word) returns (T) { return T(x); }
+  struct T { value: word; }
+  function after(x: word) returns (T) { return T(x); }
+}
+function outside(x: word) returns (word) { return T(x); }
+"""
+        expected = """\
+library L {
+  function before(x: word) returns (T) { return T.T(x); }
+  struct T { value: word; }
+  function after(x: word) returns (T) { return T.T(x); }
+}
+function outside(x: word) returns (word) { return T(x); }
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_module_constructor_owner_is_visible_in_contracts(self) -> None:
+        source = """\
+enum T { T(word) }
+contract T {
+  function value(x: word) returns (word) { return x; }
+}
+contract A {
+  alias T = word;
+  function inside(x: word) returns (word) { return T(x); }
+}
+function outside(x: word) returns (T) { return T(x); }
+"""
+        expected = """\
+enum T { T(word) }
+contract T {
+  function value(x: word) returns (word) { return x; }
+}
+contract A {
+  alias T = word;
+  function inside(x: word) returns (word) { return T.T(x); }
+}
+function outside(x: word) returns (T) { return T.T(x); }
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_contract_local_owners_do_not_seed_other_sources(self) -> None:
+        source = """\
+contract A {
+  enum T { T(word) }
+  enum Option { Some(word) }
+}
+"""
+
+        self.assertEqual(
+            MIGRATE.collect_global_constructor_owners([source]),
+            {},
+        )
+        self.assertEqual(
+            MIGRATE.collect_global_dot_constructor_candidates([source]),
+            {},
+        )
+
+    def test_dot_constructor_owners_respect_contract_scope(self) -> None:
+        source = """\
+enum Global { Other(word) }
+contract A {
+  enum Local { Some(word) }
+  function inside(x: word) returns (Local) { return .Some(x); }
+}
+function outside(x: word) returns (Global) { return .Other(x); }
+"""
+        expected = """\
+enum Global { Other(word) }
+contract A {
+  enum Local { Some(word) }
+  function inside(x: word) returns (Local) { return Local.Some(x); }
+}
+function outside(x: word) returns (Global) { return Global.Other(x); }
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_dot_constructor_rejects_visible_module_and_local_owners(
+        self,
+    ) -> None:
+        source = """\
+enum Global { Some(word) }
+contract A {
+  enum Local { Some(word) }
+  function inside(x: word) returns (Global) { return .Some(x); }
+}
+"""
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"ambiguous legacy dot-constructor \.Some.*Global, Local",
+        ):
+            MIGRATE.migrate_source(source)
+
     def test_preserves_calls_and_prose_in_rust_literals(self) -> None:
         rust = r'''
 const SOURCE: &str = r#"function uint256(x: word) returns (word) {
