@@ -5951,6 +5951,67 @@ const SOURCE: &str = concat!(
             ["function f(x: word) returns (word) { return x; }"],
         )
 
+    def test_cli_shares_concat_shadowing_between_rust_files(self) -> None:
+        parent = r'''
+macro_rules! concat {
+    ($first:literal, $second:literal $(,)?) => { $first };
+}
+mod child;
+'''
+        child = r'''
+pub const SOURCE: &str = concat!(
+    "function f(x: word) -> word { ",
+    "return x; }",
+);
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent_path = root / "lib.rs"
+            child_path = root / "child.rs"
+            output = root / "library.rmeta"
+            parent_path.write_text(parent)
+            child_path.write_text(child)
+
+            compiled = subprocess.run(
+                [
+                    "rustc",
+                    "--crate-name",
+                    "concat_shadow_test",
+                    "--crate-type",
+                    "lib",
+                    "--emit",
+                    "metadata",
+                    "-o",
+                    str(output),
+                    str(parent_path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--rust-strings",
+                    str(root),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migrated_parent = parent_path.read_text()
+            migrated_child = child_path.read_text()
+
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertTrue(MIGRATE._rust_has_explicit_concat_shadow(parent))
+        self.assertFalse(MIGRATE._rust_has_explicit_concat_shadow(child))
+        self.assertEqual(migrated_parent, parent)
+        self.assertEqual(migrated_child, child)
+
     def test_cli_deduplicates_relative_and_absolute_rust_paths(
         self,
     ) -> None:

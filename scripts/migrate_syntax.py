@@ -12148,14 +12148,21 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
     return False
 
 
-def _rust_concat_invocations(source: str) -> list[RustConcatInvocation]:
+def _rust_concat_invocations(
+    source: str,
+    *,
+    assume_concat_shadowed: bool = False,
+) -> list[RustConcatInvocation]:
     """Locate non-overlapping ``concat!`` token trees outside Rust trivia."""
 
     def identifier_continues(character: str) -> bool:
         return character == "_" or ("a" + character).isidentifier()
 
     macro_ranges = _rust_macro_token_tree_ranges(source)
-    concat_is_shadowed = _rust_has_explicit_concat_shadow(source)
+    concat_is_shadowed = (
+        assume_concat_shadowed
+        or _rust_has_explicit_concat_shadow(source)
+    )
     invocations: list[RustConcatInvocation] = []
     cursor = 0
     while cursor < len(source):
@@ -13169,6 +13176,7 @@ def migrate_rust_strings(
     global_dot_constructor_candidates: Mapping[str, set[str]] | None = None,
     *,
     classic_bare_imports: bool = False,
+    assume_concat_shadowed: bool = False,
 ) -> str:
     """Migrate Solcore programs embedded in Rust string literals.
 
@@ -13182,7 +13190,10 @@ def migrate_rust_strings(
     if has_rust_comment_marker(source, KEEP_RUST_FILE_MARKER):
         return source
 
-    concat_invocations = _rust_concat_invocations(source)
+    concat_invocations = _rust_concat_invocations(
+        source,
+        assume_concat_shadowed=assume_concat_shadowed,
+    )
     concat_spans = [
         (invocation.start, invocation.end)
         for invocation in concat_invocations
@@ -13529,6 +13540,13 @@ def main() -> int:
         except Exception as error:
             failures.append((path, error))
 
+    rust_concat_shadowed = (
+        args.rust_strings
+        and any(
+            _rust_has_explicit_concat_shadow(source)
+            for source in originals.values()
+        )
+    )
     prepared_sources: dict[Path, str] = {}
     for path, original in originals.items():
         try:
@@ -13565,6 +13583,7 @@ def main() -> int:
                 migrate_rust_strings(
                     original,
                     classic_bare_imports=args.classic_bare_imports,
+                    assume_concat_shadowed=rust_concat_shadowed,
                 )
                 if args.rust_strings
                 else migrate_source(
