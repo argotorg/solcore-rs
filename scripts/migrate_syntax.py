@@ -8483,10 +8483,9 @@ def _provider_impl_header_is_valid(
         head,
         require_arguments=True,
     )
-    return valid_head and (
-        not predicates
-        or _provider_predicates_are_valid(predicates)
-    )
+    if where is None:
+        return valid_head
+    return valid_head and _provider_predicates_are_valid(predicates)
 
 
 def _provider_special_modifiers_are_valid(

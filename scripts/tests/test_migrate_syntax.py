@@ -1706,6 +1706,7 @@ function make(x: word) { T(x); }
             "pragma solcore noCoverageCondition A,, B;",
             "trait Bad {}",
             "impl Bad {}",
+            "impl Eq<word> where {}",
         )
         for invalid_item in invalid_items:
             with self.subTest(invalid_item=invalid_item):
