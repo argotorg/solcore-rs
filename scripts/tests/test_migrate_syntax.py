@@ -6257,6 +6257,25 @@ pub const SOURCE: &str = concat!(
         self.assertLess(wide_elapsed, 5.0)
         self.assertLess(nested_elapsed, 5.0)
 
+    def test_nested_attribute_shadow_scan_remains_linear(self) -> None:
+        depth = 2_000
+        nested = (
+            "macro_rules! sink { ($($tt:tt)*) => {} }\n"
+            + "sink!("
+            + "#[" * depth
+            + "not_macro_use"
+            + "]" * depth
+            + ");\n"
+        )
+
+        started = time.perf_counter()
+        self.assertFalse(
+            MIGRATE._rust_has_explicit_concat_shadow(nested)
+        )
+        elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 5.0)
+
     def test_cli_deduplicates_relative_and_absolute_rust_paths(
         self,
     ) -> None:

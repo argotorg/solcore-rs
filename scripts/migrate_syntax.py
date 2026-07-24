@@ -12144,12 +12144,14 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
         is_raw = text.startswith("r#")
         return (text[2:] if is_raw else text, end, is_raw)
 
-    def attribute_has_macro_use(start: int) -> bool:
+    def attribute_has_macro_use(
+        start: int,
+    ) -> tuple[bool, int | None]:
         cursor = _rust_skip_trivia(source, start + 1)
         if cursor < len(source) and source[cursor] == "!":
             cursor = _rust_skip_trivia(source, cursor + 1)
         if cursor >= len(source) or source[cursor] != "[":
-            return False
+            return False, None
         end = _rust_token_tree_end(source, cursor)
         if end is None:
             end = len(source)
@@ -12162,7 +12164,7 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
             if identifier is not None:
                 text, cursor, _ = identifier
                 if text == "macro_use":
-                    return True
+                    return True, end
                 continue
             literal = _rust_raw_literal(source, cursor)
             if literal is None:
@@ -12171,7 +12173,7 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
                 cursor = literal[2]
                 continue
             cursor += 1
-        return False
+        return False, end
 
     cursor = _rust_file_code_start(source)
     while cursor < len(source):
@@ -12185,8 +12187,15 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
         if source.startswith("/*", cursor):
             cursor = _rust_block_comment_end(source, cursor)
             continue
-        if source[cursor] == "#" and attribute_has_macro_use(cursor):
-            return True
+        if source[cursor] == "#":
+            has_macro_use, attribute_end = attribute_has_macro_use(
+                cursor
+            )
+            if has_macro_use:
+                return True
+            if attribute_end is not None:
+                cursor = attribute_end
+                continue
         if source[cursor] == "'":
             char_end = _rust_char_end(source, cursor)
             if char_end is not None:
