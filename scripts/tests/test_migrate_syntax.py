@@ -343,6 +343,41 @@ function make(x: word) returns (T) {
         self.assertIn("return T.Some(x);", migrated)
         self.assertFalse(surfaces[main].has_unknown_constructors)
 
+    def test_duplicate_selective_import_names_fail_closed(self) -> None:
+        for import_declaration in (
+            "import {T, T} from provider;",
+            "import {T as U, T as V} from provider;",
+            "import {T as U, X as U} from provider;",
+        ):
+            with self.subTest(import_declaration=import_declaration):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": """\
+enum T { T(word) }
+enum X { X(word) }
+export {T(*), X(*)};
+""",
+                        "main.solc": f"""\
+{import_declaration}
+function make(x: word) {{
+  T(x);
+  X(x);
+}}
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertEqual(migrated, sources[main])
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+
     def test_namespace_import_uses_the_full_type_qualifier(self) -> None:
         sources, surfaces = self.surfaces(
             {

@@ -7791,6 +7791,14 @@ def _parse_import_specs(
             if not valid or not selections:
                 malformed = True
                 continue
+            if (
+                len({source for source, _ in selections})
+                != len(selections)
+                or len({local for _, local in selections})
+                != len(selections)
+            ):
+                malformed = True
+                continue
             external, path = parsed_path
             specs.append(
                 _ImportSpec(
