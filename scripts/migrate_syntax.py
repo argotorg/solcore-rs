@@ -2582,6 +2582,51 @@ def reject_generic_fallback(source: str) -> None:
         )
 
 
+def reject_comptime_tuple_bindings(source: str) -> None:
+    """Reject tuple destructuring that would acquire a binding modifier."""
+
+    tokens = significant(source)
+    for index, token in enumerate(tokens):
+        if token.text != "let" or index + 1 >= len(tokens):
+            continue
+        first = index + 1
+        if (
+            tokens[first].text == "comptime"
+            and first + 1 < len(tokens)
+            and tokens[first + 1].text == "("
+        ):
+            offending = tokens[first]
+        else:
+            stack: list[str] = []
+            colon: int | None = None
+            end: int | None = None
+            for cursor in range(first, len(tokens)):
+                text = tokens[cursor].text
+                if not stack and text == ":":
+                    colon = cursor
+                if not stack and text in {"=", ":=", ";"}:
+                    end = cursor
+                    break
+                _depth_step(stack, text, angles=False)
+            if (
+                colon is None
+                or end is None
+                or colon <= first
+                or colon + 1 >= end
+                or tokens[first].text != "("
+                or tokens[colon + 1].text != "comptime"
+            ):
+                continue
+            offending = tokens[colon + 1]
+        line, column = _source_line_column(source, offending.start)
+        raise ValueError(
+            "cannot migrate comptime tuple destructuring at "
+            f"line {line}, column {column}: Core does not support the "
+            "`comptime` binding modifier on tuple patterns; split the "
+            "destructuring into explicitly typed scalar bindings"
+        )
+
+
 def reject_contract_inheritance(source: str) -> None:
     """Reject Classic inheritance that Core cannot preserve automatically."""
 
@@ -6827,6 +6872,7 @@ def migrate_source(
     reject_named_call_arguments(source)
     reject_unsupported_solidity_sugar(source)
     reject_generic_fallback(source)
+    reject_comptime_tuple_bindings(source)
     reject_noncanonical_proxy_comptime(source)
     reject_malformed_mapping_types(source)
     reject_noncanonical_function_type_qualifiers(source)

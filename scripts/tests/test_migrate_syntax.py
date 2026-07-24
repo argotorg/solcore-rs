@@ -2062,6 +2062,51 @@ function f(c: bool) {
 
 
 class ComptimeLetMigrationTests(unittest.TestCase):
+    def test_rejects_comptime_tuple_destructuring(self) -> None:
+        cases = [
+            (
+                "function f(value: (word, word)) {"
+                " let (x, y): comptime (word, word) = value;"
+                " }\n"
+            ),
+            (
+                "function f(value: (word, word)) {"
+                " let comptime (x, y): (word, word) = value;"
+                " }\n"
+            ),
+        ]
+
+        for source in cases:
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate comptime tuple destructuring",
+                ):
+                    MIGRATE.migrate_source(source)
+
+    def test_keeps_scalar_comptime_and_runtime_tuple_bindings(self) -> None:
+        canonical = """\
+function f(pairValue: (word, word), value: word) {
+  let comptime scalar: word = value;
+  let (left, right): (word, word) = pairValue;
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_rejects_comptime_tuple_in_rust_source_literals(self) -> None:
+        rust = (
+            'const SOURCE: &str = r#"let (x, y): '
+            'comptime (word, word) = pairValue;"#;\n'
+        )
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 1)
+        with self.assertRaisesRegex(
+            ValueError,
+            "cannot migrate comptime tuple destructuring",
+        ):
+            MIGRATE.migrate_rust_strings(rust)
+
     def test_preserves_nested_comptime_type_layers_and_comments(self) -> None:
         classic = """\
 function f() {
