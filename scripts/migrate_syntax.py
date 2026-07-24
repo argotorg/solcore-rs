@@ -7930,6 +7930,425 @@ def _surface_import_source(source: str) -> tuple[str, bool]:
         return source, True
 
 
+def _provider_scan_source(source: str) -> tuple[str, bool]:
+    """Canonicalize item heads before validating a provider's structure."""
+
+    if has_comment_marker(source, KEEP_LEGACY_NEGATIVE_MARKER):
+        return source, True
+    passes = (
+        migrate_pragmas,
+        migrate_contract_type_parameters,
+        migrate_data_declarations,
+        migrate_incomplete_data_heads,
+        migrate_aliases,
+        migrate_value_type_underlying_types,
+        migrate_classes,
+        migrate_instances,
+        migrate_canonical_trait_impl_headers,
+        migrate_functions,
+        migrate_special_functions,
+    )
+    try:
+        for _ in range(4):
+            before = source
+            for migration in passes:
+                source = migration(source)
+            if source == before:
+                return source, False
+    except ValueError:
+        return source, True
+    return source, True
+
+
+def _provider_list_parts(
+    tokens: Sequence[Token],
+    separator: str,
+) -> list[list[Token]] | None:
+    """Split a parser list while allowing only one trailing separator."""
+
+    parts = split_top(tokens, separator)
+    if parts and not parts[-1]:
+        parts = parts[:-1]
+    if any(not part for part in parts):
+        return None
+    return parts
+
+
+def _provider_generic_end(
+    tokens: Sequence[Token],
+    cursor: int,
+) -> int | None:
+    if cursor >= len(tokens) or tokens[cursor].text != "<":
+        return cursor
+    close = matching_index(tokens, cursor)
+    if close is None:
+        return None
+    binders = _provider_list_parts(tokens[cursor + 1 : close], ",")
+    if (
+        not binders
+        or any(
+            len(binder) != 1
+            or not _is_core_import_identifier(binder[0])
+            for binder in binders
+        )
+    ):
+        return None
+    return close + 1
+
+
+def _provider_type_is_valid(tokens: Sequence[Token]) -> bool:
+    if (
+        not tokens
+        or (
+            tokens[0].kind != "word"
+            and tokens[0].text not in {"@", "(", "["}
+        )
+        or any(
+            token.text in {"?", "=", ":=", "{", "}", ";"}
+            for token in tokens
+        )
+    ):
+        return False
+    try:
+        return bool(render_type(tokens))
+    except ValueError:
+        return False
+
+
+def _provider_params_are_valid(tokens: Sequence[Token]) -> bool:
+    parts = _provider_list_parts(tokens, ",")
+    if parts is None:
+        return False
+    for part in parts:
+        cursor = 0
+        if part[cursor].text == "comptime":
+            cursor += 1
+        if (
+            cursor >= len(part)
+            or not _is_core_import_identifier(part[cursor])
+        ):
+            return False
+        cursor += 1
+        if cursor == len(part):
+            continue
+        if (
+            part[cursor].text != ":"
+            or not _provider_type_is_valid(part[cursor + 1 :])
+        ):
+            return False
+    return True
+
+
+def _provider_returns_are_valid(tokens: Sequence[Token]) -> bool:
+    parts = _provider_list_parts(tokens, ",")
+    if parts is None:
+        return False
+    for part in parts:
+        colon = find_top(part, ":")
+        if colon is None:
+            if not _provider_type_is_valid(part):
+                return False
+        elif (
+            colon != 1
+            or not _is_core_import_identifier(part[0])
+            or not _provider_type_is_valid(part[colon + 1 :])
+        ):
+            return False
+    return True
+
+
+def _provider_predicates_are_valid(tokens: Sequence[Token]) -> bool:
+    parts = _provider_list_parts(tokens, ",")
+    if not parts:
+        return False
+    try:
+        return all(render_predicate(part) is not None for part in parts)
+    except ValueError:
+        return False
+
+
+def _provider_function_header_is_valid(
+    header: Sequence[Token],
+) -> bool:
+    if (
+        len(header) < 4
+        or header[0].text != "function"
+        or not _is_core_import_identifier(header[1])
+    ):
+        return False
+    cursor = _provider_generic_end(header, 2)
+    if (
+        cursor is None
+        or cursor >= len(header)
+        or header[cursor].text != "("
+    ):
+        return False
+    close = matching_index(header, cursor)
+    if (
+        close is None
+        or not _provider_params_are_valid(header[cursor + 1 : close])
+    ):
+        return False
+    cursor = close + 1
+
+    modifiers: list[str] = []
+    while cursor < len(header) and header[cursor].text in MODIFIERS:
+        modifiers.append(header[cursor].text)
+        cursor += 1
+    visibility = [
+        modifier
+        for modifier in modifiers
+        if modifier in {"public", "external", "internal", "private"}
+    ]
+    mutability = [
+        modifier
+        for modifier in modifiers
+        if modifier in {"pure", "view", "payable"}
+    ]
+    if (
+        len(visibility) > 1
+        or len(mutability) > 1
+        or len(set(modifiers)) != len(modifiers)
+    ):
+        return False
+
+    if cursor < len(header) and header[cursor].text == "returns":
+        cursor += 1
+        if cursor >= len(header) or header[cursor].text != "(":
+            return False
+        close = matching_index(header, cursor)
+        if (
+            close is None
+            or not _provider_returns_are_valid(
+                header[cursor + 1 : close]
+            )
+        ):
+            return False
+        cursor = close + 1
+
+    if cursor < len(header) and header[cursor].text == "where":
+        if not _provider_predicates_are_valid(header[cursor + 1 :]):
+            return False
+        cursor = len(header)
+    return cursor == len(header)
+
+
+def _provider_nominal_header_is_valid(
+    kind: str,
+    header: Sequence[Token],
+) -> bool:
+    cursor = 1
+    if cursor >= len(header) or not _is_core_import_identifier(
+        header[cursor]
+    ):
+        return False
+    cursor = _provider_generic_end(header, cursor + 1)
+    if cursor is None:
+        return False
+    if kind == "trait" and cursor < len(header):
+        if header[cursor].text != "where":
+            return False
+        return _provider_predicates_are_valid(header[cursor + 1 :])
+    return cursor == len(header)
+
+
+def _provider_impl_header_is_valid(
+    header: Sequence[Token],
+) -> bool:
+    cursor = 0
+    if header and header[0].text == "default":
+        cursor += 1
+    if cursor >= len(header) or header[cursor].text != "impl":
+        return False
+    cursor = _provider_generic_end(header, cursor + 1)
+    if cursor is None or cursor >= len(header):
+        return False
+    where = find_top(header[cursor:], "where")
+    if where is None:
+        head = header[cursor:]
+        predicates: Sequence[Token] = ()
+    else:
+        where += cursor
+        head = header[cursor:where]
+        predicates = header[where + 1 :]
+    try:
+        valid_head = render_trait_ref_text(head) is not None
+    except ValueError:
+        valid_head = False
+    return valid_head and (
+        not predicates
+        or _provider_predicates_are_valid(predicates)
+    )
+
+
+def _provider_statement_is_valid(
+    kind: str,
+    body: Sequence[Token],
+) -> bool:
+    if not body:
+        return False
+    if kind not in {"alias", "type"}:
+        return True
+    if not _is_core_import_identifier(body[0]):
+        return False
+    cursor = _provider_generic_end(body, 1)
+    operator = "=" if kind == "alias" else "is"
+    return (
+        cursor is not None
+        and cursor < len(body)
+        and body[cursor].text == operator
+        and _provider_type_is_valid(body[cursor + 1 :])
+    )
+
+
+def _has_invalid_provider_items(source: str) -> bool:
+    """Reject provider facts when canonical top-level items do not parse."""
+
+    canonical, conversion_failed = _provider_scan_source(source)
+    if conversion_failed:
+        return True
+    tokens = significant(canonical)
+    brace_pairs, enclosing = _classic_brace_context(tokens)
+    statement_items = {"import", "export", "pragma", "alias", "type"}
+    nominal_items = {
+        "enum",
+        "struct",
+        "trait",
+        "contract",
+        "interface",
+        "library",
+    }
+    braced_items = nominal_items | {"impl", "function"}
+    cursor = 0
+    while cursor < len(tokens):
+        if enclosing[cursor] is not None:
+            return True
+        kind = tokens[cursor].text
+        if kind in statement_items:
+            end = _statement_end(tokens, cursor)
+            if (
+                end is None
+                or not _provider_statement_is_valid(
+                    kind, tokens[cursor + 1 : end]
+                )
+            ):
+                return True
+            cursor = end + 1
+            continue
+
+        start = cursor
+        if kind == "default":
+            if (
+                cursor + 1 >= len(tokens)
+                or tokens[cursor + 1].text != "impl"
+            ):
+                return True
+            kind = "impl"
+            cursor += 1
+        if kind not in braced_items:
+            return True
+        boundary = _header_boundary(tokens, cursor + 1)
+        if (
+            boundary is None
+            or tokens[boundary].text != "{"
+            or boundary not in brace_pairs
+        ):
+            return True
+        header = tokens[start:boundary]
+        if kind == "function":
+            valid_header = _provider_function_header_is_valid(header)
+        elif kind == "impl":
+            valid_header = _provider_impl_header_is_valid(header)
+        else:
+            valid_header = _provider_nominal_header_is_valid(
+                kind, header
+            )
+        if not valid_header:
+            return True
+        cursor = brace_pairs[boundary] + 1
+        if (
+            kind in {"enum", "struct"}
+            and cursor < len(tokens)
+            and tokens[cursor].text == ";"
+        ):
+            cursor += 1
+    return False
+
+
+def _provider_data_body(
+    tokens: Sequence[Token],
+    index: int,
+) -> tuple[str, int, int] | None:
+    """Return a validated data name and body bounds."""
+
+    if (
+        index + 1 >= len(tokens)
+        or not _is_core_import_identifier(tokens[index + 1])
+    ):
+        return None
+    name = tokens[index + 1].text
+    cursor = _provider_generic_end(tokens, index + 2)
+    if (
+        cursor is None
+        or cursor >= len(tokens)
+        or tokens[cursor].text != "{"
+    ):
+        return None
+    close = matching_index(tokens, cursor)
+    if close is None:
+        return None
+    return name, cursor, close
+
+
+def _provider_struct_fields_are_valid(
+    tokens: Sequence[Token],
+) -> bool:
+    if tokens and tokens[-1].text != ";":
+        return False
+    fields = _provider_list_parts(tokens, ";")
+    if fields is None:
+        return False
+    for field in fields:
+        colon = find_top(field, ":")
+        if (
+            colon != 1
+            or not _is_core_import_identifier(field[0])
+            or not _provider_type_is_valid(field[colon + 1 :])
+        ):
+            return False
+    return True
+
+
+def _provider_enum_constructors(
+    tokens: Sequence[Token],
+) -> frozenset[str] | None:
+    constructors = _provider_list_parts(tokens, ",")
+    if constructors is None:
+        return None
+    names: set[str] = set()
+    for constructor in constructors:
+        if not _is_core_import_identifier(constructor[0]):
+            return None
+        name = constructor[0].text
+        if len(constructor) == 1:
+            pass
+        elif constructor[1].text == "(":
+            close = matching_index(constructor, 1)
+            if close != len(constructor) - 1:
+                return None
+            fields = _provider_list_parts(constructor[2:close], ",")
+            if fields is None or any(
+                not _provider_type_is_valid(field) for field in fields
+            ):
+                return None
+        else:
+            return None
+        if name in names:
+            return None
+        names.add(name)
+    return frozenset(names)
+
+
 def _provider_local_declarations(
     source: str,
     provider: Path,
@@ -7984,50 +8403,26 @@ def _provider_local_declarations(
         if token.text not in {"enum", "struct"}:
             continue
 
+        data_body = _provider_data_body(tokens, index)
+        if data_body is None:
+            malformed_data.add(name)
+            continue
+        _, body_open, body_close = data_body
         if token.text == "struct":
+            if not _provider_struct_fields_are_valid(
+                tokens[body_open + 1 : body_close]
+            ):
+                malformed_data.add(name)
+                continue
             constructors = frozenset({name})
         else:
-            cursor = index + 2
-            if cursor < len(tokens) and tokens[cursor].text == "<":
-                close = matching_index(tokens, cursor)
-                if close is None:
-                    malformed_data.add(name)
-                    continue
-                cursor = close + 1
-            if cursor >= len(tokens) or tokens[cursor].text != "{":
+            parsed_constructors = _provider_enum_constructors(
+                tokens[body_open + 1 : body_close]
+            )
+            if parsed_constructors is None:
                 malformed_data.add(name)
                 continue
-            close = matching_index(tokens, cursor)
-            if close is None:
-                malformed_data.add(name)
-                continue
-            parsed_constructors: set[str] = set()
-            valid = True
-            for constructor in split_top(
-                tokens[cursor + 1 : close],
-                ",",
-            ):
-                if not constructor:
-                    continue
-                if not (
-                    constructor[0].kind == "word"
-                    and (
-                        len(constructor) == 1
-                        or (
-                            len(constructor) > 1
-                            and constructor[1].text == "("
-                            and matching_index(constructor, 1)
-                            == len(constructor) - 1
-                        )
-                    )
-                ):
-                    valid = False
-                    break
-                parsed_constructors.add(constructor[0].text)
-            if not valid:
-                malformed_data.add(name)
-                continue
-            constructors = frozenset(parsed_constructors)
+            constructors = parsed_constructors
 
         origin = ConstructorOrigin(
             str(_absolute_lexical_path(provider)),
@@ -8047,6 +8442,7 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
     structurally_broken = _has_unbalanced_structural_delimiters(
         significant(canonical)
     )
+    invalid_provider_items = _has_invalid_provider_items(canonical)
     (
         local_data,
         local_terms,
@@ -8082,6 +8478,8 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
                 import_conversion_failed
                 or malformed_imports
                 or structurally_broken
+                or invalid_provider_items
+                or bool(malformed_data)
             ),
         )
 
@@ -8094,6 +8492,8 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
         import_conversion_failed
         or malformed_imports
         or structurally_broken
+        or invalid_provider_items
+        or bool(malformed_data)
     )
 
     def add_data(

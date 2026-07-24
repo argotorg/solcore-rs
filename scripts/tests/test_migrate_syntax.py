@@ -942,6 +942,88 @@ function make(x: word) { T(x); }
                     sources[main],
                 )
 
+    def test_balanced_invalid_provider_items_fail_closed(self) -> None:
+        invalid_items = (
+            "this is not syntax;",
+            "function broken() frobnicate;",
+            "function broken ?;",
+            "struct Broken { x: }",
+            "function broken() frobnicate {}",
+        )
+        for invalid_item in invalid_items:
+            with self.subTest(invalid_item=invalid_item):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": f"""\
+enum T {{ T(word), Some(word) }}
+export {{T(*)}};
+{invalid_item}
+""",
+                        "bare.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+                        "dot.solc": """\
+import provider;
+function make(x: word) { return .Some(x); }
+""",
+                    }
+                )
+                bare = Path("/workspace/bare.solc")
+                dot = Path("/workspace/dot.solc")
+
+                self.assertTrue(
+                    surfaces[bare].has_unknown_constructors
+                )
+                self.assertFalse(surfaces[bare].bare_candidates)
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[bare],
+                        constructor_import_surface=surfaces[bare],
+                    ),
+                    sources[bare],
+                )
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"cannot resolve legacy dot-constructor \.Some",
+                ):
+                    MIGRATE.migrate_source(
+                        sources[dot],
+                        constructor_import_surface=surfaces[dot],
+                    )
+
+    def test_valid_complex_provider_items_remain_trusted(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T<A> { T(A), Some(A), }
+struct Box<A> { value: A; }
+function helper<A>(x: A) pure returns (result: A)
+where A: Eq {
+  return x;
+}
+export {T(*)};
+""",
+                "main.solc": """\
+import provider;
+function make(x: word) returns (T<word>) {
+  T(x);
+  return .Some(x);
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("  T.T(x);", migrated)
+        self.assertIn("return T.Some(x);", migrated)
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+
 
 class ImportHidingMigrationTests(unittest.TestCase):
     def test_filters_selected_imports_by_their_local_alias(self) -> None:
