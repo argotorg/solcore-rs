@@ -8779,6 +8779,7 @@ def build_constructor_import_surfaces(
                 if (
                     expose_bare
                     and constructor == data_type.source_name
+                    and constructor not in BUILTIN_CONSTRUCTORS
                 ):
                     bare.setdefault(constructor, set()).add(binding)
 

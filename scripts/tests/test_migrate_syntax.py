@@ -641,6 +641,33 @@ function use(x: T, y: word) {
         self.assertIn("  T(y);", migrated)
         self.assertIn("case T.T(value)", migrated)
 
+    def test_imported_constructor_does_not_shadow_builtin_pair(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum pair { pair(word) }
+export {pair(*)};
+""",
+                "main.solc": """\
+import provider;
+function make(a: word, b: word) {
+  pair(a, b);
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertEqual(migrated, sources[main])
+        self.assertNotIn("pair", surfaces[main].bare_candidates)
+
     def test_local_and_imported_constructor_origins_are_ambiguous(
         self,
     ) -> None:
