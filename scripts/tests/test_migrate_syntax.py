@@ -5238,6 +5238,41 @@ const SUFFIX: &str = concat́!(
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
         self.assert_rust_syntax(rust)
 
+    def test_local_concat_macro_shadow_stays_opaque(self) -> None:
+        rust = r'''
+macro_rules! concat {
+    ($first:literal, $second:literal $(,)?) => { $first };
+}
+const SOURCE: &str = concat!(
+    "function f(x: word) -> word { ",
+    "return x; }",
+);
+'''
+
+        invocations = MIGRATE._rust_concat_invocations(rust)
+
+        self.assertTrue(MIGRATE._rust_has_explicit_concat_shadow(rust))
+        self.assertEqual(len(invocations), 1)
+        self.assertIsNone(invocations[0].literals)
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+        self.assert_rust_syntax(rust)
+
+    def test_explicit_concat_import_stays_opaque(self) -> None:
+        rust = r'''
+use macros::join as concat;
+const SOURCE: &str = concat!(
+    "function f(x: word) -> word { ",
+    "return x; }",
+);
+'''
+
+        invocations = MIGRATE._rust_concat_invocations(rust)
+
+        self.assertTrue(MIGRATE._rust_has_explicit_concat_shadow(rust))
+        self.assertEqual(len(invocations), 1)
+        self.assertIsNone(invocations[0].literals)
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
     def test_concat_nested_in_another_macro_stays_opaque(self) -> None:
         rust = r'''
 const TOKENS: &str = stringify!(
