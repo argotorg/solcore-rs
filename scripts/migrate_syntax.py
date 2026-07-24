@@ -10273,10 +10273,8 @@ def main() -> int:
         try:
             source_bytes = path.read_bytes()
             original_bytes[path] = source_bytes
-            originals[path] = (
-                source_bytes.decode(_default_text_encoding())
-                .replace("\r\n", "\n")
-                .replace("\r", "\n")
+            originals[path] = source_bytes.decode(
+                _default_text_encoding()
             )
         except Exception as error:
             failures.append((path, error))

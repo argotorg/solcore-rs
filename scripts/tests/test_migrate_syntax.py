@@ -2675,6 +2675,70 @@ const SOURCE: &str =
 
 
 class AtomicCliMigrationTests(unittest.TestCase):
+    def test_cli_preserves_solcore_source_line_endings(self) -> None:
+        for newline in (b"\r\n", b"\r"):
+            with self.subTest(newline=newline):
+                original = (
+                    b"alias F = A -> B;"
+                    + newline
+                    + b"// keep"
+                    + newline
+                )
+                expected = (
+                    b"alias F = function(A) returns (B);"
+                    + newline
+                    + b"// keep"
+                    + newline
+                )
+                with tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / "source.solc"
+                    path.write_bytes(original)
+
+                    migration = subprocess.run(
+                        [sys.executable, str(SCRIPT), str(path)],
+                        cwd=ROOT,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                    )
+                    migrated = path.read_bytes()
+
+                self.assertEqual(
+                    migration.returncode, 0, migration.stderr
+                )
+                self.assertEqual(migrated, expected)
+
+    def test_cli_preserves_rust_source_line_endings(self) -> None:
+        original = (
+            b'const SOURCE: &str = r#"alias F = A -> B;"#;\r\n'
+            b"// keep\r\n"
+        )
+        expected = (
+            b'const SOURCE: &str = '
+            b'r#"alias F = function(A) returns (B);"#;\r\n'
+            b"// keep\r\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "embedded.rs"
+            path.write_bytes(original)
+
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migrated = path.read_bytes()
+
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertEqual(migrated, expected)
+
     def test_successful_batch_preserves_modes_and_cleans_backups(
         self,
     ) -> None:
