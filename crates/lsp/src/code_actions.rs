@@ -972,7 +972,7 @@ mod tests {
 
     #[test]
     fn exact_constructor_qualification_is_preferred() {
-        let source = "enum Option { None, Some(word) }\nfunction main(x: word) returns (Option) { return Some(x); }\n";
+        let source = "enum Option { None, Some(word) }\nfunction main(x: word) returns (Option) { return Some(x); }\n// migrate-syntax: keep-unqualified-constructor\n";
         let (world, uri) = world_with_main(source);
         let diagnostic = compute_diagnostics(&world, &uri)
             .into_iter()

@@ -1014,7 +1014,7 @@ mod tests {
 
     #[test]
     fn owned_diagnostics_preserve_exact_suggestion_applicability() {
-        let source = "enum Option { None, Some(word) }\nfunction main(x: word) returns (Option) { return Some(x); }\n";
+        let source = "enum Option { None, Some(word) }\nfunction main(x: word) returns (Option) { return Some(x); }\n// migrate-syntax: keep-unqualified-constructor\n";
         let workspace = workspace_with_main(source);
         let diagnostic = workspace
             .diagnostics()
