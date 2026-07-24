@@ -1987,6 +1987,61 @@ contract C {
         self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
 
 
+class NamedArgumentMigrationTests(unittest.TestCase):
+    def test_rejects_named_call_and_struct_arguments_before_annotations(
+        self,
+    ) -> None:
+        cases = [
+            "function f(x: word) { return g({arg: x}); }\n",
+            (
+                "struct S { a: word; b: word; }"
+                " function f(x: word) returns (S) {"
+                " return S({a: x, b: 0}); }\n"
+            ),
+            (
+                "function f(x: word) { return g({"
+                " /* name */ arg /* colon */ :"
+                " choose(x ? 1 : 2), nested: h({inner: x}),"
+                " }); }\n"
+            ),
+        ]
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate named call or struct arguments",
+                ):
+                    MIGRATE.migrate_source(classic)
+
+    def test_does_not_confuse_core_blocks_and_fields_with_named_arguments(
+        self,
+    ) -> None:
+        canonical = """\
+struct S { value: word; }
+function f(x: word) {
+  if (true) { let value: word = x; }
+  match (x) { default { return; } }
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_rejects_named_arguments_in_rust_source_literals(self) -> None:
+        rust = r'''
+const RAW: &str =
+    r#"function f(x: word) { return g({arg: x}); }"#;
+const ORDINARY: &str =
+    "function f(x: word) { return S({value: x}); }";
+'''
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "cannot migrate named call or struct arguments",
+        ):
+            MIGRATE.migrate_rust_strings(rust)
+
+
 class ContractInheritanceMigrationTests(unittest.TestCase):
     def test_rejects_unsupported_contract_like_inheritance(self) -> None:
         cases = [

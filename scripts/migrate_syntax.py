@@ -2239,6 +2239,54 @@ def reject_solidity_call_options(source: str) -> None:
             )
 
 
+def reject_named_call_arguments(source: str) -> None:
+    """Reject named call/struct arguments before colons look like annotations."""
+
+    tokens = significant(source)
+    delimiter_stack: list[int] = []
+    closing = {")": "(", "]": "[", "}": "{"}
+    for open_index, token in enumerate(tokens):
+        if token.text in closing:
+            if (
+                delimiter_stack
+                and tokens[delimiter_stack[-1]].text == closing[token.text]
+            ):
+                delimiter_stack.pop()
+            continue
+        if token.text not in {"(", "[", "{"}:
+            continue
+        if token.text == "{" and any(
+            tokens[index].text == "(" for index in delimiter_stack
+        ):
+            close_index = matching_index(tokens, open_index)
+            if close_index is not None:
+                parts = split_top(
+                    tokens[open_index + 1 : close_index],
+                    ",",
+                    angles=False,
+                )
+                if len(parts) > 1 and not parts[-1]:
+                    parts = parts[:-1]
+                named = bool(parts) and all(
+                    len(part) >= 3
+                    and part[0].kind == "word"
+                    and find_top(part, ":", angles=False) == 1
+                    and find_top(part, ";", angles=False) is None
+                    for part in parts
+                )
+                if named:
+                    line, column = _source_line_column(
+                        source, tokens[open_index].start
+                    )
+                    raise ValueError(
+                        "cannot migrate named call or struct arguments at "
+                        f"line {line}, column {column}: Core has no "
+                        "`{name: value}` argument surface; use positional "
+                        "arguments in declaration order"
+                    )
+        delimiter_stack.append(open_index)
+
+
 def reject_contract_inheritance(source: str) -> None:
     """Reject Classic inheritance that Core cannot preserve automatically."""
 
@@ -6414,8 +6462,9 @@ def migrate_source(
     if has_comment_marker(source, KEEP_LEGACY_NEGATIVE_MARKER):
         return source
     reject_string_imports(source)
-    reject_solidity_call_options(source)
     reject_contract_inheritance(source)
+    reject_solidity_call_options(source)
+    reject_named_call_arguments(source)
     reject_noncanonical_proxy_comptime(source)
     reject_malformed_mapping_types(source)
     reject_noncanonical_function_type_qualifiers(source)
