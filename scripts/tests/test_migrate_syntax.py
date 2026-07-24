@@ -1183,12 +1183,128 @@ function make(x: word) { return .Some(x); }
                         constructor_import_surface=surfaces[dot],
                     )
 
+    def test_reserved_keywords_in_provider_types_fail_closed(self) -> None:
+        invalid_items = (
+            "function bad(x: return) {}",
+            "struct Bad { x: return; }",
+            "enum Bad { Bad(return) }",
+            "alias Bad = return;",
+            "alias Bad = Option<return>;",
+            "alias Bad = function(return);",
+            "alias Bad = comptime return;",
+            "alias Bad = @comptime word;",
+            "function bad() returns (return) {}",
+            "function bad<A>(x: A) where return: Eq {}",
+            "function bad<A>(x: A) where A: return {}",
+        )
+        for invalid_item in invalid_items:
+            with self.subTest(invalid_item=invalid_item):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": f"""\
+enum T {{ T(word) }}
+export {{T(*)}};
+{invalid_item}
+""",
+                        "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+
+    def test_provider_type_keywords_match_the_parser(self) -> None:
+        for keyword in MIGRATE.CORE_LEXER_WORD_TOKENS - {"from"}:
+            with self.subTest(keyword=keyword):
+                self.assertFalse(
+                    MIGRATE._provider_type_is_valid(
+                        MIGRATE.significant(keyword)
+                    )
+                )
+        self.assertTrue(
+            MIGRATE._provider_type_is_valid(
+                MIGRATE.significant("from")
+            )
+        )
+
+    def test_malformed_provider_export_lists_fail_closed(self) -> None:
+        for declaration in (
+            "export {, T(*)};",
+            "export {T(*),,};",
+            "export {T(*),,,};",
+        ):
+            with self.subTest(declaration=declaration):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": (
+                            "enum T { T(word) }\n"
+                            "export {T(*)};\n"
+                            f"{declaration}\n"
+                        ),
+                        "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+
+    def test_provider_export_list_allows_one_trailing_comma(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { T(word) }
+export {T(*),};
+""",
+                "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+        self.assertIn("T.T(x)", migrated)
+
     def test_valid_complex_provider_items_remain_trusted(self) -> None:
         sources, surfaces = self.surfaces(
             {
                 "provider.solc": """\
 enum T<A> { T(A), Some(A), }
 struct Box<A> { value: A; }
+alias Contextual = from;
+alias Nested = Option<from>;
+alias CompileProxy = comptime @from;
+alias Callback = function(from) internal pure returns (from);
 function helper<A>(x: A) pure returns (result: A)
 where A: Eq {
   return x;

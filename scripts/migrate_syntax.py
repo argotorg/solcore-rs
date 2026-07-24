@@ -8044,10 +8044,12 @@ def _provider_scan_source(source: str) -> tuple[str, bool]:
 def _provider_list_parts(
     tokens: Sequence[Token],
     separator: str,
+    *,
+    angles: bool = True,
 ) -> list[list[Token]] | None:
     """Split a parser list while allowing only one trailing separator."""
 
-    parts = split_top(tokens, separator)
+    parts = split_top(tokens, separator, angles=angles)
     if parts and not parts[-1]:
         parts = parts[:-1]
     if any(not part for part in parts):
@@ -8077,6 +8079,181 @@ def _provider_generic_end(
     return close + 1
 
 
+def _provider_named_type_is_valid(tokens: Sequence[Token]) -> bool:
+    """Validate the canonical named-type subset used by the Core parser."""
+
+    if not tokens or not _is_core_import_identifier(tokens[0]):
+        return False
+    cursor = 1
+    while cursor + 1 < len(tokens) and tokens[cursor].text == ".":
+        if not _is_core_import_identifier(tokens[cursor + 1]):
+            return False
+        cursor += 2
+    if cursor == len(tokens):
+        return True
+    if tokens[cursor].text != "<":
+        return False
+    close = matching_index(tokens, cursor)
+    if close != len(tokens) - 1:
+        return False
+    arguments = _provider_list_parts(tokens[cursor + 1 : close], ",")
+    return arguments is not None and all(
+        _provider_canonical_type_is_valid(argument)
+        for argument in arguments
+    )
+
+
+def _provider_canonical_type_is_valid(tokens: Sequence[Token]) -> bool:
+    """Recognize the parser's canonical type grammar without diagnostics."""
+
+    tokens = _expand_type_angle_closers(
+        _split_type_angle_operator_tokens(tokens)
+    )
+    if not tokens:
+        return False
+
+    if tokens[0].text == "comptime":
+        return _provider_canonical_type_is_valid(tokens[1:])
+    if tokens[0].text == "@":
+        return (
+            len(tokens) > 1
+            and tokens[1].text != "comptime"
+            and _provider_canonical_type_is_valid(tokens[1:])
+        )
+
+    base = list(tokens)
+    if (
+        len(base) > 1
+        and base[-1].text in LOCATIONS
+    ):
+        base.pop()
+    while base and base[-1].text == "]":
+        open_index = next(
+            (
+                index
+                for index in range(len(base) - 2, -1, -1)
+                if base[index].text == "["
+                and matching_index(base, index) == len(base) - 1
+            ),
+            None,
+        )
+        if open_index is None:
+            return False
+        length = base[open_index + 1 : -1]
+        if length:
+            if len(length) != 1 or length[0].kind != "number":
+                return False
+            try:
+                radix = (
+                    16
+                    if length[0].text.lower().startswith("0x")
+                    else 10
+                )
+                value = int(length[0].text, radix)
+            except ValueError:
+                return False
+            if value == 0 or value > (1 << 64) - 1:
+                return False
+        base = base[:open_index]
+    if not base:
+        return False
+
+    if is_wrapped(base, "(", ")"):
+        elements = _provider_list_parts(base[1:-1], ",")
+        return elements is not None and all(
+            _provider_canonical_type_is_valid(element)
+            for element in elements
+        )
+
+    if len(base) >= 2 and base[0].text == "function":
+        if base[1].text != "(":
+            return False
+        close = matching_index(base, 1)
+        if close is None:
+            return False
+        parameters = _provider_list_parts(base[2:close], ",")
+        if parameters is None or not all(
+            _provider_canonical_type_is_valid(parameter)
+            for parameter in parameters
+        ):
+            return False
+        cursor = close + 1
+        if (
+            cursor < len(base)
+            and base[cursor].text in FUNCTION_TYPE_VISIBILITIES
+        ):
+            cursor += 1
+        if (
+            cursor < len(base)
+            and base[cursor].text in FUNCTION_TYPE_MUTABILITIES
+        ):
+            cursor += 1
+        if cursor < len(base) and base[cursor].text == "returns":
+            cursor += 1
+            if cursor >= len(base) or base[cursor].text != "(":
+                return False
+            close = matching_index(base, cursor)
+            if close is None:
+                return False
+            returns = _provider_list_parts(
+                base[cursor + 1 : close], ","
+            )
+            if returns is None or not all(
+                _provider_canonical_type_is_valid(result)
+                for result in returns
+            ):
+                return False
+            cursor = close + 1
+        return cursor == len(base)
+
+    if (
+        len(base) >= 3
+        and base[0].text == "mapping"
+        and base[1].text == "("
+        and matching_index(base, 1) == len(base) - 1
+    ):
+        arguments = split_top(base[2:-1], "=>")
+        return (
+            len(arguments) == 2
+            and all(arguments)
+            and all(
+                _provider_canonical_type_is_valid(argument)
+                for argument in arguments
+            )
+        )
+
+    return _provider_named_type_is_valid(base)
+
+
+def _provider_trait_ref_is_valid(
+    tokens: Sequence[Token],
+    *,
+    require_arguments: bool = False,
+) -> bool:
+    """Validate the unqualified trait references accepted by the parser."""
+
+    tokens = _expand_type_angle_closers(
+        _split_type_angle_operator_tokens(tokens)
+    )
+    if not tokens or not _is_core_import_identifier(tokens[0]):
+        return False
+    if len(tokens) == 1:
+        return not require_arguments
+    if tokens[1].text != "<":
+        return False
+    close = matching_index(tokens, 1)
+    if close != len(tokens) - 1:
+        return False
+    arguments = _provider_list_parts(tokens[2:close], ",")
+    return (
+        bool(arguments)
+        and all(
+            _provider_canonical_type_is_valid(argument)
+            for argument in arguments
+        )
+    )
+
+
 def _provider_type_is_valid(tokens: Sequence[Token]) -> bool:
     if (
         not tokens
@@ -8091,9 +8268,12 @@ def _provider_type_is_valid(tokens: Sequence[Token]) -> bool:
     ):
         return False
     try:
-        return bool(render_type(tokens))
+        rendered = render_type(tokens)
     except ValueError:
         return False
+    return bool(rendered) and _provider_canonical_type_is_valid(
+        significant(rendered)
+    )
 
 
 def _provider_params_are_valid(tokens: Sequence[Token]) -> bool:
@@ -8142,10 +8322,15 @@ def _provider_predicates_are_valid(tokens: Sequence[Token]) -> bool:
     parts = _provider_list_parts(tokens, ",")
     if not parts:
         return False
-    try:
-        return all(render_predicate(part) is not None for part in parts)
-    except ValueError:
-        return False
+    for part in parts:
+        colon = find_top(part, ":")
+        if (
+            colon is None
+            or not _provider_type_is_valid(part[:colon])
+            or not _provider_trait_ref_is_valid(part[colon + 1 :])
+        ):
+            return False
+    return True
 
 
 def _provider_function_header_is_valid(
@@ -8252,10 +8437,10 @@ def _provider_impl_header_is_valid(
         where += cursor
         head = header[cursor:where]
         predicates = header[where + 1 :]
-    try:
-        valid_head = render_trait_ref_text(head) is not None
-    except ValueError:
-        valid_head = False
+    valid_head = _provider_trait_ref_is_valid(
+        head,
+        require_arguments=True,
+    )
     return valid_head and (
         not predicates
         or _provider_predicates_are_valid(predicates)
@@ -8268,6 +8453,15 @@ def _provider_statement_is_valid(
 ) -> bool:
     if not body:
         return False
+    if kind == "export" and body[0].text == "{":
+        close = matching_index(body, 0)
+        if close != len(body) - 1:
+            return False
+        return _provider_list_parts(
+            body[1:close],
+            ",",
+            angles=False,
+        ) is not None
     if kind not in {"alias", "type"}:
         return True
     if not _is_core_import_identifier(body[0]):
