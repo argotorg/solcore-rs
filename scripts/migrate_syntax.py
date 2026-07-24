@@ -12144,37 +12144,10 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
         is_raw = text.startswith("r#")
         return (text[2:] if is_raw else text, end, is_raw)
 
-    def attribute_has_macro_use(
-        start: int,
-    ) -> tuple[bool, int | None]:
-        cursor = _rust_skip_trivia(source, start + 1)
-        if cursor < len(source) and source[cursor] == "!":
-            cursor = _rust_skip_trivia(source, cursor + 1)
-        if cursor >= len(source) or source[cursor] != "[":
-            return False, None
-        end = _rust_token_tree_end(source, cursor)
-        if end is None:
-            end = len(source)
-        cursor += 1
-        while cursor < end:
-            cursor = _rust_skip_trivia(source, cursor)
-            if cursor >= end:
-                break
-            identifier = identifier_text(cursor)
-            if identifier is not None:
-                text, cursor, _ = identifier
-                if text == "macro_use":
-                    return True, end
-                continue
-            literal = _rust_raw_literal(source, cursor)
-            if literal is None:
-                literal = _rust_ordinary_literal(source, cursor)
-            if literal is not None:
-                cursor = literal[2]
-                continue
-            cursor += 1
-        return False, end
-
+    closing = {"(": ")", "[": "]", "{": "}"}
+    attribute_openings: set[int] = set()
+    delimiter_stack: list[tuple[str, bool]] = []
+    attribute_until_eof = False
     cursor = _rust_file_code_start(source)
     while cursor < len(source):
         if source[cursor] in RUST_PATTERN_WHITESPACE:
@@ -12188,14 +12161,20 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
             cursor = _rust_block_comment_end(source, cursor)
             continue
         if source[cursor] == "#":
-            has_macro_use, attribute_end = attribute_has_macro_use(
-                cursor
-            )
-            if has_macro_use:
-                return True
-            if attribute_end is not None:
-                cursor = attribute_end
-                continue
+            attribute_open = _rust_skip_trivia(source, cursor + 1)
+            if (
+                attribute_open < len(source)
+                and source[attribute_open] == "!"
+            ):
+                attribute_open = _rust_skip_trivia(
+                    source,
+                    attribute_open + 1,
+                )
+            if (
+                attribute_open < len(source)
+                and source[attribute_open] == "["
+            ):
+                attribute_openings.add(attribute_open)
         if source[cursor] == "'":
             char_end = _rust_char_end(source, cursor)
             if char_end is not None:
@@ -12209,11 +12188,49 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
             cursor = literal[2]
             continue
 
+        token = source[cursor]
+        if token in closing:
+            inside_attribute = (
+                attribute_until_eof
+                or (
+                    bool(delimiter_stack)
+                    and delimiter_stack[-1][1]
+                )
+                or cursor in attribute_openings
+            )
+            attribute_openings.discard(cursor)
+            delimiter_stack.append(
+                (closing[token], inside_attribute)
+            )
+            cursor += 1
+            continue
+        if token in closing.values():
+            if (
+                delimiter_stack
+                and delimiter_stack[-1][0] == token
+            ):
+                delimiter_stack.pop()
+            elif delimiter_stack:
+                if delimiter_stack[-1][1]:
+                    attribute_until_eof = True
+                delimiter_stack.clear()
+            cursor += 1
+            continue
+
         identifier = identifier_text(cursor)
         if identifier is None:
             cursor += 1
             continue
         text, end, is_raw = identifier
+        inside_attribute = (
+            attribute_until_eof
+            or (
+                bool(delimiter_stack)
+                and delimiter_stack[-1][1]
+            )
+        )
+        if inside_attribute and text == "macro_use":
+            return True
         if not is_raw and text == "macro_rules":
             bang = _rust_skip_trivia(source, end)
             if bang < len(source) and source[bang] == "!":

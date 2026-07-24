@@ -6276,6 +6276,17 @@ pub const SOURCE: &str = concat!(
 
         self.assertLess(elapsed, 5.0)
 
+    def test_unclosed_attribute_keeps_later_concat_shadowed(self) -> None:
+        rust = r'''
+#[custom(
+macro_rules! concat { ($($tt:tt)*) => { "shadowed" } }
+const SOURCE: &str =
+    concat!("function f(x: word) -> word { return x; }");
+'''
+
+        self.assertTrue(MIGRATE._rust_has_explicit_concat_shadow(rust))
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
     def test_repeated_use_shadow_scan_remains_linear(self) -> None:
         count = 4_000
         repeated = (
