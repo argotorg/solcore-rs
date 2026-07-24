@@ -252,6 +252,7 @@ class ConstructorImportSurface:
     imported_terms: frozenset[str]
     unknown_imported_terms: frozenset[str]
     has_unknown_unqualified_terms: bool
+    has_unknown_unqualified_constructors: bool
     has_unknown_constructors: bool
 
 
@@ -261,6 +262,7 @@ EMPTY_CONSTRUCTOR_IMPORT_SURFACE = ConstructorImportSurface(
     imported_terms=frozenset(),
     unknown_imported_terms=frozenset(),
     has_unknown_unqualified_terms=False,
+    has_unknown_unqualified_constructors=False,
     has_unknown_constructors=False,
 )
 
@@ -5201,7 +5203,10 @@ def migrate_qualified_constructors(
     ambiguous_import_leaves: set[str] = set()
     imported_constructor_leaves = set(surface.bare_candidates)
     for leaf, bindings in surface.bare_candidates.items():
-        if len(bindings) == 1:
+        if (
+            len(bindings) == 1
+            and not surface.has_unknown_unqualified_constructors
+        ):
             owner = next(iter(bindings)).owner
             constructor_owners[leaf] = owner
             trusted_import_owners[leaf] = owner
@@ -8177,14 +8182,21 @@ def build_constructor_import_surfaces(
         imported_terms: set[str] = set()
         unknown_terms: set[str] = set()
         unknown_unqualified_terms = malformed or import_conversion_failed
+        unknown_unqualified_constructors = (
+            malformed or import_conversion_failed
+        )
         unknown_constructors = malformed or import_conversion_failed
 
         def mark_unknown(spec: _ImportSpec) -> None:
-            nonlocal unknown_unqualified_terms, unknown_constructors
+            nonlocal unknown_unqualified_terms
+            nonlocal unknown_unqualified_constructors
+            nonlocal unknown_constructors
             unknown_constructors = True
             if spec.kind == "open":
                 unknown_unqualified_terms = True
-            elif spec.kind == "selective":
+            if spec.kind in {"open", "selective"}:
+                unknown_unqualified_constructors = True
+            if spec.kind == "selective":
                 unknown_terms.update(
                     local for _, local in spec.selections
                 )
@@ -8251,18 +8263,21 @@ def build_constructor_import_surfaces(
                     unknown_terms.add(local_name)
 
         surfaces[consumer] = ConstructorImportSurface(
-            {
+            bare_candidates={
                 leaf: frozenset(bindings)
                 for leaf, bindings in bare.items()
             },
-            {
+            dot_candidates={
                 leaf: frozenset(bindings)
                 for leaf, bindings in dot.items()
             },
-            frozenset(imported_terms),
-            frozenset(unknown_terms),
-            unknown_unqualified_terms,
-            unknown_constructors,
+            imported_terms=frozenset(imported_terms),
+            unknown_imported_terms=frozenset(unknown_terms),
+            has_unknown_unqualified_terms=unknown_unqualified_terms,
+            has_unknown_unqualified_constructors=(
+                unknown_unqualified_constructors
+            ),
+            has_unknown_constructors=unknown_constructors,
         )
     return surfaces
 

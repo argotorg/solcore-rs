@@ -527,6 +527,110 @@ function use(x: T, y: word) {
             surfaces[main].has_unknown_unqualified_terms
         )
 
+    def test_unresolved_import_blocks_matching_imported_owner(
+        self,
+    ) -> None:
+        for unresolved in (
+            "import missing;",
+            "import {S} from missing;",
+            "import {S as U} from missing;",
+        ):
+            with self.subTest(unresolved=unresolved):
+                sources, surfaces = self.surfaces(
+                    {
+                        "known.solc": """\
+enum S { S(word) }
+export {S(*)};
+""",
+                        "main.solc": f"""\
+import known;
+{unresolved}
+function use(x: S, y: word) {{
+  S(y);
+  match (x) {{ case S(value) {{ return; }} }}
+}}
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertEqual(migrated, sources[main])
+                self.assertTrue(
+                    surfaces[main].has_unknown_unqualified_constructors
+                )
+
+    def test_unresolved_selective_import_may_hide_a_reexported_leaf(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "base.solc": """\
+enum T { T(word) }
+export {T(*)};
+""",
+                "facade.solc": """\
+import {T as S} from base;
+export {S(*)};
+""",
+                "main.solc": """\
+import base;
+import {S} from facade;
+function use(x: T, y: word) {
+  T(y);
+  match (x) { case T(value) { return; } }
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertEqual(migrated, sources[main])
+        self.assertTrue(
+            surfaces[main].has_unknown_unqualified_constructors
+        )
+
+    def test_unresolved_namespace_does_not_hide_a_bare_imported_owner(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "known.solc": """\
+enum S { S(word) }
+export {S(*)};
+""",
+                "main.solc": """\
+import known;
+import * as P from missing;
+function use(x: S, y: word) {
+  S(y);
+  match (x) { case S(value) { return; } }
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("  S.S(y);", migrated)
+        self.assertIn("case S.S(value)", migrated)
+        self.assertFalse(
+            surfaces[main].has_unknown_unqualified_constructors
+        )
+
     def test_cli_import_surface_reaches_a_fixed_point(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
