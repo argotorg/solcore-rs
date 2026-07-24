@@ -95,6 +95,18 @@ function project(value: Option<word>) returns (word) {
 
         self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
 
+    def test_does_not_qualify_locations_in_generic_conversion_types(
+        self,
+    ) -> None:
+        canonical = """\
+enum memory<T> { memory(word) }
+function convert(x: word) {
+  return memory.memory(0) as Box<T> memory;
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
     def test_rejects_ambiguous_dot_constructor(self) -> None:
         source = """\
 enum Left { Some(word) }
@@ -1117,7 +1129,7 @@ function f(left: Option</* payload */ word>, right: pair</* first */ word, /* se
                 " return value : /* type */ Option(/* arg */ word);"
                 " }\n",
                 "function f(value: word) returns (word) {"
-                " return value  as /* type */ Option</* arg */ word>;"
+                " return (value) as /* type */ Option</* arg */ word>;"
                 " }\n",
             ),
         ]
@@ -1368,6 +1380,1277 @@ contract Child is Base {
         self.assertIn(
             "cannot migrate contract inheritance",
             migration.stderr,
+        )
+
+
+class FunctionTypeQualifierMigrationTests(unittest.TestCase):
+    def assert_function_type_rejected(
+        self,
+        source: str,
+        offending: str,
+    ) -> None:
+        with self.assertRaises(ValueError) as rejection:
+            MIGRATE.migrate_source(source)
+        message = str(rejection.exception)
+        self.assertIn(
+            "cannot migrate noncanonical function type qualifier",
+            message,
+        )
+        self.assertIn(f"`{offending}`", message)
+
+    def test_rejects_noncanonical_qualifiers_in_every_type_context(
+        self,
+    ) -> None:
+        cases = [
+            (
+                "alias Callback = function(word) public returns (bool);\n",
+                "public",
+            ),
+            (
+                "type Callback = function(word) private returns (bool);\n",
+                "private",
+            ),
+            (
+                "contract C { callback: function(word) private"
+                " returns (bool); }\n",
+                "private",
+            ),
+            (
+                "function f() { let callback: function(word) memory"
+                " returns (bool); }\n",
+                "memory",
+            ),
+            (
+                "function f(callback: function(word) view external"
+                " returns (bool)) {}\n",
+                "external",
+            ),
+            (
+                "function f() returns (function(word) internal external"
+                " returns (bool)) {}\n",
+                "external",
+            ),
+            (
+                "function f(value: word) { return value as function(word)"
+                " pure view returns (bool); }\n",
+                "view",
+            ),
+            (
+                "alias Boxed = Box<function(word) internal internal"
+                " returns (bool)>;\n",
+                "internal",
+            ),
+            (
+                "alias Nested = function(function(word) payable internal"
+                " returns (bool)) returns (word);\n",
+                "internal",
+            ),
+            (
+                "type Guarded = function(word) onlyOwner;\n",
+                "onlyOwner",
+            ),
+            (
+                "function f() { let callback: function(word) virtual; }\n",
+                "virtual",
+            ),
+        ]
+
+        for source, offending in cases:
+            with self.subTest(source=source):
+                self.assert_function_type_rejected(source, offending)
+
+    def test_rejects_the_complete_noncanonical_qualifier_matrix(
+        self,
+    ) -> None:
+        cases = [
+            ("function(word) public", "public"),
+            ("function(word) private", "private"),
+            ("function(word) internal external", "external"),
+            ("function(word) external internal", "internal"),
+            ("function(word) internal internal", "internal"),
+            ("function(word) pure view", "view"),
+            ("function(word) view view", "view"),
+            ("function(word) payable payable", "payable"),
+            ("function(word) view external", "external"),
+            ("function(word) payable internal", "internal"),
+            ("function(word) memory returns (bool)", "memory"),
+            ("function(word) storage returns (bool)", "storage"),
+            ("function(word) calldata returns (bool)", "calldata"),
+            ("function(word) returns (bool) internal", "internal"),
+            ("function(word) returns (bool) view", "view"),
+            ("function(word) returns (bool) public", "public"),
+            ("function(word)[] returns (bool)", "returns"),
+            ("function(word) memory[]", "memory"),
+            ("function(word) returns (bool) storage[]", "storage"),
+            ("function(word) memory storage", "storage"),
+            ("function(word) returns bool", "returns"),
+            ("function(word) comptime returns (bool)", "comptime"),
+            ("function(word) internal comptime returns (bool)", "comptime"),
+            ("function(word) returns (bool) comptime", "comptime"),
+            ("function(word) onlyOwner", "onlyOwner"),
+            ("function(word) virtual", "virtual"),
+            ("function(word) override", "override"),
+            ("function(word) immutable", "immutable"),
+            ("function(word) constant", "constant"),
+            ("function(word)[foo]", "["),
+            ("function(word)[1, 2]", "["),
+            ("function(word)[1 + 2]", "["),
+            ("function(word)[0]", "0"),
+            ("function(word)[0X1]", "0X1"),
+            (
+                "function(word)[18446744073709551616]",
+                "18446744073709551616",
+            ),
+        ]
+
+        for ty, offending in cases:
+            with self.subTest(ty=ty):
+                self.assert_function_type_rejected(
+                    f"alias Callback = {ty};\n",
+                    offending,
+                )
+
+    def test_preserves_valid_outer_arrays_and_locations_in_all_contexts(
+        self,
+    ) -> None:
+        canonical = """\
+alias Bare = function(word) memory;
+alias Qualified = function(word) internal view memory;
+alias CompileTime = comptime function(word) internal view returns (bool) memory;
+alias HexArray = function(word)[0x1];
+alias LargestArray = function(word)[18446744073709551615];
+contract C {
+  handler: function(word) internal view memory;
+  function inspect(callback: function(word) external payable returns (bool)[][2] storage) returns (function(bool) internal pure returns (word) calldata) {
+    let local: function(address) view returns (bool)[4] memory = callback;
+    return callback as function(word) external payable returns (bool)[][2] storage;
+  }
+}
+"""
+
+        migrated = MIGRATE.migrate_source(canonical)
+
+        self.assertEqual(migrated, canonical)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_nested_function_type_boundaries(self) -> None:
+        canonical = (
+            "alias Nested = "
+            "function(function(word) internal returns (bool) memory) "
+            "external view returns "
+            "(function(bool) internal payable returns (word) calldata) "
+            "storage;\n"
+        )
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+        invalid = canonical.replace(
+            "function(word) internal",
+            "function(word) view external",
+        )
+        self.assert_function_type_rejected(invalid, "external")
+
+    def test_preserves_chained_conversions_after_function_types(self) -> None:
+        canonical = """\
+function convert(value: word) {
+  return value as function(word) external view returns (bool) as Callback;
+  return value as comptime @function(word) memory as Wrapped;
+  return value as function(word) + 1;
+  return value as function(word) == other;
+  return value as function(word) ? left : right;
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_allows_classic_function_return_types_before_where_clauses(
+        self,
+    ) -> None:
+        cases = [
+            (
+                "function f<T>() -> function(T) where T: Eq"
+                " { return g; }\n",
+                "function f<T>() returns (function(T)) where T: Eq"
+                " { return g; }\n",
+            ),
+            (
+                "function f<T>() -> comptime @function(T)[] memory"
+                " where T: Eq { return g; }\n",
+                "function f<T>() returns (comptime @function(T)[] memory)"
+                " where T: Eq { return g; }\n",
+            ),
+            (
+                "function f<T>() -> function(T) returns (bool)"
+                " where T: Eq { return g; }\n",
+                "function f<T>() returns (function(T) returns (bool))"
+                " where T: Eq { return g; }\n",
+            ),
+            (
+                "function f<T>() -> function(function(T) returns (T))"
+                " external view returns (bool)[][2] memory"
+                " where T: Eq { return g; }\n",
+                "function f<T>() returns"
+                " (function(function(T) returns (T)) external view"
+                " returns (bool)[][2] memory)"
+                " where T: Eq { return g; }\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+        self.assert_function_type_rejected(
+            "alias Callback = function(word) where;\n",
+            "where",
+        )
+
+    def test_allows_function_types_at_type_operator_boundaries(self) -> None:
+        classic = """\
+type Higher = function(word) -> bool;
+alias Direct = function(word) -> bool;
+alias Generic = Box<function(word) -> bool>;
+alias Nested = function(function(word) -> bool) returns (word);
+contract C {
+  callback: function(word) -> bool;
+  function use(callback: function(word) -> bool) returns (function(word) -> bool) {
+    let local: function(word) -> bool = callback;
+  }
+}
+"""
+        expected = """\
+alias Higher = function(function(word)) returns (bool);
+alias Direct = function(function(word)) returns (bool);
+alias Generic = Box<function(function(word)) returns (bool)>;
+alias Nested = function(function(function(word)) returns (bool)) returns (word);
+contract C {
+  callback: function(function(word)) returns (bool);
+  function use(callback: function(function(word)) returns (bool)) returns (function(function(word)) returns (bool)) {
+    let local: function(function(word)) returns (bool) = callback;
+  }
+}
+"""
+        migrated = MIGRATE.migrate_source(classic)
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+        canonical = """\
+alias FunctionKey = mapping(function(word) => bool);
+contract C {
+  callbacks: mapping(function(word) => bool);
+}
+"""
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+        for invalid in [
+            "alias Bad = function(word) => bool;\n",
+            "alias Bad = Box<function(word) => bool>;\n",
+            "alias Bad = foo.mapping(function(word) => bool);\n",
+        ]:
+            with self.subTest(invalid=invalid):
+                self.assert_function_type_rejected(invalid, "=>")
+
+    def test_migrates_classic_arrows_in_expression_and_enum_types(
+        self,
+    ) -> None:
+        classic = """\
+function use(x: word) {
+  return x : Box<function(word) -> bool>;
+  return x as function(word) -> bool;
+  return x as Box<function(word) -> bool>;
+  return @function(word) -> bool;
+  return @Box<function(word) -> bool>.member;
+  return @function(function(word) -> bool);
+}
+enum Callback {
+  Direct(function(word) -> bool),
+  Boxed(Box<function(word) -> bool>, word)
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertNotIn("->", migrated)
+        self.assertIn(
+            "return (x) as Box<function(function(word)) returns (bool)>;",
+            migrated,
+        )
+        self.assertIn(
+            "return x as function(function(word)) returns (bool);",
+            migrated,
+        )
+        self.assertIn(
+            "return @function(function(word)) returns (bool);",
+            migrated,
+        )
+        self.assertIn(
+            "return @Box<function(function(word)) returns (bool)>.member;",
+            migrated,
+        )
+        self.assertIn(
+            "return @function(function(function(word)) returns (bool));",
+            migrated,
+        )
+        self.assertIn(
+            "Direct(function(function(word)) returns (bool))",
+            migrated,
+        )
+        self.assertIn(
+            "Boxed(Box<function(function(word)) returns (bool)>, word)",
+            migrated,
+        )
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_classic_arrow_domain_and_prefix_precedence(
+        self,
+    ) -> None:
+        classic = """\
+alias EmptyDomain = () -> C;
+alias UnaryTupleDomain = (A) -> C;
+alias TupleDomain = (A, B) -> C;
+alias Chain = A -> B -> C;
+alias CompileTime = comptime A -> B;
+alias CompileTimeChain = comptime A -> B -> C;
+alias ProxyDomain = @A -> B;
+function proxy() {
+  return @A -> B;
+  return @A -> ();
+  return @A -> (B);
+  return @A -> (B, C);
+  return @A -> (B -> C);
+}
+"""
+        expected = """\
+alias EmptyDomain = function(()) returns (C);
+alias UnaryTupleDomain = function((A)) returns (C);
+alias TupleDomain = function((A, B)) returns (C);
+alias Chain = function(A) returns (function(B) returns (C));
+alias CompileTime = comptime function(A) returns (B);
+alias CompileTimeChain = comptime function(A) returns (function(B) returns (C));
+alias ProxyDomain = function(@A) returns (B);
+function proxy() {
+  return @function(A) returns (B);
+  return @function(A) returns (());
+  return @function(A) returns ((B));
+  return @function(A) returns ((B, C));
+  return @function(A) returns ((function(B) returns (C)));
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_migrates_statement_annotations_inside_executable_bodies(
+        self,
+    ) -> None:
+        classic = """\
+function annotate() {
+  x : function();
+  y : A -> B;
+  z : function() + y;
+}
+"""
+        expected = """\
+function annotate() {
+  (x) as function();
+  (y) as function(A) returns (B);
+  (z) as function() + y;
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_rejects_arrows_in_unterminated_parameter_lists(self) -> None:
+        for source in [
+            "function f(x: A -> B {}\n",
+            "function f(x: A, y: C -> D;\n",
+        ]:
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate Classic type arrow",
+                ):
+                    MIGRATE.migrate_source(source)
+
+    def test_rejects_noncanonical_proxy_comptime_in_type_positions(
+        self,
+    ) -> None:
+        invalid = [
+            "alias F = @comptime function(word);\n",
+            "contract C { f: @comptime function(word); }\n",
+            "function f(x: @comptime function(word)) {}\n",
+            "function f(x: word) { return x as @comptime function(word); }\n",
+            "function f() { return @function(@comptime function(word)); }\n",
+            "function f() { return @(@comptime function(word)); }\n",
+            "function f() { return @comptime function(@comptime T); }\n",
+        ]
+        for source in invalid:
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "noncanonical proxy type",
+                ):
+                    MIGRATE.migrate_source(source)
+
+        canonical = """\
+alias F = comptime @function(word);
+function f() { return @comptime function(word); }
+function g() { return @mapping(@comptime T, U); }
+"""
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_rejects_named_or_empty_function_type_entries(self) -> None:
+        invalid = [
+            "alias F = function(x: word);\n",
+            "alias F = function(word) returns (r: bool);\n",
+            "function f() { return x as function(x: word); }\n",
+            "alias F = function(A,, B);\n",
+            "alias F = function(,);\n",
+            "alias F = function(A) returns (B,, C);\n",
+        ]
+        for source in invalid:
+            with self.subTest(source=source):
+                self.assert_function_type_rejected(
+                    source,
+                    ":" if ":" in source else ",",
+                )
+
+        trailing = "alias F = function(A,) returns (B,);\n"
+        self.assertEqual(MIGRATE.migrate_source(trailing), trailing)
+
+    def test_migrates_wrapped_arrow_arrays_and_separates_operators(
+        self,
+    ) -> None:
+        classic = """\
+alias Wrapped = (A -> B)[2] memory;
+enum E { Wrapped((A -> B)[2] memory) }
+function compare() { return @Box(A -> B)>1; }
+"""
+        expected = """\
+alias Wrapped = (function(A) returns (B))[2] memory;
+enum E { Wrapped((function(A) returns (B))[2] memory) }
+function compare() { return @Box<function(A) returns (B)> >1; }
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_separates_generic_closers_from_adjacent_operators(
+        self,
+    ) -> None:
+        classic = """\
+function compare(x: word) {
+  return @Box<A -> B>>x;
+  return @Box<A -> B>>=x;
+  return @Box<A -> B>=x;
+  return @Box<A -> B>==x;
+  return x as Outer<A -> B>>x;
+  return x as Outer<Inner<A -> B>>>=x;
+}
+"""
+        expected = """\
+function compare(x: word) {
+  return @Box<function(A) returns (B)> >x;
+  return @Box<function(A) returns (B)> >=x;
+  return @Box<function(A) returns (B)> =x;
+  return @Box<function(A) returns (B)> ==x;
+  return x as Outer<function(A) returns (B)> >x;
+  return x as Outer<Inner<function(A) returns (B)>> >=x;
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+        canonical = """\
+function compare(x: word) {
+  return x as Box<function()>>= y;
+  return x as Outer<Inner<function()>>>= y;
+}
+"""
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_validates_nested_array_mapping_and_generic_types(self) -> None:
+        invalid = [
+            "alias F = function(word[0]);\n",
+            "alias F = function(word[18446744073709551616]);\n",
+            "alias F = function(word memory[]);\n",
+            "alias F = function(mapping(word => bool,));\n",
+            "function f() { return x as Box<,function()>; }\n",
+        ]
+
+        for source in invalid:
+            with self.subTest(source=source):
+                with self.assertRaises(ValueError):
+                    MIGRATE.migrate_source(source)
+
+        malformed_mappings = [
+            "alias M = mapping(=> bool);\n",
+            "contract C { m: mapping(word =>); }\n",
+            "function f(x: mapping(=>)) {}\n",
+            "function f() { let x: mapping(word => bool,); }\n",
+            "enum E { Value(mapping(word => bool,)) }\n",
+            "function f() { return x : mapping(word => bool,); }\n",
+            "function f() { return @mapping(word => bool,); }\n",
+        ]
+        for source in malformed_mappings:
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "malformed mapping type",
+                ):
+                    MIGRATE.migrate_source(source)
+
+    def test_parenthesizes_complete_classic_expression_annotations(
+        self,
+    ) -> None:
+        classic = """\
+function annotate(c: bool) {
+  return c ? x : y : word -> bool;
+  return x + y : word;
+  return call(c ? x : y : word);
+  let z = a + b : word;
+}
+"""
+        expected = """\
+function annotate(c: bool) {
+  return (c ? x : y) as function(word) returns (bool);
+  return (x + y) as word;
+  return call((c ? x : y) as word);
+  let z = (a + b) as word;
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_migrates_classic_type_application_in_complete_type_spans(
+        self,
+    ) -> None:
+        classic = """\
+alias Wrapped = Box(word);
+alias GenericMemory = memory<word>;
+alias GenericMapping = mapping<word, bool>;
+function use(x: word) {
+  return x : Box(word);
+  return x as Box(word);
+  return x as memory<word>;
+  return @Box(function(word) -> bool);
+  return @memory<word>;
+  return @Box(function(word) -> bool)(x);
+  return @comptime Box(function(word) -> bool);
+  return @mapping(function(word) -> bool, bool);
+}
+enum WrappedValue { Value(Box(word)) }
+"""
+        expected = """\
+alias Wrapped = Box<word>;
+alias GenericMemory = memory<word>;
+alias GenericMapping = mapping<word, bool>;
+function use(x: word) {
+  return (x) as Box<word>;
+  return x as Box<word>;
+  return x as memory<word>;
+  return @Box<function(function(word)) returns (bool)>;
+  return @memory<word>;
+  return @Box<function(function(word)) returns (bool)>(x);
+  return @comptime Box<function(function(word)) returns (bool)>;
+  return @mapping(function(function(word)) returns (bool) => bool);
+}
+enum WrappedValue { Value(Box<word>) }
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_migrates_remaining_complete_declaration_type_spans(
+        self,
+    ) -> None:
+        classic = """\
+type Wad is Box(word);
+type Table is mapping(word, bool,);
+type Deferred is memory(comptime word);
+type Generic<T, U> is mapping(T, Box(U));
+trait Comparable<T> where T: Eq<Box(word)> {}
+impl Eq<Box(word)> {}
+impl<T> Eq<Box(word)> where T: Show<Box(word)> {}
+"""
+        expected = """\
+type Wad is Box<word>;
+type Table is mapping(word => bool);
+type Deferred is memory<comptime word>;
+type Generic<T, U> is mapping(T => Box<U>);
+trait Comparable<T> where T: Eq<Box<word>> {}
+impl Eq<Box<word>> {}
+impl<T> Eq<Box<word>> where T: Show<Box<word>> {}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_migrates_proxy_mapping_and_parenthesized_arrow_types(
+        self,
+    ) -> None:
+        classic = """\
+function use() {
+  return @mapping(A -> B => C);
+  return @mapping(A => B -> C);
+  return @mapping(function(A), B);
+  return @Box(A,);
+  return @mapping(A, B,);
+  return @memory(A,);
+  return @Box(() -> B, C);
+  return @Box((A, B) -> C, D);
+  return @A -> memory(B);
+  return @Box(B) -> C;
+  return @memory(B) -> C;
+  return @pkg.Box(B) -> C;
+}
+"""
+        expected = """\
+function use() {
+  return @mapping(function(A) returns (B) => C);
+  return @mapping(A => function(B) returns (C));
+  return @mapping(function(A) => B);
+  return @Box<A,>;
+  return @mapping(A => B);
+  return @A memory;
+  return @Box<function(()) returns (B), C>;
+  return @Box<function((A, B)) returns (C), D>;
+  return @function(A) returns (B memory);
+  return @function(Box<B>) returns (C);
+  return @function(B memory) returns (C);
+  return @function(pkg.Box<B>) returns (C);
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+        for invalid in [
+            "function f() { return @mapping(@comptime T => U); }\n",
+            "function f() { return @mapping(T => @comptime U); }\n",
+        ]:
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "noncanonical proxy type",
+                ):
+                    MIGRATE.migrate_source(invalid)
+
+    def test_preserves_clear_proxy_calls_and_rewrites_only_type_syntax(
+        self,
+    ) -> None:
+        source = """\
+function use(flag: bool) {
+  return @T(42);
+  return @T("hi");
+  return @T(!flag);
+  return @@T(42);
+  return @comptime T(42);
+  return @T(@comptime A);
+  return @mapping(42);
+  return @mapping(@comptime A, B);
+  return @word memory[1];
+}
+"""
+        expected = source.replace(
+            "@word memory[1]", "(@word memory)[1]"
+        )
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_comptime_function_layers_in_mapping_keys(
+        self,
+    ) -> None:
+        canonical = """\
+alias First = mapping(comptime function() memory[] storage => word);
+alias Second = mapping(comptime function() memory[2] storage => word);
+alias Third = mapping(comptime function() view returns (word)[] memory storage => word);
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_preserves_comment_order_across_nested_location_wrappers(
+        self,
+    ) -> None:
+        classic = (
+            "alias X = memory(/*a*/ storage(/*b*/ word /*c*/) /*d*/);\n"
+        )
+        expected = (
+            "alias X = memory</*a*/ /*b*/ word /*c*/ storage /*d*/ >;\n"
+        )
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_comparisons_while_migrating_annotations(
+        self,
+    ) -> None:
+        classic = """\
+function annotate(c: bool) {
+  return a >= b : T;
+  return c ? a >= b : d;
+  return c ? a >= b : d : T;
+  return @pkg.T -> bool;
+}
+"""
+        expected = """\
+function annotate(c: bool) {
+  return (a >= b) as T;
+  return c ? a >= b : d;
+  return (c ? a >= b : d) as T;
+  return @function(pkg.T) returns (bool);
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_migrates_nested_proxy_type_arrows_once(self) -> None:
+        classic = """\
+function use() {
+  return @Box<@Inner<function(word) -> bool>>;
+  return @(@Box<function(word) -> bool>);
+  return @Box<@Inner<function(word) -> bool>>.member;
+  return @Box<@Inner<function(word) -> bool>>(value);
+  return @Box<@Inner<function(word) -> bool>>[value];
+}
+"""
+        expected = """\
+function use() {
+  return @Box<@Inner<function(function(word)) returns (bool)>>;
+  return @(@Box<function(function(word)) returns (bool)>);
+  return @Box<@Inner<function(function(word)) returns (bool)>>.member;
+  return @Box<@Inner<function(function(word)) returns (bool)>>(value);
+  return (@Box<@Inner<function(function(word)) returns (bool)>>)[value];
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_proxy_expression_boundaries(self) -> None:
+        classic = """\
+function useProxy(x: word) {
+  return @function(word) + x;
+  return @function(word) == x;
+  return @function(word) as Callback;
+  return @function(word).member;
+  return @function(word)(x);
+  return @function(word)[x];
+  return @function(word)[0];
+  return @function(word) ? left : right;
+  return condition ? left : @function(word).member;
+  @function(word) += x;
+  x as function(word) = replacement;
+}
+"""
+        expected = """\
+function useProxy(x: word) {
+  return @function(word) + x;
+  return @function(word) == x;
+  return @function(word) as Callback;
+  return @function(word).member;
+  return @function(word)(x);
+  return (@function(word))[x];
+  return (@function(word))[0];
+  return @function(word) ? left : right;
+  return condition ? left : @function(word).member;
+  @function(word) += x;
+  x as function(word) = replacement;
+}
+"""
+
+        migrated_proxy = MIGRATE.migrate_source(classic)
+        self.assertEqual(migrated_proxy, expected)
+        self.assertEqual(
+            MIGRATE.migrate_source(migrated_proxy),
+            migrated_proxy,
+        )
+
+        for ambiguous in [
+            "function f() { return @A[1]; }\n",
+            "function f() { return @function()[2]; }\n",
+            "function f() { return @Box<T>[3]; }\n",
+        ]:
+            with self.subTest(ambiguous=ambiguous):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "ambiguous proxy array/index syntax",
+                ):
+                    MIGRATE.migrate_source(ambiguous)
+
+        for ambiguous_call in [
+            "function f() { return @Box(word); }\n",
+            "function f() { return @Box(word)(x); }\n",
+            "function f() { return @Box(word)[1]; }\n",
+            "function f() { return @T(x); }\n",
+            "function f() { return @T(); }\n",
+            "function f() { return @mapping(A, B); }\n",
+        ]:
+            with self.subTest(ambiguous_call=ambiguous_call):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "ambiguous proxy call/type-application syntax",
+                ):
+                    MIGRATE.migrate_source(ambiguous_call)
+
+        canonical_arrays = (
+            "function f() { return @word[]; return @function()[]; "
+            "return @Box<T>[][2] calldata; }\n"
+        )
+        self.assertEqual(
+            MIGRATE.migrate_source(canonical_arrays),
+            canonical_arrays,
+        )
+
+        classic_dynamic_arrays = """\
+function f() {
+  return @Outer<Inner(A)>[];
+  return @Box<A -> B>[];
+  return @Box(A,)[];
+}
+"""
+        expected_dynamic_arrays = """\
+function f() {
+  return @Outer<Inner<A>>[];
+  return @Box<function(A) returns (B)>[];
+  return @Box<A,>[];
+}
+"""
+        migrated_dynamic_arrays = MIGRATE.migrate_source(
+            classic_dynamic_arrays
+        )
+        self.assertEqual(
+            migrated_dynamic_arrays,
+            expected_dynamic_arrays,
+        )
+        self.assertEqual(
+            MIGRATE.migrate_source(migrated_dynamic_arrays),
+            migrated_dynamic_arrays,
+        )
+
+        self.assert_function_type_rejected(
+            "function f() { return comptime @function(word) + x; }\n",
+            "+",
+        )
+
+        classic = """\
+function control(c: bool) {
+  if @function() {}
+  while @function() {}
+  match @function() { | _ => 0 }
+  return if @function() then left else right;
+  return if c then @function() else right;
+}
+"""
+        migrated = MIGRATE.migrate_source(classic)
+        self.assertIn("if (@function()) {}", migrated)
+        self.assertIn("while (@function()) {}", migrated)
+        self.assertIn("match (@function()) {", migrated)
+        self.assertIn("return (@function() ? left : right);", migrated)
+        self.assertIn("return (c ? @function() : right);", migrated)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+        self.assert_function_type_rejected(
+            "function f() { return @function() {}; }\n",
+            "{",
+        )
+
+        for invalid_arm in [
+            "function f() { return if x then @function() {} else y; }\n",
+            "function f() { return if x then y as function() {} else z; }\n",
+            "function f() { return if x then y : function() {} else z; }\n",
+        ]:
+            with self.subTest(invalid_arm=invalid_arm):
+                self.assert_function_type_rejected(invalid_arm, "{")
+
+        for invalid_for in [
+            "function f() { for @function() {} }\n",
+            "function f() { for x as function() {} }\n",
+            "function f() { for x : function() {} }\n",
+        ]:
+            with self.subTest(invalid_for=invalid_for):
+                self.assert_function_type_rejected(invalid_for, "{")
+
+        canonical_for = (
+            "function f() { for (; @function(); ) {} }\n"
+        )
+        self.assertEqual(
+            MIGRATE.migrate_source(canonical_for),
+            canonical_for,
+        )
+
+    def test_rejects_malformed_classic_type_arrows_and_delimiters(
+        self,
+    ) -> None:
+        malformed_arrows = [
+            "alias Bad = -> A;\n",
+            "alias Bad = A ->;\n",
+            "alias Bad = A -> -> B;\n",
+            "function f() { return x as Box<A -> >; }\n",
+            "function f() { return @-> bool; }\n",
+            "enum E { Bad(function(word) ->) }\n",
+        ]
+        for source in malformed_arrows:
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "malformed Classic type arrow",
+                ):
+                    MIGRATE.migrate_source(source)
+
+        malformed_delimiters = [
+            "alias Bad = Box<word -> bool>>;\n",
+            "function f() { return x as Box<word -> bool>>; }\n",
+            "enum E { Bad(Box<word -> bool>>) }\n",
+            "alias Bad = Box<(word] -> bool>;\n",
+        ]
+        for source in malformed_delimiters:
+            with self.subTest(source=source):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "malformed type delimiters|cannot migrate Classic type arrow",
+                ):
+                    MIGRATE.migrate_source(source)
+
+        with self.assertRaisesRegex(ValueError, "noncanonical type suffix"):
+            MIGRATE.render_type(MIGRATE.significant("T[8 >> 1]"))
+
+    def test_malformed_arrow_rejection_is_atomic_for_cli_and_rust(
+        self,
+    ) -> None:
+        source = "alias Bad = A ->;\n"
+        for rust in [
+            'const SOURCE: &str = r#"alias Bad = A ->;"#;\n',
+            'const SOURCE: &str = "alias Bad = A ->;";\n',
+        ]:
+            with self.subTest(rust=rust):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "malformed Classic type arrow",
+                ):
+                    MIGRATE.migrate_rust_strings(rust)
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "bad.solc"
+            path.write_text(source)
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--check", str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migration = subprocess.run(
+                [sys.executable, str(SCRIPT), str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            unchanged = path.read_text()
+
+        self.assertEqual(check.returncode, 2)
+        self.assertEqual(migration.returncode, 2)
+        self.assertEqual(unchanged, source)
+        self.assertIn("malformed Classic type arrow", check.stderr)
+        self.assertIn(
+            "malformed Classic type arrow",
+            migration.stderr,
+        )
+
+    def test_renderer_refuses_unknown_function_type_tails(self) -> None:
+        for ty in [
+            "function(word) onlyOwner",
+            "function(word) returns (bool) virtual",
+            "function(word) memory override",
+        ]:
+            with self.subTest(ty=ty):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "noncanonical function type qualifier sequence",
+                ):
+                    MIGRATE.render_type(MIGRATE.significant(ty))
+
+        for ty in [
+            "function(word) @Other",
+            "function(word) (bool)",
+            "function(word) ?",
+            "function(word) { value }",
+        ]:
+            with self.subTest(ty=ty):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "noncanonical function type suffix",
+                ):
+                    MIGRATE.render_type(MIGRATE.significant(ty))
+
+        for tail in ["@Other", "(bool)", "?", "{ value }"]:
+            with self.subTest(tail=tail):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "noncanonical function type",
+                ):
+                    MIGRATE.migrate_source(
+                        f"type Callback = function(word) {tail};\n"
+                    )
+
+    def test_validator_refuses_symbol_tails_in_canonical_contexts(
+        self,
+    ) -> None:
+        cases = [
+            (
+                "alias Callback = function(word) @Other;\n",
+                "@",
+            ),
+            (
+                "alias Callback = function(word) (bool);\n",
+                "(",
+            ),
+            (
+                "alias Callback = function(word) ?;\n",
+                "?",
+            ),
+            (
+                "alias Callback = function(word) { value };\n",
+                "{",
+            ),
+            (
+                "alias Callback = function(word) .member;\n",
+                ".",
+            ),
+            (
+                "alias Boxed = Box<function(word) @Other>;\n",
+                "@",
+            ),
+            (
+                "alias Nested = function(function(word) @Other)"
+                " returns (word);\n",
+                "@",
+            ),
+            (
+                "function f(value: word) {"
+                " return value as function(word) @Other; }\n",
+                "@",
+            ),
+            (
+                "alias Proxy = @function(word) + word;\n",
+                "+",
+            ),
+            (
+                "alias Proxy = @function(word).member;\n",
+                ".",
+            ),
+            (
+                "alias Proxy = @function(word)(word);\n",
+                "(",
+            ),
+            (
+                "alias Proxy = @function(word)[word];\n",
+                "[",
+            ),
+            (
+                "alias Proxy = Box<@function(word) + word>;\n",
+                "+",
+            ),
+        ]
+
+        for source, offending in cases:
+            with self.subTest(source=source):
+                self.assert_function_type_rejected(source, offending)
+
+        rust = (
+            'const SOURCE: &str = r#"alias Callback = '
+            'function(word) @Other;"#;\n'
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "noncanonical function type qualifier",
+        ):
+            MIGRATE.migrate_rust_strings(rust)
+
+    def test_migrates_classic_location_wrappers_around_function_types(
+        self,
+    ) -> None:
+        cases = [
+            (
+                "type Callback = memory(function(word) internal view"
+                " returns(bool));\n",
+                "alias Callback = function(word) internal view"
+                " returns (bool) memory;\n",
+            ),
+            (
+                "function f(callback: calldata(function(word) external"
+                " payable returns(bool))) {}\n",
+                "function f(callback: function(word) external payable"
+                " returns (bool) calldata) {}\n",
+            ),
+            (
+                "alias Wrapped = @memory(word,);\n",
+                "alias Wrapped = @memory<word>;\n",
+            ),
+            (
+                "alias Wrapped = @storage(A, B);\n",
+                "alias Wrapped = @storage<A, B>;\n",
+            ),
+            (
+                "alias Wrapped = comptime @calldata(Box(word),);\n",
+                "alias Wrapped = comptime @calldata<Box<word>>;\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_comments_do_not_change_function_type_recognition(self) -> None:
+        canonical = """\
+contract C {
+  callback: function /* type */ (/* param */ word)
+    /* visibility */ external /* mutability */ view
+    returns (/* result */ bool) /* array */ [4]
+    /* location */ storage;
+  function f() public view returns (word) { return 0; }
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+        self.assert_function_type_rejected(
+            "alias Callback = function /* type */ (word)"
+            " /* misplaced */ memory returns (bool);\n",
+            "memory",
+        )
+
+    def test_legacy_negative_marker_is_the_only_source_bypass(self) -> None:
+        marked = """\
+// migrate-syntax: keep-legacy-negative
+alias Callback = function(word) public returns (bool);
+"""
+        self.assertEqual(MIGRATE.migrate_source(marked), marked)
+
+        for unmarked in [
+            'let marker = "migrate-syntax: keep-legacy-negative";\n'
+            "alias Callback = function(word) public returns (bool);\n",
+            "assembly { let marker := "
+            '"migrate-syntax: keep-legacy-negative" }\n'
+            "alias Callback = function(word) public returns (bool);\n",
+        ]:
+            with self.subTest(unmarked=unmarked):
+                self.assert_function_type_rejected(unmarked, "public")
+
+    def test_cli_rejection_leaves_source_unchanged_in_both_modes(
+        self,
+    ) -> None:
+        source = (
+            "alias Callback = function(word) memory returns (bool);\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "callback.solc"
+            path.write_text(source)
+
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--check", str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migration = subprocess.run(
+                [sys.executable, str(SCRIPT), str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            unchanged = path.read_text()
+
+        self.assertEqual(check.returncode, 2)
+        self.assertEqual(migration.returncode, 2)
+        self.assertEqual(unchanged, source)
+        self.assertIn("line 1, column 33", check.stderr)
+        self.assertIn(
+            "cannot migrate noncanonical function type qualifier",
+            migration.stderr,
+        )
+
+    def test_rust_string_migration_rejects_embedded_invalid_types(self) -> None:
+        cases = [
+            (
+                'const SOURCE: &str = r#"alias Callback = '
+                'function(word) public returns (bool);"#;\n'
+            ),
+            (
+                'const SOURCE: &str = "alias Callback = '
+                'function(word) view external returns (bool);";\n'
+            ),
+            (
+                "// migrate-syntax: keep-legacy-negative\n"
+                'const SOURCE: &str = r#"alias Callback = '
+                'function(word) private returns (bool);"#;\n'
+            ),
+        ]
+
+        for rust in cases:
+            with self.subTest(rust=rust):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "noncanonical function type qualifier",
+                ):
+                    MIGRATE.migrate_rust_strings(rust)
+
+    def test_rust_string_migration_rewrites_expression_type_arrows(
+        self,
+    ) -> None:
+        rust = """\
+const RAW: &str = r#"function f() { return @Box<@Inner<function(word) -> bool>>; }"#;
+const NORMAL: &str = "function f(x: word) { return x as Box<function(word) -> bool>; }";
+"""
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertNotIn("->", migrated)
+        self.assertEqual(
+            migrated.count(
+                "function(function(word)) returns (bool)"
+            ),
+            2,
+        )
+        self.assertEqual(
+            MIGRATE.migrate_rust_strings(migrated),
+            migrated,
         )
 
 

@@ -55,9 +55,7 @@ TRIVIA = {"ws", "comment"}
 WORD_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 NUMBER_RE = re.compile(r"(?:0[xX][0-9A-Fa-f]+|[0-9]+)")
 MULTI_SYMBOLS = (
-    ">>>=",
     "<<=",
-    ">>=",
     "->",
     "=>",
     ":=",
@@ -75,7 +73,6 @@ MULTI_SYMBOLS = (
     "%=",
     "**",
     "<<",
-    ">>",
 )
 MODIFIERS = {
     "public",
@@ -94,6 +91,77 @@ PRAGMA_NAMES = {
     "no-generic-instance-for": "noGenericInstanceFor",
 }
 LOCATIONS = {"memory", "storage", "calldata"}
+FUNCTION_TYPE_VISIBILITIES = {"internal", "external"}
+FUNCTION_TYPE_MUTABILITIES = {"pure", "view", "payable"}
+FUNCTION_TYPE_GENERAL_BOUNDARIES = {
+    ",",
+    ";",
+    ":",
+    "=",
+    "->",
+    ")",
+    "]",
+    "}",
+    ">",
+    ">=",
+    ">>",
+}
+FUNCTION_TYPE_CONVERSION_BOUNDARIES = {
+    ",",
+    ";",
+    ":",
+    ")",
+    "]",
+    "}",
+    "=>",
+    "as",
+    "?",
+    "**",
+    "*",
+    "/",
+    "%",
+    "+",
+    "-",
+    "<<",
+    ">>",
+    "&",
+    "^",
+    "|",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "==",
+    "!=",
+    "&&",
+    "||",
+    "=",
+    "+=",
+    "-=",
+    "^=",
+    "&=",
+    "|=",
+    "%=",
+}
+FUNCTION_TYPE_ARROW_BOUNDARIES = (
+    FUNCTION_TYPE_GENERAL_BOUNDARIES | {"where", "{"}
+)
+FUNCTION_TYPE_PROXY_BOUNDARIES = (
+    FUNCTION_TYPE_GENERAL_BOUNDARIES
+    | FUNCTION_TYPE_CONVERSION_BOUNDARIES
+    | {
+        "(",
+        "[",
+        ".",
+        "=",
+        "+=",
+        "-=",
+        "^=",
+        "&=",
+        "|=",
+        "%=",
+    }
+)
 BUILTIN_TYPE_NAMES = {
     "address",
     "bool",
@@ -126,6 +194,15 @@ class Token:
     kind: str
     text: str
     start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class FunctionTypeSuffix:
+    visibility_index: int | None
+    mutability_index: int | None
+    returns_open: int | None
+    returns_close: int | None
     end: int
 
 
@@ -258,6 +335,28 @@ def significant(source: str) -> list[Token]:
     return [token for token in lex(source) if token.kind not in TRIVIA]
 
 
+def _split_type_angle_operator_tokens(
+    tokens: Sequence[Token],
+) -> list[Token]:
+    """Split ``>=`` only when its leading ``>`` closes a type argument list."""
+
+    result: list[Token] = []
+    stack: list[str] = []
+    for token in tokens:
+        if token.text == ">=" and stack and stack[-1] == "<":
+            result.append(
+                Token(token.kind, ">", token.start, token.start + 1)
+            )
+            result.append(
+                Token(token.kind, "=", token.start + 1, token.end)
+            )
+            stack.pop()
+            continue
+        result.append(token)
+        _depth_step(stack, token.text)
+    return result
+
+
 def has_comment_marker(source: str, marker: str) -> bool:
     return any(
         token.kind == "comment" and marker in token.text
@@ -277,6 +376,57 @@ def replace_spans(source: str, replacements: Iterable[tuple[int, int, str]]) -> 
     return result
 
 
+def _separate_following_type_token(
+    source: str,
+    end: int,
+    replacement: str,
+) -> str:
+    """Keep a rendered generic closer separate from a following operator."""
+
+    if (
+        replacement.endswith(">")
+        and end < len(source)
+        and source[end] in {">", "="}
+    ):
+        return replacement + " "
+    return replacement
+
+
+def _type_span_needs_operator_separation(
+    source: str,
+    type_tokens: Sequence[Token],
+    tail: Sequence[Token],
+    end: int,
+) -> bool:
+    return (
+        bool(type_tokens)
+        and end < len(tail)
+        and type_tokens[-1].text == ">"
+        and tail[end].text == "="
+        and type_tokens[-1].end == tail[end].start
+        and source[type_tokens[-1].start : tail[end].end] == ">="
+    )
+
+
+def _reject_dangling_type_comparison(
+    tokens: Sequence[Token],
+    end: int,
+) -> None:
+    """Reject an unmatched ``>`` that has no expression on its right."""
+
+    if (
+        end < len(tokens)
+        and tokens[end].text == ">"
+        and (
+            end + 1 >= len(tokens)
+            or tokens[end + 1].text in {",", ";", ")", "]", "}"}
+        )
+    ):
+        raise ValueError(
+            "cannot migrate malformed type delimiters near `>`"
+        )
+
+
 OPEN_TO_CLOSE = {"(": ")", "[": "]", "{": "}", "<": ">"}
 CLOSE_TO_OPEN = {close: open_ for open_, close in OPEN_TO_CLOSE.items()}
 
@@ -291,10 +441,13 @@ def matching_index(tokens: Sequence[Token], open_index: int) -> int | None:
         text = tokens[index].text
         if text == opener:
             depth += 1
-        elif opener == "<" and text and set(text) == {">"}:
+        elif opener == "<" and (
+            (text and set(text) == {">"}) or text == ">="
+        ):
             # The lexer preserves shift tokens, so nested generic closers may
-            # arrive as one ``>>`` token.
-            depth -= len(text)
+            # arrive as one ``>>`` token. A ``>=`` token can also contribute
+            # its leading character when a generic close is adjacent to `=`.
+            depth -= 1 if text == ">=" else len(text)
             if depth <= 0:
                 return index
         elif text == closer:
@@ -433,77 +586,774 @@ def _expand_type_angle_closers(tokens: Sequence[Token]) -> list[Token]:
     return expanded
 
 
+def _type_angle_opens(
+    tokens: Sequence[Token],
+    index: int,
+) -> bool:
+    """Return whether a top-level ``<`` starts a generic type argument list."""
+
+    if (
+        index == 0
+        or tokens[index].text != "<"
+        or (
+            tokens[index - 1].kind != "word"
+            and tokens[index - 1].text not in {">", ">>"}
+        )
+    ):
+        return False
+    close = matching_index(tokens, index)
+    return close is not None and not any(
+        token.text in {";", "{", "}"}
+        for token in tokens[index + 1 : close]
+    )
+
+
+def _type_boundary_opens_delimiter(
+    tokens: Sequence[Token],
+    start: int,
+    index: int,
+    *,
+    allow_array_suffix: bool,
+    forced_type_application: bool = False,
+) -> bool:
+    text = tokens[index].text
+    if text == "<":
+        return _type_angle_opens(tokens, index)
+    if text == "(":
+        follows_classic_arrow = (
+            tokens[index - 1].text in LOCATIONS
+            and find_top(tokens[start:index], "->") is not None
+        )
+        return (
+            forced_type_application
+            or index == start
+            or follows_classic_arrow
+            or (
+                tokens[index - 1].kind == "word"
+                and tokens[index - 1].text
+                not in (
+                    LOCATIONS
+                    | FUNCTION_TYPE_VISIBILITIES
+                    | FUNCTION_TYPE_MUTABILITIES
+                )
+            )
+            or tokens[index - 1].text in {"@", "->"}
+        )
+    if text != "[":
+        return False
+    if not allow_array_suffix:
+        return False
+    close = matching_index(tokens, index)
+    if close is None:
+        return False
+    length = tokens[index + 1 : close]
+    return not length or (
+        len(length) == 1 and length[0].kind == "number"
+    )
+
+
+def _type_expression_end(
+    tokens: Sequence[Token],
+    start: int,
+    boundaries: set[str],
+    *,
+    word_boundaries: set[str] | None = None,
+    allow_array_suffix: bool = True,
+    forced_type_application_opens: set[int] | None = None,
+) -> int:
+    """Find the end of a complete type embedded in an expression.
+
+    Expression operators terminate the type at depth zero, except that a
+    qualified name followed by a balanced ``<...>`` opens generic arguments.
+    """
+
+    stack: list[str] = []
+    end = start
+    for cursor in range(start, len(tokens)):
+        text = tokens[cursor].text
+        if not stack:
+            qualified_name_dot = (
+                text == "."
+                and cursor > start
+                and cursor + 1 < len(tokens)
+                and tokens[cursor - 1].kind == "word"
+                and tokens[cursor - 1].text
+                not in (
+                    LOCATIONS
+                    | FUNCTION_TYPE_VISIBILITIES
+                    | FUNCTION_TYPE_MUTABILITIES
+                )
+                and tokens[cursor + 1].kind == "word"
+            )
+            if (
+                tokens[cursor].kind == "word"
+                and word_boundaries is not None
+                and text in word_boundaries
+            ):
+                break
+            if (
+                text in boundaries
+                and not qualified_name_dot
+                and not _type_boundary_opens_delimiter(
+                    tokens,
+                    start,
+                    cursor,
+                    allow_array_suffix=allow_array_suffix,
+                    forced_type_application=(
+                        forced_type_application_opens is not None
+                        and cursor in forced_type_application_opens
+                    ),
+                )
+            ):
+                break
+        _depth_step(stack, text)
+        end = cursor + 1
+    return end
+
+
+def _parse_function_type_suffix(
+    tokens: Sequence[Token],
+    start: int,
+) -> tuple[FunctionTypeSuffix | None, int | None]:
+    """Parse the fixed-order qualifier/return suffix after `function(...)`."""
+
+    cursor = start
+    visibility_index = None
+    mutability_index = None
+    returns_open = None
+    returns_close = None
+
+    if (
+        cursor < len(tokens)
+        and tokens[cursor].text in FUNCTION_TYPE_VISIBILITIES
+    ):
+        visibility_index = cursor
+        cursor += 1
+    if (
+        cursor < len(tokens)
+        and tokens[cursor].text in FUNCTION_TYPE_MUTABILITIES
+    ):
+        mutability_index = cursor
+        cursor += 1
+    if cursor < len(tokens) and tokens[cursor].text == "returns":
+        returns_index = cursor
+        if cursor + 1 >= len(tokens) or tokens[cursor + 1].text != "(":
+            return None, returns_index
+        returns_open = cursor + 1
+        returns_close = matching_index(tokens, returns_open)
+        if returns_close is None:
+            return None, returns_index
+        cursor = returns_close + 1
+
+    return (
+        FunctionTypeSuffix(
+            visibility_index,
+            mutability_index,
+            returns_open,
+            returns_close,
+            cursor,
+        ),
+        None,
+    )
+
+
+def _function_type_outer_suffix_end(
+    tokens: Sequence[Token],
+    start: int,
+    *,
+    allow_arrays: bool = True,
+) -> tuple[int, int | None, int | None]:
+    """Consume the array suffixes and optional outer location of a type."""
+
+    cursor = start
+    if not allow_arrays and cursor < len(tokens) and tokens[cursor].text == "[":
+        return cursor, None, None
+    while cursor < len(tokens) and tokens[cursor].text == "[":
+        close = matching_index(tokens, cursor)
+        if close is None:
+            return cursor, None, cursor
+        length_tokens = tokens[cursor + 1 : close]
+        if length_tokens:
+            if (
+                len(length_tokens) != 1
+                or length_tokens[0].kind != "number"
+            ):
+                # A proxy expression may use this bracket as a postfix index.
+                # Leave it unconsumed so the source-context validator can
+                # distinguish that expression boundary from a type suffix.
+                return cursor, None, None
+            spelling = length_tokens[0].text
+            if spelling.startswith("0X"):
+                return cursor, None, cursor + 1
+            base = 16 if spelling.lower().startswith("0x") else 10
+            digits = spelling[2:] if base == 16 else spelling
+            length = int(digits, base)
+            if length == 0 or length > (1 << 64) - 1:
+                return cursor, None, cursor + 1
+        cursor = close + 1
+    location_index = None
+    if cursor < len(tokens) and tokens[cursor].text in LOCATIONS:
+        location_index = cursor
+        cursor += 1
+    return cursor, location_index, None
+
+
+def _validated_type_suffix_end(
+    tokens: Sequence[Token],
+    start: int,
+    *,
+    label: str,
+) -> int:
+    """Validate arrays followed by at most one outer data location."""
+
+    end, location_index, error_index = _function_type_outer_suffix_end(
+        tokens, start
+    )
+    if error_index is not None:
+        raise ValueError(
+            f"noncanonical {label} suffix near "
+            f"`{tokens[error_index].text}`"
+        )
+    if end != len(tokens):
+        offending = (
+            location_index
+            if (
+                location_index is not None
+                and tokens[end].text == "["
+            )
+            else end
+        )
+        raise ValueError(
+            f"noncanonical {label} suffix near "
+            f"`{tokens[offending].text}`"
+        )
+    return end
+
+
+def _function_type_tail_error_index(
+    tokens: Sequence[Token],
+    suffix: FunctionTypeSuffix,
+    *,
+    allowed_word_boundaries: set[str] | None = None,
+    allow_postfix_index_boundary: bool = False,
+) -> tuple[int, int | None]:
+    end, location_index, suffix_error = _function_type_outer_suffix_end(
+        tokens,
+        suffix.end,
+        allow_arrays=not allow_postfix_index_boundary,
+    )
+    if suffix_error is not None:
+        return end, suffix_error
+    if end >= len(tokens):
+        return end, None
+    if (
+        location_index is not None
+        and tokens[end].text in {"[", "returns"}
+    ):
+        if (
+            allow_postfix_index_boundary
+            and tokens[end].text == "["
+        ):
+            return end, None
+        return end, location_index
+    if (
+        tokens[end].kind == "word"
+        and (
+            allowed_word_boundaries is None
+            or tokens[end].text not in allowed_word_boundaries
+        )
+    ):
+        return end, end
+    return end, None
+
+
+def _function_type_prefix_context(
+    tokens: Sequence[Token],
+    function_index: int,
+) -> tuple[str | None, bool, int]:
+    cursor = function_index - 1
+    outermost_prefix = None
+    while cursor >= 0 and tokens[cursor].text in {"@", "comptime"}:
+        outermost_prefix = tokens[cursor].text
+        cursor -= 1
+    predecessor = tokens[cursor].text if cursor >= 0 else None
+    return predecessor, outermost_prefix == "@", cursor + 1
+
+
+def _function_type_initializer_expression(
+    tokens: Sequence[Token],
+    prefix_index: int,
+) -> bool:
+    start = _previous_boundary(tokens, prefix_index)
+    if start < len(tokens) and tokens[start].text in {"alias", "type"}:
+        return False
+    stack: list[str] = []
+    for token in tokens[start:prefix_index]:
+        if not stack and token.text == "=":
+            return True
+        _depth_step(stack, token.text)
+    return False
+
+
+def _proxy_prefix_is_expression(
+    tokens: Sequence[Token],
+    prefix_index: int,
+    body_contexts: Sequence[tuple[int, int, set[int]]],
+) -> bool:
+    containing_bodies = [
+        type_tokens
+        for body_start, body_end, type_tokens in body_contexts
+        if body_start <= prefix_index < body_end
+    ]
+    if containing_bodies:
+        return any(
+            prefix_index not in type_tokens
+            for type_tokens in containing_bodies
+        )
+    return _function_type_initializer_expression(tokens, prefix_index)
+
+
+def _proxy_expression_type_ranges(
+    source: str,
+    tokens: Sequence[Token],
+    body_contexts: Sequence[tuple[int, int, set[int]]],
+) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    covered_until = 0
+    for index, token in enumerate(tokens):
+        if (
+            token.start < covered_until
+            or token.text != "@"
+            or index + 1 >= len(tokens)
+            or not _proxy_prefix_is_expression(
+                tokens, index, body_contexts
+            )
+        ):
+            continue
+        type_tail = _split_type_angle_operator_tokens(
+            tokens[index + 1 :]
+        )
+        (
+            call_boundary,
+            forced_type_application_open,
+        ) = _proxy_call_boundary(source, type_tail)
+        scan_tail = (
+            type_tail[:call_boundary]
+            if call_boundary is not None
+            else type_tail
+        )
+        end = _type_expression_end(
+            scan_tail,
+            0,
+            (FUNCTION_TYPE_PROXY_BOUNDARIES - {"->"})
+            | {"else", "then", "{"},
+            word_boundaries={"as", "else", "then"},
+            allow_array_suffix=False,
+            forced_type_application_opens=(
+                {forced_type_application_open}
+                if forced_type_application_open is not None
+                else None
+            ),
+        )
+        if end <= 0:
+            continue
+        ranges.append(
+            (scan_tail[0].start, scan_tail[end - 1].end)
+        )
+        covered_until = scan_tail[end - 1].end
+    return ranges
+
+
+def _function_type_control_words(
+    tokens: Sequence[Token],
+    prefix_index: int,
+) -> set[str]:
+    start = _previous_boundary(tokens, prefix_index)
+    return {
+        token.text
+        for token in tokens[start:prefix_index]
+        if token.text in {"for", "if", "match", "then", "while"}
+    }
+
+
+def _function_type_control_tail(
+    tokens: Sequence[Token],
+    prefix_index: int,
+) -> str | None:
+    start = _previous_boundary(tokens, prefix_index)
+    return next(
+        (
+            token.text
+            for token in reversed(tokens[start:prefix_index])
+            if token.text in {"if", "match", "then", "else", "while"}
+        ),
+        None,
+    )
+
+
+def _function_type_is_mapping_key(
+    tokens: Sequence[Token],
+    function_index: int,
+    separator_index: int,
+) -> bool:
+    for open_index in range(function_index - 1, -1, -1):
+        if tokens[open_index].text != "(":
+            continue
+        close_index = matching_index(tokens, open_index)
+        if close_index is None or close_index <= separator_index:
+            continue
+        if (
+            open_index == 0
+            or tokens[open_index - 1].text != "mapping"
+            or (
+                open_index >= 2
+                and tokens[open_index - 2].text == "."
+            )
+        ):
+            continue
+        separator = find_top(
+            tokens[open_index + 1 : close_index], "=>"
+        )
+        return (
+            separator is not None
+            and open_index + 1 + separator == separator_index
+        )
+    return False
+
+
+def _function_type_source_tail_error_index(
+    tokens: Sequence[Token],
+    function_index: int,
+    end: int,
+    predecessor: str | None,
+    proxy_expression: bool,
+    annotation_expression: bool,
+    allow_expression_block: bool,
+    allowed_word_boundaries: set[str] | None,
+) -> int | None:
+    if end >= len(tokens):
+        return None
+    if (
+        tokens[end].kind == "word"
+        and allowed_word_boundaries is not None
+        and tokens[end].text in allowed_word_boundaries
+    ):
+        return None
+    if (
+        tokens[end].text == "=>"
+        and _function_type_is_mapping_key(tokens, function_index, end)
+    ):
+        return None
+    if annotation_expression:
+        allowed = FUNCTION_TYPE_CONVERSION_BOUNDARIES | {"->"}
+    elif predecessor == "as":
+        allowed = FUNCTION_TYPE_CONVERSION_BOUNDARIES | {"->"}
+    elif predecessor == "->":
+        allowed = FUNCTION_TYPE_ARROW_BOUNDARIES
+    elif proxy_expression:
+        allowed = FUNCTION_TYPE_PROXY_BOUNDARIES
+    else:
+        allowed = FUNCTION_TYPE_GENERAL_BOUNDARIES
+    if (
+        (proxy_expression or annotation_expression or predecessor == "as")
+        and allow_expression_block
+        and tokens[end].text == "{"
+    ):
+        return None
+    return None if tokens[end].text in allowed else end
+
+
+def _validate_type_delimiters(tokens: Sequence[Token]) -> None:
+    """Reject malformed type spans before rendering can discard delimiters."""
+
+    stack: list[str] = []
+    for index, token in enumerate(tokens):
+        text = token.text
+        if text in {"(", "[", "{"}:
+            stack.append(text)
+            continue
+        if text == "<":
+            if not stack or stack[-1] != "[":
+                stack.append(text)
+            continue
+        if text and set(text) == {">"}:
+            if stack and stack[-1] == "[":
+                # Shift/comparison operators inside an array-length
+                # expression are not generic closers.
+                continue
+            for _ in text:
+                if not stack or stack[-1] != "<":
+                    raise ValueError(
+                        "cannot migrate malformed type delimiters near "
+                        f"`{text}`"
+                    )
+                stack.pop()
+            continue
+        if text not in {")", "]", "}"}:
+            continue
+        expected = CLOSE_TO_OPEN[text]
+        if not stack or stack[-1] != expected:
+            raise ValueError(
+                "cannot migrate malformed type delimiters near "
+                f"`{text}`"
+            )
+        stack.pop()
+    if stack:
+        raise ValueError(
+            "cannot migrate malformed type delimiters: unclosed "
+            f"`{stack[-1]}`"
+        )
+
+
+def _type_list_error_index(
+    tokens: Sequence[Token],
+    start: int,
+    end: int,
+    *,
+    reject_named_entries: bool = False,
+) -> int | None:
+    """Find a leading/interior empty list item or a forbidden name colon."""
+
+    stack: list[str] = []
+    has_item = False
+    for index in range(start, end):
+        text = tokens[index].text
+        if not stack and text == ",":
+            if not has_item:
+                return index
+            has_item = False
+            continue
+        if reject_named_entries and text == ":":
+            return index
+        has_item = True
+        _depth_step(stack, text)
+    return None
+
+
 def render_type(tokens: Sequence[Token]) -> str:
-    tokens = _expand_type_angle_closers(tokens)
+    tokens = _split_type_angle_operator_tokens(tokens)
     if not tokens:
         return ""
+    _validate_type_delimiters(tokens)
+    tokens = _expand_type_angle_closers(tokens)
+
+    # Classic ``comptime`` consumes a complete type, including an arrow.
+    if tokens[0].text == "comptime":
+        inner_error: ValueError | None = None
+        for split in range(len(tokens), 1, -1):
+            try:
+                inner = render_type(tokens[1:split])
+                suffix_end = _validated_type_suffix_end(
+                    tokens[split:], 0, label="comptime type"
+                )
+            except ValueError as error:
+                if inner_error is None:
+                    inner_error = error
+                continue
+            return (
+                "comptime "
+                + inner
+                + _render_type_suffix(tokens[split:suffix_end + split])
+            )
+        if inner_error is not None:
+            raise inner_error
+        raise ValueError("comptime type is missing its inner type")
 
     arrow = find_top(tokens, "->")
     if arrow is not None:
         domain_tokens = tokens[:arrow]
-        if is_wrapped(domain_tokens, "(", ")"):
-            domain_parts = split_top(domain_tokens[1:-1], ",")
-            domain = ", ".join(
-                render_type(part) for part in domain_parts if part
+        result_tokens = tokens[arrow + 1 :]
+        if not domain_tokens or not result_tokens:
+            missing = "domain" if not domain_tokens else "result"
+            raise ValueError(
+                "cannot migrate malformed Classic type arrow: "
+                f"missing {missing} type"
             )
-        else:
-            domain = render_type(domain_tokens)
-        result = render_type(tokens[arrow + 1 :])
+        # Classic arrow types always have one domain type.  A parenthesized
+        # tuple is therefore one parameter, including ``()`` and ``(T)``;
+        # unwrapping it here would silently change function arity.
+        domain = render_type(domain_tokens)
+        result = render_type(result_tokens)
         return f"function({domain}) returns ({result})"
 
-    if tokens[0].text == "comptime":
-        return "comptime " + render_type(tokens[1:])
+    if (
+        tokens[0].text == "@"
+        and len(tokens) >= 4
+        and tokens[1].text in LOCATIONS
+        and tokens[2].text == "("
+    ):
+        close = matching_index(tokens, 2)
+        if close == len(tokens) - 1:
+            argument_tokens = tokens[3:close]
+            arguments = split_top(argument_tokens, ",")
+            trailing_comma = (
+                bool(argument_tokens)
+                and argument_tokens[-1].text == ","
+            )
+            rendered_arguments = [
+                render_type(argument)
+                for argument in arguments
+                if argument
+            ]
+            arguments_text = ", ".join(rendered_arguments)
+            if trailing_comma and len(rendered_arguments) > 1:
+                arguments_text += ","
+            return (
+                "@"
+                + tokens[1].text
+                + "<"
+                + arguments_text
+                + ">"
+            )
+
     if tokens[0].text == "@":
         return "@" + render_type(tokens[1:])
 
     # Canonical function types must remain canonical on repeated migrations.
-    # They differ from generic applications by using parentheses and a
-    # `returns` clause, optionally separated by data-location/function
-    # attributes.
+    # Their qualifier order is fixed; array suffixes and one outer data
+    # location apply only after the complete function type.
     if len(tokens) >= 2 and tokens[0].text == "function" and tokens[1].text == "(":
         close_index = matching_index(tokens, 1)
-        if close_index is not None:
-            params = [
+        if close_index is None:
+            raise ValueError("unterminated canonical function type")
+        params_error = _type_list_error_index(
+            tokens,
+            2,
+            close_index,
+            reject_named_entries=True,
+        )
+        if params_error is not None:
+            raise ValueError(
+                "noncanonical function type parameter list near "
+                f"`{tokens[params_error].text}`"
+            )
+        params = [
+            render_type(part)
+            for part in split_top(tokens[2:close_index], ",")
+            if part
+        ]
+        params_text = ", ".join(params)
+        if (
+            params
+            and tokens[close_index - 1].text == ","
+        ):
+            params_text += ","
+        suffix, error_index = _parse_function_type_suffix(
+            tokens, close_index + 1
+        )
+        if error_index is not None:
+            raise ValueError(
+                "noncanonical function type qualifier sequence near "
+                f"`{tokens[error_index].text}`"
+            )
+        assert suffix is not None
+        end, tail_error = _function_type_tail_error_index(
+            tokens, suffix
+        )
+        if tail_error is not None:
+            raise ValueError(
+                "noncanonical function type qualifier sequence near "
+                f"`{tokens[tail_error].text}`"
+            )
+        if end != len(tokens):
+            raise ValueError(
+                "noncanonical function type suffix near "
+                f"`{tokens[end].text}`"
+            )
+        qualifiers = [
+            tokens[index].text
+            for index in (
+                suffix.visibility_index,
+                suffix.mutability_index,
+            )
+            if index is not None
+        ]
+        qualifiers_text = (
+            " " + " ".join(qualifiers) if qualifiers else ""
+        )
+        result = ""
+        if suffix.returns_open is not None:
+            assert suffix.returns_close is not None
+            returns_error = _type_list_error_index(
+                tokens,
+                suffix.returns_open + 1,
+                suffix.returns_close,
+                reject_named_entries=True,
+            )
+            if returns_error is not None:
+                raise ValueError(
+                    "noncanonical function type return list near "
+                    f"`{tokens[returns_error].text}`"
+                )
+            result_parts = [
                 render_type(part)
-                for part in split_top(tokens[2:close_index], ",")
+                for part in split_top(
+                    tokens[
+                        suffix.returns_open + 1 : suffix.returns_close
+                    ],
+                    ",",
+                )
                 if part
             ]
-            cursor = close_index + 1
-            attributes: list[str] = []
-            while cursor < len(tokens) and tokens[cursor].text in MODIFIERS | LOCATIONS:
-                attributes.append(tokens[cursor].text)
-                cursor += 1
-            result = ""
-            if cursor < len(tokens) and tokens[cursor].text == "returns":
-                if cursor + 1 < len(tokens) and tokens[cursor + 1].text == "(":
-                    returns_close = matching_index(tokens, cursor + 1)
-                    if returns_close is not None:
-                        result_parts = [
-                            render_type(part)
-                            for part in split_top(
-                                tokens[cursor + 2 : returns_close], ","
-                            )
-                            if part
-                        ]
-                        result = " returns (" + ", ".join(result_parts) + ")"
-                        cursor = returns_close + 1
-            if cursor == len(tokens):
-                attributes_text = (
-                    " " + " ".join(attributes) if attributes else ""
+            result_text = ", ".join(result_parts)
+            if (
+                result_parts
+                and tokens[suffix.returns_close - 1].text == ","
+            ):
+                result_text += ","
+            result = " returns (" + result_text + ")"
+        return (
+            "function("
+            + params_text
+            + ")"
+            + qualifiers_text
+            + result
+            + _render_type_suffix(tokens[suffix.end:end])
+        )
+
+    if tokens[0].text == "(":
+        wrapped_close = matching_index(tokens, 0)
+        if wrapped_close is not None and wrapped_close < len(tokens) - 1:
+            suffix_end, _, suffix_error = (
+                _function_type_outer_suffix_end(
+                    tokens, wrapped_close + 1
                 )
+            )
+            if suffix_error is not None:
+                raise ValueError(
+                    "noncanonical wrapped type suffix near "
+                    f"`{tokens[suffix_error].text}`"
+                )
+            if suffix_end == len(tokens):
                 return (
-                    "function("
-                    + ", ".join(params)
-                    + ")"
-                    + attributes_text
-                    + result
+                    render_type(tokens[: wrapped_close + 1])
+                    + _render_type_suffix(
+                        tokens[wrapped_close + 1 : suffix_end]
+                    )
                 )
 
     if is_wrapped(tokens, "(", ")"):
+        tuple_error = _type_list_error_index(
+            tokens, 1, len(tokens) - 1
+        )
+        if tuple_error is not None:
+            raise ValueError(
+                "noncanonical tuple type near "
+                f"`{tokens[tuple_error].text}`"
+            )
         elements = split_top(tokens[1:-1], ",")
         if len(elements) == 1 and not elements[0]:
             return "()"
-        return "(" + ", ".join(render_type(element) for element in elements) + ")"
+        rendered_elements = [
+            render_type(element) for element in elements if element
+        ]
+        elements_text = ", ".join(rendered_elements)
+        if (
+            rendered_elements
+            and tokens[-2].text == ","
+        ):
+            elements_text += ","
+        return "(" + elements_text + ")"
 
     name_end = _qualified_name_end(tokens)
     if name_end:
@@ -514,26 +1364,92 @@ def render_type(tokens: Sequence[Token]) -> str:
             close_index = matching_index(rest, 0)
             if close_index is not None:
                 arg_tokens = rest[1:close_index]
+                args_error = _type_list_error_index(
+                    rest, 1, close_index
+                )
+                if args_error is not None:
+                    raise ValueError(
+                        "noncanonical type argument list near "
+                        f"`{rest[args_error].text}`"
+                    )
                 mapping_arrow = (
                     find_top(arg_tokens, "=>")
                     if name == "mapping" and rest[0].text == "("
                     else None
                 )
-                args = (
-                    [arg_tokens[:mapping_arrow], arg_tokens[mapping_arrow + 1 :]]
-                    if mapping_arrow is not None
-                    else split_top(arg_tokens, ",")
-                )
-                rendered_args = [render_type(arg) for arg in args if arg]
-                suffix = rest[close_index + 1 :]
-                if name == "mapping" and len(rendered_args) == 2:
-                    base = f"mapping({rendered_args[0]} => {rendered_args[1]})"
-                elif name in LOCATIONS and len(rendered_args) == 1:
-                    base = f"{rendered_args[0]} {name}"
+                if name == "mapping" and rest[0].text == "(":
+                    if mapping_arrow is not None:
+                        extra_arrow = find_top(
+                            arg_tokens[mapping_arrow + 1 :], "=>"
+                        )
+                        comma = find_top(arg_tokens, ",")
+                        malformed_mapping = (
+                            not arg_tokens[:mapping_arrow]
+                            or not arg_tokens[mapping_arrow + 1 :]
+                            or extra_arrow is not None
+                            or comma is not None
+                        )
+                        args = [
+                            arg_tokens[:mapping_arrow],
+                            arg_tokens[mapping_arrow + 1 :],
+                        ]
+                    else:
+                        args = split_top(arg_tokens, ",")
+                        if args and not args[-1]:
+                            args = args[:-1]
+                        malformed_mapping = (
+                            len(args) != 2
+                            or any(not arg for arg in args)
+                        )
+                    if malformed_mapping:
+                        raise ValueError(
+                            "cannot migrate malformed mapping type: "
+                            "expected exactly `mapping(Key, Value)` or "
+                            "`mapping(Key => Value)`"
+                        )
                 else:
-                    base = name + "<" + ", ".join(rendered_args) + ">"
-                return base + _render_type_suffix(suffix)
-        return name + _render_type_suffix(rest)
+                    args = split_top(arg_tokens, ",")
+                rendered_args = [render_type(arg) for arg in args if arg]
+                args_text = ", ".join(rendered_args)
+                if (
+                    rendered_args
+                    and arg_tokens
+                    and arg_tokens[-1].text == ","
+                ):
+                    args_text += ","
+                suffix = rest[close_index + 1 :]
+                if (
+                    name == "mapping"
+                    and rest[0].text == "("
+                    and len(rendered_args) == 2
+                ):
+                    base = f"mapping({rendered_args[0]} => {rendered_args[1]})"
+                elif (
+                    name in LOCATIONS
+                    and rest[0].text == "("
+                    and len(rendered_args) == 1
+                ):
+                    rendered_inner_tokens = significant(rendered_args[0])
+                    if (
+                        rendered_inner_tokens
+                        and (
+                            rendered_inner_tokens[0].text == "comptime"
+                            or rendered_inner_tokens[-1].text in LOCATIONS
+                        )
+                    ):
+                        base = f"{name}<{rendered_args[0]}>"
+                    else:
+                        base = f"{rendered_args[0]} {name}"
+                else:
+                    base = name + "<" + args_text + ">"
+                suffix_end = _validated_type_suffix_end(
+                    suffix, 0, label="type"
+                )
+                return base + _render_type_suffix(suffix[:suffix_end])
+        suffix_end = _validated_type_suffix_end(
+            rest, 0, label="type"
+        )
+        return name + _render_type_suffix(rest[:suffix_end])
 
     return join_tokens(tokens)
 
@@ -603,6 +1519,15 @@ def render_trait_ref(tokens: Sequence[Token]) -> tuple[str, list[str]] | None:
     elif rest:
         return None
     return name, args
+
+
+def render_trait_ref_text(tokens: Sequence[Token]) -> str | None:
+    trait = render_trait_ref(tokens)
+    if trait is None:
+        return None
+    name, args = trait
+    suffix = "<" + ", ".join(args) + ">" if args else ""
+    return name + suffix
 
 
 def render_predicate(tokens: Sequence[Token]) -> str | None:
@@ -1257,6 +2182,279 @@ def reject_contract_inheritance(source: str) -> None:
             f"column {column}: Core syntax does not support `is` base "
             "clauses; replace inheritance and base-constructor calls with "
             "composition or traits"
+        )
+
+
+def reject_noncanonical_proxy_comptime(source: str) -> None:
+    """Reject ``@comptime T`` where ``@`` occurs inside a type."""
+
+    tokens = significant(source)
+    executable_bodies = _executable_regions(tokens)[0]
+    body_contexts = [
+        (
+            body_start,
+            body_end,
+            _body_type_tokens(tokens, body_start, body_end),
+        )
+        for body_start, body_end in executable_bodies
+    ]
+    expression_type_ranges = _proxy_expression_type_ranges(
+        source, tokens, body_contexts
+    )
+    for index in range(len(tokens) - 1):
+        if (
+            tokens[index].text != "@"
+            or tokens[index + 1].text != "comptime"
+        ):
+            continue
+        if not any(
+            start <= tokens[index].start < end
+            for start, end in expression_type_ranges
+        ) and _proxy_prefix_is_expression(
+            tokens, index, body_contexts
+        ):
+            continue
+        line, column = _source_line_column(
+            source, tokens[index + 1].start
+        )
+        raise ValueError(
+            "cannot migrate noncanonical proxy type at "
+            f"line {line}, column {column}: write `comptime @T`, not "
+            "`@comptime T`; `@comptime T` is only valid as a proxy "
+            "expression"
+        )
+
+
+def reject_malformed_mapping_types(source: str) -> None:
+    """Reject malformed Solidity-style mapping argument lists."""
+
+    tokens = significant(source)
+    for index, token in enumerate(tokens):
+        if (
+            token.text != "mapping"
+            or index + 1 >= len(tokens)
+            or tokens[index + 1].text != "("
+            or (index > 0 and tokens[index - 1].text == ".")
+        ):
+            continue
+        close = matching_index(tokens, index + 1)
+        if close is None:
+            continue
+        arguments = tokens[index + 2 : close]
+        arrow = find_top(arguments, "=>")
+        if arrow is None:
+            continue
+        comma = find_top(arguments, ",")
+        if (
+            not arguments[:arrow]
+            or not arguments[arrow + 1 :]
+            or find_top(arguments[arrow + 1 :], "=>") is not None
+            or comma is not None
+        ):
+            offending_index = (
+                index + 2 + comma
+                if comma is not None
+                else index + 2 + arrow
+            )
+            line, column = _source_line_column(
+                source, tokens[offending_index].start
+            )
+            raise ValueError(
+                "cannot migrate malformed mapping type at "
+                f"line {line}, column {column}: expected exactly "
+                "`mapping(Key => Value)`"
+            )
+
+
+def reject_noncanonical_function_type_qualifiers(source: str) -> None:
+    """Reject function-type qualifiers that cannot be safely reordered."""
+
+    tokens = significant(source)
+    executable_bodies = _executable_regions(tokens)[0]
+    body_contexts = [
+        (
+            body_start,
+            body_end,
+            _body_type_tokens(tokens, body_start, body_end),
+        )
+        for body_start, body_end in executable_bodies
+    ]
+    for index, token in enumerate(tokens):
+        if (
+            token.text != "function"
+            or index + 1 >= len(tokens)
+            or tokens[index + 1].text != "("
+        ):
+            continue
+        params_close = matching_index(tokens, index + 1)
+        if params_close is None:
+            continue
+        error_index = _type_list_error_index(
+            tokens,
+            index + 2,
+            params_close,
+            reject_named_entries=True,
+        )
+        if error_index is None:
+            for open_index in range(index - 1, -1, -1):
+                if tokens[open_index].text != "<":
+                    continue
+                close_index = matching_index(tokens, open_index)
+                if close_index is None or close_index < index:
+                    continue
+                error_index = _type_list_error_index(
+                    tokens, open_index + 1, close_index
+                )
+                if error_index is not None:
+                    break
+        if error_index is None:
+            for part in split_top(
+                tokens[index + 2 : params_close], ","
+            ):
+                if part:
+                    try:
+                        render_type(part)
+                    except ValueError as error:
+                        line, column = _source_line_column(
+                            source, part[0].start
+                        )
+                        raise ValueError(
+                            "cannot migrate noncanonical function type "
+                            f"qualifier or nested type at line {line}, "
+                            f"column {column}: {error}"
+                        ) from error
+        suffix = None
+        if error_index is None:
+            suffix, error_index = _parse_function_type_suffix(
+                tokens, params_close + 1
+            )
+        if (
+            suffix is not None
+            and error_index is None
+            and suffix.returns_open is not None
+        ):
+            assert suffix.returns_close is not None
+            error_index = _type_list_error_index(
+                tokens,
+                suffix.returns_open + 1,
+                suffix.returns_close,
+                reject_named_entries=True,
+            )
+            if error_index is None:
+                for part in split_top(
+                    tokens[
+                        suffix.returns_open + 1 : suffix.returns_close
+                    ],
+                    ",",
+                ):
+                    if part:
+                        try:
+                            render_type(part)
+                        except ValueError as error:
+                            line, column = _source_line_column(
+                                source, part[0].start
+                            )
+                            raise ValueError(
+                                "cannot migrate noncanonical function type "
+                                f"qualifier or nested type at line {line}, "
+                                f"column {column}: {error}"
+                            ) from error
+        if suffix is not None and error_index is None:
+            (
+                predecessor,
+                has_proxy_prefix,
+                prefix_index,
+            ) = _function_type_prefix_context(tokens, index)
+            proxy_expression = False
+            if has_proxy_prefix:
+                proxy_expression = _proxy_prefix_is_expression(
+                    tokens, prefix_index, body_contexts
+                )
+            if any(
+                item.text == "comptime"
+                for item in tokens[prefix_index:index]
+            ):
+                comptime_tokens = _split_type_angle_operator_tokens(
+                    tokens[prefix_index:]
+                )
+                comptime_end = _type_expression_end(
+                    comptime_tokens,
+                    0,
+                    (
+                        FUNCTION_TYPE_PROXY_BOUNDARIES
+                        if (
+                            proxy_expression
+                            or predecessor in {"as", ":"}
+                        )
+                        else FUNCTION_TYPE_GENERAL_BOUNDARIES
+                    )
+                    | {"=>", "else", "then", "{"},
+                    word_boundaries={"as", "else", "then", "where"},
+                )
+                try:
+                    render_type(comptime_tokens[:comptime_end])
+                except ValueError:
+                    pass
+                else:
+                    continue
+            control_words = (
+                _function_type_control_words(tokens, prefix_index)
+                if proxy_expression or predecessor in {"as", ":"}
+                else set()
+            )
+            control_tail = _function_type_control_tail(
+                tokens, prefix_index
+            )
+            annotation_expression = (
+                predecessor == ":"
+                and prefix_index > 0
+                and _is_expression_annotation_colon(
+                    tokens,
+                    prefix_index - 1,
+                    executable_bodies,
+                )
+            )
+            if predecessor == "->":
+                allowed_word_boundaries = {"where"}
+            elif predecessor == "as" or annotation_expression:
+                allowed_word_boundaries = {"as"}
+            elif proxy_expression:
+                allowed_word_boundaries = {"as"}
+            else:
+                allowed_word_boundaries = None
+            if proxy_expression or predecessor == "as" or annotation_expression:
+                if "if" in control_words:
+                    allowed_word_boundaries.add("then")
+                if "then" in control_words:
+                    allowed_word_boundaries.add("else")
+            end, error_index = _function_type_tail_error_index(
+                tokens,
+                suffix,
+                allowed_word_boundaries=allowed_word_boundaries,
+                allow_postfix_index_boundary=proxy_expression,
+            )
+            if error_index is None:
+                error_index = _function_type_source_tail_error_index(
+                    tokens,
+                    index,
+                    end,
+                    predecessor,
+                    proxy_expression,
+                    annotation_expression,
+                    control_tail in {"if", "match", "while"},
+                    allowed_word_boundaries,
+                )
+        if error_index is None:
+            continue
+        offending = tokens[error_index]
+        line, column = _source_line_column(source, offending.start)
+        raise ValueError(
+            "cannot migrate noncanonical function type qualifier "
+            f"`{offending.text}` at line {line}, column {column}: expected "
+            "`function(...)`, optional `internal` or `external`, optional "
+            "`pure`, `view`, or `payable`, optional `returns (...)`, array "
+            "suffixes, then at most one outer `memory`, `storage`, or "
+            "`calldata`"
         )
 
 
@@ -2269,6 +3467,26 @@ def _append_generated_suffix(fragment: str, suffix: str) -> str:
     return fragment + suffix
 
 
+def _has_nested_location_wrapper(tokens: Sequence[Token]) -> bool:
+    for index in range(len(tokens) - 1):
+        if (
+            tokens[index].text not in LOCATIONS
+            or tokens[index + 1].text != "("
+        ):
+            continue
+        close = matching_index(tokens, index + 1)
+        if close is None:
+            continue
+        if any(
+            tokens[nested].text in LOCATIONS
+            and nested + 1 < close
+            and tokens[nested + 1].text == "("
+            for nested in range(index + 2, close)
+        ):
+            return True
+    return False
+
+
 def _with_preserved_comments(
     source: str,
     start: int,
@@ -2294,6 +3512,10 @@ def _with_preserved_comments(
 
     aligned = _aligned_token_indices(before, after)
     insertions: dict[int, list[tuple[int, str]]] = {}
+    preserve_source_order = _has_nested_location_wrapper(before)
+    placements: list[
+        tuple[int, int, Token, Token | None]
+    ] = []
 
     for order, comment in enumerate(comments):
         previous_index = next(
@@ -2358,6 +3580,29 @@ def _with_preserved_comments(
         else:
             position = after[0].end if after else 0
 
+        if preserve_source_order:
+            placements.append((order, position, comment, next_token))
+        else:
+            text = _comment_insertion(
+                original,
+                comment,
+                next_token,
+                replacement,
+                position,
+            )
+            insertions.setdefault(position, []).append((order, text))
+
+    # Token rewrites can move a wrapper keyword past its payload.  Preserve
+    # source comment order even when alignment would otherwise attach an
+    # earlier comment to that moved token after a later payload comment.
+    monotonic: list[tuple[int, int, Token, Token | None]] = []
+    next_position = len(replacement)
+    for order, position, comment, next_token in reversed(placements):
+        position = min(position, next_position)
+        monotonic.append((order, position, comment, next_token))
+        next_position = position
+
+    for order, position, comment, next_token in reversed(monotonic):
         text = _comment_insertion(
             original,
             comment,
@@ -2680,6 +3925,32 @@ def _mark_type_region(
         _depth_step(stack, text)
 
 
+def _mark_expression_type_region(
+    tokens: Sequence[Token],
+    start: int,
+    limit: int,
+    boundaries: set[str],
+    marked: set[int],
+) -> None:
+    """Mark a type span using the same generic-aware scan as migration."""
+
+    tail = _split_type_angle_operator_tokens(tokens[start:limit])
+    end = _type_expression_end(
+        tail,
+        0,
+        boundaries,
+        word_boundaries={"as", "else", "then"},
+    )
+    if end <= 0:
+        return
+    end_position = tail[end - 1].end
+    marked.update(
+        index
+        for index in range(start, limit)
+        if tokens[index].start < end_position
+    )
+
+
 def _body_type_tokens(
     tokens: Sequence[Token], body_start: int, body_end: int
 ) -> set[int]:
@@ -2689,6 +3960,8 @@ def _body_type_tokens(
     for index in range(body_start, body_end):
         text = tokens[index].text
         if text == ":":
+            if _is_ternary_colon(tokens, index):
+                continue
             # Local bindings and nested lambda parameters use name-first type
             # annotations.  Stop at the surrounding binding delimiter.
             _mark_type_region(
@@ -2701,29 +3974,12 @@ def _body_type_tokens(
         elif text == "as":
             # ``as`` is exclusively a conversion and everything to its right
             # up to the enclosing expression delimiter is a type.
-            _mark_type_region(
+            _mark_expression_type_region(
                 tokens,
                 index + 1,
                 body_end,
-                {
-                    ";",
-                    ",",
-                    ")",
-                    "]",
-                    "}",
-                    "{",
-                    "+",
-                    "-",
-                    "*",
-                    "/",
-                    "%",
-                    "==",
-                    "!=",
-                    "<=",
-                    ">=",
-                    "&&",
-                    "||",
-                },
+                FUNCTION_TYPE_CONVERSION_BOUNDARIES
+                | {"{", "else", "then"},
                 marked,
             )
 
@@ -2987,6 +4243,30 @@ _LEGACY_DOT_PREFIX_WORDS = {
 }
 
 
+def _closes_type_arguments(
+    tokens: Sequence[Token],
+    close_index: int,
+) -> bool:
+    close = tokens[close_index].text
+    if not close or set(close) != {">"}:
+        return False
+    depth = len(close)
+    for index in range(close_index - 1, -1, -1):
+        text = tokens[index].text
+        if text in {";", "{", "}"}:
+            return False
+        if text and set(text) == {">"}:
+            depth += len(text)
+        elif text == "<":
+            depth -= 1
+            if depth == 0:
+                return (
+                    index > 0
+                    and tokens[index - 1].kind == "word"
+                )
+    return False
+
+
 def _is_legacy_dot_constructor(
     tokens: Sequence[Token], dot_index: int
 ) -> bool:
@@ -3001,6 +4281,12 @@ def _is_legacy_dot_constructor(
     if dot_index == 0:
         return True
     previous = tokens[dot_index - 1]
+    if (
+        previous.text
+        and set(previous.text) == {">"}
+        and _closes_type_arguments(tokens, dot_index - 1)
+    ):
+        return False
     if previous.kind == "word":
         return previous.text in _LEGACY_DOT_PREFIX_WORDS
     return previous.text in _LEGACY_DOT_PREFIX_SYMBOLS
@@ -3109,7 +4395,7 @@ def migrate_aliases(source: str) -> str:
     tokens = significant(source)
     replacements: list[tuple[int, int, str]] = []
     for index, token in enumerate(tokens):
-        if token.text != "type":
+        if token.text not in {"alias", "type"}:
             continue
         end = _statement_end(tokens, index)
         if end is None or index + 1 >= end:
@@ -3122,7 +4408,8 @@ def migrate_aliases(source: str) -> str:
         name = body[0].text
         cursor = 1
         params: list[str] = []
-        if cursor < equals and body[cursor].text == "(":
+        params_open = "(" if token.text == "type" else "<"
+        if cursor < equals and body[cursor].text == params_open:
             close = matching_index(body, cursor)
             if close is None or close >= equals:
                 continue
@@ -3134,15 +4421,68 @@ def migrate_aliases(source: str) -> str:
             cursor = close + 1
         if cursor != equals:
             continue
+        rhs_tokens = body[equals + 1 :]
         generic = "<" + ", ".join(params) + ">" if params else ""
-        rhs = render_type(body[equals + 1 :])
+        rhs = render_type(rhs_tokens)
         if not rhs:
+            continue
+        if (
+            token.text == "alias"
+            and [item.text for item in significant(rhs)]
+            == [item.text for item in rhs_tokens]
+        ):
             continue
         replacement = f"alias {name}{generic} = {rhs};"
         replacement = _with_preserved_comments(
             source, token.start, tokens[end].end, replacement
         )
         replacements.append((token.start, tokens[end].end, replacement))
+    return replace_spans(source, replacements)
+
+
+def migrate_value_type_underlying_types(source: str) -> str:
+    """Canonicalize the underlying type in `type Name is Type;`."""
+
+    tokens = significant(source)
+    replacements: list[tuple[int, int, str]] = []
+    for index, token in enumerate(tokens):
+        if (
+            token.text != "type"
+            or index + 2 >= len(tokens)
+            or tokens[index + 1].kind != "word"
+        ):
+            continue
+        is_index = index + 2
+        if tokens[is_index].text == "<":
+            binder_close = matching_index(tokens, is_index)
+            if binder_close is None:
+                continue
+            is_index = binder_close + 1
+        if (
+            is_index >= len(tokens)
+            or tokens[is_index].text != "is"
+        ):
+            continue
+        end = _statement_end(tokens, index)
+        if end is None or is_index + 1 >= end:
+            continue
+        underlying = list(tokens[is_index + 1 : end])
+        rendered = render_type(underlying)
+        if (
+            not rendered
+            or [item.text for item in significant(rendered)]
+            == [item.text for item in underlying]
+        ):
+            continue
+        replacement = _with_preserved_comments(
+            source,
+            underlying[0].start,
+            underlying[-1].end,
+            rendered,
+        )
+        replacements.append(
+            (underlying[0].start, underlying[-1].end, replacement)
+        )
     return replace_spans(source, replacements)
 
 
@@ -3341,9 +4681,11 @@ def migrate_functions(source: str) -> str:
         signature_tail = tail[:where] if where is not None else tail
         existing_constraints = tail[where + 1 :] if where is not None else []
         arrow = find_top(signature_tail, "->")
-        returns = find_top(signature_tail, "returns")
-        if arrow is not None and returns is not None:
-            continue
+        returns = (
+            None
+            if arrow is not None
+            else find_top(signature_tail, "returns")
+        )
 
         return_tokens: list[Token] = []
         has_returns = returns is not None
@@ -3457,9 +4799,7 @@ def migrate_lambdas(source: str) -> str:
             continue
         tail = list(tokens[close + 1 : end])
         arrow = find_top(tail, "->")
-        returns = find_top(tail, "returns")
-        if arrow is not None and returns is not None:
-            continue
+        returns = None if arrow is not None else find_top(tail, "returns")
 
         return_tokens: list[Token] = []
         has_returns = returns is not None
@@ -3519,9 +4859,7 @@ def migrate_special_functions(source: str) -> str:
             continue
         tail = list(tokens[close + 1 : end])
         arrow = find_top(tail, "->")
-        returns = find_top(tail, "returns")
-        if arrow is not None and returns is not None:
-            continue
+        returns = None if arrow is not None else find_top(tail, "returns")
         start_index = _previous_boundary(tokens, index)
         prefix = list(tokens[start_index:index])
         modifiers = [item.text for item in prefix if item.text in MODIFIERS]
@@ -3600,8 +4938,10 @@ def migrate_incomplete_arrows(source: str) -> str:
 
     Complete declarations are handled by ``migrate_functions`` and
     ``migrate_lambdas``.  This fallback is for negative parser fixtures whose
-    missing ``)``/body/semicolon prevents those structural passes from finding
-    a whole header.  The original structural error is retained.
+    missing body or semicolon prevents those structural passes from finding a
+    whole header.  A closed parameter list is required: without ``)`` an arrow
+    could belong to a parameter type, so rewriting it would be ambiguous.  The
+    original structural error is retained.
     """
 
     tokens = significant(source)
@@ -3609,11 +4949,49 @@ def migrate_incomplete_arrows(source: str) -> str:
     for index, token in enumerate(tokens):
         if token.text != "->" or index + 1 >= len(tokens):
             continue
+        start = _previous_boundary(tokens, index)
+        callable_index = next(
+            (
+                cursor
+                for cursor in range(index - 1, start - 1, -1)
+                if (
+                    tokens[cursor].text
+                    in {"constructor", "fallback", "function", "lam"}
+                    and (
+                        tokens[cursor].text != "function"
+                        or (
+                            cursor + 1 < len(tokens)
+                            and tokens[cursor + 1].kind == "word"
+                        )
+                    )
+                )
+            ),
+            None,
+        )
+        if callable_index is None:
+            continue
+        params_open = next(
+            (
+                cursor
+                for cursor in range(callable_index + 1, index)
+                if tokens[cursor].text == "("
+            ),
+            None,
+        )
+        if params_open is None:
+            continue
+        params_close = matching_index(tokens, params_open)
+        if params_close is None or params_close >= index:
+            continue
         stack: list[str] = []
         end = index + 1
         for cursor in range(index + 1, len(tokens)):
             text = tokens[cursor].text
-            if cursor > index + 1 and not stack and text in {"{", "}", ";"}:
+            if (
+                cursor > index + 1
+                and not stack
+                and text in {"where", "{", "}", ";"}
+            ):
                 break
             _depth_step(stack, text)
             end = cursor + 1
@@ -3629,6 +5007,21 @@ def migrate_incomplete_arrows(source: str) -> str:
         )
         replacements.append((token.start, tokens[end - 1].end, replacement))
     return replace_spans(source, replacements)
+
+
+def reject_remaining_classic_arrows(source: str) -> None:
+    """Reject Classic type arrows left outside a safely rendered type span."""
+
+    for token in significant(source):
+        if token.text != "->":
+            continue
+        line, column = _source_line_column(source, token.start)
+        raise ValueError(
+            "cannot migrate Classic type arrow at "
+            f"line {line}, column {column}: rewrite the complete type "
+            "`A -> B` as `function(A) returns (B)` or isolate it in a "
+            "declaration the migrator can render safely"
+        )
 
 
 def migrate_let_types(source: str) -> str:
@@ -3677,16 +5070,30 @@ def migrate_let_types(source: str) -> str:
 
 def migrate_field_types(source: str) -> str:
     tokens = significant(source)
+    executable_bodies = _executable_regions(tokens)[0]
     replacements: list[tuple[int, int, str]] = []
     for index, token in enumerate(tokens):
         if token.text != ":" or index == 0 or tokens[index - 1].kind != "word":
+            continue
+        if _is_expression_annotation_colon(
+            tokens, index, executable_bodies
+        ):
             continue
         name_index = index - 1
         before = tokens[name_index - 1].text if name_index else None
         if before not in {None, "{", "}", ";"}:
             continue
-        end = _header_boundary(tokens, index + 1)
-        if end is None or tokens[end].text not in {"=", ";"}:
+        stack: list[str] = []
+        end = None
+        for cursor in range(index + 1, len(tokens)):
+            text = tokens[cursor].text
+            if not stack and text in {"=", ";"}:
+                end = cursor
+                break
+            if not stack and text in {"{", "}"}:
+                break
+            _depth_step(stack, text)
+        if end is None:
             continue
         ty = render_type(tokens[index + 1 : end])
         if not ty:
@@ -3974,6 +5381,7 @@ def _inside_function_parameter_list(tokens: Sequence[Token], colon_index: int) -
 
 def _is_ternary_colon(tokens: Sequence[Token], colon_index: int) -> bool:
     stack: list[str] = []
+    unmatched_colons = 0
     for index in range(colon_index - 1, -1, -1):
         text = tokens[index].text
         if text in {")", "]", "}"}:
@@ -3983,112 +5391,774 @@ def _is_ternary_colon(tokens: Sequence[Token], colon_index: int) -> bool:
                 stack.pop()
             else:
                 break
-        elif not stack and text == "?":
-            return True
-        elif not stack and text in {";", "=", "return", "case"}:
-            break
+        elif not stack:
+            if text == ":":
+                unmatched_colons += 1
+            elif text == "?":
+                if unmatched_colons:
+                    unmatched_colons -= 1
+                else:
+                    return True
+            elif text in {
+                ";",
+                ",",
+                "=",
+                ":=",
+                "=>",
+                "return",
+                "case",
+            }:
+                break
     return False
+
+
+def _is_expression_annotation_colon(
+    tokens: Sequence[Token],
+    index: int,
+    executable_bodies: Sequence[tuple[int, int]] | None = None,
+) -> bool:
+    if (
+        tokens[index].text != ":"
+        or index == 0
+        or index + 1 >= len(tokens)
+    ):
+        return False
+    if tokens[index + 1].text in {"#", "?"}:
+        return False
+    if tokens[index + 1].kind != "word" and tokens[index + 1].text not in {
+        "(",
+        "@",
+    }:
+        return False
+    if (
+        _inside_function_parameter_list(tokens, index)
+        or _is_ternary_colon(tokens, index)
+    ):
+        return False
+
+    statement_start = index - 1
+    while statement_start >= 0 and tokens[statement_start].text not in {
+        ";",
+        "{",
+        "}",
+    }:
+        statement_start -= 1
+    statement_prefix = {
+        item.text for item in tokens[statement_start + 1 : index]
+    }
+    if (
+        statement_prefix & {"export", "import", "pragma"}
+        or "where" in statement_prefix
+    ):
+        return False
+    if "let" in statement_prefix:
+        let_index = next(
+            cursor
+            for cursor in range(statement_start + 1, index)
+            if tokens[cursor].text == "let"
+        )
+        if not any(
+            tokens[cursor].text == "="
+            for cursor in range(let_index + 1, index)
+        ):
+            return False
+
+    previous = tokens[index - 1]
+    if executable_bodies is None:
+        executable_bodies = _executable_regions(tokens)[0]
+    inside_executable_body = any(
+        body_start <= index < body_end
+        for body_start, body_end in executable_bodies
+    )
+    if (
+        not inside_executable_body
+        and previous.kind == "word"
+        and statement_start + 1 == index - 1
+    ):
+        field_end = _header_boundary(tokens, index + 1)
+        if field_end is not None and tokens[field_end].text in {"=", ";"}:
+            return False
+    return not (
+        previous.kind == "word"
+        and index >= 2
+        and tokens[index - 2].text in {"trait", "impl"}
+    )
+
+
+def _annotation_expression_start(
+    tokens: Sequence[Token],
+    colon_index: int,
+) -> int:
+    """Find the expression wrapped by a Classic trailing type annotation."""
+
+    stack: list[str] = []
+    for index in range(colon_index - 1, -1, -1):
+        text = tokens[index].text
+        if text in {")", "]", "}"}:
+            stack.append(text)
+            continue
+        if text in {"(", "[", "{"}:
+            if stack:
+                stack.pop()
+                continue
+            return index + 1
+        if stack:
+            continue
+        if text in {
+            ";",
+            ",",
+            "=",
+            ":=",
+            "=>",
+            "+=",
+            "-=",
+            "^=",
+            "&=",
+            "|=",
+            "%=",
+        } or text in {
+            "return",
+            "case",
+            "then",
+            "else",
+            "if",
+            "while",
+            "match",
+        }:
+            return index + 1
+    return 0
 
 
 def migrate_expression_annotations(source: str) -> str:
     tokens = significant(source)
+    executable_bodies = _executable_regions(tokens)[0]
     replacements: list[tuple[int, int, str]] = []
     for index, token in enumerate(tokens):
-        if token.text != ":" or index == 0 or index + 1 >= len(tokens):
-            continue
-        if tokens[index + 1].text in {"#", "?"}:
-            # Rust-style formatting placeholders can appear in diagnostic
-            # strings handed to the migrator by an embedding tool.
-            continue
-        if tokens[index + 1].kind != "word" and tokens[index + 1].text not in {
-            "(",
-            "@",
-        }:
-            continue
-        if _inside_function_parameter_list(tokens, index):
-            continue
-        if _is_ternary_colon(tokens, index):
-            continue
-        # Let binding types and field declarations are canonical uses of colon.
-        statement_start = index - 1
-        while statement_start >= 0 and tokens[statement_start].text not in {
-            ";",
-            "{",
-            "}",
-        }:
-            statement_start -= 1
-        statement_prefix = {
-            item.text for item in tokens[statement_start + 1 : index]
-        }
-        if statement_prefix & {"export", "import", "pragma"}:
-            continue
-        if "where" in statement_prefix:
-            continue
-        if "let" in statement_prefix:
-            let_index = next(
-                cursor
-                for cursor in range(statement_start + 1, index)
-                if tokens[cursor].text == "let"
-            )
-            equals_before_colon = any(
-                tokens[cursor].text == "="
-                for cursor in range(let_index + 1, index)
-            )
-            if not equals_before_colon:
-                continue
-        previous = tokens[index - 1]
-        if (
-            previous.kind == "word"
-            and statement_start + 1 == index - 1
+        if not _is_expression_annotation_colon(
+            tokens, index, executable_bodies
         ):
-            # A name-first field declaration begins the statement and ends at
-            # ``=`` or ``;``.  Its colon is canonical rather than an expression
-            # annotation.
-            field_end = _header_boundary(tokens, index + 1)
-            if field_end is not None and tokens[field_end].text in {"=", ";"}:
-                continue
-        if previous.kind == "word" and index >= 2 and tokens[index - 2].text in {
-            "trait",
-            "impl",
-        }:
             continue
 
-        stack: list[str] = []
-        end = index + 1
-        for cursor in range(index + 1, len(tokens)):
-            text = tokens[cursor].text
-            if cursor > index + 1 and not stack and text in {
-                ",",
-                ";",
-                ")",
-                "]",
-                "}",
-                "+",
-                "-",
-                "*",
-                "/",
-                "==",
-                "!=",
-                "&&",
-                "||",
-            }:
-                break
-            _depth_step(stack, text)
-            end = cursor + 1
-        type_tokens = list(tokens[index + 1 : end])
+        type_tail = _split_type_angle_operator_tokens(
+            tokens[index + 1 :]
+        )
+        end = _type_expression_end(
+            type_tail,
+            0,
+            FUNCTION_TYPE_CONVERSION_BOUNDARIES | {"else", "then", "{"},
+            word_boundaries={"as", "else", "then"},
+        )
+        type_tokens = list(type_tail[:end])
         if not type_tokens:
             continue
+        _reject_dangling_type_comparison(type_tail, end)
         rendered = render_type(type_tokens)
         if not rendered:
+            continue
+        expression_start = _annotation_expression_start(tokens, index)
+        if expression_start >= index:
+            continue
+        replacement_start = token.start
+        preceding_end = tokens[index - 1].end
+        if not source[preceding_end:token.start].strip():
+            replacement_start = preceding_end
+        replacement = _with_preserved_comments(
+            source,
+            replacement_start,
+            type_tokens[-1].end,
+            ") as " + rendered,
+        )
+        replacement = _separate_following_type_token(
+            source, type_tokens[-1].end, replacement
+        )
+        replacements.append(
+            (
+                tokens[expression_start].start,
+                tokens[expression_start].start,
+                "(",
+            )
+        )
+        replacements.append(
+            (replacement_start, type_tokens[-1].end, replacement)
+        )
+    return replace_spans(source, replacements)
+
+
+def _migrate_expression_types(
+    source: str,
+    introducer: str,
+    boundaries: set[str],
+    *,
+    require_arrow: bool = False,
+) -> str:
+    """Canonicalize one complete type introduced inside an expression."""
+
+    tokens = significant(source)
+    replacements: list[tuple[int, int, str]] = []
+    covered_until = 0
+    for index, token in enumerate(tokens):
+        if (
+            token.start < covered_until
+            or token.text != introducer
+            or index + 1 >= len(tokens)
+        ):
+            continue
+        if introducer == "as":
+            statement_start = index - 1
+            while (
+                statement_start >= 0
+                and tokens[statement_start].text != ";"
+            ):
+                statement_start -= 1
+            if any(
+                item.text in {"import", "export", "pragma"}
+                for item in tokens[statement_start + 1 : index]
+            ):
+                continue
+        type_tail = _split_type_angle_operator_tokens(
+            tokens[index + 1 :]
+        )
+        end = _type_expression_end(
+            type_tail,
+            0,
+            boundaries,
+            word_boundaries={"as", "else", "then"},
+        )
+        type_tokens = list(type_tail[:end])
+        if not type_tokens:
+            continue
+        _reject_dangling_type_comparison(type_tail, end)
+        if require_arrow and not any(
+            item.text == "->" for item in type_tokens
+        ):
+            continue
+        # The outer type renderer recursively canonicalizes nested proxy or
+        # conversion types.  Never schedule a second overlapping inner span,
+        # even when the outer token sequence is already canonical.
+        covered_until = type_tokens[-1].end
+        rendered = render_type(type_tokens)
+        if any(item.text == "->" for item in significant(rendered)):
+            # Leave an incomplete or ambiguous span untouched.  The fixed
+            # point validator will report the remaining Classic arrow.
+            continue
+        needs_separator = _type_span_needs_operator_separation(
+            source, type_tokens, type_tail, end
+        )
+        if (
+            [item.text for item in significant(rendered)]
+            == [item.text for item in type_tokens]
+            and not needs_separator
+        ):
+            continue
+        replacement = _with_preserved_comments(
+            source,
+            type_tokens[0].start,
+            type_tokens[-1].end,
+            rendered,
+        )
+        replacement = _separate_following_type_token(
+            source, type_tokens[-1].end, replacement
+        )
+        replacements.append(
+            (type_tokens[0].start, type_tokens[-1].end, replacement)
+        )
+    return replace_spans(source, replacements)
+
+
+def migrate_conversion_types(source: str) -> str:
+    return _migrate_expression_types(
+        source,
+        "as",
+        FUNCTION_TYPE_CONVERSION_BOUNDARIES | {"else", "then", "{"},
+    )
+
+
+def _proxy_bracket_kind(
+    tokens: Sequence[Token],
+    open_index: int,
+) -> tuple[str, int | None]:
+    close = matching_index(tokens, open_index)
+    if close is None:
+        return "index", None
+    contents = tokens[open_index + 1 : close]
+    if not contents:
+        return "dynamic", close
+    if len(contents) != 1 or contents[0].kind != "number":
+        return "index", close
+    spelling = contents[0].text
+    if spelling.startswith("0X"):
+        return "invalid-fixed", close
+    base = 16 if spelling.lower().startswith("0x") else 10
+    digits = spelling[2:] if base == 16 else spelling
+    length = int(digits, base)
+    if length == 0 or length > (1 << 64) - 1:
+        return "invalid-fixed", close
+    return "fixed", close
+
+
+def _plausible_type_application_argument(
+    tokens: Sequence[Token],
+) -> bool:
+    if not tokens:
+        return False
+    if (
+        tokens[0].kind != "word"
+        and tokens[0].text not in {"(", "@"}
+    ):
+        return False
+    if any(
+        tokens[index].text == "@"
+        and tokens[index + 1].text == "comptime"
+        for index in range(len(tokens) - 1)
+    ):
+        return False
+    if tokens[0].text == "(":
+        close = matching_index(tokens, 0)
+        if (
+            close is not None
+            and close < len(tokens) - 1
+            and tokens[close + 1].text != "->"
+        ):
+            try:
+                _validated_type_suffix_end(
+                    tokens, close + 1, label="type"
+                )
+            except ValueError:
+                return False
+    stack: list[str] = []
+    for index, token in enumerate(tokens):
+        if token.kind in {"string", "assembly"}:
+            return False
+        if token.kind == "number":
+            if not stack or stack[-1] != "[":
+                return False
+        if token.text in {"true", "false"}:
+            return False
+        if token.text in {
+            "+",
+            "-",
+            "*",
+            "/",
+            "%",
+            "**",
+            "==",
+            "!=",
+            "<=",
+            ">=",
+            "&&",
+            "||",
+            "&",
+            "|",
+            "^",
+            "!",
+            "~",
+            "?",
+            ":",
+            "=",
+            "+=",
+            "-=",
+        }:
+            return False
+        _depth_step(stack, token.text)
+    try:
+        rendered = render_type(tokens)
+    except ValueError:
+        return False
+    return bool(rendered)
+
+
+def _type_application_argument_is_type_only(
+    tokens: Sequence[Token],
+) -> bool:
+    if not tokens or tokens[0].text == "@":
+        return False
+    if tokens[0].text in {"function", "comptime"}:
+        return True
+    if any(token.text in {"->", "=>"} for token in tokens):
+        return True
+    stack: list[str] = []
+    for index, token in enumerate(tokens):
+        if (
+            not stack
+            and index > 0
+            and token.text in LOCATIONS
+            and tokens[index - 1].text != "."
+        ):
+            return True
+        _depth_step(stack, token.text)
+    return any(
+        tokens[index].text == "["
+        and index + 1 < len(tokens)
+        and tokens[index + 1].text == "]"
+        for index in range(len(tokens) - 1)
+    )
+
+
+def _proxy_call_boundary(
+    source: str,
+    tokens: Sequence[Token],
+) -> tuple[int | None, int | None]:
+    """Classify ``@Qualified(...)`` as a call or an ambiguous old type app."""
+
+    base_start = 0
+    while (
+        base_start < len(tokens)
+        and tokens[base_start].text in {"@", "comptime"}
+    ):
+        base_start += 1
+    base_tokens = tokens[base_start:]
+    relative_name_end = _qualified_name_end(base_tokens)
+    name_end = base_start + relative_name_end
+    if (
+        not relative_name_end
+        or name_end >= len(tokens)
+        or tokens[name_end].text != "("
+        or tokens[base_start].text == "function"
+    ):
+        return None, None
+    close = matching_index(tokens, name_end)
+    if (
+        close is not None
+        and close + 1 < len(tokens)
+        and tokens[close + 1].text == "->"
+    ):
+        # Runtime calls cannot be followed by a Classic type arrow.  The
+        # parenthesized segment is therefore unambiguously an old type
+        # application, even when its arguments are otherwise name-like.
+        return None, name_end
+    if (
+        close is not None
+        and relative_name_end == 1
+        and tokens[base_start].text == "mapping"
+        and find_top(tokens[name_end + 1 : close], "=>") is not None
+    ):
+        # A top-level fat arrow is unique to the mapping type constructor.
+        # Include even malformed key/value types in the span so nested-type
+        # validators cannot mistake them for runtime call arguments.
+        return None, name_end
+    if close is None:
+        return name_end, None
+    argument_tokens = tokens[name_end + 1 : close]
+    arguments = split_top(argument_tokens, ",")
+    plausible_types = (
+        not argument_tokens
+        or (
+            bool(arguments)
+            and all(
+                _plausible_type_application_argument(argument)
+                for argument in (
+                    arguments[:-1]
+                    if not arguments[-1]
+                    else arguments
+                )
+            )
+            and (
+                bool(arguments[-1])
+                or len(arguments) == 1
+                or bool(arguments[-2])
+            )
+        )
+    )
+    if not plausible_types:
+        return name_end, None
+    nonempty_arguments = [
+        argument for argument in arguments if argument
+    ]
+    if argument_tokens and argument_tokens[-1].text == ",":
+        return None, name_end
+    if any(
+        _type_application_argument_is_type_only(argument)
+        for argument in nonempty_arguments
+    ):
+        return None, name_end
+    line, column = _source_line_column(
+        source, tokens[name_end].start
+    )
+    raise ValueError(
+        "cannot safely migrate ambiguous proxy call/type-application "
+        f"syntax at line {line}, column {column}: write `@T<...>` for "
+        "a proxy of a generic type or `(@T)(...)` for a proxy-expression "
+        "call"
+    )
+
+
+def _reject_ambiguous_proxy_array(
+    source: str,
+    token: Token,
+) -> None:
+    line, column = _source_line_column(source, token.start)
+    raise ValueError(
+        "cannot safely migrate ambiguous proxy array/index syntax at "
+        f"line {line}, column {column}: write `(@T)[n]` for a proxy "
+        "expression index; for a proxy of a fixed-array type, introduce "
+        "an alias such as `alias Fixed = T[n];` and write `@Fixed`"
+    )
+
+
+def migrate_proxy_types(source: str) -> str:
+    tokens = significant(source)
+    body_contexts = [
+        (
+            body_start,
+            body_end,
+            _body_type_tokens(tokens, body_start, body_end),
+        )
+        for body_start, body_end in _executable_regions(tokens)[0]
+    ]
+    replacements: list[tuple[int, int, str]] = []
+    covered_until = 0
+    for index, token in enumerate(tokens):
+        if (
+            token.start < covered_until
+            or token.text != "@"
+            or index + 1 >= len(tokens)
+            or not _proxy_prefix_is_expression(
+                tokens, index, body_contexts
+            )
+        ):
+            continue
+        type_tail = _split_type_angle_operator_tokens(
+            tokens[index + 1 :]
+        )
+        (
+            call_boundary,
+            forced_type_application_open,
+        ) = _proxy_call_boundary(source, type_tail)
+        scan_tail = (
+            type_tail[:call_boundary]
+            if call_boundary is not None
+            else type_tail
+        )
+        end = _type_expression_end(
+            scan_tail,
+            0,
+            (FUNCTION_TYPE_PROXY_BOUNDARIES - {"->"})
+            | {"else", "then", "{"},
+            word_boundaries={"as", "else", "then"},
+            # Classic proxy expressions parsed every following bracket as an
+            # index postfix.  Parenthesize the proxy so the new fixed-array
+            # type suffix cannot greedily change that meaning.
+            allow_array_suffix=False,
+            forced_type_application_opens=(
+                {forced_type_application_open}
+                if forced_type_application_open is not None
+                else None
+            ),
+        )
+        type_tokens = list(scan_tail[:end])
+        if not type_tokens:
+            continue
+        _reject_dangling_type_comparison(scan_tail, end)
+        rendered = render_type(type_tokens)
+        rendered_tokens = significant(rendered)
+        if any(item.text == "->" for item in rendered_tokens):
+            continue
+        changed = (
+            [item.text for item in rendered_tokens]
+            != [item.text for item in type_tokens]
+            or _type_span_needs_operator_separation(
+                source, type_tokens, scan_tail, end
+            )
+        )
+        has_postfix_index = False
+        if end < len(scan_tail) and scan_tail[end].text == "[":
+            bracket_kind, close = _proxy_bracket_kind(scan_tail, end)
+            if bracket_kind == "dynamic":
+                assert close is not None
+                end = close + 1
+                while (
+                    end < len(scan_tail)
+                    and scan_tail[end].text == "["
+                ):
+                    nested_kind, nested_close = _proxy_bracket_kind(
+                        scan_tail, end
+                    )
+                    if nested_kind not in {"dynamic", "fixed"}:
+                        break
+                    assert nested_close is not None
+                    end = nested_close + 1
+                if (
+                    end < len(scan_tail)
+                    and scan_tail[end].text in LOCATIONS
+                ):
+                    end += 1
+                type_tokens = list(scan_tail[:end])
+                rendered = render_type(type_tokens)
+                rendered_tokens = significant(rendered)
+                changed = (
+                    [item.text for item in rendered_tokens]
+                    != [item.text for item in type_tokens]
+                    or _type_span_needs_operator_separation(
+                        source, type_tokens, scan_tail, end
+                    )
+                )
+                has_postfix_index = (
+                    end < len(scan_tail)
+                    and scan_tail[end].text == "["
+                )
+            elif (
+                bracket_kind == "fixed"
+                and not changed
+                and type_tokens[-1].text not in LOCATIONS
+            ):
+                _reject_ambiguous_proxy_array(
+                    source, scan_tail[end]
+                )
+            else:
+                has_postfix_index = True
+        covered_until = type_tokens[-1].end
+        if not changed and not has_postfix_index:
             continue
         replacement = _with_preserved_comments(
             source,
             token.start,
-            tokens[end - 1].end,
-            " as " + rendered,
+            type_tokens[-1].end,
+            "@" + rendered,
+        )
+        if has_postfix_index:
+            replacement = "(" + replacement + ")"
+        replacement = _separate_following_type_token(
+            source, type_tokens[-1].end, replacement
         )
         replacements.append(
-            (token.start, tokens[end - 1].end, replacement)
+            (token.start, type_tokens[-1].end, replacement)
+        )
+    return replace_spans(source, replacements)
+
+
+def migrate_enum_payload_types(source: str) -> str:
+    """Canonicalize payload types in otherwise canonical enums."""
+
+    tokens = significant(source)
+    replacements: list[tuple[int, int, str]] = []
+    for index, token in enumerate(tokens):
+        if (
+            token.text != "enum"
+            or index + 1 >= len(tokens)
+            or tokens[index + 1].kind != "word"
+        ):
+            continue
+        body_open = index + 2
+        if body_open < len(tokens) and tokens[body_open].text == "<":
+            generic_close = matching_index(tokens, body_open)
+            if generic_close is None:
+                continue
+            body_open = generic_close + 1
+        if body_open >= len(tokens) or tokens[body_open].text != "{":
+            continue
+        body_close = matching_index(tokens, body_open)
+        if body_close is None:
+            continue
+        for variant in split_top(
+            tokens[body_open + 1 : body_close], ","
+        ):
+            if (
+                len(variant) < 3
+                or variant[0].kind != "word"
+                or variant[1].text != "("
+            ):
+                continue
+            payload_close = matching_index(variant, 1)
+            if payload_close != len(variant) - 1:
+                continue
+            for payload in split_top(
+                variant[2:payload_close], ","
+            ):
+                if not payload:
+                    continue
+                rendered = render_type(payload)
+                if any(
+                    item.text == "->" for item in significant(rendered)
+                ):
+                    continue
+                if (
+                    [item.text for item in significant(rendered)]
+                    == [item.text for item in payload]
+                ):
+                    continue
+                replacement = _with_preserved_comments(
+                    source,
+                    payload[0].start,
+                    payload[-1].end,
+                    rendered,
+                )
+                replacements.append(
+                    (payload[0].start, payload[-1].end, replacement)
+                )
+    return replace_spans(source, replacements)
+
+
+def migrate_canonical_trait_impl_headers(source: str) -> str:
+    """Canonicalize nested type syntax in already-new trait/impl headers."""
+
+    tokens = significant(source)
+    replacements: list[tuple[int, int, str]] = []
+    for index, token in enumerate(tokens):
+        if token.text not in {"trait", "impl"}:
+            continue
+        end = _header_boundary(tokens, index + 1)
+        if end is None or tokens[end].text != "{":
+            continue
+
+        head_start = index + 1
+        if (
+            token.text == "impl"
+            and head_start < end
+            and tokens[head_start].text == "<"
+        ):
+            binder_close = matching_index(tokens, head_start)
+            if binder_close is None or binder_close >= end:
+                continue
+            head_start = binder_close + 1
+        if head_start >= end:
+            continue
+
+        header = list(tokens[head_start:end])
+        where_relative = find_top(header, "where")
+        head_end = (
+            head_start + where_relative
+            if where_relative is not None
+            else end
+        )
+        head_tokens = list(tokens[head_start:head_end])
+        rendered_head = render_trait_ref_text(head_tokens)
+        if (
+            rendered_head is not None
+            and [item.text for item in significant(rendered_head)]
+            != [item.text for item in head_tokens]
+        ):
+            replacement = _with_preserved_comments(
+                source,
+                head_tokens[0].start,
+                head_tokens[-1].end,
+                rendered_head,
+            )
+            replacements.append(
+                (head_tokens[0].start, head_tokens[-1].end, replacement)
+            )
+
+        if where_relative is None:
+            continue
+        predicates = list(tokens[head_end + 1 : end])
+        if not predicates:
+            continue
+        rendered_predicates = render_predicates(predicates)
+        if not rendered_predicates:
+            continue
+        rendered_context = ", ".join(rendered_predicates)
+        if (
+            [item.text for item in significant(rendered_context)]
+            == [item.text for item in predicates]
+        ):
+            continue
+        replacement = _with_preserved_comments(
+            source,
+            predicates[0].start,
+            predicates[-1].end,
+            rendered_context,
+        )
+        replacements.append(
+            (predicates[0].start, predicates[-1].end, replacement)
         )
     return replace_spans(source, replacements)
 
@@ -4101,25 +6171,33 @@ def migrate_source(
     if has_comment_marker(source, KEEP_LEGACY_NEGATIVE_MARKER):
         return source
     reject_contract_inheritance(source)
+    reject_noncanonical_proxy_comptime(source)
+    reject_malformed_mapping_types(source)
+    reject_noncanonical_function_type_qualifiers(source)
     passes = (
         migrate_pragmas,
         migrate_imports,
         migrate_data_declarations,
         migrate_incomplete_data_heads,
         migrate_aliases,
+        migrate_value_type_underlying_types,
         migrate_classes,
         migrate_instances,
+        migrate_canonical_trait_impl_headers,
         migrate_functions,
         migrate_lambdas,
         migrate_special_functions,
         migrate_let_types,
-        migrate_incomplete_arrows,
         migrate_field_types,
+        migrate_expression_annotations,
+        migrate_conversion_types,
+        migrate_proxy_types,
+        migrate_enum_payload_types,
+        migrate_incomplete_arrows,
         migrate_matches,
         remove_match_trailing_semicolons,
         migrate_if_expressions,
         migrate_condition_parentheses,
-        migrate_expression_annotations,
     )
     for _ in range(8):
         before = source
@@ -4132,6 +6210,7 @@ def migrate_source(
             source, global_constructor_owners
         )
         if source == before:
+            reject_remaining_classic_arrows(source)
             return source
     raise RuntimeError("syntax migration did not reach a fixed point")
 

@@ -1007,7 +1007,8 @@ fn fixed_array_lengths_reject_zero_and_u64_overflow() {
     let (file, _) = parse_module(
         &db,
         "invalid-fixed-array-lengths",
-        "alias Zero = word[0]; alias Huge = word[18446744073709551616];",
+        "// migrate-syntax: keep-legacy-negative\n\
+         alias Zero = word[0]; alias Huge = word[18446744073709551616];",
     );
     let messages = diagnostics(&db, file)
         .into_iter()
