@@ -3,3 +3,5 @@ import * as booldef from booldef;
 function mkTrue() returns (booldef.Bool) {
   return True;
 }
+
+// migrate-syntax: keep-unqualified-constructor

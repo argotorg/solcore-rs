@@ -4826,11 +4826,11 @@ def _constructor_owner_candidates(
 
     Constructor use sites cannot be inferred safely from capitalization:
     declarations such as ``enum memory<a> { memory(word) }`` are valid source
-    in the historical corpus.  Build the owner table structurally, exclude
-    primitive constructors that intentionally remain unqualified, and keep
-    complete enum/struct declarations out of the term rewrite.  Struct values
-    use the implicit same-name constructor and therefore need qualification
-    just like algebraic-data constructors.
+    in the historical corpus.  Build the owner table structurally for every
+    variant, exclude primitive constructors that intentionally remain
+    unqualified, and keep complete enum/struct declarations out of the term
+    rewrite.  Expression shadowing is resolved later, while constructor
+    patterns retain structural priority over terms.
     """
 
     module_candidates: dict[str, set[str]] = {}
@@ -4896,10 +4896,15 @@ def _constructor_owner_candidates(
             ):
                 continue
             leaf = constructor[0].text
-            if leaf != name or leaf in BUILTIN_CONSTRUCTORS:
+            if (
+                leaf in BUILTIN_CONSTRUCTORS
+                or (
+                    leaf in BUILTIN_TYPE_NAMES
+                    and leaf != name
+                )
+            ):
                 continue
             add_owner(leaf, name, index)
-            break
     return module_candidates, scoped_candidates, declarations
 
 
@@ -8760,7 +8765,7 @@ def build_constructor_import_surfaces(
             unknown_constructors = True
             if spec.kind == "open":
                 unknown_unqualified_terms = True
-            if spec.kind in {"open", "selective"}:
+            if spec.kind in {"open", "selective", "namespace"}:
                 unknown_unqualified_constructors = True
             if spec.kind == "selective":
                 unknown_terms.update(
@@ -8770,16 +8775,16 @@ def build_constructor_import_surfaces(
         def add_data(
             data_type: _ExportedDataType,
             owner: str,
-            *,
-            expose_bare: bool = True,
         ) -> None:
             binding = ConstructorBinding(data_type.origin, owner)
             for constructor in data_type.constructors:
                 dot.setdefault(constructor, set()).add(binding)
                 if (
-                    expose_bare
-                    and constructor == data_type.source_name
-                    and constructor not in BUILTIN_CONSTRUCTORS
+                    constructor not in BUILTIN_CONSTRUCTORS
+                    and not (
+                        constructor in BUILTIN_TYPE_NAMES
+                        and constructor != data_type.source_name
+                    )
                 ):
                     bare.setdefault(constructor, set()).add(binding)
 
@@ -8809,11 +8814,7 @@ def build_constructor_import_surfaces(
                 for public_name, data_types in interface.data_types.items():
                     owner = f"{spec.qualifier}.{public_name}"
                     for data_type in data_types:
-                        add_data(
-                            data_type,
-                            owner,
-                            expose_bare=False,
-                        )
+                        add_data(data_type, owner)
                 continue
 
             for source_name, local_name in spec.selections:

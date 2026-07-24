@@ -4,3 +4,5 @@ function noContext() returns (word) {
   let x = Some(1);
   return 0;
 }
+
+// migrate-syntax: keep-unqualified-constructor

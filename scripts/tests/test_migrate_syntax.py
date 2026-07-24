@@ -138,6 +138,42 @@ function convert(x: word) {
 
         self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
 
+    def test_qualifies_non_same_name_local_constructors(self) -> None:
+        source = """\
+enum Option { Some(word) }
+function use(x: Option, y: word) {
+  Some(y);
+  match (x) { case Some(value) { return; } }
+}
+"""
+        expected = """\
+enum Option { Some(word) }
+function use(x: Option, y: word) {
+  Option.Some(y);
+  match (x) { case Option.Some(value) { return; } }
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_local_term_only_shadows_constructor_expressions(self) -> None:
+        source = """\
+enum Option { Some(word) }
+function Some(x: word) returns (word) { return x; }
+function use(x: Option, y: word) {
+  Some(y);
+  match (x) { case Some(value) { return; } }
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertIn("  Some(y);", migrated)
+        self.assertIn("case Option.Some(value)", migrated)
+
     def test_rejects_ambiguous_dot_constructor(self) -> None:
         source = """\
 enum Left { Some(word) }
@@ -558,7 +594,7 @@ function make(x: word) {{
         sources, surfaces = self.surfaces(
             {
                 "provider.solc": """\
-enum T { Some(word) }
+enum T { T(word), Some(word) }
 export {T(*)};
 """,
                 "main.solc": """\
@@ -577,13 +613,9 @@ function make(x: word) returns (P.T) {
             constructor_import_surface=surfaces[main],
         )
 
-        self.assertIn("  T(x);", migrated)
+        self.assertIn("  P.T.T(x);", migrated)
         self.assertIn("return P.T.Some(x);", migrated)
-        self.assertNotIn("P.T.T(x)", migrated)
-        self.assertNotIn(
-            "T",
-            surfaces[main].bare_candidates,
-        )
+        self.assertIn("T", surfaces[main].bare_candidates)
 
     def test_imported_term_wins_in_expressions_but_not_patterns(self) -> None:
         sources, surfaces = self.surfaces(
@@ -837,7 +869,7 @@ function use(x: T, y: word) {
             surfaces[main].has_unknown_unqualified_constructors
         )
 
-    def test_unresolved_namespace_does_not_hide_a_bare_imported_owner(
+    def test_unresolved_namespace_hides_a_bare_imported_owner(
         self,
     ) -> None:
         sources, surfaces = self.surfaces(
@@ -863,11 +895,90 @@ function use(x: S, y: word) {
             constructor_import_surface=surfaces[main],
         )
 
-        self.assertIn("  S.S(y);", migrated)
-        self.assertIn("case S.S(value)", migrated)
-        self.assertFalse(
+        self.assertEqual(migrated, sources[main])
+        self.assertTrue(
             surfaces[main].has_unknown_unqualified_constructors
         )
+
+    def test_qualifies_every_visible_imported_constructor_leaf(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "import provider;",
+                "Option",
+                "Option",
+            ),
+            (
+                "import {Option as Maybe} from provider;",
+                "Maybe",
+                "Maybe",
+            ),
+            (
+                "import * as P from provider;",
+                "P.Option",
+                "P.Option",
+            ),
+        )
+        for declaration, parameter_type, owner in cases:
+            with self.subTest(declaration=declaration):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": """\
+enum Option { Some(word) }
+export {Option(*)};
+""",
+                        "main.solc": f"""\
+{declaration}
+function use(x: {parameter_type}, y: word) {{
+  Some(y);
+  match (x) {{ case Some(value) {{ return; }} }}
+}}
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertIn(f"  {owner}.Some(y);", migrated)
+                self.assertIn(
+                    f"case {owner}.Some(value)",
+                    migrated,
+                )
+
+    def test_imported_term_only_shadows_constructor_expressions(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum Option { Some(word) }
+function Some(x: word) returns (word) { return x; }
+export {Option(*)};
+export {Some};
+""",
+                "main.solc": """\
+import provider;
+function use(x: Option, y: word) {
+  Some(y);
+  match (x) { case Some(value) { return; } }
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("  Some(y);", migrated)
+        self.assertIn("case Option.Some(value)", migrated)
 
     def test_cli_import_surface_reaches_a_fixed_point(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

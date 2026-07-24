@@ -4,3 +4,5 @@ function bad() returns (Option) {
   let x = Some(1);
   return x;
 }
+
+// migrate-syntax: keep-unqualified-constructor

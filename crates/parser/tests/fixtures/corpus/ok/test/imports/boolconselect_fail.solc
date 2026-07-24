@@ -3,3 +3,5 @@ import {Bool} from booldef;
 function mkTrue() returns (Bool) {
   return True;
 }
+
+// migrate-syntax: keep-unqualified-constructor
