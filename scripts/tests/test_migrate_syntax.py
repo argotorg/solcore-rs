@@ -5207,6 +5207,37 @@ const OUTSIDE: &str =
         )
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
 
+    def test_unicode_identifier_continuations_are_not_bare_concat(self) -> None:
+        rust = '''
+macro_rules! áconcat {
+    ($left:literal, $right:literal $(,)?) => {
+        concat!($left, $right)
+    };
+}
+macro_rules! concat́ {
+    ($left:literal, $right:literal $(,)?) => {
+        concat!($left, $right)
+    };
+}
+const PREFIX: &str = áconcat!(
+    "funct",
+    "ion f(x: word) -> word { return x; }",
+);
+const SUFFIX: &str = concat́!(
+    "funct",
+    "ion g(x: word) -> word { return x; }",
+);
+'''
+
+        invocations = MIGRATE._rust_concat_invocations(rust)
+
+        self.assertEqual(len(invocations), 2)
+        self.assertTrue(
+            all(invocation.literals is None for invocation in invocations)
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+        self.assert_rust_syntax(rust)
+
     def test_concat_groups_do_not_share_constructor_owners(self) -> None:
         rust = r'''
 const DECLARATION: &str = concat!(

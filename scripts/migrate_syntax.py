@@ -11907,6 +11907,9 @@ def _rust_concat_invocation_at(
 def _rust_concat_invocations(source: str) -> list[RustConcatInvocation]:
     """Locate non-overlapping ``concat!`` token trees outside Rust trivia."""
 
+    def identifier_continues(character: str) -> bool:
+        return character == "_" or ("a" + character).isidentifier()
+
     invocations: list[RustConcatInvocation] = []
     cursor = 0
     while cursor < len(source):
@@ -11934,16 +11937,12 @@ def _rust_concat_invocations(source: str) -> list[RustConcatInvocation]:
             source.startswith("concat", cursor)
             and (
                 cursor == 0
-                or not (
-                    source[cursor - 1].isalnum()
-                    or source[cursor - 1] == "_"
-                )
+                or not identifier_continues(source[cursor - 1])
             )
             and (
                 cursor + len("concat") == len(source)
-                or not (
-                    source[cursor + len("concat")].isalnum()
-                    or source[cursor + len("concat")] == "_"
+                or not identifier_continues(
+                    source[cursor + len("concat")]
                 )
             )
         ):
