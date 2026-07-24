@@ -11708,7 +11708,11 @@ def _encode_rust_ordinary_body(body: str) -> str:
 def _rust_literal_semantic_body(body: str, is_raw: bool) -> str | None:
     """Return one literal body's semantic text for every migration phase."""
 
-    return body if is_raw else _decode_rust_ordinary_body(body)
+    return (
+        body.replace("\r\n", "\n")
+        if is_raw
+        else _decode_rust_ordinary_body(body)
+    )
 
 
 @dataclass(frozen=True)
