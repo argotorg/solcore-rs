@@ -368,6 +368,416 @@ function wrap(x: word) returns (T) { return .Some(x); }
 
         self.assertEqual(MIGRATE.CORE_LEXER_WORD_TOKENS, lexer_words)
 
+    def test_export_parser_matches_core_list_boundaries(self) -> None:
+        name = MIGRATE._ProviderExportName
+        selector = MIGRATE._ProviderConstructorSelector
+        spec = MIGRATE._ProviderExportSpec
+        valid = (
+            ("export {};", spec("list")),
+            (
+                "export {T,};",
+                spec("list", names=(name("name", "T"),)),
+            ),
+            (
+                "export {T,T(*),*,base.*,(*)};",
+                spec(
+                    "list",
+                    names=(
+                        name("name", "T"),
+                        name(
+                            "name",
+                            "T",
+                            constructors=selector("all"),
+                        ),
+                        name("wildcard"),
+                        name(
+                            "module_wildcard",
+                            path=("base",),
+                        ),
+                        name("operator", "*"),
+                    ),
+                ),
+            ),
+            (
+                "export base.{};",
+                spec("items_from", path=("base",)),
+            ),
+            (
+                "export base.{T(A,B),*,(+),};",
+                spec(
+                    "items_from",
+                    path=("base",),
+                    names=(
+                        name(
+                            "name",
+                            "T",
+                            constructors=selector(
+                                "named",
+                                ("A", "B"),
+                            ),
+                        ),
+                        name("wildcard"),
+                        name("operator", "+"),
+                    ),
+                ),
+            ),
+            (
+                "export base.*;",
+                spec(
+                    "items_from",
+                    path=("base",),
+                    names=(name("wildcard"),),
+                ),
+            ),
+            (
+                "export base.{*};",
+                spec(
+                    "items_from",
+                    path=("base",),
+                    names=(name("wildcard"),),
+                ),
+            ),
+            (
+                "export base.T;",
+                spec("module", path=("base", "T")),
+            ),
+            (
+                "export base.T as U;",
+                spec(
+                    "module_as",
+                    path=("base", "T"),
+                    alias="U",
+                ),
+            ),
+            (
+                "export from.{from(*)};",
+                spec(
+                    "items_from",
+                    path=("from",),
+                    names=(
+                        name(
+                            "name",
+                            "from",
+                            constructors=selector("all"),
+                        ),
+                    ),
+                ),
+            ),
+            (
+                "export {T(A,A)};",
+                spec(
+                    "list",
+                    names=(
+                        name(
+                            "name",
+                            "T",
+                            constructors=selector(
+                                "named",
+                                ("A", "A"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            (
+                "export {(<<),(**),(<<=)};",
+                spec(
+                    "list",
+                    names=(
+                        name("operator", "<<"),
+                        name("operator", "**"),
+                        name("operator", "<<="),
+                    ),
+                ),
+            ),
+        )
+        for source, expected in valid:
+            with self.subTest(source=source):
+                specs, malformed = MIGRATE._parse_export_specs(source)
+                self.assertFalse(malformed)
+                self.assertEqual(specs, [expected])
+
+        specs, malformed = MIGRATE._parse_export_specs(
+            "export {*,(*),T(*)};"
+        )
+        self.assertFalse(malformed)
+        self.assertEqual(
+            [name.kind for name in specs[0].names],
+            ["wildcard", "operator", "name"],
+        )
+        self.assertEqual(specs[0].names[1].name, "*")
+        self.assertEqual(
+            specs[0].names[2].constructors.kind,
+            "all",
+        )
+
+    def test_export_parser_rejects_recovered_or_extended_forms(
+        self,
+    ) -> None:
+        invalid = (
+            "export {,T};",
+            "export {T,,};",
+            "export {T,,,};",
+            "export base.{,};",
+            "export base.{T,,};",
+            "export {T()};",
+            "export {T(A,)};",
+            "export {T(*,A)};",
+            "export {()};",
+            "export {(~)};",
+            "export *;",
+            "export @pkg.base.*;",
+            "export {T as U};",
+            "export base.{T as U};",
+            "export base.{nested.*};",
+            "export {base.{T}};",
+            "export base.T(*);",
+            "export base..*;",
+            "export base as;",
+            "export base as U extra;",
+            "export true;",
+            "export {T}",
+            "function f() { export {T}; }",
+        )
+        for source in invalid:
+            with self.subTest(source=source):
+                specs, malformed = MIGRATE._parse_export_specs(source)
+                self.assertTrue(malformed)
+                self.assertEqual(specs, [])
+
+    def test_pragma_payload_is_opaque_to_provider_scanners(self) -> None:
+        exports, malformed_exports = MIGRATE._parse_export_specs(
+            "pragma solidity export base.*;"
+        )
+        imports, malformed_imports = MIGRATE._parse_import_specs(
+            "pragma solidity import base;"
+        )
+        self.assertEqual(exports, [])
+        self.assertEqual(imports, [])
+        self.assertFalse(malformed_exports)
+        self.assertFalse(malformed_imports)
+
+        for source in (
+            "pragma solidity import base.{T};\n",
+            'pragma solidity import "base.sol";\n',
+            "pragma solidity import base.{(^^)};\n",
+            "pragma solidity pragma no-coverage-condition;\n",
+            "pragma solidity data T = A;\n",
+            "pragma solidity function f(x: T) -> T;\n",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(MIGRATE.migrate_source(source), source)
+
+        sources, surfaces = self.surfaces(
+            {
+                "base.solc": """\
+enum T { A(word) }
+export {T(*)};
+""",
+                "provider.solc": """\
+pragma solidity import base;
+enum Y { B(word) }
+export {Y(*)};
+""",
+                "main.solc": """\
+import provider;
+function use(x: word) { return .B(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+        self.assertIn(
+            "Y.B(x)",
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            ),
+        )
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+
+        phantom_sources, phantom_surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+pragma solidity enum T { A(word) };
+export {T(*)};
+""",
+                "main.solc": """\
+import provider;
+function use(x: word) { A(x); }
+""",
+            }
+        )
+        self.assertTrue(
+            phantom_surfaces[main].has_unknown_constructors
+        )
+        self.assertEqual(
+            MIGRATE.migrate_source(
+                phantom_sources[main],
+                constructor_import_surface=phantom_surfaces[main],
+            ),
+            phantom_sources[main],
+        )
+
+        for payload in ("(", ")", "{", "}", "[", "]"):
+            with self.subTest(payload=payload):
+                balanced_sources, balanced_surfaces = self.surfaces(
+                    {
+                        "provider.solc": f"""\
+pragma solidity {payload};
+enum T {{ A(word) }}
+export {{T(*)}};
+""",
+                        "main.solc": """\
+import provider;
+function use(x: word) { A(x); }
+""",
+                    }
+                )
+                self.assertFalse(
+                    balanced_surfaces[main]
+                    .has_unknown_constructors
+                )
+                self.assertIn(
+                    "T.A(x)",
+                    MIGRATE.migrate_source(
+                        balanced_sources[main],
+                        constructor_import_surface=(
+                            balanced_surfaces[main]
+                        ),
+                    ),
+                )
+
+        for malformed_pragma in (
+            "pragma solidity { export base.*; };",
+            "pragma solidity assembly { export base.*; };",
+            (
+                "pragma solidity pragma solcore x "
+                "assembly { export base.*; };"
+            ),
+        ):
+            with self.subTest(malformed_pragma=malformed_pragma):
+                invalid_sources, invalid_surfaces = self.surfaces(
+                    {
+                        "base.solc": """\
+enum U { B(word) }
+export {U(*)};
+""",
+                        "provider.solc": f"""\
+{malformed_pragma}
+enum T {{ A(word) }}
+export {{T(*)}};
+""",
+                        "main.solc": """\
+import provider;
+function use(x: word) { A(x); }
+""",
+                    }
+                )
+                self.assertTrue(
+                    invalid_surfaces[main]
+                    .has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        invalid_sources[main],
+                        constructor_import_surface=(
+                            invalid_surfaces[main]
+                        ),
+                    ),
+                    invalid_sources[main],
+                )
+
+    def test_core_lex_errors_make_provider_interfaces_unknown(
+        self,
+    ) -> None:
+        invalid_tokens = (
+            "§",
+            "#",
+            "$",
+            "`",
+            "\\",
+            "\0",
+            "\v",
+            "\x7f",
+            "'x'",
+            '"\\q"',
+        )
+        for invalid in invalid_tokens:
+            for provider in (
+                (
+                    f"pragma solidity {invalid};\n"
+                    "enum T { A(word) }\n"
+                    "export {T(*)};\n"
+                ),
+                (
+                    "enum T { A(word) }\n"
+                    "export {T(*)};\n"
+                    f"function bad() {{ {invalid}; }}\n"
+                ),
+                (
+                    "enum T { A(word) }\n"
+                    "export {T(*)};\n"
+                    f"function bad() {{ assembly {{ {invalid} }} }}\n"
+                ),
+            ):
+                with self.subTest(invalid=repr(invalid), provider=provider):
+                    sources, surfaces = self.surfaces(
+                        {
+                            "provider.solc": provider,
+                            "main.solc": """\
+import provider;
+function use(x: word) { A(x); }
+""",
+                        }
+                    )
+                    main = Path("/workspace/main.solc")
+                    self.assertTrue(
+                        surfaces[main].has_unknown_constructors
+                    )
+                    self.assertEqual(
+                        MIGRATE.migrate_source(
+                            sources[main],
+                            constructor_import_surface=surfaces[
+                                main
+                            ],
+                        ),
+                        sources[main],
+                    )
+
+        for provider in (
+            (
+                "enum T { A(word) }\n"
+                "export {T(*)};\n"
+                "/* unterminated"
+            ),
+            (
+                "enum T { A(word) }\n"
+                "export {T(*)};\n"
+                'function bad() { "unterminated }\n'
+            ),
+        ):
+            with self.subTest(provider=provider):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": provider,
+                        "main.solc": """\
+import provider;
+function use(x: word) { A(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+
     def test_reserved_import_identifiers_fail_closed(self) -> None:
         invalid_imports = (
             "import function;",
@@ -2192,7 +2602,7 @@ function use(x: S, y: word) {{
                     surfaces[main].has_unknown_unqualified_constructors
                 )
 
-    def test_unresolved_selective_import_may_hide_a_reexported_leaf(
+    def test_selective_import_reexport_preserves_origin_identity(
         self,
     ) -> None:
         sources, surfaces = self.surfaces(
@@ -2206,10 +2616,9 @@ import {T as S} from base;
 export {S(*)};
 """,
                 "main.solc": """\
-import base;
 import {S} from facade;
-function use(x: T, y: word) {
-  T(y);
+function use(x: S, y: word) {
+  .T(y);
   match (x) { case T(value) { return; } }
 }
 """,
@@ -2222,10 +2631,491 @@ function use(x: T, y: word) {
             constructor_import_surface=surfaces[main],
         )
 
-        self.assertEqual(migrated, sources[main])
-        self.assertTrue(
+        self.assertIn("S.T(y)", migrated)
+        self.assertIn("case S.T(value)", migrated)
+        self.assertFalse(
             surfaces[main].has_unknown_unqualified_constructors
         )
+
+    def test_direct_reexport_forms_preserve_constructor_visibility(
+        self,
+    ) -> None:
+        facades = (
+            "export base.{T(*)};\n",
+            "export base.*;\n",
+            "export base.{*};\n",
+            "export {base.*};\n",
+        )
+        for facade in facades:
+            with self.subTest(facade=facade):
+                sources, surfaces = self.surfaces(
+                    {
+                        "base.solc": """\
+enum T { A(word), B(word) }
+export {T(*)};
+""",
+                        "facade.solc": facade,
+                        "main.solc": """\
+import facade;
+function use(x: word) { A(x); B(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertIn("T.A(x)", migrated)
+                self.assertIn("T.B(x)", migrated)
+                self.assertFalse(surfaces[main].has_unknown_constructors)
+
+    def test_unresolved_reexport_dependencies_fail_closed(self) -> None:
+        cases = (
+            ("export missing.*;\n", {}),
+            ("export std.base.*;\n", {}),
+            ("export missing.{};\n", {}),
+            (
+                "export base.*;\n",
+                {
+                    "base.sol": "export {};\n",
+                    "base.solc": "export {};\n",
+                },
+            ),
+        )
+        for declaration, extra_sources in cases:
+            with self.subTest(declaration=declaration):
+                sources, surfaces = self.surfaces(
+                    {
+                        **extra_sources,
+                        "facade.solc": (
+                            "enum Y { B(word) }\n"
+                            "export {Y(*)};\n"
+                            f"{declaration}"
+                        ),
+                        "main.solc": """\
+import facade;
+function use(x: word) { B(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+
+    def test_missing_reexport_names_and_constructors_fail_closed(
+        self,
+    ) -> None:
+        for declaration in (
+            "export base.{Missing};\n",
+            "export base.{T(Missing)};\n",
+        ):
+            with self.subTest(declaration=declaration):
+                sources, surfaces = self.surfaces(
+                    {
+                        "base.solc": """\
+enum T { A(word) }
+export {T(*)};
+""",
+                        "facade.solc": declaration,
+                        "main.solc": """\
+import facade;
+function use(x: word) { A(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+
+    def test_module_alias_reexports_remain_fail_closed(self) -> None:
+        for declaration in (
+            "export base;\n",
+            "export base as B;\n",
+        ):
+            with self.subTest(declaration=declaration):
+                sources, surfaces = self.surfaces(
+                    {
+                        "base.solc": """\
+enum T { A(word) }
+export {T(*)};
+""",
+                        "facade.solc": (
+                            "enum Y { B(word) }\n"
+                            "export {Y(*)};\n"
+                            f"{declaration}"
+                        ),
+                        "main.solc": """\
+import facade;
+function use(x: word) { B(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+
+    def test_nested_and_renamed_reexports_reach_namespace_consumers(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "base.solc": """\
+enum T { A(word) }
+export {T(*)};
+""",
+                "rename.solc": """\
+import {T as U} from base;
+export {U(*)};
+""",
+                "facade.solc": "export rename.*;\n",
+                "main.solc": """\
+import * as M from facade;
+function use(x: word) { return .A(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("M.U.A(x)", migrated)
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+
+    def test_reexported_terms_keep_expression_precedence(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "base.solc": """\
+enum T { A(word) }
+function A(x: word) {}
+export {T(*), A};
+""",
+                "facade.solc": "export base.*;\n",
+                "main.solc": """\
+import facade;
+function use(x: T, y: word) {
+  A(y);
+  match (x) { case A(value) { return; } }
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("\n  A(y);", migrated)
+        self.assertIn("case T.A(value)", migrated)
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+
+    def test_reexport_constructor_selectors_narrow_and_opaque(
+        self,
+    ) -> None:
+        for facade in (
+            "export base.{T};\n",
+            "import {T} from base;\nexport {T};\n",
+        ):
+            with self.subTest(facade=facade):
+                sources, surfaces = self.surfaces(
+                    {
+                        "base.solc": """\
+enum T { A(word), B(word) }
+export {T(*)};
+""",
+                        "facade.solc": facade,
+                        "main.solc": """\
+import facade;
+function use(x: word) { return .A(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"cannot resolve legacy dot-constructor \.A",
+                ):
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    )
+                self.assertFalse(surfaces[main].has_unknown_constructors)
+
+        opaque_sources, opaque_surfaces = self.surfaces(
+            {
+                "base.solc": """\
+enum T { A(word) }
+export {T};
+""",
+                "middle.solc": "export base.*;\n",
+                "facade.solc": "export middle.*;\n",
+                "main.solc": """\
+import facade;
+function use(x: word) { return .A(x); }
+""",
+            }
+        )
+        opaque_main = Path("/workspace/main.solc")
+        with self.assertRaisesRegex(
+            ValueError,
+            r"cannot resolve legacy dot-constructor \.A",
+        ):
+            MIGRATE.migrate_source(
+                opaque_sources[opaque_main],
+                constructor_import_surface=opaque_surfaces[
+                    opaque_main
+                ],
+            )
+        self.assertFalse(
+            opaque_surfaces[opaque_main].has_unknown_constructors
+        )
+
+        sources, surfaces = self.surfaces(
+            {
+                "base.solc": """\
+enum T { A(word), B(word) }
+export {T(*)};
+""",
+                "facade.solc": "export base.{T(A)};\n",
+                "main.solc": """\
+import facade;
+function use(x: word) { return .A(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+        self.assertIn(
+            "T.A(x)",
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            ),
+        )
+        hidden_sources, hidden_surfaces = self.surfaces(
+            {
+                "base.solc": sources[Path("/workspace/base.solc")],
+                "facade.solc": "export base.{T(A)};\n",
+                "main.solc": """\
+import facade;
+function use(x: word) { return .B(x); }
+""",
+            }
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            r"cannot resolve legacy dot-constructor \.B",
+        ):
+            MIGRATE.migrate_source(
+                hidden_sources[main],
+                constructor_import_surface=hidden_surfaces[main],
+            )
+        self.assertFalse(hidden_surfaces[main].has_unknown_constructors)
+
+    def test_reexport_diamond_unions_only_the_same_origin(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "base.solc": """\
+enum T { A(word), B(word) }
+export {T(*)};
+""",
+                "left.solc": "export base.{T(A)};\n",
+                "right.solc": "export base.{T(B)};\n",
+                "facade.solc": """\
+export left.*;
+export right.*;
+""",
+                "main.solc": """\
+import facade;
+function use(x: word) { A(x); B(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("T.A(x)", migrated)
+        self.assertIn("T.B(x)", migrated)
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+
+        collision_sources, collision_surfaces = self.surfaces(
+            {
+                "a.solc": """\
+enum T { A(word) }
+export {T(*)};
+""",
+                "b.solc": """\
+enum T { B(word) }
+export {T(*)};
+""",
+                "facade.solc": """\
+export a.*;
+export b.*;
+""",
+                "main.solc": """\
+import facade;
+function use(x: word) { A(x); B(x); }
+""",
+            }
+        )
+        collision_main = Path("/workspace/main.solc")
+        self.assertEqual(
+            MIGRATE.migrate_source(
+                collision_sources[collision_main],
+                constructor_import_surface=collision_surfaces[
+                    collision_main
+                ],
+            ),
+            collision_sources[collision_main],
+        )
+        self.assertTrue(
+            collision_surfaces[collision_main].has_unknown_constructors
+        )
+
+    def test_reexport_name_collisions_span_item_namespaces(self) -> None:
+        for conflicting in (
+            "alias T = word;\nexport {T};\n",
+            "function T(x: word) {}\nexport {T};\n",
+        ):
+            with self.subTest(conflicting=conflicting):
+                sources, surfaces = self.surfaces(
+                    {
+                        "a.solc": """\
+enum T { A(word) }
+export {T(*)};
+""",
+                        "b.solc": conflicting,
+                        "facade.solc": """\
+export a.*;
+export b.*;
+""",
+                        "main.solc": """\
+import facade;
+function use(x: word) { A(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+
+    def test_reexport_cycles_use_a_least_fixed_point(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "a.solc": """\
+enum T { A(word) }
+export {T(*)};
+export b.*;
+""",
+                "b.solc": "export a.*;\n",
+                "main.solc": """\
+import b;
+function use(x: word) { return .A(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+        self.assertIn(
+            "T.A(x)",
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            ),
+        )
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+
+        empty_sources, empty_surfaces = self.surfaces(
+            {
+                "a.solc": "export b.*;\n",
+                "b.solc": "export a.*;\n",
+                "main.solc": "import a;\nfunction use() {}\n",
+            }
+        )
+        self.assertFalse(
+            empty_surfaces[Path("/workspace/main.solc")]
+            .has_unknown_constructors
+        )
+
+        bad_sources, bad_surfaces = self.surfaces(
+            {
+                "a.solc": "export b.{T};\n",
+                "b.solc": "export a.{T};\n",
+                "main.solc": "import a;\nfunction use() {}\n",
+            }
+        )
+        self.assertTrue(
+            bad_surfaces[Path("/workspace/main.solc")]
+            .has_unknown_constructors
+        )
+
+    def test_reexport_fixed_point_has_no_chain_length_cap(self) -> None:
+        providers = {
+            f"p{index}.solc": f"export p{index + 1}.*;\n"
+            for index in range(8)
+        }
+        providers["p8.solc"] = """\
+enum T { A(word) }
+export {T(*)};
+"""
+        sources, surfaces = self.surfaces(
+            {
+                **providers,
+                "main.solc": """\
+import p0;
+function use(x: word) { return .A(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        self.assertIn(
+            "T.A(x)",
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            ),
+        )
+        self.assertFalse(surfaces[main].has_unknown_constructors)
 
     def test_unresolved_namespace_hides_a_bare_imported_owner(
         self,
@@ -2474,6 +3364,17 @@ import provider;
 function make(x: word) { T(x); }
 """,
             },
+            {
+                "provider.solc": """\
+enum T { T(word) }
+export {T(*)};
+function broken() { import missing; }
+""",
+                "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+            },
         ]
 
         for case in cases:
@@ -2580,8 +3481,71 @@ function make(x: word) { T(x); }
                         sources[main],
                         constructor_import_surface=surfaces[main],
                     ),
+                        sources[main],
+                    )
+
+    def test_duplicate_local_provider_items_fail_closed(self) -> None:
+        duplicates = (
+            "alias X = word;\nalias X = bool;\n",
+            (
+                "function f(x: word) {}\n"
+                "function f(x: bool) {}\n"
+            ),
+        )
+        for duplicate in duplicates:
+            with self.subTest(duplicate=duplicate):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": (
+                            f"{duplicate}"
+                            "enum Y { A(word) }\n"
+                            "export {Y(*)};\n"
+                        ),
+                        "main.solc": """\
+import provider;
+function make(x: word) { A(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
                     sources[main],
                 )
+
+    def test_adt_and_contract_type_families_can_share_a_name(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { A(word) }
+library T {}
+export {T(*), T};
+""",
+                "main.solc": """\
+import provider;
+function make(x: word) { return .A(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+        self.assertIn(
+            "T.A(x)",
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            ),
+        )
 
     def test_provider_type_keywords_match_the_parser(self) -> None:
         for keyword in MIGRATE.CORE_LEXER_WORD_TOKENS - {"from"}:
@@ -2602,6 +3566,7 @@ function make(x: word) { T(x); }
             "export {, T(*)};",
             "export {T(*),,};",
             "export {T(*),,,};",
+            "function bad() { export {T}; }",
         ):
             with self.subTest(declaration=declaration):
                 sources, surfaces = self.surfaces(

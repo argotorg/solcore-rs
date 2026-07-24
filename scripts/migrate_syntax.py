@@ -454,8 +454,16 @@ def _constructor_owner_conflict_targets(
     local_claims = {
         claim for claim in claims if claim.local
     }
+    imported_claim_families = {
+        (
+            claim.visible_through,
+            claim.origin.provider,
+            claim.origin.type_name,
+        )
+        for claim in imported_claims
+    }
     conflicted = (
-        len(imported_claims) > 1
+        len(imported_claim_families) > 1
         or bool(imported_claims and local_claims)
         or ("." in owner and len(qualifier_targets) > 1)
     )
@@ -576,6 +584,31 @@ def _scan_assembly(source: str, start: int, word_end: int) -> int | None:
 
 def lex(source: str) -> list[Token]:
     tokens: list[Token] = []
+    opaque_pragma_active = False
+    pending_pragma = False
+
+    def append(token: Token) -> None:
+        nonlocal opaque_pragma_active
+        nonlocal pending_pragma
+        tokens.append(token)
+        if token.kind in TRIVIA:
+            return
+        if token.text == ";":
+            opaque_pragma_active = False
+            pending_pragma = False
+            return
+        if opaque_pragma_active:
+            return
+        if pending_pragma:
+            opaque_pragma_active = token.text in {
+                "solidity",
+                "abicoder",
+            }
+            pending_pragma = False
+            if opaque_pragma_active:
+                return
+        pending_pragma = token.text == "pragma"
+
     i = 0
     while i < len(source):
         start = i
@@ -583,37 +616,41 @@ def lex(source: str) -> list[Token]:
             i += 1
             while i < len(source) and source[i].isspace():
                 i += 1
-            tokens.append(Token("ws", source[start:i], start, i))
+            append(Token("ws", source[start:i], start, i))
             continue
         if source.startswith("//", i):
             end = source.find("\n", i + 2)
             i = len(source) if end < 0 else end
-            tokens.append(Token("comment", source[start:i], start, i))
+            append(Token("comment", source[start:i], start, i))
             continue
         if source.startswith("/*", i):
             i = _scan_block_comment(source, i)
-            tokens.append(Token("comment", source[start:i], start, i))
+            append(Token("comment", source[start:i], start, i))
             continue
         if source[i] in {'"', "'"}:
             i = _scan_quoted(source, i, source[i])
-            tokens.append(Token("string", source[start:i], start, i))
+            append(Token("string", source[start:i], start, i))
             continue
         word_end = _legacy_identifier_end(source, i)
         if word_end is not None:
             i = word_end
             text = source[start:i]
             if text == "assembly":
-                assembly_end = _scan_assembly(source, start, i)
+                assembly_end = (
+                    None
+                    if opaque_pragma_active
+                    else _scan_assembly(source, start, i)
+                )
                 if assembly_end is not None:
                     i = assembly_end
-                    tokens.append(Token("assembly", source[start:i], start, i))
+                    append(Token("assembly", source[start:i], start, i))
                     continue
-            tokens.append(Token("word", text, start, i))
+            append(Token("word", text, start, i))
             continue
         number = NUMBER_RE.match(source, i)
         if number:
             i = number.end()
-            tokens.append(Token("number", number.group(0), start, i))
+            append(Token("number", number.group(0), start, i))
             continue
         symbol = next(
             (candidate for candidate in MULTI_SYMBOLS if source.startswith(candidate, i)),
@@ -621,15 +658,133 @@ def lex(source: str) -> list[Token]:
         )
         if symbol is not None:
             i += len(symbol)
-            tokens.append(Token("symbol", symbol, start, i))
+            append(Token("symbol", symbol, start, i))
             continue
         i += 1
-        tokens.append(Token("symbol", source[start:i], start, i))
+        append(Token("symbol", source[start:i], start, i))
     return tokens
 
 
 def significant(source: str) -> list[Token]:
-    return [token for token in lex(source) if token.kind not in TRIVIA]
+    tokens = [
+        token for token in lex(source) if token.kind not in TRIVIA
+    ]
+    result: list[Token] = []
+    cursor = 0
+    while cursor < len(tokens):
+        token = tokens[cursor]
+        if (
+            token.text != "pragma"
+            or cursor + 1 >= len(tokens)
+            or tokens[cursor + 1].text
+            not in {"solidity", "abicoder"}
+        ):
+            result.append(token)
+            cursor += 1
+            continue
+
+        family = tokens[cursor + 1]
+        result.extend((token, family))
+        end = next(
+            (
+                index
+                for index in range(cursor + 2, len(tokens))
+                if tokens[index].text == ";"
+            ),
+            None,
+        )
+        payload_end = (
+            tokens[end].start if end is not None else len(source)
+        )
+        if family.end < payload_end:
+            result.append(
+                Token(
+                    "pragma_payload",
+                    source[family.end:payload_end],
+                    family.end,
+                    payload_end,
+                )
+            )
+        if end is None:
+            break
+        result.append(tokens[end])
+        cursor = end + 1
+    return result
+
+
+def _has_core_lex_errors(source: str) -> bool:
+    """Recognize lexical errors that Core reports before parsing."""
+
+    symbols = frozenset("+-*/%!~<>=|&^@?.:;,(){}[]_")
+    whitespace = frozenset(" \t\n\r\f")
+    cursor = 0
+    while cursor < len(source):
+        character = source[cursor]
+        if character in whitespace:
+            cursor += 1
+            continue
+        if source.startswith("//", cursor):
+            end = source.find("\n", cursor + 2)
+            cursor = len(source) if end < 0 else end + 1
+            continue
+        if source.startswith("/*", cursor):
+            depth = 1
+            cursor += 2
+            while cursor < len(source) and depth:
+                if source.startswith("/*", cursor):
+                    depth += 1
+                    cursor += 2
+                elif source.startswith("*/", cursor):
+                    depth -= 1
+                    cursor += 2
+                else:
+                    cursor += 1
+            if depth:
+                return True
+            continue
+        if character == '"':
+            cursor += 1
+            while cursor < len(source):
+                if source[cursor] == '"':
+                    cursor += 1
+                    break
+                if source[cursor] != "\\":
+                    cursor += 1
+                    continue
+                if (
+                    cursor + 1 >= len(source)
+                    or source[cursor + 1] not in {'n', 't', '"', "\\"}
+                ):
+                    return True
+                cursor += 2
+            else:
+                return True
+            continue
+        if _is_identifier_letter(character):
+            cursor += 1
+            while (
+                cursor < len(source)
+                and (
+                    source[cursor] == "_"
+                    or _is_identifier_letter(source[cursor])
+                    or _is_identifier_number(source[cursor])
+                )
+            ):
+                cursor += 1
+            continue
+        if "0" <= character <= "9":
+            cursor += 1
+            while (
+                cursor < len(source)
+                and "0" <= source[cursor] <= "9"
+            ):
+                cursor += 1
+            continue
+        if character in symbols:
+            cursor += 1
+            continue
+        return True
+    return False
 
 
 def _split_type_angle_operator_tokens(
@@ -1868,11 +2023,34 @@ def _statement_end(tokens: Sequence[Token], start: int) -> int | None:
     return None
 
 
+def _provider_statement_end(
+    tokens: Sequence[Token],
+    start: int,
+) -> int | None:
+    """Honor the parser's delimiter-opaque Solidity pragma payload."""
+
+    if (
+        tokens[start].text == "pragma"
+        and start + 1 < len(tokens)
+        and tokens[start + 1].text in {"solidity", "abicoder"}
+    ):
+        return next(
+            (
+                index
+                for index in range(start + 2, len(tokens))
+                if tokens[index].text == ";"
+            ),
+            None,
+        )
+    return _statement_end(tokens, start)
+
+
 def reject_string_imports(source: str) -> None:
     """Reject Solidity path strings, which have no canonical Core spelling."""
 
     tokens = significant(source)
-    for index, token in enumerate(tokens):
+    for index, _ in _provider_top_level_item_regions(tokens):
+        token = tokens[index]
         if token.text != "import":
             continue
         end = _statement_end(tokens, index)
@@ -1900,7 +2078,8 @@ def reject_operator_import_selectors(source: str) -> None:
     """Reject Classic parenthesized operator selectors without guessing a name."""
 
     tokens = significant(source)
-    for index, token in enumerate(tokens):
+    for index, _ in _provider_top_level_item_regions(tokens):
+        token = tokens[index]
         if token.text != "import":
             continue
         end = _statement_end(tokens, index)
@@ -1938,10 +2117,11 @@ def reject_operator_import_selectors(source: str) -> None:
 def migrate_pragmas(source: str) -> str:
     tokens = significant(source)
     replacements: list[tuple[int, int, str]] = []
-    for index, token in enumerate(tokens):
+    for index, _ in _provider_top_level_item_regions(tokens):
+        token = tokens[index]
         if token.text != "pragma":
             continue
-        end = _statement_end(tokens, index)
+        end = _provider_statement_end(tokens, index)
         if end is None or index + 1 >= end:
             continue
         body = tokens[index + 1 : end]
@@ -1985,7 +2165,8 @@ def migrate_pragmas(source: str) -> str:
 def migrate_imports(source: str) -> str:
     tokens = significant(source)
     replacements: list[tuple[int, int, str]] = []
-    for index, token in enumerate(tokens):
+    for index, _ in _provider_top_level_item_regions(tokens):
+        token = tokens[index]
         if token.text != "import":
             continue
         end = _statement_end(tokens, index)
@@ -2637,7 +2818,8 @@ def migrate_classic_bare_imports(
     replacements: list[tuple[int, int, str]] = []
     imported_local_names: set[str] = set()
 
-    for index, token in enumerate(tokens):
+    for index, _ in _provider_top_level_item_regions(tokens):
+        token = tokens[index]
         if token.text != "import":
             continue
         end = _statement_end(tokens, index)
@@ -5248,11 +5430,10 @@ def _declaration_surface_tokens(tokens: Sequence[Token]) -> set[int]:
         "library",
         "struct",
     }
-    for index, token in enumerate(tokens):
+    for index, region_end in _provider_top_level_item_regions(tokens):
+        token = tokens[index]
         if token.text in statement_items:
-            end = _statement_end(tokens, index)
-            if end is not None:
-                marked.update(range(index, end + 1))
+            marked.update(range(index, region_end + 1))
         elif token.text in header_items:
             boundary = _header_boundary(tokens, index + 1)
             if boundary is not None:
@@ -5274,12 +5455,18 @@ def _declared_type_and_module_names(tokens: Sequence[Token]) -> set[str]:
         "trait",
         "class",
     }
+    regions = _provider_top_level_item_regions(tokens)
     names = {
         tokens[index + 1].text
-        for index, token in enumerate(tokens[:-1])
-        if token.text in type_items and tokens[index + 1].kind == "word"
+        for index, _ in regions
+        if (
+            tokens[index].text in type_items
+            and index + 1 < len(tokens)
+            and tokens[index + 1].kind == "word"
+        )
     }
-    for index, token in enumerate(tokens):
+    for index, _ in regions:
+        token = tokens[index]
         if token.text != "import":
             continue
         end = _statement_end(tokens, index)
@@ -8314,6 +8501,7 @@ class _ExportedDataType:
 class _ProviderInterface:
     data_types: Mapping[str, tuple[_ExportedDataType, ...]]
     type_origins: Mapping[str, tuple[ConstructorOrigin, ...]]
+    term_origins: Mapping[str, tuple[ConstructorOrigin, ...]]
     terms: frozenset[str]
     public_names: frozenset[str]
     unknown: bool
@@ -8326,6 +8514,39 @@ class _ImportSpec:
     path: tuple[str, ...]
     selections: tuple[tuple[str, str], ...] = ()
     qualifier: str | None = None
+
+
+@dataclass(frozen=True)
+class _ProviderConstructorSelector:
+    kind: str
+    names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class _ProviderExportName:
+    kind: str
+    name: str = ""
+    path: tuple[str, ...] = ()
+    constructors: _ProviderConstructorSelector | None = None
+
+
+@dataclass(frozen=True)
+class _ProviderExportSpec:
+    kind: str
+    path: tuple[str, ...] = ()
+    names: tuple[_ProviderExportName, ...] = ()
+    alias: str | None = None
+
+
+@dataclass(frozen=True)
+class _ProviderPlan:
+    local_data: Mapping[str, tuple[_ExportedDataType, ...]]
+    local_type_origins: Mapping[str, tuple[ConstructorOrigin, ...]]
+    local_term_origins: Mapping[str, tuple[ConstructorOrigin, ...]]
+    local_public_names: frozenset[str]
+    imports: tuple[_ImportSpec, ...]
+    exports: tuple[_ProviderExportSpec, ...]
+    direct_unknown: bool
 
 
 def _absolute_lexical_path(path: Path) -> Path:
@@ -8358,17 +8579,83 @@ def _parse_module_path(
     return external, tuple(segments)
 
 
+def _provider_top_level_item_regions(
+    tokens: Sequence[Token],
+) -> list[tuple[int, int]]:
+    """Return complete top-level item regions without scanning payloads."""
+
+    statement_items = {"import", "export", "pragma", "alias", "type"}
+    regions: list[tuple[int, int]] = []
+    cursor = 0
+    while cursor < len(tokens):
+        start = cursor
+        if tokens[start].text in statement_items:
+            end = _provider_statement_end(tokens, start)
+            if end is None:
+                regions.append((start, len(tokens) - 1))
+                break
+            regions.append((start, end))
+            cursor = end + 1
+            continue
+
+        boundary = _header_boundary(tokens, start + 1)
+        if boundary is None:
+            regions.append((start, len(tokens) - 1))
+            break
+        if tokens[boundary].text == ";":
+            regions.append((start, boundary))
+            cursor = boundary + 1
+            continue
+        close = matching_index(tokens, boundary)
+        if close is None:
+            regions.append((start, len(tokens) - 1))
+            break
+        end = close
+        if end + 1 < len(tokens) and tokens[end + 1].text == ";":
+            end += 1
+        regions.append((start, end))
+        cursor = end + 1
+    return regions
+
+
+def _provider_structural_tokens(
+    tokens: Sequence[Token],
+) -> list[Token]:
+    """Exclude delimiter-opaque pragma payloads from balance checks."""
+
+    structural: list[Token] = []
+    for start, end in _provider_top_level_item_regions(tokens):
+        if (
+            tokens[start].text == "pragma"
+            and start + 1 <= end
+            and tokens[start + 1].text in {"solidity", "abicoder"}
+        ):
+            structural.extend(tokens[start : start + 2])
+            structural.append(tokens[end])
+        else:
+            structural.extend(tokens[start : end + 1])
+    return structural
+
+
 def _parse_import_specs(
     source: str,
 ) -> tuple[list[_ImportSpec], bool]:
     """Parse the canonical import forms needed by constructor discovery."""
 
     tokens = significant(source)
-    _, enclosing = _classic_brace_context(tokens)
     specs: list[_ImportSpec] = []
     malformed = False
-    for index, token in enumerate(tokens):
-        if token.text != "import" or enclosing[index] is not None:
+    for index, region_end in _provider_top_level_item_regions(tokens):
+        token = tokens[index]
+        if token.text != "import":
+            if (
+                token.text != "pragma"
+                and any(
+                    item.text == "import"
+                    for item in tokens[index + 1 : region_end + 1]
+                )
+            ):
+                malformed = True
             continue
         end = _statement_end(tokens, index)
         if end is None:
@@ -8472,6 +8759,271 @@ def _parse_import_specs(
             continue
         external, path = parsed_path
         specs.append(_ImportSpec("open", external, path))
+    return specs, malformed
+
+
+_EXPORT_OPERATOR_PARTS = frozenset(
+    {
+        ":=",
+        "->",
+        "=>",
+        "==",
+        "!=",
+        ">=",
+        "<=",
+        "&&",
+        "||",
+        "+=",
+        "-=",
+        "^=",
+        "&=",
+        "|=",
+        "%=",
+        "+",
+        "-",
+        "*",
+        "/",
+        "%",
+        "!",
+        "<",
+        "<<",
+        "<<=",
+        ">",
+        "=",
+        "|",
+        "&",
+        "^",
+        ":",
+        "**",
+    }
+)
+
+
+def _provider_export_comma_parts(
+    tokens: Sequence[Token],
+    *,
+    allow_empty: bool,
+    allow_trailing: bool,
+) -> list[list[Token]] | None:
+    """Split an export list with the parser's exact empty/trailing rules."""
+
+    parts = split_top(tokens, ",", angles=False)
+    if len(parts) == 1 and not parts[0]:
+        return [] if allow_empty else None
+    if allow_trailing and parts and not parts[-1]:
+        parts = parts[:-1]
+    if not parts and not allow_empty:
+        return None
+    if any(not part for part in parts):
+        return None
+    return parts
+
+
+def _provider_export_path_prefix(
+    tokens: Sequence[Token],
+) -> tuple[tuple[str, ...], int] | None:
+    """Consume the longest non-external dotted identifier prefix."""
+
+    if not tokens or not _is_core_import_identifier(tokens[0]):
+        return None
+    path = [tokens[0].text]
+    cursor = 1
+    while (
+        cursor + 1 < len(tokens)
+        and tokens[cursor].text == "."
+        and _is_core_import_identifier(tokens[cursor + 1])
+    ):
+        path.append(tokens[cursor + 1].text)
+        cursor += 2
+    return tuple(path), cursor
+
+
+def _parse_provider_constructor_selector(
+    tokens: Sequence[Token],
+) -> _ProviderConstructorSelector | None:
+    if (
+        len(tokens) < 2
+        or tokens[0].text != "("
+        or matching_index(tokens, 0) != len(tokens) - 1
+    ):
+        return None
+    inner = tokens[1:-1]
+    if len(inner) == 1 and inner[0].text == "*":
+        return _ProviderConstructorSelector("all")
+    parts = _provider_export_comma_parts(
+        inner,
+        allow_empty=False,
+        allow_trailing=False,
+    )
+    if parts is None or any(
+        len(part) != 1 or not _is_core_import_identifier(part[0])
+        for part in parts
+    ):
+        return None
+    return _ProviderConstructorSelector(
+        "named",
+        tuple(part[0].text for part in parts),
+    )
+
+
+def _parse_provider_export_name(
+    tokens: Sequence[Token],
+) -> _ProviderExportName | None:
+    if len(tokens) == 1 and tokens[0].text == "*":
+        return _ProviderExportName("wildcard")
+    if tokens and tokens[0].text == "(":
+        if (
+            matching_index(tokens, 0) != len(tokens) - 1
+            or len(tokens) == 2
+            or any(
+                token.text not in _EXPORT_OPERATOR_PARTS
+                for token in tokens[1:-1]
+            )
+        ):
+            return None
+        return _ProviderExportName(
+            "operator",
+            "".join(token.text for token in tokens[1:-1]),
+        )
+    if not tokens or not _is_core_import_identifier(tokens[0]):
+        return None
+    if len(tokens) == 1:
+        return _ProviderExportName("name", tokens[0].text)
+    constructors = _parse_provider_constructor_selector(tokens[1:])
+    if constructors is None:
+        return None
+    return _ProviderExportName(
+        "name",
+        tokens[0].text,
+        constructors=constructors,
+    )
+
+
+def _parse_provider_list_module_wildcard(
+    tokens: Sequence[Token],
+) -> _ProviderExportName | None:
+    parsed = _provider_export_path_prefix(tokens)
+    if parsed is None:
+        return None
+    path, cursor = parsed
+    if (
+        cursor + 2 != len(tokens)
+        or tokens[cursor].text != "."
+        or tokens[cursor + 1].text != "*"
+    ):
+        return None
+    return _ProviderExportName("module_wildcard", path=path)
+
+
+def _parse_provider_export_body(
+    body: Sequence[Token],
+) -> _ProviderExportSpec | None:
+    if not body:
+        return None
+    if body[0].text == "{":
+        if matching_index(body, 0) != len(body) - 1:
+            return None
+        parts = _provider_export_comma_parts(
+            body[1:-1],
+            allow_empty=True,
+            allow_trailing=True,
+        )
+        if parts is None:
+            return None
+        names: list[_ProviderExportName] = []
+        for part in parts:
+            name = (
+                _parse_provider_list_module_wildcard(part)
+                or _parse_provider_export_name(part)
+            )
+            if name is None:
+                return None
+            names.append(name)
+        return _ProviderExportSpec("list", names=tuple(names))
+
+    parsed = _provider_export_path_prefix(body)
+    if parsed is None:
+        return None
+    path, cursor = parsed
+    tail = body[cursor:]
+    if not tail:
+        return _ProviderExportSpec("module", path=path)
+    if (
+        len(tail) == 2
+        and tail[0].text == "as"
+        and _is_core_import_identifier(tail[1])
+    ):
+        return _ProviderExportSpec(
+            "module_as",
+            path=path,
+            alias=tail[1].text,
+        )
+    if (
+        len(tail) == 2
+        and tail[0].text == "."
+        and tail[1].text == "*"
+    ):
+        return _ProviderExportSpec(
+            "items_from",
+            path=path,
+            names=(_ProviderExportName("wildcard"),),
+        )
+    if (
+        len(tail) >= 3
+        and tail[0].text == "."
+        and tail[1].text == "{"
+        and matching_index(tail, 1) == len(tail) - 1
+    ):
+        parts = _provider_export_comma_parts(
+            tail[2:-1],
+            allow_empty=True,
+            allow_trailing=True,
+        )
+        if parts is None:
+            return None
+        names = []
+        for part in parts:
+            name = _parse_provider_export_name(part)
+            if name is None:
+                return None
+            names.append(name)
+        return _ProviderExportSpec(
+            "items_from",
+            path=path,
+            names=tuple(names),
+        )
+    return None
+
+
+def _parse_export_specs(
+    source: str,
+) -> tuple[list[_ProviderExportSpec], bool]:
+    """Parse the compatibility export grammar used by the Core parser."""
+
+    tokens = significant(source)
+    specs: list[_ProviderExportSpec] = []
+    malformed = False
+    for index, region_end in _provider_top_level_item_regions(tokens):
+        token = tokens[index]
+        if token.text != "export":
+            if (
+                token.text != "pragma"
+                and any(
+                    item.text == "export"
+                    for item in tokens[index + 1 : region_end + 1]
+                )
+            ):
+                malformed = True
+            continue
+        end = _statement_end(tokens, index)
+        if end is None:
+            malformed = True
+            continue
+        spec = _parse_provider_export_body(tokens[index + 1 : end])
+        if spec is None:
+            malformed = True
+            continue
+        specs.append(spec)
     return specs, malformed
 
 
@@ -9564,7 +10116,7 @@ def _has_invalid_provider_items(source: str) -> bool:
             return True
         kind = tokens[cursor].text
         if kind in statement_items:
-            end = _statement_end(tokens, cursor)
+            end = _provider_statement_end(tokens, cursor)
             if (
                 end is None
                 or not _provider_statement_is_valid(
@@ -9710,9 +10262,10 @@ def _provider_local_declarations(
 ) -> tuple[
     dict[str, list[_ExportedDataType]],
     dict[str, list[ConstructorOrigin]],
+    dict[str, list[ConstructorOrigin]],
     set[str],
     set[str],
-    set[str],
+    dict[str, list[str]],
 ]:
     """Collect direct module items without treating contract members as exports."""
 
@@ -9720,12 +10273,12 @@ def _provider_local_declarations(
         migrate_data_declarations(source)
     )
     tokens = significant(canonical)
-    _, enclosing = _classic_brace_context(tokens)
     data_types: dict[str, list[_ExportedDataType]] = {}
     type_origins: dict[str, list[ConstructorOrigin]] = {}
-    terms: set[str] = set()
+    term_origins: dict[str, list[ConstructorOrigin]] = {}
     public_names: set[str] = set()
     malformed_data: set[str] = set()
+    type_families: dict[str, list[str]] = {}
 
     named_items = {
         "alias",
@@ -9738,16 +10291,22 @@ def _provider_local_declarations(
         "trait",
         "type",
     }
-    for index, token in enumerate(tokens):
-        if enclosing[index] is not None:
-            continue
+    for index, _ in _provider_top_level_item_regions(tokens):
+        token = tokens[index]
         if (
             token.text == "function"
             and index + 1 < len(tokens)
             and tokens[index + 1].kind == "word"
         ):
-            terms.add(tokens[index + 1].text)
-            public_names.add(tokens[index + 1].text)
+            name = tokens[index + 1].text
+            term_origins.setdefault(name, []).append(
+                ConstructorOrigin(
+                    str(_absolute_lexical_path(provider)),
+                    name,
+                    tokens[index + 1].start,
+                )
+            )
+            public_names.add(name)
             continue
         if (
             token.text not in named_items
@@ -9763,6 +10322,15 @@ def _provider_local_declarations(
             token.start,
         )
         type_origins.setdefault(name, []).append(origin)
+        if token.text in {"enum", "struct"}:
+            family = "adt"
+        elif token.text in {"contract", "interface", "library"}:
+            family = "contract"
+        elif token.text in {"class", "trait"}:
+            family = "class"
+        else:
+            family = "alias"
+        type_families.setdefault(name, []).append(family)
         if token.text not in {"enum", "struct"}:
             continue
 
@@ -9793,202 +10361,40 @@ def _provider_local_declarations(
     return (
         data_types,
         type_origins,
-        terms,
+        term_origins,
         public_names,
         malformed_data,
+        type_families,
     )
 
 
-def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
-    """Compute the direct, locally provable part of a provider interface."""
-
-    canonical, import_conversion_failed = _surface_import_source(source)
-    structurally_broken = _has_unbalanced_structural_delimiters(
-        significant(canonical)
-    )
-    invalid_provider_items = _has_invalid_provider_items(canonical)
-    (
-        local_data,
-        local_type_origins,
-        local_terms,
-        local_public_names,
-        malformed_data,
-    ) = _provider_local_declarations(canonical, provider)
-    import_specs, malformed_imports = _parse_import_specs(canonical)
-    selected_import_wildcard = any(
-        spec.kind == "open" for spec in import_specs
-    )
-    selected_import_names = {
-        local
-        for spec in import_specs
-        if spec.kind == "selective"
-        for _, local in spec.selections
-    }
-
-    tokens = significant(
-        migrate_incomplete_data_heads(migrate_data_declarations(canonical))
-    )
-    _, enclosing = _classic_brace_context(tokens)
-    exports = [
-        index
-        for index, token in enumerate(tokens)
-        if token.text == "export" and enclosing[index] is None
-    ]
-    if not exports:
-        return _ProviderInterface(
-            {},
-            {},
-            frozenset(),
-            frozenset(),
-            (
-                import_conversion_failed
-                or malformed_imports
-                or structurally_broken
-                or invalid_provider_items
-                or bool(malformed_data)
-            ),
-        )
-
-    exported_terms: set[str] = set()
-    exported_public_names: set[str] = set()
-    exported_type_origins: dict[
-        str,
-        set[ConstructorOrigin],
-    ] = {}
-    exported_data: dict[
-        tuple[str, ConstructorOrigin], tuple[str, set[str]]
-    ] = {}
-    unknown = (
-        import_conversion_failed
-        or malformed_imports
-        or structurally_broken
-        or invalid_provider_items
-        or bool(malformed_data)
+def _empty_provider_interface() -> _ProviderInterface:
+    return _ProviderInterface(
+        {},
+        {},
+        {},
+        frozenset(),
+        frozenset(),
+        False,
     )
 
-    def add_data(
-        public_name: str,
-        data_type: _ExportedDataType,
-        constructors: Iterable[str],
-    ) -> None:
-        key = (public_name, data_type.origin)
-        source_name, visible = exported_data.setdefault(
-            key,
-            (data_type.source_name, set()),
-        )
-        assert source_name == data_type.source_name
-        visible.update(constructors)
-        exported_public_names.add(public_name)
-        exported_type_origins.setdefault(public_name, set()).add(
-            data_type.origin
-        )
 
-    for index in exports:
-        end = _statement_end(tokens, index)
-        if end is None:
-            unknown = True
-            continue
-        body = list(tokens[index + 1 : end])
-        if not body or body[0].text != "{":
-            # Module exports and items-from exports are re-exports.  Their
-            # fixed-point interface cannot be reconstructed without full
-            # project roots, so consumers must fail closed.
-            unknown = True
-            continue
-        close = matching_index(body, 0)
-        if close is None or close != len(body) - 1:
-            unknown = True
-            continue
-        for part in split_top(body[1:close], ",", angles=False):
-            if not part:
-                continue
-            if len(part) == 1 and part[0].text == "*":
-                exported_terms.update(local_terms)
-                exported_public_names.update(local_public_names)
-                for name, origins in local_type_origins.items():
-                    exported_type_origins.setdefault(name, set()).update(
-                        origins
-                    )
-                continue
-            if len(part) == 1 and part[0].kind == "word":
-                name = part[0].text
-                if name in local_terms:
-                    exported_terms.add(name)
-                if name in local_public_names:
-                    exported_public_names.add(name)
-                if name in local_type_origins:
-                    exported_type_origins.setdefault(name, set()).update(
-                        local_type_origins[name]
-                    )
-                if (
-                    selected_import_wildcard
-                    or name in selected_import_names
-                ):
-                    # `export {T}` can re-export every selected imported
-                    # namespace named T in addition to direct local items.
-                    unknown = True
-                elif name not in local_public_names:
-                    unknown = True
-                continue
-            if (
-                part[0].kind == "word"
-                and len(part) >= 3
-                and part[1].text == "("
-                and matching_index(part, 1) == len(part) - 1
-            ):
-                name = part[0].text
-                declarations = local_data.get(name, [])
-                if (
-                    name in malformed_data
-                    or len(declarations) != 1
-                ):
-                    # Constructor re-exports through selected imports are
-                    # deliberately outside this direct-provider subset.
-                    unknown = True
-                    continue
-                selector = part[2:-1]
-                data_type = declarations[0]
-                if len(selector) == 1 and selector[0].text == "*":
-                    selected = data_type.constructors
-                else:
-                    selected_names = {
-                        item[0].text
-                        for item in split_top(
-                            selector,
-                            ",",
-                            angles=False,
-                        )
-                        if len(item) == 1 and item[0].kind == "word"
-                    }
-                    if (
-                        not selected_names
-                        or any(
-                            not (
-                                len(item) == 1
-                                and item[0].kind == "word"
-                            )
-                            for item in split_top(
-                                selector,
-                                ",",
-                                angles=False,
-                            )
-                        )
-                        or not selected_names.issubset(
-                            data_type.constructors
-                        )
-                    ):
-                        unknown = True
-                        continue
-                    selected = frozenset(selected_names)
-                add_data(name, data_type, selected)
-                continue
-            unknown = True
-
+def _provider_interface_from_facts(
+    data: Mapping[
+        tuple[str, ConstructorOrigin, str],
+        set[str],
+    ],
+    type_origins: Mapping[str, set[ConstructorOrigin]],
+    term_origins: Mapping[str, set[ConstructorOrigin]],
+    *,
+    unknown: bool = False,
+) -> _ProviderInterface:
     grouped: dict[str, list[_ExportedDataType]] = {}
-    for (public_name, origin), (
+    for (
+        public_name,
+        origin,
         source_name,
-        constructors,
-    ) in exported_data.items():
+    ), constructors in data.items():
         grouped.setdefault(public_name, []).append(
             _ExportedDataType(
                 origin,
@@ -9996,19 +10402,698 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
                 frozenset(constructors),
             )
         )
+    public_names = (
+        set(grouped)
+        | set(type_origins)
+        | set(term_origins)
+    )
     return _ProviderInterface(
         {
-            name: tuple(sorted(data, key=lambda item: item.origin))
-            for name, data in grouped.items()
+            name: tuple(
+                sorted(
+                    items,
+                    key=lambda item: (
+                        item.origin,
+                        item.source_name,
+                    ),
+                )
+            )
+            for name, items in grouped.items()
         },
         {
             name: tuple(sorted(origins))
-            for name, origins in exported_type_origins.items()
+            for name, origins in type_origins.items()
         },
-        frozenset(exported_terms),
-        frozenset(exported_public_names),
+        {
+            name: tuple(sorted(origins))
+            for name, origins in term_origins.items()
+        },
+        frozenset(term_origins),
+        frozenset(public_names),
         unknown,
     )
+
+
+def _provider_add_data_fact(
+    data: dict[
+        tuple[str, ConstructorOrigin, str],
+        set[str],
+    ],
+    type_origins: dict[str, set[ConstructorOrigin]],
+    public_name: str,
+    data_type: _ExportedDataType,
+    constructors: Iterable[str],
+) -> None:
+    data.setdefault(
+        (
+            public_name,
+            data_type.origin,
+            data_type.source_name,
+        ),
+        set(),
+    ).update(constructors)
+    type_origins.setdefault(public_name, set()).add(
+        data_type.origin
+    )
+
+
+def _provider_selected_constructors(
+    data_type: _ExportedDataType,
+    selector: _ProviderConstructorSelector,
+) -> frozenset[str]:
+    if selector.kind == "all":
+        return data_type.constructors
+    return frozenset(selector.names) & data_type.constructors
+
+
+def _provider_copy_interface_name(
+    interface: _ProviderInterface,
+    source_name: str,
+    public_name: str,
+    data: dict[
+        tuple[str, ConstructorOrigin, str],
+        set[str],
+    ],
+    type_origins: dict[str, set[ConstructorOrigin]],
+    term_origins: dict[str, set[ConstructorOrigin]],
+    *,
+    opaque: bool = False,
+    selector: _ProviderConstructorSelector | None = None,
+) -> bool:
+    """Copy one public item, preserving its ultimate declaration origin."""
+
+    if selector is not None:
+        matches = interface.data_types.get(source_name, ())
+        for data_type in matches:
+            _provider_add_data_fact(
+                data,
+                type_origins,
+                public_name,
+                data_type,
+                _provider_selected_constructors(
+                    data_type,
+                    selector,
+                ),
+            )
+        return bool(matches)
+
+    for origin in interface.type_origins.get(source_name, ()):
+        type_origins.setdefault(public_name, set()).add(origin)
+    for origin in interface.term_origins.get(source_name, ()):
+        term_origins.setdefault(public_name, set()).add(origin)
+    for data_type in interface.data_types.get(source_name, ()):
+        _provider_add_data_fact(
+            data,
+            type_origins,
+            public_name,
+            data_type,
+            () if opaque else data_type.constructors,
+        )
+    return source_name in interface.public_names
+
+
+def _provider_copy_whole_interface(
+    interface: _ProviderInterface,
+    data: dict[
+        tuple[str, ConstructorOrigin, str],
+        set[str],
+    ],
+    type_origins: dict[str, set[ConstructorOrigin]],
+    term_origins: dict[str, set[ConstructorOrigin]],
+) -> None:
+    for name in interface.public_names:
+        _provider_copy_interface_name(
+            interface,
+            name,
+            name,
+            data,
+            type_origins,
+            term_origins,
+        )
+
+
+def _provider_add_local_name(
+    plan: _ProviderPlan,
+    name: str,
+    data: dict[
+        tuple[str, ConstructorOrigin, str],
+        set[str],
+    ],
+    type_origins: dict[str, set[ConstructorOrigin]],
+    term_origins: dict[str, set[ConstructorOrigin]],
+) -> bool:
+    for origin in plan.local_type_origins.get(name, ()):
+        type_origins.setdefault(name, set()).add(origin)
+    for origin in plan.local_term_origins.get(name, ()):
+        term_origins.setdefault(name, set()).add(origin)
+    for data_type in plan.local_data.get(name, ()):
+        _provider_add_data_fact(
+            data,
+            type_origins,
+            name,
+            data_type,
+            (),
+        )
+    return name in plan.local_public_names
+
+
+def _provider_add_all_locals(
+    plan: _ProviderPlan,
+    data: dict[
+        tuple[str, ConstructorOrigin, str],
+        set[str],
+    ],
+    type_origins: dict[str, set[ConstructorOrigin]],
+    term_origins: dict[str, set[ConstructorOrigin]],
+) -> None:
+    for name in plan.local_public_names:
+        _provider_add_local_name(
+            plan,
+            name,
+            data,
+            type_origins,
+            term_origins,
+        )
+
+
+def _provider_plan(source: str, provider: Path) -> _ProviderPlan:
+    canonical, import_conversion_failed = _surface_import_source(source)
+    (
+        local_data,
+        local_type_origins,
+        local_term_origins,
+        local_public_names,
+        malformed_data,
+        local_type_families,
+    ) = _provider_local_declarations(canonical, provider)
+    imports, malformed_imports = _parse_import_specs(canonical)
+    exports, malformed_exports = _parse_export_specs(canonical)
+    duplicate_local_item = (
+        any(
+            not (
+                len(families) == 2
+                and set(families) == {"adt", "contract"}
+            )
+            for families in local_type_families.values()
+            if len(families) > 1
+        )
+        or any(
+            len(origins) > 1
+            for origins in local_term_origins.values()
+        )
+    )
+    return _ProviderPlan(
+        {
+            name: tuple(items)
+            for name, items in local_data.items()
+        },
+        {
+            name: tuple(origins)
+            for name, origins in local_type_origins.items()
+        },
+        {
+            name: tuple(origins)
+            for name, origins in local_term_origins.items()
+        },
+        frozenset(local_public_names),
+        tuple(imports),
+        tuple(exports),
+        (
+            import_conversion_failed
+            or malformed_imports
+            or malformed_exports
+            or _has_core_lex_errors(canonical)
+            or _has_unbalanced_structural_delimiters(
+                _provider_structural_tokens(
+                    significant(canonical)
+                )
+            )
+            or _has_invalid_provider_items(canonical)
+            or bool(malformed_data)
+            or duplicate_local_item
+        ),
+    )
+
+
+def _provider_locally_exported_import_names(
+    plan: _ProviderPlan,
+) -> frozenset[str]:
+    """Names whose local-list export can depend on selected imports."""
+
+    names: set[str] = set()
+    for export in plan.exports:
+        if export.kind != "list":
+            continue
+        for name in export.names:
+            if name.kind not in {"name", "operator"}:
+                continue
+            if (
+                name.constructors is not None
+                and plan.local_data.get(name.name)
+            ):
+                continue
+            names.add(name.name)
+    return frozenset(names)
+
+
+def _provider_import_is_relevant(
+    plan: _ProviderPlan,
+    spec: _ImportSpec,
+) -> bool:
+    names = _provider_locally_exported_import_names(plan)
+    if not names or spec.kind == "namespace":
+        return False
+    if spec.kind == "open":
+        return True
+    return any(
+        local_name in names
+        for _, local_name in spec.selections
+    )
+
+
+def _provider_imported_interface(
+    provider: Path,
+    plan: _ProviderPlan,
+    selected: Mapping[Path, tuple[Path, ...]],
+    interfaces: Mapping[Path, _ProviderInterface],
+) -> _ProviderInterface:
+    data: dict[
+        tuple[str, ConstructorOrigin, str],
+        set[str],
+    ] = {}
+    type_origins: dict[str, set[ConstructorOrigin]] = {}
+    term_origins: dict[str, set[ConstructorOrigin]] = {}
+    for spec in plan.imports:
+        if not _provider_import_is_relevant(plan, spec):
+            continue
+        target = _resolve_selected_import(
+            provider,
+            spec,
+            selected,
+        )
+        if target is None:
+            continue
+        interface = interfaces[target]
+        if spec.kind == "open":
+            _provider_copy_whole_interface(
+                interface,
+                data,
+                type_origins,
+                term_origins,
+            )
+            continue
+        for source_name, local_name in spec.selections:
+            _provider_copy_interface_name(
+                interface,
+                source_name,
+                local_name,
+                data,
+                type_origins,
+                term_origins,
+            )
+    return _provider_interface_from_facts(
+        data,
+        type_origins,
+        term_origins,
+    )
+
+
+def _evaluate_provider_facts(
+    provider: Path,
+    plan: _ProviderPlan,
+    selected: Mapping[Path, tuple[Path, ...]],
+    interfaces: Mapping[Path, _ProviderInterface],
+) -> _ProviderInterface:
+    """Evaluate one lenient monotone step without missing-name diagnostics."""
+
+    imported = _provider_imported_interface(
+        provider,
+        plan,
+        selected,
+        interfaces,
+    )
+    data: dict[
+        tuple[str, ConstructorOrigin, str],
+        set[str],
+    ] = {}
+    type_origins: dict[str, set[ConstructorOrigin]] = {}
+    term_origins: dict[str, set[ConstructorOrigin]] = {}
+
+    def copy_target_name(
+        target: _ProviderInterface,
+        name: _ProviderExportName,
+    ) -> None:
+        if name.kind == "wildcard":
+            _provider_copy_whole_interface(
+                target,
+                data,
+                type_origins,
+                term_origins,
+            )
+            return
+        _provider_copy_interface_name(
+            target,
+            name.name,
+            name.name,
+            data,
+            type_origins,
+            term_origins,
+            opaque=name.constructors is None,
+            selector=name.constructors,
+        )
+
+    for export in plan.exports:
+        if export.kind == "list":
+            for name in export.names:
+                if name.kind == "wildcard":
+                    _provider_add_all_locals(
+                        plan,
+                        data,
+                        type_origins,
+                        term_origins,
+                    )
+                    continue
+                if name.kind == "module_wildcard":
+                    target = _resolve_selected_module_path(
+                        provider,
+                        name.path,
+                        selected,
+                    )
+                    if target is not None:
+                        _provider_copy_whole_interface(
+                            interfaces[target],
+                            data,
+                            type_origins,
+                            term_origins,
+                        )
+                    continue
+                if (
+                    name.constructors is not None
+                    and plan.local_data.get(name.name)
+                ):
+                    for data_type in plan.local_data[name.name]:
+                        _provider_add_data_fact(
+                            data,
+                            type_origins,
+                            name.name,
+                            data_type,
+                            _provider_selected_constructors(
+                                data_type,
+                                name.constructors,
+                            ),
+                        )
+                    continue
+                if name.constructors is None:
+                    _provider_add_local_name(
+                        plan,
+                        name.name,
+                        data,
+                        type_origins,
+                        term_origins,
+                    )
+                _provider_copy_interface_name(
+                    imported,
+                    name.name,
+                    name.name,
+                    data,
+                    type_origins,
+                    term_origins,
+                    opaque=name.constructors is None,
+                    selector=name.constructors,
+                )
+            continue
+
+        if export.kind != "items_from":
+            # Module aliases occupy a distinct namespace.  Until that
+            # namespace is represented, strict validation fails closed.
+            continue
+        target = _resolve_selected_module_path(
+            provider,
+            export.path,
+            selected,
+        )
+        if target is None:
+            continue
+        target_interface = interfaces[target]
+        for name in export.names:
+            copy_target_name(target_interface, name)
+
+    return _provider_interface_from_facts(
+        data,
+        type_origins,
+        term_origins,
+    )
+
+
+def _provider_selector_is_valid(
+    data_types: Sequence[_ExportedDataType],
+    selector: _ProviderConstructorSelector,
+) -> bool:
+    if not data_types:
+        return False
+    origins = {data_type.origin for data_type in data_types}
+    if len(origins) != 1:
+        return False
+    if selector.kind == "all":
+        return True
+    visible = {
+        constructor
+        for data_type in data_types
+        for constructor in data_type.constructors
+    }
+    return set(selector.names).issubset(visible)
+
+
+def _provider_dependencies(
+    provider: Path,
+    plan: _ProviderPlan,
+    selected: Mapping[Path, tuple[Path, ...]],
+) -> tuple[frozenset[Path], bool]:
+    dependencies: set[Path] = set()
+    unresolved = False
+    for spec in plan.imports:
+        if not _provider_import_is_relevant(plan, spec):
+            continue
+        target = _resolve_selected_import(provider, spec, selected)
+        if target is None:
+            unresolved = True
+        else:
+            dependencies.add(target)
+    for export in plan.exports:
+        paths: list[tuple[str, ...]] = []
+        if export.kind in {"items_from", "module", "module_as"}:
+            paths.append(export.path)
+        elif export.kind == "list":
+            paths.extend(
+                name.path
+                for name in export.names
+                if name.kind == "module_wildcard"
+            )
+        for path in paths:
+            target = _resolve_selected_module_path(
+                provider,
+                path,
+                selected,
+            )
+            if target is None:
+                unresolved = True
+            else:
+                dependencies.add(target)
+    return frozenset(dependencies), unresolved
+
+
+def _provider_strictly_unknown(
+    provider: Path,
+    plan: _ProviderPlan,
+    selected: Mapping[Path, tuple[Path, ...]],
+    interfaces: Mapping[Path, _ProviderInterface],
+) -> bool:
+    dependencies, unresolved = _provider_dependencies(
+        provider,
+        plan,
+        selected,
+    )
+    del dependencies
+    unknown = plan.direct_unknown or unresolved
+    imported = _provider_imported_interface(
+        provider,
+        plan,
+        selected,
+        interfaces,
+    )
+
+    relevant_names = _provider_locally_exported_import_names(plan)
+    for spec in plan.imports:
+        if (
+            spec.kind != "selective"
+            or not _provider_import_is_relevant(plan, spec)
+        ):
+            continue
+        target = _resolve_selected_import(provider, spec, selected)
+        if target is None:
+            continue
+        available = interfaces[target].public_names
+        if any(
+            local_name in relevant_names
+            and source_name not in available
+            for source_name, local_name in spec.selections
+        ):
+            unknown = True
+
+    for export in plan.exports:
+        if export.kind in {"module", "module_as"}:
+            unknown = True
+            continue
+        if export.kind == "list":
+            for name in export.names:
+                if name.kind == "wildcard":
+                    continue
+                if name.kind == "module_wildcard":
+                    if (
+                        _resolve_selected_module_path(
+                            provider,
+                            name.path,
+                            selected,
+                        )
+                        is None
+                    ):
+                        unknown = True
+                    continue
+                if name.constructors is None:
+                    if (
+                        name.name not in plan.local_public_names
+                        and name.name not in imported.public_names
+                    ):
+                        unknown = True
+                    continue
+                candidates = plan.local_data.get(name.name, ())
+                if not candidates:
+                    candidates = imported.data_types.get(
+                        name.name,
+                        (),
+                    )
+                if not _provider_selector_is_valid(
+                    candidates,
+                    name.constructors,
+                ):
+                    unknown = True
+            continue
+
+        target = _resolve_selected_module_path(
+            provider,
+            export.path,
+            selected,
+        )
+        if target is None:
+            unknown = True
+            continue
+        target_interface = interfaces[target]
+        for name in export.names:
+            if name.kind == "wildcard":
+                continue
+            if name.constructors is None:
+                if name.name not in target_interface.public_names:
+                    unknown = True
+                continue
+            if not _provider_selector_is_valid(
+                target_interface.data_types.get(name.name, ()),
+                name.constructors,
+            ):
+                unknown = True
+
+    interface = interfaces[provider]
+    if any(
+        len({data_type.origin for data_type in data_types}) > 1
+        for data_types in interface.data_types.values()
+    ):
+        unknown = True
+    for name in interface.public_names:
+        definition_families = {
+            (origin.provider, origin.type_name)
+            for origin in (
+                *interface.type_origins.get(name, ()),
+                *interface.term_origins.get(name, ()),
+            )
+        }
+        if len(definition_families) > 1:
+            unknown = True
+    return unknown
+
+
+def _compute_provider_interfaces(
+    sources: Mapping[Path, str],
+    selected: Mapping[Path, tuple[Path, ...]],
+) -> tuple[
+    dict[Path, _ProviderInterface],
+    dict[Path, _ProviderPlan],
+]:
+    """Compute re-export facts to a least fixed point, then fail closed."""
+
+    plans = {
+        provider: _provider_plan(source, provider)
+        for provider, source in sources.items()
+    }
+    interfaces = {
+        provider: _empty_provider_interface()
+        for provider in sources
+    }
+    while True:
+        changed = False
+        next_interfaces: dict[Path, _ProviderInterface] = {}
+        for provider, plan in plans.items():
+            interface = _evaluate_provider_facts(
+                provider,
+                plan,
+                selected,
+                interfaces,
+            )
+            next_interfaces[provider] = interface
+            changed |= interface != interfaces[provider]
+        interfaces = next_interfaces
+        if not changed:
+            break
+
+    dependencies = {
+        provider: _provider_dependencies(
+            provider,
+            plan,
+            selected,
+        )[0]
+        for provider, plan in plans.items()
+    }
+    unknown = {
+        provider: _provider_strictly_unknown(
+            provider,
+            plan,
+            selected,
+            interfaces,
+        )
+        for provider, plan in plans.items()
+    }
+    while True:
+        changed = False
+        for provider, targets in dependencies.items():
+            if (
+                not unknown[provider]
+                and any(unknown[target] for target in targets)
+            ):
+                unknown[provider] = True
+                changed = True
+        if not changed:
+            break
+
+    interfaces = {
+        provider: _ProviderInterface(
+            interface.data_types,
+            interface.type_origins,
+            interface.term_origins,
+            interface.terms,
+            interface.public_names,
+            unknown[provider],
+        )
+        for provider, interface in interfaces.items()
+    }
+    return interfaces, plans
 
 
 def _local_qualified_term_winners(
@@ -10082,6 +11167,26 @@ def _local_qualified_term_winners(
     return winners
 
 
+def _resolve_selected_module_path(
+    consumer: Path,
+    path: tuple[str, ...],
+    selected: Mapping[Path, tuple[Path, ...]],
+) -> Path | None:
+    """Resolve an unambiguous relative module path within selected files."""
+
+    if (
+        not path
+        or path[0] in {"lib", "std"}
+    ):
+        return None
+    base = _absolute_lexical_path(consumer).parent.joinpath(*path)
+    matches: list[Path] = []
+    for suffix in (".solc", ".sol"):
+        matches.extend(selected.get(base.with_suffix(suffix), ()))
+    unique = list(dict.fromkeys(matches))
+    return unique[0] if len(unique) == 1 else None
+
+
 def _resolve_selected_import(
     consumer: Path,
     spec: _ImportSpec,
@@ -10089,18 +11194,13 @@ def _resolve_selected_import(
 ) -> Path | None:
     """Resolve only unambiguous ordinary imports within selected paths."""
 
-    if (
-        spec.external
-        or not spec.path
-        or spec.path[0] in {"lib", "std"}
-    ):
+    if spec.external:
         return None
-    base = _absolute_lexical_path(consumer).parent.joinpath(*spec.path)
-    matches: list[Path] = []
-    for suffix in (".solc", ".sol"):
-        matches.extend(selected.get(base.with_suffix(suffix), ()))
-    unique = list(dict.fromkeys(matches))
-    return unique[0] if len(unique) == 1 else None
+    return _resolve_selected_module_path(
+        consumer,
+        spec.path,
+        selected,
+    )
 
 
 def build_constructor_import_surfaces(
@@ -10114,10 +11214,10 @@ def build_constructor_import_surfaces(
     selected_index = {
         path: tuple(paths) for path, paths in selected.items()
     }
-    interfaces = {
-        path: _provider_interface(source, path)
-        for path, source in sources.items()
-    }
+    interfaces, plans = _compute_provider_interfaces(
+        sources,
+        selected_index,
+    )
     surfaces: dict[Path, ConstructorImportSurface] = {}
 
     for consumer, source in sources.items():
@@ -10191,13 +11291,7 @@ def build_constructor_import_surfaces(
                 for origin in origins
             )
 
-        (
-            _,
-            local_type_origins,
-            _,
-            _,
-            _,
-        ) = _provider_local_declarations(canonical, consumer)
+        local_type_origins = plans[consumer].local_type_origins
         consumer_surface = str(_absolute_lexical_path(consumer))
         for name, origins in local_type_origins.items():
             add_owner_claims(
