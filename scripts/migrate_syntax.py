@@ -1580,6 +1580,34 @@ def _statement_end(tokens: Sequence[Token], start: int) -> int | None:
     return None
 
 
+def reject_string_imports(source: str) -> None:
+    """Reject Solidity path strings, which have no canonical Core spelling."""
+
+    tokens = significant(source)
+    for index, token in enumerate(tokens):
+        if token.text != "import":
+            continue
+        end = _statement_end(tokens, index)
+        if end is None:
+            continue
+        path = next(
+            (
+                item
+                for item in tokens[index + 1 : end]
+                if item.kind == "string"
+            ),
+            None,
+        )
+        if path is None:
+            continue
+        line, column = _source_line_column(source, path.start)
+        raise ValueError(
+            "cannot migrate string import at "
+            f"line {line}, column {column}: Core imports use dotted "
+            "module names; replace the path string with its resolved module"
+        )
+
+
 def migrate_pragmas(source: str) -> str:
     tokens = significant(source)
     replacements: list[tuple[int, int, str]] = []
@@ -6216,6 +6244,7 @@ def migrate_source(
 ) -> str:
     if has_comment_marker(source, KEEP_LEGACY_NEGATIVE_MARKER):
         return source
+    reject_string_imports(source)
     reject_solidity_call_options(source)
     reject_contract_inheritance(source)
     reject_noncanonical_proxy_comptime(source)

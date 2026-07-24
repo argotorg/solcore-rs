@@ -195,6 +195,32 @@ function wrap(x: word) -> Option(word) { return .Some(x); }
         self.assertIn("0 file(s) need migration", check.stdout)
 
 
+class StringImportMigrationTests(unittest.TestCase):
+    def test_rejects_all_solidity_string_import_forms(self) -> None:
+        cases = [
+            'import "M/N.sol";\n',
+            'import {f, g as h} from /* path */ "M/N.sol";\n',
+            'import * as M from "M/N.sol";\n',
+        ]
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate string import",
+                ):
+                    MIGRATE.migrate_source(classic)
+
+    def test_accepts_dotted_core_imports_and_unrelated_strings(self) -> None:
+        canonical = """\
+import std.dispatch;
+import {f} from @ext.foo;
+function message() returns (string) { return "M/N.sol"; }
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+
 class ClassicBareImportMigrationTests(unittest.TestCase):
     def test_parameter_shadowing_preserves_receiver_access(self) -> None:
         classic = """\
