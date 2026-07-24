@@ -390,6 +390,82 @@ function message() returns (string) { return "M/N.sol"; }
 
 
 class ClassicBareImportMigrationTests(unittest.TestCase):
+    def test_disambiguates_generated_aliases_with_the_same_leaf(self) -> None:
+        classic = """\
+import alpha.util;
+import beta.util;
+
+function read() -> word {
+  return alpha.util.first() + beta.util.second();
+}
+"""
+        expected = """\
+import * as alpha_util from alpha.util;
+import * as beta_util from beta.util;
+
+function read() -> word {
+  return alpha_util.first() + beta_util.second();
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(
+            MIGRATE.migrate_classic_bare_imports(migrated),
+            migrated,
+        )
+
+    def test_avoids_capturing_a_local_binding_with_generated_alias(self) -> None:
+        classic = """\
+import foo.bar;
+
+function read(bar: Receiver) -> word {
+  return foo.bar.read();
+}
+"""
+        expected = """\
+import * as foo_bar from foo.bar;
+
+function read(bar: Receiver) -> word {
+  return foo_bar.read();
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(
+            MIGRATE.migrate_classic_bare_imports(migrated),
+            migrated,
+        )
+
+    def test_rewrites_overlapping_paths_longest_first(self) -> None:
+        classic = """\
+import foo.bar;
+import foo.bar.baz;
+
+function read() -> word {
+  return foo.bar.read() + foo.bar.baz.read();
+}
+"""
+        expected = """\
+import * as bar from foo.bar;
+import * as baz from foo.bar.baz;
+
+function read() -> word {
+  return bar.read() + baz.read();
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(
+            MIGRATE.migrate_classic_bare_imports(migrated),
+            migrated,
+        )
+
     def test_parameter_shadowing_preserves_receiver_access(self) -> None:
         classic = """\
 import foo.bar;

@@ -2338,8 +2338,10 @@ def migrate_classic_bare_imports(
     tokens = significant(source)
     limits = dict(path_limits) if path_limits is not None else None
     import_spans: list[tuple[int, int]] = []
+    bare_imports: list[tuple[int, int, list[str], list[str], str]] = []
     namespace_paths: list[tuple[list[str], str]] = []
     replacements: list[tuple[int, int, str]] = []
+    imported_local_names: set[str] = set()
 
     for index, token in enumerate(tokens):
         if token.text != "import":
@@ -2349,6 +2351,40 @@ def migrate_classic_bare_imports(
             continue
         body = list(tokens[index + 1 : end])
         if not body:
+            continue
+        if (
+            len(body) >= 3
+            and body[0].text == "*"
+            and body[1].text == "as"
+            and body[2].kind == "word"
+        ):
+            imported_local_names.add(body[2].text)
+            continue
+        selector_open = find_top(body, "{", angles=False)
+        if selector_open is not None:
+            close = matching_index(body, selector_open)
+            if close is not None:
+                for part in split_top(
+                    body[selector_open + 1 : close], ",", angles=False
+                ):
+                    if not part:
+                        continue
+                    as_index = find_top(part, "as", angles=False)
+                    local = (
+                        part[as_index + 1]
+                        if as_index is not None and as_index + 1 < len(part)
+                        else part[0]
+                    )
+                    if local.kind == "word":
+                        imported_local_names.add(local.text)
+            continue
+        explicit_alias = find_top(body, "as", angles=False)
+        if (
+            explicit_alias is not None
+            and explicit_alias + 1 < len(body)
+            and body[explicit_alias + 1].kind == "word"
+        ):
+            imported_local_names.add(body[explicit_alias + 1].text)
             continue
         external = body[0].text == "@"
         cursor = 1 if external else 0
@@ -2373,16 +2409,84 @@ def migrate_classic_bare_imports(
             if remaining == 0:
                 continue
             limits[path] = remaining - 1
-        alias = segments[-1]
+        visible = segments[1:] if external else segments
+        bare_imports.append(
+            (token.start, tokens[end].end, segments, visible, path)
+        )
+        import_spans.append((token.start, tokens[end].end))
+
+    suffix_names = {
+        "_".join(segments[-width:])
+        for _, _, segments, _, _ in bare_imports
+        for width in range(1, len(segments) + 1)
+    }
+    alias_shadow_ranges = _classic_shadow_ranges(
+        tokens,
+        suffix_names,
+        include_callable_declarations=True,
+        include_top_level_fields=True,
+    )
+    unavailable_aliases = imported_local_names | {
+        name for name, ranges in alias_shadow_ranges.items() if ranges
+    }
+    declared_item_names = {
+        tokens[index + 1].text
+        for index, token in enumerate(tokens[:-1])
+        if token.text in {
+            "alias",
+            "class",
+            "contract",
+            "data",
+            "enum",
+            "interface",
+            "library",
+            "struct",
+            "trait",
+            "type",
+        }
+        and tokens[index + 1].kind == "word"
+    }
+    unavailable_aliases.update(declared_item_names)
+    leaf_paths: dict[str, set[str]] = {}
+    for _, _, segments, _, path in bare_imports:
+        leaf_paths.setdefault(segments[-1], set()).add(path)
+
+    assigned_aliases: set[str] = set()
+    aliases_by_path: dict[str, str] = {}
+    source_words = {token.text for token in tokens if token.kind == "word"}
+    for start, end, segments, visible, path in bare_imports:
+        alias = aliases_by_path.get(path)
+        if alias is None:
+            first_width = 2 if len(leaf_paths[segments[-1]]) > 1 else 1
+            alias = ""
+            for width in range(first_width, len(segments) + 1):
+                candidate = "_".join(segments[-width:])
+                if (
+                    candidate not in unavailable_aliases
+                    and candidate not in assigned_aliases
+                ):
+                    alias = candidate
+                    break
+            if not alias:
+                base = "_".join(segments)
+                suffix = 2
+                alias = base
+                while (
+                    alias in unavailable_aliases
+                    or alias in assigned_aliases
+                    or alias in source_words
+                ):
+                    alias = f"{base}{suffix}"
+                    suffix += 1
+            aliases_by_path[path] = alias
+            assigned_aliases.add(alias)
         replacement = _with_preserved_comments(
             source,
-            token.start,
-            tokens[end].end,
+            start,
+            end,
             f"import * as {alias} from {path};",
         )
-        replacements.append((token.start, tokens[end].end, replacement))
-        import_spans.append((token.start, tokens[end].end))
-        visible = segments[1:] if external else segments
+        replacements.append((start, end, replacement))
         namespace_paths.append((visible, alias))
 
     def inside_import(start: int, end: int) -> bool:
@@ -2397,8 +2501,10 @@ def migrate_classic_bare_imports(
     )
     type_only_tokens = _classic_type_only_tokens(tokens)
 
-    seen_uses: set[tuple[int, int]] = set()
-    for segments, alias in namespace_paths:
+    seen_uses: list[tuple[int, int]] = []
+    for segments, alias in sorted(
+        namespace_paths, key=lambda item: len(item[0]), reverse=True
+    ):
         if len(segments) < 2:
             continue
         width = len(segments) * 2 - 1
@@ -2419,14 +2525,17 @@ def migrate_classic_bare_imports(
                 continue
             start = candidate[0].start
             end = candidate[-1].end
-            if inside_import(start, end) or (start, end) in seen_uses:
+            if inside_import(start, end) or any(
+                start < seen_end and seen_start < end
+                for seen_start, seen_end in seen_uses
+            ):
                 continue
             if index not in type_only_tokens and any(
                 scope_start <= index < scope_end
                 for scope_start, scope_end in shadow_ranges[segments[0]]
             ):
                 continue
-            seen_uses.add((start, end))
+            seen_uses.append((start, end))
             replacement = _with_preserved_comments(
                 source,
                 start,
