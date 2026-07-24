@@ -225,6 +225,59 @@ function wrap(x: word) -> Option(word) { return .Some(x); }
         self.assertIn("0 file(s) need migration", check.stdout)
 
 
+class UnicodeIdentifierMigrationTests(unittest.TestCase):
+    def test_lexer_recognizes_unicode_and_legacy_identifiers(self) -> None:
+        tokens = MIGRATE.significant("_x $x λ fλ λ2")
+
+        self.assertEqual(
+            [(token.kind, token.text) for token in tokens],
+            [
+                ("word", "_x"),
+                ("word", "$x"),
+                ("word", "λ"),
+                ("word", "fλ"),
+                ("word", "λ2"),
+            ],
+        )
+
+    def test_migrates_unicode_declarations_and_constructors(self) -> None:
+        classic = """\
+data λ(a) = λ(a);
+function fλ(x: word) -> λ(word) { return λ(x); }
+"""
+        expected = """\
+enum λ<a> { λ(a) }
+function fλ(x: word) returns (λ<word>) { return λ.λ(x); }
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_resolves_unicode_import_paths_and_constructors(self) -> None:
+        sources = {
+            Path("/workspace/πάροχος.solc"): """\
+enum Τ { Τ(word) }
+export {Τ(*)};
+""",
+            Path("/workspace/main.solc"): """\
+import πάροχος;
+function make(x: word) { Τ(x); }
+""",
+        }
+        main = Path("/workspace/main.solc")
+        surfaces = MIGRATE.build_constructor_import_surfaces(sources)
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("Τ.Τ(x)", migrated)
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+
+
 class ImportAwareConstructorSurfaceTests(unittest.TestCase):
     def surfaces(
         self,

@@ -73,7 +73,6 @@ from typing import BinaryIO, Iterable, Mapping, Sequence
 
 
 TRIVIA = {"ws", "comment"}
-WORD_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
 CORE_LEXER_WORD_TOKENS = frozenset(
     {
         "contract",
@@ -269,18 +268,64 @@ class Token:
     end: int
 
 
+def _is_identifier_letter(character: str) -> bool:
+    return unicodedata.category(character).startswith("L")
+
+
+def _is_identifier_number(character: str) -> bool:
+    return unicodedata.category(character).startswith("N")
+
+
 def _is_core_identifier_text(text: str) -> bool:
     """Match the current parser's non-hyphenated identifier grammar."""
 
     return (
         bool(text)
-        and unicodedata.category(text[0]).startswith("L")
+        and _is_identifier_letter(text[0])
         and all(
             character == "_"
-            or unicodedata.category(character)[:1] in {"L", "N"}
+            or _is_identifier_letter(character)
+            or _is_identifier_number(character)
             for character in text[1:]
         )
     )
+
+
+def _is_legacy_identifier_text(text: str) -> bool:
+    """Match Unicode identifiers plus the legacy Solidity ``_``/``$`` forms."""
+
+    return (
+        bool(text)
+        and (
+            text[0] in {"_", "$"}
+            or _is_identifier_letter(text[0])
+        )
+        and all(
+            character in {"_", "$"}
+            or _is_identifier_letter(character)
+            or _is_identifier_number(character)
+            for character in text[1:]
+        )
+    )
+
+
+def _legacy_identifier_end(source: str, start: int) -> int | None:
+    if (
+        start >= len(source)
+        or not _is_legacy_identifier_text(source[start])
+    ):
+        return None
+    cursor = start + 1
+    while cursor < len(source):
+        character = source[cursor]
+        if not (
+            character in {"_", "$"}
+            or _is_identifier_letter(character)
+            or _is_identifier_number(character)
+        ):
+            break
+        cursor += 1
+    return cursor
 
 
 def _is_core_import_identifier(token: Token) -> bool:
@@ -441,10 +486,10 @@ def lex(source: str) -> list[Token]:
             i = _scan_quoted(source, i, source[i])
             tokens.append(Token("string", source[start:i], start, i))
             continue
-        word = WORD_RE.match(source, i)
-        if word:
-            i = word.end()
-            text = word.group(0)
+        word_end = _legacy_identifier_end(source, i)
+        if word_end is not None:
+            i = word_end
+            text = source[start:i]
             if text == "assembly":
                 assembly_end = _scan_assembly(source, start, i)
                 if assembly_end is not None:
@@ -5865,7 +5910,10 @@ def migrate_classes(source: str) -> str:
         lhs, trait_name, trait_args = head
         if not variables:
             candidate_params = [lhs, *trait_args]
-            if all(WORD_RE.fullmatch(param) for param in candidate_params):
+            if all(
+                _is_legacy_identifier_text(param)
+                for param in candidate_params
+            ):
                 variables = candidate_params
         if not variables:
             continue
