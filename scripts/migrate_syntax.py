@@ -258,14 +258,6 @@ def replace_spans(source: str, replacements: Iterable[tuple[int, int, str]]) -> 
     return result
 
 
-def comments_in(source: str, start: int, end: int) -> list[str]:
-    return [
-        token.text
-        for token in lex(source[start:end])
-        if token.kind == "comment"
-    ]
-
-
 OPEN_TO_CLOSE = {"(": ")", "[": "]", "{": "}", "<": ">"}
 CLOSE_TO_OPEN = {close: open_ for open_, close in OPEN_TO_CLOSE.items()}
 
@@ -540,14 +532,34 @@ def _render_type_suffix(tokens: Sequence[Token]) -> str:
     return " " + join_tokens(tokens)
 
 
+def render_return_item(tokens: Sequence[Token]) -> str:
+    tokens = list(tokens)
+    colon = find_top(tokens, ":")
+    if colon is None:
+        return render_type(tokens)
+    binding = join_tokens(tokens[:colon])
+    ty = render_type(tokens[colon + 1 :])
+    return f"{binding}: {ty}"
+
+
 def render_return_type(tokens: Sequence[Token]) -> str:
     tokens = list(tokens)
     if is_wrapped(tokens, "(", ")"):
         elements = split_top(tokens[1:-1], ",")
         if len(elements) == 1 and not elements[0]:
             return ""
-        return ", ".join(render_type(element) for element in elements)
-    return render_type(tokens)
+        return ", ".join(render_return_item(element) for element in elements)
+    return render_return_item(tokens)
+
+
+def render_return_clause_items(tokens: Sequence[Token]) -> str:
+    """Render the contents of an existing canonical `returns (...)` clause."""
+
+    return ", ".join(
+        render_return_item(part)
+        for part in split_top(tokens, ",")
+        if part
+    )
 
 
 def render_trait_ref(tokens: Sequence[Token]) -> tuple[str, list[str]] | None:
@@ -652,6 +664,12 @@ def migrate_pragmas(source: str) -> str:
         if payload:
             replacement += " " + payload
         replacement += ";"
+        replacement = _with_preserved_comments(
+            source,
+            token.start,
+            tokens[end].end,
+            replacement,
+        )
         replacements.append((token.start, tokens[end].end, replacement))
     return replace_spans(source, replacements)
 
@@ -728,6 +746,12 @@ def migrate_imports(source: str) -> str:
             replacement = f"import * as {alias} from {path};"
         else:
             continue
+        replacement = _with_preserved_comments(
+            source,
+            token.start,
+            tokens[end].end,
+            replacement,
+        )
         replacements.append((token.start, tokens[end].end, replacement))
     return replace_spans(source, replacements)
 
@@ -1102,13 +1126,13 @@ def migrate_classic_bare_imports(
                 continue
             limits[path] = remaining - 1
         alias = segments[-1]
-        replacements.append(
-            (
-                token.start,
-                tokens[end].end,
-                f"import * as {alias} from {path};",
-            )
+        replacement = _with_preserved_comments(
+            source,
+            token.start,
+            tokens[end].end,
+            f"import * as {alias} from {path};",
         )
+        replacements.append((token.start, tokens[end].end, replacement))
         import_spans.append((token.start, tokens[end].end))
         visible = segments[1:] if external else segments
         namespace_paths.append((visible, alias))
@@ -1155,7 +1179,13 @@ def migrate_classic_bare_imports(
             ):
                 continue
             seen_uses.add((start, end))
-            replacements.append((start, end, alias))
+            replacement = _with_preserved_comments(
+                source,
+                start,
+                end,
+                alias,
+            )
+            replacements.append((start, end, replacement))
 
     return replace_spans(source, replacements)
 
@@ -1225,13 +1255,1073 @@ def _parse_forall_prefix(
     return variables, rest, True
 
 
-def _with_preserved_comments(
-    source: str, start: int, end: int, replacement: str
+def _realign_type_application_delimiters(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+) -> None:
+    # Classic generic applications use `Name(...)`, while the new spelling is
+    # `Name<...>`. Nested canonical closes may also lex as one `>>` token.
+    # Structural alignment keeps comments with the corresponding delimiters.
+    for old_open, token in enumerate(before):
+        if (
+            token.text not in {"(", "<"}
+            or old_open == 0
+            or before[old_open - 1].kind != "word"
+            or (
+                token.text == "("
+                and old_open >= 2
+                and before[old_open - 2].text == "function"
+            )
+            or old_open - 1 not in aligned
+        ):
+            continue
+        new_name = aligned[old_open - 1]
+        new_open = new_name + 1
+        if new_open >= len(after) or after[new_open].text != "<":
+            continue
+        old_close = matching_index(before, old_open)
+        new_close = matching_index(after, new_open)
+        if old_close is None or new_close is None:
+            continue
+        for old_index, new_index in list(aligned.items()):
+            if (
+                old_index in {old_open, old_close}
+                or new_index == new_open
+                or (
+                    new_index == new_close
+                    and before[old_index].text not in {")", ">", ">>"}
+                )
+            ):
+                aligned.pop(old_index)
+        aligned[old_open] = new_open
+        aligned[old_close] = new_close
+
+
+def _realign_token_range(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+    old_start: int,
+    old_end: int,
+    new_start: int,
+    new_end: int,
+) -> None:
+    """Align a source range whose token order is preserved in the output."""
+
+    removed_wrapper_tokens: set[int] = set()
+    for old_open in range(old_start, old_end):
+        if (
+            before[old_open].text == "("
+            and old_open > old_start
+            and before[old_open - 1].text in LOCATIONS
+        ):
+            old_close = matching_index(before, old_open)
+            if old_close is not None and old_close < old_end:
+                removed_wrapper_tokens.update(
+                    {old_open - 1, old_open, old_close}
+                )
+
+    new_cursor = new_start
+    for old_index in range(old_start, old_end):
+        if old_index in removed_wrapper_tokens:
+            continue
+        match = next(
+            (
+                new_index
+                for new_index in range(new_cursor, new_end)
+                if (
+                    before[old_index].kind,
+                    before[old_index].text,
+                )
+                == (
+                    after[new_index].kind,
+                    after[new_index].text,
+                )
+            ),
+            None,
+        )
+        if match is not None:
+            aligned[old_index] = match
+            new_cursor = match + 1
+
+    for old_open in range(old_start, old_end):
+        if (
+            before[old_open].text not in {"(", "<"}
+            or old_open <= old_start
+            or before[old_open - 1].kind != "word"
+            or (
+                before[old_open].text == "("
+                and before[old_open - 1].text in LOCATIONS
+            )
+            or old_open - 1 not in aligned
+        ):
+            continue
+        new_open = aligned[old_open - 1] + 1
+        if (
+            new_open < new_start
+            or new_open >= new_end
+            or after[new_open].text != "<"
+        ):
+            continue
+        old_close = matching_index(before, old_open)
+        new_close = matching_index(after, new_open)
+        if (
+            old_close is None
+            or old_close >= old_end
+            or new_close is None
+            or new_close >= new_end
+        ):
+            continue
+        aligned[old_open] = new_open
+        aligned[old_close] = new_close
+
+
+def _realign_callable_signature_tokens(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+) -> None:
+    declaration_index = next(
+        (
+            index
+            for index, token in enumerate(before)
+            if (
+                token.text in {"lam", "constructor", "fallback"}
+                or (
+                    token.text == "function"
+                    and index + 1 < len(before)
+                    and before[index + 1].kind == "word"
+                )
+            )
+        ),
+        None,
+    )
+    if declaration_index is None or declaration_index not in aligned:
+        return
+    new_declaration = aligned[declaration_index]
+    old_open = next(
+        (
+            index
+            for index in range(declaration_index + 1, len(before))
+            if before[index].text == "("
+        ),
+        None,
+    )
+    new_open = next(
+        (
+            index
+            for index in range(new_declaration + 1, len(after))
+            if after[index].text == "("
+        ),
+        None,
+    )
+    if old_open is None or new_open is None:
+        return
+    old_close = matching_index(before, old_open)
+    new_close = matching_index(after, new_open)
+    if old_close is None or new_close is None:
+        return
+
+    aligned[old_open] = new_open
+    aligned[old_close] = new_close
+    _realign_token_range(
+        before,
+        after,
+        aligned,
+        old_open + 1,
+        old_close,
+        new_open + 1,
+        new_close,
+    )
+
+    old_tail_end = len(before)
+    old_where = find_top(before[old_close + 1 :], "where")
+    if old_where is not None:
+        old_tail_end = old_close + 1 + old_where
+    old_tail = before[old_close + 1 : old_tail_end]
+    old_arrow = find_top(old_tail, "->")
+    old_returns = find_top(old_tail, "returns")
+    if old_arrow is not None:
+        old_return_start = old_close + 1 + old_arrow + 1
+        old_return_end = old_tail_end
+    elif old_returns is not None:
+        old_returns += old_close + 1
+        if (
+            old_returns + 1 >= len(before)
+            or before[old_returns + 1].text != "("
+        ):
+            return
+        old_returns_close = matching_index(before, old_returns + 1)
+        if old_returns_close is None:
+            return
+        old_return_start = old_returns + 2
+        old_return_end = old_returns_close
+    else:
+        return
+
+    new_returns = find_top(after[new_close + 1 :], "returns")
+    if new_returns is None:
+        return
+    new_returns += new_close + 1
+    if (
+        new_returns + 1 >= len(after)
+        or after[new_returns + 1].text != "("
+    ):
+        return
+    new_returns_close = matching_index(after, new_returns + 1)
+    if new_returns_close is None:
+        return
+    if old_returns is not None:
+        aligned[old_returns] = new_returns
+        aligned[old_returns + 1] = new_returns + 1
+        aligned[old_return_end] = new_returns_close
+    _realign_token_range(
+        before,
+        after,
+        aligned,
+        old_return_start,
+        old_return_end,
+        new_returns + 2,
+        new_returns_close,
+    )
+
+
+def _realign_location_wrapper_delimiters(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+) -> None:
+    """Anchor removed `memory(T)` delimiters within the rewritten type."""
+
+    wrapper_ordinals: dict[str, int] = {}
+    for old_open, token in enumerate(before):
+        if (
+            token.text != "("
+            or old_open == 0
+            or before[old_open - 1].text not in LOCATIONS
+        ):
+            continue
+        old_close = matching_index(before, old_open)
+        if old_close is None:
+            continue
+        old_location = old_open - 1
+        location = before[old_location].text
+        candidates = [
+            index for index, token in enumerate(after) if token.text == location
+        ]
+        mapped_payload = [
+            aligned[index]
+            for index in range(old_open + 1, old_close)
+            if index in aligned
+        ]
+        new_location = next(
+            (
+                index
+                for index in candidates
+                if mapped_payload and index == max(mapped_payload) + 1
+            ),
+            None,
+        )
+        if new_location is None and mapped_payload:
+            following = [
+                index for index in candidates if index > max(mapped_payload)
+            ]
+            if following:
+                new_location = min(following)
+        if new_location is None:
+            ordinal = wrapper_ordinals.get(location, 0)
+            wrapper_ordinals[location] = ordinal + 1
+            if ordinal >= len(candidates):
+                continue
+            new_location = candidates[ordinal]
+        else:
+            wrapper_ordinals[location] = (
+                wrapper_ordinals.get(location, 0) + 1
+            )
+        if new_location is None:
+            continue
+        aligned[old_location] = new_location
+        aligned.pop(old_open, None)
+        aligned.pop(old_close, None)
+        # The wrapper close corresponds to the postfix location keyword. The
+        # open intentionally remains unaligned so a comment immediately inside
+        # it falls forward to the payload type instead of a later `returns (`.
+        aligned[old_close] = new_location
+
+
+def _realign_declaration_lhs_tokens(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+) -> None:
+    """Map a Classic class/instance lhs to the generated trait argument."""
+
+    for declaration_index, token in enumerate(before):
+        if (
+            token.text not in {"class", "instance"}
+            or declaration_index not in aligned
+        ):
+            continue
+        head_start = declaration_index + 1
+        arrow_relative = find_top(before[head_start:], "=>")
+        if arrow_relative is not None:
+            head_start += arrow_relative + 1
+        colon_relative = find_top(before[head_start:], ":")
+        if colon_relative is None:
+            continue
+        colon = head_start + colon_relative
+        lhs = range(head_start, colon)
+
+        old_trait_open = next(
+            (
+                index
+                for index in range(colon + 1, len(before))
+                if before[index].text in {"(", "<"}
+            ),
+            None,
+        )
+        old_trait_leaf = (
+            old_trait_open - 1
+            if old_trait_open is not None
+            else len(before) - 1
+        )
+        if old_trait_leaf not in aligned:
+            continue
+        generic_open = aligned[old_trait_leaf] + 1
+        if (
+            generic_open >= len(after)
+            or after[generic_open].text != "<"
+        ):
+            continue
+        generic_close = matching_index(after, generic_open)
+        if generic_close is None:
+            continue
+        first_arg_end = generic_close
+        depth: list[str] = []
+        for index in range(generic_open + 1, generic_close):
+            if not depth and after[index].text == ",":
+                first_arg_end = index
+                break
+            _depth_step(depth, after[index].text)
+        first_arg = range(generic_open + 1, first_arg_end)
+
+        for old_index in lhs:
+            candidates = [
+                new_index
+                for new_index in first_arg
+                if (
+                    before[old_index].kind,
+                    before[old_index].text,
+                )
+                == (
+                    after[new_index].kind,
+                    after[new_index].text,
+                )
+            ]
+            if len(candidates) == 1:
+                aligned[old_index] = candidates[0]
+
+
+def _realign_forall_binder_tokens(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+) -> None:
+    """Map Classic `forall` binder names to generated declaration generics."""
+
+    for forall_index, token in enumerate(before):
+        if token.text != "forall":
+            continue
+        dot_relative = find_top(
+            before[forall_index + 1 :],
+            ".",
+            angles=False,
+        )
+        if dot_relative is None:
+            continue
+        dot = forall_index + 1 + dot_relative
+        declaration_index = next(
+            (
+                index
+                for index in range(dot + 1, len(before))
+                if before[index].text in {"function", "class", "instance"}
+            ),
+            None,
+        )
+        if declaration_index not in aligned:
+            continue
+        declaration = before[declaration_index].text
+        new_declaration = aligned[declaration_index]
+        generic_open = (
+            new_declaration + 1
+            if declaration == "instance"
+            else new_declaration + 2
+        )
+        if generic_open >= len(after) or after[generic_open].text != "<":
+            continue
+        generic_close = matching_index(after, generic_open)
+        if generic_close is None:
+            continue
+
+        for old_index in range(forall_index + 1, dot):
+            if before[old_index].kind != "word":
+                continue
+            candidates = [
+                new_index
+                for new_index in range(generic_open + 1, generic_close)
+                if (
+                    before[old_index].kind,
+                    before[old_index].text,
+                )
+                == (
+                    after[new_index].kind,
+                    after[new_index].text,
+                )
+            ]
+            if len(candidates) == 1:
+                aligned[old_index] = candidates[0]
+
+
+def _realign_trait_head_arguments(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+) -> None:
+    """Account for the lhs inserted before explicit class/instance arguments."""
+
+    for declaration_index, token in enumerate(before):
+        if (
+            token.text not in {"class", "instance"}
+            or declaration_index not in aligned
+        ):
+            continue
+        colon_relative = find_top(before[declaration_index + 1 :], ":")
+        if colon_relative is None:
+            continue
+        colon = declaration_index + 1 + colon_relative
+        old_open = next(
+            (
+                index
+                for index in range(colon + 1, len(before))
+                if before[index].text in {"(", "<"}
+            ),
+            None,
+        )
+        if old_open is None:
+            continue
+        old_close = matching_index(before, old_open)
+        if old_close is None or old_open == colon + 1:
+            continue
+        old_name = old_open - 1
+        if old_name not in aligned:
+            continue
+        new_open = aligned[old_name] + 1
+        if new_open >= len(after) or after[new_open].text != "<":
+            continue
+        new_close = matching_index(after, new_open)
+        if new_close is None:
+            continue
+
+        depth: list[str] = []
+        inserted_lhs_comma = None
+        for index in range(new_open + 1, new_close):
+            if not depth and after[index].text == ",":
+                inserted_lhs_comma = index
+                break
+            _depth_step(depth, after[index].text)
+        if inserted_lhs_comma is None:
+            continue
+
+        new_cursor = inserted_lhs_comma + 1
+        for old_index in range(old_open + 1, old_close):
+            match = next(
+                (
+                    new_index
+                    for new_index in range(new_cursor, new_close)
+                    if (
+                        before[old_index].kind,
+                        before[old_index].text,
+                    )
+                    == (
+                        after[new_index].kind,
+                        after[new_index].text,
+                    )
+                ),
+                None,
+            )
+            if match is not None:
+                aligned[old_index] = match
+                new_cursor = match + 1
+
+        aligned.pop(old_open, None)
+        aligned[old_close] = new_close
+
+
+def _realign_predicate_context_tokens(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+) -> None:
+    """Keep moved constraint comments anchored in the generated `where` tail."""
+
+    declaration_index = next(
+        (
+            index
+            for index, token in enumerate(before)
+            if token.text in {"function", "class", "instance"}
+        ),
+        None,
+    )
+    where_index = next(
+        (
+            index
+            for index, token in enumerate(after)
+            if token.text == "where"
+        ),
+        None,
+    )
+    if declaration_index is None or where_index is None:
+        return
+
+    context_ranges: list[range] = []
+    prefix_start = 0
+    forall_index = next(
+        (
+            index
+            for index in range(declaration_index)
+            if before[index].text == "forall"
+        ),
+        None,
+    )
+    if forall_index is not None:
+        dot_relative = find_top(
+            before[forall_index + 1 : declaration_index],
+            ".",
+            angles=False,
+        )
+        if dot_relative is not None:
+            dot = forall_index + 1 + dot_relative
+            binder = before[forall_index + 1 : dot]
+            if find_top(binder, ":") is not None:
+                context_ranges.append(range(forall_index + 1, dot))
+            prefix_start = dot + 1
+
+    prefix_arrow = find_top(
+        before[prefix_start:declaration_index],
+        "=>",
+        angles=False,
+    )
+    if prefix_arrow is not None:
+        prefix_arrow += prefix_start
+        context_ranges.append(range(prefix_start, prefix_arrow))
+
+    tail_arrow = find_top(
+        before[declaration_index + 1 :],
+        "=>",
+        angles=False,
+    )
+    if tail_arrow is not None:
+        tail_arrow += declaration_index + 1
+        context_ranges.append(range(declaration_index + 1, tail_arrow))
+
+    existing_where = find_top(before[declaration_index + 1 :], "where")
+    if existing_where is not None:
+        existing_where += declaration_index + 1
+        context_ranges.append(range(existing_where + 1, len(before)))
+
+    new_cursor = where_index + 1
+    for context_range in context_ranges:
+        _realign_token_range(
+            before,
+            after,
+            aligned,
+            context_range.start,
+            context_range.stop,
+            new_cursor,
+            len(after),
+        )
+        mapped = [
+            aligned[index]
+            for index in context_range
+            if index in aligned and aligned[index] >= new_cursor
+        ]
+        if mapped:
+            new_cursor = max(mapped) + 1
+
+    context_indices = [
+        index for context_range in context_ranges for index in context_range
+    ]
+    context_set = set(context_indices)
+    for old_open in context_indices:
+        if (
+            before[old_open].text != "("
+            or old_open == 0
+            or old_open - 1 not in context_set
+            or before[old_open - 1].kind != "word"
+            or old_open - 1 not in aligned
+        ):
+            continue
+        old_close = matching_index(before, old_open)
+        if old_close is None or old_close not in context_set:
+            continue
+        new_open = aligned[old_open - 1] + 1
+        if (
+            new_open <= where_index
+            or new_open >= len(after)
+            or after[new_open].text != "<"
+        ):
+            continue
+        new_close = matching_index(after, new_open)
+        if new_close is None:
+            continue
+        aligned[old_open] = new_open
+        aligned[old_close] = new_close
+
+    for context_range in context_ranges:
+        if not context_range:
+            continue
+        old_open = context_range.start
+        old_close = context_range.stop - 1
+        if (
+            before[old_open].text != "("
+            or before[old_close].text != ")"
+            or matching_index(before, old_open) != old_close
+        ):
+            continue
+        mapped_context = [
+            aligned[index]
+            for index in context_range
+            if index in aligned and aligned[index] > where_index
+        ]
+        if mapped_context:
+            aligned[old_close] = max(mapped_context)
+
+
+def _realign_import_tokens(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+) -> None:
+    """Align import path, alias, and selector roles across reordered syntax."""
+
+    if (
+        not before
+        or not after
+        or before[0].text != "import"
+        or after[0].text != "import"
+    ):
+        return
+    old_end = len(before) - 1 if before[-1].text == ";" else len(before)
+    new_end = len(after) - 1 if after[-1].text == ";" else len(after)
+    old_as = find_top(before[1:old_end], "as", angles=False)
+    if old_as is not None:
+        old_as += 1
+    new_as = find_top(after[1:new_end], "as", angles=False)
+    if new_as is not None:
+        new_as += 1
+    new_from = find_top(after[1:new_end], "from", angles=False)
+    if new_from is not None:
+        new_from += 1
+
+    if old_as is not None and new_as is not None and new_from is not None:
+        aligned[old_as] = new_as
+        _realign_token_range(
+            before,
+            after,
+            aligned,
+            1,
+            old_as,
+            new_from + 1,
+            new_end,
+        )
+        _realign_token_range(
+            before,
+            after,
+            aligned,
+            old_as + 1,
+            old_end,
+            new_as + 1,
+            new_from,
+        )
+        return
+
+    old_brace = find_top(before[1:old_end], "{", angles=False)
+    if old_brace is not None:
+        old_brace += 1
+        old_close = matching_index(before, old_brace)
+        if old_close is None:
+            return
+        old_path_end = old_brace - 1 if before[old_brace - 1].text == "." else old_brace
+        if new_from is not None:
+            new_path_start = new_from + 1
+        else:
+            new_path_start = 1
+        _realign_token_range(
+            before,
+            after,
+            aligned,
+            1,
+            old_path_end,
+            new_path_start,
+            new_end,
+        )
+
+        new_brace = find_top(after[1:new_end], "{", angles=False)
+        if new_brace is not None:
+            new_brace += 1
+            new_close = matching_index(after, new_brace)
+            if new_close is None:
+                return
+            aligned[old_brace] = new_brace
+            aligned[old_close] = new_close
+            _realign_token_range(
+                before,
+                after,
+                aligned,
+                old_brace + 1,
+                old_close,
+                new_brace + 1,
+                new_close,
+            )
+            removed_anchor = new_close
+        else:
+            mapped_path = [
+                aligned[index]
+                for index in range(1, old_path_end)
+                if index in aligned
+            ]
+            removed_anchor = max(mapped_path) if mapped_path else 0
+
+        for old_index in range(old_path_end, old_end):
+            if old_index not in aligned:
+                aligned[old_index] = removed_anchor
+        return
+
+    if new_as is not None and new_from is not None:
+        # Classic bare imports generate an alias from the final path segment.
+        _realign_token_range(
+            before,
+            after,
+            aligned,
+            1,
+            old_end,
+            new_from + 1,
+            new_end,
+        )
+
+
+def _aligned_token_indices(
+    before: Sequence[Token], after: Sequence[Token]
+) -> dict[int, int]:
+    """Align unchanged header tokens, including uniquely moved modifiers."""
+
+    rows = len(before) + 1
+    columns = len(after) + 1
+    lengths = [[0] * columns for _ in range(rows)]
+    for left in range(len(before) - 1, -1, -1):
+        for right in range(len(after) - 1, -1, -1):
+            if (
+                before[left].kind,
+                before[left].text,
+            ) == (
+                after[right].kind,
+                after[right].text,
+            ):
+                lengths[left][right] = lengths[left + 1][right + 1] + 1
+            else:
+                lengths[left][right] = max(
+                    lengths[left + 1][right],
+                    lengths[left][right + 1],
+                )
+
+    aligned: dict[int, int] = {}
+    left = 0
+    right = 0
+    while left < len(before) and right < len(after):
+        if (
+            before[left].kind,
+            before[left].text,
+        ) == (
+            after[right].kind,
+            after[right].text,
+        ):
+            aligned[left] = right
+            left += 1
+            right += 1
+        elif lengths[left + 1][right] >= lengths[left][right + 1]:
+            left += 1
+        else:
+            right += 1
+
+    _realign_type_application_delimiters(before, after, aligned)
+
+    used_after = set(aligned.values())
+    renamed_keywords = {
+        "data": "enum",
+        "type": "alias",
+        "class": "trait",
+        "instance": "impl",
+    }
+    for old_text, new_text in renamed_keywords.items():
+        before_indices = [
+            index
+            for index, token in enumerate(before)
+            if index not in aligned and token.text == old_text
+        ]
+        after_indices = [
+            index
+            for index, token in enumerate(after)
+            if index not in used_after and token.text == new_text
+        ]
+        if len(before_indices) == 1 and len(after_indices) == 1:
+            aligned[before_indices[0]] = after_indices[0]
+            used_after.add(after_indices[0])
+
+    # `forall T. declaration` moves the binder into the declaration head.
+    # Anchor comments after the removed dot to the generated binder close
+    # instead of turning them into declaration-leading documentation.
+    for dot_index, token in enumerate(before):
+        if token.text != "." or dot_index in aligned:
+            continue
+        forall_index = next(
+            (
+                index
+                for index in range(dot_index - 1, -1, -1)
+                if before[index].text == "forall"
+            ),
+            None,
+        )
+        declaration_index = next(
+            (
+                index
+                for index in range(dot_index + 1, len(before))
+                if before[index].text in {"function", "class", "instance"}
+            ),
+            None,
+        )
+        if forall_index is None or declaration_index not in aligned:
+            continue
+        declaration = before[declaration_index].text
+        new_declaration = aligned[declaration_index]
+        generic_open = (
+            new_declaration + 1
+            if declaration == "instance"
+            else new_declaration + 2
+        )
+        if generic_open >= len(after) or after[generic_open].text != "<":
+            continue
+        generic_close = matching_index(after, generic_open)
+        if generic_close is not None:
+            aligned[dot_index] = generic_close
+            used_after.add(generic_close)
+
+    # A Classic prefix modifier moves from before `function` to the end of
+    # the parameter list, so it falls outside the order-preserving alignment.
+    # Recover any such token only when both sides have one unambiguous match.
+    unmatched_before: dict[tuple[str, str], list[int]] = {}
+    unmatched_after: dict[tuple[str, str], list[int]] = {}
+    for index, token in enumerate(before):
+        if index not in aligned:
+            unmatched_before.setdefault((token.kind, token.text), []).append(index)
+    for index, token in enumerate(after):
+        if index not in used_after:
+            unmatched_after.setdefault((token.kind, token.text), []).append(index)
+    for key, before_indices in unmatched_before.items():
+        after_indices = unmatched_after.get(key, [])
+        if len(before_indices) == 1 and len(after_indices) == 1:
+            aligned[before_indices[0]] = after_indices[0]
+    _realign_type_application_delimiters(before, after, aligned)
+    _realign_declaration_lhs_tokens(before, after, aligned)
+    _realign_forall_binder_tokens(before, after, aligned)
+    _realign_trait_head_arguments(before, after, aligned)
+    _realign_predicate_context_tokens(before, after, aligned)
+    _realign_callable_signature_tokens(before, after, aligned)
+    _realign_location_wrapper_delimiters(before, after, aligned)
+    _realign_import_tokens(before, after, aligned)
+    return aligned
+
+
+def _comment_insertion(
+    original: str,
+    comment: Token,
+    next_token: Token | None,
+    replacement: str,
+    position: int,
 ) -> str:
-    comments = comments_in(source, start, end)
+    prefix = ""
+    if (
+        position > 0
+        and not replacement[position - 1].isspace()
+        and replacement[position - 1] not in "([{<"
+    ):
+        prefix = " "
+
+    following = original[
+        comment.end : next_token.start if next_token is not None else len(original)
+    ]
+    line_break = re.search(r"\r?\n[ \t]*", following)
+    if comment.text.startswith("//"):
+        suffix = line_break.group(0) if line_break is not None else "\n"
+    elif line_break is not None:
+        suffix = line_break.group(0)
+    elif position < len(replacement) and replacement[position].isspace():
+        suffix = ""
+    else:
+        suffix = " "
+    return prefix + comment.text + suffix
+
+
+def _aligned_token_position(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: Mapping[int, int],
+    old_index: int,
+    *,
+    trailing: bool,
+) -> int:
+    new_index = aligned[old_index]
+    token = after[new_index]
+    if (
+        len(token.text) > 1
+        and set(token.text) == {">"}
+        and before[old_index].text in {")", ">"}
+    ):
+        old_closers = sorted(
+            index
+            for index, mapped in aligned.items()
+            if (
+                mapped == new_index
+                and before[index].text in {")", ">"}
+            )
+        )
+        rank = old_closers.index(old_index)
+        offset = rank + 1 if trailing else rank
+        return token.start + min(offset, len(token.text))
+    return token.end if trailing else token.start
+
+
+def _append_generated_suffix(fragment: str, suffix: str) -> str:
+    """Keep generated punctuation outside a trailing line comment."""
+
+    tokens = [token for token in lex(fragment) if token.kind != "ws"]
+    if (
+        tokens
+        and tokens[-1].kind == "comment"
+        and tokens[-1].text.startswith("//")
+        and "\n" not in fragment[tokens[-1].end :]
+        and "\r" not in fragment[tokens[-1].end :]
+    ):
+        return fragment + "\n" + suffix.lstrip()
+    return fragment + suffix
+
+
+def _with_preserved_comments(
+    source: str,
+    start: int,
+    end: int,
+    replacement: str,
+) -> str:
+    original = source[start:end]
+    original_tokens = lex(original)
+    before = [token for token in original_tokens if token.kind not in TRIVIA]
+    after = significant(replacement)
+    if [
+        (token.kind, token.text)
+        for token in _expand_type_angle_closers(before)
+    ] == [
+        (token.kind, token.text)
+        for token in _expand_type_angle_closers(after)
+    ]:
+        return original
+
+    comments = [token for token in original_tokens if token.kind == "comment"]
     if not comments:
         return replacement
-    return "\n".join(comments) + "\n" + replacement
+
+    aligned = _aligned_token_indices(before, after)
+    insertions: dict[int, list[tuple[int, str]]] = {}
+
+    for order, comment in enumerate(comments):
+        previous_index = next(
+            (
+                index
+                for index in range(len(before) - 1, -1, -1)
+                if before[index].end <= comment.start
+            ),
+            None,
+        )
+        next_index = next(
+            (
+                index
+                for index, token in enumerate(before)
+                if token.start >= comment.end
+            ),
+            None,
+        )
+        previous = before[previous_index] if previous_index is not None else None
+        next_token = before[next_index] if next_index is not None else None
+        trailing = previous is not None and not any(
+            newline in original[previous.end : comment.start]
+            for newline in ("\n", "\r")
+        )
+
+        if trailing and previous_index in aligned:
+            position = _aligned_token_position(
+                before,
+                after,
+                aligned,
+                previous_index,
+                trailing=True,
+            )
+        elif next_index in aligned:
+            next_position = _aligned_token_position(
+                before,
+                after,
+                aligned,
+                next_index,
+                trailing=False,
+            )
+            if next_position == 0 and previous_index in aligned:
+                position = _aligned_token_position(
+                    before,
+                    after,
+                    aligned,
+                    previous_index,
+                    trailing=True,
+                )
+            elif next_position == 0 and after:
+                position = after[0].end
+            else:
+                position = next_position
+        elif previous_index in aligned:
+            position = _aligned_token_position(
+                before,
+                after,
+                aligned,
+                previous_index,
+                trailing=True,
+            )
+        else:
+            position = after[0].end if after else 0
+
+        text = _comment_insertion(
+            original,
+            comment,
+            next_token,
+            replacement,
+            position,
+        )
+        insertions.setdefault(position, []).append((order, text))
+
+    result = replacement
+    for position in sorted(insertions, reverse=True):
+        text = "".join(
+            item
+            for _, item in sorted(insertions[position], key=lambda entry: entry[0])
+        )
+        result = result[:position] + text + result[position:]
+    return result
 
 
 def migrate_data_declarations(source: str) -> str:
@@ -2128,6 +3218,21 @@ def render_params(tokens: Sequence[Token]) -> str:
     return ", ".join(rendered)
 
 
+def _reject_unsupported_header_tokens(
+    source: str,
+    subject: str,
+    tokens: Sequence[Token],
+) -> None:
+    if not tokens:
+        return
+    line, column = _source_line_column(source, tokens[0].start)
+    spelling = join_tokens(tokens)
+    raise ValueError(
+        f"cannot migrate {subject} header at line {line}, column {column}: "
+        f"unsupported modifier or base-constructor syntax `{spelling}`"
+    )
+
+
 def _function_prefix(
     tokens: Sequence[Token], start_index: int, function_index: int
 ) -> tuple[list[str], list[Token], list[str], int]:
@@ -2156,7 +3261,6 @@ def migrate_functions(source: str) -> str:
         variables, constraints, modifiers, start_index = _function_prefix(
             tokens, candidate_start, index
         )
-        has_legacy_prefix = start_index != index
 
         cursor = index + 2
         existing_variables: list[str] = []
@@ -2191,6 +3295,14 @@ def migrate_functions(source: str) -> str:
         return_tokens: list[Token] = []
         has_returns = returns is not None
         if arrow is not None:
+            unsupported = [
+                item
+                for item in signature_tail[:arrow]
+                if item.text not in MODIFIERS
+            ]
+            _reject_unsupported_header_tokens(
+                source, "function", unsupported
+            )
             return_tokens = signature_tail[arrow + 1 :]
             # Modifiers after the parameter list are already canonical; retain
             # them if a partially migrated file still has an old return arrow.
@@ -2209,18 +3321,31 @@ def migrate_functions(source: str) -> str:
             if returns_close != len(signature_tail) - 1:
                 continue
             return_tokens = signature_tail[returns + 2 : returns_close]
+            unsupported = [
+                item
+                for item in signature_tail[:returns]
+                if item.text not in MODIFIERS
+            ]
+            _reject_unsupported_header_tokens(
+                source, "function", unsupported
+            )
             modifiers.extend(
                 item.text
                 for item in signature_tail[:returns]
                 if item.text in MODIFIERS
             )
         elif signature_tail:
+            unsupported = [
+                item
+                for item in signature_tail
+                if item.text not in MODIFIERS
+            ]
+            _reject_unsupported_header_tokens(
+                source, "function", unsupported
+            )
             modifiers.extend(
                 item.text for item in signature_tail if item.text in MODIFIERS
             )
-
-        if not has_legacy_prefix and arrow is None:
-            continue
 
         predicates = render_predicates(constraints) if constraints else []
         if constraints and not predicates:
@@ -2243,7 +3368,12 @@ def migrate_functions(source: str) -> str:
         if modifiers:
             replacement += " " + " ".join(dict.fromkeys(modifiers))
         if arrow is not None or has_returns:
-            replacement += " returns (" + render_return_type(return_tokens) + ")"
+            rendered_return = (
+                render_return_clause_items(return_tokens)
+                if has_returns
+                else render_return_type(return_tokens)
+            )
+            replacement += " returns (" + rendered_return + ")"
         if predicates:
             replacement += " where " + ", ".join(predicates)
         if tokens[end].text == "{":
@@ -2273,14 +3403,48 @@ def migrate_lambdas(source: str) -> str:
         if end is None or tokens[end].text != "{":
             continue
         tail = list(tokens[close + 1 : end])
-        if any(item.text == "returns" for item in tail):
-            continue
         arrow = find_top(tail, "->")
+        returns = find_top(tail, "returns")
+        if arrow is not None and returns is not None:
+            continue
+
+        return_tokens: list[Token] = []
+        has_returns = returns is not None
+        if arrow is not None:
+            _reject_unsupported_header_tokens(
+                source, "lambda", tail[:arrow]
+            )
+            return_tokens = tail[arrow + 1 :]
+        elif returns is not None:
+            if (
+                returns != 0
+                or returns + 1 >= len(tail)
+                or tail[returns + 1].text != "("
+            ):
+                continue
+            _reject_unsupported_header_tokens(
+                source, "lambda", tail[:returns]
+            )
+            returns_close = matching_index(tail, returns + 1)
+            if returns_close != len(tail) - 1:
+                continue
+            return_tokens = tail[returns + 2 : returns_close]
+        else:
+            _reject_unsupported_header_tokens(source, "lambda", tail)
+
         params = render_params(tokens[open_index + 1 : close])
         replacement = f"lam ({params})"
-        if arrow is not None:
-            replacement += " returns (" + render_return_type(tail[arrow + 1 :]) + ")"
+        if arrow is not None or has_returns:
+            rendered_return = (
+                render_return_clause_items(return_tokens)
+                if has_returns
+                else render_return_type(return_tokens)
+            )
+            replacement += " returns (" + rendered_return + ")"
         replacement += " "
+        replacement = _with_preserved_comments(
+            source, token.start, tokens[end].start, replacement
+        )
         replacements.append((token.start, tokens[end].start, replacement))
     return replace_spans(source, replacements)
 
@@ -2301,7 +3465,9 @@ def migrate_special_functions(source: str) -> str:
         if end is None:
             continue
         tail = list(tokens[close + 1 : end])
-        if any(item.text == "returns" for item in tail):
+        arrow = find_top(tail, "->")
+        returns = find_top(tail, "returns")
+        if arrow is not None and returns is not None:
             continue
         start_index = _previous_boundary(tokens, index)
         prefix = list(tokens[start_index:index])
@@ -2309,22 +3475,69 @@ def migrate_special_functions(source: str) -> str:
         if prefix and len(modifiers) != len(prefix):
             start_index = index
             modifiers = []
-        arrow = find_top(tail, "->")
+
+        return_tokens: list[Token] = []
+        has_returns = returns is not None
         if arrow is not None:
+            unsupported = [
+                item for item in tail[:arrow] if item.text not in MODIFIERS
+            ]
+            _reject_unsupported_header_tokens(
+                source, token.text, unsupported
+            )
             modifiers.extend(
                 item.text for item in tail[:arrow] if item.text in MODIFIERS
             )
+            return_tokens = tail[arrow + 1 :]
+        elif returns is not None:
+            if (
+                returns + 1 >= len(tail)
+                or tail[returns + 1].text != "("
+            ):
+                continue
+            unsupported = [
+                item
+                for item in tail[:returns]
+                if item.text not in MODIFIERS
+            ]
+            _reject_unsupported_header_tokens(
+                source, token.text, unsupported
+            )
+            returns_close = matching_index(tail, returns + 1)
+            if returns_close != len(tail) - 1:
+                continue
+            modifiers.extend(
+                item.text
+                for item in tail[:returns]
+                if item.text in MODIFIERS
+            )
+            return_tokens = tail[returns + 2 : returns_close]
         else:
+            unsupported = [
+                item for item in tail if item.text not in MODIFIERS
+            ]
+            _reject_unsupported_header_tokens(
+                source, token.text, unsupported
+            )
             modifiers.extend(item.text for item in tail if item.text in MODIFIERS)
         params = render_params(tokens[open_index + 1 : close])
         replacement = f"{token.text}({params})"
         if modifiers:
             replacement += " " + " ".join(dict.fromkeys(modifiers))
-        if arrow is not None:
-            replacement += " returns (" + render_return_type(tail[arrow + 1 :]) + ")"
+        if arrow is not None or has_returns:
+            rendered_return = (
+                render_return_clause_items(return_tokens)
+                if has_returns
+                else render_return_type(return_tokens)
+            )
+            replacement += " returns (" + rendered_return + ")"
         replacement += " "
+        start = tokens[start_index].start
+        replacement = _with_preserved_comments(
+            source, start, tokens[end].start, replacement
+        )
         replacements.append(
-            (tokens[start_index].start, tokens[end].start, replacement)
+            (start, tokens[end].start, replacement)
         )
     return replace_spans(source, replacements)
 
@@ -2355,9 +3568,13 @@ def migrate_incomplete_arrows(source: str) -> str:
         if not return_tokens:
             continue
         rendered = render_return_type(return_tokens)
-        replacements.append(
-            (token.start, tokens[end - 1].end, f"returns ({rendered})")
+        replacement = _with_preserved_comments(
+            source,
+            token.start,
+            tokens[end - 1].end,
+            f"returns ({rendered})",
         )
+        replacements.append((token.start, tokens[end - 1].end, replacement))
     return replace_spans(source, replacements)
 
 
@@ -2398,6 +3615,9 @@ def migrate_let_types(source: str) -> str:
         replacement += f"{binding}: {ty}"
         if tokens[end].text == "=":
             replacement += " "
+        replacement = _with_preserved_comments(
+            source, token.start, tokens[end].start, replacement
+        )
         replacements.append((token.start, tokens[end].start, replacement))
     return replace_spans(source, replacements)
 
@@ -2418,7 +3638,10 @@ def migrate_field_types(source: str) -> str:
         ty = render_type(tokens[index + 1 : end])
         if not ty:
             continue
-        replacements.append((token.end, tokens[end].start, " " + ty))
+        replacement = _with_preserved_comments(
+            source, token.start, tokens[end].start, ": " + ty
+        )
+        replacements.append((token.start, tokens[end].start, replacement))
     return replace_spans(source, replacements)
 
 
@@ -2496,9 +3719,17 @@ def migrate_one_match(source: str) -> tuple[str, bool]:
             head = "case (" + ", ".join(join_tokens(part) for part in patterns) + ")"
         else:
             head = "case " + join_tokens(pattern_tokens)
+        head = _with_preserved_comments(
+            source,
+            tokens[arm_start].end,
+            tokens[arrow].start,
+            head,
+        )
         # Keep arm boundaries on their own lines.  Appending the next arm or
         # closing brace to a ``//`` comment would silently comment it out.
-        rendered_arms.append(f"{head} {{\n{body}\n}}")
+        rendered_arms.append(
+            _append_generated_suffix(head, " {\n") + body + "\n}"
+        )
     scrutinee = source[tokens[index].end : tokens[brace].start].strip()
     if (
         scrutinee.startswith("(")
@@ -2508,7 +3739,8 @@ def migrate_one_match(source: str) -> tuple[str, bool]:
     ):
         scrutinee = source[tokens[index + 1].end : tokens[brace - 1].start].strip()
     replacement = (
-        f"match ({scrutinee}) {{\n"
+        "match ("
+        + _append_generated_suffix(scrutinee, ") {\n")
         + (leading + "\n" if leading else "")
         + "\n".join(rendered_arms)
         + "\n}"
@@ -2606,7 +3838,12 @@ def migrate_if_expressions(source: str) -> str:
             tokens[end_index].start if end_index < len(tokens) else len(source)
         )
         else_expr = source[tokens[else_index].end : end_pos].strip()
-        replacement = f"({condition} ? {then_expr} : {else_expr})"
+        replacement = (
+            "("
+            + _append_generated_suffix(condition, " ? ")
+            + _append_generated_suffix(then_expr, " : ")
+            + _append_generated_suffix(else_expr, ")")
+        )
         source = source[: tokens[index].start] + replacement + source[end_pos:]
     raise RuntimeError("if-expression migration did not converge")
 
@@ -2625,9 +3862,8 @@ def migrate_condition_parentheses(source: str) -> str:
         condition = source[token.end : tokens[boundary].start].strip()
         if not condition or "then" in {item.text for item in tokens[index + 1 : boundary]}:
             continue
-        replacements.append(
-            (token.end, tokens[boundary].start, f" ({condition}) ")
-        )
+        replacement = " (" + _append_generated_suffix(condition, ") ")
+        replacements.append((token.end, tokens[boundary].start, replacement))
     return replace_spans(source, replacements)
 
 
@@ -2792,8 +4028,14 @@ def migrate_expression_annotations(source: str) -> str:
         rendered = render_type(type_tokens)
         if not rendered:
             continue
+        replacement = _with_preserved_comments(
+            source,
+            token.start,
+            tokens[end - 1].end,
+            " as " + rendered,
+        )
         replacements.append(
-            (token.start, tokens[end - 1].end, " as " + rendered)
+            (token.start, tokens[end - 1].end, replacement)
         )
     return replace_spans(source, replacements)
 

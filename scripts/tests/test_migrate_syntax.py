@@ -623,6 +623,571 @@ const SOURCE: &str =
         self.assertIn("0 file(s) need migration", clean.stdout)
 
 
+class CommentPreservationMigrationTests(unittest.TestCase):
+    def test_keeps_function_header_block_comments_at_their_tokens(self) -> None:
+        classic = """\
+public /* visibility */ function f(/* parameter */ x: Option(word))
+  -> /* result */ word { return 0; }
+"""
+        expected = """\
+function f(/* parameter */ x: Option<word>) public /* visibility */ returns (/* result */ word) { return 0; }
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_line_comments_from_commenting_out_moved_header_tokens(self) -> None:
+        classic = """\
+public // visibility
+function f(// parameter
+  x: Option(word)) -> // result
+  word { return 0; }
+"""
+        expected = """\
+function f(// parameter
+  x: Option<word>) public // visibility
+ returns (// result
+  word) { return 0; }
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_comments_anchored_across_shared_header_rewrites(self) -> None:
+        cases = [
+            (
+                "data /* kind */ Option(a) = None | Some(/* payload */ a);\n",
+                "enum /* kind */ Option<a> { None, Some(/* payload */ a) }\n",
+            ),
+            (
+                "type /* kind */ Amount = Option(/* argument */ word);\n",
+                "alias /* kind */ Amount = Option</* argument */ word>;\n",
+            ),
+            (
+                "forall T. class /* kind */ T: Eq {}\n",
+                "trait /* kind */ Eq<T> {}\n",
+            ),
+            (
+                "forall T. class T /* lhs */ : Eq {}\n",
+                "trait Eq<T /* lhs */ > {}\n",
+            ),
+            (
+                "forall T. instance /* kind */ T: Eq {}\n",
+                "impl /* kind */ <T> Eq<T> {}\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_context_comments_inside_trait_and_impl_headers(self) -> None:
+        cases = [
+            (
+                "forall a. (a: Show) => /* context */ class a: Eq {}\n",
+                "trait /* context */ Eq<a> where a: Show {}\n",
+            ),
+            (
+                "forall a. (a: Show) => /* context */ instance a: Eq {}\n",
+                "impl /* context */ <a> Eq<a> where a: Show {}\n",
+            ),
+            (
+                "(a: Show) => /* context */ instance a: Eq {}\n",
+                "impl /* context */ Eq<a> where a: Show {}\n",
+            ),
+            (
+                "forall a,b. (a: Show(b), /* second */ b: Eq)"
+                " => instance a: Foo(pair(b,a), a) {}\n",
+                "impl<a, b> Foo<a, pair<b, a>, a>"
+                " where a: Show<b>, /* second */ b: Eq {}\n",
+            ),
+            (
+                "forall a,b. (a: Show(pair(/* nested */ b,a)), b: Eq)"
+                " => instance a: Foo(pair(b,a), a) {}\n",
+                "impl<a, b> Foo<a, pair<b, a>, a>"
+                " where a: Show<pair</* nested */ b, a>>, b: Eq {}\n",
+            ),
+            (
+                "forall a,b. (a: Show(pair(// nested\n b,a)), b: Eq)"
+                " => instance a: Foo(pair(b,a), a) {}\n",
+                "impl<a, b> Foo<a, pair<b, a>, a>"
+                " where a: Show<pair<// nested\n b, a>>, b: Eq {}\n",
+            ),
+            (
+                "forall a. (a: Show(Option(/* context */ a)))"
+                " => function f(x: Option(a)) -> Option(a) { return x; }\n",
+                "function f<a>(x: Option<a>) returns (Option<a>)"
+                " where a: Show<Option</* context */ a>> { return x; }\n",
+            ),
+            (
+                "forall a. (a: Show) /* end */ => class a: Eq {}\n",
+                "trait Eq<a> where a: Show /* end */ {}\n",
+            ),
+            (
+                "forall a. (a: Show) /* end */ => instance a: Eq {}\n",
+                "impl<a> Eq<a> where a: Show /* end */ {}\n",
+            ),
+            (
+                "forall a. (a: Show) // end\n => class a: Eq {}\n",
+                "trait Eq<a> where a: Show // end\n  {}\n",
+            ),
+            (
+                "forall a. (memory /* context-location */ (a)"
+                " /* context-close */ : Show)"
+                " => function f(x: memory /* param-location */ (a)"
+                " /* param-close */)"
+                " -> memory /* result-location */ (a)"
+                " /* result-close */ { return x; }\n",
+                "function f<a>(x: a memory /* param-location */"
+                "  /* param-close */ )"
+                " returns (a memory /* result-location */"
+                "  /* result-close */ )"
+                " where a memory /* context-location */"
+                "  /* context-close */ : Show { return x; }\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_comments_with_inserted_trait_head_arguments(self) -> None:
+        cases = [
+            (
+                "forall a,b. class a: Eq(/* argument */ b) {}\n",
+                "trait Eq<a, /* argument */ b> {}\n",
+            ),
+            (
+                "forall a,b. instance a: Eq(/* argument */ b) {}\n",
+                "impl<a, b> Eq<a, /* argument */ b> {}\n",
+            ),
+            (
+                "forall a. instance a /* lhs */ : Eq {}\n",
+                "impl<a> Eq<a /* lhs */ > {}\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_type_application_comments_out_of_return_types(self) -> None:
+        classic = """\
+function f(
+  left: Option(/* payload */ word),
+  right: pair(/* first */ word, /* second */ word)
+) -> Result(/* result-arg */ word) { return 0; }
+"""
+        expected = """\
+function f(left: Option</* payload */ word>, right: pair</* first */ word, /* second */ word>) returns (Result</* result-arg */ word>) { return 0; }
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_removed_location_wrapper_comments_with_the_payload(self) -> None:
+        cases = [
+            (
+                "function f(x: memory(/* param */ bytes)) -> word { return 0; }\n",
+                "function f(x: /* param */ bytes memory) returns (word) { return 0; }\n",
+            ),
+            (
+                "function f(x: memory(// param\n  bytes)) -> word { return 0; }\n",
+                "function f(x: // param\n  bytes memory) returns (word) { return 0; }\n",
+            ),
+            (
+                "function f(x: memory /* x */ (bytes),"
+                " y: memory /* y */ (bytes))"
+                " -> memory /* result */ (bytes) { return x; }\n",
+                "function f(x: bytes memory /* x */ ,"
+                " y: bytes memory /* y */ )"
+                " returns (bytes memory /* result */ ) { return x; }\n",
+            ),
+            (
+                "function f(x: memory // x\n (bytes),"
+                " y: memory // y\n (bytes))"
+                " -> memory // result\n (bytes) { return x; }\n",
+                "function f(x: bytes memory // x\n ,"
+                " y: bytes memory // y\n )"
+                " returns (bytes memory // result\n ) { return x; }\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_comments_after_forall_binders_out_of_leading_docs(self) -> None:
+        cases = [
+            (
+                "forall T. /* function binder */ function f(x: T) -> T { return x; }\n",
+                "function f<T> /* function binder */ (x: T) returns (T) { return x; }\n",
+            ),
+            (
+                "forall T. /* trait binder */ class T: Eq {}\n",
+                "trait Eq<T> /* trait binder */ {}\n",
+            ),
+            (
+                "forall T. /* impl binder */ instance T: Eq {}\n",
+                "impl<T> /* impl binder */ Eq<T> {}\n",
+            ),
+            (
+                "forall /* binder */ T. function f(x: T) -> T { return x; }\n",
+                "function f</* binder */ T>(x: T) returns (T) { return x; }\n",
+            ),
+            (
+                "forall /* binder */ T. class T: Eq {}\n",
+                "trait Eq</* binder */ T> {}\n",
+            ),
+            (
+                "forall /* binder */ T. instance T: Eq {}\n",
+                "impl</* binder */ T> Eq<T> {}\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_independent_prefix_comments_out_of_leading_docs(self) -> None:
+        cases = [
+            (
+                "forall T.\n// after-dot\nfunction f(x: T) -> T { return x; }\n",
+                "function f<T> // after-dot\n(x: T) returns (T) { return x; }\n",
+            ),
+            (
+                "public\n/* visibility */\nfunction f() -> word { return 0; }\n",
+                "function f() public /* visibility */\n returns (word) { return 0; }\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_special_function_and_lambda_header_comments(self) -> None:
+        cases = [
+            (
+                "payable /* mutability */"
+                " constructor(/* parameter */ x: Option(word)) {}\n",
+                "constructor(/* parameter */ x: Option<word>)"
+                " payable /* mutability */ {}\n",
+            ),
+            (
+                "external fallback(/* empty */) payable {}\n",
+                "fallback(/* empty */ ) external payable {}\n",
+            ),
+            (
+                "lam (/* parameter */ x: Option(word))"
+                " -> /* result */ word { x }\n",
+                "lam (/* parameter */ x: Option<word>)"
+                " returns (/* result */ word) { x }\n",
+            ),
+            (
+                "constructor() payable // comment\n {}\n",
+                "constructor() payable // comment\n {}\n",
+            ),
+            (
+                "fallback() external payable // comment\n {}\n",
+                "fallback() external payable // comment\n {}\n",
+            ),
+            (
+                "lam (x: word) // comment\n { x }\n",
+                "lam (x: word) // comment\n { x }\n",
+            ),
+            (
+                "payable // mutability\n"
+                "constructor(x: Option(word)) {}\n",
+                "constructor(x: Option<word>) payable // mutability\n"
+                " {}\n",
+            ),
+            (
+                "lam (x: Option(word)) // comment\n { x }\n",
+                "lam (x: Option<word>) // comment\n  { x }\n",
+            ),
+            (
+                "let f = lam (x: Option(/* arg */ word))"
+                " returns (Result(/* result */ word)) { x };\n",
+                "let f = lam (x: Option</* arg */ word>)"
+                " returns (Result</* result */ word>) { x };\n",
+            ),
+            (
+                "external /* visibility */ fallback() returns () {}\n",
+                "fallback() external /* visibility */ returns () {}\n",
+            ),
+            (
+                "let f = lam (x: Option(word))"
+                " returns ((word, bool)) /* body */ { x };\n",
+                "let f = lam (x: Option<word>)"
+                " returns ((word, bool)) /* body */ { x };\n",
+            ),
+            (
+                "external fallback() returns (()) /* body */ {}\n",
+                "fallback() external returns (()) /* body */ {}\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_migrates_types_in_partially_canonical_function_headers(self) -> None:
+        cases = [
+            (
+                "function f(x: Option(/* arg */ word)) {}\n",
+                "function f(x: Option</* arg */ word>) {}\n",
+            ),
+            (
+                "function f(x: Option(/* arg */ word))"
+                " returns (Result(/* result */ word)) {}\n",
+                "function f(x: Option</* arg */ word>)"
+                " returns (Result</* result */ word>) {}\n",
+            ),
+            (
+                "function f<T>(x: Option(/* arg */ word))"
+                " where T: Eq(/* trait arg */ word) {}\n",
+                "function f<T>(x: Option</* arg */ word>)"
+                " where T: Eq</* trait arg */ word> {}\n",
+            ),
+            (
+                "function f(x: Option(word))"
+                " returns ((word, bool)) /* body */ {}\n",
+                "function f(x: Option<word>)"
+                " returns ((word, bool)) /* body */ {}\n",
+            ),
+            (
+                "function f()"
+                " returns (result: Option(/* arg */ word)) {}\n",
+                "function f()"
+                " returns (result: Option</* arg */ word>) {}\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_local_and_field_type_comments(self) -> None:
+        cases = [
+            (
+                "function f(v: Option<word>) {"
+                " let x /* binding */ : /* type */ Option(/* arg */ word) = v;"
+                " }\n",
+                "function f(v: Option<word>) {"
+                " let x /* binding */ : /* type */ Option</* arg */ word> = v;"
+                " }\n",
+            ),
+            (
+                "function f(v: Option<word>) {"
+                " let x /* binding */ : comptime /* type */"
+                " Option(/* arg */ word) = v;"
+                " }\n",
+                "function f(v: Option<word>) {"
+                " let comptime /* type */ x /* binding */ :"
+                " Option</* arg */ word> = v;"
+                " }\n",
+            ),
+            (
+                "contract C { value: /* type */ Option(/* arg */ word); }\n",
+                "contract C { value: /* type */ Option</* arg */ word>; }\n",
+            ),
+            (
+                "contract C { value: /* before */ memory(bytes); }\n",
+                "contract C { value: /* before */ bytes memory; }\n",
+            ),
+            (
+                "contract C { value: // before\n memory(bytes); }\n",
+                "contract C { value: // before\n  bytes memory; }\n",
+            ),
+            (
+                "function f() { let result: comptime"
+                " pair(word, Option(word)) /* trailing */ = value; }\n",
+                "function f() { let comptime result:"
+                " pair<word, Option<word>> /* trailing */ = value; }\n",
+            ),
+            (
+                "contract C { result:"
+                " pair(/* inner */ word, Option(word)) /* trailing */; }\n",
+                "contract C { result:"
+                " pair</* inner */ word, Option<word>> /* trailing */ ; }\n",
+            ),
+            (
+                "function f(x: Outer<Inner<word> /* inner */ > /* outer */) {}\n",
+                "function f(x: Outer<Inner<word> /* inner */ > /* outer */) {}\n",
+            ),
+            (
+                "contract C { value: Outer<Inner<word> // inner\n"
+                "> // outer\n; }\n",
+                "contract C { value: Outer<Inner<word> // inner\n"
+                "> // outer\n; }\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_pragma_import_and_annotation_comments(self) -> None:
+        cases = [
+            (
+                "pragma /* rationale */ no-coverage-condition;\n",
+                "pragma /* rationale */ solcore noCoverageCondition;\n",
+            ),
+            (
+                "pragma no-generic-instance-for /* target */ Option;\n",
+                "pragma solcore noGenericInstanceFor /* target */ Option;\n",
+            ),
+            (
+                "import foo.{Thing, /* selected */ value as renamed};\n",
+                "import {Thing, /* selected */ value as renamed} from foo;\n",
+            ),
+            (
+                "import /* module */ foo.{Thing};\n",
+                "import /* module */ {Thing} from foo;\n",
+            ),
+            (
+                "import foo /* path */ .bar as foo /* alias */;\n",
+                "import * as foo /* alias */ from foo /* path */ .bar;\n",
+            ),
+            (
+                "import foo /* path */ .{Thing /* selector */};\n",
+                "import {Thing /* selector */ } from foo /* path */ ;\n",
+            ),
+            (
+                "import foo.{A /* one */, /* two */ B} hiding {B};\n",
+                "import {A /* one */ } /* two */ from foo;\n",
+            ),
+            (
+                "import foo /* one */ .{/* two */ *};\n",
+                "import foo /* one */  /* two */ ;\n",
+            ),
+            (
+                "function f(value: word) -> word {"
+                " return value : /* type */ Option(/* arg */ word);"
+                " }\n",
+                "function f(value: word) returns (word) {"
+                " return value  as /* type */ Option</* arg */ word>;"
+                " }\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_comments_in_classic_bare_import_paths(self) -> None:
+        classic = (
+            "import foo./* segment */bar;"
+            " function f() { foo./* use segment */bar.value(); }\n"
+        )
+        expected = (
+            "import * as bar from foo. /* segment */ bar;"
+            " function f() { bar /* use segment */ .value(); }\n"
+        )
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(
+            MIGRATE.migrate_classic_bare_imports(migrated),
+            migrated,
+        )
+
+    def test_keeps_generated_punctuation_outside_line_comments(self) -> None:
+        cases = [
+            (
+                "function f(cond: bool) -> word {"
+                " return if cond // condition\n then 1 else 2; }\n",
+                "function f(cond: bool) returns (word) {"
+                " return (cond // condition\n? 1 : 2); }\n",
+            ),
+            (
+                "function f(cond: bool) -> word {"
+                " return if cond then 1 // then\n else 2; }\n",
+                "function f(cond: bool) returns (word) {"
+                " return (cond ? 1 // then\n: 2); }\n",
+            ),
+            (
+                "function f(cond: bool) -> word {"
+                " return if cond then 1 else 2 // else\n ; }\n",
+                "function f(cond: bool) returns (word) {"
+                " return (cond ? 1 : 2 // else\n); }\n",
+            ),
+            (
+                "function f(cond: bool) { if cond // condition\n {} }\n",
+                "function f(cond: bool) { if (cond // condition\n) {} }\n",
+            ),
+            (
+                "function f(cond: bool) { while cond // condition\n {} }\n",
+                "function f(cond: bool) { while (cond // condition\n) {} }\n",
+            ),
+            (
+                "function f(v: Option<word>) {"
+                " match v // scrutinee\n { | _ => 0 } }\n",
+                "function f(v: Option<word>) { match (v // scrutinee\n) {\n"
+                "default {\n0\n}\n} }\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_match_arm_pattern_comments(self) -> None:
+        classic = """\
+data Option(a) = None | Some(a);
+function f(v: Option(word)) -> word {
+  match v { | /* arm */ .Some(/* bind */ x) => x | .None /* none */ => 0 }
+}
+"""
+        expected = """\
+enum Option<a> { None, Some(a) }
+function f(v: Option<word>) returns (word) {
+  match (v) {
+case /* arm */ Option.Some(/* bind */ x) {
+x
+}
+case Option.None /* none */  {
+0
+}
+}
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+
 class FunctionMigrationTests(unittest.TestCase):
     def test_moves_classic_prefix_before_canonical_return_clause(self) -> None:
         classic = """\
@@ -710,6 +1275,35 @@ trait Hook<t> {
 """
 
         self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_rejects_unsupported_callable_header_tokens(self) -> None:
+        cases = [
+            (
+                "constructor(x: Option(word)) Base(x) {}\n",
+                "cannot migrate constructor header",
+            ),
+            (
+                "constructor(x: word) onlyOwner {}\n",
+                "cannot migrate constructor header",
+            ),
+            (
+                "fallback() external onlyOwner {}\n",
+                "cannot migrate fallback header",
+            ),
+            (
+                "lam (x: Option(word)) view -> Result(word) { x }\n",
+                "cannot migrate lambda header",
+            ),
+            (
+                "function f(x: Option(word)) onlyOwner {}\n",
+                "cannot migrate function header",
+            ),
+        ]
+
+        for classic, message in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(ValueError, message):
+                    MIGRATE.migrate_source(classic)
 
 
 if __name__ == "__main__":
