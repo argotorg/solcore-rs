@@ -13,7 +13,7 @@ trait Enum<a> {
   enum Color { R, G, B }
 
 impl Enum<Color> {
-  function fromEnum(c) {
+  function fromEnum(c: Color) returns (Word) {
     match (c) { case Color.R { return 1; } case Color.G { return 2; } case Color.B { return 3; } }
   }
 }
@@ -21,7 +21,7 @@ impl Enum<Color> {
 enum Bool { False, True }
 
 impl Enum<Bool> {
-  function fromEnum(b) {
+  function fromEnum(b: Bool) returns (Word) {
       match (b) { case Bool.False { return 0; } case Bool.True { return 1; } }
   }
 }

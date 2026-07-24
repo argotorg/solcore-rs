@@ -1,5 +1,6 @@
 # path<TAB>reason
 cases/class-return-type-miss.solc	SC0221 reference treats omitted trait and impl results as incomplete; new syntax defines both omitted results as unit and Rust accepts the matching signatures
+cases/Eq.solc	SC0102 reference rejects the legacy constrained class form; its explicit new-syntax trait binder and completed impl signature are accepted by Rust
 cases/compose_desugared.solc	SC0209 reference rejects the explicitly desugared closure because its inferred invoke implementation is not polymorphic enough; Rust accepts it
 cases/for-let-post.solc	SC0001 reference frontend rejects this for-loop let form while the Rust grammar accepts it
 cases/super-class-recursive-arg.solc	SC0223 reference legacy solver rejects this recursive superclass argument, while the reference tabled mode and Rust both accept it

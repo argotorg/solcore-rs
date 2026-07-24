@@ -6,9 +6,8 @@ trait Ref<ref, deref> {
 enum Memory<a> { new(a) }
 
 impl Ref<Memory<a>, a> {
-  function load(r) {
+  function load(r: Memory<a>) returns (a) {
     match (r) { case Memory.new(x) { return x; } }
   }
 }
-
 

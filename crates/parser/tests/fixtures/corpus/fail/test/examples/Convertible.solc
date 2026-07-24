@@ -11,7 +11,7 @@ trait Typedef<a, r> {
 enum uint16 { uint16(word) }
 
 impl Typedef<uint16, word> {
-  function abs(r: word) { return uint16.uint16(r);}
+  function abs(r: word) returns (uint16) { return uint16.uint16(r);}
   function rep(x: uint16) returns (word) {
         match (x) { case uint16.uint16(val) { return val; } }
     }
@@ -20,7 +20,7 @@ impl Typedef<uint16, word> {
 enum uint8 { uint8(word) }
 
 impl Typedef<uint8, word> {
-  function abs(r: word) { return uint8.uint8(r);}
+  function abs(r: word) returns (uint8) { return uint8.uint8(r);}
   function rep(x: uint8) returns (word) {
         match (x) { case uint8.uint8(val) { return val; } }
     }
@@ -29,7 +29,7 @@ impl Typedef<uint8, word> {
 enum uint256 { uint256(word) }
 
 impl Typedef<uint256, word> {
-  function abs(r: word) { return uint256.uint256(r);}
+  function abs(r: word) returns (uint256) { return uint256.uint256(r);}
   function rep(x: uint256) returns (word) {
         match (x) { case uint256.uint256(val) { return val; } }
     }

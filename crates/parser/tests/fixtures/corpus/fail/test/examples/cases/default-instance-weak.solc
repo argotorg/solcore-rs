@@ -5,7 +5,7 @@ enum Proxy<a> { Proxy }
 enum Bool { True, False }
 default impl Test<a, word> { function f(x: a) returns (word) { return 42; }}
 
-impl Test<memory<memory<word>>, Bool> { function f(x: self) { return Bool.True; }}
+impl Test<memory<memory<word>>, Bool> { function f(x: memory<memory<word>>) returns (Bool) { return Bool.True; }}
 
 // If we choose the default instance to typecheck f,
 // this will pass type-checking, since ``r`` is word.

@@ -9,7 +9,7 @@ trait Ord<a> where a: Eq {
 }
 
 impl Eq<word> {
-  function eq(x, y) {
+  function eq(x: word, y: word) returns (Bool) {
     match (primEqWord(x,y)) { case 0 { return Bool.False; } default { return Bool.True ; } }
   }
 }

@@ -30,11 +30,11 @@ trait ToWord<self> {
 }
 
 impl ToWord<Zero> {
-    function toWord(zero) { return 0; }
+    function toWord(zero: Itself<Zero>) returns (word) { return 0; }
 }
 
 impl<prev> ToWord<Succ<prev>> where prev: ToWord {
-    function toWord(self: Itself<Succ<prev>>) {
+    function toWord(self: Itself<Succ<prev>>) returns (word) {
         let prevTag: Itself<prev> = Itself.ItselfRuntimeTag;
         let returnVal: word = ToWord.toWord(prevTag);
         assembly {

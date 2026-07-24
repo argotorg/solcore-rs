@@ -7,7 +7,7 @@ enum B { F, T }
 enum Pair<a, b> { Pair(a, b) }
 
 impl Neg<B> {
-  function neg(x: B) {
+  function neg(x: B) returns (B) {
     match (x) { case B.F { return B.T; } case B.T { return B.F; } }
   }
 }
@@ -22,7 +22,7 @@ function snd(p) {
 
 
 impl Neg<Pair<a, b>> where a: Neg, b: Neg {
-  function neg(p) {
+  function neg(p: Pair<a, b>) returns (Pair<a, b>) {
     return Pair.Pair(Neg.neg (fst(p)), Neg.neg(snd (p)));
   }
 }

@@ -7,7 +7,7 @@ enum B { F, T }
 
 
 impl Neg<B> {
-  function neg(x: B) {
+  function neg(x: B) returns (B) {
     match (x) { case B.F { return B.T; } case B.T { return B.F; } }
   }
 }
