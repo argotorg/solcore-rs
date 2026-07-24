@@ -1893,8 +1893,13 @@ def _classic_pattern_binding_names(
     """Collect binders without mistaking qualified constructor paths for them."""
 
     result: set[str] = set()
+    comptime_expression_tokens = _comptime_pattern_expression_tokens(tokens)
     for index, token in enumerate(tokens):
-        if token.kind != "word" or token.text not in namespace_roots:
+        if (
+            index in comptime_expression_tokens
+            or token.kind != "word"
+            or token.text not in namespace_roots
+        ):
             continue
         previous = tokens[index - 1].text if index else ""
         following = tokens[index + 1].text if index + 1 < len(tokens) else ""
@@ -1902,6 +1907,30 @@ def _classic_pattern_binding_names(
             continue
         result.add(token.text)
     return result
+
+
+def _comptime_pattern_expression_tokens(
+    tokens: Sequence[Token],
+) -> set[int]:
+    """Mark `comptime` labels, whose payload is an expression, not a binder."""
+
+    marked: set[int] = set()
+    stack: list[str] = []
+    expression_depth: int | None = None
+    for index, token in enumerate(tokens):
+        text = token.text
+        if expression_depth is not None:
+            if len(stack) == expression_depth and (
+                text == "," or text in CLOSE_TO_OPEN
+            ):
+                expression_depth = None
+            else:
+                marked.add(index)
+        if expression_depth is None and text == "comptime":
+            expression_depth = len(stack)
+            marked.add(index)
+        _depth_step(stack, text, angles=False)
+    return marked
 
 
 def _classic_type_only_tokens(tokens: Sequence[Token]) -> set[int]:
@@ -1941,7 +1970,11 @@ def _classic_type_only_tokens(tokens: Sequence[Token]) -> set[int]:
 
 
 def _classic_shadow_ranges(
-    tokens: Sequence[Token], namespace_roots: set[str]
+    tokens: Sequence[Token],
+    namespace_roots: set[str],
+    *,
+    include_callable_declarations: bool = False,
+    include_top_level_fields: bool = False,
 ) -> dict[str, list[tuple[int, int]]]:
     """Map term bindings to the token ranges where they shadow import roots."""
 
@@ -2002,6 +2035,55 @@ def _classic_shadow_ranges(
                 )
             break
 
+    if include_callable_declarations:
+        class_scope_opens = {
+            boundary
+            for index, token in enumerate(tokens)
+            if token.text in {"trait", "class"}
+            and (boundary := _header_boundary(tokens, index + 1)) is not None
+            and tokens[boundary].text == "{"
+        }
+        implementation_scope_opens = {
+            boundary
+            for index, token in enumerate(tokens)
+            if token.text in {"impl", "instance"}
+            and (boundary := _header_boundary(tokens, index + 1)) is not None
+            and tokens[boundary].text == "{"
+        }
+        class_method_counts: dict[str, int] = {}
+        for index, token in enumerate(tokens[:-1]):
+            if (
+                token.text == "function"
+                and enclosing[index] in class_scope_opens
+                and tokens[index + 1].kind == "word"
+            ):
+                name = tokens[index + 1].text
+                class_method_counts[name] = class_method_counts.get(name, 0) + 1
+        # A named top-level function shadows the term globally. Class methods
+        # are looked up by their unqualified leaf only when exactly one class
+        # declares that leaf. Implementations do not add another module term.
+        # Contract methods remain confined to their enclosing contract scope.
+        for index, token in enumerate(tokens[:-1]):
+            if (
+                token.text != "function"
+                or tokens[index + 1].kind != "word"
+                or tokens[index + 1].text not in namespace_roots
+            ):
+                continue
+            name = tokens[index + 1].text
+            scope_open = enclosing[index]
+            if scope_open is None:
+                add({name}, 0, len(tokens))
+            elif scope_open in class_scope_opens:
+                if class_method_counts.get(name) == 1:
+                    add({name}, 0, len(tokens))
+            elif scope_open not in implementation_scope_opens:
+                add(
+                    {name},
+                    scope_open + 1,
+                    brace_pairs.get(scope_open, len(tokens)),
+                )
+
     # A contract field is visible in every executable body in that contract.
     for index, token in enumerate(tokens):
         if token.text not in {"contract", "interface", "library"}:
@@ -2041,6 +2123,20 @@ def _classic_shadow_ranges(
                 add(field_names, body_open + 1, body_close)
         for initializer_start, initializer_end in field_initializers:
             add(field_names, initializer_start, initializer_end)
+
+    if include_top_level_fields:
+        # Preserve the previous conservative constructor behavior for any
+        # top-level value fields: if accepted, its term is module-wide.
+        for index in range(1, len(tokens) - 1):
+            token = tokens[index]
+            if (
+                enclosing[index] is None
+                and token.kind == "word"
+                and token.text in namespace_roots
+                and tokens[index + 1].text == ":"
+                and tokens[index - 1].text in {";", "}"}
+            ):
+                add({token.text}, 0, len(tokens))
 
     # `let` bindings begin after their initializer and end with their lexical
     # block. A binding in a for initializer instead ends with that loop body.
@@ -4544,23 +4640,6 @@ def _declaration_surface_tokens(tokens: Sequence[Token]) -> set[int]:
     return marked
 
 
-def _declared_callable_and_field_names(tokens: Sequence[Token]) -> set[str]:
-    """Collect source-local term names that must beat constructor fallback."""
-
-    names = {
-        tokens[index + 1].text
-        for index, token in enumerate(tokens[:-1])
-        if token.text == "function" and tokens[index + 1].kind == "word"
-    }
-    for index in range(1, len(tokens) - 1):
-        token = tokens[index]
-        if token.kind != "word" or tokens[index + 1].text != ":":
-            continue
-        if tokens[index - 1].text in {"{", "}", ";"}:
-            names.add(token.text)
-    return names
-
-
 def _declared_type_and_module_names(tokens: Sequence[Token]) -> set[str]:
     """Collect local namespaces that make a global constructor guess unsafe."""
 
@@ -4683,113 +4762,94 @@ def _body_type_tokens(
     return marked
 
 
-def _body_shadowed_names(
-    tokens: Sequence[Token], body_start: int, body_end: int, owners: set[str]
-) -> set[str]:
-    """Find direct local bindings that make an owner spelling ambiguous.
+def _body_binding_tokens(
+    tokens: Sequence[Token], body_start: int, body_end: int
+) -> set[int]:
+    """Mark local binding patterns, which are never constructor uses."""
 
-    This intentionally errs on the conservative side: if a parameter or
-    direct ``let`` binding shadows an enum owner anywhere in the body, that
-    owner is left untouched in the whole body instead of guessing which
-    occurrences denoted the constructor.
-    """
-
-    shadowed: set[str] = set()
-    brace = body_start - 1
-    header_start = brace - 1
-    while header_start >= 0 and tokens[header_start].text not in {
-        "function",
-        "constructor",
-        "fallback",
-        "lam",
-        ";",
-        "{",
-        "}",
-    }:
-        header_start -= 1
-    if header_start >= 0 and tokens[header_start].text in {
-        "function",
-        "constructor",
-        "fallback",
-        "lam",
-    }:
-        open_paren = next(
-            (
-                index
-                for index in range(header_start + 1, brace)
-                if tokens[index].text == "("
-            ),
-            None,
-        )
-        if open_paren is not None:
-            close_paren = matching_index(tokens, open_paren)
-            if close_paren is not None and close_paren < brace:
-                for parameter in split_top(
-                    tokens[open_paren + 1 : close_paren], ","
-                ):
-                    colon = find_top(parameter, ":")
-                    binding = parameter if colon is None else parameter[:colon]
-                    names = [token.text for token in binding if token.kind == "word"]
-                    if names and names[-1] in owners:
-                        shadowed.add(names[-1])
-                for cursor in range(close_paren + 1, brace - 1):
-                    if (
-                        tokens[cursor].text != "returns"
-                        or tokens[cursor + 1].text != "("
-                    ):
-                        continue
-                    returns_close = matching_index(tokens, cursor + 1)
-                    if returns_close is None or returns_close >= brace:
-                        break
-                    for result in split_top(
-                        tokens[cursor + 2 : returns_close], ","
-                    ):
-                        colon = find_top(result, ":", angles=False)
-                        if colon is None:
-                            continue
-                        names = [
-                            item.text
-                            for item in result[:colon]
-                            if item.kind == "word"
-                        ]
-                        if names and names[-1] in owners:
-                            shadowed.add(names[-1])
-                    break
-
-    for index in range(body_start, body_end - 1):
+    marked: set[int] = set()
+    for index in range(body_start, body_end):
         if tokens[index].text != "let":
             continue
-        cursor = index + 1
-        if tokens[cursor].text == "comptime":
-            cursor += 1
         stack: list[str] = []
-        while cursor < body_end:
+        for cursor in range(index + 1, body_end):
             text = tokens[cursor].text
             if not stack and text in {":", "=", ":=", ";"}:
+                marked.update(range(index + 1, cursor))
                 break
-            if tokens[cursor].kind == "word" and text in owners:
-                shadowed.add(text)
             _depth_step(stack, text, angles=False)
-            cursor += 1
 
+    # A bare lowercase identifier in a match pattern is a binder. Lowercase
+    # constructors remain distinguishable through arguments or qualification.
     for index in range(body_start, body_end):
         if tokens[index].text != "case":
             continue
-        boundary = _header_boundary(tokens, index + 1)
-        if boundary is None or boundary > body_end or tokens[boundary].text != "{":
+        arm_open = _header_boundary(tokens, index + 1)
+        if (
+            arm_open is None
+            or arm_open >= body_end
+            or tokens[arm_open].text != "{"
+        ):
             continue
-        for cursor in range(index + 1, boundary):
+        pattern = tokens[index + 1 : arm_open]
+        comptime_expression_tokens = _comptime_pattern_expression_tokens(
+            pattern
+        )
+        for cursor in range(index + 1, arm_open):
             token = tokens[cursor]
-            if token.kind != "word" or token.text not in owners:
+            if (
+                cursor - index - 1 in comptime_expression_tokens
+                or token.kind != "word"
+                or not token.text[:1].islower()
+                or (cursor > index + 1 and tokens[cursor - 1].text == ".")
+                or (
+                    cursor + 1 < arm_open
+                    and tokens[cursor + 1].text in {"(", "."}
+                )
+            ):
                 continue
+            marked.add(cursor)
+    return marked
+
+
+def _body_constructor_pattern_tokens(
+    tokens: Sequence[Token], body_start: int, body_end: int
+) -> set[int]:
+    """Mark unqualified constructor heads, which ignore value shadowing."""
+
+    marked: set[int] = set()
+    for index in range(body_start, body_end):
+        if tokens[index].text != "case":
+            continue
+        arm_open = _header_boundary(tokens, index + 1)
+        if (
+            arm_open is None
+            or arm_open >= body_end
+            or tokens[arm_open].text != "{"
+        ):
+            continue
+        pattern = tokens[index + 1 : arm_open]
+        comptime_expression_tokens = _comptime_pattern_expression_tokens(
+            pattern
+        )
+        for cursor in range(index + 1, arm_open):
+            token = tokens[cursor]
+            offset = cursor - index - 1
             previous = tokens[cursor - 1].text
             following = tokens[cursor + 1].text
             if (
-                previous not in {"case", "."}
-                and following not in {"(", "."}
+                offset in comptime_expression_tokens
+                or token.kind != "word"
+                or previous == "."
+                or following == "."
+                or (
+                    token.text[:1].islower()
+                    and following != "("
+                )
             ):
-                shadowed.add(token.text)
-    return shadowed
+                continue
+            marked.add(cursor)
+    return marked
 
 
 def migrate_qualified_constructors(
@@ -4813,11 +4873,15 @@ def migrate_qualified_constructors(
     for leaf, candidates in local_candidates.items():
         if len(candidates) != 1:
             constructor_owners.pop(leaf, None)
-    for term_name in _declared_callable_and_field_names(tokens):
-        constructor_owners.pop(term_name, None)
     if not constructor_owners:
         return source
     constructor_leaves = set(constructor_owners)
+    shadow_ranges = _classic_shadow_ranges(
+        tokens,
+        constructor_leaves,
+        include_callable_declarations=True,
+        include_top_level_fields=True,
+    )
     bodies, header_tokens = _executable_regions(tokens)
     nonterm_tokens = declaration_tokens | header_tokens | _declaration_surface_tokens(tokens)
     replacements: dict[int, tuple[int, int, str]] = {}
@@ -4825,8 +4889,11 @@ def migrate_qualified_constructors(
     for body_start, body_end in bodies:
         body_tokens.update(range(body_start, body_end))
         type_tokens = _body_type_tokens(tokens, body_start, body_end)
-        shadowed = _body_shadowed_names(
-            tokens, body_start, body_end, constructor_leaves
+        binding_tokens = _body_binding_tokens(
+            tokens, body_start, body_end
+        )
+        constructor_pattern_tokens = _body_constructor_pattern_tokens(
+            tokens, body_start, body_end
         )
         for index in range(body_start, body_end):
             token = tokens[index]
@@ -4834,9 +4901,16 @@ def migrate_qualified_constructors(
             if (
                 token.kind != "word"
                 or leaf not in constructor_owners
-                or leaf in shadowed
+                or (
+                    index not in constructor_pattern_tokens
+                    and any(
+                        start <= index < end
+                        for start, end in shadow_ranges[leaf]
+                    )
+                )
                 or index in nonterm_tokens
                 or index in type_tokens
+                or index in binding_tokens
             ):
                 continue
             previous = tokens[index - 1].text if index else ""
@@ -4890,6 +4964,10 @@ def migrate_qualified_constructors(
             or token.text not in constructor_owners
             or index in body_tokens
             or index in nonterm_tokens
+            or any(
+                start <= index < end
+                for start, end in shadow_ranges[token.text]
+            )
             or index + 1 >= len(tokens)
             or tokens[index + 1].text != "("
         ):

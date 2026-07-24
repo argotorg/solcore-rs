@@ -442,6 +442,32 @@ function namespaceUse() -> word {
         self.assertIn("return foo.bar();", migrated)
         self.assertIn("return bar.read();", migrated)
 
+    def test_contract_method_does_not_shadow_imported_namespace_path(
+        self,
+    ) -> None:
+        classic = """\
+import foo.bar;
+contract C {
+  function foo(x: word) returns (word) { return x; }
+  function use() returns (word) { return foo.bar.run(); }
+}
+"""
+        expected = """\
+import * as bar from foo.bar;
+contract C {
+  function foo(x: word) returns (word) { return x; }
+  function use() returns (word) { return bar.run(); }
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(
+            MIGRATE.migrate_classic_bare_imports(migrated),
+            migrated,
+        )
+
     def test_match_binder_shadows_only_its_classic_arm(self) -> None:
         classic = """\
 import foo.bar;
@@ -623,6 +649,348 @@ function use(x: word) returns (T: word) {
 """
 
         self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_constructor_shadowing_uses_precise_let_scopes(self) -> None:
+        source = """\
+enum T { T(word) }
+function use(x: word) {
+  let before = T(x);
+  {
+    let T = T(x);
+    T(x);
+  }
+  let after = T(x);
+  {
+    let T = callable;
+    T(x);
+  }
+  let final = T(x);
+}
+"""
+        expected = """\
+enum T { T(word) }
+function use(x: word) {
+  let before = T.T(x);
+  {
+    let T = T.T(x);
+    T(x);
+  }
+  let after = T.T(x);
+  {
+    let T = callable;
+    T(x);
+  }
+  let final = T.T(x);
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_constructor_term_shadows_stay_in_their_contract(self) -> None:
+        source = """\
+enum T { T(word) }
+contract FieldShadow {
+  T: Callback;
+  function use(x: word) { T(x); }
+}
+contract MethodShadow {
+  function T(x: word) returns (word) { return x; }
+  function use(x: word) { T(x); }
+}
+contract Unshadowed {
+  function use(x: word) { T(x); }
+}
+function make(x: word) returns (T) { return T(x); }
+"""
+        expected = """\
+enum T { T(word) }
+contract FieldShadow {
+  T: Callback;
+  function use(x: word) { T(x); }
+}
+contract MethodShadow {
+  function T(x: word) returns (word) { return x; }
+  function use(x: word) { T(x); }
+}
+contract Unshadowed {
+  function use(x: word) { T.T(x); }
+}
+function make(x: word) returns (T) { return T.T(x); }
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_constructor_term_shadows_apply_in_field_initializers(
+        self,
+    ) -> None:
+        cases = [
+            """\
+enum T { T(word) }
+contract C {
+  T: Callback;
+  value: word = T(1);
+}
+""",
+            """\
+enum T { T(word) }
+function T(x: word) returns (word) { return x; }
+contract C {
+  value: word = T(1);
+}
+""",
+        ]
+
+        for source in cases:
+            with self.subTest(source=source):
+                migrated = MIGRATE.migrate_source(source)
+                self.assertEqual(migrated, source)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_class_methods_shadow_constructor_fallback_module_wide(
+        self,
+    ) -> None:
+        cases = [
+            (
+                """\
+enum T { T(word) }
+trait C<a> {
+  function T(x: word) returns (a);
+}
+function use(x: word) returns (word) { return T(x); }
+""",
+                """\
+enum T { T(word) }
+trait C<a> {
+  function T(x: word) returns (a);
+}
+function use(x: word) returns (word) { return T(x); }
+""",
+            ),
+            (
+                """\
+enum T { T(word) }
+trait C<a> {
+  function T(x: a) returns (a);
+}
+impl C<word> {
+  function T(x: word) returns (word) { return x; }
+}
+function use(x: word) returns (word) { return T(x); }
+""",
+                """\
+enum T { T(word) }
+trait C<a> {
+  function T(x: a) returns (a);
+}
+impl C<word> {
+  function T(x: word) returns (word) { return x; }
+}
+function use(x: word) returns (word) { return T(x); }
+""",
+            ),
+            (
+                """\
+enum T { T(word) }
+trait C<a> {
+  function apply(x: a) returns (a);
+}
+impl C<word> {
+  function T(x: word) returns (word) { return x; }
+}
+function use(x: word) returns (T) { return T(x); }
+""",
+                """\
+enum T { T(word) }
+trait C<a> {
+  function apply(x: a) returns (a);
+}
+impl C<word> {
+  function T(x: word) returns (word) { return x; }
+}
+function use(x: word) returns (T) { return T.T(x); }
+""",
+            ),
+            (
+                """\
+enum T { T(word) }
+trait C<a> {
+  function T(x: word) returns (a);
+}
+trait D<a> {
+  function T(x: word) returns (a);
+}
+function use(x: word) returns (T) { return T(x); }
+""",
+                """\
+enum T { T(word) }
+trait C<a> {
+  function T(x: word) returns (a);
+}
+trait D<a> {
+  function T(x: word) returns (a);
+}
+function use(x: word) returns (T) { return T.T(x); }
+""",
+            ),
+        ]
+
+        for source, expected in cases:
+            with self.subTest(source=source):
+                migrated = MIGRATE.migrate_source(source)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_lowercase_match_binders_are_not_constructor_qualified(
+        self,
+    ) -> None:
+        cases = [
+            (
+                """\
+enum t { t(word) }
+function use(x: word) returns (word) {
+  match (x) { case t { return t; } }
+}
+""",
+                """\
+enum t { t(word) }
+function use(x: word) returns (word) {
+  match (x) { case t { return t; } }
+}
+""",
+            ),
+            (
+                """\
+data t = t(word);
+function use(x: word) -> word {
+  match x { | t => return t; }
+}
+""",
+                """\
+enum t { t(word) }
+function use(x: word) returns (word) {
+  match (x) {
+case t {
+return t;
+}
+}
+}
+""",
+            ),
+            (
+                """\
+enum t { t(word) }
+function use(x: t) returns (word) {
+  match (x) { case t(value) { return value; } }
+}
+""",
+                """\
+enum t { t(word) }
+function use(x: t) returns (word) {
+  match (x) { case t.t(value) { return value; } }
+}
+""",
+            ),
+            (
+                """\
+enum T { T }
+function use(x: T) returns (T) {
+  match (x) { case T { return T; } }
+}
+""",
+                """\
+enum T { T }
+function use(x: T) returns (T) {
+  match (x) { case T.T { return T.T; } }
+}
+""",
+            ),
+            (
+                """\
+enum tag { tag }
+function use(x: tag) returns (tag) {
+  match (x) {
+    case comptime tag { return tag; }
+    default { return tag; }
+  }
+}
+""",
+                """\
+enum tag { tag }
+function use(x: tag) returns (tag) {
+  match (x) {
+    case comptime tag.tag { return tag.tag; }
+    default { return tag.tag; }
+  }
+}
+""",
+            ),
+        ]
+
+        for source, expected in cases:
+            with self.subTest(source=source):
+                migrated = MIGRATE.migrate_source(source)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_match_constructor_heads_ignore_value_shadowing(self) -> None:
+        cases = [
+            (
+                """\
+enum T { T }
+function use(x: T, T: Callback) {
+  match (x) { case T { T(); } }
+}
+""",
+                """\
+enum T { T }
+function use(x: T, T: Callback) {
+  match (x) { case T.T { T(); } }
+}
+""",
+            ),
+            (
+                """\
+enum T { T(word) }
+function use(x: T, T: Callback) {
+  match (x) { case T(y) { T(y); } }
+}
+""",
+                """\
+enum T { T(word) }
+function use(x: T, T: Callback) {
+  match (x) { case T.T(y) { T(y); } }
+}
+""",
+            ),
+            (
+                """\
+enum t { t(word) }
+function use(x: t) {
+  let t = callback;
+  match (x) { case t(y) { t(y); } }
+}
+""",
+                """\
+enum t { t(word) }
+function use(x: t) {
+  let t = callback;
+  match (x) { case t.t(y) { t(y); } }
+}
+""",
+            ),
+        ]
+
+        for source, expected in cases:
+            with self.subTest(source=source):
+                migrated = MIGRATE.migrate_source(source)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
     def test_preserves_calls_and_prose_in_rust_literals(self) -> None:
         rust = r'''
