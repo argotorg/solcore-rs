@@ -12047,12 +12047,13 @@ def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
 def _rust_has_explicit_concat_shadow(source: str) -> bool:
     """Conservatively detect source-local bindings named ``concat``."""
 
-    def identifier_text(start: int) -> tuple[str, int] | None:
+    def identifier_text(start: int) -> tuple[str, int, bool] | None:
         end = _rust_identifier_token_end(source, start)
         if end is None:
             return None
         text = source[start:end]
-        return (text[2:] if text.startswith("r#") else text, end)
+        is_raw = text.startswith("r#")
+        return (text[2:] if is_raw else text, end, is_raw)
 
     cursor = 0
     while cursor < len(source):
@@ -12083,20 +12084,20 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
         if identifier is None:
             cursor += 1
             continue
-        text, end = identifier
-        if text == "macro_rules":
+        text, end, is_raw = identifier
+        if not is_raw and text == "macro_rules":
             bang = _rust_skip_trivia(source, end)
             if bang < len(source) and source[bang] == "!":
                 name_start = _rust_skip_trivia(source, bang + 1)
                 name = identifier_text(name_start)
                 if name is not None and name[0] == "concat":
                     return True
-        elif text == "macro":
+        elif not is_raw and text == "macro":
             name_start = _rust_skip_trivia(source, end)
             name = identifier_text(name_start)
             if name is not None and name[0] == "concat":
                 return True
-        elif text == "use":
+        elif not is_raw and text == "use":
             use_cursor = end
             while use_cursor < len(source):
                 use_cursor = _rust_skip_trivia(source, use_cursor)
