@@ -353,7 +353,7 @@ class FunctionTypeSuffix:
 
 @dataclass(frozen=True, order=True)
 class ConstructorOrigin:
-    """Stable identity for one exported algebraic-data declaration."""
+    """Stable identity for one declaration occupying a type namespace."""
 
     provider: str
     type_name: str
@@ -366,6 +366,15 @@ class ConstructorBinding:
 
     origin: ConstructorOrigin
     owner: str
+
+
+@dataclass(frozen=True, order=True)
+class ConstructorOwnerClaim:
+    """One source surface claiming a visible constructor type namespace."""
+
+    visible_through: str
+    origin: ConstructorOrigin
+    local: bool = False
 
 
 def _constructor_binding_preference(
@@ -401,6 +410,10 @@ class ConstructorImportSurface:
 
     bare_candidates: Mapping[str, frozenset[ConstructorBinding]]
     dot_candidates: Mapping[str, frozenset[ConstructorBinding]]
+    owner_claims: Mapping[str, frozenset[ConstructorOwnerClaim]]
+    namespace_qualifier_targets: Mapping[str, frozenset[str]]
+    qualified_namespace_term_targets: Mapping[str, frozenset[str]]
+    qualified_import_term_winners: Mapping[str, str]
     imported_terms: frozenset[str]
     unknown_imported_terms: frozenset[str]
     has_unknown_unqualified_terms: bool
@@ -411,12 +424,83 @@ class ConstructorImportSurface:
 EMPTY_CONSTRUCTOR_IMPORT_SURFACE = ConstructorImportSurface(
     bare_candidates={},
     dot_candidates={},
+    owner_claims={},
+    namespace_qualifier_targets={},
+    qualified_namespace_term_targets={},
+    qualified_import_term_winners={},
     imported_terms=frozenset(),
     unknown_imported_terms=frozenset(),
     has_unknown_unqualified_terms=False,
     has_unknown_unqualified_constructors=False,
     has_unknown_constructors=False,
 )
+
+
+def _constructor_owner_conflict_targets(
+    surface: ConstructorImportSurface,
+    owner: str,
+) -> tuple[str, ...]:
+    """Return import targets which make ``owner`` an ambiguous namespace."""
+
+    root = owner.split(".", 1)[0]
+    claims = surface.owner_claims.get(owner, frozenset())
+    qualifier_targets = surface.namespace_qualifier_targets.get(
+        root,
+        frozenset(),
+    )
+    imported_claims = {
+        claim for claim in claims if not claim.local
+    }
+    local_claims = {
+        claim for claim in claims if claim.local
+    }
+    conflicted = (
+        len(imported_claims) > 1
+        or bool(imported_claims and local_claims)
+        or ("." in owner and len(qualifier_targets) > 1)
+    )
+    if not conflicted:
+        return ()
+    return tuple(
+        sorted(
+            {
+                claim.visible_through
+                for claim in claims
+            }
+            | (
+                set(qualifier_targets)
+                if "." in owner
+                else set()
+            )
+        )
+    )
+
+
+def _constructor_qualification_conflict_targets(
+    surface: ConstructorImportSurface,
+    owner: str,
+    leaf: str,
+) -> tuple[str, ...]:
+    """Return sources which make the emitted ``owner.leaf`` ambiguous."""
+
+    return tuple(
+        sorted(
+            set(_constructor_owner_conflict_targets(surface, owner))
+            | (
+                set(
+                    surface.qualified_namespace_term_targets.get(
+                        f"{owner}.{leaf}",
+                        frozenset(),
+                    )
+                )
+                if surface.qualified_import_term_winners.get(
+                    f"{owner}.{leaf}"
+                )
+                != "constructor"
+                else set()
+            )
+        )
+    )
 
 
 def _scan_quoted(source: str, start: int, quote: str) -> int:
@@ -4861,6 +4945,7 @@ def _constructor_owner_candidates(
     dict[str, set[str]],
     dict[str, list[tuple[int, int, str]]],
     set[int],
+    dict[str, list[tuple[int, int, str, str]]],
 ]:
     """Collect module/scoped constructor owners and declaration tokens.
 
@@ -4875,12 +4960,25 @@ def _constructor_owner_candidates(
 
     module_candidates: dict[str, set[str]] = {}
     scoped_candidates: dict[str, list[tuple[int, int, str]]] = {}
+    promoted_aliases: dict[
+        str,
+        list[tuple[int, int, str, str]],
+    ] = {}
     declarations: set[int] = set()
     brace_pairs, enclosing = _classic_brace_context(tokens)
     contract_scope_opens = {
         boundary
         for item_index, item in enumerate(tokens)
         if item.text in {"contract", "interface", "library"}
+        and (boundary := _header_boundary(tokens, item_index + 1)) is not None
+        and tokens[boundary].text == "{"
+    }
+    library_scope_names = {
+        boundary: tokens[item_index + 1].text
+        for item_index, item in enumerate(tokens[:-1])
+        if item.text == "library"
+        and enclosing[item_index] is None
+        and tokens[item_index + 1].kind == "word"
         and (boundary := _header_boundary(tokens, item_index + 1)) is not None
         and tokens[boundary].text == "{"
     }
@@ -4899,6 +4997,20 @@ def _constructor_owner_candidates(
                 owner,
             )
         )
+        library_name = library_scope_names.get(scope_open)
+        if library_name is not None:
+            promoted_owner = f"{library_name}.{owner}"
+            module_candidates.setdefault(leaf, set()).add(
+                promoted_owner
+            )
+            promoted_aliases.setdefault(leaf, []).append(
+                (
+                    scope_open + 1,
+                    brace_pairs.get(scope_open, len(tokens)),
+                    owner,
+                    promoted_owner,
+                )
+            )
 
     for index, token in enumerate(tokens):
         if (
@@ -4945,7 +5057,12 @@ def _constructor_owner_candidates(
             ):
                 continue
             add_owner(leaf, name, index)
-    return module_candidates, scoped_candidates, declarations
+    return (
+        module_candidates,
+        scoped_candidates,
+        declarations,
+        promoted_aliases,
+    )
 
 
 def _dot_constructor_owner_candidates(
@@ -4953,6 +5070,7 @@ def _dot_constructor_owner_candidates(
 ) -> tuple[
     dict[str, set[str]],
     dict[str, list[tuple[int, int, str]]],
+    dict[str, list[tuple[int, int, str, str]]],
 ]:
     """Collect every enum constructor owner for Classic ``.Leaf`` uses.
 
@@ -4965,11 +5083,24 @@ def _dot_constructor_owner_candidates(
 
     module_candidates: dict[str, set[str]] = {}
     scoped_candidates: dict[str, list[tuple[int, int, str]]] = {}
+    promoted_aliases: dict[
+        str,
+        list[tuple[int, int, str, str]],
+    ] = {}
     brace_pairs, enclosing = _classic_brace_context(tokens)
     contract_scope_opens = {
         boundary
         for item_index, item in enumerate(tokens)
         if item.text in {"contract", "interface", "library"}
+        and (boundary := _header_boundary(tokens, item_index + 1)) is not None
+        and tokens[boundary].text == "{"
+    }
+    library_scope_names = {
+        boundary: tokens[item_index + 1].text
+        for item_index, item in enumerate(tokens[:-1])
+        if item.text == "library"
+        and enclosing[item_index] is None
+        and tokens[item_index + 1].kind == "word"
         and (boundary := _header_boundary(tokens, item_index + 1)) is not None
         and tokens[boundary].text == "{"
     }
@@ -4988,6 +5119,20 @@ def _dot_constructor_owner_candidates(
                 owner,
             )
         )
+        library_name = library_scope_names.get(scope_open)
+        if library_name is not None:
+            promoted_owner = f"{library_name}.{owner}"
+            module_candidates.setdefault(leaf, set()).add(
+                promoted_owner
+            )
+            promoted_aliases.setdefault(leaf, []).append(
+                (
+                    scope_open + 1,
+                    brace_pairs.get(scope_open, len(tokens)),
+                    owner,
+                    promoted_owner,
+                )
+            )
 
     for index, token in enumerate(tokens):
         if (
@@ -5022,7 +5167,7 @@ def _dot_constructor_owner_candidates(
             ):
                 continue
             add_owner(constructor[0].text, owner, index)
-    return module_candidates, scoped_candidates
+    return module_candidates, scoped_candidates, promoted_aliases
 
 
 def _unique_constructor_owners(
@@ -5356,10 +5501,12 @@ def migrate_qualified_constructors(
 
     surface = import_surface or EMPTY_CONSTRUCTOR_IMPORT_SURFACE
     tokens = significant(source)
+    local_qualified_term_winners = _local_qualified_term_winners(tokens)
     (
         module_candidates,
         scoped_candidates,
         declaration_tokens,
+        promoted_aliases,
     ) = _constructor_owner_candidates(tokens)
     module_owners = _unique_constructor_owners(module_candidates)
     # ``global_owners`` is retained for direct API compatibility.  The CLI no
@@ -5376,14 +5523,28 @@ def migrate_qualified_constructors(
     ambiguous_import_leaves: set[str] = set()
     imported_constructor_leaves = set(surface.bare_candidates)
     for leaf, bindings in surface.bare_candidates.items():
-        binding = _single_origin_constructor_binding(bindings)
+        origins = {candidate.origin for candidate in bindings}
+        safe_bindings = frozenset(
+            candidate
+            for candidate in bindings
+            if not _constructor_qualification_conflict_targets(
+                surface,
+                candidate.owner,
+                leaf,
+            )
+        )
+        binding = (
+            _single_origin_constructor_binding(safe_bindings)
+            if len(origins) == 1
+            else None
+        )
         if (
             binding is not None
             and not surface.has_unknown_unqualified_constructors
         ):
             owner = binding.owner
             constructor_owners[leaf] = owner
-            trusted_import_bindings[leaf] = bindings
+            trusted_import_bindings[leaf] = safe_bindings
         else:
             constructor_owners.pop(leaf, None)
             ambiguous_import_leaves.add(leaf)
@@ -5393,11 +5554,41 @@ def migrate_qualified_constructors(
     # different origins and must remain ambiguous.
     constructor_owners.update(module_owners)
     for leaf, candidates in module_candidates.items():
+        module_owner = module_owners.get(leaf)
+        imported_bindings = surface.bare_candidates.get(leaf, ())
+        local_precedes_same_import_owner = (
+            module_owner is not None
+            and bool(imported_bindings)
+            and {
+                binding.owner for binding in imported_bindings
+            }
+            == {module_owner}
+            and not _constructor_owner_conflict_targets(
+                surface,
+                module_owner,
+            )
+        )
         if leaf in imported_constructor_leaves:
             trusted_import_bindings.pop(leaf, None)
         if (
             len(candidates) != 1
-            or leaf in imported_constructor_leaves
+            or (
+                leaf in imported_constructor_leaves
+                and not local_precedes_same_import_owner
+            )
+            or (
+                leaf in module_owners
+                and (
+                    _constructor_owner_conflict_targets(
+                        surface,
+                        module_owners[leaf],
+                    )
+                    or local_qualified_term_winners.get(
+                        f"{module_owners[leaf]}.{leaf}"
+                    )
+                    == "term"
+                )
+            )
         ):
             constructor_owners.pop(leaf, None)
     constructor_leaves = (
@@ -5428,7 +5619,6 @@ def migrate_qualified_constructors(
         include_top_level_fields=True,
         constructor_pattern_names=constructor_leaves,
     )
-
     def owner_is_shadowed(
         owner: str,
         index: int,
@@ -5466,10 +5656,31 @@ def migrate_qualified_constructors(
             )
         }
         if scoped:
-            if leaf in imported_constructor_leaves:
+            outer_owners = set(module_candidates.get(leaf, set()))
+            outer_owners.difference_update(
+                promoted_owner
+                for start, end, scoped_owner, promoted_owner in (
+                    promoted_aliases.get(leaf, ())
+                )
+                if (
+                    start <= index < end
+                    and scoped_owner in scoped
+                )
+            )
+            outer_owners.update(
+                binding.owner
+                for binding in surface.bare_candidates.get(leaf, ())
+            )
+            if (
+                len(scoped) != 1
+                or (
+                    outer_owners
+                    and not outer_owners.issubset(scoped)
+                )
+            ):
                 return None, True, False
             return (
-                next(iter(scoped)) if len(scoped) == 1 else None,
+                next(iter(scoped)),
                 True,
                 False,
             )
@@ -5776,7 +5987,8 @@ def migrate_legacy_dot_constructors(
 
     surface = import_surface or EMPTY_CONSTRUCTOR_IMPORT_SURFACE
     tokens = significant(source)
-    module_candidates, scoped_candidates = (
+    local_qualified_term_winners = _local_qualified_term_winners(tokens)
+    module_candidates, scoped_candidates, promoted_aliases = (
         _dot_constructor_owner_candidates(tokens)
     )
     candidates: dict[str, set[ConstructorBinding]] = {}
@@ -5824,7 +6036,6 @@ def migrate_legacy_dot_constructors(
             set(candidates) | set(scoped_candidates)
         ),
     )
-
     def binding_is_shadowed(
         binding: ConstructorBinding,
         index: int,
@@ -5833,6 +6044,30 @@ def migrate_legacy_dot_constructors(
         return any(
             start <= index < end
             for start, end in owner_shadow_ranges[root]
+        )
+
+    def binding_conflict_targets(
+        binding: ConstructorBinding,
+        leaf: str,
+    ) -> tuple[str, ...]:
+        if binding.origin.provider == "<local-scope>":
+            return ()
+        if binding.origin.provider == "<local>":
+            targets = set(
+                _constructor_owner_conflict_targets(
+                    surface,
+                    binding.owner,
+                )
+            )
+            if local_qualified_term_winners.get(
+                f"{binding.owner}.{leaf}"
+            ) == "term":
+                targets.add("source-local library term")
+            return tuple(sorted(targets))
+        return _constructor_qualification_conflict_targets(
+            surface,
+            binding.owner,
+            leaf,
         )
 
     replacements: list[tuple[int, int, str]] = []
@@ -5858,8 +6093,61 @@ def migrate_legacy_dot_constructors(
             for start, end, owner in scoped_candidates.get(leaf, [])
             if start <= index < end
         }
-        bindings = set(candidates.get(leaf, set()))
-        bindings.update(scoped_bindings)
+        outer_bindings = set(candidates.get(leaf, set()))
+        active_promoted_owners = {
+            promoted_owner
+            for start, end, scoped_owner, promoted_owner in (
+                promoted_aliases.get(leaf, ())
+            )
+            if (
+                start <= index < end
+                and any(
+                    binding.owner == scoped_owner
+                    for binding in scoped_bindings
+                )
+            )
+        }
+        outer_bindings = {
+            binding
+            for binding in outer_bindings
+            if not (
+                binding.origin.provider == "<local>"
+                and binding.owner in active_promoted_owners
+            )
+        }
+        scoped_owners = {
+            binding.owner for binding in scoped_bindings
+        }
+        if (
+            len(scoped_owners) == 1
+            and outer_bindings
+            and {
+                binding.owner for binding in outer_bindings
+            }.issubset(scoped_owners)
+        ):
+            bindings = scoped_bindings
+        else:
+            bindings = outer_bindings | scoped_bindings
+        if not scoped_bindings:
+            local_bindings = {
+                binding
+                for binding in bindings
+                if binding.origin.provider == "<local>"
+            }
+            if (
+                len({binding.origin for binding in local_bindings}) == 1
+                and {
+                    binding.owner for binding in bindings
+                }
+                == {
+                    binding.owner for binding in local_bindings
+                }
+                and all(
+                    not binding_conflict_targets(binding, leaf)
+                    for binding in local_bindings
+                )
+            ):
+                bindings = local_bindings
         if (
             len({binding.origin for binding in bindings}) == 1
             and index + 1 not in constructor_pattern_tokens
@@ -5869,9 +6157,19 @@ def migrate_legacy_dot_constructors(
                 for binding in bindings
                 if not binding_is_shadowed(binding, index)
             }
+        binding_origins = {candidate.origin for candidate in bindings}
+        resolvable_bindings = {
+            candidate
+            for candidate in bindings
+            if not binding_conflict_targets(candidate, leaf)
+        }
         line, column = _source_line_column(source, token.start)
         location = f"line {line}, column {column}"
-        binding = _single_origin_constructor_binding(bindings)
+        binding = (
+            _single_origin_constructor_binding(resolvable_bindings)
+            if len(binding_origins) == 1
+            else None
+        )
         if (
             binding is not None
             and not surface.has_unknown_constructors
@@ -5902,6 +6200,23 @@ def migrate_legacy_dot_constructors(
                 rendered = ", ".join(rendered_bindings)
             if surface.has_unknown_constructors:
                 rendered += ", unresolved imported constructors"
+            conflict_targets: dict[str, set[str]] = {}
+            for candidate in bindings:
+                targets = binding_conflict_targets(candidate, leaf)
+                if targets:
+                    conflict_targets.setdefault(
+                        candidate.owner,
+                        set(),
+                    ).update(targets)
+            owner_conflicts = [
+                (
+                    f"qualification {owner}.{leaf} conflicts with "
+                    + ", ".join(sorted(targets))
+                )
+                for owner, targets in sorted(conflict_targets.items())
+            ]
+            if owner_conflicts:
+                rendered += "; " + "; ".join(owner_conflicts)
             errors.append(
                 f"ambiguous legacy dot-constructor .{leaf} at {location}; "
                 f"possible owners: {rendered}; qualify it explicitly"
@@ -7962,7 +8277,7 @@ def collect_global_constructor_owners(sources: Iterable[str]) -> dict[str, str]:
         canonical = migrate_incomplete_data_heads(
             migrate_data_declarations(source)
         )
-        candidates, _, _ = _constructor_owner_candidates(
+        candidates, _, _, _ = _constructor_owner_candidates(
             significant(canonical)
         )
         for leaf, owners in candidates.items():
@@ -7980,7 +8295,7 @@ def collect_global_dot_constructor_candidates(
         canonical = migrate_incomplete_data_heads(
             migrate_data_declarations(source)
         )
-        candidates, _ = _dot_constructor_owner_candidates(
+        candidates, _, _ = _dot_constructor_owner_candidates(
             significant(canonical)
         )
         for leaf, owners in candidates.items():
@@ -7998,6 +8313,7 @@ class _ExportedDataType:
 @dataclass(frozen=True)
 class _ProviderInterface:
     data_types: Mapping[str, tuple[_ExportedDataType, ...]]
+    type_origins: Mapping[str, tuple[ConstructorOrigin, ...]]
     terms: frozenset[str]
     public_names: frozenset[str]
     unknown: bool
@@ -9393,6 +9709,7 @@ def _provider_local_declarations(
     provider: Path,
 ) -> tuple[
     dict[str, list[_ExportedDataType]],
+    dict[str, list[ConstructorOrigin]],
     set[str],
     set[str],
     set[str],
@@ -9405,6 +9722,7 @@ def _provider_local_declarations(
     tokens = significant(canonical)
     _, enclosing = _classic_brace_context(tokens)
     data_types: dict[str, list[_ExportedDataType]] = {}
+    type_origins: dict[str, list[ConstructorOrigin]] = {}
     terms: set[str] = set()
     public_names: set[str] = set()
     malformed_data: set[str] = set()
@@ -9439,6 +9757,12 @@ def _provider_local_declarations(
             continue
         name = tokens[index + 1].text
         public_names.add(name)
+        origin = ConstructorOrigin(
+            str(_absolute_lexical_path(provider)),
+            name,
+            token.start,
+        )
+        type_origins.setdefault(name, []).append(origin)
         if token.text not in {"enum", "struct"}:
             continue
 
@@ -9463,15 +9787,16 @@ def _provider_local_declarations(
                 continue
             constructors = parsed_constructors
 
-        origin = ConstructorOrigin(
-            str(_absolute_lexical_path(provider)),
-            name,
-            token.start,
-        )
         data_types.setdefault(name, []).append(
             _ExportedDataType(origin, name, constructors)
         )
-    return data_types, terms, public_names, malformed_data
+    return (
+        data_types,
+        type_origins,
+        terms,
+        public_names,
+        malformed_data,
+    )
 
 
 def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
@@ -9484,6 +9809,7 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
     invalid_provider_items = _has_invalid_provider_items(canonical)
     (
         local_data,
+        local_type_origins,
         local_terms,
         local_public_names,
         malformed_data,
@@ -9511,6 +9837,7 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
     if not exports:
         return _ProviderInterface(
             {},
+            {},
             frozenset(),
             frozenset(),
             (
@@ -9524,6 +9851,10 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
 
     exported_terms: set[str] = set()
     exported_public_names: set[str] = set()
+    exported_type_origins: dict[
+        str,
+        set[ConstructorOrigin],
+    ] = {}
     exported_data: dict[
         tuple[str, ConstructorOrigin], tuple[str, set[str]]
     ] = {}
@@ -9548,6 +9879,9 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
         assert source_name == data_type.source_name
         visible.update(constructors)
         exported_public_names.add(public_name)
+        exported_type_origins.setdefault(public_name, set()).add(
+            data_type.origin
+        )
 
     for index in exports:
         end = _statement_end(tokens, index)
@@ -9571,6 +9905,10 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
             if len(part) == 1 and part[0].text == "*":
                 exported_terms.update(local_terms)
                 exported_public_names.update(local_public_names)
+                for name, origins in local_type_origins.items():
+                    exported_type_origins.setdefault(name, set()).update(
+                        origins
+                    )
                 continue
             if len(part) == 1 and part[0].kind == "word":
                 name = part[0].text
@@ -9578,6 +9916,10 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
                     exported_terms.add(name)
                 if name in local_public_names:
                     exported_public_names.add(name)
+                if name in local_type_origins:
+                    exported_type_origins.setdefault(name, set()).update(
+                        local_type_origins[name]
+                    )
                 if (
                     selected_import_wildcard
                     or name in selected_import_names
@@ -9659,10 +10001,85 @@ def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
             name: tuple(sorted(data, key=lambda item: item.origin))
             for name, data in grouped.items()
         },
+        {
+            name: tuple(sorted(origins))
+            for name, origins in exported_type_origins.items()
+        },
         frozenset(exported_terms),
         frozenset(exported_public_names),
         unknown,
     )
+
+
+def _local_qualified_term_winners(
+    tokens: Sequence[Token],
+) -> dict[str, str]:
+    """Track first source-local constructor or promoted library term paths."""
+
+    brace_pairs, enclosing = _classic_brace_context(tokens)
+    winners: dict[str, str] = {}
+    for index, token in enumerate(tokens):
+        if enclosing[index] is not None:
+            continue
+        if (
+            token.text in {"enum", "struct"}
+            and index + 1 < len(tokens)
+            and tokens[index + 1].kind == "word"
+        ):
+            body = _provider_data_body(tokens, index)
+            if body is None:
+                continue
+            name, body_open, body_close = body
+            if token.text == "struct":
+                if not _provider_struct_fields_are_valid(
+                    tokens[body_open + 1 : body_close]
+                ):
+                    continue
+                constructors = frozenset({name})
+            else:
+                parsed = _provider_enum_constructors(
+                    tokens[body_open + 1 : body_close]
+                )
+                if parsed is None:
+                    continue
+                constructors = parsed
+            for constructor in constructors:
+                winners.setdefault(
+                    f"{name}.{constructor}",
+                    "constructor",
+                )
+            continue
+        if token.text != "library":
+            continue
+        boundary = _header_boundary(tokens, index + 1)
+        if (
+            index + 1 >= len(tokens)
+            or tokens[index + 1].kind != "word"
+            or boundary is None
+            or tokens[boundary].text != "{"
+            or boundary not in brace_pairs
+        ):
+            continue
+        library_name = tokens[index + 1].text
+        for cursor in range(boundary + 1, brace_pairs[boundary]):
+            if (
+                tokens[cursor].text != "function"
+                or enclosing[cursor] != boundary
+                or cursor + 1 >= len(tokens)
+                or tokens[cursor + 1].kind != "word"
+            ):
+                continue
+            function_boundary = _header_boundary(tokens, cursor + 1)
+            if function_boundary is None:
+                continue
+            header = tokens[cursor + 1 : function_boundary]
+            if any(item.text == "private" for item in header):
+                continue
+            winners.setdefault(
+                f"{library_name}.{tokens[cursor + 1].text}",
+                "term",
+            )
+    return winners
 
 
 def _resolve_selected_import(
@@ -9708,6 +10125,10 @@ def build_constructor_import_surfaces(
         specs, malformed = _parse_import_specs(canonical)
         bare: dict[str, set[ConstructorBinding]] = {}
         dot: dict[str, set[ConstructorBinding]] = {}
+        owner_claims: dict[str, set[ConstructorOwnerClaim]] = {}
+        namespace_qualifier_targets: dict[str, set[str]] = {}
+        qualified_namespace_term_targets: dict[str, set[str]] = {}
+        qualified_import_term_winners: dict[str, str] = {}
         imported_terms: set[str] = set()
         unknown_terms: set[str] = set()
         unknown_unqualified_terms = malformed or import_conversion_failed
@@ -9736,6 +10157,10 @@ def build_constructor_import_surfaces(
         ) -> None:
             binding = ConstructorBinding(data_type.origin, owner)
             for constructor in data_type.constructors:
+                qualified_import_term_winners.setdefault(
+                    f"{owner}.{constructor}",
+                    "constructor",
+                )
                 dot.setdefault(constructor, set()).add(binding)
                 if (
                     constructor not in BUILTIN_CONSTRUCTORS
@@ -9745,6 +10170,42 @@ def build_constructor_import_surfaces(
                     )
                 ):
                     bare.setdefault(constructor, set()).add(binding)
+
+        def add_owner_claims(
+            origins: Iterable[ConstructorOrigin],
+            owner: str,
+            visible_through: str,
+            *,
+            local: bool = False,
+        ) -> None:
+            origins = tuple(origins)
+            if not origins:
+                return
+            claims = owner_claims.setdefault(owner, set())
+            claims.update(
+                ConstructorOwnerClaim(
+                    visible_through,
+                    origin,
+                    local,
+                )
+                for origin in origins
+            )
+
+        (
+            _,
+            local_type_origins,
+            _,
+            _,
+            _,
+        ) = _provider_local_declarations(canonical, consumer)
+        consumer_surface = str(_absolute_lexical_path(consumer))
+        for name, origins in local_type_origins.items():
+            add_owner_claims(
+                origins,
+                name,
+                consumer_surface,
+                local=True,
+            )
 
         for spec in specs:
             provider = _resolve_selected_import(
@@ -9759,9 +10220,18 @@ def build_constructor_import_surfaces(
             if interface.unknown:
                 mark_unknown(spec)
                 continue
+            import_target = str(_absolute_lexical_path(provider))
 
             if spec.kind == "open":
                 imported_terms.update(interface.terms)
+                for public_name, origins in (
+                    interface.type_origins.items()
+                ):
+                    add_owner_claims(
+                        origins,
+                        public_name,
+                        import_target,
+                    )
                 for public_name, data_types in interface.data_types.items():
                     for data_type in data_types:
                         add_data(data_type, public_name)
@@ -9769,6 +10239,28 @@ def build_constructor_import_surfaces(
 
             if spec.kind == "namespace":
                 assert spec.qualifier is not None
+                namespace_qualifier_targets.setdefault(
+                    spec.qualifier,
+                    set(),
+                ).add(import_target)
+                for term in interface.terms:
+                    qualified_term = f"{spec.qualifier}.{term}"
+                    qualified_namespace_term_targets.setdefault(
+                        qualified_term,
+                        set(),
+                    ).add(import_target)
+                    qualified_import_term_winners.setdefault(
+                        qualified_term,
+                        "namespace",
+                    )
+                for public_name, origins in (
+                    interface.type_origins.items()
+                ):
+                    add_owner_claims(
+                        origins,
+                        f"{spec.qualifier}.{public_name}",
+                        import_target,
+                    )
                 for public_name, data_types in interface.data_types.items():
                     owner = f"{spec.qualifier}.{public_name}"
                     for data_type in data_types:
@@ -9779,6 +10271,11 @@ def build_constructor_import_surfaces(
                 matched = source_name in interface.public_names
                 if source_name in interface.terms:
                     imported_terms.add(local_name)
+                add_owner_claims(
+                    interface.type_origins.get(source_name, ()),
+                    local_name,
+                    import_target,
+                )
                 for data_type in interface.data_types.get(
                     source_name, ()
                 ):
@@ -9797,6 +10294,23 @@ def build_constructor_import_surfaces(
                 leaf: frozenset(bindings)
                 for leaf, bindings in dot.items()
             },
+            owner_claims={
+                owner: frozenset(claims)
+                for owner, claims in owner_claims.items()
+            },
+            namespace_qualifier_targets={
+                qualifier: frozenset(targets)
+                for qualifier, targets in namespace_qualifier_targets.items()
+            },
+            qualified_namespace_term_targets={
+                term: frozenset(targets)
+                for term, targets in (
+                    qualified_namespace_term_targets.items()
+                )
+            },
+            qualified_import_term_winners=dict(
+                qualified_import_term_winners
+            ),
             imported_terms=frozenset(imported_terms),
             unknown_imported_terms=frozenset(unknown_terms),
             has_unknown_unqualified_terms=unknown_unqualified_terms,

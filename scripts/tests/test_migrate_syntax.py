@@ -992,6 +992,828 @@ function use(x: word) { return .Some(x); }
 
             self.assertEqual(messages[0], messages[1])
 
+    def test_disjoint_constructor_leaves_preserve_owner_collisions(
+        self,
+    ) -> None:
+        providers = {
+            "a.solc": "enum T { A(word) }\nexport {T(*)};\n",
+            "b.solc": "enum T { B(word) }\nexport {T(*)};\n",
+        }
+        cases = (
+            (("import a;", "import b;"), "T"),
+            (
+                (
+                    "import {T as U} from a;",
+                    "import {T as U} from b;",
+                ),
+                "U",
+            ),
+            (
+                (
+                    "import * as P from a;",
+                    "import * as P from b;",
+                ),
+                "P.T",
+            ),
+        )
+
+        for declarations, owner in cases:
+            messages = []
+            for ordered in (declarations, declarations[::-1]):
+                with self.subTest(
+                    declarations=ordered,
+                    owner=owner,
+                ):
+                    imports = "\n".join(ordered)
+                    bare_source = imports + "\n" + """\
+function use(x: word) { A(x); B(x); }
+"""
+                    sources, surfaces = self.surfaces(
+                        {
+                            **providers,
+                            "main.solc": bare_source,
+                        }
+                    )
+                    main = Path("/workspace/main.solc")
+
+                    self.assertEqual(
+                        MIGRATE.migrate_source(
+                            sources[main],
+                            constructor_import_surface=surfaces[main],
+                        ),
+                        bare_source,
+                    )
+
+                    dot_source = imports + "\n" + """\
+function use(x: word) { return .A(x); }
+"""
+                    sources, surfaces = self.surfaces(
+                        {
+                            **providers,
+                            "main.solc": dot_source,
+                        }
+                    )
+                    with self.assertRaises(ValueError) as raised:
+                        MIGRATE.migrate_source(
+                            sources[main],
+                            constructor_import_surface=surfaces[main],
+                        )
+                    message = str(raised.exception)
+                    self.assertRegex(
+                        message,
+                        (
+                            rf"qualification {re.escape(owner)}\.A "
+                            r"conflicts with "
+                            r"/workspace/a\.solc, /workspace/b\.solc"
+                        ),
+                    )
+                    messages.append(message)
+
+            self.assertEqual(messages[0], messages[1])
+
+    def test_namespace_qualifier_collision_spans_type_names(
+        self,
+    ) -> None:
+        source = """\
+import * as P from a;
+import * as P from b;
+import c;
+function use(x: word) { A(x); B(x); C(x); }
+"""
+        sources, surfaces = self.surfaces(
+            {
+                "a.solc": "enum T { A(word) }\nexport {T(*)};\n",
+                "b.solc": "enum S { B(word) }\nexport {S(*)};\n",
+                "c.solc": "enum P { C(word) }\nexport {P(*)};\n",
+                "main.solc": source,
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        self.assertIn(
+            "function use(x: word) { A(x); B(x); P.C(x); }",
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            ),
+        )
+        self.assertEqual(
+            surfaces[main].namespace_qualifier_targets["P"],
+            frozenset(
+                {
+                    "/workspace/a.solc",
+                    "/workspace/b.solc",
+                }
+            ),
+        )
+
+    def test_opaque_type_exports_still_claim_constructor_owners(
+        self,
+    ) -> None:
+        for opaque_provider in (
+            "enum T { B(word) }\nexport {T};\n",
+            "contract T {}\nexport {T};\n",
+            "alias T = word;\nexport {T};\n",
+        ):
+            with self.subTest(opaque_provider=opaque_provider):
+                source = """\
+import a;
+import b;
+function use(x: word) { A(x); }
+"""
+                sources, surfaces = self.surfaces(
+                    {
+                        "a.solc": (
+                            "enum T { A(word) }\n"
+                            "export {T(*)};\n"
+                        ),
+                        "b.solc": opaque_provider,
+                        "main.solc": source,
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    source,
+                )
+
+    def test_module_qualifier_and_type_owner_are_distinct(
+        self,
+    ) -> None:
+        source = """\
+import * as P from a;
+import b;
+import c;
+function use(x: word) { A(x); B(x); C(x); }
+"""
+        sources, surfaces = self.surfaces(
+            {
+                "a.solc": "enum T { A(word) }\nexport {T(*)};\n",
+                "b.solc": "enum P { B(word) }\nexport {P(*)};\n",
+                "c.solc": "enum V { C(word) }\nexport {V(*)};\n",
+                "main.solc": source,
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn(
+            (
+                "function use(x: word) { P.T.A(x); "
+                "P.B(x); V.C(x); }"
+            ),
+            migrated,
+        )
+
+    def test_exact_namespace_term_blocks_type_constructor_path(
+        self,
+    ) -> None:
+        cases = (
+            (
+                (
+                    "function B(x: word) returns (word) "
+                    "{ return x; }\nexport {B};\n"
+                ),
+                "B(x)",
+                True,
+            ),
+            (
+                (
+                    "function C(x: word) returns (word) "
+                    "{ return x; }\nexport {C};\n"
+                ),
+                "P.B(x)",
+                False,
+            ),
+            ("alias B = word;\nexport {B};\n", "P.B(x)", False),
+            ("enum B { X }\nexport {B};\n", "P.B(x)", False),
+            ("enum B { X }\nexport {B(*)};\n", "P.B(x)", False),
+        )
+        for namespace_source, expected_call, conflicts in cases:
+            with self.subTest(
+                namespace_source=namespace_source,
+            ):
+                source = """\
+import * as P from namespace;
+import provider;
+function use(x: word) { B(x); }
+"""
+                sources, surfaces = self.surfaces(
+                    {
+                        "namespace.solc": namespace_source,
+                        "provider.solc": (
+                            "enum P { B(word) }\n"
+                            "export {P(*)};\n"
+                        ),
+                        "main.solc": source,
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertIn(
+                    f"function use(x: word) {{ {expected_call}; }}",
+                    migrated,
+                )
+
+                if conflicts:
+                    dot_source = source.replace("B(x)", ".B(x)")
+                    sources, surfaces = self.surfaces(
+                        {
+                            "namespace.solc": namespace_source,
+                            "provider.solc": (
+                                "enum P { B(word) }\n"
+                                "export {P(*)};\n"
+                            ),
+                            "main.solc": dot_source,
+                        }
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        (
+                            r"qualification P\.B conflicts with "
+                            r"/workspace/namespace\.solc"
+                        ),
+                    ):
+                        MIGRATE.migrate_source(
+                            sources[main],
+                            constructor_import_surface=surfaces[main],
+                        )
+
+        constructor_first = """\
+import provider;
+import * as P from namespace;
+function use(x: word) { B(x); return .B(x); }
+"""
+        sources, surfaces = self.surfaces(
+            {
+                "namespace.solc": (
+                    "function B(x: word) returns (word) "
+                    "{ return x; }\nexport {B};\n"
+                ),
+                "provider.solc": (
+                    "enum P { B(word) }\n"
+                    "export {P(*)};\n"
+                ),
+                "main.solc": constructor_first,
+            }
+        )
+        main = Path("/workspace/main.solc")
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+        self.assertIn(
+            "function use(x: word) { P.B(x); return P.B(x); }",
+            migrated,
+        )
+        self.assertEqual(
+            surfaces[main].qualified_import_term_winners["P.B"],
+            "constructor",
+        )
+
+    def test_source_local_constructor_precedes_namespace_term(
+        self,
+    ) -> None:
+        bodies = (
+            """\
+enum P { B(word) }
+function use(x: word) { B(x); return .B(x); }
+""",
+            """\
+library C {
+  enum P { B(word) }
+  function use(x: word) { B(x); return .B(x); }
+}
+""",
+        )
+        for body in bodies:
+            with self.subTest(body=body):
+                source = "import * as P from namespace;\n" + body
+                sources, surfaces = self.surfaces(
+                    {
+                        "namespace.solc": (
+                            "function B(x: word) returns (word) "
+                            "{ return x; }\nexport {B};\n"
+                        ),
+                        "main.solc": source,
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertIn(
+                    "function use(x: word) { P.B(x); return P.B(x); }",
+                    migrated,
+                )
+
+        ambiguous = """\
+import * as P from namespace;
+enum P { B(word) }
+enum U { B(word) }
+function use(x: word) { return .B(x); }
+"""
+        sources, surfaces = self.surfaces(
+            {
+                "namespace.solc": (
+                    "function B(x: word) returns (word) "
+                    "{ return x; }\nexport {B};\n"
+                ),
+                "main.solc": ambiguous,
+            }
+        )
+        main = Path("/workspace/main.solc")
+        with self.assertRaises(ValueError) as raised:
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            )
+        self.assertNotIn(
+            "qualification P.B conflicts",
+            str(raised.exception),
+        )
+
+    def test_local_library_term_and_constructor_follow_item_order(
+        self,
+    ) -> None:
+        library = """\
+library P {
+  function B() returns (word) { return 0; }
+}
+"""
+        enum = "enum P { B(word) }\n"
+        use = "function use(x: word) { B(x); }\n"
+
+        self.assertEqual(
+            MIGRATE.migrate_source(library + enum + use),
+            library + enum + use,
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            r"qualification P\.B conflicts with source-local library term",
+        ):
+            MIGRATE.migrate_source(
+                (library + enum + use).replace("B(x)", ".B(x)")
+            )
+
+        constructor_first = enum + library + use
+        self.assertIn(
+            "function use(x: word) { P.B(x); }",
+            MIGRATE.migrate_source(constructor_first),
+        )
+
+        private_library = library.replace(
+            "B() returns",
+            "B() private returns",
+        )
+        self.assertIn(
+            "function use(x: word) { P.B(x); }",
+            MIGRATE.migrate_source(private_library + enum + use),
+        )
+
+        struct_collision = """\
+library T {
+  function T() returns (word) { return 0; }
+}
+struct T { value: word; }
+function use(x: word) { T(x); }
+"""
+        self.assertEqual(
+            MIGRATE.migrate_source(struct_collision),
+            struct_collision,
+        )
+
+    def test_library_data_owners_are_promoted_outside(
+        self,
+    ) -> None:
+        cases = (
+            ("enum Q { B(word) }", "B", "Q.B", "P.Q.B"),
+            (
+                "struct Q { value: word; }",
+                "Q",
+                "Q.Q",
+                "P.Q.Q",
+            ),
+        )
+        for declaration, leaf, inside_owner, outside_owner in cases:
+            with self.subTest(declaration=declaration):
+                source = f"""\
+library P {{
+  {declaration}
+  function inside(x: word) {{ {leaf}(x); return .{leaf}(x); }}
+}}
+function outside(x: word) {{ {leaf}(x); return .{leaf}(x); }}
+"""
+                migrated = MIGRATE.migrate_source(source)
+
+                self.assertIn(
+                    f"function inside(x: word) {{ {inside_owner}(x); "
+                    f"return {inside_owner}(x); }}",
+                    migrated,
+                )
+                self.assertIn(
+                    f"function outside(x: word) {{ {outside_owner}(x); "
+                    f"return {outside_owner}(x); }}",
+                    migrated,
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(migrated),
+                    migrated,
+                )
+
+    def test_local_library_promotion_precedes_same_import_owner(
+        self,
+    ) -> None:
+        source = """\
+import * as L from provider;
+library L {
+  enum T { B(bool) }
+}
+function outside(x: bool) { B(x); return .B(x); }
+"""
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": (
+                    "enum T { B(word) }\n"
+                    "export {T(*)};\n"
+                ),
+                "main.solc": source,
+            }
+        )
+        main = Path("/workspace/main.solc")
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn(
+            "function outside(x: bool) { "
+            "L.T.B(x); return L.T.B(x); }",
+            migrated,
+        )
+
+        different_owner = source.replace(
+            "import * as L from provider;",
+            "import * as P from provider;",
+        )
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": (
+                    "enum T { B(word) }\n"
+                    "export {T(*)};\n"
+                ),
+                "main.solc": different_owner.replace(
+                    "return .B(x);",
+                    "return B(x);",
+                ),
+            }
+        )
+        self.assertEqual(
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            ),
+            sources[main],
+        )
+
+    def test_source_local_type_names_claim_constructor_owners(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "import provider;\nenum T { B(word) }\n",
+                "function use(x: word) { A(x); B(x); }\n",
+                "function use(x: word) { A(x); B(x); }",
+            ),
+            (
+                "import {T as U} from provider;\nenum U { B(word) }\n",
+                "function use(x: word) { A(x); B(x); }\n",
+                "function use(x: word) { A(x); B(x); }",
+            ),
+            (
+                "import * as P from provider;\nenum P { B(word) }\n",
+                "function use(x: word) { A(x); B(x); }\n",
+                (
+                    "function use(x: word) { "
+                    "P.T.A(x); P.B(x); }"
+                ),
+            ),
+        )
+        for declarations, body, expected in cases:
+            with self.subTest(declarations=declarations):
+                source = declarations + body
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": (
+                            "enum T { A(word) }\n"
+                            "export {T(*)};\n"
+                        ),
+                        "main.solc": source,
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                self.assertIn(
+                    expected,
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                )
+
+    def test_local_namespace_claims_do_not_conflict_with_each_other(
+        self,
+    ) -> None:
+        source = """\
+enum T { T(word) }
+contract T {}
+contract A {
+  alias T = word;
+  function inside(x: word) { T(x); }
+}
+function outside(x: word) { T(x); }
+"""
+        sources, surfaces = self.surfaces({"main.solc": source})
+        main = Path("/workspace/main.solc")
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn(
+            "function inside(x: word) { T.T(x); }",
+            migrated,
+        )
+        self.assertIn(
+            "function outside(x: word) { T.T(x); }",
+            migrated,
+        )
+
+    def test_container_type_names_resolve_imported_disjoint_leaves(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "import provider;",
+                "T",
+                "T.B",
+            ),
+            (
+                "import * as P from provider;",
+                "P",
+                "P.T.B",
+            ),
+        )
+        for import_declaration, nested_owner, imported_owner in cases:
+            with self.subTest(import_declaration=import_declaration):
+                source = f"""\
+{import_declaration}
+contract C {{
+  enum {nested_owner} {{ A(word) }}
+  function inside(x: word) {{ A(x); B(x); return .B(x); }}
+}}
+function outside(x: word) {{ B(x); }}
+"""
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": (
+                            "enum T { B(word) }\n"
+                            "export {T(*)};\n"
+                        ),
+                        "main.solc": source,
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertIn(
+                    f"function inside(x: word) {{ "
+                    f"{nested_owner}.A(x); {imported_owner}(x); "
+                    f"return {imported_owner}(x); }}",
+                    migrated,
+                )
+                self.assertIn(
+                    f"function outside(x: word) {{ "
+                    f"{imported_owner}(x); }}",
+                    migrated,
+                )
+
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        migrated,
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    migrated,
+                )
+
+    def test_scoped_same_owner_constructor_wins_over_import(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "enum T { B(word) }\nexport {T(*)};\n",
+                "enum T { B(bool) }",
+                "B",
+            ),
+            (
+                "struct T { value: word; }\nexport {T(*)};\n",
+                "struct T { value: bool; }",
+                "T",
+            ),
+        )
+        for provider, nested, leaf in cases:
+            with self.subTest(provider=provider):
+                source = f"""\
+import provider;
+library C {{
+  {nested}
+  function inside(x: bool) {{ {leaf}(x); return .{leaf}(x); }}
+}}
+function outside(x: word) {{ {leaf}(x); }}
+"""
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": provider,
+                        "main.solc": source,
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertIn(
+                    f"function inside(x: bool) {{ T.{leaf}(x); "
+                    f"return T.{leaf}(x); }}",
+                    migrated,
+                )
+                self.assertIn(
+                    f"function outside(x: word) {{ {leaf}(x); }}",
+                    migrated,
+                )
+
+    def test_scoped_different_owner_constructor_stays_ambiguous(
+        self,
+    ) -> None:
+        source = """\
+import provider;
+library C {
+  enum U { B(bool) }
+  function inside(x: bool) { B(x); }
+}
+"""
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": (
+                    "enum T { B(word) }\n"
+                    "export {T(*)};\n"
+                ),
+                "main.solc": source,
+            }
+        )
+        main = Path("/workspace/main.solc")
+        self.assertEqual(
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            ),
+            source,
+        )
+
+        dot_source = source.replace("B(x)", ".B(x)")
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": (
+                    "enum T { B(word) }\n"
+                    "export {T(*)};\n"
+                ),
+                "main.solc": dot_source,
+            }
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            r"ambiguous legacy dot-constructor \.B.*T, U",
+        ):
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            )
+
+    def test_scoped_same_owner_constructor_wins_over_module_owner(
+        self,
+    ) -> None:
+        source = """\
+enum T { B(word) }
+library C {
+  enum T { B(bool) }
+  function inside(x: bool) { B(x); return .B(x); }
+}
+"""
+        sources, surfaces = self.surfaces({"main.solc": source})
+        main = Path("/workspace/main.solc")
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn(
+            "function inside(x: bool) { T.B(x); return T.B(x); }",
+            migrated,
+        )
+
+    def test_scoped_different_owner_conflicts_with_module_owner(
+        self,
+    ) -> None:
+        source = """\
+enum T { B(word) }
+library C {
+  enum U { B(bool) }
+  function inside(x: bool) { B(x); }
+}
+"""
+        sources, surfaces = self.surfaces({"main.solc": source})
+        main = Path("/workspace/main.solc")
+
+        self.assertEqual(
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            ),
+            source,
+        )
+
+    def test_same_import_target_owner_claims_are_deduplicated(
+        self,
+    ) -> None:
+        provider = """\
+enum T { A(word), B(word) }
+export {T(*)};
+"""
+        cases = (
+            (("import provider;", "import provider;"), "T"),
+            (
+                (
+                    "import {T as U} from provider;",
+                    "import {T as U} from provider;",
+                ),
+                "U",
+            ),
+            (
+                (
+                    "import * as P from provider;",
+                    "import * as P from provider;",
+                ),
+                "P.T",
+            ),
+        )
+        for declarations, owner in cases:
+            with self.subTest(declarations=declarations):
+                source = "\n".join(declarations) + "\n" + """\
+function use(x: word) { A(x); B(x); }
+"""
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": provider,
+                        "main.solc": source,
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertIn(
+                    f"function use(x: word) {{ {owner}.A(x); "
+                    f"{owner}.B(x); }}",
+                    migrated,
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        migrated,
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    migrated,
+                )
+
     def test_unknown_imports_override_same_origin_uniqueness(
         self,
     ) -> None:
@@ -3105,7 +3927,7 @@ contract A {
         self.assertEqual(migrated, source)
         self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
-    def test_contract_local_struct_owner_stays_in_its_library(self) -> None:
+    def test_library_struct_owner_is_promoted_outside(self) -> None:
         source = """\
 library L {
   function before(x: word) returns (T) { return T(x); }
@@ -3120,7 +3942,7 @@ library L {
   struct T { value: word; }
   function after(x: word) returns (T) { return T.T(x); }
 }
-function outside(x: word) returns (word) { return T(x); }
+function outside(x: word) returns (word) { return L.T.T(x); }
 """
 
         migrated = MIGRATE.migrate_source(source)
