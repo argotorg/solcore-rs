@@ -1760,18 +1760,36 @@ def migrate_imports(source: str) -> str:
                     )
                     continue
                 spelling = join_tokens(part)
-                selected.append((spelling, spelling))
+                line, column = _source_line_column(source, part[0].start)
+                raise ValueError(
+                    "cannot migrate non-identifier import selector "
+                    f"`{spelling}` at line {line}, column {column}: "
+                    "Classic and Core selective imports require an "
+                    "identifier with an optional identifier alias"
+                )
             hidden: set[str] = set()
             if hiding is not None and hiding + 1 < len(body) and body[hiding + 1].text == "{":
                 hidden_close = matching_index(body, hiding + 1)
                 if hidden_close is not None:
-                    hidden = {
-                        join_tokens(part)
-                        for part in split_top(
-                            body[hiding + 2 : hidden_close], ",", angles=False
-                        )
-                        if part
-                    }
+                    for part in split_top(
+                        body[hiding + 2 : hidden_close],
+                        ",",
+                        angles=False,
+                    ):
+                        if not part:
+                            continue
+                        if len(part) != 1 or part[0].kind != "word":
+                            spelling = join_tokens(part)
+                            line, column = _source_line_column(
+                                source, part[0].start
+                            )
+                            raise ValueError(
+                                "cannot migrate non-identifier hidden import "
+                                f"name `{spelling}` at line {line}, "
+                                f"column {column}: Classic import hiding "
+                                "requires identifier names"
+                            )
+                        hidden.add(part[0].text)
             names = [
                 spelling
                 for spelling, local_name in selected

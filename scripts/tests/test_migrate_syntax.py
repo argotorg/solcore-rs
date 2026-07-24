@@ -269,6 +269,21 @@ class OperatorImportMigrationTests(unittest.TestCase):
 
         self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
 
+    def test_rejects_non_identifier_classic_import_selectors(self) -> None:
+        cases = [
+            "import M.{T(*)};\n",
+            "import M.{T(T)};\n",
+            "import M.{value} hiding {T(*)};\n",
+        ]
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate non-identifier",
+                ):
+                    MIGRATE.migrate_source(classic)
+
     def test_leaves_non_operator_negative_selector_fixtures_unchanged(
         self,
     ) -> None:
