@@ -8456,6 +8456,550 @@ def _provider_impl_header_is_valid(
     )
 
 
+def _provider_special_modifiers_are_valid(
+    tokens: Sequence[Token],
+    *,
+    visibilities: frozenset[str],
+    mutabilities: frozenset[str],
+) -> bool:
+    if any(token.text not in MODIFIERS for token in tokens):
+        return False
+    visibility = [
+        token.text
+        for token in tokens
+        if token.text
+        in {"public", "external", "internal", "private"}
+    ]
+    mutability = [
+        token.text
+        for token in tokens
+        if token.text in {"pure", "view", "payable"}
+    ]
+    return (
+        len(visibility) <= 1
+        and len(mutability) <= 1
+        and len({token.text for token in tokens}) == len(tokens)
+        and set(visibility).issubset(visibilities)
+        and set(mutability).issubset(mutabilities)
+    )
+
+
+def _provider_constructor_header_is_valid(
+    header: Sequence[Token],
+) -> bool:
+    if len(header) < 3 or header[0].text != "constructor":
+        return False
+    if header[1].text != "(":
+        return False
+    close = matching_index(header, 1)
+    return (
+        close is not None
+        and _provider_params_are_valid(header[2:close])
+        and _provider_special_modifiers_are_valid(
+            header[close + 1 :],
+            visibilities=frozenset(),
+            mutabilities=frozenset({"payable"}),
+        )
+    )
+
+
+def _provider_unit_type_is_valid(tokens: Sequence[Token]) -> bool:
+    try:
+        rendered = render_type(tokens)
+    except ValueError:
+        return False
+    canonical = significant(rendered)
+    if not is_wrapped(canonical, "(", ")"):
+        return False
+    elements = _provider_list_parts(canonical[1:-1], ",")
+    if elements is None:
+        return False
+    if not elements:
+        return True
+    return (
+        len(elements) == 1
+        and _provider_unit_type_is_valid(elements[0])
+    )
+
+
+def _provider_returns_are_unit(tokens: Sequence[Token]) -> bool:
+    returns = _provider_list_parts(tokens, ",")
+    if returns is None:
+        return False
+    if not returns:
+        return True
+    if len(returns) != 1:
+        return False
+    result = returns[0]
+    colon = find_top(result, ":")
+    if colon is None:
+        result_type = result
+    elif (
+        colon == 1
+        and _is_core_import_identifier(result[0])
+    ):
+        result_type = result[colon + 1 :]
+    else:
+        return False
+    return _provider_unit_type_is_valid(result_type)
+
+
+def _provider_fallback_header_is_valid(
+    header: Sequence[Token],
+) -> bool:
+    if (
+        len(header) < 3
+        or header[0].text != "fallback"
+        or header[1].text != "("
+    ):
+        return False
+    close = matching_index(header, 1)
+    if close is None or close != 2:
+        return False
+    cursor = close + 1
+    modifier_start = cursor
+    while cursor < len(header) and header[cursor].text in MODIFIERS:
+        cursor += 1
+    if not _provider_special_modifiers_are_valid(
+        header[modifier_start:cursor],
+        visibilities=frozenset({"external"}),
+        mutabilities=frozenset({"payable"}),
+    ):
+        return False
+    if cursor < len(header) and header[cursor].text == "returns":
+        cursor += 1
+        if cursor >= len(header) or header[cursor].text != "(":
+            return False
+        close = matching_index(header, cursor)
+        if (
+            close is None
+            or not _provider_returns_are_unit(
+                header[cursor + 1 : close]
+            )
+        ):
+            return False
+        cursor = close + 1
+    return cursor == len(header)
+
+
+def _provider_function_header_modifiers(
+    header: Sequence[Token],
+) -> tuple[str, ...] | None:
+    if (
+        len(header) < 4
+        or header[0].text != "function"
+        or not _is_core_import_identifier(header[1])
+    ):
+        return None
+    cursor = _provider_generic_end(header, 2)
+    if (
+        cursor is None
+        or cursor >= len(header)
+        or header[cursor].text != "("
+    ):
+        return None
+    close = matching_index(header, cursor)
+    if close is None:
+        return None
+    cursor = close + 1
+    modifiers: list[str] = []
+    while cursor < len(header) and header[cursor].text in MODIFIERS:
+        modifiers.append(header[cursor].text)
+        cursor += 1
+    return tuple(modifiers)
+
+
+def _provider_member_statement_end(
+    tokens: Sequence[Token],
+    start: int,
+) -> int | None:
+    """Find a member semicolon without treating comparisons as generics."""
+
+    stack: list[str] = []
+    for index in range(start, len(tokens)):
+        if not stack and tokens[index].text == ";":
+            return index
+        _depth_step(stack, tokens[index].text, angles=False)
+    return None
+
+
+def _provider_function_member(
+    tokens: Sequence[Token],
+    start: int,
+) -> tuple[int, Sequence[Token], bool] | None:
+    boundary = _header_boundary(tokens, start + 1)
+    if boundary is None:
+        return None
+    header = tokens[start:boundary]
+    if not _provider_function_header_is_valid(header):
+        return None
+    if tokens[boundary].text == ";":
+        return boundary + 1, header, False
+    close = matching_index(tokens, boundary)
+    if close is None:
+        return None
+    return close + 1, header, True
+
+
+def _provider_special_function_member(
+    tokens: Sequence[Token],
+    start: int,
+) -> tuple[int, str] | None:
+    boundary = _header_boundary(tokens, start + 1)
+    if (
+        boundary is None
+        or tokens[boundary].text != "{"
+    ):
+        return None
+    header = tokens[start:boundary]
+    kind = tokens[start].text
+    valid = (
+        _provider_constructor_header_is_valid(header)
+        if kind == "constructor"
+        else _provider_fallback_header_is_valid(header)
+    )
+    close = matching_index(tokens, boundary)
+    if not valid or close is None:
+        return None
+    return close + 1, kind
+
+
+def _provider_data_member_end(
+    tokens: Sequence[Token],
+    start: int,
+) -> int | None:
+    data_body = _provider_data_body(tokens, start)
+    if data_body is None:
+        return None
+    _, body_open, body_close = data_body
+    kind = tokens[start].text
+    if not _provider_nominal_header_is_valid(
+        kind,
+        tokens[start:body_open],
+    ):
+        return None
+    if kind == "struct":
+        valid_body = _provider_struct_fields_are_valid(
+            tokens[body_open + 1 : body_close]
+        )
+    else:
+        valid_body = (
+            _provider_enum_constructors(
+                tokens[body_open + 1 : body_close]
+            )
+            is not None
+        )
+    if not valid_body:
+        return None
+    end = body_close + 1
+    if end < len(tokens) and tokens[end].text == ";":
+        end += 1
+    return end
+
+
+def _provider_alias_member_end(
+    tokens: Sequence[Token],
+    start: int,
+) -> int | None:
+    end = _statement_end(tokens, start)
+    if (
+        end is None
+        or not _provider_statement_is_valid(
+            tokens[start].text,
+            tokens[start + 1 : end],
+        )
+    ):
+        return None
+    return end + 1
+
+
+_PROVIDER_SIMPLE_BINARY_OPERATORS = frozenset(
+    {
+        "**",
+        "*",
+        "/",
+        "%",
+        "+",
+        "-",
+        "<<",
+        ">>",
+        "&",
+        "^",
+        "|",
+        "<",
+        ">",
+        "<=",
+        ">=",
+        "==",
+        "!=",
+        "&&",
+        "||",
+    }
+)
+
+
+def _provider_string_literal_is_valid(text: str) -> bool:
+    if len(text) < 2 or text[0] != '"' or text[-1] != '"':
+        return False
+    cursor = 1
+    while cursor < len(text) - 1:
+        if text[cursor] != "\\":
+            cursor += 1
+            continue
+        cursor += 1
+        if (
+            cursor >= len(text) - 1
+            or text[cursor] not in {'n', 't', '"', "\\"}
+        ):
+            return False
+        cursor += 1
+    return True
+
+
+def _provider_simple_expression_is_valid(
+    tokens: Sequence[Token],
+) -> bool:
+    """Validate a conservative, assignment-free Core expression subset."""
+
+    def expression_list_is_valid(
+        items: Sequence[Token],
+        *,
+        allow_trailing: bool,
+    ) -> bool:
+        if not items:
+            return True
+        parts = split_top(items, ",", angles=False)
+        if parts and not parts[-1]:
+            if not allow_trailing:
+                return False
+            parts = parts[:-1]
+        return all(
+            part and _provider_simple_expression_is_valid(part)
+            for part in parts
+        )
+
+    def operand_end(start: int) -> int | None:
+        cursor = start
+        while cursor < len(tokens) and tokens[cursor].text == "!":
+            cursor += 1
+        if cursor >= len(tokens):
+            return None
+
+        token = tokens[cursor]
+        if (
+            (
+                token.kind == "number"
+                and not token.text.startswith("0X")
+            )
+            or (
+                token.kind == "string"
+                and _provider_string_literal_is_valid(token.text)
+            )
+            or token.text in {"true", "false"}
+            or _is_core_import_identifier(token)
+        ):
+            cursor += 1
+        elif token.text == "(":
+            close = matching_index(tokens, cursor)
+            if (
+                close is None
+                or not expression_list_is_valid(
+                    tokens[cursor + 1 : close],
+                    allow_trailing=True,
+                )
+            ):
+                return None
+            cursor = close + 1
+        else:
+            return None
+
+        while cursor < len(tokens):
+            if tokens[cursor].text == ".":
+                if (
+                    cursor + 1 >= len(tokens)
+                    or not _is_core_import_identifier(
+                        tokens[cursor + 1]
+                    )
+                ):
+                    return None
+                cursor += 2
+                continue
+            if tokens[cursor].text == "(":
+                close = matching_index(tokens, cursor)
+                if (
+                    close is None
+                    or not expression_list_is_valid(
+                        tokens[cursor + 1 : close],
+                        allow_trailing=False,
+                    )
+                ):
+                    return None
+                cursor = close + 1
+                continue
+            if tokens[cursor].text == "[":
+                close = matching_index(tokens, cursor)
+                if (
+                    close is None
+                    or not _provider_simple_expression_is_valid(
+                        tokens[cursor + 1 : close]
+                    )
+                ):
+                    return None
+                cursor = close + 1
+                continue
+            break
+        return cursor
+
+    operators: list[str] = []
+    cursor = operand_end(0)
+    if cursor is None:
+        return False
+    while cursor < len(tokens):
+        if tokens[cursor].text not in _PROVIDER_SIMPLE_BINARY_OPERATORS:
+            return False
+        operators.append(tokens[cursor].text)
+        cursor = operand_end(cursor + 1)
+        if cursor is None:
+            return False
+
+    logical_segments: list[list[str]] = [[]]
+    for operator in operators:
+        if operator in {"&&", "||"}:
+            logical_segments.append([])
+        else:
+            logical_segments[-1].append(operator)
+    for logical_segment in logical_segments:
+        if sum(
+            operator in {"==", "!="}
+            for operator in logical_segment
+        ) > 1:
+            return False
+        relational_segments: list[list[str]] = [[]]
+        for operator in logical_segment:
+            if operator in {"==", "!="}:
+                relational_segments.append([])
+            else:
+                relational_segments[-1].append(operator)
+        if any(
+            sum(
+                operator in {"<", ">", "<=", ">="}
+                for operator in relational_segment
+            )
+            > 1
+            for relational_segment in relational_segments
+        ):
+            return False
+    return True
+
+
+def _provider_field_member_end(
+    tokens: Sequence[Token],
+    start: int,
+) -> int | None:
+    end = _provider_member_statement_end(tokens, start)
+    if end is None:
+        return None
+    field = tokens[start:end]
+    if (
+        len(field) < 3
+        or not _is_core_import_identifier(field[0])
+        or field[1].text != ":"
+    ):
+        return None
+    equals = find_top(field[2:], "=")
+    if equals is not None:
+        equals += 2
+        if (
+            equals == len(field) - 1
+            or not _provider_simple_expression_is_valid(
+                field[equals + 1 :]
+            )
+        ):
+            return None
+        type_tokens = field[2:equals]
+    else:
+        type_tokens = field[2:]
+    if not _provider_type_is_valid(type_tokens):
+        return None
+    return end + 1
+
+
+def _provider_container_body_is_valid(
+    kind: str,
+    tokens: Sequence[Token],
+) -> bool:
+    cursor = 0
+    while cursor < len(tokens):
+        member_kind = tokens[cursor].text
+
+        if kind == "trait":
+            member = _provider_function_member(tokens, cursor)
+            if (
+                member_kind != "function"
+                or member is None
+                or member[2]
+            ):
+                return False
+            cursor = member[0]
+            continue
+
+        if kind == "impl":
+            member = _provider_function_member(tokens, cursor)
+            if (
+                member_kind != "function"
+                or member is None
+                or not member[2]
+            ):
+                return False
+            cursor = member[0]
+            continue
+
+        if member_kind == "function":
+            member = _provider_function_member(tokens, cursor)
+            if member is None:
+                return False
+            end, header, has_body = member
+            if kind == "interface":
+                modifiers = _provider_function_header_modifiers(header)
+                if (
+                    has_body
+                    or modifiers is None
+                    or "external" not in modifiers
+                ):
+                    return False
+            elif not has_body:
+                return False
+            cursor = end
+            continue
+
+        if member_kind in {"constructor", "fallback"}:
+            member = _provider_special_function_member(tokens, cursor)
+            if kind != "contract" or member is None:
+                return False
+            cursor = member[0]
+            continue
+
+        if member_kind in {"alias", "type"}:
+            end = _provider_alias_member_end(tokens, cursor)
+            if end is None:
+                return False
+            cursor = end
+            continue
+
+        if member_kind in {"enum", "struct"}:
+            end = _provider_data_member_end(tokens, cursor)
+            if end is None:
+                return False
+            cursor = end
+            continue
+
+        end = _provider_field_member_end(tokens, cursor)
+        if kind != "contract" or end is None:
+            return False
+        cursor = end
+    return True
+
+
 def _provider_statement_is_valid(
     kind: str,
     body: Sequence[Token],
@@ -8568,7 +9112,23 @@ def _has_invalid_provider_items(source: str) -> bool:
             )
         if not valid_header:
             return True
-        cursor = brace_pairs[boundary] + 1
+        body_close = brace_pairs[boundary]
+        if (
+            kind
+            in {
+                "trait",
+                "impl",
+                "contract",
+                "interface",
+                "library",
+            }
+            and not _provider_container_body_is_valid(
+                kind,
+                tokens[boundary + 1 : body_close],
+            )
+        ):
+            return True
+        cursor = body_close + 1
         if (
             kind in {"enum", "struct"}
             and cursor < len(tokens)

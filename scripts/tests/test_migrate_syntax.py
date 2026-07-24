@@ -1365,6 +1365,121 @@ function make(x: word) { T(x); }
         self.assertFalse(surfaces[main].has_unknown_constructors)
         self.assertIn("T.T(x)", migrated)
 
+    def test_invalid_provider_container_members_fail_closed(
+        self,
+    ) -> None:
+        invalid_items = (
+            "trait Bad<A> { nonsense; }",
+            "trait Bad<A> { function f(x: A) {} }",
+            "impl Bad<word> { nonsense; }",
+            "impl Bad<word> { function f(x: word); }",
+            "contract Bad { nonsense; }",
+            "contract Bad { function f(); }",
+            "contract Bad { alias A = ; }",
+            "contract Bad { struct S { x: return; } }",
+            "contract Bad { value: word = a +; }",
+            "contract Bad { value: word = a = b; }",
+            "contract Bad { value: word = a < b < c; }",
+            "contract Bad { value: word = a == b == c; }",
+            r'contract Bad { text: string = "bad\q"; }',
+            "contract Bad { text: string = 'single'; }",
+            "contract Bad { value: word = 0XFF; }",
+            "contract Bad { constructor() public {} }",
+            "contract Bad { fallback(x: word) {} }",
+            "contract Bad { fallback() returns (word) {} }",
+            "interface Bad { value: word; }",
+            "interface Bad { constructor() {} }",
+            "interface Bad { fallback() {} }",
+            "interface Bad { function f() {} }",
+            "interface Bad { function f(); }",
+            "library Bad { value: word; }",
+            "library Bad { constructor() {} }",
+            "library Bad { fallback() {} }",
+            "library Bad { function f(); }",
+        )
+        for invalid_item in invalid_items:
+            with self.subTest(invalid_item=invalid_item):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": f"""\
+enum T {{ T(word) }}
+export {{T(*)}};
+{invalid_item}
+""",
+                        "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+
+    def test_valid_provider_container_members_remain_trusted(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+trait Good<A> {
+  function identity(x: A) returns (A);
+}
+impl Good<word> {
+  function identity(x: word) returns (word) { return x; }
+}
+contract C {
+  value: word;
+  ordered: bool = foo(1, bar).baz[0] && 1 < 2;
+  text: string = "line\\n";
+  alias A = word;
+  type B is word;
+  enum E { E(word), Other }
+  struct S { value: word; }
+  constructor() payable {}
+  fallback() external payable returns (()) {}
+  function f(x: word) public view returns (word) { return x; }
+}
+interface I {
+  alias A = word;
+  enum E { E(word) }
+  struct S { value: word; }
+  function f(x: word) external view returns (word);
+}
+library L {
+  alias A = word;
+  enum E { E(word) }
+  struct S { value: word; }
+  function f(x: word) internal pure returns (word) { return x; }
+}
+enum T { T(word) }
+export {T(*)};
+""",
+                "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+        self.assertIn("T.T(x)", migrated)
+
     def test_valid_complex_provider_items_remain_trusted(self) -> None:
         sources, surfaces = self.surfaces(
             {
