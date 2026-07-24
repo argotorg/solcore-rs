@@ -861,19 +861,19 @@ function use(x: word) returns (T) { return T.T(x); }
                 self.assertEqual(migrated, expected)
                 self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
-    def test_lowercase_match_binders_are_not_constructor_qualified(
+    def test_lowercase_match_patterns_follow_constructor_visibility(
         self,
     ) -> None:
         cases = [
             (
                 """\
-enum t { t(word) }
+enum Other { Other(word) }
 function use(x: word) returns (word) {
   match (x) { case t { return t; } }
 }
 """,
                 """\
-enum t { t(word) }
+enum Other { Other(word) }
 function use(x: word) returns (word) {
   match (x) { case t { return t; } }
 }
@@ -890,10 +890,24 @@ function use(x: word) -> word {
 enum t { t(word) }
 function use(x: word) returns (word) {
   match (x) {
-case t {
-return t;
+case t.t {
+return t.t;
 }
 }
+}
+""",
+            ),
+            (
+                """\
+enum t { t }
+function use(x: t) returns (word) {
+  match (x) { case t { return 0; } }
+}
+""",
+                """\
+enum t { t }
+function use(x: t) returns (word) {
+  match (x) { case t.t { return 0; } }
 }
 """,
             ),

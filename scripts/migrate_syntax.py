@@ -4883,10 +4883,11 @@ def _body_type_tokens(
 
 def _body_binding_tokens(
     tokens: Sequence[Token], body_start: int, body_end: int
-) -> set[int]:
-    """Mark local binding patterns, which are never constructor uses."""
+) -> tuple[set[int], set[int]]:
+    """Mark bindings and bare match names that may resolve as constructors."""
 
     marked: set[int] = set()
+    bare_match_bindings: set[int] = set()
     for index in range(body_start, body_end):
         if tokens[index].text != "let":
             continue
@@ -4928,7 +4929,8 @@ def _body_binding_tokens(
             ):
                 continue
             marked.add(cursor)
-    return marked
+            bare_match_bindings.add(cursor)
+    return marked, bare_match_bindings
 
 
 def _body_constructor_pattern_tokens(
@@ -5026,7 +5028,7 @@ def migrate_qualified_constructors(
     for body_start, body_end in bodies:
         body_tokens.update(range(body_start, body_end))
         type_tokens = _body_type_tokens(tokens, body_start, body_end)
-        binding_tokens = _body_binding_tokens(
+        binding_tokens, bare_match_bindings = _body_binding_tokens(
             tokens, body_start, body_end
         )
         constructor_pattern_tokens = _body_constructor_pattern_tokens(
@@ -5035,11 +5037,18 @@ def migrate_qualified_constructors(
         for index in range(body_start, body_end):
             token = tokens[index]
             leaf = token.text
+            if token.kind != "word" or leaf not in constructor_leaves:
+                continue
+            owner, is_local_owner = owner_at(index, leaf)
+            if owner is None:
+                continue
+            is_constructor_pattern = (
+                index in constructor_pattern_tokens
+                or index in bare_match_bindings
+            )
             if (
-                token.kind != "word"
-                or leaf not in constructor_leaves
-                or (
-                    index not in constructor_pattern_tokens
+                (
+                    not is_constructor_pattern
                     and any(
                         start <= index < end
                         for start, end in shadow_ranges[leaf]
@@ -5047,11 +5056,11 @@ def migrate_qualified_constructors(
                 )
                 or index in nonterm_tokens
                 or index in type_tokens
-                or index in binding_tokens
+                or (
+                    index in binding_tokens
+                    and not is_constructor_pattern
+                )
             ):
-                continue
-            owner, is_local_owner = owner_at(index, leaf)
-            if owner is None:
                 continue
             previous = tokens[index - 1].text if index else ""
             following = tokens[index + 1].text if index + 1 < len(tokens) else ""
