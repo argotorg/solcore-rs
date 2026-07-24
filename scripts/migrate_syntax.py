@@ -29,11 +29,12 @@ Pass ``--classic-bare-imports`` when the input still uses Classic Solcore's
 ``import * as M from M;`` before the remaining syntax migration; without the
 flag, canonical Core ``import M;`` keeps its open-import meaning.
 
-Classic prefix-dot enum constructors are qualified from their declaration
-owner when the leaf has one unambiguous owner in the CLI input
-(``.Some(...)`` becomes ``Option.Some(...)``).  Ambiguous or unresolved
-prefix-dot constructors stop the migration with a diagnostic instead of
-silently producing source that the new parser rejects.
+Classic prefix-dot enum constructors are qualified from a source-local
+declaration or a constructor explicitly exposed through the consumer's
+resolved import surface (``.Some(...)`` becomes ``Option.Some(...)``).
+Providers are matched only through unambiguous ordinary relative paths among
+the selected source files; standard, external, multi-root, unresolved, and
+ambiguous imports fail closed instead of borrowing an unrelated declaration.
 
 Batch writes are failure-atomic for migration errors, I/O failures, and
 interrupts.  Selected files must not be modified concurrently by another
@@ -41,10 +42,13 @@ process: the command revalidates bytes and file identities before and after
 the commit, but no portable filesystem primitive can combine an in-place
 metadata-preserving write with exclusion of uncooperative writers.
 
-Bare same-name constructors are also qualified when their owner is
-unambiguous (``enum Point { Point(...) }`` makes term and pattern uses become
-``Point.Point(...)``).  A source that deliberately tests a rejected
-unqualified spelling can opt out of these passes with this comment:
+Bare same-name constructors are also qualified when their source-local or
+imported origin is unambiguous (``enum Point { Point(...) }`` makes term and
+pattern uses become ``Point.Point(...)``). Imported functions retain term
+precedence in expressions, while constructor patterns remain structural.
+Embedded Rust literals are isolated sources and never seed one another's
+constructor surface. A source that deliberately tests a rejected unqualified
+spelling can opt out of these passes with this comment:
 
     // migrate-syntax: keep-unqualified-constructor
 
@@ -220,6 +224,45 @@ class FunctionTypeSuffix:
     returns_open: int | None
     returns_close: int | None
     end: int
+
+
+@dataclass(frozen=True, order=True)
+class ConstructorOrigin:
+    """Stable identity for one exported algebraic-data declaration."""
+
+    provider: str
+    type_name: str
+    declaration_start: int
+
+
+@dataclass(frozen=True, order=True)
+class ConstructorBinding:
+    """One constructor origin and the type qualifier visible to a consumer."""
+
+    origin: ConstructorOrigin
+    owner: str
+
+
+@dataclass(frozen=True)
+class ConstructorImportSurface:
+    """Constructor and term facts proven from one source file's imports."""
+
+    bare_candidates: Mapping[str, frozenset[ConstructorBinding]]
+    dot_candidates: Mapping[str, frozenset[ConstructorBinding]]
+    imported_terms: frozenset[str]
+    unknown_imported_terms: frozenset[str]
+    has_unknown_unqualified_terms: bool
+    has_unknown_constructors: bool
+
+
+EMPTY_CONSTRUCTOR_IMPORT_SURFACE = ConstructorImportSurface(
+    bare_candidates={},
+    dot_candidates={},
+    imported_terms=frozenset(),
+    unknown_imported_terms=frozenset(),
+    has_unknown_unqualified_terms=False,
+    has_unknown_constructors=False,
+)
 
 
 def _scan_quoted(source: str, start: int, quote: str) -> int:
@@ -5132,12 +5175,14 @@ def _body_constructor_pattern_tokens(
 def migrate_qualified_constructors(
     source: str,
     global_owners: Mapping[str, str] | None = None,
+    import_surface: ConstructorImportSurface | None = None,
 ) -> str:
-    """Qualify term and pattern uses with local or globally unique owners."""
+    """Qualify term and pattern uses with local or proven imported owners."""
 
     if has_comment_marker(source, KEEP_UNQUALIFIED_CONSTRUCTOR_MARKER):
         return source
 
+    surface = import_surface or EMPTY_CONSTRUCTOR_IMPORT_SURFACE
     tokens = significant(source)
     (
         module_candidates,
@@ -5145,31 +5190,65 @@ def migrate_qualified_constructors(
         declaration_tokens,
     ) = _constructor_owner_candidates(tokens)
     module_owners = _unique_constructor_owners(module_candidates)
+    # ``global_owners`` is retained for direct API compatibility.  The CLI no
+    # longer builds this repository-wide spelling table: imported owners carry
+    # provider identity in ``surface`` and are considered only by consumers
+    # whose import declarations actually expose them.
     constructor_owners = dict(global_owners or {})
     for namespace_name in _declared_type_and_module_names(tokens):
         constructor_owners.pop(namespace_name, None)
+    trusted_import_owners: dict[str, str] = {}
+    ambiguous_import_leaves: set[str] = set()
+    imported_constructor_leaves = set(surface.bare_candidates)
+    for leaf, bindings in surface.bare_candidates.items():
+        if len(bindings) == 1:
+            owner = next(iter(bindings)).owner
+            constructor_owners[leaf] = owner
+            trusted_import_owners[leaf] = owner
+        else:
+            constructor_owners.pop(leaf, None)
+            ambiguous_import_leaves.add(leaf)
     # A declaration in this source is more precise than a repository-wide
-    # spelling.  A locally ambiguous leaf must remain untouched.
+    # compatibility spelling.  An actual imported declaration is not a guess,
+    # however: a local and imported constructor with the same leaf are
+    # different origins and must remain ambiguous.
     constructor_owners.update(module_owners)
     for leaf, candidates in module_candidates.items():
-        if len(candidates) != 1:
+        if (
+            len(candidates) != 1
+            or leaf in imported_constructor_leaves
+        ):
             constructor_owners.pop(leaf, None)
-    constructor_leaves = set(constructor_owners) | set(scoped_candidates)
+    constructor_leaves = (
+        set(constructor_owners)
+        | set(scoped_candidates)
+        | ambiguous_import_leaves
+    )
     if not constructor_leaves:
         return source
 
-    def owner_at(index: int, leaf: str) -> tuple[str | None, bool]:
+    def owner_at(index: int, leaf: str) -> tuple[str | None, bool, bool]:
         scoped = {
             owner
             for start, end, owner in scoped_candidates.get(leaf, [])
             if start <= index < end
         }
         if scoped:
+            if leaf in imported_constructor_leaves:
+                return None, True, False
             return (
                 next(iter(scoped)) if len(scoped) == 1 else None,
                 True,
+                False,
             )
-        return constructor_owners.get(leaf), leaf in module_owners
+        owner = constructor_owners.get(leaf)
+        is_local = leaf in module_owners
+        is_trusted_import = (
+            not is_local
+            and owner is not None
+            and trusted_import_owners.get(leaf) == owner
+        )
+        return owner, is_local, is_trusted_import
 
     shadow_ranges = _classic_shadow_ranges(
         tokens,
@@ -5195,7 +5274,7 @@ def migrate_qualified_constructors(
             leaf = token.text
             if token.kind != "word" or leaf not in constructor_leaves:
                 continue
-            owner, is_local_owner = owner_at(index, leaf)
+            owner, is_local_owner, is_trusted_import = owner_at(index, leaf)
             if owner is None:
                 continue
             is_constructor_pattern = (
@@ -5205,9 +5284,14 @@ def migrate_qualified_constructors(
             if (
                 (
                     not is_constructor_pattern
-                    and any(
-                        start <= index < end
-                        for start, end in shadow_ranges[leaf]
+                    and (
+                        leaf in surface.imported_terms
+                        or leaf in surface.unknown_imported_terms
+                        or surface.has_unknown_unqualified_terms
+                        or any(
+                            start <= index < end
+                            for start, end in shadow_ranges[leaf]
+                        )
                     )
                 )
                 or index in nonterm_tokens
@@ -5224,6 +5308,7 @@ def migrate_qualified_constructors(
                 continue
             if (
                 not is_local_owner
+                and not is_trusted_import
                 and following == "("
                 and matching_index(tokens, index + 1) == index + 2
             ):
@@ -5233,6 +5318,7 @@ def migrate_qualified_constructors(
                 continue
             if (
                 not is_local_owner
+                and not is_trusted_import
                 and previous == "case"
                 and following not in {"(", "as"}
             ):
@@ -5244,6 +5330,7 @@ def migrate_qualified_constructors(
                 continue
             if (
                 not is_local_owner
+                and not is_trusted_import
                 and following not in {"(", "as"}
                 and previous not in {"return", "=", ":=", "case"}
             ):
@@ -5280,11 +5367,22 @@ def migrate_qualified_constructors(
         if previous not in {"return", "=", ":=", "case"}:
             continue
         leaf = token.text
-        owner, is_local_owner = owner_at(index, leaf)
+        owner, is_local_owner, is_trusted_import = owner_at(index, leaf)
         if owner is None:
+            continue
+        is_pattern = previous == "case"
+        if (
+            not is_pattern
+            and (
+                leaf in surface.imported_terms
+                or leaf in surface.unknown_imported_terms
+                or surface.has_unknown_unqualified_terms
+            )
+        ):
             continue
         if (
             not is_local_owner
+            and not is_trusted_import
             and matching_index(tokens, index + 1) == index + 2
         ):
             continue
@@ -5409,25 +5507,44 @@ def _source_line_column(source: str, offset: int) -> tuple[int, int]:
 def migrate_legacy_dot_constructors(
     source: str,
     global_candidates: Mapping[str, set[str]] | None = None,
+    import_surface: ConstructorImportSurface | None = None,
 ) -> str:
-    """Rewrite Classic ``.Leaf`` constructors or reject unsafe guesses."""
+    """Rewrite Classic ``.Leaf`` constructors from proven visible owners."""
 
     if has_comment_marker(source, KEEP_UNQUALIFIED_CONSTRUCTOR_MARKER):
         return source
 
+    surface = import_surface or EMPTY_CONSTRUCTOR_IMPORT_SURFACE
     tokens = significant(source)
     module_candidates, scoped_candidates = (
         _dot_constructor_owner_candidates(tokens)
     )
-    candidates = {
-        leaf: set(owners)
-        for leaf, owners in (global_candidates or {}).items()
-    }
-    # A source-local declaration is more precise than the CLI-wide table,
-    # while two local declarations with the same leaf remain ambiguous.
-    candidates.update(
-        {leaf: set(owners) for leaf, owners in module_candidates.items()}
-    )
+    candidates: dict[str, set[ConstructorBinding]] = {}
+
+    # Retain the old direct-call API as an explicitly untrusted compatibility
+    # input.  The public CLI never constructs this repository-global table.
+    for leaf, owners in (global_candidates or {}).items():
+        candidates[leaf] = {
+            ConstructorBinding(
+                ConstructorOrigin("<legacy-global>", owner, 0),
+                owner,
+            )
+            for owner in owners
+        }
+
+    # A source-local declaration is more precise than a legacy compatibility
+    # table.  Actual imported bindings are then unioned by origin so two
+    # providers which both spell the owner ``T`` remain ambiguous.
+    for leaf, owners in module_candidates.items():
+        candidates[leaf] = {
+            ConstructorBinding(
+                ConstructorOrigin("<local>", owner, 0),
+                owner,
+            )
+            for owner in owners
+        }
+    for leaf, bindings in surface.dot_candidates.items():
+        candidates.setdefault(leaf, set()).update(bindings)
 
     replacements: list[tuple[int, int, str]] = []
     errors: list[str] = []
@@ -5435,30 +5552,59 @@ def migrate_legacy_dot_constructors(
         if not _is_legacy_dot_constructor(tokens, index):
             continue
         leaf = tokens[index + 1].text
-        scoped_owners = {
-            owner
+        scoped_bindings = {
+            ConstructorBinding(
+                ConstructorOrigin("<local-scope>", owner, start),
+                owner,
+            )
             for start, end, owner in scoped_candidates.get(leaf, [])
             if start <= index < end
         }
-        owners = set(candidates.get(leaf, set()))
-        owners.update(scoped_owners)
+        bindings = set(candidates.get(leaf, set()))
+        bindings.update(scoped_bindings)
         line, column = _source_line_column(source, token.start)
         location = f"line {line}, column {column}"
-        if len(owners) == 1:
+        if len(bindings) == 1 and not surface.has_unknown_constructors:
             # Insert the owner before the original dot instead of replacing
             # the whole span so comments between `.` and the leaf survive.
-            owner = next(iter(owners))
+            owner = next(iter(bindings)).owner
             replacements.append((token.start, token.start, owner))
-        elif owners:
-            rendered = ", ".join(sorted(owners))
+        elif bindings:
+            owner_counts: dict[str, int] = {}
+            for binding in bindings:
+                owner_counts[binding.owner] = (
+                    owner_counts.get(binding.owner, 0) + 1
+                )
+            if all(count == 1 for count in owner_counts.values()):
+                rendered = ", ".join(sorted(owner_counts))
+            else:
+                rendered_bindings = []
+                for binding in sorted(bindings):
+                    if owner_counts[binding.owner] == 1:
+                        rendered_bindings.append(binding.owner)
+                    else:
+                        rendered_bindings.append(
+                            f"{binding.owner} "
+                            f"(from {binding.origin.provider})"
+                        )
+                rendered = ", ".join(rendered_bindings)
+            if surface.has_unknown_constructors:
+                rendered += ", unresolved imported constructors"
             errors.append(
                 f"ambiguous legacy dot-constructor .{leaf} at {location}; "
                 f"possible owners: {rendered}; qualify it explicitly"
             )
         else:
+            reason = (
+                " because at least one imported constructor surface is "
+                "unresolved"
+                if surface.has_unknown_constructors
+                else ""
+            )
             errors.append(
                 f"cannot resolve legacy dot-constructor .{leaf} at "
-                f"{location}; include its enum declaration in this migration "
+                f"{location}{reason}; include its enum declaration and "
+                "export/import path in this migration "
                 "invocation or qualify it explicitly"
             )
     if errors:
@@ -7401,6 +7547,8 @@ def migrate_source(
     source: str,
     global_constructor_owners: Mapping[str, str] | None = None,
     global_dot_constructor_candidates: Mapping[str, set[str]] | None = None,
+    *,
+    constructor_import_surface: ConstructorImportSurface | None = None,
 ) -> str:
     if has_comment_marker(source, KEEP_LEGACY_NEGATIVE_MARKER):
         return source
@@ -7448,10 +7596,14 @@ def migrate_source(
         for migration in passes:
             source = migration(source)
         source = migrate_legacy_dot_constructors(
-            source, global_dot_constructor_candidates
+            source,
+            global_dot_constructor_candidates,
+            constructor_import_surface,
         )
         source = migrate_qualified_constructors(
-            source, global_constructor_owners
+            source,
+            global_constructor_owners,
+            constructor_import_surface,
         )
         if source == before:
             reject_remaining_expression_annotations(source)
@@ -7494,6 +7646,616 @@ def collect_global_dot_constructor_candidates(
     return merged
 
 
+@dataclass(frozen=True)
+class _ExportedDataType:
+    origin: ConstructorOrigin
+    source_name: str
+    constructors: frozenset[str]
+
+
+@dataclass(frozen=True)
+class _ProviderInterface:
+    data_types: Mapping[str, tuple[_ExportedDataType, ...]]
+    terms: frozenset[str]
+    public_names: frozenset[str]
+    unknown: bool
+
+
+@dataclass(frozen=True)
+class _ImportSpec:
+    kind: str
+    external: bool
+    path: tuple[str, ...]
+    selections: tuple[tuple[str, str], ...] = ()
+    qualifier: str | None = None
+
+
+def _absolute_lexical_path(path: Path) -> Path:
+    """Make a selected path absolute without resolving symlink identity."""
+
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def _parse_module_path(
+    tokens: Sequence[Token],
+) -> tuple[bool, tuple[str, ...]] | None:
+    cursor = 0
+    external = bool(tokens and tokens[0].text == "@")
+    if external:
+        cursor += 1
+    segments: list[str] = []
+    expect_name = True
+    while cursor < len(tokens):
+        token = tokens[cursor]
+        if expect_name:
+            if token.kind != "word":
+                return None
+            segments.append(token.text)
+        elif token.text != ".":
+            return None
+        expect_name = not expect_name
+        cursor += 1
+    if expect_name or not segments:
+        return None
+    return external, tuple(segments)
+
+
+def _parse_import_specs(
+    source: str,
+) -> tuple[list[_ImportSpec], bool]:
+    """Parse the canonical import forms needed by constructor discovery."""
+
+    tokens = significant(source)
+    _, enclosing = _classic_brace_context(tokens)
+    specs: list[_ImportSpec] = []
+    malformed = False
+    for index, token in enumerate(tokens):
+        if token.text != "import" or enclosing[index] is not None:
+            continue
+        end = _statement_end(tokens, index)
+        if end is None:
+            malformed = True
+            continue
+        body = list(tokens[index + 1 : end])
+        if not body:
+            malformed = True
+            continue
+
+        if body[0].text == "*":
+            if (
+                len(body) < 5
+                or body[1].text != "as"
+                or body[2].kind != "word"
+                or body[3].text != "from"
+            ):
+                malformed = True
+                continue
+            parsed_path = _parse_module_path(body[4:])
+            if parsed_path is None:
+                malformed = True
+                continue
+            external, path = parsed_path
+            specs.append(
+                _ImportSpec(
+                    "namespace",
+                    external,
+                    path,
+                    qualifier=body[2].text,
+                )
+            )
+            continue
+
+        if body[0].text == "{":
+            close = matching_index(body, 0)
+            if (
+                close is None
+                or close + 1 >= len(body)
+                or body[close + 1].text != "from"
+            ):
+                malformed = True
+                continue
+            parsed_path = _parse_module_path(body[close + 2 :])
+            if parsed_path is None:
+                malformed = True
+                continue
+            selections: list[tuple[str, str]] = []
+            valid = True
+            parts = split_top(
+                body[1:close],
+                ",",
+                angles=False,
+            )
+            if any(not part for part in parts):
+                malformed = True
+                continue
+            for part in parts:
+                if len(part) == 1 and part[0].kind == "word":
+                    selections.append((part[0].text, part[0].text))
+                elif (
+                    len(part) == 3
+                    and part[0].kind == "word"
+                    and part[1].text == "as"
+                    and part[2].kind == "word"
+                ):
+                    selections.append((part[0].text, part[2].text))
+                else:
+                    valid = False
+                    break
+            if not valid or not selections:
+                malformed = True
+                continue
+            external, path = parsed_path
+            specs.append(
+                _ImportSpec(
+                    "selective",
+                    external,
+                    path,
+                    tuple(selections),
+                )
+            )
+            continue
+
+        parsed_path = _parse_module_path(body)
+        if parsed_path is None:
+            malformed = True
+            continue
+        external, path = parsed_path
+        specs.append(_ImportSpec("open", external, path))
+    return specs, malformed
+
+
+def _has_unbalanced_structural_delimiters(
+    tokens: Sequence[Token],
+) -> bool:
+    """Recognize provider-wide parse damage without guessing at angle roles."""
+
+    stack: list[str] = []
+    pairs = {")": "(", "]": "[", "}": "{"}
+    for token in tokens:
+        if token.text in {"(", "[", "{"}:
+            stack.append(token.text)
+        elif token.text in pairs:
+            if not stack or stack[-1] != pairs[token.text]:
+                return True
+            stack.pop()
+    return bool(stack)
+
+
+def _surface_import_source(source: str) -> tuple[str, bool]:
+    """Canonicalize imports without letting discovery preempt migration."""
+
+    try:
+        return migrate_imports(source), False
+    except ValueError:
+        # The migration pass will later report the precise source-local error
+        # (or honor a keep-legacy marker).  Constructor discovery must merely
+        # avoid deriving cross-file facts from the malformed surface.
+        return source, True
+
+
+def _provider_local_declarations(
+    source: str,
+    provider: Path,
+) -> tuple[
+    dict[str, list[_ExportedDataType]],
+    set[str],
+    set[str],
+    set[str],
+]:
+    """Collect direct module items without treating contract members as exports."""
+
+    canonical = migrate_incomplete_data_heads(
+        migrate_data_declarations(source)
+    )
+    tokens = significant(canonical)
+    _, enclosing = _classic_brace_context(tokens)
+    data_types: dict[str, list[_ExportedDataType]] = {}
+    terms: set[str] = set()
+    public_names: set[str] = set()
+    malformed_data: set[str] = set()
+
+    named_items = {
+        "alias",
+        "class",
+        "contract",
+        "enum",
+        "interface",
+        "library",
+        "struct",
+        "trait",
+        "type",
+    }
+    for index, token in enumerate(tokens):
+        if enclosing[index] is not None:
+            continue
+        if (
+            token.text == "function"
+            and index + 1 < len(tokens)
+            and tokens[index + 1].kind == "word"
+        ):
+            terms.add(tokens[index + 1].text)
+            public_names.add(tokens[index + 1].text)
+            continue
+        if (
+            token.text not in named_items
+            or index + 1 >= len(tokens)
+            or tokens[index + 1].kind != "word"
+        ):
+            continue
+        name = tokens[index + 1].text
+        public_names.add(name)
+        if token.text not in {"enum", "struct"}:
+            continue
+
+        if token.text == "struct":
+            constructors = frozenset({name})
+        else:
+            cursor = index + 2
+            if cursor < len(tokens) and tokens[cursor].text == "<":
+                close = matching_index(tokens, cursor)
+                if close is None:
+                    malformed_data.add(name)
+                    continue
+                cursor = close + 1
+            if cursor >= len(tokens) or tokens[cursor].text != "{":
+                malformed_data.add(name)
+                continue
+            close = matching_index(tokens, cursor)
+            if close is None:
+                malformed_data.add(name)
+                continue
+            parsed_constructors: set[str] = set()
+            valid = True
+            for constructor in split_top(
+                tokens[cursor + 1 : close],
+                ",",
+            ):
+                if not constructor:
+                    continue
+                if not (
+                    constructor[0].kind == "word"
+                    and (
+                        len(constructor) == 1
+                        or (
+                            len(constructor) > 1
+                            and constructor[1].text == "("
+                            and matching_index(constructor, 1)
+                            == len(constructor) - 1
+                        )
+                    )
+                ):
+                    valid = False
+                    break
+                parsed_constructors.add(constructor[0].text)
+            if not valid:
+                malformed_data.add(name)
+                continue
+            constructors = frozenset(parsed_constructors)
+
+        origin = ConstructorOrigin(
+            str(_absolute_lexical_path(provider)),
+            name,
+            token.start,
+        )
+        data_types.setdefault(name, []).append(
+            _ExportedDataType(origin, name, constructors)
+        )
+    return data_types, terms, public_names, malformed_data
+
+
+def _provider_interface(source: str, provider: Path) -> _ProviderInterface:
+    """Compute the direct, locally provable part of a provider interface."""
+
+    canonical, import_conversion_failed = _surface_import_source(source)
+    structurally_broken = _has_unbalanced_structural_delimiters(
+        significant(canonical)
+    )
+    (
+        local_data,
+        local_terms,
+        local_public_names,
+        malformed_data,
+    ) = _provider_local_declarations(canonical, provider)
+    import_specs, malformed_imports = _parse_import_specs(canonical)
+    selected_import_wildcard = any(
+        spec.kind == "open" for spec in import_specs
+    )
+    selected_import_names = {
+        local
+        for spec in import_specs
+        if spec.kind == "selective"
+        for _, local in spec.selections
+    }
+
+    tokens = significant(
+        migrate_incomplete_data_heads(migrate_data_declarations(canonical))
+    )
+    _, enclosing = _classic_brace_context(tokens)
+    exports = [
+        index
+        for index, token in enumerate(tokens)
+        if token.text == "export" and enclosing[index] is None
+    ]
+    if not exports:
+        return _ProviderInterface(
+            {},
+            frozenset(),
+            frozenset(),
+            (
+                import_conversion_failed
+                or malformed_imports
+                or structurally_broken
+            ),
+        )
+
+    exported_terms: set[str] = set()
+    exported_public_names: set[str] = set()
+    exported_data: dict[
+        tuple[str, ConstructorOrigin], tuple[str, set[str]]
+    ] = {}
+    unknown = (
+        import_conversion_failed
+        or malformed_imports
+        or structurally_broken
+    )
+
+    def add_data(
+        public_name: str,
+        data_type: _ExportedDataType,
+        constructors: Iterable[str],
+    ) -> None:
+        key = (public_name, data_type.origin)
+        source_name, visible = exported_data.setdefault(
+            key,
+            (data_type.source_name, set()),
+        )
+        assert source_name == data_type.source_name
+        visible.update(constructors)
+        exported_public_names.add(public_name)
+
+    for index in exports:
+        end = _statement_end(tokens, index)
+        if end is None:
+            unknown = True
+            continue
+        body = list(tokens[index + 1 : end])
+        if not body or body[0].text != "{":
+            # Module exports and items-from exports are re-exports.  Their
+            # fixed-point interface cannot be reconstructed without full
+            # project roots, so consumers must fail closed.
+            unknown = True
+            continue
+        close = matching_index(body, 0)
+        if close is None or close != len(body) - 1:
+            unknown = True
+            continue
+        for part in split_top(body[1:close], ",", angles=False):
+            if not part:
+                continue
+            if len(part) == 1 and part[0].text == "*":
+                exported_terms.update(local_terms)
+                exported_public_names.update(local_public_names)
+                continue
+            if len(part) == 1 and part[0].kind == "word":
+                name = part[0].text
+                if name in local_terms:
+                    exported_terms.add(name)
+                if name in local_public_names:
+                    exported_public_names.add(name)
+                if (
+                    selected_import_wildcard
+                    or name in selected_import_names
+                ):
+                    # `export {T}` can re-export every selected imported
+                    # namespace named T in addition to direct local items.
+                    unknown = True
+                elif name not in local_public_names:
+                    unknown = True
+                continue
+            if (
+                part[0].kind == "word"
+                and len(part) >= 3
+                and part[1].text == "("
+                and matching_index(part, 1) == len(part) - 1
+            ):
+                name = part[0].text
+                declarations = local_data.get(name, [])
+                if (
+                    name in malformed_data
+                    or len(declarations) != 1
+                ):
+                    # Constructor re-exports through selected imports are
+                    # deliberately outside this direct-provider subset.
+                    unknown = True
+                    continue
+                selector = part[2:-1]
+                data_type = declarations[0]
+                if len(selector) == 1 and selector[0].text == "*":
+                    selected = data_type.constructors
+                else:
+                    selected_names = {
+                        item[0].text
+                        for item in split_top(
+                            selector,
+                            ",",
+                            angles=False,
+                        )
+                        if len(item) == 1 and item[0].kind == "word"
+                    }
+                    if (
+                        not selected_names
+                        or any(
+                            not (
+                                len(item) == 1
+                                and item[0].kind == "word"
+                            )
+                            for item in split_top(
+                                selector,
+                                ",",
+                                angles=False,
+                            )
+                        )
+                        or not selected_names.issubset(
+                            data_type.constructors
+                        )
+                    ):
+                        unknown = True
+                        continue
+                    selected = frozenset(selected_names)
+                add_data(name, data_type, selected)
+                continue
+            unknown = True
+
+    grouped: dict[str, list[_ExportedDataType]] = {}
+    for (public_name, origin), (
+        source_name,
+        constructors,
+    ) in exported_data.items():
+        grouped.setdefault(public_name, []).append(
+            _ExportedDataType(
+                origin,
+                source_name,
+                frozenset(constructors),
+            )
+        )
+    return _ProviderInterface(
+        {
+            name: tuple(sorted(data, key=lambda item: item.origin))
+            for name, data in grouped.items()
+        },
+        frozenset(exported_terms),
+        frozenset(exported_public_names),
+        unknown,
+    )
+
+
+def _resolve_selected_import(
+    consumer: Path,
+    spec: _ImportSpec,
+    selected: Mapping[Path, tuple[Path, ...]],
+) -> Path | None:
+    """Resolve only unambiguous ordinary imports within selected paths."""
+
+    if (
+        spec.external
+        or not spec.path
+        or spec.path[0] in {"lib", "std"}
+    ):
+        return None
+    base = _absolute_lexical_path(consumer).parent.joinpath(*spec.path)
+    matches: list[Path] = []
+    for suffix in (".solc", ".sol"):
+        matches.extend(selected.get(base.with_suffix(suffix), ()))
+    unique = list(dict.fromkeys(matches))
+    return unique[0] if len(unique) == 1 else None
+
+
+def build_constructor_import_surfaces(
+    sources: Mapping[Path, str],
+) -> dict[Path, ConstructorImportSurface]:
+    """Build a constructor surface for each selected source consumer."""
+
+    selected: dict[Path, list[Path]] = {}
+    for path in sources:
+        selected.setdefault(_absolute_lexical_path(path), []).append(path)
+    selected_index = {
+        path: tuple(paths) for path, paths in selected.items()
+    }
+    interfaces = {
+        path: _provider_interface(source, path)
+        for path, source in sources.items()
+    }
+    surfaces: dict[Path, ConstructorImportSurface] = {}
+
+    for consumer, source in sources.items():
+        canonical, import_conversion_failed = _surface_import_source(source)
+        specs, malformed = _parse_import_specs(canonical)
+        bare: dict[str, set[ConstructorBinding]] = {}
+        dot: dict[str, set[ConstructorBinding]] = {}
+        imported_terms: set[str] = set()
+        unknown_terms: set[str] = set()
+        unknown_unqualified_terms = malformed or import_conversion_failed
+        unknown_constructors = malformed or import_conversion_failed
+
+        def mark_unknown(spec: _ImportSpec) -> None:
+            nonlocal unknown_unqualified_terms, unknown_constructors
+            unknown_constructors = True
+            if spec.kind == "open":
+                unknown_unqualified_terms = True
+            elif spec.kind == "selective":
+                unknown_terms.update(
+                    local for _, local in spec.selections
+                )
+
+        def add_data(
+            data_type: _ExportedDataType,
+            owner: str,
+        ) -> None:
+            binding = ConstructorBinding(data_type.origin, owner)
+            for constructor in data_type.constructors:
+                dot.setdefault(constructor, set()).add(binding)
+                if constructor == data_type.source_name:
+                    bare.setdefault(constructor, set()).add(binding)
+
+        for spec in specs:
+            provider = _resolve_selected_import(
+                consumer,
+                spec,
+                selected_index,
+            )
+            if provider is None:
+                mark_unknown(spec)
+                continue
+            interface = interfaces[provider]
+            if interface.unknown:
+                mark_unknown(spec)
+                continue
+
+            if spec.kind == "open":
+                imported_terms.update(interface.terms)
+                for public_name, data_types in interface.data_types.items():
+                    for data_type in data_types:
+                        add_data(data_type, public_name)
+                continue
+
+            if spec.kind == "namespace":
+                assert spec.qualifier is not None
+                for public_name, data_types in interface.data_types.items():
+                    owner = f"{spec.qualifier}.{public_name}"
+                    for data_type in data_types:
+                        add_data(data_type, owner)
+                continue
+
+            for source_name, local_name in spec.selections:
+                matched = source_name in interface.public_names
+                if source_name in interface.terms:
+                    imported_terms.add(local_name)
+                for data_type in interface.data_types.get(
+                    source_name, ()
+                ):
+                    add_data(data_type, local_name)
+                if not matched:
+                    # The compiler records a selected name missing from a
+                    # complete interface as unknown in every namespace.
+                    unknown_terms.add(local_name)
+
+        surfaces[consumer] = ConstructorImportSurface(
+            {
+                leaf: frozenset(bindings)
+                for leaf, bindings in bare.items()
+            },
+            {
+                leaf: frozenset(bindings)
+                for leaf, bindings in dot.items()
+            },
+            frozenset(imported_terms),
+            frozenset(unknown_terms),
+            unknown_unqualified_terms,
+            unknown_constructors,
+        )
+    return surfaces
+
+
 def source_paths(arguments: Sequence[str]) -> list[Path]:
     paths: set[Path] = set()
     for argument in arguments:
@@ -7522,20 +8284,6 @@ def rust_source_paths(arguments: Sequence[str]) -> list[Path]:
             continue
         else:
             raise ValueError(f"not a Rust source path: {path}")
-    return sorted(paths)
-
-
-def owner_source_paths(arguments: Sequence[str]) -> list[Path]:
-    """Find Solcore sources used to seed a cross-file constructor table."""
-
-    paths: set[Path] = set()
-    for argument in arguments:
-        path = Path(argument)
-        if path.is_dir():
-            paths.update(path.rglob("*.sol"))
-            paths.update(path.rglob("*.solc"))
-        elif path.suffix in {".sol", ".solc"}:
-            paths.add(path)
     return sorted(paths)
 
 
@@ -8877,8 +9625,8 @@ def main() -> int:
         "--rust-strings",
         action="store_true",
         help=(
-            "migrate Solcore programs inside Rust string literals; Solcore "
-            "files under directory arguments seed the shared constructor table"
+            "migrate Solcore programs inside Rust string literals; each "
+            "literal is migrated as an isolated source"
         ),
     )
     parser.add_argument(
@@ -8919,72 +9667,47 @@ def main() -> int:
         except Exception as error:
             failures.append((path, error))
 
-    owner_sources: list[str] = []
-    if args.rust_strings:
-        for path in owner_source_paths(args.paths):
-            try:
-                source = path.read_text()
-                owner_sources.append(
-                    migrate_classic_bare_imports(source)
-                    if args.classic_bare_imports
-                    else source
-                )
-            except Exception as error:
-                failures.append((path, error))
-        for original in originals.values():
-            for start, end, is_raw in _rust_solcore_literals(original):
-                encoded_source = original[start:end]
-                source = _rust_literal_semantic_body(
-                    encoded_source,
-                    is_raw,
-                )
-                if source is None:
-                    continue
-                owner_sources.append(
-                    migrate_classic_bare_imports(source)
-                    if args.classic_bare_imports
-                    else source
-                )
-    else:
-        owner_sources.extend(
-            migrate_classic_bare_imports(source)
-            if args.classic_bare_imports
-            else source
-            for source in originals.values()
-        )
-
-    try:
-        global_constructor_owners = collect_global_constructor_owners(
-            owner_sources
-        )
-        global_dot_constructor_candidates = (
-            collect_global_dot_constructor_candidates(owner_sources)
-        )
-    except Exception as error:
-        print(f"error: failed to build constructor owner table: {error}", file=sys.stderr)
-        return 2
-
-    changed: list[Path] = []
-    migrations: dict[Path, str] = {}
+    prepared_sources: dict[Path, str] = {}
     for path, original in originals.items():
         try:
-            prepared = (
+            prepared_sources[path] = (
                 migrate_classic_bare_imports(original)
                 if args.classic_bare_imports and not args.rust_strings
                 else original
             )
+        except Exception as error:
+            failures.append((path, error))
+
+    constructor_surfaces: dict[Path, ConstructorImportSurface] = {}
+    if not args.rust_strings:
+        try:
+            constructor_surfaces = build_constructor_import_surfaces(
+                prepared_sources
+            )
+        except Exception as error:
+            print(
+                "error: failed to build import-aware constructor surfaces: "
+                f"{error}",
+                file=sys.stderr,
+            )
+            return 2
+
+    changed: list[Path] = []
+    migrations: dict[Path, str] = {}
+    for path, original in originals.items():
+        if path not in prepared_sources:
+            continue
+        try:
+            prepared = prepared_sources[path]
             migrated = (
                 migrate_rust_strings(
                     original,
-                    global_constructor_owners,
-                    global_dot_constructor_candidates,
                     classic_bare_imports=args.classic_bare_imports,
                 )
                 if args.rust_strings
                 else migrate_source(
                     prepared,
-                    global_constructor_owners,
-                    global_dot_constructor_candidates,
+                    constructor_import_surface=constructor_surfaces.get(path),
                 )
             )
         except Exception as error:  # Continue so a corpus run reports every issue.

@@ -224,6 +224,394 @@ function wrap(x: word) -> Option(word) { return .Some(x); }
         self.assertIn("0 file(s) need migration", check.stdout)
 
 
+class ImportAwareConstructorSurfaceTests(unittest.TestCase):
+    def surfaces(
+        self,
+        sources: dict[str, str],
+    ) -> tuple[
+        dict[Path, str],
+        dict[Path, MIGRATE.ConstructorImportSurface],
+    ]:
+        rooted = {
+            Path("/workspace") / name: source
+            for name, source in sources.items()
+        }
+        return rooted, MIGRATE.build_constructor_import_surfaces(rooted)
+
+    def test_requires_an_explicit_constructor_export(self) -> None:
+        consumer = """\
+import provider;
+function wrap(x: word) returns (T) { return .Some(x); }
+"""
+        providers = [
+            "enum T { Some(word) }\n",
+            "enum T { Some(word) }\nexport {T};\n",
+            "enum T { Some(word) }\nexport {*};\n",
+        ]
+
+        for provider in providers:
+            with self.subTest(provider=provider):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": provider,
+                        "main.solc": consumer,
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"cannot resolve legacy dot-constructor \.Some",
+                ):
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    )
+
+    def test_open_import_exposes_selected_constructors(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { T, Some(word) }
+export {T(*)};
+""",
+                "main.solc": """\
+import provider;
+function make(x: word) returns (T) {
+  let nested = id(T);
+  match (nested) { case T { return .Some(x); } }
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("let nested = id(T.T);", migrated)
+        self.assertIn("case T.T", migrated)
+        self.assertIn("return T.Some(x);", migrated)
+
+    def test_selective_alias_preserves_the_constructor_leaf(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { T(word) }
+export {T(*)};
+""",
+                "main.solc": """\
+import {T as U} from provider;
+function make(x: word) returns (U) { return T(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("return U.T(x);", migrated)
+
+    def test_namespace_import_uses_the_full_type_qualifier(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { Some(word) }
+export {T(*)};
+""",
+                "main.solc": """\
+import * as P from provider;
+function make(x: word) returns (P.T) { return .Some(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("return P.T.Some(x);", migrated)
+
+    def test_imported_term_wins_in_expressions_but_not_patterns(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { T(word) }
+function T(x: word) returns (word) { return x; }
+export {T(*)};
+export {T};
+""",
+                "main.solc": """\
+import {T} from provider;
+function use(x: T) {
+  match (x) { case T(y) { T(y); } }
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("case T.T(y)", migrated)
+        self.assertIn("{ T(y); }", migrated)
+
+    def test_imported_function_shadows_a_source_local_constructor_term(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+function T(x: word) returns (word) { return x; }
+export {T};
+""",
+                "main.solc": """\
+import {T} from provider;
+enum T { T(word) }
+function use(x: T, y: word) {
+  T(y);
+  match (x) { case T(value) { return; } }
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("  T(y);", migrated)
+        self.assertIn("case T.T(value)", migrated)
+
+    def test_local_and_imported_constructor_origins_are_ambiguous(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { T(word) }
+export {T(*)};
+""",
+                "main.solc": """\
+import provider;
+enum T { T(word) }
+function make(x: word) returns (T) { return T(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertEqual(migrated, sources[main])
+
+    def test_unrelated_files_do_not_seed_constructor_owners(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { T(word) }
+export {T(*)};
+""",
+                "main.solc": """\
+function make(x: word) returns (word) { return T(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertEqual(migrated, sources[main])
+
+    def test_same_spelling_from_two_origins_remains_ambiguous(self) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "a.solc": "enum T { Some(word) }\nexport {T(*)};\n",
+                "b.solc": "enum T { Some(word) }\nexport {T(*)};\n",
+                "main.solc": """\
+import a;
+import b;
+function make(x: word) returns (T) { return .Some(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"ambiguous legacy dot-constructor \.Some.*a\.solc.*b\.solc",
+        ):
+            MIGRATE.migrate_source(
+                sources[main],
+                constructor_import_surface=surfaces[main],
+            )
+
+    def test_unresolved_import_blocks_terms_but_not_local_patterns(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "main.solc": """\
+import missing;
+enum T { T(word) }
+function use(x: T, y: word) {
+  T(y);
+  match (x) { case T(value) { return; } }
+}
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertIn("  T(y);", migrated)
+        self.assertIn("case T.T(value)", migrated)
+        self.assertTrue(
+            surfaces[main].has_unknown_unqualified_terms
+        )
+
+    def test_cli_import_surface_reaches_a_fixed_point(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            provider = root / "provider.solc"
+            main = root / "main.solc"
+            provider.write_text(
+                "enum T { T, Some(word) }\nexport {T(*)};\n"
+            )
+            main.write_text(
+                "import provider;\n"
+                "function make(x: word) returns (T) {\n"
+                "  let nested = id(T);\n"
+                "  return .Some(x);\n"
+                "}\n"
+            )
+
+            migration = subprocess.run(
+                [sys.executable, str(SCRIPT), str(root)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            check = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--check",
+                    str(root),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migrated = main.read_text()
+
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertEqual(check.returncode, 0, check.stderr)
+        self.assertIn("id(T.T)", migrated)
+        self.assertIn("return T.Some(x);", migrated)
+        self.assertIn("0 file(s) need migration", check.stdout)
+
+    def test_special_and_colliding_paths_fail_closed(self) -> None:
+        cases = [
+            {
+                "std/opcodes.solc": (
+                    "enum byte { byte(word) }\nexport {byte(*)};\n"
+                ),
+                "main.solc": """\
+import std.opcodes;
+function pair(a: word, b: word) { byte(a, b); }
+""",
+            },
+            {
+                "provider.sol": (
+                    "enum T { T(word) }\nexport {T(*)};\n"
+                ),
+                "provider.solc": (
+                    "enum T { T(word) }\nexport {T(*)};\n"
+                ),
+                "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(paths=sorted(case)):
+                sources, surfaces = self.surfaces(case)
+                main = Path("/workspace/main.solc")
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+                self.assertEqual(migrated, sources[main])
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+
+    def test_malformed_import_and_provider_fail_closed(self) -> None:
+        cases = [
+            {
+                "provider.solc": (
+                    "enum T { T(word) }\nexport {T(*)};\n"
+                ),
+                "main.solc": """\
+import {T,} from provider;
+function make(x: word) { T(x); }
+""",
+            },
+            {
+                "provider.solc": """\
+enum T { T(word) }
+export {T(*)};
+function broken( {
+""",
+                "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(case=case):
+                sources, surfaces = self.surfaces(case)
+                main = Path("/workspace/main.solc")
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+
+
 class ImportHidingMigrationTests(unittest.TestCase):
     def test_filters_selected_imports_by_their_local_alias(self) -> None:
         cases = [
@@ -1679,7 +2067,7 @@ const PROSE: &str =
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
         self.assert_rust_syntax(migrated)
 
-    def test_cli_owner_scan_decodes_rust_specific_escapes(self) -> None:
+    def test_cli_does_not_share_owners_between_rust_literals(self) -> None:
         source = r'''
 const DECLARATION: &str =
     "data\x20Option(a) = None | Some(a);";
@@ -1702,26 +2090,13 @@ const USE: &str =
                 check=False,
             )
             migrated = path.read_text()
-            check = subprocess.run(
-                [
-                    sys.executable,
-                    str(SCRIPT),
-                    "--check",
-                    "--rust-strings",
-                    str(path),
-                ],
-                cwd=ROOT,
-                text=True,
-                capture_output=True,
-                check=False,
-            )
 
-        self.assertEqual(migration.returncode, 0, migration.stderr)
-        self.assertEqual(check.returncode, 0, check.stderr)
-        self.assertIn('"enum Option<a> { None, Some(a) }"', migrated)
-        self.assertIn("return Option.Some(x);", migrated)
-        self.assertIn("0 file(s) need migration", check.stdout)
-        self.assert_rust_syntax(migrated)
+        self.assertEqual(migration.returncode, 2)
+        self.assertEqual(migrated, source)
+        self.assertIn(
+            "cannot resolve legacy dot-constructor .Some",
+            migration.stderr,
+        )
 
     def test_cli_rust_string_check_reports_then_reaches_fixed_point(self) -> None:
         source = r'''
@@ -2206,6 +2581,47 @@ class AtomicCliMigrationTests(unittest.TestCase):
 
         self.assertEqual(changed_after, expected_changed)
         self.assertEqual(unchanged_after, external)
+
+    def test_import_provider_is_part_of_the_atomic_snapshot(self) -> None:
+        provider_source = (
+            "enum T { T(word) }\nexport {T(*)};\n"
+        )
+        consumer_source = (
+            "import provider;\n"
+            "function make(x: word) returns (T) { return T(x); }\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            provider = root / "provider.solc"
+            consumer = root / "main.solc"
+            provider.write_text(provider_source)
+            consumer.write_text(consumer_source)
+            expected = {
+                provider: provider.read_bytes(),
+                consumer: consumer.read_bytes(),
+            }
+            sources = {
+                provider: provider_source,
+                consumer: consumer_source,
+            }
+            surfaces = MIGRATE.build_constructor_import_surfaces(sources)
+            migrated = MIGRATE.migrate_source(
+                consumer_source,
+                constructor_import_surface=surfaces[consumer],
+            )
+
+            provider.write_text(provider_source + "// concurrent edit\n")
+            with self.assertRaisesRegex(
+                OSError,
+                "source changed after migration planning",
+            ):
+                MIGRATE.write_migrations_atomically(
+                    expected,
+                    {consumer: migrated},
+                )
+            consumer_after = consumer.read_text()
+
+        self.assertEqual(consumer_after, consumer_source)
 
     def test_recovery_staging_rejects_a_short_write(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
