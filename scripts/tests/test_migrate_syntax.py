@@ -6287,6 +6287,26 @@ const SOURCE: &str =
         self.assertTrue(MIGRATE._rust_has_explicit_concat_shadow(rust))
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
 
+    def test_closed_attribute_does_not_leak_use_shadow_state(
+        self,
+    ) -> None:
+        rust = r'''
+#[doc = stringify!(use)]
+const SOURCE: &str = concat!(
+    "function f(",
+    "x: word) -> word { return x; }",
+);
+'''
+
+        self.assertFalse(MIGRATE._rust_has_explicit_concat_shadow(rust))
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertEqual(
+            self.concat_values(migrated),
+            ["function f(x: word) returns (word) { return x; }"],
+        )
+        self.assert_rust_syntax(migrated)
+
     def test_repeated_use_shadow_scan_remains_linear(self) -> None:
         count = 4_000
         repeated = (

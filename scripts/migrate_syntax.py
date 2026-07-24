@@ -12147,7 +12147,6 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
     closing = {"(": ")", "[": "]", "{": "}"}
     attribute_openings: set[int] = set()
     delimiter_stack: list[tuple[str, bool]] = []
-    attribute_until_eof = False
     in_use_declaration = False
     cursor = _rust_file_code_start(source)
     while cursor < len(source):
@@ -12190,17 +12189,18 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
             continue
 
         token = source[cursor]
+        inside_attribute = (
+            bool(delimiter_stack)
+            and delimiter_stack[-1][1]
+        )
         if token == ";":
-            in_use_declaration = False
+            if not inside_attribute:
+                in_use_declaration = False
             cursor += 1
             continue
         if token in closing:
             inside_attribute = (
-                attribute_until_eof
-                or (
-                    bool(delimiter_stack)
-                    and delimiter_stack[-1][1]
-                )
+                inside_attribute
                 or cursor in attribute_openings
             )
             attribute_openings.discard(cursor)
@@ -12217,7 +12217,7 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
                 delimiter_stack.pop()
             elif delimiter_stack:
                 if delimiter_stack[-1][1]:
-                    attribute_until_eof = True
+                    return True
                 delimiter_stack.clear()
             cursor += 1
             continue
@@ -12228,14 +12228,14 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
             continue
         text, end, is_raw = identifier
         inside_attribute = (
-            attribute_until_eof
-            or (
-                bool(delimiter_stack)
-                and delimiter_stack[-1][1]
-            )
+            bool(delimiter_stack)
+            and delimiter_stack[-1][1]
         )
-        if inside_attribute and text == "macro_use":
-            return True
+        if inside_attribute:
+            if text == "macro_use":
+                return True
+            cursor = end
+            continue
         if in_use_declaration and text == "concat":
             return True
         if not is_raw and text == "macro_rules":
@@ -12253,6 +12253,8 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
         elif not is_raw and text == "use":
             in_use_declaration = True
         cursor = end
+    if delimiter_stack and delimiter_stack[-1][1]:
+        return True
     return False
 
 
