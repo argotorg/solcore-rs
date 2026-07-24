@@ -506,6 +506,11 @@ Classic Solidity conversion:
 uint256(value)
 ```
 
+This example describes porting Classic Solidity, not a historical Solcore
+rewrite rule. Historical Solcore parsed `T(value)` as an ordinary call or
+constructor, so migration must preserve that meaning unless a
+Solidity-specific importer has resolved `T` as a conversion target.
+
 New Solcore conversion:
 
 ```solidity

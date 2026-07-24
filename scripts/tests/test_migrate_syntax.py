@@ -522,6 +522,92 @@ function namespaceUse() -> word {
         self.assertIn("0 file(s) need migration", check.stdout)
 
 
+class FunctionStyleCallPreservationTests(unittest.TestCase):
+    def test_preserves_elementary_spelling_calls_byte_for_byte(self) -> None:
+        canonical = (
+            "function uint256(x: word) returns (word) { return x; }\r\n"
+            "function address() returns (word) { return 0; }\r\n"
+            "function use(x: word) {\r\n"
+            "  let nested = uint256 /* target */ (uint256(x));\r\n"
+            "  let nullary = address();\r\n"
+            "  let binary = uint256(x, x);\r\n"
+            "}\r\n"
+        )
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_qualifies_only_proven_same_name_constructors(self) -> None:
+        source = """\
+enum uint256 { uint256(word) }
+enum Other { address(word) }
+function use(x: word) {
+  let wrapped = uint256(x);
+  let unresolved = address(x);
+}
+"""
+        expected = """\
+enum uint256 { uint256(word) }
+enum Other { address(word) }
+function use(x: word) {
+  let wrapped = uint256.uint256(x);
+  let unresolved = address(x);
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_calls_from_open_and_selective_imports(self) -> None:
+        canonical = """\
+import std.opcodes;
+import {balance as uint256} from std.opcodes;
+function use(x: word) {
+  let opcode = address();
+  let imported = uint256(x);
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_does_not_turn_type_namespace_callees_into_conversions(self) -> None:
+        canonical = """\
+import * as pkg from types;
+alias Amount = word;
+alias Box<T> = T;
+type Wad is word;
+function use(x: word) {
+  let builtin = word(x);
+  let aliasCall = Amount(x);
+  let valueTypeCall = Wad(x);
+  let genericCall = Box<word>(x);
+  let classicGenericCall = Box(word)(x);
+  let qualifiedCall = pkg.Result<word, Error>(x);
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_preserves_calls_and_prose_in_rust_literals(self) -> None:
+        rust = r'''
+const SOURCE: &str = r#"function uint256(x: word) returns (word) {
+  return uint256(x);
+}"#;
+const TYPE_NAMESPACES: &str = r#"alias Amount = word;
+type Wad is word;
+function use(x: word) {
+  let builtin = word(x);
+  let aliasCall = Amount(x);
+  let valueTypeCall = Wad(x);
+}"#;
+const PROSE: &str = "Use uint256(value) when porting Solidity.";
+'''
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 2)
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
+
 class RustStringMigrationTests(unittest.TestCase):
     def assert_rust_syntax(self, source: str) -> None:
         with tempfile.TemporaryDirectory() as directory:

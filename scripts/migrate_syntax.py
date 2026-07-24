@@ -17,6 +17,13 @@ The rewrite is idempotent: running it again on migrated input produces no
 further changes.  It intentionally leaves ``export`` declarations alone because
 new_syntax.md does not choose a replacement export/re-export surface.
 
+This tool does not translate Classic Solidity.  In historical Solcore,
+``T(expression)`` was always a call or constructor expression, never a type
+conversion, so the migrator never reinterprets that spelling as a conversion:
+ordinary calls remain calls, while proven constructors are qualified where the
+new syntax requires it.  A Solidity importer must resolve conversion targets
+semantically before rewriting them to Core's ``expression as T`` syntax.
+
 Pass ``--classic-bare-imports`` when the input still uses Classic Solcore's
 ``import M;`` namespace semantics.  That spelling becomes
 ``import * as M from M;`` before the remaining syntax migration; without the
