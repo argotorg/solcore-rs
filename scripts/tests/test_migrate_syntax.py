@@ -369,6 +369,33 @@ class RustStringMigrationTests(unittest.TestCase):
             )
         self.assertEqual(checked.returncode, 0, checked.stderr)
 
+    def test_nested_block_comment_can_keep_a_rust_file_unmigrated(self) -> None:
+        rust = """\
+/* outer /* inner */ migrate-syntax: keep-rust-file */
+const SOURCE: &str =
+    r#"function f(x: word) -> word { return x; }"#;
+"""
+
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
+    def test_marker_text_in_a_raw_string_does_not_keep_the_rust_file(
+        self,
+    ) -> None:
+        rust = '''\
+const PROSE: &str =
+    r##"quoted " /* migrate-syntax: keep-rust-file */"##;
+const SOURCE: &str =
+    r#"function f(x: word) -> word { return x; }"#;
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn("migrate-syntax: keep-rust-file", migrated)
+        self.assertIn(
+            "function f(x: word) returns (word)",
+            migrated,
+        )
+
     def test_preserves_prose_format_strings_and_sql(self) -> None:
         rust = r'''
 const HELP: &str = r#"prefer function f(x: T) -> T syntax"#;
@@ -1186,6 +1213,162 @@ case Option.None /* none */  {
 
         self.assertEqual(migrated, expected)
         self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+
+class ContractInheritanceMigrationTests(unittest.TestCase):
+    def test_rejects_unsupported_contract_like_inheritance(self) -> None:
+        cases = [
+            (
+                "contract Child is Base {}\n",
+                "cannot migrate contract inheritance at line 1, column 16",
+            ),
+            (
+                "interface I /* head */ is /* base */ Base, Other(word) {}\n",
+                "cannot migrate interface inheritance at line 1, column 24",
+            ),
+            (
+                "library L\n is Base;\n",
+                "cannot migrate library inheritance at line 2, column 2",
+            ),
+            (
+                "abstract contract C<T> /* head */ is /* base */"
+                ' A<T>("is", f({x: 1})), B {}\n',
+                "cannot migrate contract inheritance",
+            ),
+        ]
+
+        for classic, message in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(ValueError, message):
+                    MIGRATE.migrate_source(classic)
+
+    def test_does_not_confuse_value_types_or_contract_bodies_with_inheritance(
+        self,
+    ) -> None:
+        canonical = """\
+type Amount is word;
+contract C {
+  type Inner is word;
+  value: word;
+  function f() { let text = "is"; }
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_does_not_scan_past_a_malformed_contract_head(self) -> None:
+        malformed = """\
+contract C
+type Amount is word;
+contract is {}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(malformed), malformed)
+
+    def test_legacy_negative_marker_bypasses_inheritance_rejection(self) -> None:
+        marked = """\
+// migrate-syntax: keep-legacy-negative
+contract Child is Base {}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(marked), marked)
+
+        nested_marked = """\
+/* outer /* inner */ migrate-syntax: keep-legacy-negative */
+contract Child is Base {}
+"""
+
+        self.assertEqual(
+            MIGRATE.migrate_source(nested_marked),
+            nested_marked,
+        )
+
+    def test_marker_text_outside_comments_does_not_bypass_rejection(
+        self,
+    ) -> None:
+        cases = [
+            """\
+contract Child is Base {
+  function marker() {
+    let text = "migrate-syntax: keep-legacy-negative";
+  }
+}
+""",
+            """\
+contract Child is Base {
+  function marker() {
+    assembly {
+      let text := "migrate-syntax: keep-legacy-negative"
+    }
+  }
+}
+""",
+        ]
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate contract inheritance",
+                ):
+                    MIGRATE.migrate_source(classic)
+
+    def test_cli_rejection_leaves_inheritance_source_unchanged(self) -> None:
+        source = "contract Child is Base(arg) {}\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "inheritance.solc"
+            path.write_text(source)
+
+            check = subprocess.run(
+                [sys.executable, str(SCRIPT), "--check", str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migration = subprocess.run(
+                [sys.executable, str(SCRIPT), str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            unchanged = path.read_text()
+
+        self.assertEqual(check.returncode, 2)
+        self.assertEqual(migration.returncode, 2)
+        self.assertEqual(unchanged, source)
+        self.assertIn("cannot migrate contract inheritance", check.stderr)
+        self.assertIn("cannot migrate contract inheritance", migration.stderr)
+
+    def test_rust_string_cli_rejects_embedded_inheritance(self) -> None:
+        source = (
+            'const SOURCE: &str = r#"contract Child is Base {}"#;\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "embedded.rs"
+            path.write_text(source)
+
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            unchanged = path.read_text()
+
+        self.assertEqual(migration.returncode, 2)
+        self.assertEqual(unchanged, source)
+        self.assertIn(
+            "cannot migrate contract inheritance",
+            migration.stderr,
+        )
 
 
 class FunctionMigrationTests(unittest.TestCase):

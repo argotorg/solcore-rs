@@ -142,8 +142,20 @@ def _scan_quoted(source: str, start: int, quote: str) -> int:
 
 
 def _scan_block_comment(source: str, start: int) -> int:
-    end = source.find("*/", start + 2)
-    return len(source) if end < 0 else end + 2
+    depth = 1
+    cursor = start + 2
+    while cursor < len(source):
+        if source.startswith("/*", cursor):
+            depth += 1
+            cursor += 2
+        elif source.startswith("*/", cursor):
+            depth -= 1
+            cursor += 2
+            if depth == 0:
+                return cursor
+        else:
+            cursor += 1
+    return len(source)
 
 
 def _skip_trivia_raw(source: str, start: int) -> int:
@@ -244,6 +256,13 @@ def lex(source: str) -> list[Token]:
 
 def significant(source: str) -> list[Token]:
     return [token for token in lex(source) if token.kind not in TRIVIA]
+
+
+def has_comment_marker(source: str, marker: str) -> bool:
+    return any(
+        token.kind == "comment" and marker in token.text
+        for token in lex(source)
+    )
 
 
 def replace_spans(source: str, replacements: Iterable[tuple[int, int, str]]) -> str:
@@ -1205,6 +1224,40 @@ def _header_boundary(tokens: Sequence[Token], start: int) -> int | None:
             return index
         _depth_step(stack, text)
     return None
+
+
+def reject_contract_inheritance(source: str) -> None:
+    """Reject Classic inheritance that Core cannot preserve automatically."""
+
+    tokens = significant(source)
+    for index, token in enumerate(tokens):
+        if token.text not in {"contract", "interface", "library"}:
+            continue
+        if index + 1 >= len(tokens) or tokens[index + 1].kind != "word":
+            continue
+        inheritance = index + 2
+        if (
+            inheritance < len(tokens)
+            and tokens[inheritance].text == "<"
+        ):
+            generic_close = matching_index(tokens, inheritance)
+            if generic_close is None:
+                continue
+            inheritance = generic_close + 1
+        if (
+            inheritance >= len(tokens)
+            or tokens[inheritance].text != "is"
+        ):
+            continue
+        line, column = _source_line_column(
+            source, tokens[inheritance].start
+        )
+        raise ValueError(
+            f"cannot migrate {token.text} inheritance at line {line}, "
+            f"column {column}: Core syntax does not support `is` base "
+            "clauses; replace inheritance and base-constructor calls with "
+            "composition or traits"
+        )
 
 
 def _parse_forall_prefix(
@@ -2778,7 +2831,7 @@ def migrate_qualified_constructors(
 ) -> str:
     """Qualify term and pattern uses with local or globally unique owners."""
 
-    if KEEP_UNQUALIFIED_CONSTRUCTOR_MARKER in source:
+    if has_comment_marker(source, KEEP_UNQUALIFIED_CONSTRUCTOR_MARKER):
         return source
 
     tokens = significant(source)
@@ -2965,7 +3018,7 @@ def migrate_legacy_dot_constructors(
 ) -> str:
     """Rewrite Classic ``.Leaf`` constructors or reject unsafe guesses."""
 
-    if KEEP_UNQUALIFIED_CONSTRUCTOR_MARKER in source:
+    if has_comment_marker(source, KEEP_UNQUALIFIED_CONSTRUCTOR_MARKER):
         return source
 
     tokens = significant(source)
@@ -4045,8 +4098,9 @@ def migrate_source(
     global_constructor_owners: Mapping[str, str] | None = None,
     global_dot_constructor_candidates: Mapping[str, set[str]] | None = None,
 ) -> str:
-    if KEEP_LEGACY_NEGATIVE_MARKER in source:
+    if has_comment_marker(source, KEEP_LEGACY_NEGATIVE_MARKER):
         return source
+    reject_contract_inheritance(source)
     passes = (
         migrate_pragmas,
         migrate_imports,
@@ -4956,6 +5010,40 @@ def _rust_solcore_literal_spans(source: str) -> list[tuple[int, int]]:
     ]
 
 
+def has_rust_comment_marker(source: str, marker: str) -> bool:
+    """Find a marker in Rust comments without inspecting literal bodies."""
+
+    cursor = 0
+    while cursor < len(source):
+        if source.startswith("//", cursor):
+            newline = source.find("\n", cursor + 2)
+            end = len(source) if newline < 0 else newline
+            if marker in source[cursor:end]:
+                return True
+            cursor = len(source) if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", cursor):
+            end = _rust_block_comment_end(source, cursor)
+            if marker in source[cursor:end]:
+                return True
+            cursor = end
+            continue
+        if source[cursor] == "'":
+            char_end = _rust_char_end(source, cursor)
+            if char_end is not None:
+                cursor = char_end
+                continue
+
+        literal = _rust_raw_literal(source, cursor)
+        if literal is None:
+            literal = _rust_ordinary_literal(source, cursor)
+        if literal is not None:
+            cursor = literal[2]
+            continue
+        cursor += 1
+    return False
+
+
 def migrate_rust_strings(
     source: str,
     global_constructor_owners: Mapping[str, str] | None = None,
@@ -4972,7 +5060,7 @@ def migrate_rust_strings(
     stay intact.
     """
 
-    if KEEP_RUST_FILE_MARKER in source:
+    if has_rust_comment_marker(source, KEEP_RUST_FILE_MARKER):
         return source
 
     replacements: list[tuple[int, int, str]] = []
