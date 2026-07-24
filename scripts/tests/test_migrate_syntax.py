@@ -5032,6 +5032,8 @@ class RustStringMigrationTests(unittest.TestCase):
                     "rustc",
                     "--crate-name",
                     "embedded_migration_test",
+                    "--edition",
+                    "2024",
                     "--crate-type",
                     "lib",
                     "--emit",
@@ -5237,6 +5239,38 @@ const OUTSIDE: &str =
             migrated,
         )
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+    def test_standalone_byte_and_c_literal_validity(self) -> None:
+        invalid = r'''
+const INVALID_BYTE: &[u8] =
+    b"\u{66}unction f(x: word) -> word { return x; }";
+const INVALID_C: &core::ffi::CStr =
+    c"function f(x: word) -> word { return x; }\x00";
+'''
+        valid = r'''
+const BYTE: &[u8] =
+    b"function f(x: word) -> word { /* \x0b\x0c\x7f */ return x; }";
+const RAW_BYTE: &[u8] =
+    br#"function f(x: word) -> word { return x; }"#;
+const C_STRING: &core::ffi::CStr =
+    c"function f(x: word) -> word { return x; }";
+const RAW_C_STRING: &core::ffi::CStr =
+    cr#"function f(x: word) -> word { return x; }"#;
+'''
+
+        self.assertEqual(MIGRATE.migrate_rust_strings(invalid), invalid)
+        self.assertEqual(
+            len(MIGRATE._rust_solcore_literal_spans(valid)),
+            4,
+        )
+        migrated = MIGRATE.migrate_rust_strings(valid)
+
+        self.assertEqual(migrated.count("returns (word)"), 4)
+        self.assertIn(r"\x0b\x0c\x7f", migrated)
+        self.assertNotIn(r"\u{b}", migrated)
+        self.assertNotIn(r"\u{7f}", migrated)
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+        self.assert_rust_syntax(migrated)
 
     def test_unicode_identifier_continuations_are_not_bare_concat(self) -> None:
         rust = '''

@@ -11653,7 +11653,10 @@ def _rust_ordinary_literal(
     return quote + 1, body_end, literal_end, terminated
 
 
-def _decode_rust_ordinary_body(body: str) -> str | None:
+def _decode_rust_ordinary_body(
+    body: str,
+    literal_kind: str = "unicode",
+) -> str | None:
     """Decode a Rust ordinary string body to its semantic text."""
 
     simple_escapes = {
@@ -11675,6 +11678,13 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
                 continue
             if body[cursor] == "\r":
                 return None
+            if (
+                literal_kind == "byte"
+                and ord(body[cursor]) > 0x7F
+            ):
+                return None
+            if literal_kind == "c" and body[cursor] == "\0":
+                return None
             decoded.append(body[cursor])
             cursor += 1
             continue
@@ -11683,7 +11693,10 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
 
         escaped = body[cursor + 1]
         if escaped in simple_escapes:
-            decoded.append(simple_escapes[escaped])
+            value = simple_escapes[escaped]
+            if literal_kind == "c" and value == "\0":
+                return None
+            decoded.append(value)
             cursor += 2
             continue
         if escaped == "x" and cursor + 3 < len(body):
@@ -11692,10 +11705,14 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
                 value = int(digits, 16)
                 if value > 0x7F:
                     return None
+                if literal_kind == "c" and value == 0:
+                    return None
                 decoded.append(chr(value))
                 cursor += 4
                 continue
         if escaped == "u" and cursor + 2 < len(body) and body[cursor + 2] == "{":
+            if literal_kind == "byte":
+                return None
             close = body.find("}", cursor + 3)
             digits = body[cursor + 3 : close] if close >= 0 else ""
             normalized = digits.replace("_", "")
@@ -11711,6 +11728,8 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
             ):
                 value = int(normalized, 16)
                 if value <= 0x10FFFF and not 0xD800 <= value <= 0xDFFF:
+                    if literal_kind == "c" and value == 0:
+                        return None
                     decoded.append(chr(value))
                     cursor = close + 1
                     continue
@@ -11733,7 +11752,10 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
     return "".join(decoded)
 
 
-def _encode_rust_ordinary_body(body: str) -> str:
+def _encode_rust_ordinary_body(
+    body: str,
+    literal_kind: str = "unicode",
+) -> str:
     """Encode semantic text as a valid Rust ordinary string body."""
 
     escapes = {
@@ -11748,6 +11770,11 @@ def _encode_rust_ordinary_body(body: str) -> str:
     for char in body:
         if char in escapes:
             encoded.append(escapes[char])
+        elif (
+            literal_kind == "byte"
+            and (ord(char) < 0x20 or ord(char) == 0x7F)
+        ):
+            encoded.append(f"\\x{ord(char):02x}")
         elif ord(char) < 0x20 or ord(char) == 0x7F:
             encoded.append(f"\\u{{{ord(char):x}}}")
         else:
@@ -11755,13 +11782,34 @@ def _encode_rust_ordinary_body(body: str) -> str:
     return "".join(encoded)
 
 
-def _rust_literal_semantic_body(body: str, is_raw: bool) -> str | None:
+def _rust_literal_semantic_body(
+    body: str,
+    is_raw: bool,
+    literal_kind: str = "unicode",
+) -> str | None:
     """Return one literal body's semantic text for every migration phase."""
 
     if not is_raw:
-        return _decode_rust_ordinary_body(body)
+        return _decode_rust_ordinary_body(body, literal_kind)
     normalized = body.replace("\r\n", "\n")
-    return None if "\r" in normalized else normalized
+    if "\r" in normalized:
+        return None
+    if (
+        literal_kind == "byte"
+        and any(ord(character) > 0x7F for character in normalized)
+    ):
+        return None
+    if literal_kind == "c" and "\0" in normalized:
+        return None
+    return normalized
+
+
+def _rust_literal_kind(source: str, start: int) -> str:
+    if source.startswith(("br", 'b"'), start):
+        return "byte"
+    if source.startswith(("cr", 'c"'), start):
+        return "c"
+    return "unicode"
 
 
 @dataclass(frozen=True)
@@ -13115,7 +13163,7 @@ def _looks_like_solcore_concat_value(source: str) -> bool:
 def _rust_solcore_literals(
     source: str,
     excluded_spans: Sequence[tuple[int, int]] | None = None,
-) -> list[tuple[int, int, bool]]:
+) -> list[tuple[int, int, bool, str]]:
     """Locate Rust string bodies that look like embedded Solcore programs.
 
     The boolean result field is true for a raw string. Ordinary strings are
@@ -13131,7 +13179,7 @@ def _rust_solcore_literals(
             for invocation in _rust_concat_invocations(source)
         ]
 
-    literals: list[tuple[int, int, bool]] = []
+    literals: list[tuple[int, int, bool, str]] = []
     cursor = _rust_file_code_start(source)
     while cursor < len(source):
         if source.startswith("//", cursor):
@@ -13157,7 +13205,12 @@ def _rust_solcore_literals(
 
         body_start, body_end, literal_end, valid = literal
         body = source[body_start:body_end]
-        semantic_body = _rust_literal_semantic_body(body, is_raw)
+        literal_kind = _rust_literal_kind(source, cursor)
+        semantic_body = _rust_literal_semantic_body(
+            body,
+            is_raw,
+            literal_kind,
+        )
         excluded = any(
             span_start <= body_start < span_end
             for span_start, span_end in excluded_spans
@@ -13168,7 +13221,9 @@ def _rust_solcore_literals(
             and semantic_body is not None
             and _looks_like_solcore_literal(semantic_body)
         ):
-            literals.append((body_start, body_end, is_raw))
+            literals.append(
+                (body_start, body_end, is_raw, literal_kind)
+            )
         cursor = literal_end
     return literals
 
@@ -13176,7 +13231,7 @@ def _rust_solcore_literals(
 def _rust_solcore_literal_spans(source: str) -> list[tuple[int, int]]:
     return [
         (body_start, body_end)
-        for body_start, body_end, _ in _rust_solcore_literals(source)
+        for body_start, body_end, _, _ in _rust_solcore_literals(source)
     ]
 
 
@@ -13288,12 +13343,16 @@ def migrate_rust_strings(
                     )
                 )
 
-    for body_start, body_end, is_raw in _rust_solcore_literals(
+    for body_start, body_end, is_raw, literal_kind in _rust_solcore_literals(
         source,
         concat_spans,
     ):
         encoded_body = source[body_start:body_end]
-        body = _rust_literal_semantic_body(encoded_body, is_raw)
+        body = _rust_literal_semantic_body(
+            encoded_body,
+            is_raw,
+            literal_kind,
+        )
         if body is None:
             continue
         original_body = body
@@ -13307,7 +13366,10 @@ def migrate_rust_strings(
         if migrated == original_body:
             continue
         if not is_raw:
-            migrated = _encode_rust_ordinary_body(migrated)
+            migrated = _encode_rust_ordinary_body(
+                migrated,
+                literal_kind,
+            )
         if migrated != encoded_body:
             replacements.append((body_start, body_end, migrated))
 
