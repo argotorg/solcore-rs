@@ -12071,8 +12071,8 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
                 break
             identifier = identifier_text(cursor)
             if identifier is not None:
-                text, cursor, is_raw = identifier
-                if not is_raw and text == "macro_use":
+                text, cursor, _ = identifier
+                if text == "macro_use":
                     return True
                 continue
             literal = _rust_raw_literal(source, cursor)
