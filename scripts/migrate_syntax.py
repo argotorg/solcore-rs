@@ -1608,6 +1608,45 @@ def reject_string_imports(source: str) -> None:
         )
 
 
+def reject_operator_import_selectors(source: str) -> None:
+    """Reject Classic parenthesized operator selectors without guessing a name."""
+
+    tokens = significant(source)
+    for index, token in enumerate(tokens):
+        if token.text != "import":
+            continue
+        end = _statement_end(tokens, index)
+        if end is None:
+            continue
+        operator = None
+        for cursor in range(index + 1, end):
+            if (
+                tokens[cursor].text != "("
+                or tokens[cursor - 1].text not in {"{", ","}
+            ):
+                continue
+            close = matching_index(tokens, cursor)
+            if (
+                close is not None
+                and close < end
+                and close > cursor + 1
+                and all(
+                    item.kind == "symbol"
+                    for item in tokens[cursor + 1 : close]
+                )
+            ):
+                operator = tokens[cursor]
+                break
+        if operator is None:
+            continue
+        line, column = _source_line_column(source, operator.start)
+        raise ValueError(
+            "cannot migrate operator import selector at "
+            f"line {line}, column {column}: Core selective imports require "
+            "identifier names; rename the operator and import that identifier"
+        )
+
+
 def migrate_pragmas(source: str) -> str:
     tokens = significant(source)
     replacements: list[tuple[int, int, str]] = []
@@ -6461,6 +6500,7 @@ def migrate_source(
 ) -> str:
     if has_comment_marker(source, KEEP_LEGACY_NEGATIVE_MARKER):
         return source
+    reject_operator_import_selectors(source)
     reject_string_imports(source)
     reject_contract_inheritance(source)
     reject_solidity_call_options(source)
@@ -7204,6 +7244,22 @@ def _rust_import_selectors_are_source_like(
             part[0].kind == "word" or part[0].text == "*"
         ):
             continue
+        if part[0].text == "(":
+            close = matching_index(part, 0)
+            if (
+                close is not None
+                and close > 1
+                and all(item.kind == "symbol" for item in part[1:close])
+                and (
+                    close == len(part) - 1
+                    or (
+                        close + 2 == len(part) - 1
+                        and part[close + 1].text == "as"
+                        and part[close + 2].kind == "word"
+                    )
+                )
+            ):
+                continue
         if (
             len(part) == 3
             and part[0].kind == "word"

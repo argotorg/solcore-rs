@@ -195,6 +195,49 @@ function wrap(x: word) -> Option(word) { return .Some(x); }
         self.assertIn("0 file(s) need migration", check.stdout)
 
 
+class OperatorImportMigrationTests(unittest.TestCase):
+    def test_rejects_classic_operator_import_selectors(self) -> None:
+        cases = [
+            "import math.{pow, (^^)};\n",
+            "import math.{(^^) as power};\n",
+            "import math.{pow} hiding {(^^)};\n",
+            "import {(^^) as power} from math;\n",
+        ]
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate operator import selector",
+                ):
+                    MIGRATE.migrate_source(classic)
+
+    def test_keeps_identifier_only_core_imports(self) -> None:
+        canonical = "import {pow, power as renamed} from math;\n"
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_leaves_non_operator_negative_selector_fixtures_unchanged(
+        self,
+    ) -> None:
+        negative = "import {D(C)} from lib;\n"
+
+        self.assertEqual(MIGRATE.migrate_source(negative), negative)
+
+    def test_rejects_operator_imports_in_isolated_rust_literals(self) -> None:
+        rust = r'''
+const RAW: &str = r#"import math.{pow, (^^)};"#;
+const ORDINARY: &str = "import {(^^) as power} from math;";
+'''
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 2)
+        with self.assertRaisesRegex(
+            ValueError,
+            "cannot migrate operator import selector",
+        ):
+            MIGRATE.migrate_rust_strings(rust)
+
+
 class StringImportMigrationTests(unittest.TestCase):
     def test_rejects_all_solidity_string_import_forms(self) -> None:
         cases = [
