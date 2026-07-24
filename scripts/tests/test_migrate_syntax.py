@@ -195,6 +195,58 @@ function wrap(x: word) -> Option(word) { return .Some(x); }
         self.assertIn("0 file(s) need migration", check.stdout)
 
 
+class ImportHidingMigrationTests(unittest.TestCase):
+    def test_filters_selected_imports_by_their_local_alias(self) -> None:
+        cases = [
+            (
+                "import M.{f as g, h} hiding {g};\n",
+                "import {h} from M;\n",
+            ),
+            (
+                "import M.{f as g, h} hiding {f};\n",
+                "import {f as g, h} from M;\n",
+            ),
+            (
+                "import M.{f, g, h as local} hiding {f, local};\n",
+                "import {g} from M;\n",
+            ),
+        ]
+
+        for classic, expected in cases:
+            with self.subTest(classic=classic):
+                migrated = MIGRATE.migrate_source(classic)
+                self.assertEqual(migrated, expected)
+                self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_rejects_hiding_that_removes_every_selected_name(self) -> None:
+        cases = [
+            "import M.{f} hiding {f};\n",
+            "import M.{f, g} hiding {f, g};\n",
+            "import M.{f as g} hiding {g};\n",
+        ]
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate empty selective import",
+                ):
+                    MIGRATE.migrate_source(classic)
+
+    def test_rejects_empty_result_in_isolated_rust_imports(self) -> None:
+        rust = (
+            'const SOURCE: &str = '
+            'r#"import M.{f as g} hiding {g};"#;\n'
+        )
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 1)
+        with self.assertRaisesRegex(
+            ValueError,
+            "cannot migrate empty selective import",
+        ):
+            MIGRATE.migrate_rust_strings(rust)
+
+
 class OperatorImportMigrationTests(unittest.TestCase):
     def test_rejects_classic_operator_import_selectors(self) -> None:
         cases = [

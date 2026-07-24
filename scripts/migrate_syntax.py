@@ -1728,7 +1728,32 @@ def migrate_imports(source: str) -> str:
                 continue
             path = join_tokens(body[: brace - 1])
             selected_parts = split_top(body[brace + 1 : close], ",", angles=False)
-            selected = [join_tokens(part) for part in selected_parts if part]
+            selected: list[tuple[str, str]] = []
+            has_wildcard = False
+            for part in selected_parts:
+                if not part:
+                    continue
+                if len(part) == 1 and part[0].text == "*":
+                    has_wildcard = True
+                    continue
+                if len(part) == 1 and part[0].kind == "word":
+                    selected.append((part[0].text, part[0].text))
+                    continue
+                if (
+                    len(part) == 3
+                    and part[0].kind == "word"
+                    and part[1].text == "as"
+                    and part[2].kind == "word"
+                ):
+                    selected.append(
+                        (
+                            f"{part[0].text} as {part[2].text}",
+                            part[2].text,
+                        )
+                    )
+                    continue
+                spelling = join_tokens(part)
+                selected.append((spelling, spelling))
             hidden: set[str] = set()
             if hiding is not None and hiding + 1 < len(body) and body[hiding + 1].text == "{":
                 hidden_close = matching_index(body, hiding + 1)
@@ -1740,9 +1765,10 @@ def migrate_imports(source: str) -> str:
                         )
                         if part
                     }
-            has_wildcard = "*" in selected
             names = [
-                name for name in selected if name != "*" and name not in hidden
+                spelling
+                for spelling, local_name in selected
+                if local_name not in hidden
             ]
             if has_wildcard:
                 if hidden:
@@ -1756,8 +1782,17 @@ def migrate_imports(source: str) -> str:
                 replacement = f"import {path};"
             elif names:
                 replacement = f"import {{{', '.join(names)}}} from {path};"
+            elif selected:
+                line, column = _source_line_column(
+                    source, body[brace].start
+                )
+                raise ValueError(
+                    "cannot migrate empty selective import at "
+                    f"line {line}, column {column}: `hiding` removes every "
+                    "selected local name and Core has no empty import surface"
+                )
             else:
-                replacement = f"import {path};"
+                continue
         elif as_index is not None:
             path = join_tokens(body[:as_index])
             alias = join_tokens(body[as_index + 1 :])
