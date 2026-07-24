@@ -11672,7 +11672,10 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
             cursor += 2
             if escaped == "\r" and cursor < len(body) and body[cursor] == "\n":
                 cursor += 1
-            while cursor < len(body) and body[cursor].isspace():
+            while (
+                cursor < len(body)
+                and body[cursor] in {" ", "\t", "\n", "\r"}
+            ):
                 cursor += 1
             continue
 

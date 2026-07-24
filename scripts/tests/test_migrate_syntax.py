@@ -5580,6 +5580,33 @@ const PROSE: &str =
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
         self.assert_rust_syntax(migrated)
 
+    def test_line_continuation_preserves_non_rust_whitespace(self) -> None:
+        preserved = "\v\f\u00a0\u0085\u2028\u2029"
+        rust = (
+            'const SOURCE: &str = concat!(\n'
+            '    "function f(x: word) -> word { return x; }\\\n'
+            " \t"
+            + preserved
+            + '",\n'
+            ");\n"
+        )
+        original_value = (
+            "function f(x: word) -> word { return x; }" + preserved
+        )
+
+        self.assertEqual(self.concat_values(rust), [original_value])
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertEqual(
+            self.concat_values(migrated),
+            [
+                "function f(x: word) returns (word) { return x; }"
+                + preserved
+            ],
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+        self.assert_rust_syntax(migrated)
+
     def test_cli_does_not_share_owners_between_rust_literals(self) -> None:
         source = r'''
 const DECLARATION: &str =
