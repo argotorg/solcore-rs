@@ -13191,11 +13191,12 @@ def _rust_solcore_literals(
 ) -> list[tuple[int, int, bool, str]]:
     """Locate Rust string bodies that look like embedded Solcore programs.
 
-    The boolean result field is true for a raw string. Ordinary strings are
-    decoded before detection so an escaped newline terminates a Solcore line
-    comment and does not hide the rest of the embedded program. Bodies inside
-    any ``concat!`` token tree are excluded because their semantic context is
-    the joined macro value, not an individual operand.
+    The third result field is true for a raw string and the fourth records its
+    Unicode, byte, or C-string kind. Ordinary strings are decoded before
+    detection so an escaped newline terminates a Solcore line comment and does
+    not hide the rest of the embedded program. Bodies inside any ``concat!``
+    token tree are excluded because their semantic context is the joined macro
+    value, not an individual operand.
     """
 
     if excluded_spans is None:
@@ -13313,11 +13314,17 @@ def migrate_rust_strings(
 ) -> str:
     """Migrate Solcore programs embedded in Rust string literals.
 
-    Literals are rewritten only when combined token, boundary, and declaration
-    signals make them source-like, leaving unrelated regex, format templates,
-    and prose byte-for-byte unchanged.  Ordinary strings are transformed in
-    their escaped spelling so the surrounding Rust source and existing escapes
-    stay intact.
+    Standalone literals and direct Unicode string-only ``concat!`` groups are
+    rewritten only when combined token, boundary, and declaration signals make
+    them source-like. Unrelated regex, format templates, and prose remain
+    byte-for-byte unchanged. Migrated ordinary strings are decoded and safely
+    re-encoded; migrated concat operands become ordinary Unicode strings while
+    retaining their operand count and intervening Rust comments.
+
+    Set ``assume_concat_shadowed`` when a bare ``concat!`` may resolve to a
+    custom macro outside this source. The CLI derives that flag across all
+    selected Rust files from explicit imports, macro definitions, and
+    ``macro_use`` attributes.
     """
 
     if has_rust_comment_marker(source, KEEP_RUST_FILE_MARKER):
@@ -13640,8 +13647,8 @@ def main() -> int:
         "--rust-strings",
         action="store_true",
         help=(
-            "migrate Solcore programs inside Rust string literals; each "
-            "literal is migrated as an isolated source"
+            "migrate Solcore programs inside Rust strings; each standalone "
+            "literal or direct string-only concat group is an isolated source"
         ),
     )
     parser.add_argument(
