@@ -11904,12 +11904,52 @@ def _rust_concat_invocation_at(
     return RustConcatInvocation(start, end, tuple(literals))
 
 
+def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
+    """Locate macro token trees so nested ``concat!`` stays opaque."""
+
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    while cursor < len(source):
+        if source.startswith("//", cursor):
+            newline = source.find("\n", cursor + 2)
+            cursor = len(source) if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", cursor):
+            cursor = _rust_block_comment_end(source, cursor)
+            continue
+        if source[cursor] == "'":
+            char_end = _rust_char_end(source, cursor)
+            if char_end is not None:
+                cursor = char_end
+                continue
+
+        literal = _rust_raw_literal(source, cursor)
+        if literal is None:
+            literal = _rust_ordinary_literal(source, cursor)
+        if literal is not None:
+            cursor = literal[2]
+            continue
+
+        if source[cursor] == "!":
+            open_start = _rust_skip_trivia(source, cursor + 1)
+            if (
+                open_start < len(source)
+                and source[open_start] in "([{"
+            ):
+                end = _rust_token_tree_end(source, open_start)
+                if end is not None:
+                    ranges.append((cursor, end))
+        cursor += 1
+    return ranges
+
+
 def _rust_concat_invocations(source: str) -> list[RustConcatInvocation]:
     """Locate non-overlapping ``concat!`` token trees outside Rust trivia."""
 
     def identifier_continues(character: str) -> bool:
         return character == "_" or ("a" + character).isidentifier()
 
+    macro_ranges = _rust_macro_token_tree_ranges(source)
     invocations: list[RustConcatInvocation] = []
     cursor = 0
     while cursor < len(source):
@@ -11948,6 +11988,15 @@ def _rust_concat_invocations(source: str) -> list[RustConcatInvocation]:
         ):
             invocation = _rust_concat_invocation_at(source, cursor)
             if invocation is not None:
+                if any(
+                    bang < cursor < end
+                    for bang, end in macro_ranges
+                ):
+                    invocation = RustConcatInvocation(
+                        invocation.start,
+                        invocation.end,
+                        None,
+                    )
                 invocations.append(invocation)
                 cursor = invocation.end
                 continue

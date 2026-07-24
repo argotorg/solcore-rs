@@ -5238,6 +5238,24 @@ const SUFFIX: &str = concat́!(
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
         self.assert_rust_syntax(rust)
 
+    def test_concat_nested_in_another_macro_stays_opaque(self) -> None:
+        rust = r'''
+const TOKENS: &str = stringify!(
+    concat!(
+        "function f(",
+        "x: word) -> word { return x; }",
+    )
+);
+'''
+
+        invocations = MIGRATE._rust_concat_invocations(rust)
+
+        self.assertEqual(len(invocations), 1)
+        self.assertIsNone(invocations[0].literals)
+        self.assertEqual(MIGRATE._rust_solcore_literal_spans(rust), [])
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+        self.assert_rust_syntax(rust)
+
     def test_concat_groups_do_not_share_constructor_owners(self) -> None:
         rust = r'''
 const DECLARATION: &str = concat!(
