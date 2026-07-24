@@ -2551,6 +2551,37 @@ def reject_unsupported_solidity_sugar(source: str) -> None:
     )
 
 
+def reject_generic_fallback(source: str) -> None:
+    """Reject Classic generic or constrained fallback declarations."""
+
+    tokens = significant(source)
+    for index, token in enumerate(tokens):
+        if (
+            token.text != "fallback"
+            or index + 1 >= len(tokens)
+            or tokens[index + 1].text != "("
+        ):
+            continue
+        start = _previous_boundary(tokens, index)
+        prefix = list(tokens[start:index])
+        non_modifiers = [
+            item for item in prefix if item.text not in MODIFIERS
+        ]
+        if not non_modifiers:
+            continue
+        _, _, had_forall = _parse_forall_prefix(non_modifiers)
+        if not had_forall and not any(
+            item.text == "=>" for item in non_modifiers
+        ):
+            continue
+        line, column = _source_line_column(source, non_modifiers[0].start)
+        raise ValueError(
+            "cannot migrate generic or constrained fallback at "
+            f"line {line}, column {column}: Core fallback declarations "
+            "cannot bind type parameters or carry trait predicates"
+        )
+
+
 def reject_contract_inheritance(source: str) -> None:
     """Reject Classic inheritance that Core cannot preserve automatically."""
 
@@ -6795,6 +6826,7 @@ def migrate_source(
     reject_solidity_call_options(source)
     reject_named_call_arguments(source)
     reject_unsupported_solidity_sugar(source)
+    reject_generic_fallback(source)
     reject_noncanonical_proxy_comptime(source)
     reject_malformed_mapping_types(source)
     reject_noncanonical_function_type_qualifiers(source)
@@ -7379,6 +7411,39 @@ def _rust_function_fragment_is_source_like(
     )
 
 
+def _rust_special_function_fragment_is_source_like(
+    source: str, tokens: Sequence[Token], index: int
+) -> bool:
+    """Recognize isolated constructor and fallback source fragments."""
+
+    prefixed_start = _rust_classic_prefix_start(tokens, index)
+    source_boundary = _rust_source_boundary(source, tokens, index)
+    if prefixed_start is not None:
+        source_boundary = source_boundary or _rust_source_boundary(
+            source, tokens, prefixed_start
+        )
+    if (
+        not source_boundary
+        or index + 1 >= len(tokens)
+        or tokens[index + 1].text != "("
+    ):
+        return False
+    params_close = matching_index(tokens, index + 1)
+    if params_close is None:
+        return False
+    boundary = _header_boundary(tokens, params_close + 1)
+    if boundary is None or not _rust_function_trailer_is_source_like(
+        tokens[params_close + 1 : boundary]
+    ):
+        return False
+    if tokens[boundary].text == ";":
+        return _rust_source_line_ends_after(source, tokens[boundary])
+    body_close = matching_index(tokens, boundary)
+    return body_close is not None and _rust_executable_block_is_source_like(
+        source, tokens, boundary, body_close
+    )
+
+
 def _rust_assignment_declaration_is_source_like(
     source: str, tokens: Sequence[Token], index: int
 ) -> bool:
@@ -7723,6 +7788,13 @@ def _looks_like_solcore_literal(source: str) -> bool:
             return True
         if token.text == "function" and _rust_function_fragment_is_source_like(
             source, tokens, index
+        ):
+            return True
+        if (
+            token.text in {"constructor", "fallback"}
+            and _rust_special_function_fragment_is_source_like(
+                source, tokens, index
+            )
         ):
             return True
         if token.text in {"data", "type", "alias"} and (

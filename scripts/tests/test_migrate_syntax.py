@@ -2354,6 +2354,49 @@ const CALLS: &str = r#"emit(0); new(0); obj.emit(0);"#;
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
 
 
+class GenericFallbackMigrationTests(unittest.TestCase):
+    def test_rejects_generic_and_constrained_fallbacks(self) -> None:
+        cases = [
+            "forall T. fallback(x: T) -> T { return x; }\n",
+            (
+                "forall T: Eq. external fallback(x: T)"
+                " returns (T) { return x; }\n"
+            ),
+            "(T: Eq) => fallback(x: T) returns (T) { return x; }\n",
+        ]
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate generic or constrained fallback",
+                ):
+                    MIGRATE.migrate_source(classic)
+
+    def test_preserves_non_generic_fallbacks_and_named_functions(self) -> None:
+        canonical = """\
+contract C {
+  fallback() external payable { revert; }
+  function fallback<T>(x: T) returns (T) { return x; }
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_rejects_isolated_generic_fallback_in_rust_literal(self) -> None:
+        rust = (
+            'const SOURCE: &str = r#"forall T. '
+            'fallback(x: T) -> T { return x; }"#;\n'
+        )
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 1)
+        with self.assertRaisesRegex(
+            ValueError,
+            "cannot migrate generic or constrained fallback",
+        ):
+            MIGRATE.migrate_rust_strings(rust)
+
+
 class ContractInheritanceMigrationTests(unittest.TestCase):
     def test_rejects_unsupported_contract_like_inheritance(self) -> None:
         cases = [
