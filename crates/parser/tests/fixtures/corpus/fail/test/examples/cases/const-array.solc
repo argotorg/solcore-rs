@@ -11,7 +11,8 @@ impl<a> Eq<a, a> {}
 
 // this should work but doesnt: forall sizel sizer elem sizeout . (sizel, sizer):TAdd(sizeout)
 function concat<sizel, sizer, elem, sizeout, pairSizelSizer>(lhs: array<sizel, elem> memory, rhs: array<sizer, elem> memory) returns (array<sizeout, elem> memory) where pairSizelSizer: Eq<(sizel, sizer)>, pairSizelSizer: TAdd<sizeout> {
-    return memory.memory(0)  as array<sizeout, elem> memory; // :D
+    let result: array<sizeout, elem> memory = memory.memory(0);
+    return result; // :D
 }
 
 enum Itself<a> { ItselfRuntimeTag }
@@ -34,7 +35,8 @@ impl ToWord<Zero> {
 
 impl<prev> ToWord<Succ<prev>> where prev: ToWord {
     function toWord(self: Itself<Succ<prev>>) {
-        let returnVal: word = ToWord.toWord(Itself.ItselfRuntimeTag as Itself<prev>);
+        let prevTag: Itself<prev> = Itself.ItselfRuntimeTag;
+        let returnVal: word = ToWord.toWord(prevTag);
         assembly {
             returnVal := add(1, returnVal)
         }
@@ -60,7 +62,8 @@ impl MemoryType<word> {
 
 impl<size, elem> IndexAccessible<array<size, elem> memory, word, elem> where size: ToWord, elem: MemoryType {
     function at(self, index) returns (elem) {
-        let sizeValue = ToWord.toWord(Itself.ItselfRuntimeTag as Itself<size>);
+        let sizeTag: Itself<size> = Itself.ItselfRuntimeTag;
+        let sizeValue = ToWord.toWord(sizeTag);
        // this should work but doesn't
         // assembly {
         //    if iszero(lt(index, sizeValue)) {
@@ -76,7 +79,8 @@ impl<size, elem> IndexAccessible<array<size, elem> memory, word, elem> where siz
     }
 
     function set(self, index, val) {
-        let sizeValue = ToWord.toWord(Itself.ItselfRuntimeTag as Itself<size>);
+        let sizeTag: Itself<size> = Itself.ItselfRuntimeTag;
+        let sizeValue = ToWord.toWord(sizeTag);
 
         //assembly {
         //    if iszero(lt(index, sizeValue)) {

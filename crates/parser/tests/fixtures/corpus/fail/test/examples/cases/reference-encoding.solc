@@ -113,7 +113,8 @@ enum StructField<structType, fieldSelector> { StructField(structType) }
 impl<structType, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessProxy<structType memory, fieldSelector>, memoryRef<fieldType>> where StructField<structType, fieldSelector>: CStructField<fieldType, offsetType>, offsetType: MemorySize {
     function memberAccess(x: MemberAccessProxy<structType memory, fieldSelector>) returns (memoryRef<fieldType>) {
         let ptr: word = Typedef.rep(memberAccessD1(x));
-        let size: word = MemorySize.size(Proxy.Proxy as Proxy<offsetType>);
+        let offsetProxy: Proxy<offsetType> = Proxy.Proxy;
+        let size: word = MemorySize.size(offsetProxy);
         assembly {
             ptr := add(ptr, size)
         }
@@ -142,8 +143,10 @@ impl MemorySize<uint> {
 
 impl<a, b> MemorySize<(a, b)> where a: MemorySize, b: MemorySize {
     function size(x: Proxy<(a, b)>) returns (word) {
-        let a_sz: word = MemorySize.size(Proxy.Proxy as Proxy<a>);
-        let b_sz: word = MemorySize.size(Proxy.Proxy as Proxy<b>);
+        let aProxy: Proxy<a> = Proxy.Proxy;
+        let a_sz: word = MemorySize.size(aProxy);
+        let bProxy: Proxy<b> = Proxy.Proxy;
+        let b_sz: word = MemorySize.size(bProxy);
         assembly {
             a_sz := add(a_sz, b_sz)
         }
@@ -154,12 +157,14 @@ impl<a, b> MemorySize<(a, b)> where a: MemorySize, b: MemorySize {
 impl<structType, fieldSelector, fieldType, offsetType> RValueMemberAccess<MemberAccessProxy<structType memory, fieldSelector>, fieldType> where StructField<structType, fieldSelector>: CStructField<fieldType, offsetType>, fieldType: MemoryType, offsetType: MemorySize {
     function memberAccess(x: MemberAccessProxy<structType memory, fieldSelector>) returns (fieldType) {
         let ptr: word = Typedef.rep(memberAccessD1(x));
-        let size: word = MemorySize.size(Proxy.Proxy as Proxy<offsetType>);
+        let offsetProxy: Proxy<offsetType> = Proxy.Proxy;
+        let size: word = MemorySize.size(offsetProxy);
         // BUG: Something wrong here? Complains about ptr not being word...
         /*assembly {
                      ptr := add(ptr, size)
         }*/
-        return MemoryType.load(Typedef.abs(ptr)) as fieldType;
+        let loaded: fieldType = MemoryType.load(Typedef.abs(ptr));
+        return loaded;
     }
 }
 

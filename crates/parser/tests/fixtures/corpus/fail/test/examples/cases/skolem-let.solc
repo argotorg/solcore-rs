@@ -7,7 +7,7 @@ function fromWord<a>(x: word) returns (a) {
 
 contract Unsafe {
   function main() public {
-    fromWord(7) as ();
+    let result: () = fromWord(7);
     return 42;
   }
 }

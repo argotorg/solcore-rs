@@ -16,19 +16,23 @@ impl BaseMemoryType<word> {
 impl<a, b> BaseMemoryType<(a, b)> where a: BaseMemoryType, b: BaseMemoryType {
 
     function memorySize(x) returns (word) { // not correct semantically, just for debugging
-            return add(BaseMemoryType.memorySize(Proxy.Proxy as Proxy<a>),
+            let aProxy: Proxy<a> = Proxy.Proxy;
+            let bProxy: Proxy<b> = Proxy.Proxy;
+            return add(BaseMemoryType.memorySize(aProxy),
             // BaseMemoryType.memorySize(Proxy:Proxy(b))
-	    morefun(Proxy.Proxy as Proxy<b>)
+	    morefun(bProxy)
 	    );
     }
 }
 // this should trigger a type error.
 function morefun<t>(p: Proxy<t>) returns (word) {
-  return BaseMemoryType.memorySize(Proxy.Proxy as Proxy<t>);
+  let proxy: Proxy<t> = Proxy.Proxy;
+  return BaseMemoryType.memorySize(proxy);
 }
 
 contract TestMemoryType {
   function main() public returns (word) {
-    return BaseMemoryType.memorySize(Proxy.Proxy as Proxy<(word, word)>);
+    let proxy: Proxy<(word, word)> = Proxy.Proxy;
+    return BaseMemoryType.memorySize(proxy);
   }
 }

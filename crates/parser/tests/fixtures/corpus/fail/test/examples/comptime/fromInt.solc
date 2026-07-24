@@ -33,13 +33,25 @@ function fromInt<a, b>(x: a) returns (b) where a: Int, b: Int { return Int.fromW
 function staticInt<a, b>(comptime x: a) returns (comptime b) where a: Int, b: Int { return Int.fromWord(Int.toWord(x)); }
 
 // limited usability
-function dynamic_cast<a, b, r>(x: a) returns (b) where a: Typedef<r>, b: Typedef<r> { return Typedef.abs(Typedef.rep(x) as r); }
-function static_cast<a, b, r>(comptime x: a) returns (comptime b) where a: Typedef<r>, b: Typedef<r> { return Typedef.abs(Typedef.rep(x) as r); }
+function dynamic_cast<a, b, r>(x: a) returns (b) where a: Typedef<r>, b: Typedef<r> {
+  let rep: r = Typedef.rep(x);
+  return Typedef.abs(rep);
+}
+function static_cast<a, b, r>(comptime x: a) returns (comptime b) where a: Typedef<r>, b: Typedef<r> {
+  let rep: r = Typedef.rep(x);
+  return Typedef.abs(rep);
+}
 
 // wider usability
-function dynamic_cast_via<a, b, r>(p: @r, x: a) returns (b) where a: Typedef<r>, b: Typedef<r> { return Typedef.abs(Typedef.rep(x) as r); }
+function dynamic_cast_via<a, b, r>(p: @r, x: a) returns (b) where a: Typedef<r>, b: Typedef<r> {
+  let rep: r = Typedef.rep(x);
+  return Typedef.abs(rep);
+}
 
-function static_cast_via<a, b, r>(comptime p: @r, comptime x: a) returns (comptime b) where a: Typedef<r>, b: Typedef<r> { return Typedef.abs(Typedef.rep(x) as r); }
+function static_cast_via<a, b, r>(comptime p: @r, comptime x: a) returns (comptime b) where a: Typedef<r>, b: Typedef<r> {
+  let rep: r = Typedef.rep(x);
+  return Typedef.abs(rep);
+}
 // maybe: `comptime function static_cast_via` as equivalent notation
 
 function notcomptime(x: word) returns (word) {
@@ -70,7 +82,8 @@ contract FromWord {
   }
 
   function h() returns (comptime uint256) {
-    let comptime y2: uint256 = staticInt( ( staticInt(42) ) as uint256); // error without the explicit conversion
+    let comptime inner: uint256 = staticInt(42);
+    let comptime y2: uint256 = staticInt(inner); // error without the type annotation
     return y2;
   }
   function main() {

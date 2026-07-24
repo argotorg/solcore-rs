@@ -11,6 +11,8 @@ function f<a>(p: Proxy<a>) {
 }
 
 function g() {
-    f(Proxy.Proxy as Proxy<memory<memory<word>>>); // needs to choose default instance in Test.f
-    f(Proxy.Proxy as Proxy<memory<word>>); // needs to choose concrete instance
+    let nestedMemoryProxy: Proxy<memory<memory<word>>> = Proxy.Proxy;
+    f(nestedMemoryProxy); // needs to choose default instance in Test.f
+    let memoryProxy: Proxy<memory<word>> = Proxy.Proxy;
+    f(memoryProxy); // needs to choose concrete instance
 }

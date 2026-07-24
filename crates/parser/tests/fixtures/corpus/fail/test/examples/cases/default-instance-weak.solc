@@ -19,6 +19,8 @@ function f<a>(p: Proxy<a>) {
 }
 
 function g() {
-    f(Proxy.Proxy as Proxy<memory<memory<word>>>); // valid, since default instance is used
-    f(Proxy.Proxy as Proxy<memory<word>>); // PROBLEM: now we have a bool cross the assembly barrier
+    let nestedMemoryProxy: Proxy<memory<memory<word>>> = Proxy.Proxy;
+    f(nestedMemoryProxy); // valid, since default instance is used
+    let memoryProxy: Proxy<memory<word>> = Proxy.Proxy;
+    f(memoryProxy); // PROBLEM: now we have a bool cross the assembly barrier
 }

@@ -139,10 +139,12 @@ impl<a, b> LValueMemberAccess<MemberAccessProxy<(a, b) memory, zero>, memoryRef<
 impl<a, b, c, n> LValueMemberAccess<MemberAccessProxy<(a, b) memory, suc<n>>, c> where MemberAccessProxy<b memory, n>: LValueMemberAccess<c>, a: MemorySize {
     function memberAccess(map: MemberAccessProxy<(a, b) memory, suc<n>>, f: Proxy<suc<n>>) returns (c) {
         let ptr: word = memberAccessPtr(map);
-        let sz: word = MemorySize.size(Proxy.Proxy as Proxy<a>);
+        let aProxy: Proxy<a> = Proxy.Proxy;
+        let sz: word = MemorySize.size(aProxy);
         assembly { ptr := add(ptr, sz) }
         let newPtr: b memory = memory.memory(ptr);
-        return LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(newPtr, Proxy.Proxy as Proxy<n>));
+        let fieldProxy: Proxy<n> = Proxy.Proxy;
+        return LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(newPtr, fieldProxy));
     }
 }
 
@@ -173,19 +175,26 @@ impl Typedef<S, (word, uint, word)> {
 // The idea here would be to generate these particularly on the definition of a struct with fields.
 impl<c, rep> LValueMemberAccess<MemberAccessProxy<S memory, x_sel>, word> where S: Typedef<rep>, MemberAccessProxy<rep memory, zero>: LValueMemberAccess<word> {
     function memberAccess(map: MemberAccessProxy<S memory, x_sel>, f: Proxy<x_sel>) returns (word) {
-        return (LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(memory.memory(memberAccessPtr(map)) as rep memory, Proxy.Proxy as Proxy<zero>))  as word);
+        let memoryValue: rep memory = memory.memory(memberAccessPtr(map));
+        let fieldProxy: Proxy<zero> = Proxy.Proxy;
+        let value: word = LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(memoryValue, fieldProxy));
+        return value;
     }
 }
 
 impl<c, rep> LValueMemberAccess<MemberAccessProxy<S memory, y_sel>, uint> where S: Typedef<rep>, MemberAccessProxy<rep memory, suc<zero>>: LValueMemberAccess<uint> {
     function memberAccess(map: MemberAccessProxy<S memory, y_sel>, f: Proxy<y_sel>) returns (uint) {
-        return LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(memory.memory(memberAccessPtr(map)) as rep memory, Proxy.Proxy as Proxy<suc<zero>>));
+        let memoryValue: rep memory = memory.memory(memberAccessPtr(map));
+        let fieldProxy: Proxy<suc<zero>> = Proxy.Proxy;
+        return LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(memoryValue, fieldProxy));
     }
 }
 
 impl<c, rep> LValueMemberAccess<MemberAccessProxy<S memory, z_sel>, word> where S: Typedef<rep>, MemberAccessProxy<rep memory, suc<suc<zero>>>: LValueMemberAccess<word> {
     function memberAccess(map: MemberAccessProxy<S memory, z_sel>, f: Proxy<z_sel>) returns (word) {
-        return LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(memory.memory(memberAccessPtr(map)) as rep memory, Proxy.Proxy as Proxy<suc<suc<zero>>>));
+        let memoryValue: rep memory = memory.memory(memberAccessPtr(map));
+        let fieldProxy: Proxy<suc<suc<zero>>> = Proxy.Proxy;
+        return LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(memoryValue, fieldProxy));
     }
 }
 
@@ -201,11 +210,14 @@ function g() {
     let y: uint = Typedef.abs(21);
     let z: word = 7;
     // s.x = x;
-    Assign.assign(LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(s, Proxy.Proxy as Proxy<x_sel>)), x);
+    let xProxy: Proxy<x_sel> = Proxy.Proxy;
+    Assign.assign(LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(s, xProxy)), x);
     // s.y = y;
-    Assign.assign(LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(s, Proxy.Proxy as Proxy<y_sel>)), y);
+    let yProxy: Proxy<y_sel> = Proxy.Proxy;
+    Assign.assign(LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(s, yProxy)), y);
     // s.z = z;
-    Assign.assign(LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(s, Proxy.Proxy as Proxy<z_sel>)), z);
+    let zProxy: Proxy<z_sel> = Proxy.Proxy;
+    Assign.assign(LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(s, zProxy)), z);
 }
 
 contract C {

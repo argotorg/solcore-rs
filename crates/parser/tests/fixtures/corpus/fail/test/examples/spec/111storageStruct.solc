@@ -111,7 +111,8 @@ impl StorageType<word> {
 
 impl StorageType<uint> {
     function sload(ptr: word) returns (uint) {
-        return Typedef.abs(sload_(ptr)) as uint; // explicit conversion needed due to a typechecker bug
+        let value: uint = Typedef.abs(sload_(ptr));
+        return value; // type annotation needed due to a typechecker bug
     }
     function store(ptr: word, value: uint) returns () {
         return sstore_(ptr, Typedef.rep(value));
@@ -146,7 +147,8 @@ enum StructField<structType, fieldSelector> { StructField(structType) }
 impl<structType, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessProxy<structType storage, fieldSelector, offsetType>, storageRef<fieldType>> where StructField<structType, fieldSelector>: CStructField<fieldType, offsetType>, offsetType: StorageSize {
     function memberAccess(x: MemberAccessProxy<structType storage, fieldSelector, offsetType>) returns (storageRef<fieldType>) {
         let ptr: word = Typedef.rep(memberAccessD1(x));
-        let size: word = StorageSize.size(Proxy.Proxy as Proxy<offsetType>);
+        let offsetProxy: Proxy<offsetType> = Proxy.Proxy;
+        let size: word = StorageSize.size(offsetProxy);
         assembly {
             ptr := add(ptr, size)
         }
@@ -185,8 +187,10 @@ forall a b . a:Typedef(b), b:StorageSize
 
 impl<a, b> StorageSize<(a, b)> where a: StorageSize, b: StorageSize {
     function size(x: Proxy<(a, b)>) returns (word) {
-        let a_sz: word = StorageSize.size(Proxy.Proxy as Proxy<a>);
-        let b_sz: word = StorageSize.size(Proxy.Proxy as Proxy<b>);
+        let aProxy: Proxy<a> = Proxy.Proxy;
+        let bProxy: Proxy<b> = Proxy.Proxy;
+        let a_sz: word = StorageSize.size(aProxy);
+        let b_sz: word = StorageSize.size(bProxy);
         assembly {
             a_sz := add(a_sz, b_sz)
         }
@@ -197,11 +201,13 @@ impl<a, b> StorageSize<(a, b)> where a: StorageSize, b: StorageSize {
 impl<structType, fieldSelector, fieldType, offsetType> RValueMemberAccess<MemberAccessProxy<structType storage, fieldSelector, offsetType>, fieldType> where StructField<structType, fieldSelector>: CStructField<fieldType, offsetType>, fieldType: StorageType, offsetType: StorageSize {
     function memberAccess(x: MemberAccessProxy<structType storage, fieldSelector, offsetType>) returns (fieldType) {
         let ptr: word = Typedef.rep(memberAccessD1(x));
-        let size: word = StorageSize.size(Proxy.Proxy as Proxy<offsetType>);
+        let offsetProxy: Proxy<offsetType> = Proxy.Proxy;
+        let size: word = StorageSize.size(offsetProxy);
         assembly {
             ptr := add(ptr, size)
         }
-        return StorageType.sload(ptr) as fieldType;
+        let value: fieldType = StorageType.sload(ptr);
+        return value;
     }
 }
 
@@ -226,8 +232,8 @@ function g() returns (word) {
     let s: S storage = Typedef.abs(0x80);
     let fld1_map: MemberAccessProxy<S storage, fld1_sel, ()> = MemberAccessProxy.MemberAccessProxy(s, fld1_sel.fld1_sel);
     let fld2_map: MemberAccessProxy<S storage, fld2_sel, uint> = MemberAccessProxy.MemberAccessProxy(s, fld2_sel.fld2_sel);
-    let fld3_map = MemberAccessProxy.MemberAccessProxy(s, fld3_sel.fld3_sel)
-		  as MemberAccessProxy<S storage, fld3_sel, (uint, word)>;
+    let fld3_map: MemberAccessProxy<S storage, fld3_sel, (uint, word)> =
+        MemberAccessProxy.MemberAccessProxy(s, fld3_sel.fld3_sel);
     // let y:word = 13;
     let z: uint = uint.uint(13);
 
@@ -256,7 +262,8 @@ function g() returns (word) {
     let f3: word;
     f3 = RValueMemberAccess.memberAccess(fld3_map);
 
-    let f12 = add(Typedef.rep(f1)  as word, f2);
+    let f1Rep: word = Typedef.rep(f1);
+    let f12 = add(f1Rep, f2);
     let f123 = add(f12, f3);
 
     return f123;

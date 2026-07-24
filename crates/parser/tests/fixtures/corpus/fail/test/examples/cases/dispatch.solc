@@ -27,7 +27,8 @@ trait Selector<nm> {
 // Method has a Selector if its name has a Selector
 impl<name, args, rets, fn> Selector<Method<name, args, rets, fn>> where name: Selector {
   function hash(prx: Proxy<Method<name, args, rets, fn>>) returns (word) {
-    return Selector.hash(Proxy.Proxy  as Proxy<name>);
+    let nameProxy: Proxy<name> = Proxy.Proxy;
+    return Selector.hash(nameProxy);
   }
 }
 
@@ -42,7 +43,8 @@ trait ExecMethod<ty, callvalueCheckStatus> {
 impl<name, args, rets, fn, callvalueCheckStatus> ExecMethod<Method<name, Proxy<args>, Proxy<rets>, fn>> where fn: invokable<args, ret> {
   function exec(m: Method<name, args, rets, fn>, pstatus: Proxy<callvalueCheckStatus>) returns () {
     match (m) { case Method.Method(nm, args, rets, fn) { // check callvalue
-        MethodLevelCallvalueCheck.checkCallvalue(Proxy.Proxy  as Proxy<Method<name, args, rets, fn>>, pstatus);
+        let methodProxy: Proxy<Method<name, args, rets, fn>> = Proxy.Proxy;
+        MethodLevelCallvalueCheck.checkCallvalue(methodProxy, pstatus);
 
         // check we have enough calldata for the head of args
         // abi decode args from calldata
@@ -58,7 +60,8 @@ impl<name, args, rets, fn, callvalueCheckStatus> ExecMethod<Method<name, Proxy<a
 impl<args, rets, fn, callvalueCheckStatus> ExecMethod<Fallback<Proxy<args>, Proxy<rets>, fn>> where fn: invokable<args, ret> {
   function exec(fb: Fallback<args, rets, fn>, pstatus: Proxy<callvalueCheckStatus>) returns () {
     match (fb) { case Fallback.Fallback(args, rets, fn) { // check callvalue
-        MethodLevelCallvalueCheck.checkCallvalue(Proxy.Proxy  as Proxy<Fallback<args, rets, fn>>, pstatus);
+        let fallbackProxy: Proxy<Fallback<args, rets, fn>> = Proxy.Proxy;
+        MethodLevelCallvalueCheck.checkCallvalue(fallbackProxy, pstatus);
 
         // check we have enough calldata for the head of args
         // abi decode args from calldata
@@ -81,21 +84,25 @@ trait RunDispatch<ty, callvalueCheckStatus> {
 // TODO: do we need this instance?
 impl<m, callvalueCheckStatus> RunDispatch<m> where m: ExecMethod, m: Selector {
   function go(method: m, pstatus: Proxy<callvalueCheckStatus>) returns () {
-    match (selector_matches(Proxy.Proxy  as Proxy<m>)) { case Bool.True { ExecMethod.exec(method, pstatus); } case Bool.False { return (); } }
+    let methodProxy: Proxy<m> = Proxy.Proxy;
+    match (selector_matches(methodProxy)) { case Bool.True { ExecMethod.exec(method, pstatus); } case Bool.False { return (); } }
   }
 }
 
 // We can dispatch to a tuple of executable methods with a known selector
 impl<n, m, callvalueCheckStatus> RunDispatch<(n, m)> where n: ExecMethod, n: Selector, m: ExecMethod, m: Selector {
   function go(methods: (n, m), pstatus: Proxy<callvalueCheckStatus>) returns () {
-    match (methods) { case (method_n, method_m) { match (selector_matches(Proxy.Proxy  as Proxy<n>)) { case Bool.True { ExecMethod.exec(method_n); } case Bool.False { match (selector_matches(Proxy.Proxy  as Proxy<m>)) { case Bool.True { ExecMethod.exec(method_m, pstatus); } case Bool.False { return (); } } } } } }
+    let firstMethodProxy: Proxy<n> = Proxy.Proxy;
+    let secondMethodProxy: Proxy<m> = Proxy.Proxy;
+    match (methods) { case (method_n, method_m) { match (selector_matches(firstMethodProxy)) { case Bool.True { ExecMethod.exec(method_n); } case Bool.False { match (selector_matches(secondMethodProxy)) { case Bool.True { ExecMethod.exec(method_m, pstatus); } case Bool.False { return (); } } } } } }
   }
 }
 
 // Recursive instance
 impl<n, m, callvalueCheckStatus> RunDispatch<(n, m)> where n: ExecMethod, n: Selector, m: RunDispatch {
   function go(methods: (n, m), pstatus: Proxy<callvalueCheckStatus>) returns () {
-    match (methods) { case (method_n, rest) { match (selector_matches(Proxy.Proxy  as Proxy<n>)) { case Bool.True { ExecMethod.exec(method_n, pstatus); } case Bool.False { RunDispatch.go(rest, pstatus); } } } }
+    let methodProxy: Proxy<n> = Proxy.Proxy;
+    match (methods) { case (method_n, rest) { match (selector_matches(methodProxy)) { case Bool.True { ExecMethod.exec(method_n, pstatus); } case Bool.False { RunDispatch.go(rest, pstatus); } } } }
   }
 }
 
@@ -132,7 +139,10 @@ trait TopLevelCallvalueCheck<ty, ret> {
 }
 
 default impl<methods> TopLevelCallvalueCheck<methods, CallvalueUnchecked> {
-  function checkCallvalue(prx: Proxy<methods>) returns (Proxy<CallvalueUnchecked>) { return Proxy.Proxy  as Proxy<CallvalueUnchecked>; }
+  function checkCallvalue(prx: Proxy<methods>) returns (Proxy<CallvalueUnchecked>) {
+    let result: Proxy<CallvalueUnchecked> = Proxy.Proxy;
+    return result;
+  }
 }
 
 impl<methods> TopLevelCallvalueCheck<methods, CallvalueChecked> where methods: AllNonPayable {
@@ -143,7 +153,8 @@ impl<methods> TopLevelCallvalueCheck<methods, CallvalueChecked> where methods: A
         revert(0,32)
       }
     }
-    return Proxy.Proxy  as Proxy<CallvalueChecked>;
+    let result: Proxy<CallvalueChecked> = Proxy.Proxy;
+    return result;
   }
 }
 
@@ -183,7 +194,8 @@ impl<methods, fb> RunContract<Contract<methods, fb>> where methods: RunDispatch,
         // assembly { mstore(0x40, memoryguard(128)) }
 
         // if all methods are non payable then check callvalue
-        let callvalueChecked = TopLevelCallvalueCheck.checkCallvalue(Proxy.Proxy  as Proxy<(fb, methods)>);
+        let contractProxy: Proxy<(fb, methods)> = Proxy.Proxy;
+        let callvalueChecked = TopLevelCallvalueCheck.checkCallvalue(contractProxy);
 
         // check that we have at least 4 bytes of calldata
         let haveSelector: word;
@@ -226,9 +238,13 @@ contract C {
   }
 
   function main() public returns (word) {
+    let methodArgsProxy: Proxy<(word, word)> = Proxy.Proxy;
+    let methodReturnProxy: Proxy<word> = Proxy.Proxy;
+    let fallbackArgsProxy: Proxy<()> = Proxy.Proxy;
+    let fallbackReturnProxy: Proxy<()> = Proxy.Proxy;
     let c = Contract.Contract(
-      Method.Method(C_Add2_Selector.C_Add2_Selector, Proxy.Proxy  as Proxy<(word, word)>, Proxy.Proxy  as Proxy<word>, add2),
-      Fallback.Fallback(Proxy.Proxy  as Proxy<()>,Proxy.Proxy  as Proxy<()>,revert_handler)
+      Method.Method(C_Add2_Selector.C_Add2_Selector, methodArgsProxy, methodReturnProxy, add2),
+      Fallback.Fallback(fallbackArgsProxy, fallbackReturnProxy, revert_handler)
     );
 
     RunContract.exec(c);
