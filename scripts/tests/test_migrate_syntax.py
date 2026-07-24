@@ -5047,6 +5047,223 @@ class RustStringMigrationTests(unittest.TestCase):
             )
         self.assertEqual(checked.returncode, 0, checked.stderr)
 
+    def concat_values(self, source: str) -> list[str]:
+        values: list[str] = []
+        for invocation in MIGRATE._rust_concat_invocations(source):
+            bodies = MIGRATE._rust_concat_semantic_body(
+                source,
+                invocation,
+            )
+            if bodies is not None:
+                values.append("".join(bodies))
+        return values
+
+    def test_migrates_split_concat_as_one_isolated_source(self) -> None:
+        rust = r'''
+const SOURCE: &str = concat!(
+    "data Option(a) = None | ",
+    /* keep the operand boundary */
+    r#"Some(a);
+function wrap(x: word) -> Option(word) { return .Some(x); }
+"#,
+);
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+        values = self.concat_values(migrated)
+
+        self.assertEqual(len(values), 1)
+        self.assertIn("enum Option<a> { None, Some(a) }", values[0])
+        self.assertIn(
+            "function wrap(x: word) returns (Option<word>)",
+            values[0],
+        )
+        self.assertIn("return Option.Some(x);", values[0])
+        self.assertIn("/* keep the operand boundary */", migrated)
+        self.assertNotIn('r#"', migrated)
+        self.assertEqual(MIGRATE._rust_solcore_literal_spans(rust), [])
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+        self.assert_rust_syntax(migrated)
+
+    def test_migrates_concat_across_tokens_with_all_delimiters(self) -> None:
+        rust = r'''
+const PAREN: &str = concat /* macro trivia */ ! (
+    "funct",
+    r#"ion f(x: Option("#,
+    "word)) -> word { return 1; }",
+);
+const BRACKET: &str = concat![
+    "function g(x: word) ",
+    // keep this separator
+    "->\x20",
+    r#"word { return x; }"#,
+];
+const BRACE: &str = concat! {
+    "let x : comptime",
+    "\u{20}word = 1;",
+};
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+        values = self.concat_values(migrated)
+
+        self.assertEqual(len(values), 3)
+        self.assertIn(
+            "function f(x: Option<word>) returns (word)",
+            values[0],
+        )
+        self.assertEqual(
+            values[1],
+            "function g(x: word) returns (word) { return x; }",
+        )
+        self.assertEqual(values[2], "let comptime x: word = 1;")
+        self.assertIn("// keep this separator", migrated)
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+        self.assert_rust_syntax(migrated)
+
+    def test_concat_joined_context_keeps_opaque_fragments(self) -> None:
+        rust = r'''
+const BLOCK_COMMENT: &str = concat!(
+    "/* ",
+    "function hidden() -> word { return 1; }",
+    " */",
+);
+const LINE_COMMENT: &str = concat!(
+    "// ",
+    "function hidden() -> word { return 1; }",
+    "\n",
+);
+const STRING: &str = concat!(
+    "function text() { let value = \"",
+    "function hidden() -> word { return 1; }",
+    "\"; }",
+);
+const ASSEMBLY: &str = concat!(
+    "function yul() { assembly { ",
+    "function hidden() -> word { return 1; }",
+    " } }",
+);
+const PROSE_PREFIX: &str = concat!(
+    "example: ",
+    "function hidden() -> word { return 1; }",
+);
+const PROSE_SUFFIX: &str = concat!(
+    "function hidden() -> word { return 1; }",
+    " in documentation",
+);
+'''
+
+        self.assertEqual(MIGRATE._rust_solcore_literal_spans(rust), [])
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+        self.assert_rust_syntax(rust)
+
+    def test_unsupported_concat_protects_all_nested_literals(self) -> None:
+        rust = r'''
+const ENV: &str = concat!(
+    "function hidden() -> word { return 1; }",
+    env!("SUFFIX"),
+);
+const NUMBER: &str = concat!(
+    "function hidden() -> word { return 1; }",
+    1,
+);
+const NESTED: &str = concat!(
+    concat!("function hidden() -> word { return 1; }"),
+);
+const BYTE: &[u8] = concat!(
+    b"bytes",
+    "function hidden() -> word { return 1; }",
+);
+const RAW_BYTE: &[u8] = concat!(
+    br"bytes",
+    "function hidden() -> word { return 1; }",
+);
+const C_STRING: &str = concat!(
+    c"bytes",
+    "function hidden() -> word { return 1; }",
+);
+const CHARACTER: &str = concat!(
+    'x',
+    "function hidden() -> word { return 1; }",
+);
+const QUALIFIED: &str = std:: /* qualification trivia */ concat!(
+    "function hidden() -> word { return 1; }",
+);
+const OUTSIDE: &str =
+    "function migrated(x: word) -> word { return x; }";
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertEqual(
+            migrated.count(
+                "function hidden() -> word { return 1; }"
+            ),
+            8,
+        )
+        self.assertIn(
+            "function migrated(x: word) returns (word)",
+            migrated,
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+    def test_concat_groups_do_not_share_constructor_owners(self) -> None:
+        rust = r'''
+const DECLARATION: &str = concat!(
+    "data Option(a) = None | Some(a);",
+);
+const USE: &str = concat!(
+    "function wrap(x: word) -> Option(word) { return .Some(x); }",
+);
+'''
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "cannot resolve legacy dot-constructor .Some",
+        ):
+            MIGRATE.migrate_rust_strings(rust)
+
+    def test_concat_comment_marker_keeps_non_solcore_output(self) -> None:
+        rust = r'''
+const SNAPSHOT: &str = concat!(
+    // migrate-syntax: keep-rust-concat
+    "function maybe$Word (n : word) -> word {\n",
+    "  return n\n",
+    "}\n",
+);
+'''
+
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+        self.assert_rust_syntax(rust)
+
+    def test_classic_bare_import_only_rewrites_rust_sources(self) -> None:
+        rust = r'''
+const STANDALONE: &str = "import foo.bar;";
+const CONCAT: &str = concat!("import foo.", "bar;");
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(
+            rust,
+            classic_bare_imports=True,
+        )
+
+        self.assertEqual(
+            migrated.count("import * as bar from foo.bar;"),
+            1,
+        )
+        self.assertEqual(
+            self.concat_values(migrated),
+            ["import * as bar from foo.bar;"],
+        )
+        self.assertEqual(
+            MIGRATE.migrate_rust_strings(
+                migrated,
+                classic_bare_imports=True,
+            ),
+            migrated,
+        )
+        self.assert_rust_syntax(migrated)
+
     def test_nested_block_comment_can_keep_a_rust_file_unmigrated(self) -> None:
         rust = """\
 /* outer /* inner */ migrate-syntax: keep-rust-file */
@@ -5404,6 +5621,67 @@ const SOURCE: &str =
         self.assertIn("function f(x: word) returns (word)", migrated)
         self.assertIn("prefer function f(x: T) -> T syntax", migrated)
         self.assertIn("0 file(s) need migration", clean.stdout)
+
+    def test_cli_migrates_split_concat_then_reaches_fixed_point(self) -> None:
+        source = r'''
+const SOURCE: &str = concat!(
+    "function f(",
+    "x: word) -> word { return x; }",
+);
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "embedded.rs"
+            path.write_text(source)
+
+            needs_migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--check",
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            unchanged = path.read_text()
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migrated = path.read_text()
+            clean = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--check",
+                    "--rust-strings",
+                    str(path),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(needs_migration.returncode, 1)
+        self.assertEqual(unchanged, source)
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        self.assertEqual(
+            self.concat_values(migrated),
+            ["function f(x: word) returns (word) { return x; }"],
+        )
 
     def test_cli_deduplicates_relative_and_absolute_rust_paths(
         self,

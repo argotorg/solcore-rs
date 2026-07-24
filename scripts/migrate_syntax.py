@@ -56,6 +56,12 @@ Likewise, a negative fixture that deliberately exercises any rejected Classic
 surface can opt out of the complete rewrite with:
 
     // migrate-syntax: keep-legacy-negative
+
+Direct Unicode string operands of a bare Rust ``concat!`` are treated as one
+isolated source. A ``concat!`` that contains non-Solcore output which happens
+to resemble Classic syntax can opt out with a comment inside its token tree:
+
+    // migrate-syntax: keep-rust-concat
 """
 
 from __future__ import annotations
@@ -258,6 +264,7 @@ KEEP_UNQUALIFIED_CONSTRUCTOR_MARKER = (
 )
 KEEP_LEGACY_NEGATIVE_MARKER = "migrate-syntax: keep-legacy-negative"
 KEEP_RUST_FILE_MARKER = "migrate-syntax: keep-rust-file"
+KEEP_RUST_CONCAT_MARKER = "migrate-syntax: keep-rust-concat"
 BUILTIN_CONSTRUCTORS = {"true", "false", "pair", "inl", "inr"}
 
 
@@ -11701,6 +11708,291 @@ def _rust_literal_semantic_body(body: str, is_raw: bool) -> str | None:
     return body if is_raw else _decode_rust_ordinary_body(body)
 
 
+@dataclass(frozen=True)
+class RustStringLiteral:
+    literal_start: int
+    body_start: int
+    body_end: int
+    literal_end: int
+    is_raw: bool
+
+
+@dataclass(frozen=True)
+class RustConcatInvocation:
+    start: int
+    end: int
+    literals: tuple[RustStringLiteral, ...] | None
+
+
+def _rust_skip_trivia(source: str, start: int) -> int:
+    cursor = start
+    while cursor < len(source):
+        if source[cursor].isspace():
+            cursor += 1
+            continue
+        if source.startswith("//", cursor):
+            newline = source.find("\n", cursor + 2)
+            cursor = len(source) if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", cursor):
+            cursor = _rust_block_comment_end(source, cursor)
+            continue
+        break
+    return cursor
+
+
+def _rust_token_tree_end(source: str, open_start: int) -> int | None:
+    """Return the end of one balanced Rust macro token tree."""
+
+    closing = {"(": ")", "[": "]", "{": "}"}
+    opener = source[open_start] if open_start < len(source) else ""
+    if opener not in closing:
+        return None
+
+    stack = [closing[opener]]
+    cursor = open_start + 1
+    while cursor < len(source):
+        if source.startswith("//", cursor):
+            newline = source.find("\n", cursor + 2)
+            cursor = len(source) if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", cursor):
+            cursor = _rust_block_comment_end(source, cursor)
+            continue
+        if source[cursor] == "'":
+            char_end = _rust_char_end(source, cursor)
+            if char_end is not None:
+                cursor = char_end
+                continue
+
+        literal = _rust_raw_literal(source, cursor)
+        if literal is None:
+            literal = _rust_ordinary_literal(source, cursor)
+        if literal is not None:
+            cursor = literal[2]
+            continue
+
+        token = source[cursor]
+        if token in closing:
+            stack.append(closing[token])
+            cursor += 1
+            continue
+        if token in closing.values():
+            if token != stack[-1]:
+                return None
+            stack.pop()
+            cursor += 1
+            if not stack:
+                return cursor
+            continue
+        cursor += 1
+    return None
+
+
+def _rust_unicode_string_literal(
+    source: str, start: int
+) -> RustStringLiteral | None:
+    """Recognize a direct Unicode string literal accepted by ``concat!``."""
+
+    raw = _rust_raw_literal(source, start)
+    if raw is not None and source[start] == "r":
+        body_start, body_end, literal_end = raw
+        return RustStringLiteral(
+            start,
+            body_start,
+            body_end,
+            literal_end,
+            True,
+        )
+
+    if start >= len(source) or source[start] != '"':
+        return None
+    ordinary = _rust_ordinary_literal(source, start)
+    if ordinary is None:
+        return None
+    body_start, body_end, literal_end = ordinary
+    return RustStringLiteral(
+        start,
+        body_start,
+        body_end,
+        literal_end,
+        False,
+    )
+
+
+def _rust_code_suffix(source: str, end: int, length: int) -> str:
+    """Return significant Rust spelling before an offset, skipping trivia."""
+
+    suffix = ""
+    cursor = 0
+    while cursor < end:
+        if source.startswith("//", cursor):
+            newline = source.find("\n", cursor + 2, end)
+            cursor = end if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", cursor):
+            cursor = min(end, _rust_block_comment_end(source, cursor))
+            continue
+        if source[cursor] == "'":
+            char_end = _rust_char_end(source, cursor)
+            if char_end is not None and char_end <= end:
+                suffix = (suffix + "?")[-length:]
+                cursor = char_end
+                continue
+
+        literal = _rust_raw_literal(source, cursor)
+        if literal is None:
+            literal = _rust_ordinary_literal(source, cursor)
+        if literal is not None and literal[2] <= end:
+            suffix = (suffix + "?")[-length:]
+            cursor = literal[2]
+            continue
+        if not source[cursor].isspace():
+            suffix = (suffix + source[cursor])[-length:]
+        cursor += 1
+    return suffix
+
+
+def _rust_concat_invocation_at(
+    source: str, start: int
+) -> RustConcatInvocation | None:
+    """Parse a bare ``concat!`` and its direct string-literal operands."""
+
+    cursor = _rust_skip_trivia(source, start + len("concat"))
+    if cursor >= len(source) or source[cursor] != "!":
+        return None
+    cursor = _rust_skip_trivia(source, cursor + 1)
+    if cursor >= len(source) or source[cursor] not in "([{":
+        return None
+
+    end = _rust_token_tree_end(source, cursor)
+    if end is None:
+        return RustConcatInvocation(start, len(source), None)
+    close = end - 1
+
+    # Qualified and raw-identifier macro names are not proven to be the
+    # built-in concat macro. Protect their contents from literal fallback.
+    if _rust_code_suffix(source, start, 2) in {"::", "r#"}:
+        return RustConcatInvocation(start, end, None)
+
+    literals: list[RustStringLiteral] = []
+    argument = _rust_skip_trivia(source, cursor + 1)
+    if argument == close:
+        return RustConcatInvocation(start, end, ())
+
+    while argument < close:
+        literal = _rust_unicode_string_literal(source, argument)
+        if literal is None or literal.literal_end > close:
+            return RustConcatInvocation(start, end, None)
+        semantic = _rust_literal_semantic_body(
+            source[literal.body_start : literal.body_end],
+            literal.is_raw,
+        )
+        if semantic is None:
+            return RustConcatInvocation(start, end, None)
+        literals.append(literal)
+
+        argument = _rust_skip_trivia(source, literal.literal_end)
+        if argument == close:
+            break
+        if source[argument] != ",":
+            return RustConcatInvocation(start, end, None)
+        argument = _rust_skip_trivia(source, argument + 1)
+        if argument == close:
+            break
+
+    return RustConcatInvocation(start, end, tuple(literals))
+
+
+def _rust_concat_invocations(source: str) -> list[RustConcatInvocation]:
+    """Locate non-overlapping ``concat!`` token trees outside Rust trivia."""
+
+    invocations: list[RustConcatInvocation] = []
+    cursor = 0
+    while cursor < len(source):
+        if source.startswith("//", cursor):
+            newline = source.find("\n", cursor + 2)
+            cursor = len(source) if newline < 0 else newline + 1
+            continue
+        if source.startswith("/*", cursor):
+            cursor = _rust_block_comment_end(source, cursor)
+            continue
+        if source[cursor] == "'":
+            char_end = _rust_char_end(source, cursor)
+            if char_end is not None:
+                cursor = char_end
+                continue
+
+        literal = _rust_raw_literal(source, cursor)
+        if literal is None:
+            literal = _rust_ordinary_literal(source, cursor)
+        if literal is not None:
+            cursor = literal[2]
+            continue
+
+        if (
+            source.startswith("concat", cursor)
+            and (
+                cursor == 0
+                or not (
+                    source[cursor - 1].isalnum()
+                    or source[cursor - 1] == "_"
+                )
+            )
+            and (
+                cursor + len("concat") == len(source)
+                or not (
+                    source[cursor + len("concat")].isalnum()
+                    or source[cursor + len("concat")] == "_"
+                )
+            )
+        ):
+            invocation = _rust_concat_invocation_at(source, cursor)
+            if invocation is not None:
+                invocations.append(invocation)
+                cursor = invocation.end
+                continue
+        cursor += 1
+    return invocations
+
+
+def _rust_concat_semantic_body(
+    source: str, invocation: RustConcatInvocation
+) -> tuple[str, ...] | None:
+    if invocation.literals is None:
+        return None
+    bodies: list[str] = []
+    for literal in invocation.literals:
+        semantic = _rust_literal_semantic_body(
+            source[literal.body_start : literal.body_end],
+            literal.is_raw,
+        )
+        if semantic is None:
+            return None
+        bodies.append(semantic)
+    return tuple(bodies)
+
+
+def _partition_rust_concat_body(
+    migrated: str, original_bodies: Sequence[str]
+) -> tuple[str, ...]:
+    """Split a migrated semantic value while preserving operand count."""
+
+    if not original_bodies:
+        return ()
+    chunks: list[str] = []
+    cursor = 0
+    for original in original_bodies[:-1]:
+        end = min(len(migrated), cursor + len(original))
+        chunks.append(migrated[cursor:end])
+        cursor = end
+    chunks.append(migrated[cursor:])
+    result = tuple(chunks)
+    if "".join(result) != migrated:
+        raise AssertionError("concat! migration partition changed its value")
+    return result
+
+
 _SOLCORE_PREFIX_MODIFIERS = {
     "public",
     "external",
@@ -12505,13 +12797,36 @@ def _looks_like_solcore_literal(source: str) -> bool:
     return False
 
 
-def _rust_solcore_literals(source: str) -> list[tuple[int, int, bool]]:
+def _looks_like_solcore_concat_value(source: str) -> bool:
+    """Require a complete source boundary for a joined macro value."""
+
+    tokens = significant(source)
+    return (
+        bool(tokens)
+        and tokens[-1].text in {";", "}"}
+        and _rust_source_text_is_trivia(source[tokens[-1].end :])
+        and _looks_like_solcore_literal(source)
+    )
+
+
+def _rust_solcore_literals(
+    source: str,
+    excluded_spans: Sequence[tuple[int, int]] | None = None,
+) -> list[tuple[int, int, bool]]:
     """Locate Rust string bodies that look like embedded Solcore programs.
 
     The boolean result field is true for a raw string. Ordinary strings are
     decoded before detection so an escaped newline terminates a Solcore line
-    comment and does not hide the rest of the embedded program.
+    comment and does not hide the rest of the embedded program. Bodies inside
+    any ``concat!`` token tree are excluded because their semantic context is
+    the joined macro value, not an individual operand.
     """
+
+    if excluded_spans is None:
+        excluded_spans = [
+            (invocation.start, invocation.end)
+            for invocation in _rust_concat_invocations(source)
+        ]
 
     literals: list[tuple[int, int, bool]] = []
     cursor = 0
@@ -12540,8 +12855,14 @@ def _rust_solcore_literals(source: str) -> list[tuple[int, int, bool]]:
         body_start, body_end, literal_end = literal
         body = source[body_start:body_end]
         semantic_body = _rust_literal_semantic_body(body, is_raw)
-        if semantic_body is not None and _looks_like_solcore_literal(
-            semantic_body
+        excluded = any(
+            span_start <= body_start < span_end
+            for span_start, span_end in excluded_spans
+        )
+        if (
+            not excluded
+            and semantic_body is not None
+            and _looks_like_solcore_literal(semantic_body)
         ):
             literals.append((body_start, body_end, is_raw))
         cursor = literal_end
@@ -12608,12 +12929,27 @@ def migrate_rust_strings(
     if has_rust_comment_marker(source, KEEP_RUST_FILE_MARKER):
         return source
 
+    concat_invocations = _rust_concat_invocations(source)
+    concat_spans = [
+        (invocation.start, invocation.end)
+        for invocation in concat_invocations
+    ]
     replacements: list[tuple[int, int, str]] = []
-    for body_start, body_end, is_raw in _rust_solcore_literals(source):
-        encoded_body = source[body_start:body_end]
-        body = _rust_literal_semantic_body(encoded_body, is_raw)
-        if body is None:
+    for invocation in concat_invocations:
+        original_bodies = _rust_concat_semantic_body(source, invocation)
+        if (
+            original_bodies is None
+            or has_rust_comment_marker(
+                source[invocation.start : invocation.end],
+                KEEP_RUST_CONCAT_MARKER,
+            )
+        ):
             continue
+        original_body = "".join(original_bodies)
+        if not _looks_like_solcore_concat_value(original_body):
+            continue
+
+        body = original_body
         if classic_bare_imports:
             body = migrate_classic_bare_imports(body)
         migrated = migrate_source(
@@ -12621,7 +12957,46 @@ def migrate_rust_strings(
             global_constructor_owners,
             global_dot_constructor_candidates,
         )
-        if migrated == body:
+        if migrated == original_body:
+            continue
+
+        chunks = _partition_rust_concat_body(
+            migrated,
+            original_bodies,
+        )
+        if invocation.literals is None:
+            raise AssertionError("supported concat! lost its literals")
+        for literal, chunk in zip(invocation.literals, chunks, strict=True):
+            replacement = '"' + _encode_rust_ordinary_body(chunk) + '"'
+            if (
+                replacement
+                != source[literal.literal_start : literal.literal_end]
+            ):
+                replacements.append(
+                    (
+                        literal.literal_start,
+                        literal.literal_end,
+                        replacement,
+                    )
+                )
+
+    for body_start, body_end, is_raw in _rust_solcore_literals(
+        source,
+        concat_spans,
+    ):
+        encoded_body = source[body_start:body_end]
+        body = _rust_literal_semantic_body(encoded_body, is_raw)
+        if body is None:
+            continue
+        original_body = body
+        if classic_bare_imports:
+            body = migrate_classic_bare_imports(body)
+        migrated = migrate_source(
+            body,
+            global_constructor_owners,
+            global_dot_constructor_candidates,
+        )
+        if migrated == original_body:
             continue
         if not is_raw:
             migrated = _encode_rust_ordinary_body(migrated)

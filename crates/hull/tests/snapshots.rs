@@ -169,6 +169,7 @@ fn maybe_option_snapshot() {
     assert_eq!(
         pretty_program(&db, &program),
         concat!(
+            // migrate-syntax: keep-rust-concat
             "function maybe$Word (n : word, o : Option{(unit + word)}) -> word {\n",
             "  match<Option{(unit + word)}> o with {\n",
             "    inl $alt => {\n",
@@ -298,6 +299,7 @@ fn color_enum_snapshot() {
     assert_eq!(
         pretty_program(&db, &program),
         concat!(
+            // migrate-syntax: keep-rust-concat
             "function fromEnum (c : Color{(unit + (unit + unit))}) -> word {\n",
             "  match<Color{(unit + (unit + unit))}> c with {\n",
             "    inl $alt => {\n",
@@ -406,6 +408,7 @@ fn add1_contract_object_snapshot() {
     assert_eq!(
         pretty_program(&db, &program),
         concat!(
+            // migrate-syntax: keep-rust-concat
             "object \"Add1\" {\n",
             "  code {\n",
             "    /* deployment code */\n",
