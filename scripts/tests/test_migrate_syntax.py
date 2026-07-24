@@ -5256,6 +5256,25 @@ const TOKENS: &str = stringify!(
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
         self.assert_rust_syntax(rust)
 
+    def test_unary_not_parentheses_do_not_hide_concat(self) -> None:
+        rust = r'''
+pub fn is_empty() -> bool {
+    return !(concat!(
+        "function f(",
+        "x: word) -> word { return x; }",
+    ).is_empty());
+}
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertEqual(
+            self.concat_values(migrated),
+            ["function f(x: word) returns (word) { return x; }"],
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+        self.assert_rust_syntax(migrated)
+
     def test_concat_groups_do_not_share_constructor_owners(self) -> None:
         rust = r'''
 const DECLARATION: &str = concat!(

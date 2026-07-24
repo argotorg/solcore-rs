@@ -11864,6 +11864,32 @@ def _rust_code_suffix(source: str, end: int, length: int) -> str:
     return suffix
 
 
+def _rust_identifier_token_end(source: str, start: int) -> int | None:
+    """Return the end of one Rust identifier, including a raw identifier."""
+
+    cursor = start
+    if source.startswith("r#", cursor):
+        cursor += 2
+    if (
+        cursor >= len(source)
+        or not (
+            source[cursor] == "_"
+            or source[cursor].isidentifier()
+        )
+    ):
+        return None
+    cursor += 1
+    while (
+        cursor < len(source)
+        and (
+            source[cursor] == "_"
+            or ("a" + source[cursor]).isidentifier()
+        )
+    ):
+        cursor += 1
+    return cursor
+
+
 def _rust_concat_invocation_at(
     source: str, start: int
 ) -> RustConcatInvocation | None:
@@ -11918,9 +11944,49 @@ def _rust_concat_invocation_at(
 def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
     """Locate macro token trees so nested ``concat!`` stays opaque."""
 
+    non_path_keywords = {
+        "as",
+        "async",
+        "await",
+        "break",
+        "const",
+        "continue",
+        "dyn",
+        "else",
+        "enum",
+        "extern",
+        "false",
+        "fn",
+        "for",
+        "if",
+        "impl",
+        "in",
+        "let",
+        "loop",
+        "match",
+        "mod",
+        "move",
+        "mut",
+        "pub",
+        "ref",
+        "return",
+        "static",
+        "struct",
+        "trait",
+        "true",
+        "type",
+        "unsafe",
+        "use",
+        "where",
+        "while",
+    }
     ranges: list[tuple[int, int]] = []
     cursor = 0
+    previous_identifier: str | None = None
     while cursor < len(source):
+        if source[cursor].isspace():
+            cursor += 1
+            continue
         if source.startswith("//", cursor):
             newline = source.find("\n", cursor + 2)
             cursor = len(source) if newline < 0 else newline + 1
@@ -11931,6 +11997,7 @@ def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
         if source[cursor] == "'":
             char_end = _rust_char_end(source, cursor)
             if char_end is not None:
+                previous_identifier = None
                 cursor = char_end
                 continue
 
@@ -11938,10 +12005,24 @@ def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
         if literal is None:
             literal = _rust_ordinary_literal(source, cursor)
         if literal is not None:
+            previous_identifier = None
             cursor = literal[2]
             continue
 
-        if source[cursor] == "!":
+        identifier_end = _rust_identifier_token_end(source, cursor)
+        if identifier_end is not None:
+            previous_identifier = source[cursor:identifier_end]
+            cursor = identifier_end
+            continue
+
+        is_macro_name = (
+            previous_identifier is not None
+            and (
+                previous_identifier.startswith("r#")
+                or previous_identifier not in non_path_keywords
+            )
+        )
+        if source[cursor] == "!" and is_macro_name:
             open_start = _rust_skip_trivia(source, cursor + 1)
             if (
                 open_start < len(source)
@@ -11950,6 +12031,7 @@ def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
                 end = _rust_token_tree_end(source, open_start)
                 if end is not None:
                     ranges.append((cursor, end))
+        previous_identifier = None
         cursor += 1
     return ranges
 
