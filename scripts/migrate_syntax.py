@@ -8408,13 +8408,22 @@ def _provider_nominal_header_is_valid(
         header[cursor]
     ):
         return False
+    has_type_parameters = (
+        cursor + 1 < len(header)
+        and header[cursor + 1].text == "<"
+    )
     cursor = _provider_generic_end(header, cursor + 1)
     if cursor is None:
         return False
-    if kind == "trait" and cursor < len(header):
-        if header[cursor].text != "where":
+    if kind == "trait":
+        if not has_type_parameters:
             return False
-        return _provider_predicates_are_valid(header[cursor + 1 :])
+        if cursor < len(header):
+            if header[cursor].text != "where":
+                return False
+            return _provider_predicates_are_valid(
+                header[cursor + 1 :]
+            )
     return cursor == len(header)
 
 
@@ -8453,6 +8462,25 @@ def _provider_statement_is_valid(
 ) -> bool:
     if not body:
         return False
+    if kind == "pragma":
+        if body[0].text in {"solidity", "abicoder"}:
+            return True
+        if (
+            body[0].text != "solcore"
+            or len(body) < 2
+            or not _is_core_import_identifier(body[1])
+        ):
+            return False
+        items = _provider_list_parts(
+            body[2:],
+            ",",
+            angles=False,
+        )
+        return items is not None and all(
+            len(item) == 1
+            and _is_core_import_identifier(item[0])
+            for item in items
+        )
     if kind == "export" and body[0].text == "{":
         close = matching_index(body, 0)
         if close != len(body) - 1:

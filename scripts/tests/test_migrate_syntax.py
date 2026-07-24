@@ -1295,6 +1295,76 @@ function make(x: word) { T(x); }
         self.assertFalse(surfaces[main].has_unknown_constructors)
         self.assertIn("T.T(x)", migrated)
 
+    def test_invalid_provider_pragma_and_trait_heads_fail_closed(
+        self,
+    ) -> None:
+        invalid_items = (
+            "pragma nonsense foo;",
+            "pragma ?;",
+            "pragma solcore;",
+            "pragma solcore noCoverageCondition , A;",
+            "pragma solcore noCoverageCondition A,, B;",
+            "trait Bad {}",
+            "impl Bad {}",
+        )
+        for invalid_item in invalid_items:
+            with self.subTest(invalid_item=invalid_item):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": f"""\
+enum T {{ T(word) }}
+export {{T(*)}};
+{invalid_item}
+""",
+                        "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surfaces[main],
+                    ),
+                    sources[main],
+                )
+
+    def test_valid_provider_pragma_and_trait_heads_remain_trusted(
+        self,
+    ) -> None:
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+pragma solidity ^0.8.23;
+pragma abicoder v2;
+pragma solcore noCoverageCondition A, B,;
+trait Good<A> {}
+impl Good<word> {}
+enum T { T(word) }
+export {T(*)};
+""",
+                "main.solc": """\
+import provider;
+function make(x: word) { T(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+
+        self.assertFalse(surfaces[main].has_unknown_constructors)
+        self.assertIn("T.T(x)", migrated)
+
     def test_valid_complex_provider_items_remain_trusted(self) -> None:
         sources, surfaces = self.surfaces(
             {
