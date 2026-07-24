@@ -725,6 +725,7 @@ const RUST_DYN: &str =
     def test_rejects_malformed_types_in_isolated_typed_lets(self) -> None:
         cases = [
             r'const SOURCE: &str = r#"let x: A -> = value;"#;' + "\n",
+            r'const SOURCE: &str = "let x: Box<(word] = value;";' + "\n",
         ]
 
         for rust in cases:
@@ -3216,6 +3217,25 @@ function compare(x: word) {
 """
         self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
 
+    def test_separates_generic_closers_from_let_initializers(self) -> None:
+        compact = """\
+function f(value: word) {
+  let single: Box<word>=value;
+  let nested: Box<Box<word>>=value;
+}
+"""
+        expected = """\
+function f(value: word) {
+  let single: Box<word> = value;
+  let nested: Box<Box<word>> = value;
+}
+"""
+
+        migrated = MIGRATE.migrate_source(compact)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
     def test_validates_nested_array_mapping_and_generic_types(self) -> None:
         invalid = [
             "alias F = function(word[0]);\n",
@@ -3659,6 +3679,9 @@ function control(c: bool) {
             "function f() { return x as Box<word -> bool>>; }\n",
             "enum E { Bad(Box<word -> bool>>) }\n",
             "alias Bad = Box<(word] -> bool>;\n",
+            "function f() { let x: Box<(word] = value; }\n",
+            "function f() { let x: Box<(word] }\n",
+            "let x: Box<word\n",
         ]
         for source in malformed_delimiters:
             with self.subTest(source=source):

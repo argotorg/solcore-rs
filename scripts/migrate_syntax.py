@@ -2820,6 +2820,56 @@ def reject_malformed_mapping_types(source: str) -> None:
             )
 
 
+def reject_malformed_let_type_delimiters(source: str) -> None:
+    """Reject unbalanced typed-let spans that ordinary scans cannot migrate."""
+
+    tokens = significant(source)
+    for index, token in enumerate(tokens):
+        if token.text != "let" or index + 2 >= len(tokens):
+            continue
+        cursor = index + 1
+        if tokens[cursor].text == "comptime":
+            cursor += 1
+        if cursor >= len(tokens):
+            continue
+        if tokens[cursor].kind == "word":
+            colon = cursor + 1
+        elif tokens[cursor].text == "(":
+            binding_close = matching_index(tokens, cursor)
+            if binding_close is None:
+                continue
+            colon = binding_close + 1
+        else:
+            continue
+        if colon >= len(tokens) or tokens[colon].text != ":":
+            continue
+        type_tail = _split_type_angle_operator_tokens(
+            tokens[colon + 1 :]
+        )
+        terminator = next(
+            (
+                position
+                for position, item in enumerate(type_tail)
+                if item.text in {"=", ";", "{", "}"}
+            ),
+            None,
+        )
+        if terminator is None:
+            terminator = len(type_tail)
+        if terminator == 0:
+            continue
+        type_tokens = type_tail[:terminator]
+        try:
+            _validate_type_delimiters(type_tokens)
+        except ValueError as error:
+            line, column = _source_line_column(
+                source, type_tokens[0].start
+            )
+            raise ValueError(
+                f"{error} in typed let at line {line}, column {column}"
+            ) from error
+
+
 def reject_noncanonical_function_type_qualifiers(source: str) -> None:
     """Reject function-type qualifiers that cannot be safely reordered."""
 
@@ -5660,6 +5710,7 @@ def migrate_let_types(source: str) -> str:
         stack: list[str] = []
         colon: int | None = None
         end: int | None = None
+        combined_generic_assignment = False
         for cursor in range(index + 1, len(tokens)):
             text = tokens[cursor].text
             if not stack and text == ":":
@@ -5667,11 +5718,28 @@ def migrate_let_types(source: str) -> str:
             if not stack and text in {"=", ";"}:
                 end = cursor
                 break
+            if text == ">=" and colon is not None:
+                split_tail = _split_type_angle_operator_tokens(
+                    tokens[colon + 1 : cursor + 1]
+                )
+                if split_tail and split_tail[-1].text == "=":
+                    end = cursor
+                    combined_generic_assignment = True
+                    break
             _depth_step(stack, text, angles=False)
         if colon is None or end is None or colon >= end:
             continue
         binding_tokens = list(tokens[index + 1 : colon])
         type_tokens = list(tokens[colon + 1 : end])
+        if combined_generic_assignment:
+            type_tokens.append(
+                Token(
+                    "symbol",
+                    ">",
+                    tokens[end].start,
+                    tokens[end].start + 1,
+                )
+            )
         if not type_tokens:
             continue
         already_comptime = (
@@ -5690,12 +5758,19 @@ def migrate_let_types(source: str) -> str:
         if move_comptime:
             replacement += "comptime "
         replacement += f"{binding}: {ty}"
-        if tokens[end].text == "=":
+        if combined_generic_assignment:
+            replacement += " = "
+        elif tokens[end].text == "=":
             replacement += " "
-        replacement = _with_preserved_comments(
-            source, token.start, tokens[end].start, replacement
+        replacement_end = (
+            tokens[end].end
+            if combined_generic_assignment
+            else tokens[end].start
         )
-        replacements.append((token.start, tokens[end].start, replacement))
+        replacement = _with_preserved_comments(
+            source, token.start, replacement_end, replacement
+        )
+        replacements.append((token.start, replacement_end, replacement))
     return replace_spans(source, replacements)
 
 
@@ -6874,6 +6949,7 @@ def migrate_source(
     reject_generic_fallback(source)
     reject_comptime_tuple_bindings(source)
     reject_noncanonical_proxy_comptime(source)
+    reject_malformed_let_type_delimiters(source)
     reject_malformed_mapping_types(source)
     reject_noncanonical_function_type_qualifiers(source)
     passes = (
@@ -7584,6 +7660,15 @@ def _rust_migratable_let_is_source_like(
     if not _rust_source_boundary(source, tokens, index):
         return False
     end = _statement_end(tokens, index)
+    if end is None:
+        end = next(
+            (
+                cursor
+                for cursor in range(index + 1, len(tokens))
+                if tokens[cursor].text == ";"
+            ),
+            None,
+        )
     if end is None or not _rust_source_line_ends_after(source, tokens[end]):
         return False
     declaration = tokens[index + 1 : end]
