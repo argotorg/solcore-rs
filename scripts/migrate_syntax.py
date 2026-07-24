@@ -9105,8 +9105,11 @@ _SOLCORE_CONTAINER_KEYWORDS = {
     "impl",
     "instance",
 }
-_RUST_NAMED_TEMPLATE_HOLE_RE = re.compile(
-    r"\{[a-z_$][A-Za-z0-9_$]*\}"
+_RUST_TEMPLATE_HOLE_RE = re.compile(
+    r"(?<!\{)\{"
+    r"(?:[A-Za-z_$][A-Za-z0-9_$]*|[0-9]+)"
+    r"(?::[^{}\s]*)?"
+    r"\}(?!\})"
 )
 
 
@@ -9839,7 +9842,7 @@ def _looks_like_solcore_literal(source: str) -> bool:
     # `name: Type` declaration for the removed `expression : Type` spelling.
     # Recognize structurally complete imports first because their selector
     # braces are ordinary source syntax, not Rust format placeholders.
-    if _RUST_NAMED_TEMPLATE_HOLE_RE.search(source) is not None:
+    if _RUST_TEMPLATE_HOLE_RE.search(source) is not None:
         return False
 
     if _rust_unsupported_solidity_fragment_is_source_like(source, tokens):

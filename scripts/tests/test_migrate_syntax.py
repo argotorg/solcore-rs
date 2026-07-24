@@ -2322,6 +2322,12 @@ const IMPORT_PROSE: &str = r#"run import foo.bar; to continue"#;
 const DECLARATION_TEMPLATE: &str =
     "function f({keyword}: word) { let {keyword}: word = 0; }";
 const FIELD_TEMPLATE: &str = "struct S { {keyword}: word; }";
+const UPPER_TEMPLATE: &str =
+    "function f({TYPE}: word) -> word { return 0; }";
+const POSITIONAL_TEMPLATE: &str =
+    "function f(x: {0}) -> word { return 0; }";
+const FORMAT_SPEC_TEMPLATE: &str =
+    "function f(x: word) -> word { return {name:?}; }";
 const SQL: &str =
     r#"select type, alias, comptime from function where match = ?;"#;
 const SQL_IMPORT: &str = r#"import records from audit;"#;
@@ -2329,6 +2335,18 @@ const SQL_IMPORT: &str = r#"import records from audit;"#;
 
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
         self.assertEqual(MIGRATE._rust_solcore_literal_spans(rust), [])
+
+    def test_template_holes_exclude_doubled_format_braces(self) -> None:
+        for template in ("{TYPE}", "{0}", "{name:?}"):
+            with self.subTest(template=template):
+                self.assertIsNotNone(
+                    MIGRATE._RUST_TEMPLATE_HOLE_RE.search(template)
+                )
+        for escaped in ("{{}}", "{{TYPE}}", "{{0}}", "{{name:?}}"):
+            with self.subTest(escaped=escaped):
+                self.assertIsNone(
+                    MIGRATE._RUST_TEMPLATE_HOLE_RE.search(escaped)
+                )
 
     def test_recognizes_and_migrates_structured_imports(self) -> None:
         rust = r'''
