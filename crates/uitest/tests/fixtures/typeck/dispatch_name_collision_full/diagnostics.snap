@@ -13,6 +13,6 @@ error[SC0229]: duplicate type definition: DispatchNameTy_C_ping
 6 | contract C {
 7 |   function ping() public returns (uint256) {
   |            ---- existing definition
-8 |     return 0 as uint256;
+8 |     return uint256.uint256(0);
   |
   = note: rename or remove the duplicate type definition

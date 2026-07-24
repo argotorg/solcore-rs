@@ -3,11 +3,11 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/body_independent_errors/main.solc
 ---
-error[SC0001]: invalid token `~`
+error[SC0001]: invalid token `§`
  --> /main/main.solc:2:1
   |
 1 | function main() returns (word) {
-2 | ~
+2 | §
   | ^ invalid token
 3 | let broken = ;
   |
@@ -16,7 +16,7 @@ error[SC0001]: invalid token `~`
 error[SC0001]: parse error: unexpected `;`
  --> /main/main.solc:3:14
   |
-2 | ~
+2 | §
 3 | let broken = ;
   |              ^ unexpected token
 4 | return 0;
