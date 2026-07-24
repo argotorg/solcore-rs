@@ -1,4 +1,4 @@
-import std;
+import std; // migrate-syntax: keep-legacy-negative
 import std.dispatch;
 
 contract BadFallback {

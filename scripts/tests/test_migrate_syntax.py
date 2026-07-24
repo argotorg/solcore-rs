@@ -2255,6 +2255,105 @@ const ORDINARY: &str =
             MIGRATE.migrate_rust_strings(rust)
 
 
+class UnsupportedSoliditySugarMigrationTests(unittest.TestCase):
+    def test_rejects_deliberately_omitted_solidity_constructs(self) -> None:
+        cases = [
+            (
+                "contract C { receive() external payable {} }\n",
+                "Solidity `receive` declaration",
+            ),
+            (
+                "event Transfer(word indexed sender, word value);\n",
+                "Solidity event declaration",
+            ),
+            (
+                "event Transfer(word value) anonymous;\n",
+                "Solidity event declaration",
+            ),
+            (
+                "error Unauthorized(word caller);\n",
+                "Solidity custom-error declaration",
+            ),
+            (
+                "modifier onlyOwner() { _; }\n",
+                "Solidity modifier declaration",
+            ),
+            (
+                "function f(x: word) { emit Token.Transfer(x); }\n",
+                "Solidity `emit` statement",
+            ),
+            (
+                "function f(x: word) { revert Unauthorized(x); }\n",
+                "custom-error revert",
+            ),
+            (
+                "function revert(x: word) { return; }\n",
+                "Classic `revert` identifier",
+            ),
+            (
+                "function f(x: word) { return new pkg.C<word>(x); }\n",
+                "Solidity `new` creation expression",
+            ),
+            (
+                "function f(n: word) { let xs = new word[](n); }\n",
+                "Solidity `new` creation expression",
+            ),
+        ]
+
+        for classic, message in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(ValueError, message):
+                    MIGRATE.migrate_source(classic)
+
+    def test_preserves_ordinary_identifiers_and_bare_revert(self) -> None:
+        canonical = """\
+function receive() { receive(); }
+function event(x: word) { event(x); }
+function error(x: word) { error(x); }
+function modifier(x: word) { modifier(x); }
+function emit(x: word) { emit(x); obj.emit(x); }
+function new(x: word) { new(x); obj.new(x); }
+function f(flag: bool) {
+  if (flag) revert;
+  if (flag) { revert; }
+  else revert;
+  assembly { revert(0, 0) }
+  let text = "emit Event(0); revert Error();";
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_rejects_isolated_constructs_in_rust_source_literals(self) -> None:
+        cases = [
+            'const S: &str = r#"event E(word x);"#;\n',
+            'const S: &str = r#"error E(word x);"#;\n',
+            'const S: &str = r#"modifier only() { _; }"#;\n',
+            'const S: &str = r#"receive() external payable {}"#;\n',
+            'const S: &str = r#"emit E(0);"#;\n',
+            'const S: &str = r#"revert E(0);"#;\n',
+            'const S: &str = r#"new C(0);"#;\n',
+        ]
+
+        for rust in cases:
+            with self.subTest(rust=rust):
+                self.assertEqual(
+                    len(MIGRATE._rust_solcore_literal_spans(rust)),
+                    1,
+                )
+                with self.assertRaisesRegex(ValueError, "cannot migrate"):
+                    MIGRATE.migrate_rust_strings(rust)
+
+    def test_does_not_classify_similar_rust_prose_or_calls(self) -> None:
+        rust = r'''
+const PROSE: &str = "a new C(value) example";
+const CALLS: &str = r#"emit(0); new(0); obj.emit(0);"#;
+'''
+
+        self.assertEqual(MIGRATE._rust_solcore_literal_spans(rust), [])
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
+
 class ContractInheritanceMigrationTests(unittest.TestCase):
     def test_rejects_unsupported_contract_like_inheritance(self) -> None:
         cases = [

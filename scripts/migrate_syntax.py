@@ -2361,6 +2361,196 @@ def reject_named_call_arguments(source: str) -> None:
         delimiter_stack.append(open_index)
 
 
+def _begins_statement(tokens: Sequence[Token], index: int) -> bool:
+    """Return whether ``index`` can begin a standalone source statement."""
+
+    if index == 0 or tokens[index - 1].text in {"{", "}", ";", "else"}:
+        return True
+    start = _previous_boundary(tokens, index)
+    prefix = list(tokens[start:index])
+    if (
+        len(prefix) >= 3
+        and prefix[0].text in {"if", "while", "for"}
+        and prefix[1].text == "("
+    ):
+        return matching_index(prefix, 1) == len(prefix) - 1
+    return False
+
+
+def _unsupported_solidity_construct(
+    source: str,
+) -> tuple[Token, str, str] | None:
+    """Find omitted Solidity sugar without rejecting ordinary identifiers."""
+
+    tokens = significant(source)
+    for index, token in enumerate(tokens):
+        if token.text == "receive":
+            start = _previous_boundary(tokens, index)
+            prefix = tokens[start:index]
+            if prefix and not all(
+                item.kind == "word" and item.text in MODIFIERS
+                for item in prefix
+            ):
+                continue
+            if index + 1 >= len(tokens) or tokens[index + 1].text != "(":
+                continue
+            close = matching_index(tokens, index + 1)
+            if close is None:
+                continue
+            boundary = _header_boundary(tokens, close + 1)
+            if boundary is None:
+                continue
+            trailer = tokens[close + 1 : boundary]
+            if (
+                all(
+                    item.kind == "word" and item.text in MODIFIERS
+                    for item in trailer
+                )
+                and (
+                    tokens[boundary].text == "{"
+                    or (bool(trailer) and tokens[boundary].text == ";")
+                )
+            ):
+                return (
+                    token,
+                    "Solidity `receive` declaration",
+                    "Core uses the general `fallback` entry point",
+                )
+
+        if (
+            token.text in {"event", "error"}
+            and _previous_boundary(tokens, index) == index
+            and index + 2 < len(tokens)
+            and tokens[index + 1].kind == "word"
+            and tokens[index + 2].text == "("
+        ):
+            close = matching_index(tokens, index + 2)
+            if close is None:
+                continue
+            cursor = close + 1
+            if (
+                token.text == "event"
+                and cursor < len(tokens)
+                and tokens[cursor].text == "anonymous"
+            ):
+                cursor += 1
+            if cursor < len(tokens) and tokens[cursor].text == ";":
+                if token.text == "event":
+                    return (
+                        token,
+                        "Solidity event declaration",
+                        "use an explicit log or standard-library event helper",
+                    )
+                return (
+                    token,
+                    "Solidity custom-error declaration",
+                    "use an explicit revert-data helper",
+                )
+
+        if (
+            token.text == "modifier"
+            and _previous_boundary(tokens, index) == index
+            and index + 1 < len(tokens)
+            and tokens[index + 1].kind == "word"
+        ):
+            cursor = index + 2
+            if cursor < len(tokens) and tokens[cursor].text == "(":
+                close = matching_index(tokens, cursor)
+                if close is None:
+                    continue
+                cursor = close + 1
+            boundary = _header_boundary(tokens, cursor)
+            if boundary is not None and tokens[boundary].text == "{":
+                return (
+                    token,
+                    "Solidity modifier declaration",
+                    "replace the modifier with an ordinary helper function",
+                )
+
+        if (
+            token.text == "emit"
+            and _begins_statement(tokens, index)
+            and index + 2 < len(tokens)
+            and tokens[index + 1].kind == "word"
+        ):
+            cursor = index + 2
+            while (
+                cursor + 1 < len(tokens)
+                and tokens[cursor].text == "."
+                and tokens[cursor + 1].kind == "word"
+            ):
+                cursor += 2
+            if cursor < len(tokens) and tokens[cursor].text == "(":
+                close = matching_index(tokens, cursor)
+                if (
+                    close is not None
+                    and close + 1 < len(tokens)
+                    and tokens[close + 1].text == ";"
+                ):
+                    return (
+                        token,
+                        "Solidity `emit` statement",
+                        "use an explicit log or standard-library event helper",
+                    )
+
+        if token.text == "new" and index + 1 < len(tokens):
+            cursor = index + 1
+            if tokens[cursor].kind != "word":
+                continue
+            cursor += 1
+            while (
+                cursor + 1 < len(tokens)
+                and tokens[cursor].text == "."
+                and tokens[cursor + 1].kind == "word"
+            ):
+                cursor += 2
+            if cursor < len(tokens) and tokens[cursor].text == "<":
+                close = matching_index(tokens, cursor)
+                if close is None:
+                    continue
+                cursor = close + 1
+            while cursor < len(tokens) and tokens[cursor].text == "[":
+                close = matching_index(tokens, cursor)
+                if close is None:
+                    break
+                cursor = close + 1
+            if cursor < len(tokens) and tokens[cursor].text in {"(", "{"}:
+                return (
+                    token,
+                    "Solidity `new` creation expression",
+                    "use the explicit standard-library creation operation",
+                )
+
+        if token.text == "revert":
+            if (
+                index + 1 < len(tokens)
+                and tokens[index + 1].text == ";"
+                and _begins_statement(tokens, index)
+            ):
+                continue
+            return (
+                token,
+                "Classic `revert` identifier or custom-error revert",
+                "Core only supports bare `revert;`; use an explicit "
+                "revert-data helper for payloads",
+            )
+    return None
+
+
+def reject_unsupported_solidity_sugar(source: str) -> None:
+    """Reject Solidity constructs deliberately omitted from the Core surface."""
+
+    unsupported = _unsupported_solidity_construct(source)
+    if unsupported is None:
+        return
+    token, construct, guidance = unsupported
+    line, column = _source_line_column(source, token.start)
+    raise ValueError(
+        f"cannot migrate {construct} at line {line}, column {column}: "
+        f"{guidance}"
+    )
+
+
 def reject_contract_inheritance(source: str) -> None:
     """Reject Classic inheritance that Core cannot preserve automatically."""
 
@@ -6604,6 +6794,7 @@ def migrate_source(
     reject_contract_inheritance(source)
     reject_solidity_call_options(source)
     reject_named_call_arguments(source)
+    reject_unsupported_solidity_sugar(source)
     reject_noncanonical_proxy_comptime(source)
     reject_malformed_mapping_types(source)
     reject_noncanonical_function_type_qualifiers(source)
@@ -7477,6 +7668,33 @@ def _rust_pragma_fragment_is_source_like(
     return False
 
 
+def _rust_unsupported_solidity_fragment_is_source_like(
+    source: str, tokens: Sequence[Token]
+) -> bool:
+    """Recognize isolated omitted-Solidity declarations and statements."""
+
+    unsupported = _unsupported_solidity_construct(source)
+    if unsupported is None:
+        return False
+    token, construct, _ = unsupported
+    index = next(
+        (
+            candidate
+            for candidate, item in enumerate(tokens)
+            if item.start == token.start and item.end == token.end
+        ),
+        None,
+    )
+    if index is None or not _rust_source_boundary(source, tokens, index):
+        return False
+    if "declaration" in construct:
+        return True
+    end = _statement_end(tokens, index)
+    return end is not None and _rust_source_line_ends_after(
+        source, tokens[end]
+    )
+
+
 def _looks_like_solcore_literal(source: str) -> bool:
     """Classify an embedded literal from combined Solcore syntax signals."""
 
@@ -7494,6 +7712,9 @@ def _looks_like_solcore_literal(source: str) -> bool:
     # braces are ordinary source syntax, not Rust format placeholders.
     if _RUST_NAMED_TEMPLATE_HOLE_RE.search(source) is not None:
         return False
+
+    if _rust_unsupported_solidity_fragment_is_source_like(source, tokens):
+        return True
 
     for index, token in enumerate(tokens):
         if token.text == "pragma" and _rust_pragma_fragment_is_source_like(
