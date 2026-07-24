@@ -368,6 +368,33 @@ class ConstructorBinding:
     owner: str
 
 
+def _constructor_binding_preference(
+    binding: ConstructorBinding,
+) -> tuple[int, bool, bool, int, str]:
+    """Choose a stable visible owner for aliases of one declaration."""
+
+    return (
+        binding.owner.count("."),
+        binding.owner != binding.origin.type_name,
+        binding.owner.rsplit(".", 1)[-1]
+        != binding.origin.type_name,
+        len(binding.owner),
+        binding.owner,
+    )
+
+
+def _single_origin_constructor_binding(
+    bindings: Iterable[ConstructorBinding],
+) -> ConstructorBinding | None:
+    candidates = tuple(bindings)
+    if (
+        not candidates
+        or len({binding.origin for binding in candidates}) != 1
+    ):
+        return None
+    return min(candidates, key=_constructor_binding_preference)
+
+
 @dataclass(frozen=True)
 class ConstructorImportSurface:
     """Constructor and term facts proven from one source file's imports."""
@@ -5333,11 +5360,12 @@ def migrate_qualified_constructors(
     ambiguous_import_leaves: set[str] = set()
     imported_constructor_leaves = set(surface.bare_candidates)
     for leaf, bindings in surface.bare_candidates.items():
+        binding = _single_origin_constructor_binding(bindings)
         if (
-            len(bindings) == 1
+            binding is not None
             and not surface.has_unknown_unqualified_constructors
         ):
-            owner = next(iter(bindings)).owner
+            owner = binding.owner
             constructor_owners[leaf] = owner
             trusted_import_owners[leaf] = owner
         else:
@@ -5699,11 +5727,16 @@ def migrate_legacy_dot_constructors(
         bindings.update(scoped_bindings)
         line, column = _source_line_column(source, token.start)
         location = f"line {line}, column {column}"
-        if len(bindings) == 1 and not surface.has_unknown_constructors:
+        binding = _single_origin_constructor_binding(bindings)
+        if (
+            binding is not None
+            and not surface.has_unknown_constructors
+        ):
             # Insert the owner before the original dot instead of replacing
             # the whole span so comments between `.` and the leaf survive.
-            owner = next(iter(bindings)).owner
-            replacements.append((token.start, token.start, owner))
+            replacements.append(
+                (token.start, token.start, binding.owner)
+            )
         elif bindings:
             owner_counts: dict[str, int] = {}
             for binding in bindings:

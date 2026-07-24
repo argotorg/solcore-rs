@@ -769,6 +769,406 @@ function make(x: word) returns (T) { return .Some(x); }
                 constructor_import_surface=surfaces[main],
             )
 
+    def test_same_origin_aliases_choose_a_stable_owner_in_any_order(
+        self,
+    ) -> None:
+        provider = """\
+enum T { T(word), Some(word) }
+export {T(*)};
+"""
+        cases = (
+            (
+                (
+                    "import provider;",
+                    "import {T as A} from provider;",
+                ),
+                {"T", "A"},
+                "T",
+            ),
+            (
+                (
+                    "import {T as V} from provider;",
+                    "import {T as U} from provider;",
+                ),
+                {"U", "V"},
+                "U",
+            ),
+            (
+                (
+                    "import provider;",
+                    "import * as P from provider;",
+                ),
+                {"T", "P.T"},
+                "T",
+            ),
+            (
+                (
+                    "import * as Q from provider;",
+                    "import * as P from provider;",
+                ),
+                {"P.T", "Q.T"},
+                "P.T",
+            ),
+        )
+
+        for declarations, visible_owners, expected_owner in cases:
+            migrated_bodies = []
+            for ordered in (declarations, declarations[::-1]):
+                with self.subTest(
+                    declarations=ordered,
+                    expected_owner=expected_owner,
+                ):
+                    consumer = "\n".join(ordered) + "\n" + """\
+function use(x: word) {
+  Some(x);
+  match (.Some(x)) { case Some(value) { return; } }
+}
+"""
+                    sources, surfaces = self.surfaces(
+                        {
+                            "provider.solc": provider,
+                            "main.solc": consumer,
+                        }
+                    )
+                    main = Path("/workspace/main.solc")
+                    surface = surfaces[main]
+                    bindings = surface.bare_candidates["Some"]
+
+                    self.assertEqual(
+                        {binding.owner for binding in bindings},
+                        visible_owners,
+                    )
+                    self.assertEqual(
+                        len(
+                            {
+                                binding.origin
+                                for binding in bindings
+                            }
+                        ),
+                        1,
+                    )
+                    self.assertEqual(
+                        bindings,
+                        surface.dot_candidates["Some"],
+                    )
+
+                    migrated = MIGRATE.migrate_source(
+                        sources[main],
+                        constructor_import_surface=surface,
+                    )
+
+                    self.assertIn(
+                        f"  {expected_owner}.Some(x);",
+                        migrated,
+                    )
+                    self.assertIn(
+                        f"match ({expected_owner}.Some(x))",
+                        migrated,
+                    )
+                    self.assertIn(
+                        f"case {expected_owner}.Some(value)",
+                        migrated,
+                    )
+                    self.assertEqual(
+                        MIGRATE.migrate_source(
+                            migrated,
+                            constructor_import_surface=surface,
+                        ),
+                        migrated,
+                    )
+                    migrated_bodies.append(
+                        migrated[migrated.index("function use") :]
+                    )
+
+            self.assertEqual(
+                migrated_bodies[0],
+                migrated_bodies[1],
+            )
+
+    def test_different_origins_with_the_same_owner_remain_ambiguous(
+        self,
+    ) -> None:
+        provider = """\
+enum T { Some(word) }
+export {T(*)};
+"""
+        providers = {
+            "a.solc": provider,
+            "b.solc": provider,
+        }
+        cases = (
+            (
+                ("import a;", "import b;"),
+                "T",
+            ),
+            (
+                (
+                    "import {T as U} from a;",
+                    "import {T as U} from b;",
+                ),
+                "U",
+            ),
+            (
+                (
+                    "import * as P from a;",
+                    "import * as P from b;",
+                ),
+                "P.T",
+            ),
+        )
+
+        for declarations, owner in cases:
+            messages = []
+            for ordered in (declarations, declarations[::-1]):
+                with self.subTest(
+                    declarations=ordered,
+                    owner=owner,
+                ):
+                    imports = "\n".join(ordered)
+
+                    bare_source = imports + "\n" + """\
+function use(x: word) { Some(x); }
+"""
+                    sources, surfaces = self.surfaces(
+                        {
+                            **providers,
+                            "main.solc": bare_source,
+                        }
+                    )
+                    main = Path("/workspace/main.solc")
+                    surface = surfaces[main]
+                    bindings = surface.bare_candidates["Some"]
+
+                    self.assertEqual(
+                        {binding.owner for binding in bindings},
+                        {owner},
+                    )
+                    self.assertEqual(
+                        len(
+                            {
+                                binding.origin
+                                for binding in bindings
+                            }
+                        ),
+                        2,
+                    )
+                    self.assertEqual(
+                        MIGRATE.migrate_source(
+                            sources[main],
+                            constructor_import_surface=surface,
+                        ),
+                        bare_source,
+                    )
+
+                    dot_source = imports + "\n" + """\
+function use(x: word) { return .Some(x); }
+"""
+                    sources, surfaces = self.surfaces(
+                        {
+                            **providers,
+                            "main.solc": dot_source,
+                        }
+                    )
+                    surface = surfaces[main]
+
+                    with self.assertRaises(ValueError) as raised:
+                        MIGRATE.migrate_source(
+                            sources[main],
+                            constructor_import_surface=surface,
+                        )
+
+                    message = str(raised.exception)
+                    self.assertRegex(
+                        message,
+                        (
+                            r"ambiguous legacy dot-constructor \.Some.*"
+                            rf"possible owners: {re.escape(owner)} "
+                            r"\(from /workspace/a\.solc\), "
+                            rf"{re.escape(owner)} "
+                            r"\(from /workspace/b\.solc\)"
+                        ),
+                    )
+                    messages.append(message)
+
+            self.assertEqual(messages[0], messages[1])
+
+    def test_unknown_imports_override_same_origin_uniqueness(
+        self,
+    ) -> None:
+        provider = """\
+enum T { Some(word) }
+export {T(*)};
+"""
+        known = (
+            "import provider;",
+            "import {T as U} from provider;",
+        )
+        unresolved_declarations = (
+            "import missing;",
+            "import {Missing as M} from missing;",
+            "import * as M from missing;",
+        )
+
+        for unresolved in unresolved_declarations:
+            orders = (
+                (known[0], known[1], unresolved),
+                (unresolved, known[1], known[0]),
+            )
+            messages = []
+            for ordered in orders:
+                with self.subTest(
+                    unresolved=unresolved,
+                    declarations=ordered,
+                ):
+                    imports = "\n".join(ordered)
+
+                    bare_source = imports + "\n" + """\
+function use(x: word) { Some(x); }
+"""
+                    sources, surfaces = self.surfaces(
+                        {
+                            "provider.solc": provider,
+                            "main.solc": bare_source,
+                        }
+                    )
+                    main = Path("/workspace/main.solc")
+                    surface = surfaces[main]
+                    bindings = surface.bare_candidates["Some"]
+
+                    self.assertEqual(
+                        {binding.owner for binding in bindings},
+                        {"T", "U"},
+                    )
+                    self.assertEqual(
+                        len(
+                            {
+                                binding.origin
+                                for binding in bindings
+                            }
+                        ),
+                        1,
+                    )
+                    self.assertTrue(
+                        surface.has_unknown_unqualified_constructors
+                    )
+                    self.assertTrue(
+                        surface.has_unknown_constructors
+                    )
+                    self.assertEqual(
+                        MIGRATE.migrate_source(
+                            sources[main],
+                            constructor_import_surface=surface,
+                        ),
+                        bare_source,
+                    )
+
+                    dot_source = imports + "\n" + """\
+function use(x: word) { return .Some(x); }
+"""
+                    sources, surfaces = self.surfaces(
+                        {
+                            "provider.solc": provider,
+                            "main.solc": dot_source,
+                        }
+                    )
+                    surface = surfaces[main]
+
+                    with self.assertRaises(ValueError) as raised:
+                        MIGRATE.migrate_source(
+                            sources[main],
+                            constructor_import_surface=surface,
+                        )
+
+                    message = str(raised.exception)
+                    self.assertRegex(
+                        message,
+                        (
+                            r"ambiguous legacy dot-constructor \.Some.*"
+                            r"possible owners: T, U, "
+                            r"unresolved imported constructors"
+                        ),
+                    )
+                    messages.append(message)
+
+            self.assertEqual(messages[0], messages[1])
+
+    def test_same_origin_aliases_preserve_imported_term_shadowing(
+        self,
+    ) -> None:
+        provider = """\
+enum Option { Some(word) }
+function Some(x: word) returns (word) { return x; }
+export {Option(*), Some};
+"""
+        declarations = (
+            "import {Some, Option as V} from provider;",
+            "import {Option as U} from provider;",
+        )
+        migrated_bodies = []
+
+        for ordered in (declarations, declarations[::-1]):
+            with self.subTest(declarations=ordered):
+                consumer = "\n".join(ordered) + "\n" + """\
+function make(y: word) returns (U) { return .Some(y); }
+function use(x: U, y: word) {
+  Some(y);
+  match (x) { case Some(value) { return; } }
+}
+"""
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": provider,
+                        "main.solc": consumer,
+                    }
+                )
+                main = Path("/workspace/main.solc")
+                surface = surfaces[main]
+                bindings = surface.bare_candidates["Some"]
+
+                self.assertEqual(
+                    {binding.owner for binding in bindings},
+                    {"U", "V"},
+                )
+                self.assertEqual(
+                    len(
+                        {
+                            binding.origin
+                            for binding in bindings
+                        }
+                    ),
+                    1,
+                )
+                self.assertIn("Some", surface.imported_terms)
+
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surface,
+                )
+
+                self.assertIn(
+                    "function make(y: word) returns (U) "
+                    "{ return U.Some(y); }",
+                    migrated,
+                )
+                self.assertIn("\n  Some(y);\n", migrated)
+                self.assertNotIn("\n  U.Some(y);\n", migrated)
+                self.assertIn("case U.Some(value)", migrated)
+                self.assertEqual(
+                    MIGRATE.migrate_source(
+                        migrated,
+                        constructor_import_surface=surface,
+                    ),
+                    migrated,
+                )
+                migrated_bodies.append(
+                    migrated[migrated.index("function make") :]
+                )
+
+        self.assertEqual(
+            migrated_bodies[0],
+            migrated_bodies[1],
+        )
+
     def test_unresolved_import_blocks_terms_but_not_local_patterns(
         self,
     ) -> None:
