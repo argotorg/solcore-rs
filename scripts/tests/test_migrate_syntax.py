@@ -5746,6 +5746,90 @@ const RUST_DYN: &str =
                 ):
                     MIGRATE.migrate_rust_strings(rust)
 
+    def test_unterminated_rust_literals_stay_opaque(self) -> None:
+        cases = [
+            (
+                'const SOURCE: &str = "function f(x: word) '
+                "-> word { return x; }\n"
+            ),
+            (
+                'const SOURCE: &str = r#"function f(x: word) '
+                "-> word { return x; }\n"
+            ),
+        ]
+
+        for rust in cases:
+            with self.subTest(raw='r#"' in rust):
+                self.assertEqual(
+                    MIGRATE._rust_solcore_literal_spans(rust),
+                    [],
+                )
+                self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
+    def test_bare_cr_in_rust_literals_stays_opaque(self) -> None:
+        cases = [
+            (
+                'const SOURCE: &str = "function f(x: word) '
+                '-> word { return x; }\r";\n'
+            ),
+            (
+                'const SOURCE: &str = r#"function f(x: word) '
+                '-> word { return x; }\r"#;\n'
+            ),
+            (
+                'const SOURCE: &str = concat!("function f(x: word) '
+                '-> word { return x; }\r");\n'
+            ),
+        ]
+
+        for rust in cases:
+            with self.subTest(concat="concat!" in rust):
+                self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
+    def test_invalid_leading_unicode_escape_underscore_stays_opaque(
+        self,
+    ) -> None:
+        rust = r'''
+const SOURCE: &str = concat!(
+    "\u{_66}unction f(",
+    "x: word) -> word { return x; }",
+);
+'''
+
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
+    def test_raw_string_hash_limit_is_enforced(self) -> None:
+        classic = "function f(x: word) -> word { return x; }"
+        valid_hashes = "#" * 255
+        valid = (
+            "const SOURCE: &str = concat!(r"
+            + valid_hashes
+            + '"'
+            + classic
+            + '"'
+            + valid_hashes
+            + ");\n"
+        )
+        invalid_hashes = "#" * 256
+        invalid = (
+            "const SOURCE: &str = concat!(r"
+            + invalid_hashes
+            + '"'
+            + classic
+            + '"'
+            + invalid_hashes
+            + ");\n"
+        )
+
+        migrated = MIGRATE.migrate_rust_strings(valid)
+
+        self.assertEqual(
+            self.concat_values(migrated),
+            ["function f(x: word) returns (word) { return x; }"],
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(invalid), invalid)
+        self.assert_rust_syntax(migrated)
+
     def test_recognizes_canonical_fragments_without_rewriting(self) -> None:
         rust = r'''
 const FUNCTION: &str =

@@ -11585,8 +11585,8 @@ def _rust_identifier_continues(character: str) -> bool:
 
 def _rust_raw_literal(
     source: str, start: int
-) -> tuple[int, int, int] | None:
-    """Return `(body_start, body_end, literal_end)` for a Rust raw string."""
+) -> tuple[int, int, int, bool] | None:
+    """Return body bounds, literal end, and lexical validity."""
 
     if start and _rust_identifier_continues(source[start - 1]):
         return None
@@ -11610,14 +11610,19 @@ def _rust_raw_literal(
     terminator = '"' + hashes
     body_end = source.find(terminator, body_start)
     if body_end < 0:
-        return body_start, len(source), len(source)
-    return body_start, body_end, body_end + len(terminator)
+        return body_start, len(source), len(source), False
+    return (
+        body_start,
+        body_end,
+        body_end + len(terminator),
+        len(hashes) <= 255,
+    )
 
 
 def _rust_ordinary_literal(
     source: str, start: int
-) -> tuple[int, int, int] | None:
-    """Return `(body_start, body_end, literal_end)` for a Rust string."""
+) -> tuple[int, int, int, bool] | None:
+    """Return body bounds, literal end, and lexical validity."""
 
     if start >= len(source):
         return None
@@ -11633,8 +11638,19 @@ def _rust_ordinary_literal(
     else:
         return None
     literal_end = _scan_quoted(source, quote, '"')
-    body_end = max(quote + 1, literal_end - 1)
-    return quote + 1, body_end, literal_end
+    quote_index = literal_end - 1
+    backslashes = 0
+    cursor = quote_index - 1
+    while cursor > quote and source[cursor] == "\\":
+        backslashes += 1
+        cursor -= 1
+    terminated = (
+        quote_index > quote
+        and source[quote_index] == '"'
+        and backslashes % 2 == 0
+    )
+    body_end = quote_index if terminated else len(source)
+    return quote + 1, body_end, literal_end, terminated
 
 
 def _decode_rust_ordinary_body(body: str) -> str | None:
@@ -11657,6 +11673,8 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
                 decoded.append("\n")
                 cursor += 2
                 continue
+            if body[cursor] == "\r":
+                return None
             decoded.append(body[cursor])
             cursor += 1
             continue
@@ -11682,7 +11700,9 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
             digits = body[cursor + 3 : close] if close >= 0 else ""
             normalized = digits.replace("_", "")
             if (
-                normalized
+                digits
+                and digits[0] != "_"
+                and normalized
                 and len(normalized) <= 6
                 and all(
                     digit in "0123456789abcdefABCDEF"
@@ -11738,11 +11758,10 @@ def _encode_rust_ordinary_body(body: str) -> str:
 def _rust_literal_semantic_body(body: str, is_raw: bool) -> str | None:
     """Return one literal body's semantic text for every migration phase."""
 
-    return (
-        body.replace("\r\n", "\n")
-        if is_raw
-        else _decode_rust_ordinary_body(body)
-    )
+    if not is_raw:
+        return _decode_rust_ordinary_body(body)
+    normalized = body.replace("\r\n", "\n")
+    return None if "\r" in normalized else normalized
 
 
 @dataclass(frozen=True)
@@ -11833,7 +11852,9 @@ def _rust_unicode_string_literal(
 
     raw = _rust_raw_literal(source, start)
     if raw is not None and source[start] == "r":
-        body_start, body_end, literal_end = raw
+        body_start, body_end, literal_end, valid = raw
+        if not valid:
+            return None
         return RustStringLiteral(
             start,
             body_start,
@@ -11847,7 +11868,9 @@ def _rust_unicode_string_literal(
     ordinary = _rust_ordinary_literal(source, start)
     if ordinary is None:
         return None
-    body_start, body_end, literal_end = ordinary
+    body_start, body_end, literal_end, valid = ordinary
+    if not valid:
+        return None
     return RustStringLiteral(
         start,
         body_start,
@@ -13132,7 +13155,7 @@ def _rust_solcore_literals(
             cursor += 1
             continue
 
-        body_start, body_end, literal_end = literal
+        body_start, body_end, literal_end, valid = literal
         body = source[body_start:body_end]
         semantic_body = _rust_literal_semantic_body(body, is_raw)
         excluded = any(
@@ -13140,7 +13163,8 @@ def _rust_solcore_literals(
             for span_start, span_end in excluded_spans
         )
         if (
-            not excluded
+            valid
+            and not excluded
             and semantic_body is not None
             and _looks_like_solcore_literal(semantic_body)
         ):
