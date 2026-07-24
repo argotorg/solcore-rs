@@ -8190,11 +8190,16 @@ def build_constructor_import_surfaces(
         def add_data(
             data_type: _ExportedDataType,
             owner: str,
+            *,
+            expose_bare: bool = True,
         ) -> None:
             binding = ConstructorBinding(data_type.origin, owner)
             for constructor in data_type.constructors:
                 dot.setdefault(constructor, set()).add(binding)
-                if constructor == data_type.source_name:
+                if (
+                    expose_bare
+                    and constructor == data_type.source_name
+                ):
                     bare.setdefault(constructor, set()).add(binding)
 
         for spec in specs:
@@ -8223,7 +8228,11 @@ def build_constructor_import_surfaces(
                 for public_name, data_types in interface.data_types.items():
                     owner = f"{spec.qualifier}.{public_name}"
                     for data_type in data_types:
-                        add_data(data_type, owner)
+                        add_data(
+                            data_type,
+                            owner,
+                            expose_bare=False,
+                        )
                 continue
 
             for source_name, local_name in spec.selections:

@@ -325,7 +325,10 @@ export {T(*)};
 """,
                 "main.solc": """\
 import * as P from provider;
-function make(x: word) returns (P.T) { return .Some(x); }
+function make(x: word) returns (P.T) {
+  T(x);
+  return .Some(x);
+}
 """,
             }
         )
@@ -336,7 +339,13 @@ function make(x: word) returns (P.T) { return .Some(x); }
             constructor_import_surface=surfaces[main],
         )
 
+        self.assertIn("  T(x);", migrated)
         self.assertIn("return P.T.Some(x);", migrated)
+        self.assertNotIn("P.T.T(x)", migrated)
+        self.assertNotIn(
+            "T",
+            surfaces[main].bare_candidates,
+        )
 
     def test_imported_term_wins_in_expressions_but_not_patterns(self) -> None:
         sources, surfaces = self.surfaces(
