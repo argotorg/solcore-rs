@@ -6,7 +6,8 @@ enum storage<a> { storage(word) }
 enum IndexAP<m, idx, member> { IndexAP(m, idx, Proxy<member>) }
 
 function wal(ref: dict<address, word> storage, src: address, amt: word) returns () {
-  let ip = IndexAP.IndexAP(ref, src, Proxy.Proxy  as Proxy<word>);
+  let wordProxy: Proxy<word> = Proxy.Proxy;
+  let ip = IndexAP.IndexAP(ref, src, wordProxy);
   Assign.assign(LVA.acc(ip), amt);
 }
 

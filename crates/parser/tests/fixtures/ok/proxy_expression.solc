@@ -1,6 +1,6 @@
 function main(x: word) returns (word) {
   let p = @word;
   let pairProxy = @(word, word);
-  let converted = p as @word;
+  let converted: @word = p;
   return x;
 }

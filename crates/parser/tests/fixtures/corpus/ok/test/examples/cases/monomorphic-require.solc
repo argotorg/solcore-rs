@@ -11,7 +11,7 @@ function myrevert<a>(offset: word, length: word) returns (a) {
 }
 function require(cond: bool) returns () {
     if (!cond) {
-     myrevert(0,0) as ();
+     let reverted: () = myrevert(0,0);
     }
 }
 

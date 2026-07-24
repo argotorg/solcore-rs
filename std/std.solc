@@ -996,7 +996,8 @@ impl MemoryType<uint256, uint256> {
 impl<ty, ret> MemoryType<DynArray<ty>, slice<ret memory>> where ty: MemoryType<ret> {
     function loadFromMemory(p: Proxy<DynArray<ty>>, loc: word) returns (slice<ret memory>) {
         let length = mload(loc);
-        return slice(Typedef.abs(loc) as ret memory, length);
+        let loaded: ret memory = Typedef.abs(loc);
+        return slice(loaded, length);
     }
 }
 */
@@ -1009,7 +1010,8 @@ impl<ty, ret> MemoryType<DynArray<ty>, slice<ret memory>> where ty: MemoryType<r
 impl<ty, deref> ABIEncode<ty memory> where ty: MemoryType<deref>, deref: ABIEncode {
     function encodeInto(x: ty memory, basePtr: word, offset: word, tail: word) returns (word) {
         let prx: Proxy<ty>; // FIXED: before was Proxy<deref>
-        return ABIEncode.encodeInto(MemoryType.loadFromMemory(prx, Typedef.rep(x)) as deref, basePtr, offset, tail);
+        let loaded: deref = MemoryType.loadFromMemory(prx, Typedef.rep(x));
+        return ABIEncode.encodeInto(loaded, basePtr, offset, tail);
     }
 }
 */
@@ -1575,7 +1577,8 @@ impl<structType, fieldSelector, fieldType, storageType, offsetType>
         offsetType: StorageSize {
     function acc(x: MemberAccessProxy<structType storage, fieldSelector, fieldType, offsetType>) returns (fieldType storage) {
         let ptr: word = Typedef.rep(memberAccessBase(x));
-        let size: word = StorageSize.size(Proxy as Proxy<offsetType>);
+        let offsetProxy: Proxy<offsetType> = Proxy;
+        let size: word = StorageSize.size(offsetProxy);
         return storage(ptr + size);
     }
 }
@@ -1587,7 +1590,8 @@ impl<structType, fieldSelector, fieldType, storageType, offsetType>
         fieldType: StorageType {
     function acc(x: MemberAccessProxy<structType storage, fieldSelector, fieldType, offsetType>) returns (fieldType) {
         let ptr: word = Typedef.rep(memberAccessBase(x));
-        let size: word = StorageSize.size(Proxy as Proxy<offsetType>);
+        let offsetProxy: Proxy<offsetType> = Proxy;
+        let size: word = StorageSize.size(offsetProxy);
         return CanStore.load(ptr + size);
     }
 }

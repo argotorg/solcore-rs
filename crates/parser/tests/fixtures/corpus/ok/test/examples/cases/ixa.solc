@@ -96,14 +96,16 @@ trait LValueIdxAccess<col_idx, val> {
 
 impl<a> RValueIdxAccess<(array<a> memory, word), a> where a: MemoryType {
   function lookup(col_idx: (array<a> memory, word)) returns (a) {
-    let sz = MemoryType.size(Proxy.Proxy  as Proxy<a>);
+    let elementProxy: Proxy<a> = Proxy.Proxy;
+    let sz = MemoryType.size(elementProxy);
     match (col_idx) { case (col, idx) { match (col) { case memory.memory(loc) { return MemoryType.load(Add.add(loc, Mul.mul(idx, sz))); } } } }
   }
 }
 
 impl<a> LValueIdxAccess<(array<a> memory, word), a memory> where a: MemoryType {
   function lookup(col_idx: (array<a> memory, word)) returns (a memory) {
-    let sz = MemoryType.size(Proxy.Proxy  as Proxy<a>);
+    let elementProxy: Proxy<a> = Proxy.Proxy;
+    let sz = MemoryType.size(elementProxy);
     match (col_idx) { case (col, idx) { match (col) { case memory.memory(loc) { return memory.memory(Add.add(loc, Mul.mul(idx, sz))); } } } }
   }
 }

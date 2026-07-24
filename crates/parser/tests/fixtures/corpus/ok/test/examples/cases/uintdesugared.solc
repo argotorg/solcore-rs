@@ -232,7 +232,8 @@ impl StorageType<word> {
 
 impl StorageType<uint> {
     function sload(ptr: word) returns (uint) {
-        return Typedef.abs(sload_(ptr)) as uint; // explicit conversion needed due to a typechecker bug
+        let result: uint = Typedef.abs(sload_(ptr)); // explicit type annotation needed due to a typechecker bug
+        return result;
     }
     function store(ptr: word, value: uint) returns () {
         return sstore_(ptr, Typedef.rep(value));
@@ -241,7 +242,8 @@ impl StorageType<uint> {
 
 impl StorageType<address> {
     function sload(ptr: word) returns (address) {
-        return Typedef.abs(sload_(ptr)) as address; // explicit conversion needed due to a typechecker bug
+        let result: address = Typedef.abs(sload_(ptr)); // explicit type annotation needed due to a typechecker bug
+        return result;
     }
     function store(ptr: word, value: address) returns () {
         return sstore_(ptr, Typedef.rep(value));
@@ -275,7 +277,8 @@ trait RValueMemberAccess<self, memberValueType> {
 impl<structType, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessProxy<structType storage, fieldSelector, offsetType>, storageRef<fieldType>> where StructField<structType, fieldSelector>: CStructField<fieldType, offsetType>, offsetType: StorageSize {
     function memberAccess(x: MemberAccessProxy<structType storage, fieldSelector, offsetType>) returns (storageRef<fieldType>) {
         let ptr: word = Typedef.rep(memberAccessD1(x));
-        let size: word = StorageSize.size(Proxy.Proxy as Proxy<offsetType>);
+        let offsetProxy: Proxy<offsetType> = Proxy.Proxy;
+        let size: word = StorageSize.size(offsetProxy);
         assembly {
             ptr := add(ptr, size)
         }
@@ -320,8 +323,10 @@ forall a b . a:Typedef(b), b:StorageSize
 
 impl<a, b> StorageSize<(a, b)> where a: StorageSize, b: StorageSize {
     function size(x: Proxy<(a, b)>) returns (word) {
-        let a_sz: word = StorageSize.size(Proxy.Proxy as Proxy<a>);
-        let b_sz: word = StorageSize.size(Proxy.Proxy as Proxy<b>);
+        let aProxy: Proxy<a> = Proxy.Proxy;
+        let bProxy: Proxy<b> = Proxy.Proxy;
+        let a_sz: word = StorageSize.size(aProxy);
+        let b_sz: word = StorageSize.size(bProxy);
         assembly {
             a_sz := add(a_sz, b_sz)
         }
@@ -339,7 +344,8 @@ pragma solcore noCoverageCondition MemberAccessProxy, LValueMemberAccess, RValue
 impl<cxt, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessProxy<ContractStorage<cxt>, fieldSelector, offsetType>, storageRef<fieldType>> where StructField<ContractStorage<cxt>, fieldSelector>: CStructField<fieldType, offsetType>, offsetType: StorageSize {
     function memberAccess(x: MemberAccessProxy<ContractStorage<cxt>, fieldSelector, offsetType>) returns (storageRef<fieldType>) {
         let ptr: word = 0x100; // forge uses at least 1 storage slot
-        let offsetSize: word = StorageSize.size(Proxy.Proxy as Proxy<offsetType>);
+        let offsetProxy: Proxy<offsetType> = Proxy.Proxy;
+        let offsetSize: word = StorageSize.size(offsetProxy);
 
         assembly {
             ptr := add(ptr, offsetSize)
@@ -351,8 +357,10 @@ impl<cxt, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessP
 impl<cxt, fieldSelector, fieldType, offsetType> RValueMemberAccess<MemberAccessProxy<ContractStorage<cxt>, fieldSelector, offsetType>, fieldType> where StructField<ContractStorage<cxt>, fieldSelector>: CStructField<fieldType, offsetType>, fieldType: StorageType, offsetType: StorageSize {
     function memberAccess(x: MemberAccessProxy<ContractStorage<cxt>, fieldSelector, offsetType>) returns (fieldType) {
         let ptr: word = 0x100;
-        let offsetSize: word = StorageSize.size(Proxy.Proxy as Proxy<offsetType>);
-        return StorageType.sload(addW(ptr, offsetSize)) as fieldType;
+        let offsetProxy: Proxy<offsetType> = Proxy.Proxy;
+        let offsetSize: word = StorageSize.size(offsetProxy);
+        let result: fieldType = StorageType.sload(addW(ptr, offsetSize));
+        return result;
     }
 }
 
@@ -461,6 +469,7 @@ contract Uint {
       init();
       mint(uint.uint(1000));
       mint(uint.uint(1000));
-      return rval(IndexAccessProxy.IndexAccessProxy(LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(ContractStorage.ContractStorage(UintCxt.UintCxt), balances_sel.balances_sel)), rval(MemberAccessProxy.MemberAccessProxy(ContractStorage.ContractStorage(UintCxt.UintCxt), owner_sel.owner_sel))))  as uint;
+      let result: uint = rval(IndexAccessProxy.IndexAccessProxy(LValueMemberAccess.memberAccess(MemberAccessProxy.MemberAccessProxy(ContractStorage.ContractStorage(UintCxt.UintCxt), balances_sel.balances_sel)), rval(MemberAccessProxy.MemberAccessProxy(ContractStorage.ContractStorage(UintCxt.UintCxt), owner_sel.owner_sel))));
+      return result;
    }
 }

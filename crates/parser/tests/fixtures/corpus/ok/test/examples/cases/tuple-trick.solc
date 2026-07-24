@@ -18,7 +18,7 @@ impl<a, b> Nth<Zero, (a, b), a> {
 
 impl<n, a, b, c> Nth<Succ<n>, (a, b), c> where n: Nth<b, c> {
    function nth(x: Proxy<Succ<n>>, y: (a, b)) returns (c) {
-      match (y) { case (a, b) { return Nth.nth(Proxy.Proxy  as Proxy<n>, b); } }
+      match (y) { case (a, b) { let predecessorProxy: Proxy<n> = Proxy.Proxy; return Nth.nth(predecessorProxy, b); } }
    }
 }
 
@@ -28,10 +28,12 @@ contract C {
   }
   function main() public returns () {
     let p: (word, word, word, ());
-    let x: word = Nth.nth(Proxy.Proxy  as Proxy<Zero>, p);
-    let y: word = Nth.nth(Proxy.Proxy  as Proxy<Succ<Zero>>, p);
-    let z: word = Nth.nth(Proxy.Proxy  as Proxy<Succ<Succ<Zero>>>, p);
+    let zeroProxy: Proxy<Zero> = Proxy.Proxy;
+    let oneProxy: Proxy<Succ<Zero>> = Proxy.Proxy;
+    let twoProxy: Proxy<Succ<Succ<Zero>>> = Proxy.Proxy;
+    let x: word = Nth.nth(zeroProxy, p);
+    let y: word = Nth.nth(oneProxy, p);
+    let z: word = Nth.nth(twoProxy, p);
     id(z);
   }
 }
-

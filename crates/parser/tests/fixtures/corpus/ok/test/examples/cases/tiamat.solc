@@ -18,15 +18,18 @@ function setbal(ref: dict<address, word> storage, src: address, amt: word) retur
     ref : storage(dict(address, word))
     => ref[src] : storage(word)  assuming src is of the right type
   */
-  let tip = TIP.TIP(ref, src, Proxy.Proxy as Proxy<word>);
+  let wordProxy: Proxy<word> = Proxy.Proxy;
+  let tip = TIP.TIP(ref, src, wordProxy);
   Assign.assign(LVA.acc(tip), amt);
 }
 
 function setAllowance(ref: dict<address, dict<address, word>> storage, owner: address, spender: address, amt: word) returns () {
 
-  let tip1: TIP<dict<address, dict<address, word>> storage, address, dict<address, word>> = TIP.TIP(ref, owner, Proxy.Proxy as Proxy<dict<address, word>>);
+  let allowanceProxy: Proxy<dict<address, word>> = Proxy.Proxy;
+  let tip1: TIP<dict<address, dict<address, word>> storage, address, dict<address, word>> = TIP.TIP(ref, owner, allowanceProxy);
   let ref2: dict<address, word> storage = LVA.acc(tip1);
-  let tip2: TIP<dict<address, word> storage, address, word> = TIP.TIP(ref2, spender, Proxy.Proxy as Proxy<word>);
+  let wordProxy: Proxy<word> = Proxy.Proxy;
+  let tip2: TIP<dict<address, word> storage, address, word> = TIP.TIP(ref2, spender, wordProxy);
   let ref3: word storage = LVA.acc(tip2);
   Assign.assign(ref3, amt);
 }
@@ -39,17 +42,19 @@ function getAllowance(ref: dict<address, dict<address, word>> storage, owner: ad
   let tip2 : TIP(storage(dict(address, word)), address, word)
            = TIP(ref2, spender, Proxy:Proxy(word));
 */
+  let allowanceProxy: Proxy<dict<address, word>> = Proxy.Proxy;
+  let wordProxy: Proxy<word> = Proxy.Proxy;
   return RVA.acc(
     TIP.TIP
     ( LVA.acc(
        TIP.TIP
        (ref
        , owner
-       , Proxy.Proxy as Proxy<dict<address, word>>
+       , allowanceProxy
        ) /* tip : TIP(storage(dict(address, dict(address, word))), address, dict(address, word)) */
       ) /* ref2 : storage(dict(address,word)) */
     , spender
-    , Proxy.Proxy as Proxy<word>
+    , wordProxy
     ) /* tip2 : TIP(storage(dict(address, word)), address, word) */
   );
 }
