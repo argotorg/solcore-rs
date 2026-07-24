@@ -1837,6 +1837,64 @@ const ORDINARY: &str =
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
 
 
+class LetInitializerMigrationTests(unittest.TestCase):
+    def test_rewrites_classic_let_initializers_in_bodies_and_for_loops(
+        self,
+    ) -> None:
+        classic = """\
+function f(v: Option(word)) {
+  let x := 1;
+  let y: Option(word) := v;
+  let z: comptime Option(word) := v;
+  for (let i := 0; i < 1; i += 1) {}
+  assembly { let untouched := 1 }
+}
+"""
+        expected = """\
+function f(v: Option<word>) {
+  let x = 1;
+  let y: Option<word> = v;
+  let comptime z: Option<word> = v;
+  for (let i = 0; i < 1; i += 1) {}
+  assembly { let untouched := 1 }
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_comments_around_classic_initializer(self) -> None:
+        classic = (
+            "function f() {"
+            " let x /* binding */ : Option(word) /* type */"
+            " := /* value */ make();"
+            " }\n"
+        )
+        expected = (
+            "function f() {"
+            " let x /* binding */ : Option<word> /* type */"
+            " = /* value */ make();"
+            " }\n"
+        )
+
+        self.assertEqual(MIGRATE.migrate_source(classic), expected)
+
+    def test_rewrites_isolated_walrus_lets_in_rust_literals(self) -> None:
+        rust = r'''
+const RAW: &str = r#"let x := 1;"#;
+const ORDINARY: &str = "let x: Option(word) := value;";
+'''
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 2)
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn('r#"let x = 1;"#', migrated)
+        self.assertIn('"let x: Option<word> = value;"', migrated)
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+
 class CallOptionMigrationTests(unittest.TestCase):
     def test_rejects_solidity_call_options_before_annotation_migration(
         self,

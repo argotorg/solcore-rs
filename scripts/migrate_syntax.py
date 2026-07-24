@@ -5146,6 +5146,31 @@ def reject_remaining_classic_arrows(source: str) -> None:
         )
 
 
+def migrate_let_initializers(source: str) -> str:
+    """Replace Classic ``let ... := ...`` outside opaque assembly blocks."""
+
+    tokens = significant(source)
+    replacements: list[tuple[int, int, str]] = []
+    for index, token in enumerate(tokens):
+        if token.text != "let":
+            continue
+        stack: list[str] = []
+        for cursor in range(index + 1, len(tokens)):
+            text = tokens[cursor].text
+            if not stack and text in {"=", ":=", ";"}:
+                if text == ":=":
+                    replacements.append(
+                        (
+                            tokens[cursor].start,
+                            tokens[cursor].end,
+                            "=",
+                        )
+                    )
+                break
+            _depth_step(stack, text, angles=False)
+    return replace_spans(source, replacements)
+
+
 def migrate_let_types(source: str) -> str:
     tokens = significant(source)
     replacements: list[tuple[int, int, str]] = []
@@ -6315,6 +6340,7 @@ def migrate_source(
         migrate_functions,
         migrate_lambdas,
         migrate_special_functions,
+        migrate_let_initializers,
         migrate_let_types,
         migrate_field_types,
         migrate_expression_annotations,
@@ -6896,7 +6922,7 @@ def _rust_assignment_declaration_is_source_like(
     return equals is not None and index + 2 + equals + 1 < end
 
 
-def _rust_comptime_let_is_source_like(
+def _rust_migratable_let_is_source_like(
     source: str, tokens: Sequence[Token], index: int
 ) -> bool:
     if not _rust_source_boundary(source, tokens, index):
@@ -6905,6 +6931,17 @@ def _rust_comptime_let_is_source_like(
     if end is None or not _rust_source_line_ends_after(source, tokens[end]):
         return False
     declaration = tokens[index + 1 : end]
+    walrus = find_top(declaration, ":=", angles=False)
+    if (
+        walrus is not None
+        and walrus > 0
+        and walrus + 1 < len(declaration)
+        and (
+            declaration[0].kind == "word"
+            or declaration[0].text in {"(", "comptime"}
+        )
+    ):
+        return True
     colon = find_top(declaration, ":", angles=False)
     if colon is None or colon == 0 or colon + 1 >= len(declaration):
         return False
@@ -7165,7 +7202,7 @@ def _looks_like_solcore_literal(source: str) -> bool:
             _rust_assignment_declaration_is_source_like(source, tokens, index)
         ):
             return True
-        if token.text == "let" and _rust_comptime_let_is_source_like(
+        if token.text == "let" and _rust_migratable_let_is_source_like(
             source, tokens, index
         ):
             return True
