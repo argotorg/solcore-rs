@@ -2023,7 +2023,7 @@ def _classic_shadow_ranges(
     for index, token in enumerate(tokens):
         if token.text != "match":
             continue
-        match_open = _header_boundary(tokens, index + 1)
+        match_open = _expression_block_boundary(tokens, index + 1)
         if (
             match_open is None
             or tokens[match_open].text != "{"
@@ -2185,6 +2185,20 @@ def _header_boundary(tokens: Sequence[Token], start: int) -> int | None:
         if not stack and text in {"{", ";"}:
             return index
         _depth_step(stack, text)
+    return None
+
+
+def _expression_block_boundary(
+    tokens: Sequence[Token], start: int
+) -> int | None:
+    """Find an expression's body without treating comparison ``<`` as generic."""
+
+    stack: list[str] = []
+    for index in range(start, len(tokens)):
+        text = tokens[index].text
+        if not stack and text in {"{", ";"}:
+            return index
+        _depth_step(stack, text, angles=False)
     return None
 
 
@@ -5283,7 +5297,7 @@ def migrate_one_match(source: str) -> tuple[str, bool]:
     for index, token in enumerate(tokens):
         if token.text != "match":
             continue
-        brace = _header_boundary(tokens, index + 1)
+        brace = _expression_block_boundary(tokens, index + 1)
         if brace is None or tokens[brace].text != "{":
             continue
         close = matching_index(tokens, brace)
@@ -5467,7 +5481,7 @@ def migrate_condition_parentheses(source: str) -> str:
             continue
         if tokens[index + 1].text == "(":
             continue
-        boundary = _header_boundary(tokens, index + 1)
+        boundary = _expression_block_boundary(tokens, index + 1)
         if boundary is None or tokens[boundary].text != "{":
             continue
         condition = source[token.end : tokens[boundary].start].strip()
@@ -6965,7 +6979,7 @@ def _rust_match_fragment_is_source_like(
         or previous in {"return", "=", ":=", "(", "[", ",", "=>"}
     ):
         return False
-    body_open = _header_boundary(tokens, index + 1)
+    body_open = _expression_block_boundary(tokens, index + 1)
     if body_open is None or tokens[body_open].text != "{":
         return False
     body_close = matching_index(tokens, body_open)

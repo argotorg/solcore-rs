@@ -340,6 +340,23 @@ function read(value: pair(Receiver, word)) -> word {
         self.assertIn("| (foo, _) => foo.bar()", migrated)
         self.assertIn("| _ => bar.read()", migrated)
 
+    def test_match_comparison_preserves_binder_shadow_scope(self) -> None:
+        classic = """\
+import foo.bar;
+
+function read(x: word, y: word) -> word {
+  return match x < y {
+    | foo => foo.bar()
+    | _ => foo.bar.read()
+  };
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertIn("| foo => foo.bar()", migrated)
+        self.assertIn("| _ => bar.read()", migrated)
+
     def test_for_binding_scope_ends_after_loop_body(self) -> None:
         classic = """\
 import foo.bar;
@@ -1792,6 +1809,43 @@ case Option.None /* none */  {
 
         self.assertEqual(migrated, expected)
         self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+
+class ExpressionHeaderBoundaryMigrationTests(unittest.TestCase):
+    def test_migrates_less_than_conditions_and_match_scrutinees(self) -> None:
+        classic = """\
+function compare(x: word, y: word) {
+  if x < y { return; }
+  while x < y { break; }
+  match x < y {
+    | true => return;
+    | false => return;
+  }
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertIn("if (x < y) {", migrated)
+        self.assertIn("while (x < y) {", migrated)
+        self.assertIn("match (x < y) {", migrated)
+        self.assertIn("case true {", migrated)
+        self.assertIn("case false {", migrated)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_migrates_less_than_match_in_isolated_rust_literals(self) -> None:
+        rust = r'''
+const RAW: &str =
+    r#"match x < y { | true => 1 | false => 0 }"#;
+const ORDINARY: &str =
+    "match x < y { | true => 1 | false => 0 }";
+'''
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 2)
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertEqual(migrated.count("match (x < y)"), 2)
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
 
 
 class ComptimeLetMigrationTests(unittest.TestCase):
