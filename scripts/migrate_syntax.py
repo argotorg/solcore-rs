@@ -66,6 +66,7 @@ import locale
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 import unicodedata
@@ -8856,20 +8857,67 @@ def _deduplicate_lexical_paths(paths: Iterable[Path]) -> list[Path]:
     return list(unique.values())
 
 
+def _directory_source_paths(
+    root: Path,
+    suffixes: frozenset[str],
+) -> list[Path]:
+    """Walk a directory without hiding traversal errors or special files."""
+
+    files: list[Path] = []
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name)
+        except OSError as error:
+            raise ValueError(
+                f"cannot traverse source directory {directory}: {error}"
+            ) from error
+
+        child_directories: list[Path] = []
+        for entry in entries:
+            path = Path(entry.path)
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    child_directories.append(path)
+                elif (
+                    path.suffix in suffixes
+                    and entry.is_file(follow_symlinks=True)
+                ):
+                    files.append(path)
+            except OSError as error:
+                raise ValueError(
+                    f"cannot inspect source path {path}: {error}"
+                ) from error
+        pending.extend(reversed(child_directories))
+    return files
+
+
+def _argument_path_kind(path: Path) -> str:
+    try:
+        mode = path.stat().st_mode
+    except OSError as error:
+        raise ValueError(f"cannot inspect source path {path}: {error}") from error
+    if stat.S_ISDIR(mode):
+        return "directory"
+    if stat.S_ISREG(mode):
+        return "file"
+    return "special"
+
+
 def source_paths(arguments: Sequence[str]) -> list[Path]:
     paths: list[Path] = []
     for argument in arguments:
         path = Path(argument)
-        if path.is_dir():
+        kind = _argument_path_kind(path)
+        if kind == "directory":
             paths.extend(
-                sorted(
-                    [
-                        *path.rglob("*.sol"),
-                        *path.rglob("*.solc"),
-                    ]
+                _directory_source_paths(
+                    path, frozenset({".sol", ".solc"})
                 )
             )
-        elif path.suffix in {".sol", ".solc"}:
+        elif kind == "file" and path.suffix in {".sol", ".solc"}:
             paths.append(path)
         else:
             raise ValueError(f"not a Solcore source path: {path}")
@@ -8880,11 +8928,17 @@ def rust_source_paths(arguments: Sequence[str]) -> list[Path]:
     paths: list[Path] = []
     for argument in arguments:
         path = Path(argument)
-        if path.is_dir():
-            paths.extend(sorted(path.rglob("*.rs")))
-        elif path.suffix == ".rs":
+        kind = _argument_path_kind(path)
+        if kind == "directory":
+            paths.extend(
+                _directory_source_paths(path, frozenset({".rs"}))
+            )
+        elif kind == "file" and path.suffix == ".rs":
             paths.append(path)
-        elif path.suffix in {".sol", ".solc"}:
+        elif (
+            kind == "file"
+            and path.suffix in {".sol", ".solc"}
+        ):
             # Retain the legacy CLI acceptance, but this mode edits only Rust
             # files and builds no cross-file constructor table.
             continue

@@ -2675,6 +2675,67 @@ const SOURCE: &str =
 
 
 class AtomicCliMigrationTests(unittest.TestCase):
+    def test_directory_discovery_excludes_special_source_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.solc"
+            fifo = root / "blocked.solc"
+            source.write_text("function f() {}\n")
+            MIGRATE.os.mkfifo(fifo)
+
+            discovered = MIGRATE.source_paths([str(root)])
+            with self.assertRaisesRegex(
+                ValueError,
+                r"not a Solcore source path",
+            ):
+                MIGRATE.source_paths([str(fifo)])
+
+        self.assertEqual(discovered, [source])
+
+    def test_directory_discovery_errors_before_cli_writes(self) -> None:
+        source = "alias Good = A -> B;\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            good = root / "good.solc"
+            denied = root / "denied"
+            hidden = denied / "hidden.solc"
+            denied.mkdir()
+            good.write_text(source)
+            hidden.write_text("alias Hidden = A -> B;\n")
+            real_scandir = MIGRATE.os.scandir
+
+            def guarded_scandir(path: object) -> object:
+                if Path(path) == denied:
+                    raise PermissionError("permission denied by test")
+                return real_scandir(path)
+
+            with (
+                mock.patch.object(
+                    MIGRATE.os,
+                    "scandir",
+                    side_effect=guarded_scandir,
+                ),
+                mock.patch.object(
+                    MIGRATE.sys,
+                    "argv",
+                    [str(SCRIPT), str(root)],
+                ),
+                mock.patch.object(
+                    MIGRATE.argparse.ArgumentParser,
+                    "error",
+                    side_effect=RuntimeError("discovery failed"),
+                ),
+                self.assertRaisesRegex(
+                    RuntimeError, r"discovery failed"
+                ),
+            ):
+                MIGRATE.main()
+            good_after = good.read_text()
+
+        self.assertEqual(good_after, source)
+
     def test_cli_preserves_solcore_source_line_endings(self) -> None:
         for newline in (b"\r\n", b"\r"):
             with self.subTest(newline=newline):
