@@ -624,6 +624,25 @@ function use(x: word) {
         self.assertEqual(migrated, expected)
         self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
+    def test_comparisons_do_not_hide_constructor_calls(self) -> None:
+        source = """\
+enum T { T(word) }
+function between(a: word, b: word, x: word) returns (bool) {
+  return a < T(x) > b;
+}
+"""
+        expected = """\
+enum T { T(word) }
+function between(a: word, b: word, x: word) returns (bool) {
+  return a < T.T(x) > b;
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
     def test_preserves_calls_from_open_and_selective_imports(self) -> None:
         canonical = """\
 import std.opcodes;

@@ -4909,6 +4909,21 @@ def _body_type_tokens(
             continue
         close = matching_index(tokens, index)
         if close is not None and close < body_end:
+            following = (
+                tokens[close + 1]
+                if close + 1 < body_end
+                else None
+            )
+            if (
+                following is not None
+                and following.kind in {"word", "number", "string"}
+                and following.text not in LOCATIONS
+            ):
+                # In an executable region, ``a < T(x) > b`` is a pair of
+                # comparisons rather than a generic argument list.  A type
+                # application can only be followed by another bare word when
+                # that word is a storage-location suffix.
+                continue
             marked.update(range(index + 1, close))
     return marked
 
