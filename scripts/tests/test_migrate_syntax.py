@@ -1739,6 +1739,44 @@ case Option.None /* none */  {
         self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
 
+class CallOptionMigrationTests(unittest.TestCase):
+    def test_rejects_solidity_call_options_before_annotation_migration(
+        self,
+    ) -> None:
+        cases = [
+            "function f(x: word) { target.call{value: x, gas: x}(x); }\n",
+            "function f(x: word) { new C{salt: x}(); }\n",
+            (
+                "function f(x: word) { obj.call /* call */ {"
+                " /* option */ gas /* name */ : gasFor(x ? 1 : 2),"
+                " value: wrap({nested: x}) /* value */ }(x); }\n"
+            ),
+        ]
+
+        for classic in cases:
+            with self.subTest(classic=classic):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate Solidity call options",
+                ):
+                    MIGRATE.migrate_source(classic)
+
+    def test_does_not_confuse_declaration_or_statement_blocks_with_options(
+        self,
+    ) -> None:
+        canonical = """\
+contract C {
+  value: word;
+  function f(x: word) {
+    if (true) { let value: word = x; }
+    target(x);
+  }
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+
 class ContractInheritanceMigrationTests(unittest.TestCase):
     def test_rejects_unsupported_contract_like_inheritance(self) -> None:
         cases = [

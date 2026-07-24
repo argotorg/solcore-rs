@@ -2160,6 +2160,43 @@ def _header_boundary(tokens: Sequence[Token], start: int) -> int | None:
     return None
 
 
+def reject_solidity_call_options(source: str) -> None:
+    """Reject call options before their colons look like type annotations."""
+
+    tokens = significant(source)
+    option_names = {"gas", "salt", "value"}
+    for open_index, token in enumerate(tokens):
+        if token.text != "{":
+            continue
+        close_index = matching_index(tokens, open_index)
+        if (
+            close_index is None
+            or close_index + 1 >= len(tokens)
+            or tokens[close_index + 1].text != "("
+        ):
+            continue
+        for part in split_top(
+            tokens[open_index + 1 : close_index], ",", angles=False
+        ):
+            colon = find_top(part, ":", angles=False)
+            if (
+                colon is None
+                or colon == 0
+                or part[colon - 1].kind != "word"
+                or part[colon - 1].text not in option_names
+            ):
+                continue
+            line, column = _source_line_column(
+                source, part[colon - 1].start
+            )
+            raise ValueError(
+                "cannot migrate Solidity call options at "
+                f"line {line}, column {column}: Core syntax does not "
+                "support `{value: ...}`, `{gas: ...}`, or `{salt: ...}`; "
+                "use the explicit standard-library call operation"
+            )
+
+
 def reject_contract_inheritance(source: str) -> None:
     """Reject Classic inheritance that Core cannot preserve automatically."""
 
@@ -6179,6 +6216,7 @@ def migrate_source(
 ) -> str:
     if has_comment_marker(source, KEEP_LEGACY_NEGATIVE_MARKER):
         return source
+    reject_solidity_call_options(source)
     reject_contract_inheritance(source)
     reject_noncanonical_proxy_comptime(source)
     reject_malformed_mapping_types(source)
