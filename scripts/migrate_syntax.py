@@ -3336,6 +3336,53 @@ def _realign_import_tokens(
         )
 
 
+def _realign_let_comptime_tokens(
+    before: Sequence[Token],
+    after: Sequence[Token],
+    aligned: dict[int, int],
+) -> None:
+    """Keep nested ``comptime`` comments attached when one layer moves."""
+
+    if (
+        len(before) < 4
+        or len(after) < 4
+        or before[0].text != "let"
+        or after[0].text != "let"
+        or before[1].text == "comptime"
+        or after[1].text != "comptime"
+    ):
+        return
+    old_colon = find_top(before, ":", angles=False)
+    new_colon = find_top(after, ":", angles=False)
+    if (
+        old_colon is None
+        or new_colon is None
+        or old_colon + 1 >= len(before)
+        or before[old_colon + 1].text != "comptime"
+    ):
+        return
+
+    old_comptime: list[int] = []
+    cursor = old_colon + 1
+    while cursor < len(before) and before[cursor].text == "comptime":
+        old_comptime.append(cursor)
+        cursor += 1
+    new_comptime = [1]
+    cursor = new_colon + 1
+    while cursor < len(after) and after[cursor].text == "comptime":
+        new_comptime.append(cursor)
+        cursor += 1
+    if len(old_comptime) != len(new_comptime):
+        return
+
+    old_set = set(old_comptime)
+    new_set = set(new_comptime)
+    for old_index, new_index in list(aligned.items()):
+        if old_index in old_set or new_index in new_set:
+            del aligned[old_index]
+    aligned.update(zip(old_comptime, new_comptime, strict=True))
+
+
 def _aligned_token_indices(
     before: Sequence[Token], after: Sequence[Token]
 ) -> dict[int, int]:
@@ -3464,6 +3511,7 @@ def _aligned_token_indices(
     _realign_callable_signature_tokens(before, after, aligned)
     _realign_location_wrapper_delimiters(before, after, aligned)
     _realign_import_tokens(before, after, aligned)
+    _realign_let_comptime_tokens(before, after, aligned)
     return aligned
 
 
@@ -5121,16 +5169,20 @@ def migrate_let_types(source: str) -> str:
         type_tokens = list(tokens[colon + 1 : end])
         if not type_tokens:
             continue
-        comptime = type_tokens[0].text == "comptime"
-        if comptime:
+        already_comptime = (
+            binding_tokens and binding_tokens[0].text == "comptime"
+        )
+        move_comptime = (
+            type_tokens[0].text == "comptime" and not already_comptime
+        )
+        if move_comptime:
             type_tokens = type_tokens[1:]
-        already_comptime = binding_tokens and binding_tokens[0].text == "comptime"
         binding = join_tokens(binding_tokens)
         ty = render_type(type_tokens)
         if not binding or not ty:
             continue
         replacement = "let "
-        if comptime and not already_comptime:
+        if move_comptime:
             replacement += "comptime "
         replacement += f"{binding}: {ty}"
         if tokens[end].text == "=":

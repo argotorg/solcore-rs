@@ -1794,6 +1794,49 @@ case Option.None /* none */  {
         self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
 
+class ComptimeLetMigrationTests(unittest.TestCase):
+    def test_preserves_nested_comptime_type_layers_and_comments(self) -> None:
+        classic = """\
+function f() {
+  let x: comptime comptime word = y;
+  let z: comptime /* outer */ comptime /* inner */ word = y;
+}
+"""
+        expected = """\
+function f() {
+  let comptime x: comptime word = y;
+  let comptime /* outer */ z: comptime /* inner */ word = y;
+}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_keeps_canonical_binding_and_type_comptime_layers(self) -> None:
+        canonical = (
+            "function f() {"
+            " let comptime x: comptime /* type */ word = y;"
+            " }\n"
+        )
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_preserves_nested_comptime_in_rust_source_literals(self) -> None:
+        rust = r'''
+const RAW: &str =
+    r#"function f() { let x: comptime comptime word = y; }"#;
+const ORDINARY: &str =
+    "function f() { let x: comptime comptime word = y; }";
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertEqual(migrated.count("let comptime x: comptime word"), 2)
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+
 class CallOptionMigrationTests(unittest.TestCase):
     def test_rejects_solidity_call_options_before_annotation_migration(
         self,
