@@ -6323,6 +6323,33 @@ const SOURCE: &str = concat!(
         )
         self.assert_rust_syntax(migrated)
 
+    def test_use_shadow_scan_keeps_nested_macro_use_attributes(
+        self,
+    ) -> None:
+        attributes = (
+            "#[macro_use]",
+            "#[r#macro_use]",
+            '#[cfg_attr(feature = "shadow", macro_use)]',
+        )
+        for attribute in attributes:
+            with self.subTest(attribute=attribute):
+                rust = f'''
+macro_rules! sink {{ ($($tt:tt)*) => {{}} }}
+sink!(use foo {attribute};);
+const SOURCE: &str = concat!(
+    "function f(",
+    "x: word) -> word {{ return x; }}",
+);
+'''
+
+                self.assertTrue(
+                    MIGRATE._rust_has_explicit_concat_shadow(rust)
+                )
+                self.assertEqual(
+                    MIGRATE.migrate_rust_strings(rust),
+                    rust,
+                )
+
     def test_cli_deduplicates_relative_and_absolute_rust_paths(
         self,
     ) -> None:

@@ -12148,6 +12148,7 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
     attribute_openings: set[int] = set()
     delimiter_stack: list[tuple[str, bool]] = []
     attribute_until_eof = False
+    in_use_declaration = False
     cursor = _rust_file_code_start(source)
     while cursor < len(source):
         if source[cursor] in RUST_PATTERN_WHITESPACE:
@@ -12189,6 +12190,10 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
             continue
 
         token = source[cursor]
+        if token == ";":
+            in_use_declaration = False
+            cursor += 1
+            continue
         if token in closing:
             inside_attribute = (
                 attribute_until_eof
@@ -12231,6 +12236,8 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
         )
         if inside_attribute and text == "macro_use":
             return True
+        if in_use_declaration and text == "concat":
+            return True
         if not is_raw and text == "macro_rules":
             bang = _rust_skip_trivia(source, end)
             if bang < len(source) and source[bang] == "!":
@@ -12244,37 +12251,7 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
             if name is not None and name[0] == "concat":
                 return True
         elif not is_raw and text == "use":
-            use_cursor = end
-            while use_cursor < len(source):
-                use_cursor = _rust_skip_trivia(source, use_cursor)
-                if (
-                    use_cursor >= len(source)
-                    or source[use_cursor] == ";"
-                ):
-                    break
-                if source[use_cursor] == "'":
-                    char_end = _rust_char_end(source, use_cursor)
-                    if char_end is not None:
-                        use_cursor = char_end
-                        continue
-                literal = _rust_raw_literal(source, use_cursor)
-                if literal is None:
-                    literal = _rust_ordinary_literal(
-                        source,
-                        use_cursor,
-                    )
-                if literal is not None:
-                    use_cursor = literal[2]
-                    continue
-                use_identifier = identifier_text(use_cursor)
-                if use_identifier is not None:
-                    if use_identifier[0] == "concat":
-                        return True
-                    use_cursor = use_identifier[1]
-                    continue
-                use_cursor += 1
-            cursor = use_cursor
-            continue
+            in_use_declaration = True
         cursor = end
     return False
 
