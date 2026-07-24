@@ -767,6 +767,27 @@ contract C {
                 self.assertEqual(migrated, source)
                 self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
 
+    def test_qualifies_nested_constructor_in_field_initializer(
+        self,
+    ) -> None:
+        source = """\
+enum T { T(word) }
+contract C {
+  value: T = id(T(1));
+}
+"""
+        expected = """\
+enum T { T(word) }
+contract C {
+  value: T = id(T.T(1));
+}
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
     def test_class_methods_shadow_constructor_fallback_module_wide(
         self,
     ) -> None:

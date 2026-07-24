@@ -4714,7 +4714,7 @@ def _unique_constructor_owners(
 def _executable_regions(
     tokens: Sequence[Token],
 ) -> tuple[list[tuple[int, int]], set[int]]:
-    """Return executable body ranges and nested declaration-header tokens."""
+    """Return executable body/initializer ranges and declaration headers."""
 
     bodies: list[tuple[int, int]] = []
     headers: set[int] = set()
@@ -4729,6 +4729,38 @@ def _executable_regions(
         if close is None:
             continue
         bodies.append((boundary + 1, close))
+
+    brace_pairs, enclosing = _classic_brace_context(tokens)
+    contract_scope_opens = {
+        boundary
+        for index, token in enumerate(tokens)
+        if token.text in {"contract", "interface", "library"}
+        and (boundary := _header_boundary(tokens, index + 1)) is not None
+        and tokens[boundary].text == "{"
+        and boundary in brace_pairs
+    }
+    for index in range(1, len(tokens) - 1):
+        scope_open = enclosing[index]
+        if (
+            scope_open not in contract_scope_opens
+            or tokens[index].kind != "word"
+            or tokens[index + 1].text != ":"
+            or tokens[index - 1].text not in {"{", "}", ";"}
+        ):
+            continue
+        statement_end = _statement_end(tokens, index)
+        if (
+            statement_end is None
+            or statement_end >= brace_pairs[scope_open]
+        ):
+            continue
+        equals = find_top(
+            tokens[index + 2 : statement_end],
+            "=",
+            angles=False,
+        )
+        if equals is not None:
+            bodies.append((index + 2 + equals + 1, statement_end))
     return bodies, headers
 
 
