@@ -5273,6 +5273,23 @@ const SOURCE: &str = concat!(
         self.assertIsNone(invocations[0].literals)
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
 
+    def test_macro_use_import_keeps_concat_opaque(self) -> None:
+        rust = r'''
+#[macro_use]
+extern crate shadow_macros;
+const SOURCE: &str = concat!(
+    "function f(x: word) -> word { ",
+    "return x; }",
+);
+'''
+
+        invocations = MIGRATE._rust_concat_invocations(rust)
+
+        self.assertTrue(MIGRATE._rust_has_explicit_concat_shadow(rust))
+        self.assertEqual(len(invocations), 1)
+        self.assertIsNone(invocations[0].literals)
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
     def test_raw_use_identifier_does_not_shadow_concat(self) -> None:
         rust = r'''
 pub fn source() -> &'static str {

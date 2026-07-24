@@ -12055,6 +12055,35 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
         is_raw = text.startswith("r#")
         return (text[2:] if is_raw else text, end, is_raw)
 
+    def attribute_has_macro_use(start: int) -> bool:
+        cursor = _rust_skip_trivia(source, start + 1)
+        if cursor < len(source) and source[cursor] == "!":
+            cursor = _rust_skip_trivia(source, cursor + 1)
+        if cursor >= len(source) or source[cursor] != "[":
+            return False
+        end = _rust_token_tree_end(source, cursor)
+        if end is None:
+            end = len(source)
+        cursor += 1
+        while cursor < end:
+            cursor = _rust_skip_trivia(source, cursor)
+            if cursor >= end:
+                break
+            identifier = identifier_text(cursor)
+            if identifier is not None:
+                text, cursor, is_raw = identifier
+                if not is_raw and text == "macro_use":
+                    return True
+                continue
+            literal = _rust_raw_literal(source, cursor)
+            if literal is None:
+                literal = _rust_ordinary_literal(source, cursor)
+            if literal is not None:
+                cursor = literal[2]
+                continue
+            cursor += 1
+        return False
+
     cursor = 0
     while cursor < len(source):
         if source[cursor].isspace():
@@ -12067,6 +12096,8 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
         if source.startswith("/*", cursor):
             cursor = _rust_block_comment_end(source, cursor)
             continue
+        if source[cursor] == "#" and attribute_has_macro_use(cursor):
+            return True
         if source[cursor] == "'":
             char_end = _rust_char_end(source, cursor)
             if char_end is not None:
