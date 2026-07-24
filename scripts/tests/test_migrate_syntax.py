@@ -371,6 +371,30 @@ function namespaceUse() -> word {
             migrated,
         )
 
+    def test_named_result_shadowing_preserves_receiver_access(self) -> None:
+        classic = """\
+import foo.bar;
+
+function shadowed() returns (foo: Receiver) {
+  return foo.bar();
+}
+"""
+        expected = """\
+import * as bar from foo.bar;
+
+function shadowed() returns (foo: Receiver) {
+  return foo.bar();
+}
+"""
+
+        migrated = MIGRATE.migrate_classic_bare_imports(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(
+            MIGRATE.migrate_classic_bare_imports(migrated),
+            migrated,
+        )
+
     def test_local_shadowing_respects_nested_block_scope(self) -> None:
         classic = """\
 import foo.bar;
@@ -584,6 +608,17 @@ function use(x: word) {
   let genericCall = Box<word>(x);
   let classicGenericCall = Box(word)(x);
   let qualifiedCall = pkg.Result<word, Error>(x);
+}
+"""
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_named_results_shadow_same_name_constructors(self) -> None:
+        canonical = """\
+enum T { T(word) }
+function use(x: word) returns (T: word) {
+  T = x;
+  return T;
 }
 """
 

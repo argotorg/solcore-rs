@@ -1960,18 +1960,47 @@ def _classic_shadow_ranges(
         for name in names:
             ranges[name].append((start, end))
 
-    # Parameters shadow a namespace throughout their function or lambda body.
+    # Parameters and named results shadow a namespace throughout their
+    # function or lambda body.
     for body_open, body_close, param_open, param_close in callables:
-        if param_open is None or param_close is None:
-            continue
-        for parameter in split_top(tokens[param_open + 1 : param_close], ","):
-            colon = find_top(parameter, ":", angles=False)
-            binding = parameter if colon is None else parameter[:colon]
-            add(
-                _classic_binding_names(binding, namespace_roots),
-                body_open + 1,
-                body_close,
-            )
+        if param_open is not None and param_close is not None:
+            for parameter in split_top(
+                tokens[param_open + 1 : param_close], ","
+            ):
+                colon = find_top(parameter, ":", angles=False)
+                binding = parameter if colon is None else parameter[:colon]
+                add(
+                    _classic_binding_names(binding, namespace_roots),
+                    body_open + 1,
+                    body_close,
+                )
+
+        header_start = (
+            param_close + 1 if param_close is not None else body_open
+        )
+        for cursor in range(header_start, body_open - 1):
+            if (
+                tokens[cursor].text != "returns"
+                or tokens[cursor + 1].text != "("
+            ):
+                continue
+            returns_close = matching_index(tokens, cursor + 1)
+            if returns_close is None or returns_close >= body_open:
+                break
+            for result in split_top(
+                tokens[cursor + 2 : returns_close], ","
+            ):
+                colon = find_top(result, ":", angles=False)
+                if colon is None:
+                    continue
+                add(
+                    _classic_binding_names(
+                        result[:colon], namespace_roots
+                    ),
+                    body_open + 1,
+                    body_close,
+                )
+            break
 
     # A contract field is visible in every executable body in that contract.
     for index, token in enumerate(tokens):
@@ -4703,6 +4732,29 @@ def _body_shadowed_names(
                     names = [token.text for token in binding if token.kind == "word"]
                     if names and names[-1] in owners:
                         shadowed.add(names[-1])
+                for cursor in range(close_paren + 1, brace - 1):
+                    if (
+                        tokens[cursor].text != "returns"
+                        or tokens[cursor + 1].text != "("
+                    ):
+                        continue
+                    returns_close = matching_index(tokens, cursor + 1)
+                    if returns_close is None or returns_close >= brace:
+                        break
+                    for result in split_top(
+                        tokens[cursor + 2 : returns_close], ","
+                    ):
+                        colon = find_top(result, ":", angles=False)
+                        if colon is None:
+                            continue
+                        names = [
+                            item.text
+                            for item in result[:colon]
+                            if item.kind == "word"
+                        ]
+                        if names and names[-1] in owners:
+                            shadowed.add(names[-1])
+                    break
 
     for index in range(body_start, body_end - 1):
         if tokens[index].text != "let":
