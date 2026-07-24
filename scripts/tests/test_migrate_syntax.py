@@ -5238,6 +5238,28 @@ const SUFFIX: &str = concat́!(
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
         self.assert_rust_syntax(rust)
 
+    def test_plain_string_after_lifetime_is_still_a_literal(self) -> None:
+        rust = r'''
+macro_rules! take {
+    ($lifetime:lifetime $source:literal) => { $source };
+}
+const SOURCE: &str = take!(
+    'a"function f(x: word) -> word { return x; }"
+);
+'''
+
+        self.assertEqual(
+            len(MIGRATE._rust_solcore_literal_spans(rust)),
+            1,
+        )
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn(
+            "'a\"function f(x: word) returns (word)",
+            migrated,
+        )
+        self.assert_rust_syntax(migrated)
+
     def test_local_concat_macro_shadow_stays_opaque(self) -> None:
         rust = r'''
 macro_rules! concat {

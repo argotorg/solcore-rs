@@ -11563,12 +11563,16 @@ def _rust_char_end(source: str, start: int) -> int | None:
     return cursor + 1 if cursor < len(source) and source[cursor] == "'" else None
 
 
+def _rust_identifier_continues(character: str) -> bool:
+    return character == "_" or ("a" + character).isidentifier()
+
+
 def _rust_raw_literal(
     source: str, start: int
 ) -> tuple[int, int, int] | None:
     """Return `(body_start, body_end, literal_end)` for a Rust raw string."""
 
-    if start and (source[start - 1].isalnum() or source[start - 1] == "_"):
+    if start and _rust_identifier_continues(source[start - 1]):
         return None
     marker = next(
         (
@@ -11599,12 +11603,18 @@ def _rust_ordinary_literal(
 ) -> tuple[int, int, int] | None:
     """Return `(body_start, body_end, literal_end)` for a Rust string."""
 
-    if start and (source[start - 1].isalnum() or source[start - 1] == "_"):
+    if start >= len(source):
         return None
-    quote = start
-    if source.startswith(("b\"", "c\""), start):
-        quote += 1
-    elif source[start] != '"':
+    if source[start] == '"':
+        quote = start
+    elif source.startswith(("b\"", "c\""), start):
+        if (
+            start
+            and _rust_identifier_continues(source[start - 1])
+        ):
+            return None
+        quote = start + 1
+    else:
         return None
     literal_end = _scan_quoted(source, quote, '"')
     body_end = max(quote + 1, literal_end - 1)
@@ -11881,10 +11891,7 @@ def _rust_identifier_token_end(source: str, start: int) -> int | None:
     cursor += 1
     while (
         cursor < len(source)
-        and (
-            source[cursor] == "_"
-            or ("a" + source[cursor]).isidentifier()
-        )
+        and _rust_identifier_continues(source[cursor])
     ):
         cursor += 1
     return cursor
@@ -12155,9 +12162,6 @@ def _rust_concat_invocations(
 ) -> list[RustConcatInvocation]:
     """Locate non-overlapping ``concat!`` token trees outside Rust trivia."""
 
-    def identifier_continues(character: str) -> bool:
-        return character == "_" or ("a" + character).isidentifier()
-
     macro_ranges = _rust_macro_token_tree_ranges(source)
     concat_is_shadowed = (
         assume_concat_shadowed
@@ -12190,11 +12194,11 @@ def _rust_concat_invocations(
             source.startswith("concat", cursor)
             and (
                 cursor == 0
-                or not identifier_continues(source[cursor - 1])
+                or not _rust_identifier_continues(source[cursor - 1])
             )
             and (
                 cursor + len("concat") == len(source)
-                or not identifier_continues(
+                or not _rust_identifier_continues(
                     source[cursor + len("concat")]
                 )
             )
