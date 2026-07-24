@@ -2251,7 +2251,7 @@ def reject_contract_inheritance(source: str) -> None:
         inheritance = index + 2
         if (
             inheritance < len(tokens)
-            and tokens[inheritance].text == "<"
+            and tokens[inheritance].text in {"(", "<"}
         ):
             generic_close = matching_index(tokens, inheritance)
             if generic_close is None:
@@ -2271,6 +2271,84 @@ def reject_contract_inheritance(source: str) -> None:
             "clauses; replace inheritance and base-constructor calls with "
             "composition or traits"
         )
+
+
+def migrate_contract_type_parameters(source: str) -> str:
+    """Rewrite Classic ``contract C(T)`` binders as ``contract C<T>``."""
+
+    tokens = significant(source)
+    replacements: list[tuple[int, int, str]] = []
+    for index, token in enumerate(tokens):
+        if (
+            token.text not in {"contract", "interface", "library"}
+            or index + 2 >= len(tokens)
+            or tokens[index + 1].kind != "word"
+            or tokens[index + 2].text != "("
+        ):
+            continue
+        open_index = index + 2
+        close_index = matching_index(tokens, open_index)
+        if (
+            close_index is None
+            or close_index + 1 >= len(tokens)
+            or tokens[close_index + 1].text != "{"
+        ):
+            continue
+        body_tokens = list(tokens[open_index + 1 : close_index])
+        parameters = split_top(body_tokens, ",", angles=False)
+        trailing_comma = bool(body_tokens) and body_tokens[-1].text == ","
+        if trailing_comma:
+            parameters = parameters[:-1]
+        if any(
+            len(parameter) != 1 or parameter[0].kind != "word"
+            for parameter in parameters
+            if parameter
+        ) or (
+            len(parameters) > 1 and any(not parameter for parameter in parameters)
+        ):
+            continue
+        names = [parameter[0].text for parameter in parameters if parameter]
+        if names:
+            replacements.extend(
+                (
+                    (
+                        tokens[open_index].start,
+                        tokens[open_index].end,
+                        "<",
+                    ),
+                    (
+                        tokens[close_index].start,
+                        tokens[close_index].end,
+                        ">",
+                    ),
+                )
+            )
+            if trailing_comma:
+                replacements.append(
+                    (
+                        body_tokens[-1].start,
+                        body_tokens[-1].end,
+                        "",
+                    )
+                )
+        else:
+            if any(item.text == "," for item in body_tokens):
+                continue
+            replacements.extend(
+                (
+                    (
+                        tokens[open_index].start,
+                        tokens[open_index].end,
+                        "",
+                    ),
+                    (
+                        tokens[close_index].start,
+                        tokens[close_index].end,
+                        "",
+                    ),
+                )
+            )
+    return replace_spans(source, replacements)
 
 
 def reject_noncanonical_proxy_comptime(source: str) -> None:
@@ -6344,6 +6422,7 @@ def migrate_source(
     passes = (
         migrate_pragmas,
         migrate_imports,
+        migrate_contract_type_parameters,
         migrate_data_declarations,
         migrate_incomplete_data_heads,
         migrate_aliases,

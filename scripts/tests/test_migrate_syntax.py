@@ -2143,6 +2143,67 @@ contract Child is Base {
         )
 
 
+class ContractTypeParameterMigrationTests(unittest.TestCase):
+    def test_migrates_classic_contract_like_type_parameters(self) -> None:
+        classic = """\
+contract Box(t, u, /* trailing */) { value: pair(t, u); }
+interface Reader(/* first */ key, value /* second */) {}
+library Helpers() {}
+"""
+        expected = """\
+contract Box<t, u /* trailing */> { value: pair<t, u>; }
+interface Reader</* first */ key, value /* second */> {}
+library Helpers {}
+"""
+
+        migrated = MIGRATE.migrate_source(classic)
+
+        self.assertEqual(migrated, expected)
+        self.assertEqual(MIGRATE.migrate_source(migrated), migrated)
+
+    def test_preserves_comments_in_an_empty_classic_binder(self) -> None:
+        classic = "contract C(/* no type parameters */) {}\n"
+        expected = "contract C/* no type parameters */ {}\n"
+
+        self.assertEqual(MIGRATE.migrate_source(classic), expected)
+
+    def test_keeps_canonical_contract_type_parameters(self) -> None:
+        canonical = "contract Box<t> { value: t; }\n"
+
+        self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
+
+    def test_does_not_repair_malformed_classic_type_binders(self) -> None:
+        for malformed in [
+            "contract C(,) {}\n",
+            "contract C(, T) {}\n",
+            "contract C(T,, U) {}\n",
+        ]:
+            with self.subTest(malformed=malformed):
+                self.assertEqual(
+                    MIGRATE.migrate_source(malformed),
+                    malformed,
+                )
+
+    def test_rejects_inheritance_after_a_classic_type_binder(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "cannot migrate contract inheritance",
+        ):
+            MIGRATE.migrate_source("contract Box(t) is Base {}\n")
+
+    def test_migrates_contract_binders_in_rust_literals(self) -> None:
+        rust = r'''
+const RAW: &str = r#"contract Box(t) { value: t; }"#;
+const ORDINARY: &str = "interface Empty() {}";
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn("contract Box<t>", migrated)
+        self.assertIn("interface Empty {}", migrated)
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+
+
 class FunctionTypeQualifierMigrationTests(unittest.TestCase):
     def assert_function_type_rejected(
         self,
