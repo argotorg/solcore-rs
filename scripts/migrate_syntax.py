@@ -6956,6 +6956,12 @@ def _rust_module_path_is_source_like(tokens: Sequence[Token]) -> bool:
     return True
 
 
+def _rust_import_path_is_source_like(tokens: Sequence[Token]) -> bool:
+    return (
+        len(tokens) == 1 and tokens[0].kind == "string"
+    ) or _rust_module_path_is_source_like(tokens)
+
+
 def _rust_import_selectors_are_source_like(
     tokens: Sequence[Token],
 ) -> bool:
@@ -6982,13 +6988,16 @@ def _rust_import_body_is_source_like(tokens: Sequence[Token]) -> bool:
     if not tokens:
         return False
 
+    if len(tokens) == 1 and tokens[0].kind == "string":
+        return True
+
     if tokens[0].text == "*":
         return (
             len(tokens) >= 5
             and tokens[1].text == "as"
             and tokens[2].kind == "word"
             and tokens[3].text == "from"
-            and _rust_module_path_is_source_like(tokens[4:])
+            and _rust_import_path_is_source_like(tokens[4:])
         )
 
     if tokens[0].text == "{":
@@ -6998,7 +7007,7 @@ def _rust_import_body_is_source_like(tokens: Sequence[Token]) -> bool:
             and close + 2 < len(tokens)
             and tokens[close + 1].text == "from"
             and _rust_import_selectors_are_source_like(tokens[1:close])
-            and _rust_module_path_is_source_like(tokens[close + 2 :])
+            and _rust_import_path_is_source_like(tokens[close + 2 :])
         )
 
     brace = find_top(tokens, "{", angles=False)
@@ -7028,7 +7037,7 @@ def _rust_import_body_is_source_like(tokens: Sequence[Token]) -> bool:
         return (
             as_index + 2 == len(tokens)
             and tokens[as_index + 1].kind == "word"
-            and _rust_module_path_is_source_like(tokens[:as_index])
+            and _rust_import_path_is_source_like(tokens[:as_index])
         )
     return _rust_module_path_is_source_like(tokens)
 
@@ -7076,18 +7085,22 @@ def _rust_pragma_fragment_is_source_like(
 def _looks_like_solcore_literal(source: str) -> bool:
     """Classify an embedded literal from combined Solcore syntax signals."""
 
-    # Dynamically completed Rust test templates are not standalone Solcore
-    # sources yet. Rewriting around a `{name}` hole can mistake a canonical
-    # `name: Type` declaration for the removed `expression : Type` spelling.
-    if _RUST_NAMED_TEMPLATE_HOLE_RE.search(source) is not None:
-        return False
-
     tokens = significant(source)
     for index, token in enumerate(tokens):
         if token.text == "import" and _rust_import_fragment_is_source_like(
             source, tokens, index
         ):
             return True
+
+    # Dynamically completed Rust test templates are not standalone Solcore
+    # sources yet. Rewriting around a `{name}` hole can mistake a canonical
+    # `name: Type` declaration for the removed `expression : Type` spelling.
+    # Recognize structurally complete imports first because their selector
+    # braces are ordinary source syntax, not Rust format placeholders.
+    if _RUST_NAMED_TEMPLATE_HOLE_RE.search(source) is not None:
+        return False
+
+    for index, token in enumerate(tokens):
         if token.text == "pragma" and _rust_pragma_fragment_is_source_like(
             source, tokens, index
         ):

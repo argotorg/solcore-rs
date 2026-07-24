@@ -220,6 +220,35 @@ function message() returns (string) { return "M/N.sol"; }
 
         self.assertEqual(MIGRATE.migrate_source(canonical), canonical)
 
+    def test_rejects_string_imports_in_isolated_rust_literals(self) -> None:
+        cases = [
+            'const SOURCE: &str = r##"import "M/N.sol";"##;\n',
+            (
+                'const SOURCE: &str = '
+                '"import {f} from \\"M/N.sol\\";";\n'
+            ),
+            (
+                'const SOURCE: &str = '
+                'r##"import * as M from "M/N.sol";"##;\n'
+            ),
+            (
+                'const SOURCE: &str = '
+                'r##"import "M/N.sol" as M;"##;\n'
+            ),
+        ]
+
+        for rust in cases:
+            with self.subTest(rust=rust):
+                self.assertEqual(
+                    len(MIGRATE._rust_solcore_literal_spans(rust)),
+                    1,
+                )
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "cannot migrate string import",
+                ):
+                    MIGRATE.migrate_rust_strings(rust)
+
 
 class ClassicBareImportMigrationTests(unittest.TestCase):
     def test_parameter_shadowing_preserves_receiver_access(self) -> None:
