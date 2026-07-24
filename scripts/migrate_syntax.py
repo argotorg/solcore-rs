@@ -11565,11 +11565,35 @@ def _rust_char_end(source: str, start: int) -> int | None:
         cursor += 1
         if cursor >= len(source):
             return None
-        if source[cursor] == "u" and cursor + 1 < len(source) and source[cursor + 1] == "{":
-            close = source.find("}", cursor + 2)
-            if close < 0:
+        if (
+            source[cursor] == "u"
+            and cursor + 1 < len(source)
+            and source[cursor + 1] == "{"
+        ):
+            escape_cursor = cursor + 2
+            digit_count = 0
+            value = 0
+            while escape_cursor < len(source) and digit_count < 6:
+                character = source[escape_cursor]
+                if character not in "0123456789abcdefABCDEF":
+                    break
+                value = value * 16 + int(character, 16)
+                digit_count += 1
+                escape_cursor += 1
+                while (
+                    escape_cursor < len(source)
+                    and source[escape_cursor] == "_"
+                ):
+                    escape_cursor += 1
+            if (
+                digit_count == 0
+                or escape_cursor >= len(source)
+                or source[escape_cursor] != "}"
+                or value > 0x10FFFF
+                or 0xD800 <= value <= 0xDFFF
+            ):
                 return None
-            cursor = close + 1
+            cursor = escape_cursor + 1
         elif source[cursor] == "x":
             cursor += 3
         else:

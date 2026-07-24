@@ -6257,6 +6257,43 @@ pub const SOURCE: &str = concat!(
         self.assertLess(wide_elapsed, 5.0)
         self.assertLess(nested_elapsed, 5.0)
 
+    def test_unclosed_unicode_char_scanning_remains_linear(
+        self,
+    ) -> None:
+        count = 128_000
+        invalid = "'\\u{" * count + "}"
+
+        started = time.perf_counter()
+        self.assertTrue(
+            all(
+                MIGRATE._rust_char_end(invalid, start) is None
+                for start in range(0, count * 4, 4)
+            )
+        )
+        elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 2.0)
+
+    def test_unicode_char_escape_keeps_local_scan_boundaries(
+        self,
+    ) -> None:
+        rust = r'''
+const SYMBOL: char = '\u{1f_600}';
+const SOURCE: &str = concat!(
+    "function f(",
+    "x: word) -> word { return x; }",
+);
+'''
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn(r"const SYMBOL: char = '\u{1f_600}';", migrated)
+        self.assertEqual(
+            self.concat_values(migrated),
+            ["function f(x: word) returns (word) { return x; }"],
+        )
+        self.assert_rust_syntax(migrated)
+
     def test_nested_attribute_shadow_scan_remains_linear(self) -> None:
         depth = 2_000
         nested = (
