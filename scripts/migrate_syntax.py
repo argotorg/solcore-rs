@@ -28,6 +28,12 @@ owner when the leaf has one unambiguous owner in the CLI input
 prefix-dot constructors stop the migration with a diagnostic instead of
 silently producing source that the new parser rejects.
 
+Batch writes are failure-atomic for migration errors, I/O failures, and
+interrupts.  Selected files must not be modified concurrently by another
+process: the command revalidates bytes and file identities before and after
+the commit, but no portable filesystem primitive can combine an in-place
+metadata-preserving write with exclusion of uncooperative writers.
+
 Bare same-name constructors are also qualified when their owner is
 unambiguous (``enum Point { Point(...) }`` makes term and pattern uses become
 ``Point.Point(...)``).  A source that deliberately tests a rejected
@@ -45,10 +51,13 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import locale
+import os
 from pathlib import Path
 import re
 import sys
-from typing import Iterable, Mapping, Sequence
+import tempfile
+from typing import BinaryIO, Iterable, Mapping, Sequence
 
 
 TRIVIA = {"ws", "comment"}
@@ -7165,6 +7174,225 @@ def migrate_rust_strings(
     return replace_spans(source, replacements)
 
 
+def _stage_atomic_bytes(
+    path: Path,
+    source: bytes,
+    mode: int,
+    *,
+    label: str,
+) -> Path:
+    file_descriptor, staged_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.migrate-{label}-",
+    )
+    staged = Path(staged_name)
+    try:
+        with os.fdopen(file_descriptor, "wb") as stream:
+            written = stream.write(source)
+            if written != len(source):
+                raise OSError(
+                    f"short recovery write: wrote {written} of "
+                    f"{len(source)} bytes"
+                )
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(staged, mode)
+    except BaseException:
+        try:
+            staged.unlink()
+        except OSError as cleanup_error:
+            raise OSError(
+                f"failed to clean staged migration file {staged}: "
+                f"{cleanup_error}"
+            ) from cleanup_error
+        raise
+    return staged
+
+
+def _write_binary_stream(stream: BinaryIO, source: bytes) -> None:
+    stream.seek(0)
+    written = stream.write(source)
+    if written != len(source):
+        raise OSError(
+            f"short migration write: wrote {written} of {len(source)} bytes"
+        )
+    stream.truncate()
+    stream.flush()
+    os.fsync(stream.fileno())
+
+
+def _default_text_encoding() -> str:
+    """Match `Path.read_text()` including Python's UTF-8 mode."""
+
+    return locale.getpreferredencoding(False)
+
+
+def write_migrations_atomically(
+    expected_originals: Mapping[Path, bytes],
+    migrations: Mapping[Path, str],
+) -> None:
+    """Open a complete batch before writing and roll back every failed write.
+
+    Existing inodes are updated in place so ownership, ACLs, extended
+    attributes, hard links, and symbolic-link targets retain their previous
+    behavior.  Exact original bytes stay in memory for rollback.  If restoring
+    an open file fails, a recovery file is preserved and named in the error.
+    Callers must exclude concurrent, non-cooperating in-place writers; byte
+    and identity checks detect ordinary races but cannot make compare/write a
+    single portable filesystem operation.
+    """
+
+    encoding = _default_text_encoding()
+    encoded: dict[Path, bytes] = {}
+    try:
+        encoded = {
+            path: migrated.encode(encoding)
+            for path, migrated in migrations.items()
+        }
+    except UnicodeEncodeError as error:
+        raise OSError(
+            f"cannot encode migrated source as {encoding}: {error}"
+        ) from error
+
+    originals: dict[Path, bytes] = {}
+    modes: dict[Path, int] = {}
+    identities: dict[tuple[int, int], Path] = {}
+    identity_by_path: dict[Path, tuple[int, int]] = {}
+    desired_by_identity: dict[tuple[int, int], bytes] = {}
+    write_paths: list[Path] = []
+    try:
+        missing = set(migrations) - set(expected_originals)
+        if missing:
+            rendered = ", ".join(str(path) for path in sorted(missing))
+            raise OSError(
+                f"missing expected original bytes for {rendered}"
+            )
+        for path, expected in expected_originals.items():
+            access = "r+b" if path in migrations else "rb"
+            with path.open(access) as stream:
+                metadata = os.fstat(stream.fileno())
+                identity = (metadata.st_dev, metadata.st_ino)
+                current = stream.read()
+            if current != expected_originals[path]:
+                raise OSError(
+                    f"source changed after migration planning: {path}"
+                )
+            desired = encoded.get(path, current)
+            identity_by_path[path] = identity
+            if identity in identities:
+                primary = identities[identity]
+                if desired != desired_by_identity[identity]:
+                    raise OSError(
+                        f"selected paths {primary} and {path} refer to the "
+                        "same file but require different migrated contents"
+                    )
+                continue
+            identities[identity] = path
+            desired_by_identity[identity] = desired
+            originals[path] = current
+            modes[path] = metadata.st_mode & 0o777
+            if desired != current:
+                write_paths.append(path)
+    except Exception as error:
+        raise OSError(
+            f"atomic migration preparation failed: {error}"
+        ) from error
+
+    applied: list[Path] = []
+    completed: set[Path] = set()
+    try:
+        for path in write_paths:
+            with path.open("r+b") as stream:
+                metadata = os.fstat(stream.fileno())
+                identity = (metadata.st_dev, metadata.st_ino)
+                current = stream.read()
+                if (
+                    identity != identity_by_path[path]
+                    or current != originals[path]
+                ):
+                    raise OSError(
+                        f"source changed during migration: {path}"
+                    )
+                # Record the current path before writing so even a partial or
+                # short write is restored.
+                applied.append(path)
+                _write_binary_stream(
+                    stream,
+                    desired_by_identity[identity],
+                )
+                completed.add(path)
+        for path in expected_originals:
+            with path.open("rb") as stream:
+                metadata = os.fstat(stream.fileno())
+                identity = (metadata.st_dev, metadata.st_ino)
+                current = stream.read()
+            if (
+                identity != identity_by_path[path]
+                or current != desired_by_identity[
+                    identity_by_path[path]
+                ]
+            ):
+                raise OSError(
+                    f"source changed while committing migration: {path}"
+                )
+    except BaseException as error:
+        rollback_errors: list[str] = []
+        for path in reversed(applied):
+            try:
+                with path.open("r+b") as stream:
+                    metadata = os.fstat(stream.fileno())
+                    identity = (metadata.st_dev, metadata.st_ino)
+                    if identity != identity_by_path[path]:
+                        raise OSError(
+                            "path identity changed before rollback"
+                        )
+                    current = stream.read()
+                    if (
+                        path in completed
+                        and current
+                        != desired_by_identity[identity_by_path[path]]
+                    ):
+                        raise OSError(
+                            "file content changed before rollback"
+                        )
+                    _write_binary_stream(stream, originals[path])
+            except BaseException as rollback_error:
+                recovery_path = None
+                recovery_error = None
+                try:
+                    recovery_path = _stage_atomic_bytes(
+                        path,
+                        originals[path],
+                        modes[path],
+                        label="recovery",
+                    )
+                except BaseException as staging_error:
+                    recovery_error = staging_error
+                recovery = (
+                    f"; original preserved at {recovery_path}"
+                    if recovery_path is not None
+                    else (
+                        f"; could not stage recovery: {recovery_error}"
+                    )
+                )
+                rollback_errors.append(
+                    f"{path}: {rollback_error}{recovery}"
+                )
+        detail = (
+            "; rollback failed for " + "; ".join(rollback_errors)
+            if rollback_errors
+            else ""
+        )
+        if (
+            not rollback_errors
+            and isinstance(error, (KeyboardInterrupt, SystemExit))
+        ):
+            raise
+        raise OSError(
+            f"atomic migration write failed: {error}{detail}"
+        ) from error
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -7205,9 +7433,16 @@ def main() -> int:
 
     failures: list[tuple[Path, Exception]] = []
     originals: dict[Path, str] = {}
+    original_bytes: dict[Path, bytes] = {}
     for path in paths:
         try:
-            originals[path] = path.read_text()
+            source_bytes = path.read_bytes()
+            original_bytes[path] = source_bytes
+            originals[path] = (
+                source_bytes.decode(_default_text_encoding())
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+            )
         except Exception as error:
             failures.append((path, error))
 
@@ -7257,6 +7492,7 @@ def main() -> int:
         return 2
 
     changed: list[Path] = []
+    migrations: dict[Path, str] = {}
     for path, original in originals.items():
         try:
             prepared = (
@@ -7284,12 +7520,26 @@ def main() -> int:
         if migrated == original:
             continue
         changed.append(path)
-        if not args.check:
-            path.write_text(migrated)
+        migrations[path] = migrated
+
+    if not args.check and not failures and migrations:
+        try:
+            write_migrations_atomically(
+                original_bytes,
+                migrations,
+            )
+        except Exception as error:
+            failures.append((Path("<migration batch>"), error))
 
     action = "need migration" if args.check else "migrated"
-    print(f"{len(changed)} file(s) {action}; {len(paths)} file(s) examined")
-    for path in changed:
+    reported_changed = (
+        changed if args.check or not failures else []
+    )
+    print(
+        f"{len(reported_changed)} file(s) {action}; "
+        f"{len(paths)} file(s) examined"
+    )
+    for path in reported_changed:
         print(path)
     for path, error in failures:
         print(f"error: {path}: {error}", file=sys.stderr)

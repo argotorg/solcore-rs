@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -660,6 +661,517 @@ const SOURCE: &str =
         self.assertIn("function f(x: word) returns (word)", migrated)
         self.assertIn("prefer function f(x: T) -> T syntax", migrated)
         self.assertIn("0 file(s) need migration", clean.stdout)
+
+
+class AtomicCliMigrationTests(unittest.TestCase):
+    def test_successful_batch_preserves_modes_and_cleans_backups(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "source.solc"
+            path.write_text("original\n")
+            path.chmod(0o640)
+
+            MIGRATE.write_migrations_atomically(
+                {path: path.read_bytes()},
+                {path: "migrated\n"}
+            )
+
+            migrated = path.read_text()
+            mode = path.stat().st_mode & 0o777
+            names = [entry.name for entry in root.iterdir()]
+
+        self.assertEqual(migrated, "migrated\n")
+        self.assertEqual(mode, 0o640)
+        self.assertEqual(names, ["source.solc"])
+
+    def test_successful_batch_preserves_symlink_and_hardlink_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "target.solc"
+            hardlink = root / "hardlink.solc"
+            symlink = root / "symlink.solc"
+            target.write_text("original\n")
+            MIGRATE.os.link(target, hardlink)
+            symlink.symlink_to(target.name)
+            inode = target.stat().st_ino
+
+            MIGRATE.write_migrations_atomically(
+                {
+                    target: target.read_bytes(),
+                    hardlink: hardlink.read_bytes(),
+                    symlink: symlink.read_bytes(),
+                },
+                {
+                    target: "migrated\n",
+                    hardlink: "migrated\n",
+                    symlink: "migrated\n",
+                },
+            )
+
+            target_after = target.read_text()
+            hardlink_after = hardlink.read_text()
+            symlink_after = symlink.read_text()
+            remains_symlink = symlink.is_symlink()
+            inode_after = target.stat().st_ino
+
+        self.assertEqual(target_after, "migrated\n")
+        self.assertEqual(hardlink_after, "migrated\n")
+        self.assertEqual(symlink_after, "migrated\n")
+        self.assertTrue(remains_symlink)
+        self.assertEqual(inode_after, inode)
+
+    def test_unchanged_read_only_target_does_not_block_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            changed = root / "changed.solc"
+            unchanged = root / "unchanged.solc"
+            changed.write_bytes(b"changed original\n")
+            unchanged.write_bytes(b"unchanged original\n")
+            unchanged.chmod(0o444)
+
+            MIGRATE.write_migrations_atomically(
+                {
+                    changed: b"changed original\n",
+                    unchanged: b"unchanged original\n",
+                },
+                {changed: "changed migrated\n"},
+            )
+
+            changed_after = changed.read_bytes()
+            unchanged_after = unchanged.read_bytes()
+            unchanged_mode = unchanged.stat().st_mode & 0o777
+
+        self.assertEqual(changed_after, b"changed migrated\n")
+        self.assertEqual(unchanged_after, b"unchanged original\n")
+        self.assertEqual(unchanged_mode, 0o444)
+
+    def test_source_batch_validation_failure_writes_nothing(self) -> None:
+        good_source = "alias Good = A -> B;\n"
+        bad_source = "alias Bad = A ->;\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            good = root / "a_good.solc"
+            bad = root / "z_bad.solc"
+            good.write_text(good_source)
+            bad.write_text(bad_source)
+
+            migration = subprocess.run(
+                [sys.executable, str(SCRIPT), str(root)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            good_after = good.read_text()
+            bad_after = bad.read_text()
+
+        self.assertEqual(migration.returncode, 2)
+        self.assertEqual(good_after, good_source)
+        self.assertEqual(bad_after, bad_source)
+        self.assertIn("0 file(s) migrated", migration.stdout)
+        self.assertIn(str(bad), migration.stderr)
+
+    def test_rust_batch_validation_failure_writes_nothing(self) -> None:
+        good_source = (
+            'const SOURCE: &str = r#"alias Good = A -> B;"#;\n'
+        )
+        bad_source = (
+            'const SOURCE: &str = r#"alias Bad = A ->;"#;\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            good = root / "a_good.rs"
+            bad = root / "z_bad.rs"
+            good.write_text(good_source)
+            bad.write_text(bad_source)
+
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--rust-strings",
+                    str(root),
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            good_after = good.read_text()
+            bad_after = bad.read_text()
+
+        self.assertEqual(migration.returncode, 2)
+        self.assertEqual(good_after, good_source)
+        self.assertEqual(bad_after, bad_source)
+        self.assertIn("0 file(s) migrated", migration.stdout)
+        self.assertIn(str(bad), migration.stderr)
+
+    def test_cli_honors_python_utf8_mode_for_source_encoding(
+        self,
+    ) -> None:
+        source = "// 日本語\nalias Good = A -> B;\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "source.solc"
+            path.write_text(source)
+            environment = dict(MIGRATE.os.environ)
+            environment.update({"LC_ALL": "C", "PYTHONUTF8": "1"})
+
+            migration = subprocess.run(
+                [sys.executable, str(SCRIPT), str(path)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+                env=environment,
+            )
+            migrated = path.read_text()
+
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertIn("// 日本語", migrated)
+        self.assertIn("function(A) returns (B)", migrated)
+
+    def test_write_failure_rolls_back_already_replaced_files(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.solc"
+            second = root / "second.solc"
+            first_original = b"first original\r\n"
+            second_original = b"second original\r\n"
+            first.write_bytes(first_original)
+            second.write_bytes(second_original)
+            original_write = MIGRATE._write_binary_stream
+
+            def fail_second_write(
+                stream: object,
+                source: bytes,
+            ) -> None:
+                if (
+                    Path(stream.name) == second
+                    and source == b"second migrated\n"
+                ):
+                    raise OSError("injected write failure")
+                original_write(stream, source)
+
+            with mock.patch.object(
+                MIGRATE,
+                "_write_binary_stream",
+                side_effect=fail_second_write,
+            ):
+                with self.assertRaisesRegex(
+                    OSError,
+                    "atomic migration write failed",
+                ):
+                    MIGRATE.write_migrations_atomically(
+                        {
+                            first: first_original,
+                            second: second_original,
+                        },
+                        {
+                            first: "first migrated\n",
+                            second: "second migrated\n",
+                        }
+                    )
+
+            names = sorted(path.name for path in root.iterdir())
+            first_after = first.read_bytes()
+            second_after = second.read_bytes()
+
+        self.assertEqual(first_after, first_original)
+        self.assertEqual(second_after, second_original)
+        self.assertEqual(names, ["first.solc", "second.solc"])
+
+    def test_interrupt_rolls_back_already_replaced_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.solc"
+            second = root / "second.solc"
+            first_original = b"first original\r\n"
+            second_original = b"second original\r\n"
+            first.write_bytes(first_original)
+            second.write_bytes(second_original)
+            original_write = MIGRATE._write_binary_stream
+
+            def interrupt_second_write(
+                stream: object,
+                source: bytes,
+            ) -> None:
+                if (
+                    Path(stream.name) == second
+                    and source == b"second migrated\n"
+                ):
+                    raise KeyboardInterrupt
+                original_write(stream, source)
+
+            with mock.patch.object(
+                MIGRATE,
+                "_write_binary_stream",
+                side_effect=interrupt_second_write,
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    MIGRATE.write_migrations_atomically(
+                        {
+                            first: first_original,
+                            second: second_original,
+                        },
+                        {
+                            first: "first migrated\n",
+                            second: "second migrated\n",
+                        },
+                    )
+
+            first_after = first.read_bytes()
+            second_after = second.read_bytes()
+
+        self.assertEqual(first_after, first_original)
+        self.assertEqual(second_after, second_original)
+
+    def test_rollback_does_not_overwrite_replaced_path_identity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.solc"
+            moved = root / "first-moved.solc"
+            second = root / "second.solc"
+            first_original = b"first original\n"
+            second_original = b"second original\n"
+            external = b"external replacement\n"
+            first.write_bytes(first_original)
+            second.write_bytes(second_original)
+            original_write = MIGRATE._write_binary_stream
+
+            def replace_then_fail(
+                stream: object,
+                source: bytes,
+            ) -> None:
+                if (
+                    Path(stream.name) == second
+                    and source == b"second migrated\n"
+                ):
+                    MIGRATE.os.replace(first, moved)
+                    first.write_bytes(external)
+                    raise OSError("injected write failure")
+                original_write(stream, source)
+
+            with mock.patch.object(
+                MIGRATE,
+                "_write_binary_stream",
+                side_effect=replace_then_fail,
+            ):
+                with self.assertRaisesRegex(
+                    OSError,
+                    "original preserved at",
+                ):
+                    MIGRATE.write_migrations_atomically(
+                        {
+                            first: first_original,
+                            second: second_original,
+                        },
+                        {
+                            first: "first migrated\n",
+                            second: "second migrated\n",
+                        },
+                    )
+
+            first_after = first.read_bytes()
+            moved_after = moved.read_bytes()
+            second_after = second.read_bytes()
+            recovery = list(
+                root.glob(".first.solc.migrate-recovery-*")
+            )
+            recovery_contents = [
+                path.read_bytes() for path in recovery
+            ]
+
+        self.assertEqual(first_after, external)
+        self.assertEqual(moved_after, b"first migrated\n")
+        self.assertEqual(second_after, second_original)
+        self.assertEqual(recovery_contents, [first_original])
+
+    def test_rollback_does_not_overwrite_external_in_place_edit(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.solc"
+            second = root / "second.solc"
+            first_original = b"first original\n"
+            second_original = b"second original\n"
+            external = b"external in-place edit\n"
+            first.write_bytes(first_original)
+            second.write_bytes(second_original)
+            original_write = MIGRATE._write_binary_stream
+
+            def edit_then_fail(
+                stream: object,
+                source: bytes,
+            ) -> None:
+                if (
+                    Path(stream.name) == second
+                    and source == b"second migrated\n"
+                ):
+                    first.write_bytes(external)
+                    raise OSError("injected write failure")
+                original_write(stream, source)
+
+            with mock.patch.object(
+                MIGRATE,
+                "_write_binary_stream",
+                side_effect=edit_then_fail,
+            ):
+                with self.assertRaisesRegex(
+                    OSError,
+                    "original preserved at",
+                ):
+                    MIGRATE.write_migrations_atomically(
+                        {
+                            first: first_original,
+                            second: second_original,
+                        },
+                        {
+                            first: "first migrated\n",
+                            second: "second migrated\n",
+                        },
+                    )
+
+            first_after = first.read_bytes()
+            second_after = second.read_bytes()
+            recovery = list(
+                root.glob(".first.solc.migrate-recovery-*")
+            )
+            recovery_contents = [
+                path.read_bytes() for path in recovery
+            ]
+
+        self.assertEqual(first_after, external)
+        self.assertEqual(second_after, second_original)
+        self.assertEqual(recovery_contents, [first_original])
+
+    def test_external_edit_aborts_before_any_batch_write(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            changed = root / "changed.solc"
+            unchanged = root / "unchanged.solc"
+            expected_changed = b"changed original\n"
+            expected_unchanged = b"unchanged original\n"
+            external = b"external edit\n"
+            changed.write_bytes(expected_changed)
+            unchanged.write_bytes(expected_unchanged)
+            planned = {
+                changed: expected_changed,
+                unchanged: expected_unchanged,
+            }
+            unchanged.write_bytes(external)
+
+            with self.assertRaisesRegex(
+                OSError,
+                "source changed after migration planning",
+            ):
+                MIGRATE.write_migrations_atomically(
+                    planned,
+                    {changed: "migrated\n"},
+                )
+
+            changed_after = changed.read_bytes()
+            unchanged_after = unchanged.read_bytes()
+
+        self.assertEqual(changed_after, expected_changed)
+        self.assertEqual(unchanged_after, external)
+
+    def test_recovery_staging_rejects_a_short_write(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "source.solc"
+            path.write_bytes(b"original")
+            original_fdopen = MIGRATE.os.fdopen
+
+            class ShortWriter:
+                def __init__(self, file_descriptor: int, mode: str) -> None:
+                    self.inner = original_fdopen(file_descriptor, mode)
+
+                def __enter__(self) -> "ShortWriter":
+                    self.inner.__enter__()
+                    return self
+
+                def __exit__(self, *args: object) -> object:
+                    return self.inner.__exit__(*args)
+
+                def write(self, source: bytes) -> int:
+                    self.inner.write(source[:-1])
+                    return len(source) - 1
+
+                def __getattr__(self, name: str) -> object:
+                    return getattr(self.inner, name)
+
+            with mock.patch.object(
+                MIGRATE.os,
+                "fdopen",
+                side_effect=ShortWriter,
+            ):
+                with self.assertRaisesRegex(
+                    OSError,
+                    "short recovery write",
+                ):
+                    MIGRATE._stage_atomic_bytes(
+                        path,
+                        b"original",
+                        0o600,
+                        label="recovery",
+                    )
+
+            names = [entry.name for entry in root.iterdir()]
+
+        self.assertEqual(names, ["source.solc"])
+
+    def test_recovery_staging_cleans_up_after_interrupt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "source.solc"
+            path.write_bytes(b"original")
+            original_fdopen = MIGRATE.os.fdopen
+
+            class InterruptWriter:
+                def __init__(self, file_descriptor: int, mode: str) -> None:
+                    self.inner = original_fdopen(file_descriptor, mode)
+
+                def __enter__(self) -> "InterruptWriter":
+                    self.inner.__enter__()
+                    return self
+
+                def __exit__(self, *args: object) -> object:
+                    return self.inner.__exit__(*args)
+
+                def write(self, source: bytes) -> int:
+                    self.inner.write(source[:2])
+                    raise KeyboardInterrupt
+
+                def __getattr__(self, name: str) -> object:
+                    return getattr(self.inner, name)
+
+            with mock.patch.object(
+                MIGRATE.os,
+                "fdopen",
+                side_effect=InterruptWriter,
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    MIGRATE._stage_atomic_bytes(
+                        path,
+                        b"original",
+                        0o600,
+                        label="recovery",
+                    )
+
+            names = [entry.name for entry in root.iterdir()]
+
+        self.assertEqual(names, ["source.solc"])
 
 
 class CommentPreservationMigrationTests(unittest.TestCase):
