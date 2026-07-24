@@ -667,6 +667,78 @@ const COMMENTED: &str =
         self.assertIn("function commented() returns (word)", migrated)
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
 
+    def test_migrates_isolated_typed_lets_with_classic_types(self) -> None:
+        rust = r'''
+const RAW: &str =
+    r#"let x /* binding */: Option(/* argument */ word) = value;"#;
+const ORDINARY: &str =
+    "let table: mapping(word, Option(word)) = value;";
+const NESTED_FN_IDENTIFIER: &str =
+    r#"let nested: Option(fn) = value;"#;
+const NESTED_FN_APPLICATION: &str =
+    r#"let nestedCallback: Option(fn(word)) = value;"#;
+'''
+
+        self.assertEqual(len(MIGRATE._rust_solcore_literal_spans(rust)), 4)
+
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertIn(
+            "let x /* binding */ : Option</* argument */ word> = value;",
+            migrated,
+        )
+        self.assertIn(
+            "let table: mapping(word => Option<word>) = value;",
+            migrated,
+        )
+        self.assertIn("let nested: Option<fn> = value;", migrated)
+        self.assertIn(
+            "let nestedCallback: Option<fn<word>> = value;",
+            migrated,
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+        self.assert_rust_syntax(migrated)
+
+    def test_does_not_treat_typed_let_prose_as_embedded_source(self) -> None:
+        rust = r'''
+const MULTIWORD: &str =
+    r#"let us consider x: Option(word) = value;"#;
+const PREFIXED: &str =
+    r#"Use let x: Option(word) = value;"#;
+const TRAILING: &str =
+    r#"let x: Option(word) = value; in docs"#;
+const CANONICAL: &str =
+    r#"let x: Option<word> = value;"#;
+const TEMPLATE: &str =
+    r#"let {name}: Option(word) = value;"#;
+const RUST_FN: &str =
+    r#"let f: fn(u8) -> u8 = callback;"#;
+const RUST_FN_UNIT: &str =
+    r#"let f: fn(u8) = callback;"#;
+const RUST_DYN: &str =
+    r#"let f: &dyn Fn(u8) -> u8 = callback;"#;
+'''
+
+        self.assertEqual(MIGRATE._rust_solcore_literal_spans(rust), [])
+        self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
+
+    def test_rejects_malformed_types_in_isolated_typed_lets(self) -> None:
+        cases = [
+            r'const SOURCE: &str = r#"let x: A -> = value;"#;' + "\n",
+        ]
+
+        for rust in cases:
+            with self.subTest(rust=rust):
+                self.assertEqual(
+                    len(MIGRATE._rust_solcore_literal_spans(rust)),
+                    1,
+                )
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "malformed Classic type arrow|malformed type delimiters",
+                ):
+                    MIGRATE.migrate_rust_strings(rust)
+
     def test_recognizes_canonical_fragments_without_rewriting(self) -> None:
         rust = r'''
 const FUNCTION: &str =

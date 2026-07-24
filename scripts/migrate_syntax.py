@@ -7506,6 +7506,78 @@ def _rust_assignment_declaration_is_source_like(
     return equals is not None and index + 2 + equals + 1 < end
 
 
+def _rust_let_binding_is_source_like(tokens: Sequence[Token]) -> bool:
+    """Recognize a complete scalar or tuple binding, not prose after `let`."""
+
+    binding = list(tokens)
+    if binding and binding[0].text == "comptime":
+        binding = binding[1:]
+    if len(binding) == 1:
+        return binding[0].kind == "word"
+    return (
+        bool(binding)
+        and binding[0].text == "("
+        and matching_index(binding, 0) == len(binding) - 1
+    )
+
+
+def _rust_classic_type_signal(tokens: Sequence[Token]) -> bool:
+    """Distinguish Classic Solcore type syntax from embedded Rust snippets."""
+
+    base = 0
+    while base < len(tokens) and tokens[base].text in {"@", "comptime"}:
+        base += 1
+    name_end = _qualified_name_end(tokens[base:])
+    application_open = base + name_end
+    if (
+        name_end
+        and application_open < len(tokens)
+        and tokens[application_open].text == "("
+        and tokens[application_open - 1].text != "fn"
+    ):
+        # An outer `Option(...)`/`pkg.Option(...)` shell is unambiguously
+        # Classic type syntax even if one of its arguments is named `fn`.
+        return True
+
+    for index, token in enumerate(tokens):
+        if (
+            token.text == "fn"
+            and index + 1 < len(tokens)
+            and tokens[index + 1].text == "("
+        ):
+            return False
+        if (
+            token.text in {"dyn", "impl"}
+            and index + 2 < len(tokens)
+            and tokens[index + 1].text in {"Fn", "FnMut", "FnOnce"}
+            and tokens[index + 2].text == "("
+        ):
+            return False
+    if any(
+        token.text
+        in {
+            "->",
+            "@",
+            "comptime",
+            "function",
+            "mapping",
+            "memory",
+            "storage",
+            "calldata",
+            "word",
+            "integer",
+        }
+        for token in tokens
+    ):
+        return True
+    return any(
+        token.kind == "word"
+        and index + 1 < len(tokens)
+        and tokens[index + 1].text == "("
+        for index, token in enumerate(tokens)
+    )
+
+
 def _rust_migratable_let_is_source_like(
     source: str, tokens: Sequence[Token], index: int
 ) -> bool:
@@ -7516,18 +7588,36 @@ def _rust_migratable_let_is_source_like(
         return False
     declaration = tokens[index + 1 : end]
     walrus = find_top(declaration, ":=", angles=False)
+    walrus_binding_end = (
+        find_top(declaration[:walrus], ":", angles=False)
+        if walrus is not None
+        else None
+    )
     if (
         walrus is not None
         and walrus > 0
         and walrus + 1 < len(declaration)
-        and (
-            declaration[0].kind == "word"
-            or declaration[0].text in {"(", "comptime"}
+        and _rust_let_binding_is_source_like(
+            declaration[
+                : (
+                    walrus
+                    if walrus_binding_end is None
+                    else walrus_binding_end
+                )
+            ]
         )
     ):
         return True
     equals = find_top(declaration, "=", angles=False)
     if equals is not None:
+        binding_end = find_top(
+            declaration[:equals], ":", angles=False
+        )
+        binding = declaration[
+            : equals if binding_end is None else binding_end
+        ]
+        if not _rust_let_binding_is_source_like(binding):
+            return False
         for cursor in range(equals + 1, len(declaration)):
             if (
                 declaration[cursor].text == ":"
@@ -7537,14 +7627,30 @@ def _rust_migratable_let_is_source_like(
     colon = find_top(declaration, ":", angles=False)
     if colon is None or colon == 0 or colon + 1 >= len(declaration):
         return False
+    if equals is not None and colon > equals:
+        return False
     canonical = declaration[0].text == "comptime"
     classic = declaration[colon + 1].text == "comptime"
-    if not (canonical or classic):
+    binding = declaration[:colon]
+    if not _rust_let_binding_is_source_like(binding):
         return False
-    binding = declaration[1:colon] if canonical else declaration[:colon]
-    return bool(binding) and (
-        binding[0].kind == "word" or binding[0].text == "("
-    )
+    if canonical or classic:
+        return True
+
+    type_end = equals if equals is not None else len(declaration)
+    type_tokens = list(declaration[colon + 1 : type_end])
+    if not type_tokens or not _rust_classic_type_signal(type_tokens):
+        return False
+    try:
+        rendered = render_type(type_tokens)
+    except ValueError:
+        # The complete `let` shell and Classic-only type tokens already prove
+        # this is embedded source.  Keep it classified so migration reports
+        # the malformed type instead of silently treating the Rust file clean.
+        return True
+    return [token.text for token in significant(rendered)] != [
+        token.text for token in type_tokens
+    ]
 
 
 def _rust_match_fragment_is_source_like(
