@@ -12242,6 +12242,8 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
                     use_cursor = use_identifier[1]
                     continue
                 use_cursor += 1
+            cursor = use_cursor
+            continue
         cursor = end
     return False
 

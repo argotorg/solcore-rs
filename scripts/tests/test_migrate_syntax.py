@@ -6276,6 +6276,23 @@ pub const SOURCE: &str = concat!(
 
         self.assertLess(elapsed, 5.0)
 
+    def test_repeated_use_shadow_scan_remains_linear(self) -> None:
+        count = 4_000
+        repeated = (
+            "macro_rules! sink { ($($tt:tt)*) => {} }\n"
+            + "sink!("
+            + "use " * count
+            + ";);\n"
+        )
+
+        started = time.perf_counter()
+        self.assertFalse(
+            MIGRATE._rust_has_explicit_concat_shadow(repeated)
+        )
+        elapsed = time.perf_counter() - started
+
+        self.assertLess(elapsed, 5.0)
+
     def test_cli_deduplicates_relative_and_absolute_rust_paths(
         self,
     ) -> None:
