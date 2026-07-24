@@ -5635,6 +5635,34 @@ const PROSE: &str =
         self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
         self.assert_rust_syntax(migrated)
 
+    def test_ordinary_concat_crlf_has_rusts_lf_semantics(self) -> None:
+        rust = (
+            'const SOURCE: &str = concat!(\r\n'
+            '    "function f(x: word) -> word {\r\n'
+            '  return x;\r\n'
+            '}",\r\n'
+            ');\r\n'
+        )
+        original_value = (
+            "function f(x: word) -> word {\n"
+            "  return x;\n"
+            "}"
+        )
+
+        self.assertEqual(self.concat_values(rust), [original_value])
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertEqual(
+            self.concat_values(migrated),
+            [
+                "function f(x: word) returns (word) {\n"
+                "  return x;\n"
+                "}"
+            ],
+        )
+        self.assertEqual(MIGRATE.migrate_rust_strings(migrated), migrated)
+        self.assert_rust_syntax(migrated)
+
     def test_cli_does_not_share_owners_between_rust_literals(self) -> None:
         source = r'''
 const DECLARATION: &str =

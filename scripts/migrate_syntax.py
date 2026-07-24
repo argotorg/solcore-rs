@@ -11627,6 +11627,10 @@ def _decode_rust_ordinary_body(body: str) -> str | None:
     cursor = 0
     while cursor < len(body):
         if body[cursor] != "\\":
+            if body.startswith("\r\n", cursor):
+                decoded.append("\n")
+                cursor += 2
+                continue
             decoded.append(body[cursor])
             cursor += 1
             continue
