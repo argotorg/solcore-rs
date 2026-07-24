@@ -68,11 +68,63 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import unicodedata
 from typing import BinaryIO, Iterable, Mapping, Sequence
 
 
 TRIVIA = {"ws", "comment"}
 WORD_RE = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]*")
+CORE_LEXER_WORD_TOKENS = frozenset(
+    {
+        "contract",
+        "interface",
+        "library",
+        "import",
+        "from",
+        "export",
+        "as",
+        "let",
+        "comptime",
+        "enum",
+        "struct",
+        "trait",
+        "impl",
+        "alias",
+        "is",
+        "where",
+        "returns",
+        "if",
+        "else",
+        "for",
+        "while",
+        "unchecked",
+        "switch",
+        "type",
+        "case",
+        "default",
+        "match",
+        "public",
+        "external",
+        "internal",
+        "private",
+        "pure",
+        "view",
+        "payable",
+        "function",
+        "constructor",
+        "fallback",
+        "return",
+        "revert",
+        "leave",
+        "continue",
+        "break",
+        "lam",
+        "assembly",
+        "pragma",
+        "true",
+        "false",
+    }
+)
 NUMBER_RE = re.compile(r"(?:0[xX][0-9A-Fa-f]+|[0-9]+)")
 MULTI_SYMBOLS = (
     "<<=",
@@ -215,6 +267,33 @@ class Token:
     text: str
     start: int
     end: int
+
+
+def _is_core_identifier_text(text: str) -> bool:
+    """Match the current parser's non-hyphenated identifier grammar."""
+
+    return (
+        bool(text)
+        and unicodedata.category(text[0]).startswith("L")
+        and all(
+            character == "_"
+            or unicodedata.category(character)[:1] in {"L", "N"}
+            for character in text[1:]
+        )
+    )
+
+
+def _is_core_import_identifier(token: Token) -> bool:
+    """Mirror ``ident_parser`` without accepting its diagnosed recoveries."""
+
+    return (
+        token.kind == "word"
+        and _is_core_identifier_text(token.text)
+        and (
+            token.text == "from"
+            or token.text not in CORE_LEXER_WORD_TOKENS
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -7693,7 +7772,7 @@ def _parse_module_path(
     while cursor < len(tokens):
         token = tokens[cursor]
         if expect_name:
-            if token.kind != "word":
+            if not _is_core_import_identifier(token):
                 return None
             segments.append(token.text)
         elif token.text != ".":
@@ -7730,7 +7809,7 @@ def _parse_import_specs(
             if (
                 len(body) < 5
                 or body[1].text != "as"
-                or body[2].kind != "word"
+                or not _is_core_import_identifier(body[2])
                 or body[3].text != "from"
             ):
                 malformed = True
@@ -7776,13 +7855,16 @@ def _parse_import_specs(
                 malformed = True
                 continue
             for part in parts:
-                if len(part) == 1 and part[0].kind == "word":
+                if (
+                    len(part) == 1
+                    and _is_core_import_identifier(part[0])
+                ):
                     selections.append((part[0].text, part[0].text))
                 elif (
                     len(part) == 3
-                    and part[0].kind == "word"
+                    and _is_core_import_identifier(part[0])
                     and part[1].text == "as"
-                    and part[2].kind == "word"
+                    and _is_core_import_identifier(part[2])
                 ):
                     selections.append((part[0].text, part[2].text))
                 else:

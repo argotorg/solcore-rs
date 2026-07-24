@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -266,6 +267,128 @@ function wrap(x: word) returns (T) { return .Some(x); }
                         sources[main],
                         constructor_import_surface=surfaces[main],
                     )
+
+    def test_import_keyword_table_matches_the_parser_lexer(self) -> None:
+        lexer = (ROOT / "crates" / "parser" / "src" / "lexer.rs").read_text()
+        lexer_words = frozenset(
+            re.findall(
+                r'#\[token\("([A-Za-z][A-Za-z0-9_]*)"\)\]',
+                lexer,
+            )
+        )
+
+        self.assertEqual(MIGRATE.CORE_LEXER_WORD_TOKENS, lexer_words)
+
+    def test_reserved_import_identifiers_fail_closed(self) -> None:
+        invalid_imports = (
+            "import function;",
+            "import pkg.function;",
+            "import * as function from provider;",
+            "import {function} from provider;",
+            "import {T as function} from provider;",
+            "import true;",
+            "import fallback;",
+        )
+        for import_declaration in invalid_imports:
+            with self.subTest(import_declaration=import_declaration):
+                sources, surfaces = self.surfaces(
+                    {
+                        "function.solc": """\
+enum T { T(word) }
+export {T(*)};
+""",
+                        "pkg/function.solc": """\
+enum T { T(word) }
+export {T(*)};
+""",
+                        "provider.solc": """\
+enum T { T(word) }
+export {T(*)};
+""",
+                        "main.solc": f"""\
+{import_declaration}
+function make(x: word) {{ T(x); }}
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertEqual(migrated, sources[main])
+                self.assertTrue(
+                    surfaces[main].has_unknown_constructors
+                )
+
+    def test_contextual_and_retired_import_words_remain_identifiers(
+        self,
+    ) -> None:
+        for module_name in ("from", "data", "class", "memory"):
+            with self.subTest(module_name=module_name):
+                sources, surfaces = self.surfaces(
+                    {
+                        f"{module_name}.solc": """\
+enum T { T(word) }
+export {T(*)};
+""",
+                        "main.solc": f"""\
+import {module_name};
+function make(x: word) {{ T(x); }}
+""",
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertIn("T.T(x)", migrated)
+                self.assertFalse(
+                    surfaces[main].has_unknown_constructors
+                )
+
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum from { from(word) }
+export {from(*)};
+""",
+                "main.solc": """\
+import {from as data} from provider;
+function make(x: word) { from(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+        self.assertIn("data.from(x)", migrated)
+
+        sources, surfaces = self.surfaces(
+            {
+                "provider.solc": """\
+enum T { Some(word) }
+export {T(*)};
+""",
+                "main.solc": """\
+import * as data from provider;
+function make(x: word) { return .Some(x); }
+""",
+            }
+        )
+        main = Path("/workspace/main.solc")
+        migrated = MIGRATE.migrate_source(
+            sources[main],
+            constructor_import_surface=surfaces[main],
+        )
+        self.assertIn("data.T.Some(x)", migrated)
 
     def test_open_import_exposes_selected_constructors(self) -> None:
         sources, surfaces = self.surfaces(
