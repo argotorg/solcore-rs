@@ -11539,6 +11539,19 @@ def _rust_block_comment_end(source: str, start: int) -> int:
     return cursor
 
 
+def _rust_file_code_start(source: str) -> int:
+    """Skip Rust's optional BOM and non-attribute shebang."""
+
+    cursor = 1 if source.startswith("\ufeff") else 0
+    if source.startswith("#!", cursor) and not source.startswith(
+        "#![",
+        cursor,
+    ):
+        newline = source.find("\n", cursor + 2)
+        return len(source) if newline < 0 else newline + 1
+    return cursor
+
+
 def _rust_char_end(source: str, start: int) -> int | None:
     """Recognize a Rust character literal without mistaking lifetimes for one."""
 
@@ -11845,7 +11858,7 @@ def _rust_code_suffix(source: str, end: int, length: int) -> str:
     """Return significant Rust spelling before an offset, skipping trivia."""
 
     suffix = ""
-    cursor = 0
+    cursor = min(end, _rust_file_code_start(source))
     while cursor < end:
         if source.startswith("//", cursor):
             newline = source.find("\n", cursor + 2, end)
@@ -11988,7 +12001,7 @@ def _rust_macro_token_tree_ranges(source: str) -> list[tuple[int, int]]:
         "while",
     }
     ranges: list[tuple[int, int]] = []
-    cursor = 0
+    cursor = _rust_file_code_start(source)
     previous_identifier: str | None = None
     while cursor < len(source):
         if source[cursor].isspace():
@@ -12091,7 +12104,7 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
             cursor += 1
         return False
 
-    cursor = 0
+    cursor = _rust_file_code_start(source)
     while cursor < len(source):
         if source[cursor].isspace():
             cursor += 1
@@ -12168,7 +12181,7 @@ def _rust_concat_invocations(
         or _rust_has_explicit_concat_shadow(source)
     )
     invocations: list[RustConcatInvocation] = []
-    cursor = 0
+    cursor = _rust_file_code_start(source)
     while cursor < len(source):
         if source.startswith("//", cursor):
             newline = source.find("\n", cursor + 2)
@@ -13093,7 +13106,7 @@ def _rust_solcore_literals(
         ]
 
     literals: list[tuple[int, int, bool]] = []
-    cursor = 0
+    cursor = _rust_file_code_start(source)
     while cursor < len(source):
         if source.startswith("//", cursor):
             newline = source.find("\n", cursor + 2)
@@ -13143,7 +13156,7 @@ def _rust_solcore_literal_spans(source: str) -> list[tuple[int, int]]:
 def has_rust_comment_marker(source: str, marker: str) -> bool:
     """Find a marker in Rust comments without inspecting literal bodies."""
 
-    cursor = 0
+    cursor = _rust_file_code_start(source)
     while cursor < len(source):
         if source.startswith("//", cursor):
             newline = source.find("\n", cursor + 2)

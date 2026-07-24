@@ -5480,6 +5480,41 @@ const SOURCE: &str =
 
         self.assertEqual(MIGRATE.migrate_rust_strings(rust), rust)
 
+    def test_shebang_is_opaque_with_or_without_a_bom(self) -> None:
+        shebang = (
+            '#!/usr/bin/env concat!("function hidden('
+            'x: word) -> word {}") '
+            "// migrate-syntax: keep-rust-file\n"
+        )
+        for bom in ("", "\ufeff"):
+            with self.subTest(bom=bool(bom)):
+                rust = (
+                    bom
+                    + shebang
+                    + 'const SOURCE: &str = concat!(\n'
+                    '    "function visible(",\n'
+                    '    "x: word) -> word { return x; }",\n'
+                    ");\n"
+                )
+
+                self.assertFalse(
+                    MIGRATE.has_rust_comment_marker(
+                        rust,
+                        MIGRATE.KEEP_RUST_FILE_MARKER,
+                    )
+                )
+                migrated = MIGRATE.migrate_rust_strings(rust)
+
+                self.assertTrue(migrated.startswith(bom + shebang))
+                self.assertEqual(
+                    self.concat_values(migrated),
+                    [
+                        "function visible(x: word) "
+                        "returns (word) { return x; }"
+                    ],
+                )
+                self.assert_rust_syntax(migrated)
+
     def test_marker_text_in_a_raw_string_does_not_keep_the_rust_file(
         self,
     ) -> None:
