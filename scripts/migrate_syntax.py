@@ -2103,11 +2103,14 @@ def _classic_binding_names(
 
 
 def _classic_pattern_binding_names(
-    tokens: Sequence[Token], namespace_roots: set[str]
+    tokens: Sequence[Token],
+    namespace_roots: set[str],
+    constructor_names: set[str] | None = None,
 ) -> set[str]:
     """Collect binders without mistaking qualified constructor paths for them."""
 
     result: set[str] = set()
+    constructor_names = constructor_names or set()
     comptime_expression_tokens = _comptime_pattern_expression_tokens(tokens)
     for index, token in enumerate(tokens):
         if (
@@ -2119,6 +2122,11 @@ def _classic_pattern_binding_names(
         previous = tokens[index - 1].text if index else ""
         following = tokens[index + 1].text if index + 1 < len(tokens) else ""
         if previous == "." or following in {".", "("}:
+            continue
+        if (
+            token.text in constructor_names
+            and token.text[:1].isupper()
+        ):
             continue
         result.add(token.text)
     return result
@@ -2190,6 +2198,7 @@ def _classic_shadow_ranges(
     *,
     include_callable_declarations: bool = False,
     include_top_level_fields: bool = False,
+    constructor_pattern_names: set[str] | None = None,
 ) -> dict[str, list[tuple[int, int]]]:
     """Map term bindings to the token ranges where they shadow import roots."""
 
@@ -2477,7 +2486,9 @@ def _classic_shadow_ranges(
             continue
         add(
             _classic_pattern_binding_names(
-                tokens[index + 1 : body_open], namespace_roots
+                tokens[index + 1 : body_open],
+                namespace_roots,
+                constructor_pattern_names,
             ),
             body_open + 1,
             brace_pairs[body_open],
@@ -2510,7 +2521,9 @@ def _classic_shadow_ranges(
             arrow += arm_start + 1
             add(
                 _classic_pattern_binding_names(
-                    tokens[arm_start + 1 : arrow], namespace_roots
+                    tokens[arm_start + 1 : arrow],
+                    namespace_roots,
+                    constructor_pattern_names,
                 ),
                 arrow + 1,
                 arm_end,
@@ -5319,10 +5332,10 @@ def _body_constructor_pattern_tokens(
             if (
                 offset in comptime_expression_tokens
                 or token.kind != "word"
-                or previous == "."
                 or following == "."
                 or (
-                    token.text[:1].islower()
+                    previous != "."
+                    and token.text[:1].islower()
                     and following != "("
                 )
             ):
@@ -5356,7 +5369,10 @@ def migrate_qualified_constructors(
     constructor_owners = dict(global_owners or {})
     for namespace_name in _declared_type_and_module_names(tokens):
         constructor_owners.pop(namespace_name, None)
-    trusted_import_owners: dict[str, str] = {}
+    trusted_import_bindings: dict[
+        str,
+        frozenset[ConstructorBinding],
+    ] = {}
     ambiguous_import_leaves: set[str] = set()
     imported_constructor_leaves = set(surface.bare_candidates)
     for leaf, bindings in surface.bare_candidates.items():
@@ -5367,7 +5383,7 @@ def migrate_qualified_constructors(
         ):
             owner = binding.owner
             constructor_owners[leaf] = owner
-            trusted_import_owners[leaf] = owner
+            trusted_import_bindings[leaf] = bindings
         else:
             constructor_owners.pop(leaf, None)
             ambiguous_import_leaves.add(leaf)
@@ -5377,6 +5393,8 @@ def migrate_qualified_constructors(
     # different origins and must remain ambiguous.
     constructor_owners.update(module_owners)
     for leaf, candidates in module_candidates.items():
+        if leaf in imported_constructor_leaves:
+            trusted_import_bindings.pop(leaf, None)
         if (
             len(candidates) != 1
             or leaf in imported_constructor_leaves
@@ -5390,11 +5408,56 @@ def migrate_qualified_constructors(
     if not constructor_leaves:
         return source
 
-    def owner_at(index: int, leaf: str) -> tuple[str | None, bool, bool]:
+    owner_roots = {
+        owner.split(".", 1)[0]
+        for owner in constructor_owners.values()
+    }
+    owner_roots.update(
+        binding.owner.split(".", 1)[0]
+        for bindings in trusted_import_bindings.values()
+        for binding in bindings
+    )
+    owner_roots.update(
+        owner.split(".", 1)[0]
+        for candidates in scoped_candidates.values()
+        for _, _, owner in candidates
+    )
+    owner_shadow_ranges = _classic_shadow_ranges(
+        tokens,
+        owner_roots,
+        include_top_level_fields=True,
+        constructor_pattern_names=constructor_leaves,
+    )
+
+    def owner_is_shadowed(
+        owner: str,
+        index: int,
+        *,
+        respect_term_shadowing: bool,
+    ) -> bool:
+        if not respect_term_shadowing:
+            return False
+        root = owner.split(".", 1)[0]
+        return any(
+            start <= index < end
+            for start, end in owner_shadow_ranges[root]
+        )
+
+    def owner_at(
+        index: int,
+        leaf: str,
+        *,
+        respect_term_shadowing: bool = True,
+    ) -> tuple[str | None, bool, bool]:
         scoped = {
             owner
             for start, end, owner in scoped_candidates.get(leaf, [])
             if start <= index < end
+            and not owner_is_shadowed(
+                owner,
+                index,
+                respect_term_shadowing=respect_term_shadowing,
+            )
         }
         if scoped:
             if leaf in imported_constructor_leaves:
@@ -5404,14 +5467,34 @@ def migrate_qualified_constructors(
                 True,
                 False,
             )
+        imported = trusted_import_bindings.get(leaf)
+        if imported is not None:
+            binding = _single_origin_constructor_binding(
+                binding
+                for binding in imported
+                if not owner_is_shadowed(
+                    binding.owner,
+                    index,
+                    respect_term_shadowing=respect_term_shadowing,
+                )
+            )
+            return (
+                binding.owner if binding is not None else None,
+                False,
+                binding is not None,
+            )
         owner = constructor_owners.get(leaf)
         is_local = leaf in module_owners
-        is_trusted_import = (
-            not is_local
-            and owner is not None
-            and trusted_import_owners.get(leaf) == owner
-        )
-        return owner, is_local, is_trusted_import
+        if (
+            owner is not None
+            and owner_is_shadowed(
+                owner,
+                index,
+                respect_term_shadowing=respect_term_shadowing,
+            )
+        ):
+            owner = None
+        return owner, is_local, False
 
     shadow_ranges = _classic_shadow_ranges(
         tokens,
@@ -5437,13 +5520,17 @@ def migrate_qualified_constructors(
             leaf = token.text
             if token.kind != "word" or leaf not in constructor_leaves:
                 continue
-            owner, is_local_owner, is_trusted_import = owner_at(index, leaf)
-            if owner is None:
-                continue
             is_constructor_pattern = (
                 index in constructor_pattern_tokens
                 or index in bare_match_bindings
             )
+            owner, is_local_owner, is_trusted_import = owner_at(
+                index,
+                leaf,
+                respect_term_shadowing=not is_constructor_pattern,
+            )
+            if owner is None:
+                continue
             if (
                 (
                     not is_constructor_pattern
@@ -5530,7 +5617,11 @@ def migrate_qualified_constructors(
         if previous not in {"return", "=", ":=", "case"}:
             continue
         leaf = token.text
-        owner, is_local_owner, is_trusted_import = owner_at(index, leaf)
+        owner, is_local_owner, is_trusted_import = owner_at(
+            index,
+            leaf,
+            respect_term_shadowing=previous != "case",
+        )
         if owner is None:
             continue
         is_pattern = previous == "case"
@@ -5709,8 +5800,46 @@ def migrate_legacy_dot_constructors(
     for leaf, bindings in surface.dot_candidates.items():
         candidates.setdefault(leaf, set()).update(bindings)
 
+    owner_roots = {
+        binding.owner.split(".", 1)[0]
+        for bindings in candidates.values()
+        for binding in bindings
+    }
+    owner_roots.update(
+        owner.split(".", 1)[0]
+        for scoped in scoped_candidates.values()
+        for _, _, owner in scoped
+    )
+    owner_shadow_ranges = _classic_shadow_ranges(
+        tokens,
+        owner_roots,
+        include_top_level_fields=True,
+        constructor_pattern_names=(
+            set(candidates) | set(scoped_candidates)
+        ),
+    )
+
+    def binding_is_shadowed(
+        binding: ConstructorBinding,
+        index: int,
+    ) -> bool:
+        root = binding.owner.split(".", 1)[0]
+        return any(
+            start <= index < end
+            for start, end in owner_shadow_ranges[root]
+        )
+
     replacements: list[tuple[int, int, str]] = []
     errors: list[str] = []
+    constructor_pattern_tokens: set[int] = set()
+    for body_start, body_end in _executable_regions(tokens)[0]:
+        constructor_pattern_tokens.update(
+            _body_constructor_pattern_tokens(
+                tokens,
+                body_start,
+                body_end,
+            )
+        )
     for index, token in enumerate(tokens):
         if not _is_legacy_dot_constructor(tokens, index):
             continue
@@ -5725,6 +5854,15 @@ def migrate_legacy_dot_constructors(
         }
         bindings = set(candidates.get(leaf, set()))
         bindings.update(scoped_bindings)
+        if (
+            len({binding.origin for binding in bindings}) == 1
+            and index + 1 not in constructor_pattern_tokens
+        ):
+            bindings = {
+                binding
+                for binding in bindings
+                if not binding_is_shadowed(binding, index)
+            }
         line, column = _source_line_column(source, token.start)
         location = f"line {line}, column {column}"
         binding = _single_origin_constructor_binding(bindings)

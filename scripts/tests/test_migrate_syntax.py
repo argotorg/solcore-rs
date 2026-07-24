@@ -1169,6 +1169,137 @@ function use(x: U, y: word) {
             migrated_bodies[1],
         )
 
+    def test_constructor_alias_selection_avoids_shadowed_roots(
+        self,
+    ) -> None:
+        provider = """\
+enum T { Some(word) }
+export {T(*)};
+"""
+        cases = (
+            (
+                (
+                    "import provider;",
+                    "import {T as A} from provider;",
+                ),
+                "T",
+                "A",
+                "T",
+            ),
+            (
+                (
+                    "import * as P from provider;",
+                    "import * as Q from provider;",
+                ),
+                "P",
+                "Q.T",
+                "P.T",
+            ),
+        )
+        for (
+            declarations,
+            shadowed,
+            owner,
+            pattern_owner,
+        ) in cases:
+            with self.subTest(
+                declarations=declarations,
+                shadowed=shadowed,
+            ):
+                sources, surfaces = self.surfaces(
+                    {
+                        "provider.solc": provider,
+                        "main.solc": (
+                            "\n".join(declarations)
+                            + f"""
+function use({shadowed}: word, x: word) {{
+  Some(x);
+  match (.Some(x)) {{ case Some(value) {{ return; }} }}
+}}
+"""
+                        ),
+                    }
+                )
+                main = Path("/workspace/main.solc")
+
+                migrated = MIGRATE.migrate_source(
+                    sources[main],
+                    constructor_import_surface=surfaces[main],
+                )
+
+                self.assertIn(f"  {owner}.Some(x);", migrated)
+                self.assertIn(
+                    f"match ({owner}.Some(x))",
+                    migrated,
+                )
+                self.assertIn(
+                    f"case {pattern_owner}.Some(value)",
+                    migrated,
+                )
+
+    def test_shadowed_local_constructor_owner_is_not_emitted(
+        self,
+    ) -> None:
+        bare_source = """\
+enum T { Some(word) }
+function use(T: word, x: word) { Some(x); }
+"""
+
+        self.assertEqual(
+            MIGRATE.migrate_source(bare_source),
+            bare_source,
+        )
+
+        dot_source = """\
+enum T { Some(word) }
+function use(T: word, x: word) { return .Some(x); }
+"""
+        with self.assertRaisesRegex(
+            ValueError,
+            r"cannot resolve legacy dot-constructor \.Some",
+        ):
+            MIGRATE.migrate_source(dot_source)
+
+        for pattern in ("Some(value)", ".Some(value)"):
+            with self.subTest(pattern=pattern):
+                pattern_source = f"""\
+enum T {{ Some(word) }}
+function use(T: word, x: T) {{
+  match (x) {{ case {pattern} {{ return; }} }}
+}}
+"""
+                self.assertIn(
+                    "case T.Some(value)",
+                    MIGRATE.migrate_source(pattern_source),
+                )
+
+        lowercase_dot_pattern = """\
+enum t { t }
+function use(t: word, x: t) {
+  match (x) { case .t { return; } }
+}
+"""
+        self.assertIn(
+            "case t.t",
+            MIGRATE.migrate_source(lowercase_dot_pattern),
+        )
+
+    def test_callable_does_not_shadow_constructor_owner_namespace(
+        self,
+    ) -> None:
+        source = """\
+enum T { Some(word) }
+function T(x: word) returns (word) { return x; }
+function use(x: word) { Some(x); }
+"""
+
+        migrated = MIGRATE.migrate_source(source)
+
+        self.assertIn(
+            "function use(x: word) { T.Some(x); }",
+            migrated,
+        )
+
     def test_unresolved_import_blocks_terms_but_not_local_patterns(
         self,
     ) -> None:
