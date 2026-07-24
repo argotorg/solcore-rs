@@ -674,6 +674,39 @@ function use(x: S, y: word) {
         self.assertIn("return T.Some(x);", migrated)
         self.assertIn("0 file(s) need migration", check.stdout)
 
+    def test_cli_deduplicates_relative_and_absolute_source_paths(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            provider = root / "provider.solc"
+            main = root / "main.solc"
+            provider.write_text(
+                "enum T { T(word) }\nexport {T(*)};\n"
+            )
+            main.write_text(
+                "import provider;\n"
+                "function make(x: word) { T(x); }\n"
+            )
+
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    root.name,
+                    str(provider),
+                ],
+                cwd=root.parent,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migrated = main.read_text()
+
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertIn("T.T(x);", migrated)
+        self.assertIn("2 file(s) examined", migration.stdout)
+
     def test_special_and_colliding_paths_fail_closed(self) -> None:
         cases = [
             {
@@ -2297,6 +2330,37 @@ const SOURCE: &str =
         self.assertIn("function f(x: word) returns (word)", migrated)
         self.assertIn("prefer function f(x: T) -> T syntax", migrated)
         self.assertIn("0 file(s) need migration", clean.stdout)
+
+    def test_cli_deduplicates_relative_and_absolute_rust_paths(
+        self,
+    ) -> None:
+        source = (
+            'const SOURCE: &str = '
+            'r#"function f(x: word) -> word { return x; }"#;\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            path = root / "embedded.rs"
+            path.write_text(source)
+
+            migration = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--rust-strings",
+                    root.name,
+                    str(path),
+                ],
+                cwd=root.parent,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            migrated = path.read_text()
+
+        self.assertEqual(migration.returncode, 0, migration.stderr)
+        self.assertIn("function f(x: word) returns (word)", migrated)
+        self.assertIn("1 file(s) examined", migration.stdout)
 
 
 class AtomicCliMigrationTests(unittest.TestCase):

@@ -8282,35 +8282,50 @@ def build_constructor_import_surfaces(
     return surfaces
 
 
+def _deduplicate_lexical_paths(paths: Iterable[Path]) -> list[Path]:
+    """Keep the first spelling of each absolute lexical source path."""
+
+    unique: dict[Path, Path] = {}
+    for path in paths:
+        unique.setdefault(_absolute_lexical_path(path), path)
+    return list(unique.values())
+
+
 def source_paths(arguments: Sequence[str]) -> list[Path]:
-    paths: set[Path] = set()
+    paths: list[Path] = []
     for argument in arguments:
         path = Path(argument)
         if path.is_dir():
-            paths.update(path.rglob("*.sol"))
-            paths.update(path.rglob("*.solc"))
+            paths.extend(
+                sorted(
+                    [
+                        *path.rglob("*.sol"),
+                        *path.rglob("*.solc"),
+                    ]
+                )
+            )
         elif path.suffix in {".sol", ".solc"}:
-            paths.add(path)
+            paths.append(path)
         else:
             raise ValueError(f"not a Solcore source path: {path}")
-    return sorted(paths)
+    return _deduplicate_lexical_paths(paths)
 
 
 def rust_source_paths(arguments: Sequence[str]) -> list[Path]:
-    paths: set[Path] = set()
+    paths: list[Path] = []
     for argument in arguments:
         path = Path(argument)
         if path.is_dir():
-            paths.update(path.rglob("*.rs"))
+            paths.extend(sorted(path.rglob("*.rs")))
         elif path.suffix == ".rs":
-            paths.add(path)
+            paths.append(path)
         elif path.suffix in {".sol", ".solc"}:
-            # In --rust-strings mode an explicit Solcore source is an owner
-            # table seed, not an edit target.
+            # Retain the legacy CLI acceptance, but this mode edits only Rust
+            # files and builds no cross-file constructor table.
             continue
         else:
             raise ValueError(f"not a Rust source path: {path}")
-    return sorted(paths)
+    return _deduplicate_lexical_paths(paths)
 
 
 def _rust_block_comment_end(source: str, start: int) -> int:
