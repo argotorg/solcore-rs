@@ -6293,6 +6293,25 @@ pub const SOURCE: &str = concat!(
 
         self.assertLess(elapsed, 5.0)
 
+    def test_use_shadow_scan_skips_literal_semicolons(self) -> None:
+        rust = r'''
+macro_rules! sink { ($($tt:tt)*) => {} }
+sink!(use "text; macro_rules! concat { }";);
+const SOURCE: &str = concat!(
+    "function f(",
+    "x: word) -> word { return x; }",
+);
+'''
+
+        self.assertFalse(MIGRATE._rust_has_explicit_concat_shadow(rust))
+        migrated = MIGRATE.migrate_rust_strings(rust)
+
+        self.assertEqual(
+            self.concat_values(migrated),
+            ["function f(x: word) returns (word) { return x; }"],
+        )
+        self.assert_rust_syntax(migrated)
+
     def test_cli_deduplicates_relative_and_absolute_rust_paths(
         self,
     ) -> None:

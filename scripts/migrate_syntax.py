@@ -12235,6 +12235,20 @@ def _rust_has_explicit_concat_shadow(source: str) -> bool:
                     or source[use_cursor] == ";"
                 ):
                     break
+                if source[use_cursor] == "'":
+                    char_end = _rust_char_end(source, use_cursor)
+                    if char_end is not None:
+                        use_cursor = char_end
+                        continue
+                literal = _rust_raw_literal(source, use_cursor)
+                if literal is None:
+                    literal = _rust_ordinary_literal(
+                        source,
+                        use_cursor,
+                    )
+                if literal is not None:
+                    use_cursor = literal[2]
+                    continue
                 use_identifier = identifier_text(use_cursor)
                 if use_identifier is not None:
                     if use_identifier[0] == "concat":
