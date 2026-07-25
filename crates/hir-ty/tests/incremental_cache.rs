@@ -120,12 +120,12 @@ impl solcore_hir_ty::Db for TestDb {}
 #[test]
 fn unrelated_signature_edit_does_not_rerun_every_body_inference() {
     let before = r#"
-function id(x: word) returns (word) { return x; }
+function id(x: word) returns (word) { return x as word; }
 function unrelated(x: word) returns (word) { return 0; }
 function main() returns (word) { return id(1); }
 "#;
     let after = r#"
-function id(x: word) returns (word) { return x; }
+function id(x: word) returns (word) { return x as word; }
 function unrelated(x: bool) returns (word) { return 0; }
 function main() returns (word) { return id(1); }
 "#;

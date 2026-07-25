@@ -233,8 +233,11 @@ impl<'db> InferCtx<'db> {
 
     fn finish_pending_conversions(&mut self) -> Vec<CheckedConversion<'db>> {
         let pending = std::mem::take(&mut self.pending_conversions);
+        if pending.is_empty() {
+            return Vec::new();
+        }
         let mut checked = Vec::with_capacity(pending.len());
-        let item_resolutions = self.item_resolutions_for_aliases();
+        let mut item_resolutions = None;
         for conversion in pending {
             if self
                 .poisoned_exprs
@@ -261,7 +264,16 @@ impl<'db> InferCtx<'db> {
                 });
                 continue;
             }
-            if let Some(kind) = self.value_type_conversion_kind(&item_resolutions, source, target) {
+            let value_type_conversion = if value_type_def(self.db, source).is_some()
+                || value_type_def(self.db, target).is_some()
+            {
+                let item_resolutions =
+                    item_resolutions.get_or_insert_with(|| self.item_resolutions_for_aliases());
+                self.value_type_conversion_kind(item_resolutions, source, target)
+            } else {
+                None
+            };
+            if let Some(kind) = value_type_conversion {
                 checked.push(CheckedConversion {
                     body: conversion.body,
                     expr: conversion.expr,
