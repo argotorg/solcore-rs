@@ -4,7 +4,7 @@ expression: render_fixture(&fixture)
 ---
 object "Add1Deploy" {
   code {
-    function usr$Add1_Add1__start_d2d7f074c() {
+    function usr$Add1_Add1__start_dbcd1f6ef() {
       mstore(64, memoryguard(128))
       if lt(codesize(), datasize("Add1Deploy")) {
         revert(0, 0)
@@ -17,18 +17,18 @@ object "Add1Deploy" {
       codecopy(0, dataoffset("Add1"), datasize("Add1"))
       return(0, asm$size_0)
     }
-    usr$Add1_Add1__start_d2d7f074c()
+    usr$Add1_Add1__start_dbcd1f6ef()
   }
   object "Add1" {
     code {
-      function usr$Add1_Add1_main_dac62ccff() -> gen$result_1 {
+      function usr$Add1_Add1_main_d117a093c() -> gen$result_1 {
         let src$res_2
         src$res_2 := add(40, 2)
         gen$result_1 := 42
         leave
       }
       let _v0
-      _v0 := usr$Add1_Add1_main_dac62ccff()
+      _v0 := usr$Add1_Add1_main_d117a093c()
     }
   }
 }

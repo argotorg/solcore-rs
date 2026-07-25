@@ -4,7 +4,7 @@ expression: render_fixture(&fixture)
 ---
 object "DataTypeStorageFullDeploy" {
   code {
-    function usr$main_DataTypeStorageFull__start_d1108d95f() {
+    function usr$main_DataTypeStorageFull__start_d53c64ea3() {
       mstore(64, memoryguard(128))
       if lt(codesize(), datasize("DataTypeStorageFullDeploy")) {
         revert(0, 0)
@@ -17,11 +17,11 @@ object "DataTypeStorageFullDeploy" {
       codecopy(0, dataoffset("DataTypeStorageFull"), datasize("DataTypeStorageFull"))
       return(0, asm$size_0)
     }
-    usr$main_DataTypeStorageFull__start_d1108d95f()
+    usr$main_DataTypeStorageFull__start_d53c64ea3()
   }
   object "DataTypeStorageFull" {
     code {
-      function usr$main_DataTypeStorageFull_main_dd6d1ea2d() -> gen$result_1 {
+      function usr$main_DataTypeStorageFull_main_d836bf57c() -> gen$result_1 {
         let src$inner_2
         let _v0
         _v0 := sload(0)
@@ -30,7 +30,7 @@ object "DataTypeStorageFullDeploy" {
         leave
       }
       let _v1
-      _v1 := usr$main_DataTypeStorageFull_main_dd6d1ea2d()
+      _v1 := usr$main_DataTypeStorageFull_main_d836bf57c()
     }
   }
 }

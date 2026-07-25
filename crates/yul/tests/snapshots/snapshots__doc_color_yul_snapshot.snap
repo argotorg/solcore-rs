@@ -4,7 +4,7 @@ expression: render_fixture(&fixture)
 ---
 object "RGBDeploy" {
   code {
-    function usr$047rgb_RGB__start_d48fc98ea() {
+    function usr$047rgb_RGB__start_d2ed51dd2() {
       mstore(64, memoryguard(128))
       if lt(codesize(), datasize("RGBDeploy")) {
         revert(0, 0)
@@ -17,16 +17,16 @@ object "RGBDeploy" {
       codecopy(0, dataoffset("RGB"), datasize("RGB"))
       return(0, asm$size_0)
     }
-    usr$047rgb_RGB__start_d48fc98ea()
+    usr$047rgb_RGB__start_d2ed51dd2()
   }
   object "RGB" {
     code {
-      function usr$047rgb_RGB_main_d0a7ed26d() -> gen$result_1 {
+      function usr$047rgb_RGB_main_d0c6582db() -> gen$result_1 {
         gen$result_1 := 42
         leave
       }
       let _v0
-      _v0 := usr$047rgb_RGB_main_d0a7ed26d()
+      _v0 := usr$047rgb_RGB_main_d0c6582db()
     }
   }
 }

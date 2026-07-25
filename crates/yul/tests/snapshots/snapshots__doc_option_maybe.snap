@@ -4,7 +4,7 @@ expression: "render_source(\"doc_option_maybe\",\nr#\"\ncontract OptionDoc {\n  
 ---
 object "OptionDocDeploy" {
   code {
-    function usr$doc_option_maybe_OptionDoc__start_df4f0f763() {
+    function usr$doc_option_maybe_OptionDoc__start_d152c2b55() {
       mstore(64, memoryguard(128))
       if lt(codesize(), datasize("OptionDocDeploy")) {
         revert(0, 0)
@@ -17,16 +17,16 @@ object "OptionDocDeploy" {
       codecopy(0, dataoffset("OptionDoc"), datasize("OptionDoc"))
       return(0, asm$size_0)
     }
-    usr$doc_option_maybe_OptionDoc__start_df4f0f763()
+    usr$doc_option_maybe_OptionDoc__start_d152c2b55()
   }
   object "OptionDoc" {
     code {
-      function usr$doc_option_maybe_OptionDoc_main_d5564561b() -> gen$result_1 {
+      function usr$doc_option_maybe_OptionDoc_main_d383edd09() -> gen$result_1 {
         gen$result_1 := 42
         leave
       }
       let _v0
-      _v0 := usr$doc_option_maybe_OptionDoc_main_d5564561b()
+      _v0 := usr$doc_option_maybe_OptionDoc_main_d383edd09()
     }
   }
 }
