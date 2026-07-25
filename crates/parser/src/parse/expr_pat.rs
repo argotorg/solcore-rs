@@ -275,7 +275,8 @@ where
             .clone()
             .foldl_with(mul_op.then(pow).repeated(), |lhs, (op, rhs), e| {
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
-            });
+            })
+            .boxed();
 
         let add_op = select! {
             Token::Plus => function::BinOp::Add,
@@ -286,7 +287,8 @@ where
             .clone()
             .foldl_with(add_op.then(mul).repeated(), |lhs, (op, rhs), e| {
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
-            });
+            })
+            .boxed();
 
         let shift_op = choice((
             just(Token::Less)
@@ -301,7 +303,8 @@ where
             .clone()
             .foldl_with(shift_op.then(add).repeated(), |lhs, (op, rhs), e| {
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
-            });
+            })
+            .boxed();
 
         let bit_and_op = just(Token::Amp)
             .to(function::BinOp::BitAnd)
@@ -310,7 +313,8 @@ where
             .clone()
             .foldl_with(bit_and_op.then(shift).repeated(), |lhs, (op, rhs), e| {
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
-            });
+            })
+            .boxed();
 
         let bit_xor_op = just(Token::Caret)
             .to(function::BinOp::BitXor)
@@ -319,7 +323,8 @@ where
             .clone()
             .foldl_with(bit_xor_op.then(bit_and).repeated(), |lhs, (op, rhs), e| {
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
-            });
+            })
+            .boxed();
 
         let bit_or_op = just(Token::Pipe)
             .to(function::BinOp::BitOr)
@@ -368,7 +373,8 @@ where
             .clone()
             .foldl_with(and_op.then(eq).repeated(), |lhs, (op, rhs), e| {
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
-            });
+            })
+            .boxed();
 
         let or_op = just(Token::OrOr)
             .to(function::BinOp::Or)
@@ -377,7 +383,8 @@ where
             .clone()
             .foldl_with(or_op.then(and).repeated(), |lhs, (op, rhs), e| {
                 parsed_bin_op_expr(lhs, op, rhs, e.span())
-            });
+            })
+            .boxed();
 
         let ternary = recursive(|ternary| {
             or.clone()

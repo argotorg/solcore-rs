@@ -96,3 +96,21 @@ fn sequential_if_statements_do_not_count_as_nested_expressions() {
         "sequential statements are not expression nesting: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn standard_library_expressions_use_bounded_stack() {
+    let source = include_str!("../../../std/std.solc").to_owned();
+    let diagnostics = std::thread::Builder::new()
+        .name("standard-library-parser".to_owned())
+        // The unboxed precedence chain overflows at 1 MiB while the boxed
+        // parser has enough headroom to keep this stable across test hosts.
+        .stack_size(1024 * 1024)
+        .spawn(move || parse_without_large_test_stack(source))
+        .expect("spawn parser thread")
+        .join()
+        .expect("parser thread should not overflow its stack");
+    assert!(
+        diagnostics.is_empty(),
+        "standard-library expressions should parse on a bounded stack: {diagnostics:#?}"
+    );
+}
