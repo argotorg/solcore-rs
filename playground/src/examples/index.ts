@@ -25,7 +25,7 @@ import std.dispatch;
 
 contract Answer {
   function main() public returns (uint256) {
-    return 42 as uint256;
+    return uint256.uint256(42);
   }
 }
 `,

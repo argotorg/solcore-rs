@@ -520,10 +520,10 @@ mod tests {
     fn clean_program_emits_all_playground_outputs() {
         let result = compile_impl(input(
             concat!(
-                "import std;\n",
+                "import {uint256} from std;\n",
                 "import std.dispatch;\n",
-                "contract Main {\n",
-                "  function answer() public returns (uint256) {\n",
+                "contract Answer {\n",
+                "  function main() public returns (uint256) {\n",
                 "    return uint256.uint256(42);\n",
                 "  }\n",
                 "}\n",
@@ -550,7 +550,7 @@ mod tests {
             result
                 .abi
                 .as_deref()
-                .is_some_and(|text| text.contains("\"name\": \"answer\""))
+                .is_some_and(|text| text.contains("\"name\": \"main\""))
         );
     }
 
