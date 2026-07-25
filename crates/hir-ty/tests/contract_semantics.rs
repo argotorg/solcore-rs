@@ -1342,7 +1342,7 @@ contract Store {
     assert!(
         contract_abi_json(&db, module, contract)
             .expect_err("unsupported ABI type")
-            .contains("cannot represent type")
+            .contains("unsupported type")
     );
     assert!(
         diagnostics(
