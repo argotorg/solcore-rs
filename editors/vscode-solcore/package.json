@@ -4,7 +4,7 @@
   "description": "Syntax highlighting and editor configuration for Solcore .solc files.",
   "version": "0.0.0",
   "publisher": "solcore",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "main": "./extension.js",
   "engines": {
     "vscode": "^1.85.0"
