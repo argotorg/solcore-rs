@@ -1617,6 +1617,7 @@ dependencies = [
  "solcore-hir-ty",
  "solcore-nameres",
  "solcore-parser",
+ "solcore-test-utils",
  "url",
 ]
 

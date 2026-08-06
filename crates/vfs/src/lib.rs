@@ -1088,13 +1088,17 @@ mod tests {
 
     #[test]
     fn std_import_resolves_from_embedded_files() {
-        let workspace = workspace_with_main(
-            "import std.{addWord};\n\nfunction main() -> word {\n  return addWord(1, 2);\n}\n",
-        );
+        // Windows test threads default to a 1 MiB stack, which is too small
+        // for whole-frontend analysis of the embedded standard library.
+        solcore_test_utils::run_in_large_stack(|| {
+            let workspace = workspace_with_main(
+                "import std.{addWord};\n\nfunction main() -> word {\n  return addWord(1, 2);\n}\n",
+            );
 
-        assert!(workspace.diagnostics().is_empty());
-        assert!(workspace.entry_module().is_some());
-        assert_eq!(messages(&workspace), raw_messages(&workspace));
+            assert!(workspace.diagnostics().is_empty());
+            assert!(workspace.entry_module().is_some());
+            assert_eq!(messages(&workspace), raw_messages(&workspace));
+        });
     }
 
     #[test]

@@ -16,3 +16,6 @@ parser = { workspace = true }
 rustc-hash = { workspace = true }
 salsa = { workspace = true }
 url = { workspace = true }
+
+[dev-dependencies]
+solcore-test-utils = { path = "../test-utils" }
