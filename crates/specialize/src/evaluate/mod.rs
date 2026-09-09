@@ -38,7 +38,7 @@ pub(crate) fn evaluate_module<'db>(
             item => items.push(item),
         }
     }
-    while let Some(function) = evaluator.eval_next_string_clone() {
+    while let Some(function) = evaluator.eval_next_clone() {
         items.push(MonoItem::Function(function));
     }
     module.items = items;

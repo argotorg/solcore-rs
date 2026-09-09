@@ -48,6 +48,11 @@ use crate::{
     specialize::{SpecializeDiagnostic, SpecializeDiagnosticKind},
 };
 
+#[path = "closures.rs"]
+mod closures;
+
+use closures::{ClosureCloneKey, LiftedClosure};
+
 enum FoldOutcome<'db> {
     ReturnedKnown(MonoExpr<'db>),
     ReturnedUnknownAbort,
@@ -68,7 +73,7 @@ struct StringCloneKey {
     bindings: Vec<(usize, String)>,
 }
 
-struct PendingStringClone<'db> {
+struct PendingClone<'db> {
     function: MonoFunction<'db>,
     env: VEnv<'db>,
 }
@@ -119,8 +124,12 @@ pub(super) struct Evaluator<'db> {
     // Mono functions are module-global. Hull's object reachability copies a
     // shared clone into every object that calls it, so module-wide dedup is safe.
     clone_names: FxHashMap<StringCloneKey, String>,
-    pending_string_clones: VecDeque<PendingStringClone<'db>>,
+    pending_clones: VecDeque<PendingClone<'db>>,
     next_clone_id: usize,
+    closure_clone_names: FxHashMap<ClosureCloneKey, String>,
+    lifted_closures: Vec<LiftedClosure<'db>>,
+    capture_types: TypeReg<'db>,
+    storage_fields: FxHashSet<String>,
     inline_depth_limit: usize,
     memory: BTreeMap<BigInt, u8>,
     comptime_mode: bool,
@@ -189,8 +198,12 @@ impl<'db> Evaluator<'db> {
             fuel,
             clone_fuel: fuel,
             clone_names: FxHashMap::default(),
-            pending_string_clones: VecDeque::new(),
+            pending_clones: VecDeque::new(),
             next_clone_id: 0,
+            closure_clone_names: FxHashMap::default(),
+            lifted_closures: Vec::new(),
+            capture_types: TypeReg::default(),
+            storage_fields,
             inline_depth_limit,
             memory: BTreeMap::new(),
             comptime_mode: false,
@@ -202,8 +215,8 @@ impl<'db> Evaluator<'db> {
         self.eval_function_with_env(function, VEnv::default())
     }
 
-    pub(super) fn eval_next_string_clone(&mut self) -> Option<MonoFunction<'db>> {
-        let pending = self.pending_string_clones.pop_front()?;
+    pub(super) fn eval_next_clone(&mut self) -> Option<MonoFunction<'db>> {
+        let pending = self.pending_clones.pop_front()?;
         Some(self.eval_function_with_env(pending.function, pending.env))
     }
 
@@ -260,6 +273,8 @@ impl<'db> Evaluator<'db> {
         stmts: Vec<MonoStmt<'db>>,
         ret_comptime: bool,
     ) -> (VEnv<'db>, CEnv, Vec<MonoStmt<'db>>) {
+        let saved_types = self.capture_types.clone();
+        self.capture_types.extend(type_reg.clone());
         let mut out = Vec::new();
         for stmt in stmts {
             let (next_env, next_comptime_env, mut stmts) =
@@ -268,6 +283,7 @@ impl<'db> Evaluator<'db> {
             comptime_env = next_comptime_env;
             out.append(&mut stmts);
         }
+        self.capture_types = saved_types;
         (env, comptime_env, out)
     }
 
@@ -295,6 +311,13 @@ impl<'db> Evaluator<'db> {
                         (Some(expr), effects)
                     }
                     None => (None, AssignedNames::empty()),
+                };
+                let (init, capture_bindings) = match init {
+                    Some(expr) if ty_is_function(self.db, id.ty.ty()) => {
+                        let (expr, bindings) = self.capture_closure_value(expr);
+                        (Some(expr), bindings)
+                    }
+                    init => (init, Vec::new()),
                 };
                 let mut env = env;
                 let mut comptime_env = comptime_env;
@@ -337,7 +360,7 @@ impl<'db> Evaluator<'db> {
                         .as_ref()
                         .is_some_and(|expr| self.expr_is_known_value(expr))
                 {
-                    return (env, comptime_env, Vec::new());
+                    return (env, comptime_env, capture_bindings);
                 }
                 (
                     env,
@@ -959,13 +982,14 @@ impl<'db> Evaluator<'db> {
             MonoExprKind::Lambda { name, params, body } => {
                 let type_reg = build_type_reg(&params, &body);
                 let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
-                let (_, _, body) = self.eval_stmts(
-                    &type_reg,
-                    env.clone(),
-                    comptime_env.clone(),
-                    body,
-                    ret_comptime,
-                );
+                let mut env = env.clone();
+                let mut comptime_env = comptime_env.clone();
+                for param in &params {
+                    env.remove(&param.name);
+                    comptime_env.remove(&param.name);
+                }
+                let (_, _, body) =
+                    self.eval_stmts(&type_reg, env, comptime_env, body, ret_comptime);
                 MonoExpr {
                     span,
                     ty,
@@ -1002,6 +1026,9 @@ impl<'db> Evaluator<'db> {
                         return result;
                     }
                     if let Some(result) = self.try_clone_string_call(&callee, &args, ty, span) {
+                        return result;
+                    }
+                    if let Some(result) = self.try_clone_closure_call(&callee, &args, ty, span) {
                         return result;
                     }
                 }
@@ -1247,69 +1274,35 @@ impl<'db> Evaluator<'db> {
                 let args = self.closure_call_args(function, args);
                 self.check_comptime_params(&id.name, &args, &CEnv::default(), span);
                 self.try_inline(&id.name, &args, span).or_else(|| {
-                    self.try_clone_string_call(id, &args, ty, span).or_else(|| {
-                        Some(MonoExpr {
-                            span,
-                            ty,
-                            kind: MonoExprKind::Call {
-                                callee: id.clone(),
-                                args,
-                                origin: MonoCallOrigin::ByName,
-                            },
+                    self.try_clone_string_call(id, &args, ty, span)
+                        .or_else(|| self.try_clone_closure_call(id, &args, ty, span))
+                        .or_else(|| {
+                            Some(MonoExpr {
+                                span,
+                                ty,
+                                kind: MonoExprKind::Call {
+                                    callee: id.clone(),
+                                    args,
+                                    origin: MonoCallOrigin::ByName,
+                                },
+                            })
                         })
-                    })
                 })
             }
-            MonoExprKind::Lambda { name, params, body } if params.len() == args.len() => {
-                let ret_comptime = lambda_ret_is_comptime(self.db, ty.ty());
-                let frame_comptime = self.comptime_mode
-                    || ret_comptime
-                    || params.iter().any(|param| param_is_comptime(self.db, param));
-                let frame_name = format!(
-                    "lambda:{}:{}:{}",
-                    name,
-                    span.begin().as_u32(),
-                    span.end().as_u32()
-                );
-                if self.has_recursive_inline_frame(&frame_name, args) {
-                    self.push_recursion_diagnostic(name.clone(), frame_comptime, None, span);
-                    return None;
-                }
-                if let Some(exhaustion) = self.inline_budget_exhaustion() {
-                    self.push_inline_limit_diagnostic(
-                        name.clone(),
-                        self.inline_chain_is_comptime(frame_comptime),
+            MonoExprKind::Lambda { params, .. } if params.len() == args.len() => {
+                let (target, captures) = self.lift_closure(callee)?;
+                let mut args = args.to_vec();
+                args.extend(captures);
+                self.eval_closure_dispatch(
+                    &MonoExpr {
                         span,
-                        exhaustion,
-                    );
-                    return None;
-                }
-                self.fuel -= 1;
-                self.inline_stack.push(InlineFrame {
-                    name: frame_name,
-                    args: args.to_vec(),
-                    comptime: frame_comptime,
-                });
-                let mut env = VEnv::default();
-                let mut comptime_env = CEnv::default();
-                for (param, arg) in params.iter().zip(args) {
-                    if self.expr_is_known_value(arg) {
-                        env.insert(param.name.clone(), arg.clone());
-                        comptime_env.insert(param.name.clone());
-                    } else if param_is_comptime(self.db, param) {
-                        comptime_env.insert(param.name.clone());
-                    }
-                }
-                let type_reg = build_type_reg(params, body);
-                let result = self.eval_fun_body(&type_reg, env, comptime_env, body.clone());
-                let frame = self.inline_stack.pop();
-                debug_assert!(frame.is_some_and(|frame| frame.name.starts_with("lambda:")));
-                match result {
-                    FoldOutcome::ReturnedKnown(expr) => Some(expr),
-                    FoldOutcome::ReturnedUnknownAbort | FoldOutcome::FellThroughContinue(_, _) => {
-                        None
-                    }
-                }
+                        ty: target.ty,
+                        kind: MonoExprKind::Var(target),
+                    },
+                    &args,
+                    ty,
+                    span,
+                )
             }
             MonoExprKind::TypeAnnot { expr, .. } => {
                 self.eval_closure_dispatch(expr, args, ty, span)
@@ -1765,7 +1758,7 @@ impl<'db> Evaluator<'db> {
                 return None;
             }
             self.clone_fuel -= 1;
-            let name = self.fresh_string_clone_name(&function.name);
+            let name = self.fresh_clone_name(&function.name);
             let mut clone = function.clone();
             clone.name = name.clone();
             clone.params = kept_params;
@@ -1781,7 +1774,7 @@ impl<'db> Evaluator<'db> {
                     .unwrap_or(AssignedNames::All),
             );
             self.functions.insert(name.clone(), clone.clone());
-            self.pending_string_clones.push_back(PendingStringClone {
+            self.pending_clones.push_back(PendingClone {
                 function: clone,
                 env,
             });
@@ -1809,7 +1802,7 @@ impl<'db> Evaluator<'db> {
         })
     }
 
-    fn fresh_string_clone_name(&mut self, base: &str) -> String {
+    fn fresh_clone_name(&mut self, base: &str) -> String {
         loop {
             let name = format!("{base}$ct{}", self.next_clone_id);
             self.next_clone_id += 1;

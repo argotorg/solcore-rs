@@ -68,7 +68,7 @@ pub(super) fn intrinsic_is_pure(intrinsic: MonoIntrinsic) -> bool {
     }
 }
 
-fn function_is_pure<'db>(
+pub(super) fn function_is_pure<'db>(
     db: &'db dyn Db,
     function: &MonoFunction<'db>,
     pure: &FxHashSet<String>,
