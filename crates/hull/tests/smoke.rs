@@ -177,6 +177,18 @@ fn specialization_corpus_subset_emits_and_checks() {
 }
 
 #[test]
+fn function_typed_closure_parameters_emit_and_check() {
+    let (db, output) = specialize_src_with_std(
+        "closure_parameters",
+        include_str!("../../../tests/e2e/closure-parameters/main.sol"),
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+}
+
+#[test]
 fn objectless_string_materializers_are_content_deduplicated() {
     let (db, output) = specialize_src_with_std(
         "objectless_string_materializer",
