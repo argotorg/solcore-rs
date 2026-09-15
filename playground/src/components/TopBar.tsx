@@ -148,7 +148,7 @@ export function TopBar({
           }}
           title={
             linkCopyState === "failed"
-              ? "Copy failed - copy the address bar URL with ?example=" + selectedExample
+              ? "Copy failed - link: " + buildExampleLink(window.location.href, selectedExample)
               : "Copy a link to this example"
           }
           aria-label="Copy a link to this example"

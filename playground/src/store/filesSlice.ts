@@ -1,6 +1,6 @@
 import type { StoreApi } from "zustand";
 import { defaultExample, findExample, getExample, type PlaygroundExample } from "../examples";
-import { readSharedExampleId } from "../share/exampleLink";
+import { readExampleRoute, readSharedExampleId } from "../share/exampleLink";
 import { freshExecutionState, invalidateExecution } from "./executionSlice";
 import { isBrowser } from "./isBrowser";
 import type { WorkspaceState } from "./workspace";
@@ -183,12 +183,17 @@ function readSharedExample(): PlaygroundExample | null {
     return null;
   }
 
-  const sharedId = readSharedExampleId(window.location.search);
+  const sharedId = window.location.hash
+    ? readExampleRoute(window.location.hash)
+    : readSharedExampleId(window.location.search);
   return sharedId ? (findExample(sharedId) ?? null) : null;
 }
 
 export const sharedExample = readSharedExample();
-const storedWorkspace = sharedExample ? null : readStoredWorkspace();
+export const savedWorkspace = readStoredWorkspace();
+export const storedWorkspace = sharedExample && sharedExample.id !== savedWorkspace?.exampleId
+  ? null
+  : savedWorkspace;
 export const initialWorkspace = storedWorkspace
   ? {
       files: createFileMap(storedWorkspace.files),
