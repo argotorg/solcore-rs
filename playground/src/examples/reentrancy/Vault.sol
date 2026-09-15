@@ -1,20 +1,25 @@
 import * from std;
 import * from std.dispatch;
 import {sender} from context;
-import {withLock} from reentrancy;
+import {withWriteLock, withReadLock} from reentrancy;
+
+// The lock id for the balances state; other state would get its own id.
+function balancesLock() returns (uint256) {
+    return uint256(1);
+}
 
 // The vault tracks credits only; token custody is omitted.
 contract Vault {
     balances : mapping(address => uint256);
 
     function deposit(amount: uint256) public {
-        balances[sender()] = balances[sender()] + amount;
+        withWriteLock(balancesLock(), lam () -> () {
+            balances[sender()] = balances[sender()] + amount;
+        });
     }
 
-    // The protected body is a lambda: withLock runs it while the lock is
-    // held, the counterpart of a nonReentrant modifier.
     function withdraw(amount: uint256) public returns (uint256) {
-        return withLock(lam () -> uint256 {
+        return withWriteLock(balancesLock(), lam () -> uint256 {
             require(balances[sender()] >= amount, "insufficient balance");
             balances[sender()] = balances[sender()] - amount;
             return amount;
@@ -22,13 +27,30 @@ contract Vault {
     }
 
     function balanceOf(who: address) public returns (uint256) {
-        return balances[who];
+        return withReadLock(balancesLock(), lam () -> uint256 {
+            return balances[who];
+        });
     }
 
-    // Entering the lock twice in one transaction reverts.
+    // Read locks nest: this takes one and calls the read-locked balanceOf.
+    function totalOf(a: address, b: address) public returns (uint256) {
+        return withReadLock(balancesLock(), lam () -> uint256 {
+            return balanceOf(a) + balanceOf(b);
+        });
+    }
+
+    // Entering the write lock twice in one transaction reverts.
     function reenter() public returns (uint256) {
-        return withLock(lam () -> uint256 {
+        return withWriteLock(balancesLock(), lam () -> uint256 {
             return withdraw(uint256(0));
+        });
+    }
+
+    // Reading while a write is in progress reverts: the read-only
+    // reentrancy case.
+    function readDuringWrite() public returns (uint256) {
+        return withWriteLock(balancesLock(), lam () -> uint256 {
+            return balanceOf(sender());
         });
     }
 }

@@ -146,7 +146,7 @@ export const examples: PlaygroundExample[] = [
   {
     id: "reentrancy",
     name: "Reentrancy",
-    description: "A reentrancy guard as a wrapper function: the protected body is a lambda that runs while the transient lock is held.",
+    description: "Read and write locks as wrapper functions: protected bodies are lambdas, and reads are guarded against read-only reentrancy.",
     entry: "Vault.sol",
     files: [
       { path: "Vault.sol", content: reentrancyVault },
