@@ -38,14 +38,26 @@ export interface CompileResult {
   yul: string | null;
   sonatina: string | null;
   abi: string | null;
+  execution: ExecutionResult | null;
 }
 
 export interface CompileRequest {
   id: number;
-  kind: "compile";
+  kind: "compile" | "run";
   input: CompileInput;
 }
 
 export type CompileResponse =
   | { id: number; kind: "result"; result: CompileResult }
   | { id: number; kind: "error"; message: string };
+
+export interface ExecutionResult {
+  status: "success" | "revert" | "halt" | "error";
+  phase: "prepare" | "deploy" | "call";
+  returnData: string;
+  returnWord: string | null;
+  gasUsed: number;
+  deploymentGasUsed: number | null;
+  gasLimit: number;
+  message: string | null;
+}

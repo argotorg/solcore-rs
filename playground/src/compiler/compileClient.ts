@@ -23,6 +23,14 @@ export class CompileClient {
   }
 
   compile(input: CompileInput): Promise<CompileResult> {
+    return this.request("compile", input);
+  }
+
+  run(input: CompileInput): Promise<CompileResult> {
+    return this.request("run", input);
+  }
+
+  private request(kind: CompileRequest["kind"], input: CompileInput): Promise<CompileResult> {
     const id = this.nextId;
     this.nextId += 1;
     this.latestId = id;
@@ -36,7 +44,7 @@ export class CompileClient {
 
     const request: CompileRequest = {
       id,
-      kind: "compile",
+      kind,
       input,
     };
 

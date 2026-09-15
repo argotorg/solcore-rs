@@ -726,3 +726,8 @@
     font-size: var(--font-size-badge);
   }
 }
+
+.button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}

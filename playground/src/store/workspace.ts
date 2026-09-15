@@ -16,7 +16,7 @@ export interface WorkspaceFile {
   content: string;
 }
 
-export type OutputTab = "hull" | "yul" | "sonatina" | "abi" | "problems";
+export type OutputTab = "hull" | "yul" | "sonatina" | "abi" | "execution" | "problems";
 export type ThemeMode = "light" | "dark";
 
 interface WorkspaceOptions {
@@ -33,6 +33,7 @@ export interface WorkspaceState {
   activePath: string;
   exampleId: string;
   compiling: boolean;
+  running: boolean;
   compileStartedAt: number | null;
   lastCompileDurationMs: number | null;
   workspaceVersion: number;
@@ -52,6 +53,7 @@ export interface WorkspaceState {
   loadExample: (id: string) => void;
   resetWorkspace: () => void;
   compileNow: () => Promise<void>;
+  runNow: () => Promise<void>;
 }
 
 const WORKSPACE_STORAGE_KEY = "solcore-playground.workspace.v1";
@@ -273,6 +275,7 @@ function diagnosticResult(message: string): CompileResult {
     yul: null,
     sonatina: null,
     abi: null,
+    execution: null,
   };
 }
 
@@ -303,6 +306,7 @@ applyTheme(initialTheme);
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   ...initialWorkspace,
   compiling: false,
+  running: false,
   compileStartedAt: null,
   lastCompileDurationMs: null,
   workspaceVersion: 0,
@@ -466,9 +470,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   loadExample(id) {
+    compileRun += 1;
     const nextWorkspace = workspaceFromExample(getExample(id));
     set((state) => ({
       ...nextWorkspace,
+      compiling: false,
+      running: false,
+      compileStartedAt: null,
       result: null,
       lastCompileDurationMs: null,
       lastCompiledVersion: null,
@@ -480,9 +488,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   resetWorkspace() {
+    compileRun += 1;
     const nextWorkspace = workspaceFromExample(defaultExample);
     set((state) => ({
       ...nextWorkspace,
+      compiling: false,
+      running: false,
+      compileStartedAt: null,
       result: null,
       lastCompileDurationMs: null,
       lastCompiledVersion: null,
@@ -493,59 +505,73 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     persistWorkspace(get());
   },
 
-  async compileNow() {
-    const runId = compileRun + 1;
-    compileRun = runId;
-
-    const state = get();
-    const compileVersion = state.workspaceVersion;
-    const startedAt = nowMs();
-    const input: CompileInput = {
-      files: state.order
-        .map((path) => state.files[path])
-        .filter((file): file is WorkspaceFile => Boolean(file))
-        .map((file) => ({
-          path: file.path,
-          content: file.content,
-        })),
-      entry: state.entry,
-      options: state.options,
-    };
-
-    set({ compiling: true, compileStartedAt: startedAt });
-
-    try {
-      const result = await compileClient.compile(input);
-      const durationMs = nowMs() - startedAt;
-      if (runId === compileRun) {
-        set({
-          result,
-          compiling: false,
-          compileStartedAt: null,
-          lastCompileDurationMs: durationMs,
-          lastCompiledVersion: compileVersion,
-          outputTab: result.success ? get().outputTab : "problems",
-        });
-      }
-    } catch (error: unknown) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
-      }
-
-      if (runId === compileRun) {
-        const durationMs = nowMs() - startedAt;
-        set({
-          result: diagnosticResult(error instanceof Error ? error.message : "Compile failed"),
-          compiling: false,
-          compileStartedAt: null,
-          lastCompileDurationMs: durationMs,
-          lastCompiledVersion: compileVersion,
-          outputTab: "problems",
-        });
-      }
-    }
-  },
+  compileNow: () => executeWorkspace(false),
+  runNow: () => executeWorkspace(true),
 }));
+
+async function executeWorkspace(run: boolean): Promise<void> {
+  const get = useWorkspaceStore.getState;
+  const set = useWorkspaceStore.setState;
+  const runId = compileRun + 1;
+  compileRun = runId;
+
+  const state = get();
+  const compileVersion = state.workspaceVersion;
+  const startedAt = nowMs();
+  const input: CompileInput = {
+    files: state.order
+      .map((path) => state.files[path])
+      .filter((file): file is WorkspaceFile => Boolean(file))
+      .map((file) => ({
+        path: file.path,
+        content: file.content,
+      })),
+    entry: state.entry,
+    options: state.options,
+  };
+
+  set({
+    compiling: true,
+    running: run,
+    compileStartedAt: startedAt,
+    ...(run && state.result ? { result: { ...state.result, execution: null } } : {}),
+  });
+
+  try {
+    const result = await (run ? compileClient.run(input) : compileClient.compile(input));
+    const durationMs = nowMs() - startedAt;
+    if (runId === compileRun) {
+      set({
+        result,
+        compiling: false,
+        running: false,
+        compileStartedAt: null,
+        lastCompileDurationMs: durationMs,
+        lastCompiledVersion: compileVersion,
+        outputTab: compileVersion !== get().workspaceVersion
+          ? get().outputTab
+          : result.success ? (run ? "execution" : get().outputTab) : "problems",
+      });
+    }
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return;
+    }
+
+    if (runId === compileRun) {
+      const durationMs = nowMs() - startedAt;
+      set({
+        result: diagnosticResult(error instanceof Error ? error.message : "Compile failed"),
+        compiling: false,
+        running: false,
+        compileStartedAt: null,
+        lastCompileDurationMs: durationMs,
+        lastCompiledVersion: compileVersion,
+        outputTab: compileVersion === get().workspaceVersion ? "problems" : get().outputTab,
+      });
+    }
+  }
+}
 
 if (sharedExample) {
   // The shared example replaces any locally stored workspace: back the previous

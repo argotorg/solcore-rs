@@ -3,6 +3,7 @@ import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { useCallback, useMemo } from "react";
+import { formatExecution } from "../compiler/executionOutput.js";
 import type { Diag, Pos, Severity } from "../compiler/types";
 import { monacoThemeFor, registerSolcoreLanguage } from "../monaco/solc-language";
 import { requestEditorNavigation } from "./editorNavigation";
@@ -60,6 +61,7 @@ function outputText(
 }
 
 export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
+  const running = useWorkspaceStore((state) => state.running);
   const rawResult = useWorkspaceStore((state) => state.result);
   const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
   const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
@@ -159,6 +161,15 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
         <button
           type="button"
           role="tab"
+          aria-selected={outputTab === "execution"}
+          className={`output-tab ${outputTab === "execution" ? "is-active" : ""}`}
+          onClick={() => setOutputTab("execution")}
+        >
+          Execution
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={outputTab === "problems"}
           id="output-tab-problems"
           aria-controls="output-panel"
@@ -225,7 +236,7 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
             language={outputTab === "abi" ? "json" : "plaintext"}
             options={{ ...editorOptions, ariaLabel: `${outputTab} output` }}
             theme={monacoThemeFor(theme)}
-            value={renderedOutput}
+            value={outputTab === "execution" ? (running ? "" : formatExecution(rawResult?.execution ?? null)) : renderedOutput}
           />
         )}
       </div>

@@ -1,5 +1,7 @@
 //! Browser-facing `wasm-bindgen` API for compiling in-memory Solcore sources.
 
+mod execution;
+
 use std::{collections::BTreeMap, path::Path};
 
 use nameres::Db as _;
@@ -31,6 +33,16 @@ pub fn compile(input: JsValue) -> Result<JsValue, JsValue> {
     result
         .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
         .map_err(|err| JsValue::from_str(&format!("failed to serialize compile result: {err}")))
+}
+
+/// Compiles and executes a no-argument main with revm.
+#[wasm_bindgen]
+pub fn run(input: JsValue) -> Result<JsValue, JsValue> {
+    let input = serde_wasm_bindgen::from_value(input)
+        .map_err(|err| JsValue::from_str(&format!("invalid run input: {err}")))?;
+    run_impl(input)
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+        .map_err(|err| JsValue::from_str(&format!("failed to serialize run result: {err}")))
 }
 
 /// Returns the embedded standard library files as `{ path, content }` objects.
@@ -91,6 +103,7 @@ pub(crate) struct CompileResult {
     pub(crate) yul: Option<String>,
     pub(crate) sonatina: Option<String>,
     pub(crate) abi: Option<String>,
+    pub(crate) execution: Option<execution::RunResult>,
 }
 
 #[derive(Serialize)]
@@ -136,6 +149,14 @@ struct FileOutput {
 
 /// Compiles already-deserialized input. Tests use this native helper directly.
 pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
+    compile_workspace(input, false)
+}
+
+pub(crate) fn run_impl(input: CompileInput) -> CompileResult {
+    compile_workspace(input, true)
+}
+
+fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
     if Path::new(&input.entry)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -154,6 +175,7 @@ pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
             yul: None,
             sonatina: None,
             abi: None,
+            execution: None,
         };
     }
 
@@ -182,47 +204,43 @@ pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
         ));
     }
 
-    let mut hull = None;
-    let mut yul = None;
-    let mut sonatina = None;
-    let mut abi = None;
-    let wants_backend = input.options.emit_hull
+    let wants_backend = execute
+        || input.options.emit_hull
         || input.options.emit_yul
         || input.options.emit_sonatina
         || input.options.emit_abi;
-
-    if wants_backend && !diagnostics.iter().any(Diag::is_error) {
-        run_backend(
-            &workspace,
-            &input.options,
-            &mut diagnostics,
-            &mut hull,
-            &mut yul,
-            &mut sonatina,
-            &mut abi,
-        );
-    }
-
-    let success = !diagnostics.iter().any(Diag::is_error);
-    CompileResult {
-        success,
+    let mut result = CompileResult {
+        success: false,
         diagnostics,
-        hull,
-        yul,
-        sonatina,
-        abi,
+        hull: None,
+        yul: None,
+        sonatina: None,
+        abi: None,
+        execution: None,
+    };
+
+    if wants_backend && !result.diagnostics.iter().any(Diag::is_error) {
+        run_backend(&workspace, &input.options, &mut result, execute);
     }
+    result.success = !result.diagnostics.iter().any(Diag::is_error);
+    result
 }
 
 fn run_backend(
     workspace: &Workspace,
     options: &Options,
-    diagnostics: &mut Vec<Diag>,
-    hull_text: &mut Option<String>,
-    yul_text: &mut Option<String>,
-    sonatina_text: &mut Option<String>,
-    abi_text: &mut Option<String>,
+    result: &mut CompileResult,
+    execute: bool,
 ) {
+    let CompileResult {
+        diagnostics,
+        hull: hull_text,
+        yul: yul_text,
+        sonatina: sonatina_text,
+        abi: abi_text,
+        execution,
+        ..
+    } = result;
     let db = workspace.db();
     let Some(entry) = workspace.entry_module() else {
         diagnostics.push(message_diag(
@@ -255,7 +273,7 @@ fn run_backend(
         }
     }
 
-    if options.emit_hull || options.emit_yul || options.emit_sonatina {
+    if execute || options.emit_hull || options.emit_yul || options.emit_sonatina {
         let compiler::CheckedHull {
             program,
             diagnostics: backend_diagnostics,
@@ -297,6 +315,9 @@ fn run_backend(
                     format!("Sonatina translation failed:\n  {err}"),
                 )),
             }
+        }
+        if execute && !diagnostics.iter().any(Diag::is_error) {
+            *execution = Some(execution::execute(workspace, &program));
         }
     }
 }

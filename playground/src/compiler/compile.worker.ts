@@ -1,4 +1,4 @@
-import { compile, initializeCompiler } from "./runtime";
+import { compile, initializeCompiler, run } from "./runtime";
 import type { CompileRequest, CompileResponse } from "./types";
 
 const workerScope = self as unknown as {
@@ -12,7 +12,7 @@ const workerScope = self as unknown as {
 workerScope.addEventListener("message", (event: MessageEvent<CompileRequest>) => {
   const request = event.data;
 
-  if (request.kind !== "compile") {
+  if (request.kind !== "compile" && request.kind !== "run") {
     return;
   }
 
@@ -22,7 +22,7 @@ workerScope.addEventListener("message", (event: MessageEvent<CompileRequest>) =>
 async function handleCompile(request: CompileRequest): Promise<void> {
   try {
     await initializeCompiler();
-    const result = compile(request.input);
+    const result = request.kind === "run" ? run(request.input) : compile(request.input);
     const response: CompileResponse = {
       id: request.id,
       kind: "result",

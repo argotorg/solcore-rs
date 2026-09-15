@@ -2,12 +2,30 @@
 
 A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The compile path runs in a Web Worker and calls the generated `solcore-wasm` package from `../crates/wasm/pkg`. Editor language features run in a separate LSP Worker backed by `solcore-lsp` from `../crates/lsp/pkg`.
 
+## Run a program
+
+Select **Hello contract** and click **Run** to execute it in the browser. The
+**Execution** tab shows the return word, raw return data, gas used, and any revert
+or halt. revm runs inside the existing compiler WASM worker.
+
+Run supports a no-argument `main` returning one word, either as a plain function
+or the public runtime entry of a single contract with a no-argument constructor.
+Each run uses a new in-memory database. Constructor storage is available to `main`
+within that run. Execution output stays visible during edits and clears when the
+next run starts.
+
+The runner uses Osaka rules, a gas limit of 1,000,000 per transaction, and a 16 MiB
+EVM memory limit. Contract `main` receives empty calldata. A wrapper returns its
+word to the playground; the normal Compile artifacts are unchanged.
+
 ## Keyboard navigation
 
 Use Left/Right, Home, and End to move between source or output tabs. In the
 editor, Ctrl+M (Ctrl+Shift+M on macOS) toggles whether Tab indents or moves focus.
 
 ## Development
+
+Use wasm-pack 0.15.0, as pinned in CI, for the custom WASM build profile.
 
 On a fresh checkout, generate the local wasm packages once before installing JavaScript dependencies:
 
@@ -69,6 +87,9 @@ npm run build
 
 The build script rebuilds both wasm packages, runs `tsc --noEmit`, then runs `vite build`.
 
+After building, `npm run test:wasm` checks execution through the generated WASM
+package. `npm run test:unit` checks the JavaScript helpers and workspace updates.
+
 ## Deploy
 
 Deploy the generated `dist/` directory with static hosting that serves `.wasm` files. Vite emits the compiler and LSP wasm files as assets and rewrites the worker imports to those built assets.
@@ -108,17 +129,17 @@ is instead tuned for native compiler throughput. A final `wasm-opt -Oz` pass fro
 build:wasm` applies it automatically after `npm ci`; a missing optimizer is a build error rather
 than silently changing the bundle contents. `vite build` reports the current raw and gzipped asset
 sizes. The Playground imports `init`,
-`compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted
+`compile`, `run`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted
 `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The LSP worker imports
 `SolcoreLsp` from `solcore-lsp`; `src/languageServer/lsp.worker.ts` passes Vite's emitted
 `solcore_lsp_bg.wasm?url` asset to `init()`. The shared compiler API shape lives in
 `src/compiler/types.ts` and should stay the single source of truth for the Playground compile protocol.
 
-The compile worker protocol is intentionally Playground-specific batch compile messaging:
+The compiler worker accepts compile and run messages:
 
 ```ts
 // request
-{ id: number; kind: "compile"; input: CompileInput }
+{ id: number; kind: "compile" | "run"; input: CompileInput }
 
 interface CompileInput {
   files: Array<{ path: string; content: string }>;
@@ -142,8 +163,12 @@ interface CompileResult {
   yul: string | null;
   sonatina: string | null;
   abi: string | null;
+  execution: ExecutionResult | null;
 }
 ```
+
+`success` describes compilation; `execution.status` describes execution.
+`execution` is null for Compile requests and compilation errors.
 
 The Playground requests Hull, Yul, Sonatina IR, and contract ABI JSON in one compile and exposes each
 textual output in its own tab. Backend fields remain `null` when an output was not requested,

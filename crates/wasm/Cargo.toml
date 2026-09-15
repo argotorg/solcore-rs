@@ -20,6 +20,12 @@ nameres = { workspace = true }
 hull = { path = "../hull", package = "solcore-hull" }
 yul = { path = "../yul", package = "solcore-yul" }
 sonatina = { path = "../sonatina", package = "solcore-sonatina" }
+sonatina-codegen = { workspace = true }
+revm = { version = "43.0.2", default-features = false, features = ["std", "sha3-keccak", "memory_limit"] }
+
+# Cryptographic dependencies obtain entropy through the browser Web Crypto API.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 
 # wasm-pack's bundled wasm-opt is too old for reference-types (multiple tables).
 # Size is handled by the workspace `[profile.wasm-release]` (strip + opt-level=z + lto);
