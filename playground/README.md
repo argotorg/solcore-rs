@@ -95,33 +95,30 @@ component they change. Monaco's code font sizes are configured in the editor com
 
 ## Sharing examples
 
-Every bundled example has a stable id, and the Playground reads it from an `example` query
-parameter, so a link like this opens that example directly:
+Every bundled example has a hash route, for example:
 
 ```
-https://<host>/?example=trait
+https://<host>/#/examples/trait
 ```
 
-The link button next to the example picker copies the link for the currently selected example.
-Ids live in `src/examples/index.ts`; an unknown or missing id is ignored and the Playground opens
-the workspace it would otherwise restore.
+The example picker updates the URL, and browser Back and Forward navigate between examples.
+The link button copies the selected example's URL. Links also work under deployment subpaths.
+Existing `?example=trait` links are accepted and converted to hash routes.
 
-A shared link loads the example as it ships with that deployment — it does not carry edited code.
-Opening one replaces the locally stored workspace, and the parameter is then dropped from the
-address bar so a later reload keeps whatever the visitor edited. The previous workspace payload
-is kept under the `solcore-playground.workspace.v1.backup` localStorage key, so accidentally
-following a link does not destroy saved work beyond recovery; to restore it, run this in the
-browser console:
+Links identify bundled examples and do not contain edited code. Reloading a route for the
+currently saved example preserves local edits. Opening a different example replaces the saved
+workspace. On page load, the previous workspace is backed up under
+`solcore-playground.workspace.v1.backup` in localStorage. To restore it in the browser console:
 
 ```js
 localStorage.setItem(
   "solcore-playground.workspace.v1",
   localStorage.getItem("solcore-playground.workspace.v1.backup"),
 );
-location.reload();
+location.href = location.pathname;
 ```
 
-An unknown id keeps the parameter in the address bar so a mistyped link stays diagnosable.
+Unknown or malformed routes leave the workspace and URL unchanged.
 
 ## Build
 

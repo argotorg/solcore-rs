@@ -10,7 +10,7 @@ import {
   getExample,
   type PlaygroundExample,
 } from "../examples";
-import { readSharedExampleId, stripExampleParam } from "../share/exampleLink";
+import { readExampleRoute, readSharedExampleId } from "../share/exampleLink";
 
 export interface WorkspaceFile {
   path: string;
@@ -326,12 +326,17 @@ function readSharedExample(): PlaygroundExample | null {
     return null;
   }
 
-  const sharedId = readSharedExampleId(window.location.search);
+  const sharedId = window.location.hash
+    ? readExampleRoute(window.location.hash)
+    : readSharedExampleId(window.location.search);
   return sharedId ? (findExample(sharedId) ?? null) : null;
 }
 
 const sharedExample = readSharedExample();
-const storedWorkspace = sharedExample ? null : readStoredWorkspace();
+const savedWorkspace = readStoredWorkspace();
+const storedWorkspace = sharedExample && sharedExample.id !== savedWorkspace?.exampleId
+  ? null
+  : savedWorkspace;
 const initialWorkspace = storedWorkspace
   ? {
       files: createFileMap(storedWorkspace.files),
@@ -795,18 +800,9 @@ async function refreshWatches(): Promise<void> {
   }
 }
 
-if (sharedExample) {
-  // The shared example replaces any locally stored workspace: back the previous
-  // payload up, persist the example, and drop the parameter so a later reload
-  // keeps the visitor's edits instead of resetting the example. An unknown id
-  // deliberately keeps the parameter in the address bar, so a mistyped link
-  // stays diagnosable from a screenshot.
+if (sharedExample && !storedWorkspace) {
   backupStoredWorkspace();
   persistWorkspace(useWorkspaceStore.getState());
-
-  if (isBrowser()) {
-    window.history.replaceState(null, "", stripExampleParam(window.location.href));
-  }
 }
 
 export { examples };

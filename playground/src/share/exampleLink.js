@@ -2,7 +2,7 @@
  * Shareable example links.
  *
  * A link carries only the example id, so it always resolves against the
- * examples bundled with the deployed Playground: `https://host/?example=trait`.
+ * examples bundled with the deployed Playground: `https://host/#/examples/trait`.
  */
 
 export const EXAMPLE_PARAM = "example";
@@ -25,18 +25,18 @@ export function readSharedExampleId(search) {
 /** Builds the shareable link for an example id, based on the current href. */
 export function buildExampleLink(href, id) {
   const url = new URL(href);
-  url.hash = "";
-  url.searchParams.set(EXAMPLE_PARAM, id);
+  url.searchParams.delete(EXAMPLE_PARAM);
+  url.hash = `/examples/${encodeURIComponent(id)}`;
   return url.toString();
 }
 
-/** Returns the href without the example parameter. */
-export function stripExampleParam(href) {
-  const url = new URL(href);
-  if (!url.searchParams.has(EXAMPLE_PARAM)) {
-    return href;
+/** Reads the single example route; malformed and unrelated hashes are ignored. */
+export function readExampleRoute(hash) {
+  const match = /^#\/examples\/([^/]+)$/.exec(hash);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
   }
-
-  url.searchParams.delete(EXAMPLE_PARAM);
-  return url.toString();
 }

@@ -7,6 +7,8 @@ import { ResizeHandle } from "./components/ResizeHandle";
 import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 
+import { useExampleRouter } from "./share/useExampleRouter";
+
 // Below this main-area width, the editor and output panes can no longer sit
 // side by side without either squeezing the editor unreasonably narrow or
 // letting the output tab strip (Hull/Yul/Sonatina IR/ABI/Execution/Problems) overflow.
@@ -62,6 +64,7 @@ function useElementWidth(): [RefObject<HTMLDivElement>, number] {
 }
 
 export function App(): JSX.Element {
+  useExampleRouter();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [outputOpen, setOutputOpen] = useState(true);
   // The sidebar's own auto-collapse still just follows the window - it isn't
