@@ -10,31 +10,32 @@ export { withWriteLock, withReadLock };
 // the end-of-transaction zeroing is only a backstop, since one
 // transaction can bundle several logical operations.
 //
-// Each lock id owns two slots: a write flag and a read counter.
-function writeSlot(lock: uint256) returns (word) {
+// Each lock id owns one transient word: bit zero is the write flag and
+// every active read adds two. The word is 0 when free, 1 during a write,
+// and a larger even number while only reads are running.
+function slotFor(lock: uint256) returns (word) {
     return hash2(Typedef.rep(erc7201("vault.reentrancy")), Typedef.rep(lock));
-}
-
-function readSlot(lock: uint256) returns (word) {
-    return writeSlot(lock) + 1;
 }
 
 // Runs the body while holding the write lock: until it finishes, no
 // other entry through this lock id is allowed, read or write.
 function withWriteLock<r>(lock: uint256, body: function() returns (r)) returns (r) {
-    require(tload(writeSlot(lock)) == 0 && tload(readSlot(lock)) == 0, "already locked");
-    tstore(writeSlot(lock), 1);
+    let slot = slotFor(lock);
+    require(tload(slot) == 0, "already locked");
+    tstore(slot, 1);
     let result = body();
-    tstore(writeSlot(lock), 0);
+    tstore(slot, 0);
     return result;
 }
 
 // Runs the body while holding a read lock: writes are blocked, further
 // reads may nest. This is the guard against read-only reentrancy.
 function withReadLock<r>(lock: uint256, body: function() returns (r)) returns (r) {
-    require(tload(writeSlot(lock)) == 0, "write in progress");
-    tstore(readSlot(lock), tload(readSlot(lock)) + 1);
+    let slot = slotFor(lock);
+    let state = tload(slot);
+    require(state % 2 == 0, "write in progress");
+    tstore(slot, state + 2);
     let result = body();
-    tstore(readSlot(lock), tload(readSlot(lock)) - 1);
+    tstore(slot, tload(slot) - 2);
     return result;
 }

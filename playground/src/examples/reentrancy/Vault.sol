@@ -3,9 +3,10 @@ import * from std.dispatch;
 import {sender} from context;
 import {withWriteLock, withReadLock} from reentrancy;
 
-// The lock id for the balances state; other state would get its own id.
+// The lock id for the balances state, hash-derived so copies of this
+// pattern get distinct ids. Other state would get its own id.
 function balancesLock() returns (uint256) {
-    return uint256(1);
+    return uint256(Typedef.rep(erc7201("vault.balancesLock")));
 }
 
 // The vault tracks credits only; token custody is omitted.
