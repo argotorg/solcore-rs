@@ -5,7 +5,7 @@ A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The
 ## Run a program
 
 Select **Hello contract** and click **Run** to execute it in the browser. The
-**Execution** tab shows the return word, raw return data, gas used, and any revert
+**Run** tab shows the return word, raw return data, gas used, and any revert
 or halt. revm runs inside the existing compiler WASM worker.
 
 Run supports a no-argument `main` returning one word, either as a plain function
@@ -32,7 +32,8 @@ function add(a: uint256, b: uint256) public returns (uint256) {
 
 Click **Run test** above a comment or **Run all tests** in the toolbar. Tests are
 discovered in the entry file. Results appear beside their comments and in the
-Execution tab. Edits retain inline results, marked outdated until the next run.
+Run tab. Expand a test to inspect its expected and actual values, gas, or source
+location. Edits retain results, marked outdated until the next run.
 With no test comments, Run executes `main` as described above.
 
 Tests use the contract's normal selector dispatcher, so the contract must not

@@ -3,7 +3,7 @@ import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
 import { useCallback, useMemo } from "react";
-import { formatExecution } from "../compiler/executionOutput.js";
+import { RunPane } from "./RunPane";
 import type { Diag, Pos, Severity } from "../compiler/types";
 import { monacoThemeFor, registerSolcoreLanguage } from "../monaco/solc-language";
 import { requestEditorNavigation } from "./editorNavigation";
@@ -61,7 +61,6 @@ function outputText(
 }
 
 export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
-  const running = useWorkspaceStore((state) => state.running);
   const rawResult = useWorkspaceStore((state) => state.result);
   const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
   const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
@@ -165,7 +164,7 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
           className={`output-tab ${outputTab === "execution" ? "is-active" : ""}`}
           onClick={() => setOutputTab("execution")}
         >
-          Execution
+          Run
         </button>
         <button
           type="button"
@@ -229,6 +228,8 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
               })
             )}
           </div>
+        ) : outputTab === "execution" ? (
+          <RunPane />
         ) : (
           <Editor
             beforeMount={beforeMount}
@@ -236,7 +237,7 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
             language={outputTab === "abi" ? "json" : "plaintext"}
             options={{ ...editorOptions, ariaLabel: `${outputTab} output` }}
             theme={monacoThemeFor(theme)}
-            value={outputTab === "execution" ? (running ? "" : formatExecution(rawResult?.execution ?? null, rawResult?.tests ?? [])) : renderedOutput}
+            value={renderedOutput}
           />
         )}
       </div>

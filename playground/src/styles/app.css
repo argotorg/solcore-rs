@@ -732,6 +732,34 @@
   opacity: 0.65;
 }
 
-.test-result--passed { color: var(--success); }
-.test-result--failed { color: var(--error); }
-.test-result--outdated { color: var(--text-muted); font-style: italic; }
+.monaco-editor .test-result--passed { color: var(--success); }
+.monaco-editor .test-result--failed { color: var(--error); }
+.monaco-editor .test-result--outdated { color: var(--text-muted); font-style: italic; }
+
+.run-pane {
+  height: 100%;
+  overflow: auto;
+  padding: var(--space-4);
+  color: var(--text-primary);
+}
+.run-pane__toolbar, .run-test__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.run-pane__toolbar { margin-bottom: var(--space-4); }
+.run-pane__toolbar > span, .run-test__outcome { color: var(--text-secondary); font-size: 12px; }
+.run-pane__error { color: var(--error); overflow-wrap: anywhere; }
+.run-pane__output { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.6 var(--font-mono); }
+.run-test { border-top: 1px solid var(--border-subtle); }
+.run-test > summary { cursor: pointer; padding: var(--space-3) 0; line-height: 1.7; overflow-wrap: anywhere; }
+.run-test__status { padding: 0 var(--space-2); }
+.run-test__status--passed { color: var(--success); }
+.run-test__status--failed, .run-test__status--error { color: var(--error); }
+.run-test__outcome { margin-left: var(--space-2); }
+.run-test__details { padding: 0 var(--space-3) var(--space-4); }
+.run-test__details dl { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2) var(--space-3); }
+.run-test__details dt { color: var(--text-secondary); }
+.run-test__details dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.run-test__source { border: 0; padding: 0; background: none; color: var(--accent); cursor: pointer; text-decoration: underline; overflow-wrap: anywhere; }
