@@ -88,3 +88,21 @@ test('browser WASM replays sends for an individual test and renders booleans', a
   assert.equal(result.tests[1].actual, 'true');
   assert.equal(result.tests[1].expected, 'true');
 });
+
+test('browser WASM shares a test deployment with editable manual calls', async () => {
+  const content = await readFile(new URL('../src/examples/std-usage/Calculator.sol', import.meta.url), 'utf8');
+  const input = { files: [{ path: 'Calculator.sol', content }], entry: 'Calculator.sol', options };
+  const discovered = compile(input);
+  const testcase = discovered.tests[0];
+  assert.deepEqual(JSON.parse(testcase.invocation.arguments), ['20', '22']);
+  const tested = run({ ...input, testId: testcase.id });
+  assert.equal(tested.tests[0].status, 'passed');
+  assert.equal(tested.sandbox.contract, testcase.contract);
+  const manual = run({ ...input, manual: {
+    contract: testcase.contract, ...testcase.invocation,
+    constructorArguments: '[]', arguments: '[30,12]',
+  } });
+  assert.equal(manual.execution.status, 'success');
+  assert.equal(manual.execution.decoded, '42');
+  assert.equal(manual.sandbox.address, tested.sandbox.address);
+});

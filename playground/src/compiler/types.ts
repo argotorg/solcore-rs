@@ -2,6 +2,8 @@ export interface CompileInput {
   files: Array<{ path: string; content: string }>;
   entry: string;
   testId?: string;
+  manual?: ManualCall;
+  sandboxEpoch?: number;
   options: {
     emitHull: boolean;
     emitYul: boolean;
@@ -41,6 +43,8 @@ export interface CompileResult {
   abi: string | null;
   execution: ExecutionResult | null;
   tests: TestCase[];
+  contracts: ContractInterface[];
+  sandbox: { contract: string; address: string } | null;
 }
 
 export interface CompileRequest {
@@ -58,10 +62,26 @@ export interface ExecutionResult {
   phase: "prepare" | "deploy" | "call";
   returnData: string;
   returnWord: string | null;
+  decoded?: string | null;
   gasUsed: number;
   deploymentGasUsed: number | null;
   gasLimit: number;
   message: string | null;
+}
+
+export interface ContractInterface {
+  name: string;
+  constructorInputs: string[];
+  methods: Array<{ signature: string; inputs: string[] }>;
+}
+
+export interface ManualCall {
+  contract: string;
+  signature: string;
+  arguments: string;
+  constructorArguments: string;
+  simulate: boolean;
+  reset?: boolean;
 }
 
 export interface TestCase {
@@ -70,6 +90,7 @@ export interface TestCase {
   line: number;
   contract: string;
   label: string;
+  invocation: { signature: string; arguments: string; simulate: boolean } | null;
   status: "ready" | "passed" | "failed" | "error";
   message: string | null;
   actual: string | null;

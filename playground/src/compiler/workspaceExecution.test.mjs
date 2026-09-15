@@ -118,3 +118,44 @@ test('inline test results survive edits and Compile, then clear on Run', async (
   pending.shift().resolve(result);
   await operation;
 });
+
+test('test play fills the manual controls before running and edits detach the assertion', async () => {
+  store.getState().loadExample('std-usage');
+  const testcase = { id: 'Calculator.sol:20', contract: 'Calculator', invocation: {
+    signature: 'viaOperator(uint256,uint256)', arguments: '["20","22"]', simulate: true,
+  } };
+  store.setState({ testCases: [testcase] });
+  const operation = store.getState().runNow(testcase.id);
+  assert.equal(store.getState().outputTab, 'execution');
+  assert.equal(store.getState().selectedTestId, testcase.id);
+  assert.deepEqual(store.getState().callDraft, { contract: 'Calculator', constructorArguments: '[]', ...testcase.invocation });
+  pending.shift().resolve({ ...result, tests: [testcase], sandbox: { contract: 'Calculator', address: '0x1234' } });
+  await operation;
+  store.getState().setCallDraft({ arguments: '[3,4]' });
+  assert.equal(store.getState().selectedTestId, null);
+  assert.equal(store.getState().testResults.length, 1);
+  const manual = store.getState().runCall();
+  const request = pending.shift();
+  assert.equal(request.input.manual.arguments, '[3,4]');
+  assert.equal(request.input.testId, undefined);
+  assert.deepEqual(store.getState().testResults, []);
+  request.resolve({ ...result, execution: { ...execution, decoded: '7' } });
+  await manual;
+  assert.equal(store.getState().manualResult.decoded, '7');
+  const compile = store.getState().compileNow();
+  pending.shift().resolve({ ...result, execution: null });
+  await compile;
+  assert.equal(store.getState().manualResult.decoded, '7');
+  const epoch = request.input.sandboxEpoch;
+  const content = store.getState().files['Calculator.sol'].content;
+  store.getState().setContent('Calculator.sol', content + '\n');
+  store.getState().setContent('Calculator.sol', content);
+  store.getState().resetSandbox();
+  assert.equal(store.getState().manualResult.decoded, '7');
+  const rerun = store.getState().runCall();
+  const next = pending.shift();
+  assert.ok(next.input.sandboxEpoch > epoch);
+  assert.equal(store.getState().manualResult, null);
+  next.resolve(result);
+  await rerun;
+});

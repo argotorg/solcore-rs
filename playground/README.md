@@ -34,7 +34,8 @@ Click **Run test** above a comment or **Run all tests** in the toolbar. Tests ar
 discovered in the entry file. Results appear beside their comments and in the
 Run tab. Expand a test to inspect its expected and actual values, gas, or source
 location. Edits retain results, marked outdated until the next run.
-With no test comments, Run executes `main` as described above.
+Playing a test also fills the Run controls with its function, arguments, and
+simulation mode. Editing those controls switches to a manual call.
 
 Tests use the contract's normal selector dispatcher, so the contract must not
 have an explicit runtime `main`. Constructors currently take no arguments.
@@ -43,10 +44,18 @@ The shared directive parser supports static ABI values and expected reverts.
 unchanged. Tests run in source order against one deployment per contract.
 An individual test replays preceding sends for its contract first.
 
-## Keyboard navigation
+## Call a contract
 
-Use Left/Right, Home, and End to move between source or output tabs. In the
-editor, Ctrl+M (Ctrl+Shift+M on macOS) toggles whether Tab indents or moves focus.
+The Run tab lists public selector functions and accepts arguments as a JSON array.
+Integers may be quoted decimal strings; tuples use nested arrays. The first call
+also deploys the contract, with constructor arguments when required. **Simulate**
+discards that call's changes. Otherwise, state persists for subsequent calls.
+**Reset** or a source change causes the next call to redeploy. Results remain
+visible until another run starts.
+
+After a test, manual calls can inspect or change its deployed contract. Running a
+test again starts a new deployment and replays its setup. With no test comments,
+the toolbar runs the selected function, or `main` when there is no selector interface.
 
 ## Development
 
@@ -229,3 +238,8 @@ monaco.editor.setModelMarkers(model, "solcore-compile", markers);
 ```
 
 LSP diagnostics use Monaco marker owner `"solcore-lsp"` so compile diagnostics and LSP diagnostics can coexist.
+
+## Keyboard navigation
+
+Use Left/Right, Home, and End to move between source or output tabs. In the
+editor, Ctrl+M (Ctrl+Shift+M on macOS) toggles whether Tab indents or moves focus.

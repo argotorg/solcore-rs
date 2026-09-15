@@ -1,23 +1,19 @@
 //! Source-comment tests executed through the contract's ordinary ABI dispatcher.
 
-use crate::execution::{CALLER, GAS_LIMIT, MEMORY_LIMIT, RunResult, RunStatus};
+use crate::execution::{RunResult, RunStatus};
+use crate::sandbox::Sandbox;
 use hir::ast::item::{ContractItem, FuncKind, Item};
 use hir_ty::{AbiParam, AbiType};
 use nameres::Db as _;
 use revm::{
-    Context, ExecuteCommitEvm, ExecuteEvm, MainBuilder, MainContext,
-    context::TxEnv,
-    context_interface::result::{ExecutionResult, Output},
-    database::InMemoryDB,
-    primitives::{Bytes, TxKind, U256, hardfork::SpecId, hex},
-    state::AccountInfo,
+    context_interface::result::ExecutionResult,
+    primitives::{Bytes, U256, hex},
 };
 use serde::Serialize;
 use solcore_test_directives::{
     AbiShape, ResolvedE2eAction, ResolvedE2eCall, ResolvedExpectedOutcome, parse_e2e_directive,
     resolve_e2e_directive,
 };
-use sonatina_codegen::{EvmCompile, OptLevel};
 use vfs::Workspace;
 
 #[derive(Clone, Debug, Serialize)]
@@ -33,10 +29,18 @@ pub(crate) struct TestCase {
     pub actual: Option<String>,
     pub expected: Option<String>,
     pub gas_used: Option<u64>,
+    pub invocation: Option<Invocation>,
     #[serde(skip)]
     pub call: Option<ResolvedE2eCall>,
     #[serde(skip)]
     pub outputs: Vec<AbiShape>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct Invocation {
+    pub signature: String,
+    pub arguments: String,
+    pub simulate: bool,
 }
 
 pub(crate) fn discover(workspace: &Workspace, path: &str) -> Vec<TestCase> {
@@ -100,6 +104,7 @@ pub(crate) fn discover(workspace: &Workspace, path: &str) -> Vec<TestCase> {
                     actual: None,
                     expected: None,
                     gas_used: None,
+                    invocation: None,
                     call: None,
                     outputs: vec![],
                 };
@@ -125,6 +130,21 @@ pub(crate) fn discover(workspace: &Workspace, path: &str) -> Vec<TestCase> {
                                 .find(|m| m.def == function.def_id_value(db))
                         })
                         .ok_or("Tests require a public contract selector method.")?;
+                    test.invocation = Some(Invocation {
+                        signature: method.signature.clone(),
+                        arguments: serde_json::to_string(
+                            &directive
+                                .args
+                                .iter()
+                                .map(crate::sandbox::argument_value)
+                                .collect::<Vec<_>>(),
+                        )
+                        .unwrap(),
+                        simulate: !matches!(
+                            directive.action,
+                            solcore_test_directives::E2eAction::Send
+                        ),
+                    });
                     test.outputs = method.outputs.iter().map(abi_shape).collect();
                     resolve_e2e_directive(
                         method.signature.clone(),
@@ -153,7 +173,7 @@ pub(crate) fn discover(workspace: &Workspace, path: &str) -> Vec<TestCase> {
     tests
 }
 
-fn abi_shape(param: &AbiParam) -> AbiShape {
+pub(crate) fn abi_shape(param: &AbiParam) -> AbiShape {
     match &param.ty {
         AbiType::Uint256 => AbiShape::Word,
         AbiType::Bool => AbiShape::Bool,
@@ -179,7 +199,7 @@ fn display_data(data: &[u8]) -> String {
     }
     format!("0x{}", hex::encode(data))
 }
-fn display_output(data: &[u8], shapes: &[AbiShape]) -> String {
+pub(crate) fn display_output(data: &[u8], shapes: &[AbiShape]) -> String {
     fn decode(data: &mut &[u8], shape: &AbiShape) -> Option<String> {
         if let AbiShape::Unit = shape {
             return Some("()".to_owned());
@@ -239,6 +259,7 @@ pub(crate) fn execute(
     program: &hull::Program<'_>,
     tests: &mut [TestCase],
     selected: Option<&str>,
+    sandbox_key: &str,
 ) -> RunResult {
     if selected.is_some_and(|id| !tests.iter().any(|t| t.id == id)) {
         return RunResult::error(
@@ -258,9 +279,15 @@ pub(crate) fn execute(
             .filter(|(_, t)| t.contract == contract)
             .map(|(i, _)| i)
             .collect::<Vec<_>>();
-        if let Err(message) =
-            execute_contract(workspace, program, tests, &indices, &contract, selected)
-        {
+        if let Err(message) = execute_contract(
+            workspace,
+            program,
+            tests,
+            &indices,
+            &contract,
+            selected,
+            sandbox_key,
+        ) {
             for i in indices {
                 if selected.is_none_or(|id| tests[i].id == id) && tests[i].status == "ready" {
                     tests[i].status = "error";
@@ -291,16 +318,8 @@ fn execute_contract(
     indices: &[usize],
     contract: &str,
     selected: Option<&str>,
+    sandbox_key: &str,
 ) -> Result<(), String> {
-    let mut program = program.clone();
-    program
-        .objects
-        .retain(|o| o.name.as_str() == format!("{contract}Deploy"));
-    program.functions.clear();
-    program.entry_points.clear();
-    if program.objects.len() != 1 {
-        return Err("Could not find the test contract's deploy object.".to_owned());
-    }
     let abis = compiler::collect_contract_abis(
         workspace.db(),
         workspace.entry_module().unwrap(),
@@ -318,56 +337,7 @@ fn execute_contract(
     }) {
         return Err("Tests currently require a constructor with no arguments.".to_owned());
     }
-    let module =
-        sonatina::translate_hull_program(workspace.db(), &program).map_err(|e| e.to_string())?;
-    let artifacts = EvmCompile::new(module)
-        .with_opt_level(OptLevel::O0)
-        .compile()
-        .map_err(|e| format!("{e:?}"))?;
-    let bytecode = artifacts
-        .into_iter()
-        .flat_map(|a| a.sections)
-        .find_map(|(n, s)| (n.0 == "init").then_some(s.bytes))
-        .ok_or("Missing init bytecode.")?;
-    let mut db = InMemoryDB::default();
-    db.insert_account_info(
-        CALLER,
-        AccountInfo::default().with_balance(U256::from(10u64).pow(U256::from(20))),
-    );
-    let mut evm = Context::mainnet()
-        .with_db(db)
-        .modify_cfg_chained(|cfg| {
-            cfg.set_spec_and_mainnet_gas_params(SpecId::OSAKA);
-            cfg.memory_limit = MEMORY_LIMIT;
-        })
-        .modify_block_chained(|block| {
-            block.basefee = 0;
-            block.gas_limit = GAS_LIMIT;
-            block.number = U256::from(1);
-            block.timestamp = U256::from(1);
-        })
-        .build_mainnet();
-    let tx = |kind, data, nonce| {
-        TxEnv::builder()
-            .caller(CALLER)
-            .kind(kind)
-            .data(data)
-            .nonce(nonce)
-            .gas_limit(GAS_LIMIT)
-            .gas_price(0)
-            .build_fill()
-    };
-    let deployment = evm
-        .transact_commit(tx(TxKind::Create, Bytes::from(bytecode), 0))
-        .map_err(|e| e.to_string())?;
-    let address = match deployment {
-        ExecutionResult::Success {
-            output: Output::Create(_, Some(address)),
-            ..
-        } => address,
-        other => return Err(format!("Deployment failed: {other:?}")),
-    };
-    let mut nonce = 1;
+    let mut sandbox = Sandbox::deploy(workspace, program, contract, &[], sandbox_key)?;
     for &i in indices {
         let is_selected = selected.is_none_or(|id| tests[i].id == id);
         let Some(call) = tests[i].call.clone() else {
@@ -383,16 +353,7 @@ fn execute_contract(
         }
         let data =
             hex::decode(call.calldata.trim_start_matches("0x")).map_err(|e| e.to_string())?;
-        let transaction = tx(TxKind::Call(address), Bytes::from(data), nonce);
-        let result = if send {
-            let result = evm
-                .transact_commit(transaction)
-                .map_err(|e| e.to_string())?;
-            nonce += 1;
-            result
-        } else {
-            evm.transact(transaction).map_err(|e| e.to_string())?.result
-        };
+        let result = sandbox.call(Bytes::from(data), send)?;
         let gas = result.tx_gas_used();
         let (passed, actual) = match (&call.action, &result) {
             (ResolvedE2eAction::Send, ExecutionResult::Success { .. }) => {
@@ -434,6 +395,7 @@ fn execute_contract(
             break;
         }
     }
+    sandbox.retain();
     Ok(())
 }
 
@@ -449,6 +411,8 @@ mod tests {
             entry: "main.sol".into(),
             options: Options::default(),
             test_id,
+            manual: None,
+            sandbox_epoch: 0,
         }
     }
     const COUNTER: &str = r#"

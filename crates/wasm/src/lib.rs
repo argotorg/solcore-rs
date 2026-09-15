@@ -1,6 +1,7 @@
 //! Browser-facing `wasm-bindgen` API for compiling in-memory Solcore sources.
 
 mod execution;
+mod sandbox;
 mod test_execution;
 
 use std::{collections::BTreeMap, path::Path};
@@ -77,9 +78,13 @@ pub(crate) struct CompileInput {
     #[serde(default)]
     #[serde(rename = "testId")]
     pub(crate) test_id: Option<String>,
+    #[serde(default)]
+    pub(crate) manual: Option<sandbox::Request>,
+    #[serde(default, rename = "sandboxEpoch")]
+    pub(crate) sandbox_epoch: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub(crate) struct FileInput {
     pub(crate) path: String,
     pub(crate) content: String,
@@ -109,6 +114,8 @@ pub(crate) struct CompileResult {
     pub(crate) abi: Option<String>,
     pub(crate) execution: Option<execution::RunResult>,
     pub(crate) tests: Vec<test_execution::TestCase>,
+    pub(crate) contracts: Vec<sandbox::Contract>,
+    pub(crate) sandbox: Option<sandbox::Info>,
 }
 
 #[derive(Serialize)]
@@ -182,9 +189,13 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
             abi: None,
             execution: None,
             tests: vec![],
+            contracts: vec![],
+            sandbox: None,
         };
     }
 
+    let sandbox_key =
+        serde_json::to_string(&(&input.entry, &input.files, input.sandbox_epoch)).unwrap();
     let mut workspace = Workspace::new();
     workspace.apply_file_changes(
         input
@@ -224,8 +235,13 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
         abi: None,
         execution: None,
         tests: vec![],
+        contracts: vec![],
+        sandbox: None,
     };
 
+    if !result.diagnostics.iter().any(Diag::is_error) {
+        result.contracts = sandbox::discover(&workspace);
+    }
     result.tests = test_execution::discover(&workspace, &input.entry);
     if wants_backend && !result.diagnostics.iter().any(Diag::is_error) {
         run_backend(
@@ -234,7 +250,12 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
             &mut result,
             execute,
             input.test_id.as_deref(),
+            input.manual.as_ref(),
+            &sandbox_key,
         );
+    }
+    if execute {
+        result.sandbox = sandbox::info(&sandbox_key);
     }
     result.success = !result.diagnostics.iter().any(Diag::is_error);
     result
@@ -246,6 +267,8 @@ fn run_backend(
     result: &mut CompileResult,
     execute: bool,
     test_id: Option<&str>,
+    manual: Option<&sandbox::Request>,
+    sandbox_key: &str,
 ) {
     let CompileResult {
         diagnostics,
@@ -333,10 +356,14 @@ fn run_backend(
             }
         }
         if execute && !diagnostics.iter().any(Diag::is_error) {
-            *execution = Some(if tests.is_empty() && test_id.is_none() {
+            *execution = Some(if let Some(request) = manual {
+                sandbox::execute(workspace, &program, request, sandbox_key)
+            } else if tests.is_empty() && test_id.is_none() {
+                sandbox::clear();
                 execution::execute(workspace, &program)
             } else {
-                test_execution::execute(workspace, &program, tests, test_id)
+                sandbox::clear();
+                test_execution::execute(workspace, &program, tests, test_id, sandbox_key)
             });
         }
     }
@@ -576,6 +603,8 @@ mod tests {
             entry: "main.sol".to_owned(),
             options,
             test_id: None,
+            manual: None,
+            sandbox_epoch: 0,
         }
     }
 
@@ -593,6 +622,8 @@ mod tests {
             entry: "main.solc".to_owned(),
             options: Options::default(),
             test_id: None,
+            manual: None,
+            sandbox_epoch: 0,
         });
         assert!(!invalid.success);
         assert!(invalid.diagnostics.iter().any(|diagnostic| {
@@ -750,6 +781,8 @@ mod tests {
             ],
             entry: "main.sol".to_owned(),
             test_id: None,
+            manual: None,
+            sandbox_epoch: 0,
             options: Options {
                 emit_hull: false,
                 emit_yul: false,

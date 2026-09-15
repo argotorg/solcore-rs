@@ -36,6 +36,7 @@ pub(crate) struct RunResult {
     pub(crate) return_data: String,
     /// Unsigned interpretation of a single returned EVM word, not ABI decoding.
     pub(crate) return_word: Option<String>,
+    pub(crate) decoded: Option<String>,
     /// Transaction gas, including intrinsic gas. Deployment is reported separately.
     pub(crate) gas_used: u64,
     pub(crate) deployment_gas_used: Option<u64>,
@@ -50,6 +51,7 @@ impl RunResult {
             phase,
             return_data: "0x".to_owned(),
             return_word: None,
+            decoded: None,
             gas_used: 0,
             deployment_gas_used: None,
             gas_limit: GAS_LIMIT,
@@ -57,7 +59,7 @@ impl RunResult {
         }
     }
 
-    fn from_evm(result: ExecutionResult, phase: &'static str) -> Self {
+    pub(crate) fn from_evm(result: ExecutionResult, phase: &'static str) -> Self {
         let gas_used = result.tx_gas_used();
         let (status, data, message) = match result {
             ExecutionResult::Success { output, .. } => {
@@ -81,6 +83,7 @@ impl RunResult {
             phase,
             return_data: format!("0x{}", hex::encode(&data)),
             return_word,
+            decoded: None,
             gas_used,
             deployment_gas_used: None,
             gas_limit: GAS_LIMIT,
@@ -295,6 +298,8 @@ mod tests {
             entry: "main.sol".to_owned(),
             options: Options::default(),
             test_id: None,
+            manual: None,
+            sandbox_epoch: 0,
         });
         assert!(
             result.success,
@@ -408,6 +413,8 @@ contract Counter {
             entry: "main.sol".to_owned(),
             options: Options::default(),
             test_id: None,
+            manual: None,
+            sandbox_epoch: 0,
         });
         assert!(!result.success);
         assert!(result.execution.is_none());

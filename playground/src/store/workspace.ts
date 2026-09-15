@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { compileClient } from "../compiler/compileClient";
 import { nowMs } from "../compiler/timing";
-import type { CompileInput, CompileResult, Diag, TestCase } from "../compiler/types";
+import type { CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall } from "../compiler/types";
 import {
   defaultExample,
   examples,
@@ -54,6 +54,17 @@ export interface WorkspaceState {
   resetWorkspace: () => void;
   compileNow: () => Promise<void>;
   runNow: (testId?: string) => Promise<void>;
+  contracts: ContractInterface[];
+  callDraft: ManualCall;
+  selectedTestId: string | null;
+  sandbox: CompileResult["sandbox"];
+  sandboxVersion: number | null;
+  sandboxEpoch: number;
+  manualResult: CompileResult["execution"];
+  manualResultVersion: number | null;
+  setCallDraft: (patch: Partial<ManualCall>) => void;
+  runCall: () => Promise<void>;
+  resetSandbox: () => void;
   testCases: TestCase[];
   testResults: TestCase[];
   testResultsVersion: number | null;
@@ -280,6 +291,8 @@ function diagnosticResult(message: string): CompileResult {
     abi: null,
     execution: null,
     tests: [],
+    contracts: [],
+    sandbox: null,
   };
 }
 
@@ -309,6 +322,17 @@ applyTheme(initialTheme);
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   ...initialWorkspace,
+  contracts: [],
+  callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
+  selectedTestId: null,
+  sandbox: null,
+  sandboxVersion: null,
+  sandboxEpoch: 0,
+  manualResult: null,
+  manualResultVersion: null,
+  setCallDraft(patch) { set((s) => ({ callDraft: { ...s.callDraft, ...patch }, selectedTestId: null })); },
+  runCall: () => executeWorkspace(true, undefined, get().callDraft),
+  resetSandbox() { set((s) => ({ sandbox: null, sandboxVersion: null, sandboxEpoch: s.sandboxEpoch + 1 })); },
   testCases: [],
   testResults: [],
   testResultsVersion: null,
@@ -481,6 +505,14 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const nextWorkspace = workspaceFromExample(getExample(id));
     set((state) => ({
       ...nextWorkspace,
+      contracts: [],
+      callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
+      selectedTestId: null,
+      sandbox: null,
+      sandboxVersion: null,
+      sandboxEpoch: state.sandboxEpoch + 1,
+      manualResult: null,
+      manualResultVersion: null,
       testCases: [],
       testResults: [],
       testResultsVersion: null,
@@ -502,6 +534,14 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const nextWorkspace = workspaceFromExample(defaultExample);
     set((state) => ({
       ...nextWorkspace,
+      contracts: [],
+      callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
+      selectedTestId: null,
+      sandbox: null,
+      sandboxVersion: null,
+      sandboxEpoch: state.sandboxEpoch + 1,
+      manualResult: null,
+      manualResultVersion: null,
       testCases: [],
       testResults: [],
       testResultsVersion: null,
@@ -519,10 +559,22 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   compileNow: () => executeWorkspace(false),
-  runNow: (testId) => executeWorkspace(true, testId),
+  runNow: (testId) => {
+    const state = get();
+    if (!testId && !state.testCases.length) {
+      const contract = state.contracts.find((c) => c.name === state.callDraft.contract) ?? state.contracts[0];
+      const method = contract?.methods.find((m) => m.signature === state.callDraft.signature) ?? contract?.methods[0];
+      if (contract && method) {
+        const draft = { ...state.callDraft, contract: contract.name, signature: method.signature };
+        set({ callDraft: draft });
+        return executeWorkspace(true, undefined, draft);
+      }
+    }
+    return executeWorkspace(true, testId);
+  },
 }));
 
-async function executeWorkspace(run: boolean, testId?: string): Promise<void> {
+async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCall): Promise<void> {
   const get = useWorkspaceStore.getState;
   const set = useWorkspaceStore.setState;
   const runId = compileRun + 1;
@@ -542,9 +594,21 @@ async function executeWorkspace(run: boolean, testId?: string): Promise<void> {
     entry: state.entry,
     options: state.options,
     testId,
+    manual,
+    sandboxEpoch: state.sandboxEpoch + state.workspaceVersion,
   };
 
+  const selected = testId ? state.testCases.find((t) => t.id === testId) : null;
   set({
+    ...(run ? {
+      selectedTestId: testId ?? null,
+      manualResult: null,
+      manualResultVersion: null,
+      outputTab: "execution" as const,
+      ...(selected?.invocation ? { callDraft: {
+        contract: selected.contract, constructorArguments: "[]", ...selected.invocation,
+      } } : {}),
+    } : {}),
     compiling: true,
     running: run,
     ...(run ? { testResults: [], testResultsVersion: null } : {}),
@@ -558,8 +622,14 @@ async function executeWorkspace(run: boolean, testId?: string): Promise<void> {
     if (runId === compileRun) {
       set({
         result,
+        contracts: compileVersion === get().workspaceVersion ? (result.contracts ?? []) : get().contracts,
+        ...(run ? {
+          sandbox: result.sandbox ?? null,
+          sandboxVersion: compileVersion,
+          ...(manual ? { manualResult: result.execution, manualResultVersion: compileVersion } : {}),
+        } : {}),
         testCases: compileVersion === get().workspaceVersion ? result.tests : get().testCases,
-        ...(run ? { testResults: result.tests, testResultsVersion: compileVersion } : {}),
+        ...(run && !manual ? { testResults: result.tests, testResultsVersion: compileVersion } : {}),
         compiling: false,
         running: false,
         compileStartedAt: null,

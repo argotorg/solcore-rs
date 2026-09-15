@@ -9,10 +9,6 @@ export function useTestDiscovery(): void {
   const compiling = useWorkspaceStore((s) => s.compiling);
   useEffect(() => {
     if (compiling) return;
-    if (!files[entry]?.content.includes("#[")) {
-      useWorkspaceStore.setState({ testCases: [] });
-      return;
-    }
     let active = true;
     const timer = window.setTimeout(() => {
       void compileClient.discover({
@@ -20,7 +16,7 @@ export function useTestDiscovery(): void {
         options: { emitHull: false, emitYul: false, emitSonatina: false, emitAbi: false },
       }).then((result) => {
         if (active && useWorkspaceStore.getState().workspaceVersion === version) {
-          useWorkspaceStore.setState({ testCases: result.tests });
+          useWorkspaceStore.setState({ testCases: result.tests, contracts: result.contracts });
         }
       }).catch(() => {
         // Compilation and worker errors are reported by the explicit Run action.

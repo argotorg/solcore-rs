@@ -112,6 +112,15 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
         <button
           type="button"
           role="tab"
+          aria-selected={outputTab === "execution"}
+          className={`output-tab ${outputTab === "execution" ? "is-active" : ""}`}
+          onClick={() => setOutputTab("execution")}
+        >
+          Run
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={outputTab === "hull"}
           id="output-tab-hull"
           aria-controls="output-panel"
@@ -156,15 +165,6 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
           onClick={() => setOutputTab("abi")}
         >
           ABI
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={outputTab === "execution"}
-          className={`output-tab ${outputTab === "execution" ? "is-active" : ""}`}
-          onClick={() => setOutputTab("execution")}
-        >
-          Run
         </button>
         <button
           type="button"

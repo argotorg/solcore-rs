@@ -63,6 +63,8 @@ export function stubCompile(input: CompileInput): CompileResult {
       abi: null,
       execution: null,
       tests: [],
+      contracts: [],
+      sandbox: null,
     };
   }
 
@@ -74,7 +76,9 @@ export function stubCompile(input: CompileInput): CompileResult {
     sonatina: `; Sonatina IR for ${input.entry}\nfunc private %main() {}`,
     abi: null,
     execution: null,
-      tests: [],
+    tests: [],
+    contracts: [],
+    sandbox: null,
   };
 }
 
