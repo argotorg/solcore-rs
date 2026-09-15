@@ -43,6 +43,7 @@ export function TopBar({
   const order = useWorkspaceStore((state) => state.order);
   const entry = useWorkspaceStore((state) => state.entry);
   const compiling = useWorkspaceStore((state) => state.compiling);
+  const testCount = useWorkspaceStore((state) => state.testCases.length);
   const running = useWorkspaceStore((state) => state.running);
   const lastCompileDurationMs = useWorkspaceStore((state) => state.lastCompileDurationMs);
   const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
@@ -206,7 +207,7 @@ export function TopBar({
           }}
         >
           {running ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-          <span>{running ? "Running" : "Run"}</span>
+          <span>{running ? "Running" : testCount > 0 ? "Run all tests" : "Run"}</span>
         </button>
 
         {compileTimeLabel ? (

@@ -3650,6 +3650,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "solcore-test-directives"
+version = "0.1.0"
+
+[[package]]
 name = "solcore-test-utils"
 version = "0.1.0"
 dependencies = [
@@ -3661,6 +3665,7 @@ dependencies = [
  "solcore-hir",
  "solcore-nameres",
  "solcore-parser",
+ "solcore-test-directives",
  "url",
 ]
 
@@ -3704,9 +3709,13 @@ dependencies = [
  "serde-wasm-bindgen",
  "serde_json",
  "solcore-compiler",
+ "solcore-hir",
+ "solcore-hir-ty",
  "solcore-hull",
  "solcore-nameres",
+ "solcore-parser",
  "solcore-sonatina",
+ "solcore-test-directives",
  "solcore-vfs",
  "solcore-yul",
  "sonatina-codegen",

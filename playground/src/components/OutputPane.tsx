@@ -236,7 +236,7 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
             language={outputTab === "abi" ? "json" : "plaintext"}
             options={{ ...editorOptions, ariaLabel: `${outputTab} output` }}
             theme={monacoThemeFor(theme)}
-            value={outputTab === "execution" ? (running ? "" : formatExecution(rawResult?.execution ?? null)) : renderedOutput}
+            value={outputTab === "execution" ? (running ? "" : formatExecution(rawResult?.execution ?? null, rawResult?.tests ?? [])) : renderedOutput}
           />
         )}
       </div>

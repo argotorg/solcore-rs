@@ -29,7 +29,7 @@ const execution = {
   status: 'success', phase: 'call', returnData: '0x', returnWord: '42',
   gasUsed: 21018, deploymentGasUsed: null, gasLimit: 1000000, message: null,
 };
-const result = { success: true, diagnostics: [], hull: null, yul: null, sonatina: null, abi: null, execution };
+const result = { tests: [], success: true, diagnostics: [], hull: null, yul: null, sonatina: null, abi: null, execution };
 
 function visibleResult() {
   const state = store.getState();
@@ -95,4 +95,26 @@ test('switching examples during Run preserves the new example output tab', async
   assert.equal(store.getState().result, null);
   assert.equal(store.getState().running, false);
   assert.equal(visibleResult(), null);
+});
+
+test('inline test results survive edits and Compile, then clear on Run', async () => {
+  store.getState().loadExample('std-usage');
+  const tests = [{ id: 'Calculator.sol:10', status: 'passed', actual: '42' }];
+  let operation = store.getState().runNow(tests[0].id);
+  let request = pending.shift();
+  assert.equal(request.input.testId, tests[0].id);
+  request.resolve({ ...result, tests });
+  await operation;
+  const version = store.getState().testResultsVersion;
+  store.getState().setContent('Calculator.sol', '// edited');
+  assert.deepEqual(store.getState().testResults, tests);
+  assert.notEqual(store.getState().workspaceVersion, version);
+  operation = store.getState().compileNow();
+  pending.shift().resolve({ ...result, execution: null });
+  await operation;
+  assert.deepEqual(store.getState().testResults, tests);
+  operation = store.getState().runNow();
+  assert.deepEqual(store.getState().testResults, []);
+  pending.shift().resolve(result);
+  await operation;
 });

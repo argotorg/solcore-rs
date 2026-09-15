@@ -21,12 +21,13 @@ test('browser WASM runs the bundled Hello contract without changing Compile outp
   assert.deepEqual({ ...result, execution: null }, compiled);
 });
 
-test('browser WASM reports that the bundled Calculator requires a main entry', async () => {
+test('browser WASM discovers and runs the bundled Calculator test', async () => {
   const content = await readFile(new URL('../src/examples/std-usage/Calculator.sol', import.meta.url), 'utf8');
   const result = run({ files: [{ path: 'Calculator.sol', content }], entry: 'Calculator.sol', options });
   assert.equal(result.success, true, JSON.stringify(result.diagnostics));
-  assert.equal(result.execution?.status, 'error');
-  assert.match(result.execution.message, /main/);
+  assert.equal(result.execution?.status, 'success');
+  assert.equal(result.tests[0].status, 'passed');
+  assert.equal(result.tests[0].actual, '42');
 });
 
 test('a changed source is recompiled, and Compile does not execute', () => {
@@ -72,4 +73,18 @@ contract Counter {
     assert.equal(result.execution.returnWord, '8');
     assert.ok(result.execution.deploymentGasUsed > 0);
   }
+});
+
+test('browser WASM replays sends for an individual test and renders booleans', async () => {
+  const content = await readFile(new URL('../src/examples/trait/LightSwitch.sol', import.meta.url), 'utf8');
+  const input = { files: [{ path: 'LightSwitch.sol', content }], entry: 'LightSwitch.sol', options };
+  const compiled = compile(input);
+  assert.equal(compiled.tests.length, 2);
+  assert.ok(compiled.tests.every(test => test.status === 'ready'));
+  const result = run({ ...input, testId: compiled.tests[1].id });
+  assert.equal(result.execution?.status, 'success', JSON.stringify(result));
+  assert.equal(result.tests[0].status, 'ready');
+  assert.equal(result.tests[1].status, 'passed');
+  assert.equal(result.tests[1].actual, 'true');
+  assert.equal(result.tests[1].expected, 'true');
 });

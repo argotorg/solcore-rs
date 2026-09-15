@@ -1,6 +1,7 @@
 //! Browser-facing `wasm-bindgen` API for compiling in-memory Solcore sources.
 
 mod execution;
+mod test_execution;
 
 use std::{collections::BTreeMap, path::Path};
 
@@ -73,6 +74,9 @@ pub(crate) struct CompileInput {
     pub(crate) entry: String,
     #[serde(default)]
     pub(crate) options: Options,
+    #[serde(default)]
+    #[serde(rename = "testId")]
+    pub(crate) test_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +108,7 @@ pub(crate) struct CompileResult {
     pub(crate) sonatina: Option<String>,
     pub(crate) abi: Option<String>,
     pub(crate) execution: Option<execution::RunResult>,
+    pub(crate) tests: Vec<test_execution::TestCase>,
 }
 
 #[derive(Serialize)]
@@ -176,6 +181,7 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
             sonatina: None,
             abi: None,
             execution: None,
+            tests: vec![],
         };
     }
 
@@ -217,10 +223,18 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
         sonatina: None,
         abi: None,
         execution: None,
+        tests: vec![],
     };
 
+    result.tests = test_execution::discover(&workspace, &input.entry);
     if wants_backend && !result.diagnostics.iter().any(Diag::is_error) {
-        run_backend(&workspace, &input.options, &mut result, execute);
+        run_backend(
+            &workspace,
+            &input.options,
+            &mut result,
+            execute,
+            input.test_id.as_deref(),
+        );
     }
     result.success = !result.diagnostics.iter().any(Diag::is_error);
     result
@@ -231,6 +245,7 @@ fn run_backend(
     options: &Options,
     result: &mut CompileResult,
     execute: bool,
+    test_id: Option<&str>,
 ) {
     let CompileResult {
         diagnostics,
@@ -239,6 +254,7 @@ fn run_backend(
         sonatina: sonatina_text,
         abi: abi_text,
         execution,
+        tests,
         ..
     } = result;
     let db = workspace.db();
@@ -317,7 +333,11 @@ fn run_backend(
             }
         }
         if execute && !diagnostics.iter().any(Diag::is_error) {
-            *execution = Some(execution::execute(workspace, &program));
+            *execution = Some(if tests.is_empty() && test_id.is_none() {
+                execution::execute(workspace, &program)
+            } else {
+                test_execution::execute(workspace, &program, tests, test_id)
+            });
         }
     }
 }
@@ -555,6 +575,7 @@ mod tests {
             }],
             entry: "main.sol".to_owned(),
             options,
+            test_id: None,
         }
     }
 
@@ -571,6 +592,7 @@ mod tests {
             }],
             entry: "main.solc".to_owned(),
             options: Options::default(),
+            test_id: None,
         });
         assert!(!invalid.success);
         assert!(invalid.diagnostics.iter().any(|diagnostic| {
@@ -727,6 +749,7 @@ mod tests {
                 },
             ],
             entry: "main.sol".to_owned(),
+            test_id: None,
             options: Options {
                 emit_hull: false,
                 emit_yul: false,

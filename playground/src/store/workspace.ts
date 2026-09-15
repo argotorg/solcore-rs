@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { compileClient } from "../compiler/compileClient";
 import { nowMs } from "../compiler/timing";
-import type { CompileInput, CompileResult, Diag } from "../compiler/types";
+import type { CompileInput, CompileResult, Diag, TestCase } from "../compiler/types";
 import {
   defaultExample,
   examples,
@@ -53,7 +53,10 @@ export interface WorkspaceState {
   loadExample: (id: string) => void;
   resetWorkspace: () => void;
   compileNow: () => Promise<void>;
-  runNow: () => Promise<void>;
+  runNow: (testId?: string) => Promise<void>;
+  testCases: TestCase[];
+  testResults: TestCase[];
+  testResultsVersion: number | null;
 }
 
 const WORKSPACE_STORAGE_KEY = "solcore-playground.workspace.v1";
@@ -276,6 +279,7 @@ function diagnosticResult(message: string): CompileResult {
     sonatina: null,
     abi: null,
     execution: null,
+    tests: [],
   };
 }
 
@@ -305,6 +309,9 @@ applyTheme(initialTheme);
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   ...initialWorkspace,
+  testCases: [],
+  testResults: [],
+  testResultsVersion: null,
   compiling: false,
   running: false,
   compileStartedAt: null,
@@ -474,6 +481,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const nextWorkspace = workspaceFromExample(getExample(id));
     set((state) => ({
       ...nextWorkspace,
+      testCases: [],
+      testResults: [],
+      testResultsVersion: null,
       compiling: false,
       running: false,
       compileStartedAt: null,
@@ -492,6 +502,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const nextWorkspace = workspaceFromExample(defaultExample);
     set((state) => ({
       ...nextWorkspace,
+      testCases: [],
+      testResults: [],
+      testResultsVersion: null,
       compiling: false,
       running: false,
       compileStartedAt: null,
@@ -506,10 +519,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   compileNow: () => executeWorkspace(false),
-  runNow: () => executeWorkspace(true),
+  runNow: (testId) => executeWorkspace(true, testId),
 }));
 
-async function executeWorkspace(run: boolean): Promise<void> {
+async function executeWorkspace(run: boolean, testId?: string): Promise<void> {
   const get = useWorkspaceStore.getState;
   const set = useWorkspaceStore.setState;
   const runId = compileRun + 1;
@@ -528,11 +541,13 @@ async function executeWorkspace(run: boolean): Promise<void> {
       })),
     entry: state.entry,
     options: state.options,
+    testId,
   };
 
   set({
     compiling: true,
     running: run,
+    ...(run ? { testResults: [], testResultsVersion: null } : {}),
     compileStartedAt: startedAt,
     ...(run && state.result ? { result: { ...state.result, execution: null } } : {}),
   });
@@ -543,6 +558,8 @@ async function executeWorkspace(run: boolean): Promise<void> {
     if (runId === compileRun) {
       set({
         result,
+        testCases: compileVersion === get().workspaceVersion ? result.tests : get().testCases,
+        ...(run ? { testResults: result.tests, testResultsVersion: compileVersion } : {}),
         compiling: false,
         running: false,
         compileStartedAt: null,

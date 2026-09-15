@@ -731,3 +731,7 @@
   cursor: wait;
   opacity: 0.65;
 }
+
+.test-result--passed { color: var(--success); }
+.test-result--failed { color: var(--error); }
+.test-result--outdated { color: var(--text-muted); font-style: italic; }

@@ -1,6 +1,7 @@
 export interface CompileInput {
   files: Array<{ path: string; content: string }>;
   entry: string;
+  testId?: string;
   options: {
     emitHull: boolean;
     emitYul: boolean;
@@ -39,11 +40,12 @@ export interface CompileResult {
   sonatina: string | null;
   abi: string | null;
   execution: ExecutionResult | null;
+  tests: TestCase[];
 }
 
 export interface CompileRequest {
   id: number;
-  kind: "compile" | "run";
+  kind: "compile" | "run" | "discover";
   input: CompileInput;
 }
 
@@ -60,4 +62,17 @@ export interface ExecutionResult {
   deploymentGasUsed: number | null;
   gasLimit: number;
   message: string | null;
+}
+
+export interface TestCase {
+  id: string;
+  file: string;
+  line: number;
+  contract: string;
+  label: string;
+  status: "ready" | "passed" | "failed" | "error";
+  message: string | null;
+  actual: string | null;
+  expected: string | null;
+  gasUsed: number | null;
 }

@@ -1,7 +1,15 @@
-/** @param {import('./types').ExecutionResult | null} result */
-export function formatExecution(result) {
+/** @param {import('./types').ExecutionResult | null} result
+ * @param {import('./types').TestCase[]} tests */
+export function formatExecution(result, tests = []) {
   if (!result) {
-    return 'Press Run to compile and execute main().';
+    return 'Press Run to execute tests or main().';
+  }
+  const completed = tests.filter(test => test.status !== 'ready');
+  if (completed.length) {
+    return [result.message ?? 'Tests', '', ...completed.map(test => {
+      const detail = test.message ?? (test.status === 'passed' ? test.actual : `expected ${test.expected}, got ${test.actual}`);
+      return `${test.file}:${test.line} ${test.label}\n${test.status === 'passed' ? 'PASS' : 'FAIL'}: ${detail}${test.gasUsed !== null ? ` (gas: ${test.gasUsed})` : ''}`;
+    })].join('\n');
   }
   const labels = { success: 'Success', revert: 'Reverted', halt: 'Halted', error: 'Could not run' };
   const lines = [`${labels[result.status]} (${result.phase})`];

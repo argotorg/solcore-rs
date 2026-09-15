@@ -2,6 +2,7 @@ import CompileWorker from "./compile.worker?worker";
 import type { CompileInput, CompileRequest, CompileResponse, CompileResult } from "./types";
 
 interface PendingRequest {
+  kind: CompileRequest["kind"];
   resolve: (result: CompileResult) => void;
   reject: (reason: Error) => void;
 }
@@ -30,13 +31,17 @@ export class CompileClient {
     return this.request("run", input);
   }
 
+  discover(input: CompileInput): Promise<CompileResult> {
+    return this.request("discover", input);
+  }
+
   private request(kind: CompileRequest["kind"], input: CompileInput): Promise<CompileResult> {
     const id = this.nextId;
     this.nextId += 1;
-    this.latestId = id;
+    if (kind !== "discover") this.latestId = id;
 
     for (const [pendingId, pending] of this.pending) {
-      if (pendingId < id) {
+      if ((pending.kind === "discover") === (kind === "discover") && pendingId < id) {
         pending.reject(createAbortError("Compile request superseded"));
         this.pending.delete(pendingId);
       }
@@ -49,7 +54,7 @@ export class CompileClient {
     };
 
     const promise = new Promise<CompileResult>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { kind, resolve, reject });
     });
 
     this.worker.postMessage(request);
@@ -77,7 +82,7 @@ export class CompileClient {
 
     this.pending.delete(response.id);
 
-    if (response.id !== this.latestId) {
+    if (pending.kind !== "discover" && response.id !== this.latestId) {
       pending.reject(createAbortError("Compile response superseded"));
       return;
     }

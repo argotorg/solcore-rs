@@ -18,6 +18,30 @@ The runner uses Osaka rules, a gas limit of 1,000,000 per transaction, and a 16 
 EVM memory limit. Contract `main` receives empty calldata. A wrapper returns its
 word to the playground; the normal Compile artifacts are unchanged.
 
+## Run tests
+
+Public contract methods can carry the same test comments used by the compiler's
+E2E fixtures:
+
+```sol
+// #[(20, 22) -> 42]
+function add(a: uint256, b: uint256) public returns (uint256) {
+    return a + b;
+}
+```
+
+Click **Run test** above a comment or **Run all tests** in the toolbar. Tests are
+discovered in the entry file. Results appear beside their comments and in the
+Execution tab. Edits retain inline results, marked outdated until the next run.
+With no test comments, Run executes `main` as described above.
+
+Tests use the contract's normal selector dispatcher, so the contract must not
+have an explicit runtime `main`. Constructors currently take no arguments.
+The shared directive parser supports static ABI values and expected reverts.
+`// #[send(7)]` commits a state-changing call; ordinary assertions leave state
+unchanged. Tests run in source order against one deployment per contract.
+An individual test replays preceding sends for its contract first.
+
 ## Keyboard navigation
 
 Use Left/Right, Home, and End to move between source or output tabs. In the

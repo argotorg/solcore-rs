@@ -14,9 +14,9 @@ use serde_json::Value;
 use sonatina_codegen::{EvmCompile, OptLevel};
 use vfs::Workspace;
 
-const GAS_LIMIT: u64 = 1_000_000;
-const MEMORY_LIMIT: u64 = 16 * 1024 * 1024;
-const CALLER: Address = Address::new([0x11; 20]);
+pub(crate) const GAS_LIMIT: u64 = 1_000_000;
+pub(crate) const MEMORY_LIMIT: u64 = 16 * 1024 * 1024;
+pub(crate) const CALLER: Address = Address::new([0x11; 20]);
 const PROGRAM_ADDRESS: Address = Address::new([0x22; 20]);
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -44,7 +44,7 @@ pub(crate) struct RunResult {
 }
 
 impl RunResult {
-    fn error(phase: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn error(phase: &'static str, message: impl Into<String>) -> Self {
         Self {
             status: RunStatus::Error,
             phase,
@@ -294,6 +294,7 @@ mod tests {
             }],
             entry: "main.sol".to_owned(),
             options: Options::default(),
+            test_id: None,
         });
         assert!(
             result.success,
@@ -406,6 +407,7 @@ contract Counter {
             }],
             entry: "main.sol".to_owned(),
             options: Options::default(),
+            test_id: None,
         });
         assert!(!result.success);
         assert!(result.execution.is_none());

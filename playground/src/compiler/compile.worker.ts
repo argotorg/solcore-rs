@@ -12,7 +12,7 @@ const workerScope = self as unknown as {
 workerScope.addEventListener("message", (event: MessageEvent<CompileRequest>) => {
   const request = event.data;
 
-  if (request.kind !== "compile" && request.kind !== "run") {
+  if (request.kind !== "compile" && request.kind !== "run" && request.kind !== "discover") {
     return;
   }
 

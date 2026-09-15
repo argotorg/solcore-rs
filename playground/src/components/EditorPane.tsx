@@ -1,3 +1,6 @@
+import { attachTestControls } from "../monaco/testControls";
+import { useTestDiscovery } from "./useTestDiscovery";
+
 import { TabList } from "./TabList";
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
@@ -119,6 +122,7 @@ function diagnosticsToMarkers(
 }
 
 export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
+  useTestDiscovery();
   const files = useWorkspaceStore((state) => state.files);
   const order = useWorkspaceStore((state) => state.order);
   const activePath = useWorkspaceStore((state) => state.activePath);
@@ -192,6 +196,8 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
 
   const onMount = useCallback<OnMount>(
     (editor, monaco) => {
+      const tests = attachTestControls(editor, monaco);
+      editor.onDidDispose(() => tests.dispose());
       editorRef.current = editor;
       monacoRef.current = monaco;
       monaco.editor.setTheme(monacoThemeFor(theme));

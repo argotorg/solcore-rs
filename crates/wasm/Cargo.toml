@@ -9,6 +9,10 @@ rust-version.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+solcore-test-directives = { path = "../test-directives" }
+hir = { workspace = true }
+hir-ty = { workspace = true }
+parser = { workspace = true }
 wasm-bindgen = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
