@@ -9,7 +9,7 @@ export { Pool, mkPool, reserveX, reserveY, swapXforY, addLiquidity };
 
 enum Pool { Pool(uint256, uint256) }
 
-// The single point where the reserve invariant is established.
+// The single point where the nonzero-reserve invariant is established.
 function mkPool(x: uint256, y: uint256) returns (Pool) {
     require(x > uint256(0) && y > uint256(0), "empty reserves");
     return Pool(x, y);
@@ -23,8 +23,9 @@ function reserveY(p: Pool) returns (uint256) {
     match (p) { case Pool(_, y) { return y; } }
 }
 
-// The output rounds against the trader, so the product of the reserves
-// never decreases.
+// A swap may never decrease the product of the reserves. The rounding
+// against the trader makes the property hold; the assertion enforces it
+// against future changes to the arithmetic.
 function swapXforY(p: Pool, dx: uint256) returns ((Pool, uint256)) {
     match (p) {
         case Pool(x, y) {
@@ -32,6 +33,7 @@ function swapXforY(p: Pool, dx: uint256) returns ((Pool, uint256)) {
             let nx = x + dx;
             let ny = (k + nx - uint256(1)) / nx;
             let dy = y - ny;
+            require(nx * ny >= k, "product decreased");
             return (mkPool(nx, ny), dy);
         }
     }
