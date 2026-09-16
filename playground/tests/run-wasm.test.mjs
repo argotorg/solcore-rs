@@ -106,3 +106,24 @@ test('browser WASM shares a test deployment with editable manual calls', async (
   assert.equal(manual.execution.decoded, '42');
   assert.equal(manual.sandbox.address, tested.sandbox.address);
 });
+
+test('Composition exports each Yul object and runs the selected vault', async () => {
+  const files = await Promise.all(['Vaults.sol', 'context.sol', 'engine.sol'].map(async path => ({
+    path, content: await readFile(new URL(`../src/examples/composition/${path}`, import.meta.url), 'utf8'),
+  })));
+  const input = { files, entry: 'Vaults.sol', options };
+  const compiled = compile(input);
+  assert.equal(compiled.success, true, JSON.stringify(compiled.diagnostics));
+  assert.deepEqual(compiled.yulOutputs.map(output => output.name).sort(), ['VaultDirectDeploy', 'VaultGaslessDeploy', 'VaultPremiumDeploy']);
+  for (const output of compiled.yulOutputs) assert.ok(output.code.startsWith(`object "${output.name}"`));
+  for (const contract of ['VaultDirect', 'VaultPremium', 'VaultGasless']) {
+    const result = run({ ...input, manual: {
+      contract, signature: 'balanceOf(address)', arguments: '["0x1111111111111111111111111111111111111111"]',
+      constructorArguments: contract === 'VaultGasless' ? '[2]' : '[]', simulate: true,
+    } });
+    assert.equal(result.success, true, JSON.stringify(result.diagnostics));
+    assert.equal(result.execution.status, 'success', JSON.stringify(result.execution));
+    assert.equal(result.execution.decoded, '0');
+    assert.equal(result.sandbox.contract, contract);
+  }
+});

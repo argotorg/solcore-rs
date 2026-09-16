@@ -110,12 +110,19 @@ pub(crate) struct CompileResult {
     pub(crate) diagnostics: Vec<Diag>,
     pub(crate) hull: Option<String>,
     pub(crate) yul: Option<String>,
+    pub(crate) yul_outputs: Vec<YulOutput>,
     pub(crate) sonatina: Option<String>,
     pub(crate) abi: Option<String>,
     pub(crate) execution: Option<execution::RunResult>,
     pub(crate) tests: Vec<test_execution::TestCase>,
     pub(crate) contracts: Vec<sandbox::Contract>,
     pub(crate) sandbox: Option<sandbox::Info>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct YulOutput {
+    name: String,
+    code: String,
 }
 
 #[derive(Serialize)]
@@ -185,6 +192,7 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
             )],
             hull: None,
             yul: None,
+            yul_outputs: vec![],
             sonatina: None,
             abi: None,
             execution: None,
@@ -231,6 +239,7 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
         diagnostics,
         hull: None,
         yul: None,
+        yul_outputs: vec![],
         sonatina: None,
         abi: None,
         execution: None,
@@ -274,6 +283,7 @@ fn run_backend(
         diagnostics,
         hull: hull_text,
         yul: yul_text,
+        yul_outputs,
         sonatina: sonatina_text,
         abi: abi_text,
         execution,
@@ -335,8 +345,11 @@ fn run_backend(
             *hull_text = Some(hull::pretty_program(db, &program));
         }
         if options.emit_yul {
-            match yul::render_hull_program_object(db, &program, None) {
-                Ok(rendered) => *yul_text = Some(rendered),
+            match render_yul_outputs(db, &program) {
+                Ok(outputs) => {
+                    *yul_text = outputs.first().map(|output| output.code.clone());
+                    *yul_outputs = outputs;
+                }
                 Err(err) => diagnostics.push(message_diag(
                     DiagnosticSeverity::Error,
                     format!("Yul translation failed:\n  {err}"),
@@ -367,6 +380,30 @@ fn run_backend(
             });
         }
     }
+}
+
+/// Each deployable object is a separate strict-assembly input.
+fn render_yul_outputs(
+    db: &AnalysisHost,
+    program: &hull::Program<'_>,
+) -> Result<Vec<YulOutput>, yul::TranslationError> {
+    if program.objects.is_empty() {
+        return Ok(vec![YulOutput {
+            name: "main".to_owned(),
+            code: yul::render_hull_program_object(db, program, None)?,
+        }]);
+    }
+    program
+        .objects
+        .iter()
+        .map(|object| {
+            let name = object.name.as_str();
+            Ok(YulOutput {
+                name: name.to_owned(),
+                code: yul::render_hull_program_object(db, program, Some(name))?,
+            })
+        })
+        .collect()
 }
 
 /// Renders ABI output as one JSON string: a single contract returns its ABI
@@ -696,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn combined_artifacts_follow_cli_fail_fast_order() {
+    fn multiple_contracts_have_independent_yul_outputs() {
         let result = compile_impl(input(
             concat!(
                 "contract A { function main() public returns (word) { return 1; } }\n",
@@ -709,22 +746,82 @@ mod tests {
                 emit_abi: true,
             },
         ));
+        assert!(
+            result.success,
+            "{}",
+            serde_json::to_string(&result.diagnostics).unwrap()
+        );
+        assert!(result.abi.is_some());
+        assert!(result.sonatina.is_some());
+        assert_eq!(result.yul_outputs.len(), 2);
+        assert_eq!(
+            result.yul.as_deref(),
+            Some(result.yul_outputs[0].code.as_str())
+        );
+        for output in &result.yul_outputs {
+            assert!(
+                output
+                    .code
+                    .starts_with(&format!("object \"{}\"", output.name))
+            );
+        }
+    }
 
-        assert!(!result.success);
+    #[test]
+    fn composition_runs_with_all_artifacts_enabled() {
+        let files = [
+            (
+                "Vaults.sol",
+                include_str!("../../../playground/src/examples/composition/Vaults.sol"),
+            ),
+            (
+                "context.sol",
+                include_str!("../../../playground/src/examples/composition/context.sol"),
+            ),
+            (
+                "engine.sol",
+                include_str!("../../../playground/src/examples/composition/engine.sol"),
+            ),
+        ]
+        .into_iter()
+        .map(|(path, content)| FileInput {
+            path: path.into(),
+            content: content.into(),
+        })
+        .collect();
+        let result = run_impl(CompileInput {
+            files,
+            entry: "Vaults.sol".into(),
+            options: Options {
+                emit_hull: true,
+                emit_yul: true,
+                emit_sonatina: true,
+                emit_abi: true,
+            },
+            test_id: None,
+            sandbox_epoch: 0,
+            manual: Some(sandbox::Request {
+                contract: "VaultDirect".into(),
+                signature: "balanceOf(address)".into(),
+                arguments: r#"["0x1111111111111111111111111111111111111111"]"#.into(),
+                constructor_arguments: "[]".into(),
+                simulate: true,
+                reset: false,
+            }),
+        });
         assert!(
-            result.abi.is_some(),
-            "ABI is produced before backend rendering"
+            result.success,
+            "{}",
+            serde_json::to_string(&result.diagnostics).unwrap()
         );
-        assert!(result.yul.is_none());
-        assert!(
-            result.sonatina.is_none(),
-            "Sonatina is skipped after Yul fails"
+        assert_eq!(result.yul_outputs.len(), 3);
+        let execution = result.execution.unwrap();
+        assert_eq!(
+            execution.status,
+            execution::RunStatus::Success,
+            "{execution:?}"
         );
-        assert!(result.diagnostics.iter().any(|diagnostic| {
-            diagnostic
-                .message
-                .contains("strict-assembly output requires one top-level object")
-        }));
+        assert_eq!(execution.decoded.as_deref(), Some("0"));
     }
 
     #[test]

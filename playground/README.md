@@ -195,6 +195,7 @@ interface CompileResult {
   diagnostics: Diag[];
   hull: string | null;
   yul: string | null;
+  yulOutputs: Array<{ name: string; code: string }>;
   sonatina: string | null;
   abi: string | null;
   execution: ExecutionResult | null;
@@ -205,7 +206,9 @@ interface CompileResult {
 `execution` is null for Compile requests and compilation errors.
 
 The Playground requests Hull, Yul, Sonatina IR, and contract ABI JSON in one compile and exposes each
-textual output in its own tab. Backend fields remain `null` when an output was not requested,
+textual output in its own tab. For multiple contracts, the Yul tab selects one
+standalone deploy object at a time. Problems can be copied individually or together,
+including their locations, labels, notes, and help. Backend fields remain `null` when an output was not requested,
 compilation stopped before that backend ran, or (for ABI) the workspace contains no contract.
 
 ## File key contract

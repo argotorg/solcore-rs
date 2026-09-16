@@ -39,6 +39,7 @@ export interface CompileResult {
   diagnostics: Diag[];
   hull: string | null;
   yul: string | null;
+  yulOutputs: Array<{ name: string; code: string }>;
   sonatina: string | null;
   abi: string | null;
   execution: ExecutionResult | null;

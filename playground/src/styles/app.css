@@ -534,7 +534,7 @@
 
 .problem-item {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--space-3);
   width: 100%;
   padding: var(--space-3);
@@ -542,17 +542,15 @@
   border-radius: var(--radius-2);
   background: var(--surface-2);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
   transition:
     background var(--transition-fast),
-    border-color var(--transition-fast),
-    transform var(--transition-fast);
+    border-color var(--transition-fast);
 }
 
-.problem-item:hover:not(:disabled) {
+.problem-item:focus-within {
   border-color: var(--border-strong);
   background: var(--surface-hover);
-  transform: translateY(-1px);
 }
 
 .problem-item__icon {
@@ -778,3 +776,12 @@
 .run-call-result { border-top: 1px solid var(--border-subtle); padding: var(--space-3) 0; overflow-wrap: anywhere; }
 .run-call-result dl { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2); }
 .run-call-result dd { margin: 0; min-width: 0; }
+
+.problems-toolbar { display: flex; justify-content: flex-end; }
+.problem-item__message { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; }
+.problem-item__source { border: 0; padding: 0; background: none; text-align: left; cursor: pointer; text-decoration: underline; }
+.problem-copy { align-self: start; }
+.artifact-output { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.artifact-editor { flex: 1; min-height: 0; }
+.artifact-selector { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); color: var(--text-secondary); font-size: 12px; }
+.artifact-selector select { min-width: 0; max-width: 100%; padding: var(--space-1); background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-2); }

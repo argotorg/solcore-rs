@@ -287,6 +287,7 @@ function diagnosticResult(message: string): CompileResult {
     diagnostics: [diagnostic],
     hull: null,
     yul: null,
+    yulOutputs: [],
     sonatina: null,
     abi: null,
     execution: null,
