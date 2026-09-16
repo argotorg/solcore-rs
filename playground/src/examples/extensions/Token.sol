@@ -2,7 +2,7 @@ import * from std;
 import * from std.dispatch;
 import {sender} from context;
 import {Option} from option;
-import {Stacked} from hooks;
+import {Stacked, NoHook} from hooks;
 import {balance, supply, apply} from erc20core;
 import {isPaused, setPaused, Pausable} from pausable;
 import {setCap, Capped} from capped;
@@ -21,7 +21,7 @@ contract Token {
     // The single choke point: every balance change flows through here,
     // and the ledger will not move balances without a hook chain.
     function update(from: Option<address>, to: Option<address>, amount: uint256) {
-        apply(Stacked(Pausable, Capped), from, to, amount);
+        apply(Stacked(Pausable, Capped), NoHook, from, to, amount);
     }
 
     function transfer(to: address, amount: uint256) public {

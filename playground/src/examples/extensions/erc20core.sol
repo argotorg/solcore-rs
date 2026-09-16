@@ -13,6 +13,10 @@ function supplySlot() returns (word) {
     return Typedef.rep(erc7201("token.erc20.supply"));
 }
 
+function supply() returns (uint256) {
+    return uint256(sload(supplySlot()));
+}
+
 function balanceSlot(who: address) returns (word) {
     return hash2(Typedef.rep(erc7201("token.erc20.balances")), Typedef.rep(who));
 }
@@ -21,46 +25,29 @@ function balance(who: address) returns (uint256) {
     return uint256(sload(balanceSlot(who)));
 }
 
-function supply() returns (uint256) {
-    return uint256(sload(supplySlot()));
-}
-
-function move(from: address, to: address, amount: uint256) {
-    require(balance(from) >= amount, "insufficient balance");
-    sstore(balanceSlot(from), Typedef.rep(balance(from) - amount));
-    sstore(balanceSlot(to), Typedef.rep(balance(to) + amount));
-}
-
-function mintTo(to: address, amount: uint256) {
-    sstore(supplySlot(), Typedef.rep(supply() + amount));
-    sstore(balanceSlot(to), Typedef.rep(balance(to) + amount));
-}
-
-function burnFrom(from: address, amount: uint256) {
-    require(balance(from) >= amount, "insufficient balance");
-    sstore(balanceSlot(from), Typedef.rep(balance(from) - amount));
-    sstore(supplySlot(), Typedef.rep(supply() - amount));
-}
-
-// The only exported way to change balances: the hook chain runs before the
-// effects, so one cannot be invoked without the other. from = None mints,
-// to = None burns.
-function apply<h>(hooks: h, from: Option<address>, to: Option<address>, amount: uint256)
-    where h: TransferHook
+// The only exported way to change balances: the before and after hook
+// chains run around the effects, so none of them can be skipped. A side
+// with no hooks takes NoHook. from = None mints, to = None burns.
+function apply<b, a>(before: b, after: a, from: Option<address>, to: Option<address>, amount: uint256)
+    where b: TransferHook, a: TransferHook
 {
-    TransferHook.on(hooks, from, to, amount);
+    TransferHook.on(before, from, to, amount);
     match (from) {
-        case Option.Some(src) {
-            match (to) {
-                case Option.Some(dst) { move(src, dst, amount); }
-                default { burnFrom(src, amount); }
-            }
+        case Option.None {
+            sstore(supplySlot(), Typedef.rep(supply() + amount));
         }
-        default {
-            match (to) {
-                case Option.Some(dst) { mintTo(dst, amount); }
-                default { require(false, "empty update"); }
-            }
+        case Option.Some(from_) {
+            require(balance(from_) >= amount, "insufficient balance");
+            sstore(balanceSlot(from_), Typedef.rep(balance(from_) - amount));
         }
     }
+    match (to) {
+        case Option.None {
+            sstore(supplySlot(), Typedef.rep(supply() - amount));
+        }
+        case Option.Some(to_) {
+            sstore(balanceSlot(to_), Typedef.rep(balance(to_) + amount));
+        }
+    }
+    TransferHook.on(after, from, to, amount);
 }
