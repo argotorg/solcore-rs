@@ -47,6 +47,17 @@ pub fn run(input: JsValue) -> Result<JsValue, JsValue> {
         .map_err(|err| JsValue::from_str(&format!("failed to serialize run result: {err}")))
 }
 
+/// Read watched calls from the existing deployment without committing changes.
+#[wasm_bindgen]
+pub fn watch(input: JsValue) -> Result<JsValue, JsValue> {
+    let input: sandbox::WatchInput = serde_wasm_bindgen::from_value(input)
+        .map_err(|err| JsValue::from_str(&format!("invalid watch input: {err}")))?;
+    sandbox::watch(&input)
+        .map_err(|err| JsValue::from_str(&err))?
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+        .map_err(|err| JsValue::from_str(&format!("failed to serialize watches: {err}")))
+}
+
 /// Returns the embedded standard library files as `{ path, content }` objects.
 #[wasm_bindgen]
 pub fn std_files() -> JsValue {
@@ -82,6 +93,12 @@ pub(crate) struct CompileInput {
     pub(crate) manual: Option<sandbox::Request>,
     #[serde(default, rename = "sandboxEpoch")]
     pub(crate) sandbox_epoch: u32,
+}
+
+impl CompileInput {
+    pub(crate) fn sandbox_key(&self) -> String {
+        serde_json::to_string(&(&self.entry, &self.files, self.sandbox_epoch)).unwrap()
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -202,8 +219,7 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
         };
     }
 
-    let sandbox_key =
-        serde_json::to_string(&(&input.entry, &input.files, input.sandbox_epoch)).unwrap();
+    let sandbox_key = input.sandbox_key();
     let mut workspace = Workspace::new();
     workspace.apply_file_changes(
         input

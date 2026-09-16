@@ -26,6 +26,7 @@ use vfs::Workspace;
 pub(crate) struct Method {
     pub signature: String,
     pub inputs: Vec<String>,
+    pub returns_value: bool,
     #[serde(skip)]
     selector: [u8; 4],
     #[serde(skip)]
@@ -89,6 +90,7 @@ pub(crate) fn discover(workspace: &Workspace) -> Vec<Contract> {
                     let shapes = m.inputs.iter().map(abi_shape).collect::<Vec<_>>();
                     Method {
                         signature: m.signature.clone(),
+                        returns_value: !m.outputs.is_empty(),
                         inputs: shapes.iter().map(ToString::to_string).collect(),
                         selector: m.selector.0,
                         shapes,
@@ -168,6 +170,7 @@ pub(crate) struct Sandbox {
     nonce: u64,
     key: String,
     contract: String,
+    methods: Vec<Method>,
 }
 thread_local! { static SESSION: RefCell<Option<Sandbox>> = const { RefCell::new(None) }; }
 
@@ -211,6 +214,11 @@ impl Sandbox {
             nonce: 0,
             key: key.to_owned(),
             contract: contract.to_owned(),
+            methods: discover(workspace)
+                .into_iter()
+                .find(|c| c.name == contract)
+                .map(|c| c.methods)
+                .unwrap_or_default(),
         };
         let result = sandbox.transact(TxKind::Create, bytecode.into(), true)?;
         sandbox.address = match result {
@@ -332,6 +340,77 @@ pub(crate) fn execute(
     result.unwrap_or_else(|message| RunResult::error("prepare", message))
 }
 
+#[derive(Deserialize)]
+pub(crate) struct WatchInput {
+    pub workspace: crate::CompileInput,
+    pub watches: Vec<WatchRequest>,
+}
+#[derive(Deserialize)]
+pub(crate) struct WatchRequest {
+    pub id: String,
+    pub contract: String,
+    pub signature: String,
+    pub arguments: String,
+}
+#[derive(Debug, Serialize)]
+pub(crate) struct WatchResult {
+    pub id: String,
+    pub value: Option<String>,
+    pub error: Option<String>,
+}
+
+pub(crate) fn watch(input: &WatchInput) -> Result<Vec<WatchResult>, String> {
+    if input.watches.len() > 16 {
+        return Err("At most 16 calls can be watched.".to_owned());
+    }
+    let key = input.workspace.sandbox_key();
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        Ok(input
+            .watches
+            .iter()
+            .map(|request| {
+                let value = (|| {
+                    let sandbox = session
+                        .as_mut()
+                        .filter(|s| s.key == key && s.contract == request.contract)
+                        .ok_or("No current deployment for this contract.")?;
+                    let method = sandbox
+                        .methods
+                        .iter()
+                        .find(|m| m.signature == request.signature)
+                        .ok_or("Function is no longer available.")?
+                        .clone();
+                    let mut data = method.selector.to_vec();
+                    data.extend(encode(&request.arguments, &method.shapes)?);
+                    match sandbox.call(data.into(), false)? {
+                        ExecutionResult::Success { output, .. } => {
+                            Ok(display_output(output.data(), &method.outputs))
+                        }
+                        ExecutionResult::Revert { output, .. } => Err(format!(
+                            "Reverted: 0x{}",
+                            revm::primitives::hex::encode(output)
+                        )),
+                        ExecutionResult::Halt { reason, .. } => Err(format!("Halted: {reason:?}")),
+                    }
+                })();
+                match value {
+                    Ok(value) => WatchResult {
+                        id: request.id.clone(),
+                        value: Some(value),
+                        error: None,
+                    },
+                    Err(error) => WatchResult {
+                        id: request.id.clone(),
+                        value: None,
+                        error: Some(error),
+                    },
+                }
+            })
+            .collect())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +522,69 @@ contract Counter {
             Some("0")
         );
     }
+    #[test]
+    fn watches_are_isolated_and_reject_stale_deployments() {
+        clear();
+        let source = SOURCE.replace("function read()", "function increment() public returns (uint256) { n = n + uint256(1); return n; }\nfunction read()");
+        let requests = || {
+            vec![
+                WatchRequest {
+                    id: "increment".into(),
+                    contract: "Counter".into(),
+                    signature: "increment()".into(),
+                    arguments: "[]".into(),
+                },
+                WatchRequest {
+                    id: "bad".into(),
+                    contract: "Counter".into(),
+                    signature: "set(uint256)".into(),
+                    arguments: "[false]".into(),
+                },
+                WatchRequest {
+                    id: "read".into(),
+                    contract: "Counter".into(),
+                    signature: "read()".into(),
+                    arguments: "[]".into(),
+                },
+            ]
+        };
+        let mut watched = WatchInput {
+            workspace: input(&source),
+            watches: requests(),
+        };
+        assert!(watch(&watched).unwrap().iter().all(|r| r.error.is_some()));
+        assert!(
+            info(&watched.workspace.sandbox_key()).is_none(),
+            "watching must not deploy"
+        );
+        call(&source, "set(uint256)", "[7]", false, 0);
+        for _ in 0..2 {
+            let results = watch(&watched).unwrap();
+            assert_eq!(results[0].value.as_deref(), Some("8"));
+            assert!(results[1].error.is_some());
+            assert_eq!(
+                results[2].value.as_deref(),
+                Some("7"),
+                "each watch must discard its changes"
+            );
+        }
+        assert_eq!(
+            call(&source, "read()", "[]", true, 0)
+                .execution
+                .unwrap()
+                .decoded
+                .as_deref(),
+            Some("7")
+        );
+        watched.workspace.sandbox_epoch = 1;
+        assert!(watch(&watched).unwrap().iter().all(|r| r.error.is_some()));
+        watched.workspace.sandbox_epoch = 0;
+        watched.workspace.files[0].content.push_str("\n// edited");
+        assert!(watch(&watched).unwrap().iter().all(|r| r.error.is_some()));
+        watched.watches = (0..17).map(|_| requests().remove(0)).collect();
+        assert!(watch(&watched).is_err());
+    }
+
     #[test]
     fn constructor_arguments_and_invalid_calls() {
         clear();

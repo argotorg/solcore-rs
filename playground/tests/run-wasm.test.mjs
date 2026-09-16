@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import init, { compile, run } from 'solcore-wasm';
+import init, { compile, run, watch } from 'solcore-wasm';
 
 // Exercise the actual browser WASM package and the examples shipped by the UI.
 await init({
@@ -126,4 +126,31 @@ test('Composition exports each Yul object and runs the selected vault', async ()
     assert.equal(result.execution.decoded, '0');
     assert.equal(result.sandbox.contract, contract);
   }
+});
+
+
+test('AMM watches track committed swaps and discard changes from watched calls', async () => {
+  const files = await Promise.all(['Amm.sol', 'pool.sol'].map(async path => ({
+    path, content: await readFile(new URL(`../src/examples/invariants/${path}`, import.meta.url), 'utf8'),
+  })));
+  const input = { files, entry: 'Amm.sol', options };
+  const invoke = (signature, args, simulate) => run({ ...input, manual: {
+    contract: 'Amm', signature, arguments: args, constructorArguments: '[]', simulate,
+  } });
+  const watches = ['poolX()', 'poolY()'].map(signature => ({ id: signature, contract: 'Amm', signature, arguments: '[]' }));
+  const values = () => watch({ workspace: input, watches }).map(result => result.value);
+  assert.equal(invoke('poolX()', '[]', true).execution.decoded, '10');
+  assert.deepEqual(values(), ['10', '1000']);
+  const inspected = watch({ workspace: input, watches: [
+    { id: 'swap', contract: 'Amm', signature: 'swap(uint256)', arguments: '[10]' }, ...watches,
+  ] });
+  assert.deepEqual(inspected.map(result => result.value), ['500', '10', '1000']);
+  assert.equal(invoke('swap(uint256)', '[10]', false).execution.decoded, '500');
+  assert.deepEqual(values(), ['20', '500']);
+  assert.equal(invoke('swap(uint256)', '[10]', true).execution.decoded, '166');
+  assert.deepEqual(values(), ['20', '500']);
+  invoke('swap(uint256)', '[10]', false);
+  assert.deepEqual(values(), ['30', '334']);
+  const stale = watch({ workspace: { ...input, sandboxEpoch: 1 }, watches });
+  assert.ok(stale.every(result => result.error && result.value === null));
 });

@@ -73,7 +73,7 @@ export interface ExecutionResult {
 export interface ContractInterface {
   name: string;
   constructorInputs: string[];
-  methods: Array<{ signature: string; inputs: string[] }>;
+  methods: Array<{ signature: string; inputs: string[]; returnsValue: boolean }>;
 }
 
 export interface ManualCall {
@@ -98,3 +98,21 @@ export interface TestCase {
   expected: string | null;
   gasUsed: number | null;
 }
+
+export interface WatchCall {
+  id: string;
+  contract: string;
+  signature: string;
+  arguments: string;
+}
+export interface WatchResult {
+  id: string;
+  value: string | null;
+  error: string | null;
+}
+export interface WatchInput {
+  workspace: CompileInput;
+  watches: WatchCall[];
+}
+export type WorkerRequest = CompileRequest | { id: number; kind: "watch"; input: WatchInput };
+export type WorkerResponse = CompileResponse | { id: number; kind: "watch-result"; result: WatchResult[] };

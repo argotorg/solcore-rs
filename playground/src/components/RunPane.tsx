@@ -1,3 +1,4 @@
+import { StatePane } from "./StatePane";
 import { CallControls } from "./CallControls";
 import { formatExecution } from "../compiler/executionOutput";
 import { useWorkspaceStore } from "../store/workspace";
@@ -30,6 +31,7 @@ export function RunPane(): JSX.Element {
   return (
     <div className="run-pane">
       <CallControls />
+      <StatePane />
       {manualResult ? <div className="run-call-result" role="status">
         <strong>{manualResult.status === "success" ? "Success" : manualResult.status}</strong>
         {manualVersion !== version ? " (outdated)" : ""}

@@ -1,11 +1,12 @@
 import init, {
   compile as wasmCompile,
   run as wasmRun,
+  watch as wasmWatch,
   std_files as wasmStdFiles,
   version as wasmVersion,
 } from "solcore-wasm";
 import wasmUrl from "solcore-wasm/solcore_wasm_bg.wasm?url";
-import type { CompileInput, CompileResult } from "./types";
+import type { CompileInput, CompileResult, WatchInput, WatchResult } from "./types";
 
 export interface StdFile {
   path: string;
@@ -40,4 +41,8 @@ export function std_files(): Promise<StdFile[]> {
 
 export function run(input: CompileInput): CompileResult {
   return wasmRun(input) as CompileResult;
+}
+
+export function watch(input: WatchInput): WatchResult[] {
+  return wasmWatch(input) as WatchResult[];
 }

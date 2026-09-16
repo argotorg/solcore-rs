@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { compileClient } from "../compiler/compileClient";
 import { nowMs } from "../compiler/timing";
-import type { CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall } from "../compiler/types";
+import type { CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall, WatchCall, WatchResult } from "../compiler/types";
 import {
   defaultExample,
   examples,
@@ -65,6 +65,15 @@ export interface WorkspaceState {
   setCallDraft: (patch: Partial<ManualCall>) => void;
   runCall: () => Promise<void>;
   resetSandbox: () => void;
+  watches: WatchCall[];
+  watchValues: Record<string, WatchResult & { changed: boolean }>;
+  watchVersion: number | null;
+  watchEpoch: number | null;
+  watchRevision: number;
+  watchLoading: boolean;
+  addWatch: (call: Omit<WatchCall, "id">) => void;
+  removeWatch: (id: string) => void;
+  refreshWatches: () => Promise<void>;
   testCases: TestCase[];
   testResults: TestCase[];
   testResultsVersion: number | null;
@@ -75,6 +84,7 @@ const WORKSPACE_BACKUP_STORAGE_KEY = "solcore-playground.workspace.v1.backup";
 const THEME_STORAGE_KEY = "solcore-playground.theme.v1";
 
 let compileRun = 0;
+let watchRun = 0;
 
 function isBrowser(): boolean {
   return typeof window !== "undefined" && typeof document !== "undefined";
@@ -333,7 +343,30 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   manualResultVersion: null,
   setCallDraft(patch) { set((s) => ({ callDraft: { ...s.callDraft, ...patch }, selectedTestId: null })); },
   runCall: () => executeWorkspace(true, undefined, get().callDraft),
-  resetSandbox() { set((s) => ({ sandbox: null, sandboxVersion: null, sandboxEpoch: s.sandboxEpoch + 1 })); },
+  resetSandbox() {
+    watchRun += 1;
+    set((s) => ({ sandbox: null, sandboxVersion: null, sandboxEpoch: s.sandboxEpoch + 1,
+      watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false }));
+  },
+  watches: [],
+  watchValues: {},
+  watchVersion: null,
+  watchEpoch: null,
+  watchRevision: 0,
+  watchLoading: false,
+  addWatch(call) {
+    const normalized = { ...call, arguments: call.arguments.trim() };
+    const id = JSON.stringify([normalized.contract, normalized.signature, normalized.arguments]);
+    if (get().watches.length >= 16 || get().watches.some((watch) => watch.id === id)) return;
+    set((s) => ({ watches: [...s.watches, { ...normalized, id }] }));
+    void get().refreshWatches();
+  },
+  removeWatch(id) {
+    set((s) => ({ watches: s.watches.filter((watch) => watch.id !== id) }));
+    void get().refreshWatches();
+  },
+  refreshWatches,
+
   testCases: [],
   testResults: [],
   testResultsVersion: null,
@@ -506,6 +539,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const nextWorkspace = workspaceFromExample(getExample(id));
     set((state) => ({
       ...nextWorkspace,
+      watches: [], watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false,
       contracts: [],
       callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
       selectedTestId: null,
@@ -535,6 +569,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const nextWorkspace = workspaceFromExample(defaultExample);
     set((state) => ({
       ...nextWorkspace,
+      watches: [], watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false,
       contracts: [],
       callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
       selectedTestId: null,
@@ -580,6 +615,7 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
   const set = useWorkspaceStore.setState;
   const runId = compileRun + 1;
   compileRun = runId;
+  if (run) watchRun += 1;
 
   const state = get();
   const compileVersion = state.workspaceVersion;
@@ -602,6 +638,7 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
   const selected = testId ? state.testCases.find((t) => t.id === testId) : null;
   set({
     ...(run ? {
+      watchLoading: false,
       selectedTestId: testId ?? null,
       manualResult: null,
       manualResultVersion: null,
@@ -640,6 +677,7 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
           ? get().outputTab
           : result.success ? (run ? "execution" : get().outputTab) : "problems",
       });
+      if (run) void get().refreshWatches();
     }
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -658,6 +696,48 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
         outputTab: compileVersion === get().workspaceVersion ? "problems" : get().outputTab,
       });
     }
+  }
+}
+
+async function refreshWatches(): Promise<void> {
+  const get = useWorkspaceStore.getState;
+  const set = useWorkspaceStore.setState;
+  const state = get();
+  const requestId = ++watchRun;
+  const watches = state.watches.filter((watch) => watch.contract === state.sandbox?.contract);
+  if (state.compiling || !state.sandbox || state.sandboxVersion !== state.workspaceVersion || !watches.length) {
+    set({ watchLoading: false });
+    return;
+  }
+  const current = (): boolean => requestId === watchRun
+    && state.workspaceVersion === get().workspaceVersion
+    && state.sandboxEpoch === get().sandboxEpoch
+    && state.watches === get().watches;
+  set({ watchLoading: true });
+  try {
+    const results = await compileClient.watch({
+      workspace: {
+        files: state.order.map((path) => state.files[path]), entry: state.entry,
+        options: state.options, sandboxEpoch: state.sandboxEpoch + state.workspaceVersion,
+      }, watches,
+    });
+    if (!current()) return;
+    set({
+      watchValues: Object.fromEntries(results.map((result) => [result.id, {
+        ...result, changed: result.value !== null && state.watchValues[result.id]?.value != null
+          && result.value !== state.watchValues[result.id].value,
+      }])),
+      watchVersion: state.workspaceVersion, watchEpoch: state.sandboxEpoch,
+      watchRevision: state.watchRevision + 1,
+    });
+  } catch (error: unknown) {
+    if (!current() || error instanceof DOMException && error.name === "AbortError") return;
+    const message = error instanceof Error ? error.message : "Could not read watches";
+    set({ watchValues: Object.fromEntries(watches.map((watch) => [watch.id, {
+      id: watch.id, value: null, error: message, changed: false,
+    }])), watchVersion: state.workspaceVersion, watchEpoch: state.sandboxEpoch });
+  } finally {
+    if (requestId === watchRun) set({ watchLoading: false });
   }
 }
 

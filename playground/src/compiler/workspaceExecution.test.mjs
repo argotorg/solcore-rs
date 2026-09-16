@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 
 const pending = [];
-globalThis.__playgroundCompileMock = Object.fromEntries(['compile', 'run'].map(kind => [
+globalThis.__playgroundCompileMock = Object.fromEntries(['compile', 'run', 'watch'].map(kind => [
   kind, input => new Promise(resolve => pending.push({ kind, input, resolve })),
 ]));
 const bundle = await build({
@@ -158,4 +158,47 @@ test('test play fills the manual controls before running and edits detach the as
   assert.equal(store.getState().manualResult, null);
   next.resolve(result);
   await rerun;
+});
+
+
+test('watches refresh after a call, retain results on edits, and reject late reads after reset', async () => {
+  store.getState().loadExample('std-usage');
+  const definition = { contract: 'Calculator', signature: 'answer()', arguments: '[]' };
+  store.getState().addWatch(definition);
+  assert.equal(pending.length, 0, 'adding a watch must not deploy');
+  store.getState().addWatch(definition);
+  assert.equal(store.getState().watches.length, 1);
+  const id = store.getState().watches[0].id;
+  const run = store.getState().runCall();
+  pending.shift().resolve({ ...result, sandbox: { contract: 'Calculator', address: '0x1234' } });
+  await run;
+  const first = pending.shift();
+  assert.equal(first.kind, 'watch');
+  first.resolve([{ id, value: '42', error: null }]);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(store.getState().watchValues[id].value, '42');
+  assert.equal(store.getState().watchValues[id].changed, false);
+  const refresh = store.getState().refreshWatches();
+  pending.shift().resolve([{ id, value: '43', error: null }]);
+  await refresh;
+  assert.equal(store.getState().watchValues[id].changed, true);
+  const late = store.getState().refreshWatches();
+  const request = pending.shift();
+  store.getState().setContent('Calculator.sol', '// changed');
+  request.resolve([{ id, value: '99', error: null }]);
+  await late;
+  assert.equal(store.getState().watchValues[id].value, '43');
+  assert.notEqual(store.getState().watchVersion, store.getState().workspaceVersion);
+  await store.getState().refreshWatches();
+  assert.equal(pending.length, 0, 'outdated source must not read an old deployment');
+  store.setState({ sandboxVersion: store.getState().workspaceVersion });
+  const resetRead = store.getState().refreshWatches();
+  const resetRequest = pending.shift();
+  store.getState().resetSandbox();
+  resetRequest.resolve([{ id, value: '100', error: null }]);
+  await resetRead;
+  assert.deepEqual(store.getState().watchValues, {});
+  assert.equal(store.getState().watches.length, 1);
+  store.getState().loadExample('trait');
+  assert.equal(store.getState().watches.length, 0);
 });

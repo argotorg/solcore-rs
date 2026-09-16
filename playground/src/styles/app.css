@@ -785,3 +785,19 @@
 .artifact-editor { flex: 1; min-height: 0; }
 .artifact-selector { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); color: var(--text-secondary); font-size: 12px; }
 .artifact-selector select { min-width: 0; max-width: 100%; padding: var(--space-1); background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-2); }
+
+.state-pane { border-top: 1px solid var(--border-subtle); margin-bottom: var(--space-3); padding-top: var(--space-2); }
+.state-pane__heading { display: flex; align-items: center; gap: var(--space-2); }
+.state-pane h3 { margin: 0; font-size: 13px; }
+.state-pane__heading > span, .state-pane p { color: var(--text-secondary); font-size: 12px; }
+.state-pane__heading > button { margin-left: auto; }
+.state-pane table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.state-pane th, .state-pane td { padding: var(--space-2) 0; text-align: left; overflow-wrap: anywhere; }
+.state-pane th { font-weight: 400; }
+.state-pane thead { color: var(--text-secondary); }
+.state-pane th:last-child, .state-pane td:last-child { width: 36px; text-align: right; }
+.state-pane small { display: block; color: var(--text-secondary); overflow-wrap: anywhere; }
+.state-pane__value--outdated { color: var(--text-muted); }
+.state-pane__value--changed { animation: watched-value-change 1.4s ease-out; }
+@keyframes watched-value-change { from { background: var(--accent-soft); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .state-pane__value--changed { animation: none; } }

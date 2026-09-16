@@ -57,6 +57,13 @@ After a test, manual calls can inspect or change its deployed contract. Running 
 test again starts a new deployment and replays its setup. With no test comments,
 the toolbar runs the selected function, or `main` when there is no selector interface.
 
+Use **Watch** beside the call controls to add a function and its arguments to the
+State section. Watched calls always discard changes and read the current deployment;
+they do not deploy or recompile. Values refresh after runs, and changed values are
+highlighted briefly. Source edits retain values marked outdated; Reset clears the
+values while keeping the watches. Up to 16 calls can be watched per workspace;
+watches last for the current page session.
+
 ## Development
 
 Use wasm-pack 0.15.0, as pinned in CI, for the custom WASM build profile.
