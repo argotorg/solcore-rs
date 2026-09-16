@@ -21,6 +21,9 @@ import extensionsContext from "./extensions/context.sol?raw";
 import extensionsOwnable from "./extensions/ownable.sol?raw";
 import extensionsHooks from "./extensions/hooks.sol?raw";
 import extensionsOption from "./extensions/option.sol?raw";
+import reentrancyVault from "./reentrancy/Vault.sol?raw";
+import reentrancyReentrancy from "./reentrancy/reentrancy.sol?raw";
+import reentrancyContext from "./reentrancy/context.sol?raw";
 import comptimeAnswer from "./comptime/Answer.sol?raw";
 
 export interface ExampleFile {
@@ -138,6 +141,17 @@ export const examples: PlaygroundExample[] = [
       { path: "hooks.sol", content: extensionsHooks },
       { path: "option.sol", content: extensionsOption },
       { path: "context.sol", content: extensionsContext },
+    ],
+  },
+  {
+    id: "reentrancy",
+    name: "Reentrancy",
+    description: "Read and write locks as wrapper functions: protected bodies are lambdas, and reads are guarded against read-only reentrancy.",
+    entry: "Vault.sol",
+    files: [
+      { path: "Vault.sol", content: reentrancyVault },
+      { path: "reentrancy.sol", content: reentrancyReentrancy },
+      { path: "context.sol", content: reentrancyContext },
     ],
   },
   {
