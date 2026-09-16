@@ -45,7 +45,8 @@ export interface CompileResult {
   execution: ExecutionResult | null;
   tests: TestCase[];
   contracts: ContractInterface[];
-  sandbox: { contract: string; address: string } | null;
+  sandbox: { id: number; contract: string; address: string } | null;
+  events: ExecutionEvent[];
 }
 
 export interface CompileRequest {
@@ -85,7 +86,30 @@ export interface ManualCall {
   reset?: boolean;
 }
 
+export interface ExecutionEvent {
+  kind: "deploy" | "call" | "setup" | "check";
+  contract: string;
+  signature: string;
+  arguments: string;
+  simulate: boolean;
+  testId: string | null;
+  expected: string | null;
+  passed: boolean | null;
+  result: ExecutionResult;
+}
+
+export interface RecentAction {
+  id: number;
+  label: string;
+  version: number;
+  sandboxId: number | null;
+  events: ExecutionEvent[];
+  result: ExecutionResult | null;
+  message: string | null;
+}
+
 export interface TestCase {
+  replayed?: boolean;
   id: string;
   file: string;
   line: number;

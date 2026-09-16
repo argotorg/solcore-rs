@@ -1,5 +1,5 @@
 //! A single browser-worker deployment shared by manual calls and selected tests.
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use crate::{
     execution::{CALLER, GAS_LIMIT, MEMORY_LIMIT, RunResult},
@@ -56,6 +56,7 @@ pub(crate) struct Request {
 }
 #[derive(Serialize)]
 pub(crate) struct Info {
+    id: u64,
     contract: String,
     address: String,
 }
@@ -164,7 +165,33 @@ fn encode(arguments: &str, shapes: &[AbiShape]) -> Result<Vec<u8>, String> {
     encode_static_abi("argument", shapes, &values).map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Event {
+    pub kind: &'static str,
+    pub contract: String,
+    pub signature: String,
+    pub arguments: String,
+    pub simulate: bool,
+    pub test_id: Option<String>,
+    pub expected: Option<String>,
+    pub passed: Option<bool>,
+    pub result: RunResult,
+}
+thread_local! {
+    static EVENTS: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
+    static NEXT_ID: Cell<u64> = const { Cell::new(0) };
+}
+pub(crate) fn record(event: Event) {
+    EVENTS.with(|events| events.borrow_mut().push(event));
+}
+pub(crate) fn take_events() -> Vec<Event> {
+    EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()))
+}
+
 pub(crate) struct Sandbox {
+    id: u64,
+    deployment: RunResult,
     db: InMemoryDB,
     address: Address,
     nonce: u64,
@@ -176,6 +203,32 @@ thread_local! { static SESSION: RefCell<Option<Sandbox>> = const { RefCell::new(
 
 impl Sandbox {
     pub(crate) fn deploy(
+        workspace: &Workspace,
+        program: &hull::Program<'_>,
+        contract: &str,
+        args: &[u8],
+        arguments: &str,
+        key: &str,
+    ) -> Result<Self, String> {
+        let deployed = Self::deploy_inner(workspace, program, contract, args, key);
+        let result = match &deployed {
+            Ok(sandbox) => sandbox.deployment.clone(),
+            Err(message) => RunResult::error("deploy", message),
+        };
+        record(Event {
+            kind: "deploy",
+            contract: contract.to_owned(),
+            signature: String::new(),
+            arguments: arguments.to_owned(),
+            simulate: false,
+            test_id: None,
+            expected: None,
+            passed: None,
+            result,
+        });
+        deployed
+    }
+    fn deploy_inner(
         workspace: &Workspace,
         program: &hull::Program<'_>,
         contract: &str,
@@ -209,6 +262,12 @@ impl Sandbox {
             AccountInfo::default().with_balance(U256::from(10u64).pow(U256::from(20))),
         );
         let mut sandbox = Self {
+            id: NEXT_ID.with(|id| {
+                let next = id.get() + 1;
+                id.set(next);
+                next
+            }),
+            deployment: RunResult::error("deploy", "Deployment has not run"),
             db,
             address: Address::ZERO,
             nonce: 0,
@@ -221,6 +280,7 @@ impl Sandbox {
                 .unwrap_or_default(),
         };
         let result = sandbox.transact(TxKind::Create, bytecode.into(), true)?;
+        sandbox.deployment = RunResult::from_evm(result.clone(), "deploy");
         sandbox.address = match result {
             ExecutionResult::Success {
                 output: Output::Create(_, Some(address)),
@@ -280,6 +340,7 @@ pub(crate) fn clear() {
 pub(crate) fn info(key: &str) -> Option<Info> {
     SESSION.with(|s| {
         s.borrow().as_ref().filter(|s| s.key == key).map(|s| Info {
+            id: s.id,
             contract: s.contract.clone(),
             address: s.address.to_string(),
         })
@@ -319,21 +380,35 @@ pub(crate) fn execute(
                     program,
                     &contract.name,
                     &args,
+                    &request.constructor_arguments,
                     key,
                 )?);
             }
-            let result = session
+            let called = session
                 .as_mut()
                 .unwrap()
-                .call(data.into(), !request.simulate)?;
-            let decoded = match &result {
-                ExecutionResult::Success { output, .. } => {
+                .call(data.into(), !request.simulate);
+            let decoded = match &called {
+                Ok(ExecutionResult::Success { output, .. }) => {
                     Some(display_output(output.data(), &method.outputs))
                 }
                 _ => None,
             };
-            let mut result = RunResult::from_evm(result, "call");
+            let mut result = called
+                .map(|r| RunResult::from_evm(r, "call"))
+                .unwrap_or_else(|message| RunResult::error("call", message));
             result.decoded = decoded;
+            record(Event {
+                kind: "call",
+                contract: request.contract.clone(),
+                signature: request.signature.clone(),
+                arguments: request.arguments.clone(),
+                simulate: request.simulate,
+                test_id: None,
+                expected: None,
+                passed: None,
+                result: result.clone(),
+            });
             Ok::<_, String>(result)
         })
     })();

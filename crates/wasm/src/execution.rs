@@ -19,7 +19,7 @@ pub(crate) const MEMORY_LIMIT: u64 = 16 * 1024 * 1024;
 pub(crate) const CALLER: Address = Address::new([0x11; 20]);
 const PROGRAM_ADDRESS: Address = Address::new([0x22; 20]);
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum RunStatus {
     Success,
@@ -28,7 +28,7 @@ pub(crate) enum RunStatus {
     Error,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RunResult {
     pub(crate) status: RunStatus,

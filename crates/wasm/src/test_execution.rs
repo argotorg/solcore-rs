@@ -25,6 +25,7 @@ pub(crate) struct TestCase {
     pub contract: String,
     pub label: String,
     pub status: &'static str,
+    pub replayed: bool,
     pub message: Option<String>,
     pub actual: Option<String>,
     pub expected: Option<String>,
@@ -100,6 +101,7 @@ pub(crate) fn discover(workspace: &Workspace, path: &str) -> Vec<TestCase> {
                     contract: contract.clone(),
                     label: comment.text.trim().to_owned(),
                     status: "ready",
+                    replayed: false,
                     message: None,
                     actual: None,
                     expected: None,
@@ -337,7 +339,7 @@ fn execute_contract(
     }) {
         return Err("Tests currently require a constructor with no arguments.".to_owned());
     }
-    let mut sandbox = Sandbox::deploy(workspace, program, contract, &[], sandbox_key)?;
+    let mut sandbox = Sandbox::deploy(workspace, program, contract, &[], "[]", sandbox_key)?;
     for &i in indices {
         let is_selected = selected.is_none_or(|id| tests[i].id == id);
         let Some(call) = tests[i].call.clone() else {
@@ -353,7 +355,39 @@ fn execute_contract(
         }
         let data =
             hex::decode(call.calldata.trim_start_matches("0x")).map_err(|e| e.to_string())?;
-        let result = sandbox.call(Bytes::from(data), send)?;
+        let called = sandbox.call(Bytes::from(data), send);
+        let mut event_result = match &called {
+            Ok(result) => RunResult::from_evm(result.clone(), "call"),
+            Err(message) => RunResult::error("call", message),
+        };
+        if let Ok(ExecutionResult::Success { output, .. }) = &called {
+            event_result.decoded = Some(display_output(output.data(), &tests[i].outputs));
+        }
+        let invocation = tests[i]
+            .invocation
+            .as_ref()
+            .expect("resolved test has an invocation");
+        let mut event = crate::sandbox::Event {
+            kind: if send { "setup" } else { "check" },
+            contract: contract.to_owned(),
+            signature: invocation.signature.clone(),
+            arguments: invocation.arguments.clone(),
+            simulate: !send,
+            test_id: Some(tests[i].id.clone()),
+            expected: tests[i].expected.clone(),
+            passed: None,
+            result: event_result,
+        };
+        tests[i].replayed = !is_selected;
+        let result = match called {
+            Ok(result) => result,
+            Err(message) => {
+                tests[i].status = "error";
+                tests[i].message = Some(message.clone());
+                crate::sandbox::record(event);
+                return Err(message);
+            }
+        };
         let gas = result.tx_gas_used();
         let (passed, actual) = match (&call.action, &result) {
             (ResolvedE2eAction::Send, ExecutionResult::Success { .. }) => {
@@ -383,11 +417,11 @@ fn execute_contract(
             }
             (_, ExecutionResult::Halt { reason, .. }) => (false, format!("halt: {reason:?}")),
         };
-        if is_selected {
-            tests[i].status = if passed { "passed" } else { "failed" };
-            tests[i].actual = Some(actual.clone());
-            tests[i].gas_used = Some(gas);
-        }
+        event.passed = Some(passed);
+        crate::sandbox::record(event);
+        tests[i].status = if passed { "passed" } else { "failed" };
+        tests[i].actual = Some(actual.clone());
+        tests[i].gas_used = Some(gas);
         if send && !passed {
             return Err(format!("Setup failed: {actual}"));
         }
@@ -447,8 +481,47 @@ contract Counter {
         let selected = result.tests[3].id.clone();
         let result = run_impl(input(COUNTER, Some(selected)));
         assert_eq!(result.tests[3].status, "passed", "{:?}", result.tests);
-        assert!(result.tests[..3].iter().all(|t| t.status == "ready"));
+        assert_eq!(result.tests[0].status, "passed");
+        assert!(result.tests[0].replayed);
+        assert!(result.tests[1..3].iter().all(|t| t.status == "ready"));
+        assert_eq!(
+            result.events.iter().map(|e| e.kind).collect::<Vec<_>>(),
+            ["deploy", "setup", "check"]
+        );
+        assert_eq!(result.events[1].test_id, Some(result.tests[0].id.clone()));
     }
+    #[test]
+    fn execution_events_stop_at_failed_setup_and_report_contract_order() {
+        let broken = COUNTER.replace("n = value;", "assembly { revert(0, 0) }");
+        let found = compile_impl(input(&broken, None));
+        let result = run_impl(input(&broken, Some(found.tests[3].id.clone())));
+        assert_eq!(
+            result.events.iter().map(|e| e.kind).collect::<Vec<_>>(),
+            ["deploy", "setup"]
+        );
+        assert_eq!(result.tests[0].status, "failed");
+        assert!(result.tests[0].replayed);
+        assert_eq!(result.tests[3].status, "error");
+        assert!(result.sandbox.is_none());
+
+        let source = COUNTER.replace("contract Counter", "contract Zed")
+            + &COUNTER
+                .replace("import * from std;", "")
+                .replace("import * from std.dispatch;", "")
+                .replace("contract Counter", "contract Alpha");
+        let result = run_impl(input(&source, None));
+        assert!(result.success);
+        assert_eq!(
+            result
+                .events
+                .iter()
+                .filter(|e| e.kind == "deploy")
+                .map(|e| e.contract.as_str())
+                .collect::<Vec<_>>(),
+            ["Alpha", "Zed"]
+        );
+    }
+
     #[test]
     fn failures_do_not_hide_subsequent_results_and_reverts_can_pass() {
         let source = r#"
@@ -475,6 +548,13 @@ contract C {
         );
         assert_eq!(result.tests[0].actual.as_deref(), Some("42"));
         assert_eq!(result.tests[0].expected.as_deref(), Some("99"));
+        assert_eq!(
+            result.events[1].result.status,
+            crate::execution::RunStatus::Success
+        );
+        assert_eq!(result.events[1].passed, Some(false));
+        assert_eq!(result.events[1].expected.as_deref(), Some("99"));
+        assert_eq!(result.events[3].passed, Some(true));
     }
     #[test]
     fn discovery_uses_attached_comments_and_reports_invalid_targets() {

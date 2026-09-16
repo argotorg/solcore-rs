@@ -29,6 +29,7 @@ export function attachTestControls(
           command: {
             id: state.compiling ? "" : "solcore.runTest",
             title: state.running ? "Running…" : "▶ Run test",
+            tooltip: "Starts fresh and replays earlier setup calls before this test.",
             arguments: [test.id],
           },
         })),
@@ -61,7 +62,7 @@ export function attachTestControls(
       const detail = test.message ?? (test.status === "passed"
         ? test.actual
         : `expected ${test.expected}, got ${test.actual}`);
-      const text = `${test.status === "passed" ? "✓" : "✗"} ${detail}${stale ? " (outdated)" : ""}`;
+      const text = `${test.status === "passed" ? "✓" : "✗"} ${test.replayed ? "Setup: " : ""}${detail}${stale ? " (outdated)" : ""}`;
       return {
         range: new monaco.Range(line, column, line, column),
         options: {

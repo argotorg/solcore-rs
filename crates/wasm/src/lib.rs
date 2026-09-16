@@ -134,6 +134,7 @@ pub(crate) struct CompileResult {
     pub(crate) tests: Vec<test_execution::TestCase>,
     pub(crate) contracts: Vec<sandbox::Contract>,
     pub(crate) sandbox: Option<sandbox::Info>,
+    pub(crate) events: Vec<sandbox::Event>,
 }
 
 #[derive(Serialize)]
@@ -193,6 +194,9 @@ pub(crate) fn run_impl(input: CompileInput) -> CompileResult {
 }
 
 fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
+    if execute {
+        sandbox::take_events();
+    }
     if Path::new(&input.entry)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -216,6 +220,7 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
             tests: vec![],
             contracts: vec![],
             sandbox: None,
+            events: vec![],
         };
     }
 
@@ -262,6 +267,7 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
         tests: vec![],
         contracts: vec![],
         sandbox: None,
+        events: vec![],
     };
 
     if !result.diagnostics.iter().any(Diag::is_error) {
@@ -281,6 +287,7 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
     }
     if execute {
         result.sandbox = sandbox::info(&sandbox_key);
+        result.events = sandbox::take_events();
     }
     result.success = !result.diagnostics.iter().any(Diag::is_error);
     result

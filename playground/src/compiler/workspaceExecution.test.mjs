@@ -151,7 +151,8 @@ test('test play fills the manual controls before running and edits detach the as
   store.getState().setContent('Calculator.sol', content + '\n');
   store.getState().setContent('Calculator.sol', content);
   store.getState().resetSandbox();
-  assert.equal(store.getState().manualResult.decoded, '7');
+  assert.equal(store.getState().manualResult, null);
+  assert.equal(store.getState().recentActions.at(-1).label, 'Reset sandbox');
   const rerun = store.getState().runCall();
   const next = pending.shift();
   assert.ok(next.input.sandboxEpoch > epoch);
@@ -201,4 +202,48 @@ test('watches refresh after a call, retain results on edits, and reject late rea
   assert.equal(store.getState().watches.length, 1);
   store.getState().loadExample('trait');
   assert.equal(store.getState().watches.length, 0);
+});
+
+test('recent actions preserve call identity, mode, deployment boundaries, and reset history', async () => {
+  store.getState().loadExample('std-usage');
+  store.getState().setCallDraft({ contract: 'Counter', signature: 'set(uint256)', arguments: '[7]' });
+  const sandbox = { id: 41, contract: 'Counter', address: '0x1234' };
+  const deploy = { kind: 'deploy', contract: 'Counter', signature: '', arguments: '[]', simulate: false, result: execution };
+  for (const simulate of [false, true]) {
+    const run = store.getState().runCall(simulate);
+    const request = pending.shift();
+    assert.equal(request.input.manual.simulate, simulate);
+    request.resolve({ ...result, sandbox, events: simulate ? [] : [deploy] });
+    await run;
+  }
+  let actions = store.getState().recentActions;
+  assert.deepEqual(actions.map(a => a.label), ['Run Counter.set(7)', 'Simulate Counter.set(7)']);
+  assert.equal(actions[0].events[0].kind, 'deploy');
+  assert.equal(store.getState().sandboxAction, 2);
+  store.getState().setCallDraft({ arguments: '[9]' });
+  assert.equal(store.getState().recentActions[0].label, 'Run Counter.set(7)');
+  store.getState().setContent('Calculator.sol', '// changed');
+  assert.notEqual(store.getState().workspaceVersion, actions[0].version);
+  store.getState().resetSandbox();
+  assert.equal(store.getState().sandbox, null);
+  assert.equal(store.getState().manualResult, null);
+  assert.equal(store.getState().recentActions[0].sandboxId, 41);
+  assert.equal(store.getState().recentActions.at(-1).label, 'Reset sandbox');
+  for (let i = 0; i < 25; i++) store.getState().resetSandbox();
+  actions = store.getState().recentActions;
+  assert.equal(actions.length, 20);
+  assert.equal(actions.at(-1).id, 28);
+  store.getState().loadExample('trait');
+  assert.equal(store.getState().recentActions.length, 0);
+});
+
+test('opening manual controls and removing watches do not run calls', async () => {
+  store.getState().loadExample('std-usage');
+  store.setState({ contracts: [{ name: 'Counter', methods: [{ signature: 'read()' }] }], testCases: [] });
+  await store.getState().runNow();
+  assert.equal(store.getState().outputTab, 'execution');
+  assert.equal(pending.length, 0);
+  store.setState({ watches: [{ id: 'read', contract: 'Counter', signature: 'read()', arguments: '[]' }] });
+  store.getState().removeWatch('read');
+  assert.equal(pending.length, 0);
 });

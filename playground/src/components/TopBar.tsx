@@ -43,7 +43,9 @@ export function TopBar({
   const order = useWorkspaceStore((state) => state.order);
   const entry = useWorkspaceStore((state) => state.entry);
   const compiling = useWorkspaceStore((state) => state.compiling);
+  const hasManualCalls = useWorkspaceStore((state) => state.contracts.some((c) => c.methods.length > 0));
   const testCount = useWorkspaceStore((state) => state.testCases.length);
+  const runLabel = testCount > 0 ? "Run all tests" : hasManualCalls ? "Open calls" : "Run main";
   const running = useWorkspaceStore((state) => state.running);
   const lastCompileDurationMs = useWorkspaceStore((state) => state.lastCompileDurationMs);
   const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
@@ -200,14 +202,14 @@ export function TopBar({
           type="button"
           className="button button--primary"
           disabled={compiling}
-          aria-label="Run"
-          title="Compile and run main()"
+          aria-label={runLabel}
+          title={testCount > 0 ? "Run tests in fresh sandboxes" : hasManualCalls ? "Open the contract call controls" : "Compile and run main()"}
           onClick={() => {
             void runNow();
           }}
         >
-          {running ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-          <span>{running ? "Running" : testCount > 0 ? "Run all tests" : "Run"}</span>
+          {running ? <Loader2 className="spin" size={16} /> : hasManualCalls && !testCount ? <Braces size={16} /> : <Play size={16} />}
+          <span>{running ? "Running" : runLabel}</span>
         </button>
 
         {compileTimeLabel ? (
@@ -241,7 +243,7 @@ export function TopBar({
           title="Reset workspace"
         >
           <RotateCcw size={16} />
-          <span>Reset</span>
+          <span>Reset workspace</span>
         </button>
 
         <span className="version-pill">v{compilerVersion ?? "..."}</span>

@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { compileClient } from "../compiler/compileClient";
+import { formatCall } from "../compiler/formatCall";
 import { nowMs } from "../compiler/timing";
-import type { CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall, WatchCall, WatchResult } from "../compiler/types";
+import type { CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall, WatchCall, WatchResult, RecentAction } from "../compiler/types";
 import {
   defaultExample,
   examples,
@@ -63,7 +64,11 @@ export interface WorkspaceState {
   manualResult: CompileResult["execution"];
   manualResultVersion: number | null;
   setCallDraft: (patch: Partial<ManualCall>) => void;
-  runCall: () => Promise<void>;
+  runCall: (simulate?: boolean) => Promise<void>;
+  recentActions: RecentAction[];
+  actionSequence: number;
+  sandboxAction: number | null;
+  watchAction: number | null;
   resetSandbox: () => void;
   watches: WatchCall[];
   watchValues: Record<string, WatchResult & { changed: boolean }>;
@@ -304,6 +309,7 @@ function diagnosticResult(message: string): CompileResult {
     tests: [],
     contracts: [],
     sandbox: null,
+    events: [],
   };
 }
 
@@ -336,16 +342,22 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   contracts: [],
   callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
   selectedTestId: null,
+  recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
   sandbox: null,
   sandboxVersion: null,
   sandboxEpoch: 0,
   manualResult: null,
   manualResultVersion: null,
   setCallDraft(patch) { set((s) => ({ callDraft: { ...s.callDraft, ...patch }, selectedTestId: null })); },
-  runCall: () => executeWorkspace(true, undefined, get().callDraft),
+  runCall: (simulate = false) => executeWorkspace(true, undefined, { ...get().callDraft, simulate }),
   resetSandbox() {
     watchRun += 1;
     set((s) => ({ sandbox: null, sandboxVersion: null, sandboxEpoch: s.sandboxEpoch + 1,
+      sandboxAction: null, watchAction: null, manualResult: null, manualResultVersion: null,
+      actionSequence: s.actionSequence + 1,
+      recentActions: [...s.recentActions, { id: s.actionSequence + 1, label: "Reset sandbox",
+        version: s.workspaceVersion, sandboxId: null, events: [], result: null,
+        message: "The next call deploys a new contract." }].slice(-20),
       watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false }));
   },
   watches: [],
@@ -363,7 +375,6 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
   removeWatch(id) {
     set((s) => ({ watches: s.watches.filter((watch) => watch.id !== id) }));
-    void get().refreshWatches();
   },
   refreshWatches,
 
@@ -543,6 +554,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       contracts: [],
       callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
       selectedTestId: null,
+      recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
       sandbox: null,
       sandboxVersion: null,
       sandboxEpoch: state.sandboxEpoch + 1,
@@ -573,6 +585,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       contracts: [],
       callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
       selectedTestId: null,
+      recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
       sandbox: null,
       sandboxVersion: null,
       sandboxEpoch: state.sandboxEpoch + 1,
@@ -598,12 +611,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   runNow: (testId) => {
     const state = get();
     if (!testId && !state.testCases.length) {
-      const contract = state.contracts.find((c) => c.name === state.callDraft.contract) ?? state.contracts[0];
-      const method = contract?.methods.find((m) => m.signature === state.callDraft.signature) ?? contract?.methods[0];
-      if (contract && method) {
-        const draft = { ...state.callDraft, contract: contract.name, signature: method.signature };
-        set({ callDraft: draft });
-        return executeWorkspace(true, undefined, draft);
+      if (state.contracts.some((contract) => contract.methods.length > 0)) {
+        set({ outputTab: "execution" });
+        return Promise.resolve();
       }
     }
     return executeWorkspace(true, testId);
@@ -658,7 +668,20 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
     const result = await (run ? compileClient.run(input) : compileClient.compile(input));
     const durationMs = nowMs() - startedAt;
     if (runId === compileRun) {
+      const actionId = get().actionSequence + 1;
+      const label = manual
+        ? `${manual.simulate ? "Simulate" : "Run"} ${manual.contract}.${formatCall(manual.signature, manual.arguments)}`
+        : selected ? `Run test · ${selected.file}:${selected.line}`
+        : input.testId ? "Run selected test" : result.tests.length ? "Run all tests" : "Run main";
       set({
+        ...(run ? {
+          actionSequence: actionId,
+          sandboxAction: result.sandbox ? actionId : null,
+          recentActions: [...get().recentActions, { id: actionId, label, version: compileVersion,
+            sandboxId: result.sandbox?.id ?? null, events: result.events ?? [], result: result.execution,
+            message: result.execution?.message ?? result.diagnostics.find((d) => d.severity === "error")?.message ?? null,
+          }].slice(-20),
+        } : {}),
         result,
         contracts: compileVersion === get().workspaceVersion ? (result.contracts ?? []) : get().contracts,
         ...(run ? {
@@ -686,8 +709,16 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
 
     if (runId === compileRun) {
       const durationMs = nowMs() - startedAt;
+      const message = error instanceof Error ? error.message : "Compile failed";
       set({
-        result: diagnosticResult(error instanceof Error ? error.message : "Compile failed"),
+        ...(run ? {
+          actionSequence: get().actionSequence + 1,
+          recentActions: [...get().recentActions, { id: get().actionSequence + 1,
+            label: manual ? `${manual.simulate ? "Simulate" : "Run"} ${manual.contract}.${formatCall(manual.signature, manual.arguments)}` : "Run failed",
+            version: compileVersion, sandboxId: null, events: [], result: null, message,
+          }].slice(-20),
+        } : {}),
+        result: diagnosticResult(message),
         compiling: false,
         running: false,
         compileStartedAt: null,
@@ -712,7 +743,7 @@ async function refreshWatches(): Promise<void> {
   const current = (): boolean => requestId === watchRun
     && state.workspaceVersion === get().workspaceVersion
     && state.sandboxEpoch === get().sandboxEpoch
-    && state.watches === get().watches;
+    && state.sandbox?.id === get().sandbox?.id;
   set({ watchLoading: true });
   try {
     const results = await compileClient.watch({
@@ -723,10 +754,11 @@ async function refreshWatches(): Promise<void> {
     });
     if (!current()) return;
     set({
-      watchValues: Object.fromEntries(results.map((result) => [result.id, {
+      watchValues: Object.fromEntries(results.filter((result) => get().watches.some((w) => w.id === result.id)).map((result) => [result.id, {
         ...result, changed: result.value !== null && state.watchValues[result.id]?.value != null
           && result.value !== state.watchValues[result.id].value,
       }])),
+      watchAction: state.sandboxAction,
       watchVersion: state.workspaceVersion, watchEpoch: state.sandboxEpoch,
       watchRevision: state.watchRevision + 1,
     });

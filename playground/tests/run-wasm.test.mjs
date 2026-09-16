@@ -83,7 +83,9 @@ test('browser WASM replays sends for an individual test and renders booleans', a
   assert.ok(compiled.tests.every(test => test.status === 'ready'));
   const result = run({ ...input, testId: compiled.tests[1].id });
   assert.equal(result.execution?.status, 'success', JSON.stringify(result));
-  assert.equal(result.tests[0].status, 'ready');
+  assert.equal(result.tests[0].status, 'passed');
+  assert.equal(result.tests[0].replayed, true);
+  assert.deepEqual(result.events.map(e => e.kind), ['deploy', 'setup', 'check']);
   assert.equal(result.tests[1].status, 'passed');
   assert.equal(result.tests[1].actual, 'true');
   assert.equal(result.tests[1].expected, 'true');
@@ -105,6 +107,9 @@ test('browser WASM shares a test deployment with editable manual calls', async (
   assert.equal(manual.execution.status, 'success');
   assert.equal(manual.execution.decoded, '42');
   assert.equal(manual.sandbox.address, tested.sandbox.address);
+  assert.equal(manual.sandbox.id, tested.sandbox.id);
+  assert.deepEqual(manual.events.map(e => e.kind), ['call']);
+  assert.equal(manual.events[0].simulate, true);
 });
 
 test('Composition exports each Yul object and runs the selected vault', async () => {

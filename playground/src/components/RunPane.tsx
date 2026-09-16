@@ -1,3 +1,4 @@
+import { RecentActions } from "./RecentActions";
 import { StatePane } from "./StatePane";
 import { CallControls } from "./CallControls";
 import { formatExecution } from "../compiler/executionOutput";
@@ -11,7 +12,6 @@ export function RunPane(): JSX.Element {
   const version = useWorkspaceStore((s) => s.workspaceVersion);
   const compiling = useWorkspaceStore((s) => s.compiling);
   const manualResult = useWorkspaceStore((s) => s.manualResult);
-  const manualVersion = useWorkspaceStore((s) => s.manualResultVersion);
   const contracts = useWorkspaceStore((s) => s.contracts);
   const selectedId = useWorkspaceStore((s) => s.selectedTestId);
   const running = useWorkspaceStore((s) => s.running);
@@ -25,31 +25,18 @@ export function RunPane(): JSX.Element {
     actual: null,
     gasUsed: null,
   }));
-  const completed = tests.filter((test) => test.status !== "ready");
+  const completed = tests.filter((test) => test.status !== "ready" && !test.replayed);
+  const actions = useWorkspaceStore((s) => s.recentActions);
   const passed = completed.filter((test) => test.status === "passed").length;
 
   return (
     <div className="run-pane">
       <CallControls />
+      <RecentActions />
       <StatePane />
-      {manualResult ? <div className="run-call-result" role="status">
-        <strong>{manualResult.status === "success" ? "Success" : manualResult.status}</strong>
-        {manualVersion !== version ? " (outdated)" : ""}
-        {manualResult.decoded != null ? <p>Returned <code>{manualResult.decoded}</code></p> : null}
-        {manualResult.message ? <p className="run-pane__error">{manualResult.message}</p> : null}
-        {manualResult.phase !== "prepare" ? <details><summary>Details</summary>
-          <dl><dt>Gas used</dt><dd>{manualResult.gasUsed.toLocaleString()}</dd>
-          <dt>{manualResult.status === "revert" ? "Revert data" : "Return data"}</dt><dd><code>{manualResult.returnData}</code></dd></dl>
-        </details> : null}
-      </div> : null}
-      {tests.length ? <div className="run-pane__toolbar"><span role="status">
-        {running ? "Running…" : hasResults && completed.length
-          ? `${passed}/${completed.length} tests passed` : `${tests.length} test${tests.length === 1 ? "" : "s"}`}
-        {outdated ? " (outdated)" : ""}
-      </span></div> : null}
-      {!running && !manualResult && execution?.phase === "prepare" && tests.length > 0 ? (
-        <p className="run-pane__error">{execution.message}</p>
-      ) : null}
+      {tests.length ? <details className="run-tests" open={selectedId ? true : undefined}>
+        <summary>Tests ({tests.length}){hasResults && completed.length ? ` · ${passed}/${completed.length} passed` : ""}{outdated ? " (outdated)" : ""}</summary>
+        <p className="call-controls__hint">Tests start fresh. Running one test replays earlier setup calls in its contract. Assertions discard changes.</p>
       {tests.length ? tests.map((test) => {
         const canRun = !compiling && cases.some((current) => current.id === test.id);
         return (
@@ -59,7 +46,7 @@ export function RunPane(): JSX.Element {
                 {test.status === "passed" ? "✓" : test.status === "ready" ? "○" : "✗"}
               </span>
               <code>{test.invocation?.signature ?? test.contract}: {test.label}</code>
-              <span className="run-test__outcome">{test.status === "ready" ? "Not run" : test.status}</span>
+              <span className="run-test__outcome">{test.status === "ready" ? "Not run" : test.replayed ? `Setup ${test.status}` : test.status}</span>
             </summary>
             <div className="run-test__details">
               <dl>
@@ -69,6 +56,10 @@ export function RunPane(): JSX.Element {
                 {test.gasUsed !== null ? <><dt>Gas used</dt><dd>{test.gasUsed.toLocaleString()}</dd></> : null}
               </dl>
               {test.message ? <p className="run-pane__error">{test.message}</p> : null}
+              <p className="call-controls__hint">Starts fresh{(() => {
+                const setup = cases.filter((t) => t.contract === test.contract && t.line < test.line && t.invocation?.simulate === false).length;
+                return setup ? ` → replays ${setup} setup call${setup === 1 ? "" : "s"}` : "";
+              })()} → runs this test</p>
               <div className="run-test__actions">
                 <button type="button" className="button button--secondary" disabled={!canRun}
                   onClick={() => void run(test.id)}>Run test</button>
@@ -87,7 +78,9 @@ export function RunPane(): JSX.Element {
             </div>
           </details>
         );
-      }) : !contracts.length && !manualResult ? <pre className="run-pane__output">{running ? "" : formatExecution(execution)}</pre> : null}
+      }) : null}
+      </details> : null}
+      {!tests.length && !actions.length && !contracts.length && !manualResult ? <pre className="run-pane__output">{running ? "" : formatExecution(execution)}</pre> : null}
     </div>
   );
 }

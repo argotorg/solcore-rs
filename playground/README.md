@@ -4,15 +4,14 @@ A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The
 
 ## Run a program
 
-Select **Hello contract** and click **Run** to execute it in the browser. The
+Select **Hello contract** and click **Run main** to execute it in the browser. The
 **Run** tab shows the return word, raw return data, gas used, and any revert
 or halt. revm runs inside the existing compiler WASM worker.
 
 Run supports a no-argument `main` returning one word, either as a plain function
 or the public runtime entry of a single contract with a no-argument constructor.
 Each run uses a new in-memory database. Constructor storage is available to `main`
-within that run. Execution output stays visible during edits and clears when the
-next run starts.
+within that run. Recent actions keeps previous runs visible, including through source edits.
 
 The runner uses Osaka rules, a gas limit of 1,000,000 per transaction, and a 16 MiB
 EVM memory limit. Contract `main` receives empty calldata. A wrapper returns its
@@ -34,35 +33,37 @@ Click **Run test** above a comment or **Run all tests** in the toolbar. Tests ar
 discovered in the entry file. Results appear beside their comments and in the
 Run tab. Expand a test to inspect its expected and actual values, gas, or source
 location. Edits retain results, marked outdated until the next run.
-Playing a test also fills the Run controls with its function, arguments, and
-simulation mode. Editing those controls switches to a manual call.
+Playing a test also fills the Run controls with its function and arguments. The
+manual buttons run that call without checking the test assertion.
 
 Tests use the contract's normal selector dispatcher, so the contract must not
 have an explicit runtime `main`. Constructors currently take no arguments.
 The shared directive parser supports static ABI values and expected reverts.
 `// #[send(7)]` commits a state-changing call; ordinary assertions leave state
-unchanged. Tests run in source order against one deployment per contract.
+unchanged. Tests run in source order within each contract, with contracts processed by name.
+Each contract starts with a new deployment.
 An individual test replays preceding sends for its contract first.
 
 ## Call a contract
 
 The Run tab lists public selector functions and accepts arguments as a JSON array.
 Integers may be quoted decimal strings; tuples use nested arrays. The first call
-also deploys the contract, with constructor arguments when required. **Simulate**
-discards that call's changes. Otherwise, state persists for subsequent calls.
-**Reset** or a source change causes the next call to redeploy. Results remain
-visible until another run starts.
+also deploys the contract, with constructor arguments when required. **Run call**
+keeps changes for subsequent calls; **Simulate call** discards them. **Reset sandbox**,
+a source change, or switching contracts causes the next call to deploy again.
+Recent actions retains the last 20 runs and resets, including actual deployments
+and setup calls in execution order. Edits preserve this history as earlier results.
 
 After a test, manual calls can inspect or change its deployed contract. Running a
 test again starts a new deployment and replays its setup. With no test comments,
-the toolbar runs the selected function, or `main` when there is no selector interface.
+the toolbar opens the call controls, or runs `main` when there is no selector interface.
 
-Use **Watch** beside the call controls to add a function and its arguments to the
-State section. Watched calls always discard changes and read the current deployment;
-they do not deploy or recompile. Values refresh after runs, and changed values are
-highlighted briefly. Source edits retain values marked outdated; Reset clears the
-values while keeping the watches. Up to 16 calls can be watched per workspace;
-watches last for the current page session.
+**Watch this call** adds the function and arguments to **Watched calls**. Watches
+simulate against the current deployment and discard changes; they do not deploy
+or recompile. Values refresh when a watch is added and after runs, with the last
+action shown beside them. Source edits mark values outdated; Reset sandbox clears
+values while keeping watches. Up to 16 calls can be watched. Watches and recent
+actions last for the current page session.
 
 ## Development
 

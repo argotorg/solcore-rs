@@ -66,6 +66,7 @@ export function stubCompile(input: CompileInput): CompileResult {
       tests: [],
       contracts: [],
       sandbox: null,
+      events: [],
     };
   }
 
@@ -81,6 +82,7 @@ export function stubCompile(input: CompileInput): CompileResult {
     tests: [],
     contracts: [],
     sandbox: null,
+    events: [],
   };
 }
 

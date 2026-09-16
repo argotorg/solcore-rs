@@ -10,6 +10,7 @@ export function CallControls(): JSX.Element | null {
   const compiling = useWorkspaceStore((s) => s.compiling);
   const sandbox = useWorkspaceStore((s) => s.sandbox);
   const sandboxVersion = useWorkspaceStore((s) => s.sandboxVersion);
+  const sandboxAction = useWorkspaceStore((s) => s.sandboxAction);
   const version = useWorkspaceStore((s) => s.workspaceVersion);
   const update = useWorkspaceStore((s) => s.setCallDraft);
   const contract = contracts.find((c) => c.name === draft.contract) ?? contracts[0];
@@ -28,6 +29,16 @@ export function CallControls(): JSX.Element | null {
       update({ contract: contract.name, signature: method.signature });
       void state.runCall();
     }}>
+      <div className="call-controls__sandbox">
+        <span>{deployed ? `${contract.name} · after action ${sandboxAction}`
+          : sandbox && sandboxVersion !== version ? "Source changed. The next call starts a fresh sandbox."
+          : sandbox ? `The next call replaces ${sandbox.contract} with ${contract.name}.`
+          : `No deployment. The first call deploys ${contract.name}.`}</span>
+        {sandbox ? <button className="button button--ghost" type="button" disabled={compiling}
+          onClick={() => useWorkspaceStore.getState().resetSandbox()} title="Clear the sandbox; deploy again on the next call">
+          <RotateCcw size={14} aria-hidden="true" />Reset sandbox
+        </button> : null}
+      </div>
       <div className="call-controls__selection">
         <label>Contract
           <select value={contract.name} disabled={compiling} onChange={(e) => update({
@@ -60,24 +71,22 @@ export function CallControls(): JSX.Element | null {
         <button className="button button--primary" type="submit" disabled={compiling || !method}>
           <Play size={14} aria-hidden="true" />Run call
         </button>
+        <button className="button button--secondary" type="button" disabled={compiling || !method}
+          onClick={() => {
+            if (!method) return;
+            update({ contract: contract.name, signature: method.signature });
+            void useWorkspaceStore.getState().runCall(true);
+          }}>Simulate call</button>
+      </div>
+      <div className="call-controls__actions">
+        <span className="call-controls__hint">Run keeps changes. Simulate discards them.</span>
         <button className="button button--ghost" type="button" disabled={compiling || watched || !method?.returnsValue || watches.length >= 16}
-          title={watches.length >= 16 ? "Up to 16 watches" : "Watch this call without changing state"}
+          title={watches.length >= 16 ? "Up to 16 watches" : "Simulate this call now and after runs; discard its changes"}
           onClick={() => { if (method) useWorkspaceStore.getState().addWatch({
             contract: contract.name, signature: method.signature, arguments: draft.arguments,
-          }); }}><Eye size={14} aria-hidden="true" />{watched ? "Watched" : "Watch"}</button>
-        <label className="call-controls__simulate" title="Discard state changes from this call">
-          <input type="checkbox" checked={draft.simulate} disabled={compiling}
-            onChange={(e) => update({ simulate: e.target.checked })} />Simulate
-        </label>
-        {sandbox ? <button className="button button--ghost" type="button" disabled={compiling}
-          onClick={() => useWorkspaceStore.getState().resetSandbox()} title="Redeploy on the next call">
-          <RotateCcw size={14} aria-hidden="true" />Reset
-        </button> : null}
+          }); }}><Eye size={14} aria-hidden="true" />{watched ? "Watched" : "Watch this call"}</button>
       </div>
-      {selected ? <div className="call-controls__hint">From test: <code>{selected.label}</code></div> : null}
-      {sandbox ? <div className="call-controls__hint" title={sandbox.address}>
-        {sandbox.contract} deployed{sandboxVersion !== version ? " (source changed; next run redeploys)" : ""}
-      </div> : null}
+      {selected ? <div className="call-controls__hint">Inputs from <code>{selected.file}:{selected.line}</code></div> : null}
     </form>
   );
 }
