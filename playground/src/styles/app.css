@@ -180,9 +180,9 @@
   height: 32px;
   padding: 0 30px 0 10px;
   color: var(--text-primary);
-  background-color: var(--surface-1);
+  background: transparent;
   border: 0;
-  outline: 0;
+  border-radius: inherit;
   appearance: none;
   cursor: pointer;
 }
@@ -190,10 +190,6 @@
 .select-control select option {
   color: var(--text-primary);
   background-color: var(--surface-1);
-}
-
-.select-control__shell:hover select {
-  background-color: var(--surface-hover);
 }
 
 .select-control svg {
