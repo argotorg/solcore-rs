@@ -2,6 +2,11 @@
 
 A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The compile path runs in a Web Worker and calls the generated `solcore-wasm` package from `../crates/wasm/pkg`. Editor language features run in a separate LSP Worker backed by `solcore-lsp` from `../crates/lsp/pkg`.
 
+## Keyboard navigation
+
+Use Left/Right, Home, and End to move between source or output tabs. In the
+editor, Ctrl+M (Ctrl+Shift+M on macOS) toggles whether Tab indents or moves focus.
+
 ## Development
 
 On a fresh checkout, generate the local wasm packages once before installing JavaScript dependencies:

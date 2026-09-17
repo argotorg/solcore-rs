@@ -30,7 +30,7 @@
   --accent: #c2410c;
   --accent-strong: #9a3412;
   --accent-soft: #ffedd5;
-  --accent-ring: rgba(194, 65, 12, 0.26);
+  --accent-ring: #c2410c;
   --info: #4f46e5;
   --info-soft: #eef2ff;
   --success: #15803d;
@@ -75,7 +75,7 @@
   --accent: #fb923c;
   --accent-strong: #fdba74;
   --accent-soft: rgba(251, 146, 60, 0.13);
-  --accent-ring: rgba(251, 146, 60, 0.32);
+  --accent-ring: #fb923c;
   --info: #a5b4fc;
   --info-soft: rgba(99, 102, 241, 0.16);
   --success: #4ade80;

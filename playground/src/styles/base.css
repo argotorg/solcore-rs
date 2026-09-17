@@ -35,7 +35,9 @@ button {
 button:focus-visible,
 select:focus-visible,
 input:focus-visible,
-textarea:focus-visible {
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
   outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
 }
@@ -68,4 +70,9 @@ button:disabled {
   to {
     transform: rotate(360deg);
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+  :root { --transition-fast: 0s; }
 }

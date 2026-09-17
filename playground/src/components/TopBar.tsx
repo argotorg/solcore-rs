@@ -111,17 +111,19 @@ export function TopBar({
           type="button"
           className="icon-button topbar__sidebar-toggle"
           onClick={onToggleSidebar}
+          aria-expanded={sidebarOpen}
+          aria-controls="workspace-files"
           title={sidebarOpen ? "Hide file explorer" : "Show file explorer"}
           aria-label={sidebarOpen ? "Hide file explorer" : "Show file explorer"}
         >
           {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
         </button>
 
-        <div className="brand" aria-label="solcore playground">
+        <div className="brand">
           <span className="brand__mark" aria-hidden="true">
             <Braces size={20} />
           </span>
-          <span className="brand__text">solcore playground</span>
+          <h1 className="brand__text">solcore playground</h1>
         </div>
       </div>
 
@@ -129,7 +131,7 @@ export function TopBar({
         <label className="select-control">
           <span>Example</span>
           <span className="select-control__shell">
-            <select value={selectedExample} onChange={(event) => loadExample(event.target.value)}>
+            <select aria-label="Example" value={selectedExample} onChange={(event) => loadExample(event.target.value)}>
               {examples.map((example) => (
                 <option key={example.id} value={example.id}>
                   {example.name}
@@ -165,7 +167,7 @@ export function TopBar({
         <label className="select-control">
           <span>Entry</span>
           <span className="select-control__shell">
-            <select value={entry} onChange={(event) => setEntry(event.target.value)}>
+            <select aria-label="Entry" value={entry} onChange={(event) => setEntry(event.target.value)}>
               {solFiles.map((path) => (
                 <option key={path} value={path}>
                   {path}
@@ -179,6 +181,8 @@ export function TopBar({
         <button
           type="button"
           className="button button--primary"
+          aria-label={compiling ? "Compiling" : "Compile"}
+          disabled={compiling}
           onClick={() => {
             void compileNow();
           }}
@@ -214,6 +218,7 @@ export function TopBar({
           type="button"
           className="button button--secondary"
           onClick={resetWorkspace}
+          aria-label="Reset workspace"
           title="Reset workspace"
         >
           <RotateCcw size={16} />
@@ -226,6 +231,8 @@ export function TopBar({
           type="button"
           className="icon-button"
           onClick={onToggleOutput}
+          aria-expanded={outputOpen}
+          aria-controls="compiler-output"
           title={outputOpen ? "Hide output pane" : "Show output pane"}
           aria-label={outputOpen ? "Hide output pane" : "Show output pane"}
         >

@@ -70,7 +70,7 @@ export function StatusBar({ cursor }: StatusBarProps): JSX.Element {
       <span>
         Ln {cursor.line}, Col {cursor.column}
       </span>
-      <span className={statusClass}>{status}</span>
+      <span className={statusClass} role="status">{status}</span>
       {durationText ? <span>{durationText}</span> : null}
       <span>solcore {compilerVersion ?? "..."}</span>
     </footer>

@@ -70,6 +70,8 @@
 }
 
 .brand__text {
+  margin: 0;
+  font-weight: inherit;
   overflow: hidden;
   font-size: var(--font-size-heading);
   white-space: nowrap;
@@ -261,6 +263,12 @@
   border-radius: var(--radius-3);
   background: var(--surface-1);
   box-shadow: var(--shadow-soft), var(--shadow-panel);
+}
+
+/* Collapsing a panel must also remove its controls from keyboard navigation. */
+.file-explorer[hidden],
+.output-pane[hidden] {
+  display: none;
 }
 
 .file-explorer,
@@ -477,6 +485,14 @@
   background: var(--accent-soft);
   font-size: var(--font-size-badge);
   font-weight: var(--font-weight-bold);
+}
+
+/* Inset rings stay visible inside scrolling and clipped panels. */
+.source-tab:focus-visible,
+.output-tab:focus-visible,
+.editor-surface:focus-visible,
+.output-content:focus-visible {
+  outline-offset: -3px;
 }
 
 /* Editor, output, and diagnostics */
