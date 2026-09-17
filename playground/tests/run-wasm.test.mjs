@@ -158,3 +158,26 @@ test('AMM watches track committed swaps and discard changes from watched calls',
   const stale = watch({ workspace: { ...input, sandboxEpoch: 1 }, watches });
   assert.ok(stale.every(result => result.error && result.value === null));
 });
+
+for (const [directory, entry, helpers, count] of [
+  ['std-usage', 'Calculator.sol', [], 4],
+  ['option', 'Splitter.sol', ['option.sol'], 4],
+  ['generics', 'Registry.sol', [], 6],
+  ['pattern-matching', 'Escrow.sol', [], 6],
+  ['invariants', 'Amm.sol', ['pool.sol'], 5],
+]) {
+  test(`${directory} example tests pass together and replay setup for the final check`, async () => {
+    const files = await Promise.all([entry, ...helpers].map(async path => ({
+      path, content: await readFile(new URL(`../src/examples/${directory}/${path}`, import.meta.url), 'utf8'),
+    })));
+    const input = { files, entry, options };
+    const result = run(input);
+    assert.equal(result.success, true, JSON.stringify(result.diagnostics));
+    assert.equal(result.tests.length, count);
+    assert.ok(result.tests.every(t => t.status === 'passed'), JSON.stringify(result.tests));
+    const selected = result.tests.at(-1);
+    const replayed = run({ ...input, testId: selected.id });
+    assert.equal(replayed.tests.find(t => t.id === selected.id).status, 'passed', JSON.stringify(replayed.tests));
+    assert.equal(replayed.tests.find(t => t.id === selected.id).actual, selected.actual);
+  });
+}

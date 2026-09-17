@@ -48,14 +48,21 @@ contract Registry {
         newest = Version(uint256(0), uint256(0));
     }
 
+    // Older versions must not move the registry backwards.
+    // #[send(1, 9)]
+    // #[send(2, 1)]
+    // #[send(1, 99)]
+    // #[send(2, 0)]
     function publish(maj: uint256, min: uint256) public {
         newest = max(newest, Version(maj, min));
     }
 
+    // #[() -> 2]
     function newestMajor() public returns (uint256) {
         return major(newest);
     }
 
+    // #[() -> 1]
     function newestMinor() public returns (uint256) {
         return minor(newest);
     }

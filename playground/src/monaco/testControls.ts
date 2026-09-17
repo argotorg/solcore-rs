@@ -60,7 +60,7 @@ export function attachTestControls(
       const line = Math.min(oldRanges[i]?.startLineNumber ?? test.line, model.getLineCount());
       const column = model.getLineMaxColumn(line);
       const detail = test.message ?? (test.status === "passed"
-        ? test.actual
+        ? test.expected?.startsWith("revert") ? "reverted as expected" : test.actual
         : `expected ${test.expected}, got ${test.actual}`);
       const text = `${test.status === "passed" ? "✓" : "✗"} ${test.replayed ? "Setup: " : ""}${detail}${stale ? " (outdated)" : ""}`;
       return {
