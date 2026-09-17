@@ -49,7 +49,7 @@ export function RunPane(): JSX.Element {
         <RecentActions />
         {!actions.length && !contracts.length && !manualResult ? <pre className="run-pane__output">{running ? "" : !discovered ? "Checking runnable code…" : hasMain ? formatExecution(null) : "No runnable functions in this file."}</pre> : null}
       </section> : <section role="tabpanel" id="tests-panel" aria-labelledby="tests-tab">
-        <p className="call-controls__hint">Each test run starts from the beginning in a separate contract. Your calls in Try calls are untouched.</p>
+        <p className="call-controls__hint">Running all tests starts each contract fresh, then runs its tests in order. Your calls in Try calls are untouched.</p>
         <button className="button button--primary" disabled={compiling || !cases.length} onClick={() => void run()}>{running ? "Running tests…" : "Run all tests from start"}</button>
         <TestSequence />
       {tests.length ? <details className="run-tests">
