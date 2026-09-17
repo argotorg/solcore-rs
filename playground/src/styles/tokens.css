@@ -5,7 +5,14 @@
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
     monospace;
 
+  /* UI controls share one size; smaller text is reserved for metadata and badges. */
+  --font-size-badge: 11px;
+  --font-size-meta: 12px;
   --font-size-ui: 13px;
+  --font-size-content: 14px;
+  --font-size-heading: 15px;
+  --font-weight-medium: 650;
+  --font-weight-bold: 700;
 
   --bg-canvas: #f5f7fb;
   --bg-subtle: #eef2f7;

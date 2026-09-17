@@ -19,6 +19,13 @@ After dependencies are installed, `npm run dev` rebuilds both local wasm package
 
 `package.json` depends on `solcore-wasm` and `solcore-lsp` through `file:` dependencies, so a normal install links the generated wasm-pack output into Vite without publishing it. If a dev server was already running while rebuilding wasm, restart with `npm run dev:force` once to clear Vite's dependency cache.
 
+## Styles
+
+`src/styles/tokens.css` defines shared colors, spacing, and typography. `base.css` sets
+inherited defaults; `app.css` contains component rules and responsive overrides.
+Use the typography tokens for UI text and keep responsive selectors scoped to the
+component they change. Monaco's code font sizes are configured in the editor components.
+
 ## Sharing examples
 
 Every bundled example has a stable id, and the Playground reads it from an `example` query

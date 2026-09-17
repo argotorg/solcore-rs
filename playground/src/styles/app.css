@@ -1,3 +1,5 @@
+/* Application shell */
+
 .app-shell {
   display: grid;
   grid-template-rows: minmax(var(--topbar-height), auto) minmax(0, 1fr) var(--statusbar-height);
@@ -7,6 +9,8 @@
     linear-gradient(180deg, rgba(194, 65, 12, 0.07), transparent 240px),
     var(--bg-canvas);
 }
+
+/* Toolbar and shared controls */
 
 .topbar {
   display: flex;
@@ -50,7 +54,7 @@
 .brand {
   gap: var(--space-2);
   min-width: 0;
-  font-weight: 760;
+  font-weight: var(--font-weight-bold);
 }
 
 .brand__mark {
@@ -67,7 +71,7 @@
 
 .brand__text {
   overflow: hidden;
-  font-size: 15px;
+  font-size: var(--font-size-heading);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -89,6 +93,13 @@
     transform var(--transition-fast);
 }
 
+/* Controls keep their size even inside metadata-sized labels or containers. */
+.button,
+.icon-button,
+.select-control__shell {
+  font-size: var(--font-size-ui);
+}
+
 .button,
 .icon-button {
   justify-content: center;
@@ -98,7 +109,7 @@
 
 .button {
   padding: 0 var(--space-3);
-  font-weight: 680;
+  font-weight: var(--font-weight-medium);
 }
 
 .button--primary {
@@ -152,15 +163,14 @@
   gap: var(--space-2);
   min-width: 0;
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 650;
+  font-size: var(--font-size-meta);
+  font-weight: var(--font-weight-medium);
 }
 
 .select-control__shell {
   position: relative;
   gap: var(--space-2);
   min-width: 146px;
-  font-size: var(--font-size-ui);
   color: var(--text-primary);
 }
 
@@ -198,7 +208,7 @@
   padding: 0 var(--space-3);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-meta);
 }
 
 .compile-timing {
@@ -207,7 +217,7 @@
   padding: 0 var(--space-3);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-meta);
   white-space: nowrap;
 }
 
@@ -216,6 +226,8 @@
   border-color: color-mix(in srgb, var(--warning) 34%, var(--border-subtle));
   background: var(--warning-soft);
 }
+
+/* Workspace and file explorer */
 
 .workspace-shell {
   min-width: 0;
@@ -278,14 +290,15 @@
   display: block;
   margin-bottom: 2px;
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 760;
+  font-size: var(--font-size-badge);
+  font-weight: var(--font-weight-bold);
   text-transform: uppercase;
 }
 
 .panel-heading h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--font-size-heading);
+  font-weight: var(--font-weight-bold);
 }
 
 .file-list {
@@ -388,6 +401,8 @@
   opacity: 1;
 }
 
+/* Source and output tabs */
+
 .tab-strip,
 .output-tabs {
   display: flex;
@@ -464,9 +479,11 @@
   color: var(--accent-strong);
   border-radius: 999px;
   background: var(--accent-soft);
-  font-size: 11px;
-  font-weight: 760;
+  font-size: var(--font-size-badge);
+  font-weight: var(--font-weight-bold);
 }
+
+/* Editor, output, and diagnostics */
 
 .editor-surface,
 .output-content {
@@ -496,7 +513,7 @@
   height: 100%;
   min-height: 180px;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: var(--font-size-content);
 }
 
 .empty-state svg {
@@ -559,8 +576,8 @@
 
 .problem-item__message {
   color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 650;
+  font-size: var(--font-size-ui);
+  font-weight: var(--font-weight-medium);
   line-height: 1.35;
 }
 
@@ -568,17 +585,19 @@
   margin-right: var(--space-2);
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-weight: 700;
+  font-weight: var(--font-weight-bold);
 }
 
 .problem-item__location {
   overflow: hidden;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-meta);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* Panel resizing */
 
 .resize-handle {
   display: flex;
@@ -611,6 +630,8 @@
   background: var(--accent-soft);
 }
 
+/* Status bar */
+
 .statusbar {
   display: flex;
   align-items: center;
@@ -622,7 +643,7 @@
   border-top: 1px solid var(--border-subtle);
   background: var(--surface-1);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-meta);
 }
 
 .statusbar span {
@@ -639,6 +660,8 @@
   color: var(--warning);
 }
 
+/* Responsive layout */
+
 @media (max-width: 1080px) {
   .topbar {
     align-items: stretch;
@@ -652,27 +675,14 @@
     justify-content: flex-start;
   }
 
-  .select-control > span:first-child {
-    display: none;
-  }
-}
-
-/*
- * Trim to icon-only controls at the SAME 1080px breakpoint that drops the
- * select labels. Below 1080px the full-text Compile/Reset buttons + version
- * pill no longer fit alongside the (now label-less) selects, so simplifying at
- * this same width avoids the cramped 960-1080px band where the labels were
- * hidden but everything else stayed full-size (forcing topbar__controls into
- * its overflow-x scroll). The 760px query below still handles the true
- * mobile two-row wrap.
- */
-@media (max-width: 1080px) {
-  .button span,
-  .version-pill {
+  /* Only toolbar controls collapse to icons on narrow screens. */
+  .topbar .select-control > span:first-child,
+  .topbar .button > span,
+  .topbar .version-pill {
     display: none;
   }
 
-  .select-control__shell {
+  .topbar .select-control__shell {
     min-width: 124px;
   }
 }
@@ -701,6 +711,6 @@
 
   .statusbar {
     gap: var(--space-2);
-    font-size: 11px;
+    font-size: var(--font-size-badge);
   }
 }
