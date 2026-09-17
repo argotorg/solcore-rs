@@ -1,3 +1,4 @@
+import { TabList } from "./TabList";
 import { Loader2, Play } from "lucide-react";
 import { RecentActions, TestSequence } from "./RecentActions";
 import { CallControls } from "./CallControls";
@@ -33,11 +34,11 @@ export function RunPane(): JSX.Element {
 
   return (
     <div className="run-pane">
-      <div className="run-activities" role="tablist" aria-label="Run activity">
-        <button role="tab" id="calls-tab" aria-controls="calls-panel" aria-selected={activity === "calls"} disabled={compiling} onClick={() => setActivity("calls")}>Try calls</button>
-        <button role="tab" id="tests-tab" aria-controls="tests-panel" aria-selected={activity === "tests"} disabled={compiling} onClick={() => setActivity("tests")}>Run tests ({cases.length})</button>
-      </div>
-      {activity === "calls" ? <section role="tabpanel" id="calls-panel" aria-labelledby="calls-tab">
+      <TabList className="run-activities" label="Run activity">
+        <button role="tab" id="calls-tab" aria-controls="calls-panel" aria-selected={activity === "calls"} tabIndex={activity === "calls" ? 0 : -1} disabled={compiling} onClick={() => setActivity("calls")}>Try calls</button>
+        <button role="tab" id="tests-tab" aria-controls="tests-panel" aria-selected={activity === "tests"} tabIndex={activity === "tests" ? 0 : -1} disabled={compiling} onClick={() => setActivity("tests")}>Run tests ({cases.length})</button>
+      </TabList>
+      <section hidden={activity !== "calls"} role="tabpanel" id="calls-panel" aria-labelledby="calls-tab">
         {hasMain && !cases.length && !contracts.some((contract) => contract.methods.length > 0) ? <div className="run-pane__toolbar">
           <button type="button" className="button button--primary" disabled={compiling || !discovered}
             title="Compile and run main()" onClick={() => void run()}>
@@ -48,7 +49,8 @@ export function RunPane(): JSX.Element {
         <CallControls />
         <RecentActions />
         {!actions.length && !contracts.length && !manualResult ? <pre className="run-pane__output">{running ? "" : !discovered ? "Checking runnable code…" : hasMain ? formatExecution(null) : "No runnable functions in this file."}</pre> : null}
-      </section> : <section role="tabpanel" id="tests-panel" aria-labelledby="tests-tab">
+      </section>
+      <section hidden={activity !== "tests"} role="tabpanel" id="tests-panel" aria-labelledby="tests-tab">
         <p className="call-controls__hint">Running all tests starts each contract fresh, then runs its tests in order. Your calls in Try calls are untouched.</p>
         <button className="button button--primary" disabled={compiling || !cases.length} onClick={() => void run()}>{running ? "Running tests…" : "Run all tests from start"}</button>
         <TestSequence />
@@ -98,7 +100,7 @@ export function RunPane(): JSX.Element {
       }) : null}
       </details> : null}
       {!tests.length ? <p>No test comments in this file.</p> : null}
-      </section>}
+      </section>
     </div>
   );
 }

@@ -1,6 +1,5 @@
 import { attachTestControls } from "../monaco/testControls";
 import { useTestDiscovery } from "./useTestDiscovery";
-
 import { TabList } from "./TabList";
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";

@@ -118,6 +118,9 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
           type="button"
           role="tab"
           aria-selected={outputTab === "execution"}
+          id="output-tab-execution"
+          aria-controls="output-panel"
+          tabIndex={outputTab === "execution" ? 0 : -1}
           className={`output-tab ${outputTab === "execution" ? "is-active" : ""}`}
           onClick={() => setOutputTab("execution")}
         >
