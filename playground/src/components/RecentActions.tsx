@@ -1,59 +1,67 @@
 import { useEffect, useRef } from "react";
 import { formatCall } from "../compiler/formatCall";
-import type { ExecutionEvent, ExecutionResult } from "../compiler/types";
+import type { ExecutionResult } from "../compiler/types";
 import { useWorkspaceStore } from "../store/workspace";
 
-function effect(event: ExecutionEvent): string {
-  if (event.result.status === "revert" || event.result.status === "halt") return "Contract changes reverted";
-  if (event.result.status === "error") return "Not completed";
-  if (event.simulate) return "Changes discarded";
-  return event.kind === "deploy" ? "Deployed" : "Changes kept";
-}
-
 function ResultDetails({ result }: { result: ExecutionResult }): JSX.Element {
-  return <details className="run-action__details"><summary>Details</summary>
-    <dl>{result.deploymentGasUsed !== null ? <><dt>Deployment gas</dt><dd>{result.deploymentGasUsed.toLocaleString()}</dd></> : null}<dt>Gas used</dt><dd>{result.gasUsed.toLocaleString()}</dd>
-      <dt>{result.status === "revert" ? "Revert data" : "Return data"}</dt><dd><code>{result.returnData}</code></dd></dl>
-  </details>;
+  return <dl className="run-action__details">
+    {result.deploymentGasUsed != null ? <><dt>Deployment gas</dt><dd>{result.deploymentGasUsed.toLocaleString()}</dd></> : null}
+    <dt>Gas used</dt><dd>{result.gasUsed.toLocaleString()}</dd>
+    <dt>{result.status === "revert" ? "Revert data" : "Return data"}</dt><dd><code>{result.returnData}</code></dd>
+  </dl>;
 }
 
 export function RecentActions(): JSX.Element | null {
   const actions = useWorkspaceStore((s) => s.recentActions);
-  const sandbox = useWorkspaceStore((s) => s.sandbox);
   const version = useWorkspaceStore((s) => s.workspaceVersion);
   const running = useWorkspaceStore((s) => s.running);
   const list = useRef<HTMLOListElement>(null);
   useEffect(() => { if (list.current) list.current.scrollTop = list.current.scrollHeight; }, [actions]);
   if (!actions.length && !running) return null;
-  return <section className="recent-actions" aria-label="Recent actions">
-    <h3>Recent actions</h3>
-    <ol ref={list}>{actions.map((action) => <li key={action.id} value={action.id}>
-      <details className="run-action" open={action.id === actions.at(-1)?.id ? true : undefined}>
-        <summary><span>{action.label}</span>
-          {action.result ? <span className={`run-action__status run-action__status--${action.result.status}`}>
-            {action.result.decoded != null ? `→ ${action.result.decoded} · ` : ""}{action.result.status}
-          </span> : null}
-        </summary>
-        {action.version !== version ? <p className="call-controls__hint">Earlier source version</p>
-          : action.sandboxId !== null && action.sandboxId !== sandbox?.id ? <p className="call-controls__hint">Previous sandbox</p> : null}
-        {action.events.length === 1 && action.events[0].kind === "call" ? <>
-          <small>{effect(action.events[0])}</small>
-          <ResultDetails result={action.events[0].result} />
-        </> : action.events.length ? <ol className="run-action__events">{action.events.map((event, index) => <li key={index}>
-          <div><code>{event.kind === "deploy" ? `Deploy ${formatCall(event.contract, event.arguments)}`
-            : `${event.kind === "setup" ? "Setup: " : event.kind === "check" ? "Check: " : event.simulate ? "Simulate " : "Run "}${event.contract}.${formatCall(event.signature, event.arguments)}`}</code>
-            {event.result.decoded != null ? <> → <code>{event.result.decoded}</code></> : null}</div>
-          <small>{effect(event)}{event.passed != null ? event.passed ? " · Passed" : " · Failed" : event.result.status !== "success" ? ` · ${event.result.status}` : ""}</small>
-          {event.passed === false ? <p>Expected <code>{event.expected}</code></p> : null}
-          {event.result.message ? <p className={event.passed ? undefined : "run-pane__error"}>{event.result.message}</p> : null}
-          <ResultDetails result={event.result} />
-        </li>)}</ol> : action.result && action.result.phase !== "prepare" ? <>
-          {action.result.returnWord != null ? <p>Returned <code>{action.result.returnWord}</code></p> : null}
-          <ResultDetails result={action.result} />
-        </> : null}
-        {action.message ? <p>{action.message}</p> : null}
+  return <section className="recent-actions" aria-label="Calls">
+    <h3>Calls</h3>
+    <ol ref={list}>{actions.map((action) => {
+      const call = action.events.find((e) => e.kind === "call");
+      const deployment = action.events.find((e) => e.kind === "deploy");
+      const failed = action.result && action.result.status !== "success";
+      const value = action.result?.decoded ?? action.result?.returnWord;
+      return <li key={action.id} value={action.id}>
+        {deployment ? <p className="call-controls__hint">{deployment.result.status === "success" ? "Started" : "Could not start"} {formatCall(deployment.contract, deployment.arguments)}</p> : null}
+        <details className="run-action">
+          <summary>
+            <code>{call ? `${call.contract}.${formatCall(call.signature, call.arguments)}` : action.label}</code>
+            {value != null ? <> → <code>{value}</code></> : null}
+            {call?.simulate ? <span className="call-controls__hint"> · Preview, not saved</span> : null}
+            {failed ? <span className="run-pane__error"> · {action.message ?? action.result?.status}</span> : null}
+            {action.version !== version ? <span className="call-controls__hint"> · Earlier source</span> : null}
+          </summary>
+          {action.result ? <ResultDetails result={action.result} /> : <p>{action.message}</p>}
+        </details>
+      </li>;
+    })}</ol>
+    {running ? <p role="status">Calling…</p> : null}
+  </section>;
+}
+
+export function TestSequence(): JSX.Element | null {
+  const run = useWorkspaceStore((s) => s.testRun);
+  const version = useWorkspaceStore((s) => s.workspaceVersion);
+  if (!run) return null;
+  return <section className="test-sequence" aria-label="Last test run">
+    <h3>{run.label}</h3>
+    <p role="status">{run.message}{run.version !== version ? " (earlier source)" : ""}</p>
+    <ol>{run.events.map((event, index) => <li key={index}>
+      <details><summary>
+        <code>{event.kind === "deploy" ? `Start ${formatCall(event.contract, event.arguments)}`
+          : `${event.kind === "setup" ? "Setup: " : "Check: "}${event.contract}.${formatCall(event.signature, event.arguments)}`}</code>
+        {event.result.decoded != null ? <> → <code>{event.result.decoded}</code></> : null}
+        {event.passed != null ? event.passed ? " · Passed" : " · Failed" : event.result.status !== "success" ? " · Failed" : ""}
+      </summary>
+        {event.expected ? <p>Expected <code>{event.expected}</code></p> : null}
+        {event.result.message ? <p>{event.result.message}</p> : null}
+        <ResultDetails result={event.result} />
       </details>
     </li>)}</ol>
-    {running ? <p role="status">Running…</p> : null}
+    <p className="call-controls__hint">This run is finished. Run it again to start over.</p>
   </section>;
 }

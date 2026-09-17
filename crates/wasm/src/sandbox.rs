@@ -1,4 +1,4 @@
-//! A single browser-worker deployment shared by manual calls and selected tests.
+//! Persistent manual calls and temporary test deployments in the browser worker.
 use std::cell::{Cell, RefCell};
 
 use crate::{
@@ -330,10 +330,8 @@ impl Sandbox {
     pub(crate) fn call(&mut self, data: Bytes, commit: bool) -> Result<ExecutionResult, String> {
         self.transact(TxKind::Call(self.address), data, commit)
     }
-    pub(crate) fn retain(self) {
-        SESSION.with(|s| *s.borrow_mut() = Some(self));
-    }
 }
+#[cfg(test)]
 pub(crate) fn clear() {
     SESSION.with(|s| *s.borrow_mut() = None);
 }
@@ -541,7 +539,7 @@ contract Counter {
         result
     }
     #[test]
-    fn selected_test_populates_controls_and_retains_setup_for_manual_calls() {
+    fn tests_leave_manual_state_unchanged_and_do_not_create_a_manual_session() {
         clear();
         let discovered = compile_impl(input(SOURCE));
         let invocation = discovered.tests[0].invocation.as_ref().unwrap();
@@ -552,14 +550,36 @@ contract Counter {
         input.test_id = Some(discovered.tests[1].id.clone());
         let tested = run_impl(input);
         assert_eq!(tested.tests[1].status, "passed");
-        assert!(tested.sandbox.is_some());
+        assert!(tested.sandbox.is_none());
+        let manual = call(SOURCE, "set(uint256)", "[5]", false, 0);
+        let manual_id = manual.sandbox.unwrap().id;
+        for selected in [None, Some(discovered.tests[1].id.clone())] {
+            let mut input = self::input(SOURCE);
+            input.test_id = selected;
+            let tested = run_impl(input);
+            assert_eq!(tested.sandbox.unwrap().id, manual_id);
+        }
         assert_eq!(
             call(SOURCE, "read()", "[]", true, 0)
                 .execution
                 .unwrap()
                 .decoded
                 .as_deref(),
-            Some("7")
+            Some("5")
+        );
+        let mut failed = self::input(SOURCE);
+        failed.test_id = Some("missing-test".to_owned());
+        assert_eq!(
+            run_impl(failed).execution.unwrap().status,
+            crate::execution::RunStatus::Error
+        );
+        assert_eq!(
+            call(SOURCE, "read()", "[]", true, 0)
+                .execution
+                .unwrap()
+                .decoded
+                .as_deref(),
+            Some("5")
         );
         call(SOURCE, "set(uint256)", "[9]", true, 0);
         assert_eq!(
@@ -568,7 +588,7 @@ contract Counter {
                 .unwrap()
                 .decoded
                 .as_deref(),
-            Some("7")
+            Some("5")
         );
         call(SOURCE, "set(uint256)", "[11]", false, 0);
         assert_eq!(

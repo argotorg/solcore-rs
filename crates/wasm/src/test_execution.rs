@@ -429,7 +429,6 @@ fn execute_contract(
             break;
         }
     }
-    sandbox.retain();
     Ok(())
 }
 
@@ -492,6 +491,7 @@ contract Counter {
     }
     #[test]
     fn execution_events_stop_at_failed_setup_and_report_contract_order() {
+        crate::sandbox::clear();
         let broken = COUNTER.replace("n = value;", "assembly { revert(0, 0) }");
         let found = compile_impl(input(&broken, None));
         let result = run_impl(input(&broken, Some(found.tests[3].id.clone())));

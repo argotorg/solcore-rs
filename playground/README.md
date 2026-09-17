@@ -31,7 +31,8 @@ function add(a: uint256, b: uint256) public returns (uint256) {
 
 Click **Run test** above a comment or **Run all tests** in the toolbar. Tests are
 discovered in the entry file. Results appear beside their comments and in the
-Run tab. Expand a test to inspect its expected and actual values, gas, or source
+Run tab under **Run tests**. Each run starts from the beginning in separate
+contracts, without changing your manual session. Expand a test to inspect its expected and actual values, gas, or source
 location. Edits retain results, marked outdated until the next run.
 Playing a test also fills the Run controls with its function and arguments. The
 manual buttons run that call without checking the test assertion.
@@ -46,24 +47,23 @@ An individual test replays preceding sends for its contract first.
 
 ## Call a contract
 
-The Run tab lists public selector functions and accepts arguments as a JSON array.
-Integers may be quoted decimal strings; tuples use nested arrays. The first call
-also deploys the contract, with constructor arguments when required. **Run call**
-keeps changes for subsequent calls; **Simulate call** discards them. **Reset sandbox**,
-a source change, or switching contracts causes the next call to deploy again.
-Recent actions retains the last 20 runs and resets, including actual deployments
-and setup calls in execution order. Edits preserve this history as earlier results.
+Under **Try calls**, choose a public selector function and enter arguments as a
+JSON array. Integers may be quoted decimal strings; tuples use nested arrays.
+**Call function** runs one call and keeps its changes for subsequent calls. The
+first call also deploys the contract, with constructor arguments when required.
+**Reset contract**, a source change, or switching contracts starts a new deployment
+on the next call. The Calls list retains the last 20 calls and resets.
 
-After a test, manual calls can inspect or change its deployed contract. Running a
-test again starts a new deployment and replays its setup. With no test comments,
-the toolbar opens the call controls, or runs `main` when there is no selector interface.
+Running tests never replaces or changes the contract in Try calls. Playing a test
+copies its inputs into the call controls, but calling those inputs manually does
+not replay test setup or check its assertion. Test results stay in Run tests and
+are replaced when tests are run again.
 
-**Watch this call** adds the function and arguments to **Watched calls**. Watches
-simulate against the current deployment and discard changes; they do not deploy
-or recompile. Values refresh when a watch is added and after runs, with the last
-action shown beside them. Source edits mark values outdated; Reset sandbox clears
-values while keeping watches. Up to 16 calls can be watched. Watches and recent
-actions last for the current page session.
+**More options** contains **Preview without saving**, which runs one call and
+discards its changes, and **Watch this call**. Watches do not deploy or recompile;
+they refresh against the manual contract when added and after manual calls. Source
+edits mark values outdated; Reset contract clears values while keeping watches.
+Up to 16 calls can be watched. Watches and call history last for the page session.
 
 ## Development
 

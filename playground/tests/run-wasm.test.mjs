@@ -91,25 +91,24 @@ test('browser WASM replays sends for an individual test and renders booleans', a
   assert.equal(result.tests[1].expected, 'true');
 });
 
-test('browser WASM shares a test deployment with editable manual calls', async () => {
-  const content = await readFile(new URL('../src/examples/std-usage/Calculator.sol', import.meta.url), 'utf8');
-  const input = { files: [{ path: 'Calculator.sol', content }], entry: 'Calculator.sol', options };
-  const discovered = compile(input);
-  const testcase = discovered.tests[0];
-  assert.deepEqual(JSON.parse(testcase.invocation.arguments), ['20', '22']);
-  const tested = run({ ...input, testId: testcase.id });
-  assert.equal(tested.tests[0].status, 'passed');
-  assert.equal(tested.sandbox.contract, testcase.contract);
-  const manual = run({ ...input, manual: {
-    contract: testcase.contract, ...testcase.invocation,
-    constructorArguments: '[]', arguments: '[30,12]',
-  } });
-  assert.equal(manual.execution.status, 'success');
-  assert.equal(manual.execution.decoded, '42');
-  assert.equal(manual.sandbox.address, tested.sandbox.address);
-  assert.equal(manual.sandbox.id, tested.sandbox.id);
-  assert.deepEqual(manual.events.map(e => e.kind), ['call']);
-  assert.equal(manual.events[0].simulate, true);
+test('browser WASM test reruns leave manual contract state untouched', async () => {
+  const content = await readFile(new URL('../src/examples/trait/LightSwitch.sol', import.meta.url), 'utf8');
+  const input = { files: [{ path: 'LightSwitch.sol', content }], entry: 'LightSwitch.sol', options, sandboxEpoch: 174 };
+  const testcase = compile(input).tests[1];
+  const invoke = () => run({ ...input, manual: { contract: 'LightSwitch', signature: 'isOn()',
+    arguments: '[]', constructorArguments: '[]', simulate: true } });
+  assert.equal(run({ ...input, testId: testcase.id }).sandbox, null, 'tests must not create a manual session');
+  const initial = invoke();
+  assert.equal(initial.execution.decoded, 'false');
+  for (const testId of [testcase.id, undefined, testcase.id]) {
+    const tested = run({ ...input, testId });
+    assert.equal(tested.tests[1].actual, 'true');
+    assert.equal(tested.sandbox.id, initial.sandbox.id);
+    const manual = invoke();
+    assert.equal(manual.execution.decoded, 'false');
+    assert.equal(manual.sandbox.id, initial.sandbox.id);
+    assert.deepEqual(manual.events.map(e => e.kind), ['call']);
+  }
 });
 
 test('Composition exports each Yul object and runs the selected vault', async () => {

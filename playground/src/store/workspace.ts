@@ -66,6 +66,9 @@ export interface WorkspaceState {
   setCallDraft: (patch: Partial<ManualCall>) => void;
   runCall: (simulate?: boolean) => Promise<void>;
   recentActions: RecentAction[];
+  runActivity: "calls" | "tests";
+  setRunActivity: (activity: "calls" | "tests") => void;
+  testRun: RecentAction | null;
   actionSequence: number;
   sandboxAction: number | null;
   watchAction: number | null;
@@ -342,12 +345,14 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   contracts: [],
   callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
   selectedTestId: null,
+  runActivity: "calls", testRun: null,
   recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
   sandbox: null,
   sandboxVersion: null,
   sandboxEpoch: 0,
   manualResult: null,
   manualResultVersion: null,
+  setRunActivity(runActivity) { set({ runActivity }); },
   setCallDraft(patch) { set((s) => ({ callDraft: { ...s.callDraft, ...patch }, selectedTestId: null })); },
   runCall: (simulate = false) => executeWorkspace(true, undefined, { ...get().callDraft, simulate }),
   resetSandbox() {
@@ -355,7 +360,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     set((s) => ({ sandbox: null, sandboxVersion: null, sandboxEpoch: s.sandboxEpoch + 1,
       sandboxAction: null, watchAction: null, manualResult: null, manualResultVersion: null,
       actionSequence: s.actionSequence + 1,
-      recentActions: [...s.recentActions, { id: s.actionSequence + 1, label: "Reset sandbox",
+      recentActions: [...s.recentActions, { id: s.actionSequence + 1, label: "Reset contract",
         version: s.workspaceVersion, sandboxId: null, events: [], result: null,
         message: "The next call deploys a new contract." }].slice(-20),
       watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false }));
@@ -554,6 +559,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       contracts: [],
       callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
       selectedTestId: null,
+      runActivity: "calls", testRun: null,
       recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
       sandbox: null,
       sandboxVersion: null,
@@ -585,6 +591,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       contracts: [],
       callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
       selectedTestId: null,
+      runActivity: "calls", testRun: null,
       recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
       sandbox: null,
       sandboxVersion: null,
@@ -612,7 +619,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     const state = get();
     if (!testId && !state.testCases.length) {
       if (state.contracts.some((contract) => contract.methods.length > 0)) {
-        set({ outputTab: "execution" });
+        set({ outputTab: "execution", runActivity: "calls" });
         return Promise.resolve();
       }
     }
@@ -625,7 +632,6 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
   const set = useWorkspaceStore.setState;
   const runId = compileRun + 1;
   compileRun = runId;
-  if (run) watchRun += 1;
 
   const state = get();
   const compileVersion = state.workspaceVersion;
@@ -645,21 +651,23 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
     sandboxEpoch: state.sandboxEpoch + state.workspaceVersion,
   };
 
+  const testing = run && !manual && (Boolean(testId) || state.testCases.length > 0);
+  if (run && !testing) watchRun += 1;
   const selected = testId ? state.testCases.find((t) => t.id === testId) : null;
   set({
     ...(run ? {
-      watchLoading: false,
+      ...(!testing ? { watchLoading: false } : {}),
       selectedTestId: testId ?? null,
-      manualResult: null,
-      manualResultVersion: null,
+      runActivity: testing ? "tests" as const : "calls" as const,
+      ...(testing ? { testRun: null } : { manualResult: null, manualResultVersion: null }),
       outputTab: "execution" as const,
       ...(selected?.invocation ? { callDraft: {
-        contract: selected.contract, constructorArguments: "[]", ...selected.invocation,
+        contract: selected.contract, constructorArguments: state.callDraft.contract === selected.contract ? state.callDraft.constructorArguments : "[]", ...selected.invocation,
       } } : {}),
     } : {}),
     compiling: true,
     running: run,
-    ...(run ? { testResults: [], testResultsVersion: null } : {}),
+    ...(testing ? { testResults: [], testResultsVersion: null } : {}),
     compileStartedAt: startedAt,
     ...(run && state.result ? { result: { ...state.result, execution: null } } : {}),
   });
@@ -670,27 +678,28 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
     if (runId === compileRun) {
       const actionId = get().actionSequence + 1;
       const label = manual
-        ? `${manual.simulate ? "Simulate" : "Run"} ${manual.contract}.${formatCall(manual.signature, manual.arguments)}`
+        ? `${manual.simulate ? "Preview" : "Call"} ${manual.contract}.${formatCall(manual.signature, manual.arguments)}`
         : selected ? `Run test · ${selected.file}:${selected.line}`
         : input.testId ? "Run selected test" : result.tests.length ? "Run all tests" : "Run main";
+      const action: RecentAction = { id: actionId, label, version: compileVersion,
+        sandboxId: testing ? null : result.sandbox?.id ?? null, events: result.events ?? [], result: result.execution,
+        message: result.execution?.message ?? result.diagnostics.find((d) => d.severity === "error")?.message ?? null };
       set({
-        ...(run ? {
+        ...(testing ? { testRun: action } : {}),
+        ...(run && !testing ? {
           actionSequence: actionId,
           sandboxAction: result.sandbox ? actionId : null,
-          recentActions: [...get().recentActions, { id: actionId, label, version: compileVersion,
-            sandboxId: result.sandbox?.id ?? null, events: result.events ?? [], result: result.execution,
-            message: result.execution?.message ?? result.diagnostics.find((d) => d.severity === "error")?.message ?? null,
-          }].slice(-20),
+          recentActions: [...get().recentActions, action].slice(-20),
         } : {}),
         result,
         contracts: compileVersion === get().workspaceVersion ? (result.contracts ?? []) : get().contracts,
-        ...(run ? {
+        ...(run && !testing ? {
           sandbox: result.sandbox ?? null,
           sandboxVersion: compileVersion,
           ...(manual ? { manualResult: result.execution, manualResultVersion: compileVersion } : {}),
         } : {}),
         testCases: compileVersion === get().workspaceVersion ? result.tests : get().testCases,
-        ...(run && !manual ? { testResults: result.tests, testResultsVersion: compileVersion } : {}),
+        ...(testing ? { testResults: result.tests, testResultsVersion: compileVersion } : {}),
         compiling: false,
         running: false,
         compileStartedAt: null,
@@ -700,7 +709,7 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
           ? get().outputTab
           : result.success ? (run ? "execution" : get().outputTab) : "problems",
       });
-      if (run) void get().refreshWatches();
+      if (run && !testing) void get().refreshWatches();
     }
   } catch (error: unknown) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -711,10 +720,12 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
       const durationMs = nowMs() - startedAt;
       const message = error instanceof Error ? error.message : "Compile failed";
       set({
-        ...(run ? {
+        ...(testing ? { testRun: { id: 0, label: "Test run failed", version: compileVersion,
+          sandboxId: null, events: [], result: null, message } } : {}),
+        ...(run && !testing ? {
           actionSequence: get().actionSequence + 1,
           recentActions: [...get().recentActions, { id: get().actionSequence + 1,
-            label: manual ? `${manual.simulate ? "Simulate" : "Run"} ${manual.contract}.${formatCall(manual.signature, manual.arguments)}` : "Run failed",
+            label: manual ? `${manual.simulate ? "Preview" : "Call"} ${manual.contract}.${formatCall(manual.signature, manual.arguments)}` : "Run failed",
             version: compileVersion, sandboxId: null, events: [], result: null, message,
           }].slice(-20),
         } : {}),

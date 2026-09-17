@@ -1,11 +1,12 @@
-import { RecentActions } from "./RecentActions";
-import { StatePane } from "./StatePane";
+import { RecentActions, TestSequence } from "./RecentActions";
 import { CallControls } from "./CallControls";
 import { formatExecution } from "../compiler/executionOutput";
 import { useWorkspaceStore } from "../store/workspace";
 import { requestEditorNavigation } from "./editorNavigation";
 
 export function RunPane(): JSX.Element {
+  const activity = useWorkspaceStore((s) => s.runActivity);
+  const setActivity = useWorkspaceStore((s) => s.setRunActivity);
   const cases = useWorkspaceStore((s) => s.testCases);
   const results = useWorkspaceStore((s) => s.testResults);
   const resultsVersion = useWorkspaceStore((s) => s.testResultsVersion);
@@ -13,9 +14,7 @@ export function RunPane(): JSX.Element {
   const compiling = useWorkspaceStore((s) => s.compiling);
   const manualResult = useWorkspaceStore((s) => s.manualResult);
   const contracts = useWorkspaceStore((s) => s.contracts);
-  const selectedId = useWorkspaceStore((s) => s.selectedTestId);
   const running = useWorkspaceStore((s) => s.running);
-  const execution = useWorkspaceStore((s) => s.result?.execution ?? null);
   const run = useWorkspaceStore((s) => s.runNow);
   const hasResults = resultsVersion !== null;
   const outdated = hasResults && resultsVersion !== version;
@@ -31,16 +30,24 @@ export function RunPane(): JSX.Element {
 
   return (
     <div className="run-pane">
-      <CallControls />
-      <RecentActions />
-      <StatePane />
-      {tests.length ? <details className="run-tests" open={selectedId ? true : undefined}>
-        <summary>Tests ({tests.length}){hasResults && completed.length ? ` · ${passed}/${completed.length} passed` : ""}{outdated ? " (outdated)" : ""}</summary>
-        <p className="call-controls__hint">Tests start fresh. Running one test replays earlier setup calls in its contract. Assertions discard changes.</p>
+      <div className="run-activities" role="tablist" aria-label="Run activity">
+        <button role="tab" id="calls-tab" aria-controls="calls-panel" aria-selected={activity === "calls"} disabled={compiling} onClick={() => setActivity("calls")}>Try calls</button>
+        <button role="tab" id="tests-tab" aria-controls="tests-panel" aria-selected={activity === "tests"} disabled={compiling} onClick={() => setActivity("tests")}>Run tests ({cases.length})</button>
+      </div>
+      {activity === "calls" ? <section role="tabpanel" id="calls-panel" aria-labelledby="calls-tab">
+        <CallControls />
+        <RecentActions />
+        {!actions.length && !contracts.length && !manualResult ? <pre className="run-pane__output">{running ? "" : formatExecution(null)}</pre> : null}
+      </section> : <section role="tabpanel" id="tests-panel" aria-labelledby="tests-tab">
+        <p className="call-controls__hint">Each test run starts from the beginning in a separate contract. Your calls in Try calls are untouched.</p>
+        <button className="button button--primary" disabled={compiling || !cases.length} onClick={() => void run()}>{running ? "Running tests…" : "Run all tests from start"}</button>
+        <TestSequence />
+      {tests.length ? <details className="run-tests">
+        <summary>Individual tests ({tests.length}){hasResults && completed.length ? ` · ${passed}/${completed.length} passed` : ""}{outdated ? " (outdated)" : ""}</summary>
       {tests.length ? tests.map((test) => {
         const canRun = !compiling && cases.some((current) => current.id === test.id);
         return (
-          <details className="run-test" key={test.id} open={selectedId === test.id ? true : undefined}>
+          <details className="run-test" key={test.id} >
             <summary>
               <span className={`run-test__status run-test__status--${test.status}`}>
                 {test.status === "passed" ? "✓" : test.status === "ready" ? "○" : "✗"}
@@ -80,7 +87,8 @@ export function RunPane(): JSX.Element {
         );
       }) : null}
       </details> : null}
-      {!tests.length && !actions.length && !contracts.length && !manualResult ? <pre className="run-pane__output">{running ? "" : formatExecution(execution)}</pre> : null}
+      {!tests.length ? <p>No test comments in this file.</p> : null}
+      </section>}
     </div>
   );
 }

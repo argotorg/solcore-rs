@@ -803,12 +803,16 @@
 .recent-actions > ol { max-height: 320px; overflow-y: auto; margin: 0; padding: 0 0 0 28px; }
 .recent-actions li { padding: var(--space-1) 0; font-size: 12px; overflow-wrap: anywhere; }
 .run-action summary, .state-pane > summary, .run-tests > summary { cursor: pointer; font-size: 13px; }
-.run-action__status { display: block; color: var(--text-secondary); padding-left: var(--space-3); }
-.run-action__status--revert, .run-action__status--halt, .run-action__status--error { color: var(--error); }
-.run-action__events { margin: var(--space-2) 0; padding-left: 20px; }
-.run-action small { color: var(--text-secondary); }
 .run-action p { margin: var(--space-2) 0; }
-.run-action__details > summary { color: var(--text-secondary); font-size: 12px; }
-.run-action__details dl { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2); }
 .run-action__details dd { margin: 0; min-width: 0; }
-.run-tests > .call-controls__hint { margin: var(--space-2) 0; }
+.run-activities { display: flex; gap: var(--space-2); margin-bottom: var(--space-3); border-bottom: 1px solid var(--border-subtle); }
+.run-activities button { padding: var(--space-2); border: 0; background: none; color: var(--text-secondary); cursor: pointer; }
+.run-activities button[aria-selected="true"] { color: var(--text-primary); border-bottom: 2px solid var(--accent); }
+.call-controls__more > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); }
+.call-controls__more > button, .call-controls__more .state-pane { margin-top: var(--space-3); }
+.test-sequence { margin: var(--space-3) 0; font-size: 12px; overflow-wrap: anywhere; }
+.test-sequence h3 { font-size: 13px; }
+.test-sequence ol { padding-left: 24px; }
+.test-sequence li { margin: var(--space-2) 0; }
+.test-sequence summary { cursor: pointer; }
+.run-action__details { display: grid; grid-template-columns: auto 1fr; gap: var(--space-2); }

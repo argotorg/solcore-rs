@@ -395,10 +395,8 @@ fn run_backend(
             *execution = Some(if let Some(request) = manual {
                 sandbox::execute(workspace, &program, request, sandbox_key)
             } else if tests.is_empty() && test_id.is_none() {
-                sandbox::clear();
                 execution::execute(workspace, &program)
             } else {
-                sandbox::clear();
                 test_execution::execute(workspace, &program, tests, test_id, sandbox_key)
             });
         }
