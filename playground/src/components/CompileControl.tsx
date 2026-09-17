@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Hammer, Loader2 } from "lucide-react";
+import { Binary, ChevronDown, Hammer, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 import { CopyButton } from "./CopyButton";
@@ -56,7 +56,7 @@ export function CompileControl(): JSX.Element {
           void compile();
         }
       }}>
-      {compiling && !running ? <Loader2 className="spin" size={16} aria-hidden="true" /> : compiled ? <Check size={16} aria-hidden="true" /> : <Hammer size={16} aria-hidden="true" />}
+      {compiling && !running ? <Loader2 className="spin" size={16} aria-hidden="true" /> : compiled ? <Binary size={16} aria-hidden="true" /> : <Hammer size={16} aria-hidden="true" />}
       <span>{label}</span>{compiled ? <ChevronDown size={14} aria-hidden="true" /> : null}
     </summary>
     <div className="bytecode-menu__panel">
