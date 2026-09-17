@@ -181,3 +181,24 @@ for (const [directory, entry, helpers, count] of [
     assert.equal(replayed.tests.find(t => t.id === selected.id).actual, selected.actual);
   });
 }
+
+
+test('bytecode output contains creation and runtime sections without deploying', () => {
+  const input = {
+    files: [{ path: 'main.sol', content: 'contract A { function main() public returns (word) { return 1; } } contract B { function main() public returns (word) { return 2; } }' }],
+    entry: 'main.sol', options: { emitBytecode: true },
+  };
+  const result = compile(input);
+  assert.equal(result.success, true, JSON.stringify(result.diagnostics));
+  assert.equal(result.execution, null);
+  assert.equal(result.sandbox, null);
+  assert.deepEqual(result.bytecode.map(object => object.name).sort(), ['ADeploy', 'BDeploy']);
+  for (const object of result.bytecode) {
+    assert.deepEqual(object.sections.map(section => section.name).sort(), ['init', 'runtime']);
+    for (const section of object.sections) assert.match(section.code, /^0x(?:[0-9a-f]{2})+$/);
+  }
+  const main = compile({ ...input, files: [{ path: 'main.sol', content: 'function main() returns (word) { return 42; }' }] });
+  assert.equal(main.hasMain, true);
+  assert.deepEqual(main.bytecode[0].sections.map(section => section.name), ['runtime']);
+  assert.equal(compile({ ...input, options: {} }).bytecode.length, 0);
+});

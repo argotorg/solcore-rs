@@ -1,10 +1,11 @@
 //! Browser-facing `wasm-bindgen` API for compiling in-memory Solcore sources.
 
+mod bytecode;
 mod execution;
 mod sandbox;
 mod test_execution;
 
-use std::{collections::BTreeMap, path::Path};
+use std::{cell::RefCell, collections::BTreeMap, path::Path};
 
 use nameres::Db as _;
 use serde::{Deserialize, Serialize};
@@ -26,7 +27,7 @@ pub fn __start() {
 /// `input` is a JS object:
 /// `{ files: [{ path: string, content: string }], entry: string,
 /// options?: { emitHull?: bool, emitYul?: bool, emitSonatina?: bool,
-/// emitAbi?: bool } }`.
+/// emitAbi?: bool, emitBytecode?: bool } }`.
 #[wasm_bindgen]
 pub fn compile(input: JsValue) -> Result<JsValue, JsValue> {
     let input = serde_wasm_bindgen::from_value(input)
@@ -107,7 +108,7 @@ pub(crate) struct FileInput {
     pub(crate) content: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Options {
     #[serde(default)]
@@ -118,9 +119,11 @@ pub(crate) struct Options {
     pub(crate) emit_sonatina: bool,
     #[serde(default)]
     pub(crate) emit_abi: bool,
+    #[serde(default)]
+    pub(crate) emit_bytecode: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CompileResult {
     pub(crate) success: bool,
@@ -130,20 +133,22 @@ pub(crate) struct CompileResult {
     pub(crate) yul_outputs: Vec<YulOutput>,
     pub(crate) sonatina: Option<String>,
     pub(crate) abi: Option<String>,
+    pub(crate) bytecode: Vec<bytecode::Object>,
     pub(crate) execution: Option<execution::RunResult>,
     pub(crate) tests: Vec<test_execution::TestCase>,
     pub(crate) contracts: Vec<sandbox::Contract>,
+    pub(crate) has_main: bool,
     pub(crate) sandbox: Option<sandbox::Info>,
     pub(crate) events: Vec<sandbox::Event>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct YulOutput {
     name: String,
     code: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Diag {
     pub(crate) severity: String,
@@ -189,8 +194,42 @@ pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
     compile_workspace(input, false)
 }
 
+// One compiled manual workspace, bounded independently of the call history.
+thread_local! {
+    static MANUAL_COMPILE: RefCell<Option<(String, Options, CompileResult)>> = const { RefCell::new(None) };
+}
+
 pub(crate) fn run_impl(input: CompileInput) -> CompileResult {
-    compile_workspace(input, true)
+    let key = input.sandbox_key();
+    if let Some(request) = &input.manual {
+        let cached = MANUAL_COMPILE.with(|cache| {
+            cache
+                .borrow()
+                .as_ref()
+                .filter(|(saved_key, options, _)| *saved_key == key && *options == input.options)
+                .map(|(_, _, result)| result.clone())
+        });
+        if let Some(mut result) = cached {
+            sandbox::take_events();
+            if let Some(execution) = sandbox::execute_cached(request, &key, &result.contracts) {
+                result.execution = Some(execution);
+                result.sandbox = sandbox::info(&key);
+                result.events = sandbox::take_events();
+                return result;
+            }
+        }
+    }
+    let manual = input.manual.is_some();
+    let options = input.options.clone();
+    let result = compile_workspace(input, true);
+    if manual && result.success {
+        let mut artifacts = result.clone();
+        artifacts.execution = None;
+        artifacts.sandbox = None;
+        artifacts.events.clear();
+        MANUAL_COMPILE.with(|cache| *cache.borrow_mut() = Some((key, options, artifacts)));
+    }
+    result
 }
 
 fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
@@ -216,9 +255,11 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
             yul_outputs: vec![],
             sonatina: None,
             abi: None,
+            bytecode: vec![],
             execution: None,
             tests: vec![],
             contracts: vec![],
+            has_main: false,
             sandbox: None,
             events: vec![],
         };
@@ -254,7 +295,8 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
         || input.options.emit_hull
         || input.options.emit_yul
         || input.options.emit_sonatina
-        || input.options.emit_abi;
+        || input.options.emit_abi
+        || input.options.emit_bytecode;
     let mut result = CompileResult {
         success: false,
         diagnostics,
@@ -263,15 +305,34 @@ fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
         yul_outputs: vec![],
         sonatina: None,
         abi: None,
+        bytecode: vec![],
         execution: None,
         tests: vec![],
         contracts: vec![],
+        has_main: false,
         sandbox: None,
         events: vec![],
     };
 
     if !result.diagnostics.iter().any(Diag::is_error) {
         result.contracts = sandbox::discover(&workspace);
+        if let Some(module) = workspace
+            .entry_module()
+            .and_then(|entry| workspace.db().module_file(entry))
+        {
+            let db = workspace.db();
+            result.has_main = parser::parse_file_to_hir(db, module)
+                .module(db)
+                .items(db)
+                .iter()
+                .any(|item| match item {
+                    hir::ast::item::Item::FunctionDef(function) => {
+                        function.sig(db).name.atom().text(db) == "main"
+                    }
+                    hir::ast::item::Item::ContractDef(contract) => contract.has_runtime_main(db),
+                    _ => false,
+                });
+        }
     }
     result.tests = test_execution::discover(&workspace, &input.entry);
     if wants_backend && !result.diagnostics.iter().any(Diag::is_error) {
@@ -309,6 +370,7 @@ fn run_backend(
         yul_outputs,
         sonatina: sonatina_text,
         abi: abi_text,
+        bytecode,
         execution,
         tests,
         ..
@@ -345,7 +407,12 @@ fn run_backend(
         }
     }
 
-    if execute || options.emit_hull || options.emit_yul || options.emit_sonatina {
+    if execute
+        || options.emit_hull
+        || options.emit_yul
+        || options.emit_sonatina
+        || options.emit_bytecode
+    {
         let compiler::CheckedHull {
             program,
             diagnostics: backend_diagnostics,
@@ -389,6 +456,12 @@ fn run_backend(
                     DiagnosticSeverity::Error,
                     format!("Sonatina translation failed:\n  {err}"),
                 )),
+            }
+        }
+        if options.emit_bytecode && !diagnostics.iter().any(Diag::is_error) {
+            match bytecode::generate(db, &program) {
+                Ok(objects) => *bytecode = objects,
+                Err(message) => diagnostics.push(message_diag(DiagnosticSeverity::Error, message)),
             }
         }
         if execute && !diagnostics.iter().any(Diag::is_error) {
@@ -667,6 +740,72 @@ mod tests {
     }
 
     #[test]
+    fn bytecode_only_emits_each_object_without_execution() {
+        let source = "contract A { function main() public returns (word) { return 1; } }\ncontract B { function main() public returns (word) { return 2; } }";
+        let result = compile_impl(input(
+            source,
+            Options {
+                emit_bytecode: true,
+                ..Options::default()
+            },
+        ));
+        assert!(
+            result.success,
+            "{}",
+            serde_json::to_string(&result.diagnostics).unwrap()
+        );
+        assert!(result.execution.is_none());
+        assert!(result.sandbox.is_none());
+        assert!(result.hull.is_none());
+        assert!(result.sonatina.is_none());
+        assert_eq!(result.bytecode.len(), 2);
+        for object in &result.bytecode {
+            assert!(object.name.contains('A') || object.name.contains('B'));
+            for name in ["init", "runtime"] {
+                let section = object
+                    .sections
+                    .iter()
+                    .find(|section| section.name == name)
+                    .expect("EVM section");
+                let bytes = revm::primitives::hex::decode(section.code.strip_prefix("0x").unwrap())
+                    .unwrap();
+                assert!(!bytes.is_empty());
+            }
+        }
+        assert!(
+            compile_impl(input(source, Options::default()))
+                .bytecode
+                .is_empty()
+        );
+        let invalid = compile_impl(input(
+            "function main() returns (word) { return true; }",
+            Options {
+                emit_bytecode: true,
+                ..Options::default()
+            },
+        ));
+        assert!(!invalid.success);
+        assert!(invalid.bytecode.is_empty());
+    }
+
+    #[test]
+    fn discovery_reports_main_without_generating_artifacts() {
+        for (source, expected) in [
+            ("function main() returns (word) { return 42; }", true),
+            (
+                "contract Hello { function main() public returns (word) { return 42; } }",
+                true,
+            ),
+            ("function helper() returns (word) { return 42; }", false),
+        ] {
+            let result = compile_impl(input(source, Options::default()));
+            assert!(result.success);
+            assert_eq!(result.has_main, expected);
+            assert!(result.bytecode.is_empty());
+        }
+    }
+
+    #[test]
     fn compile_accepts_only_sol_entry_files() {
         let valid = compile_impl(input("function main() {}\n", Options::default()));
         assert!(valid.success);
@@ -709,6 +848,7 @@ mod tests {
                 emit_yul: true,
                 emit_sonatina: true,
                 emit_abi: true,
+                emit_bytecode: false,
             },
         ));
 
@@ -739,6 +879,7 @@ mod tests {
                 emit_yul: false,
                 emit_sonatina: true,
                 emit_abi: false,
+                emit_bytecode: false,
             },
         ));
 
@@ -765,6 +906,7 @@ mod tests {
                 emit_yul: true,
                 emit_sonatina: true,
                 emit_abi: true,
+                emit_bytecode: false,
             },
         ));
         assert!(
@@ -818,6 +960,7 @@ mod tests {
                 emit_yul: true,
                 emit_sonatina: true,
                 emit_abi: true,
+                emit_bytecode: false,
             },
             test_id: None,
             sandbox_epoch: 0,
@@ -862,6 +1005,7 @@ mod tests {
                 emit_yul: false,
                 emit_sonatina: false,
                 emit_abi: true,
+                emit_bytecode: false,
             },
         ));
 
@@ -906,6 +1050,7 @@ mod tests {
                 emit_yul: false,
                 emit_sonatina: false,
                 emit_abi: true,
+                emit_bytecode: false,
             },
         });
 
@@ -974,6 +1119,7 @@ mod tests {
                 emit_yul: false,
                 emit_sonatina: false,
                 emit_abi: false,
+                emit_bytecode: false,
             },
         ));
 
@@ -1000,6 +1146,7 @@ mod tests {
                 emit_yul: true,
                 emit_sonatina: true,
                 emit_abi: false,
+                emit_bytecode: false,
             },
         ));
 

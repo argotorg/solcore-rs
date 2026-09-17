@@ -62,9 +62,11 @@ export function stubCompile(input: CompileInput): CompileResult {
       yulOutputs: [],
       sonatina: null,
       abi: null,
+      bytecode: [],
       execution: null,
       tests: [],
       contracts: [],
+      hasMain: false,
       sandbox: null,
       events: [],
     };
@@ -78,9 +80,11 @@ export function stubCompile(input: CompileInput): CompileResult {
     yulOutputs: [],
     sonatina: `; Sonatina IR for ${input.entry}\nfunc private %main() {}`,
     abi: null,
+    bytecode: [],
     execution: null,
     tests: [],
     contracts: [],
+    hasMain: false,
     sandbox: null,
     events: [],
   };

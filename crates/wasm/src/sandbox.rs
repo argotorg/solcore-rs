@@ -54,7 +54,7 @@ pub(crate) struct Request {
     #[serde(default)]
     pub reset: bool,
 }
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct Info {
     id: u64,
     contract: String,
@@ -165,7 +165,7 @@ fn encode(arguments: &str, shapes: &[AbiShape]) -> Result<Vec<u8>, String> {
     encode_static_abi("argument", shapes, &values).map_err(|e| e.to_string())
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Event {
     pub kind: &'static str,
@@ -382,35 +382,72 @@ pub(crate) fn execute(
                     key,
                 )?);
             }
-            let called = session
-                .as_mut()
-                .unwrap()
-                .call(data.into(), !request.simulate);
-            let decoded = match &called {
-                Ok(ExecutionResult::Success { output, .. }) => {
-                    Some(display_output(output.data(), &method.outputs))
-                }
-                _ => None,
-            };
-            let mut result = called
-                .map(|r| RunResult::from_evm(r, "call"))
-                .unwrap_or_else(|message| RunResult::error("call", message));
-            result.decoded = decoded;
-            record(Event {
-                kind: "call",
-                contract: request.contract.clone(),
-                signature: request.signature.clone(),
-                arguments: request.arguments.clone(),
-                simulate: request.simulate,
-                test_id: None,
-                expected: None,
-                passed: None,
-                result: result.clone(),
-            });
-            Ok::<_, String>(result)
+            Ok::<_, String>(invoke(
+                session.as_mut().unwrap(),
+                request,
+                method,
+                data.into(),
+            ))
         })
     })();
     result.unwrap_or_else(|message| RunResult::error("prepare", message))
+}
+
+/// Invoke only an existing matching deployment; otherwise the caller must compile.
+pub(crate) fn execute_cached(
+    request: &Request,
+    key: &str,
+    contracts: &[Contract],
+) -> Option<RunResult> {
+    SESSION.with(|session| {
+        let mut session = session.borrow_mut();
+        let session = session.as_mut()?;
+        if request.reset || session.key != key || session.contract != request.contract {
+            return None;
+        }
+        let result = (|| {
+            let contract = contracts
+                .iter()
+                .find(|c| c.name == request.contract)
+                .ok_or("Choose a contract.")?;
+            let method = contract
+                .methods
+                .iter()
+                .find(|m| m.signature == request.signature)
+                .ok_or("Choose a function.")?;
+            let mut data = method.selector.to_vec();
+            data.extend(encode(&request.arguments, &method.shapes)?);
+            encode(&request.constructor_arguments, &contract.constructor)?;
+            Ok::<_, String>(invoke(session, request, method, data.into()))
+        })();
+        Some(result.unwrap_or_else(|message| RunResult::error("prepare", message)))
+    })
+}
+
+fn invoke(session: &mut Sandbox, request: &Request, method: &Method, data: Bytes) -> RunResult {
+    let called = session.call(data, !request.simulate);
+    let decoded = match &called {
+        Ok(ExecutionResult::Success { output, .. }) => {
+            Some(display_output(output.data(), &method.outputs))
+        }
+        _ => None,
+    };
+    let mut result = called
+        .map(|r| RunResult::from_evm(r, "call"))
+        .unwrap_or_else(|message| RunResult::error("call", message));
+    result.decoded = decoded;
+    record(Event {
+        kind: "call",
+        contract: request.contract.clone(),
+        signature: request.signature.clone(),
+        arguments: request.arguments.clone(),
+        simulate: request.simulate,
+        test_id: None,
+        expected: None,
+        passed: None,
+        result: result.clone(),
+    });
+    result
 }
 
 #[derive(Deserialize)]
@@ -538,6 +575,53 @@ contract Counter {
         );
         result
     }
+    #[test]
+    fn cached_calls_require_the_matching_live_deployment() {
+        clear();
+        let first = call(SOURCE, "set(uint256)", "[5]", false, 0);
+        let key = input(SOURCE).sandbox_key();
+        let mut request = Request {
+            contract: "Counter".into(),
+            signature: "read()".into(),
+            arguments: "[]".into(),
+            constructor_arguments: "[]".into(),
+            simulate: false,
+            reset: false,
+        };
+        assert_eq!(
+            execute_cached(&request, &key, &first.contracts)
+                .unwrap()
+                .decoded
+                .as_deref(),
+            Some("5")
+        );
+        assert!(execute_cached(&request, "changed source", &first.contracts).is_none());
+        request.reset = true;
+        assert!(execute_cached(&request, &key, &first.contracts).is_none());
+        request.reset = false;
+        request.contract = "Other".into();
+        assert!(execute_cached(&request, &key, &first.contracts).is_none());
+        request.contract = "Counter".into();
+        request.signature = "set(uint256)".into();
+        request.arguments = "[false]".into();
+        assert_eq!(
+            execute_cached(&request, &key, &first.contracts)
+                .unwrap()
+                .status,
+            crate::execution::RunStatus::Error
+        );
+        assert_eq!(
+            call(SOURCE, "read()", "[]", false, 0)
+                .execution
+                .unwrap()
+                .decoded
+                .as_deref(),
+            Some("5")
+        );
+        clear();
+        assert!(execute_cached(&request, &key, &first.contracts).is_none());
+    }
+
     #[test]
     fn tests_leave_manual_state_unchanged_and_do_not_create_a_manual_session() {
         clear();

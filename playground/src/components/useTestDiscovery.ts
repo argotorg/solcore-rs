@@ -16,10 +16,13 @@ export function useTestDiscovery(): void {
         options: { emitHull: false, emitYul: false, emitSonatina: false, emitAbi: false },
       }).then((result) => {
         if (active && useWorkspaceStore.getState().workspaceVersion === version) {
-          useWorkspaceStore.setState({ testCases: result.tests, contracts: result.contracts });
+          useWorkspaceStore.setState({ testCases: result.tests, contracts: result.contracts, hasMain: result.hasMain, discoveryVersion: version });
         }
       }).catch(() => {
-        // Compilation and worker errors are reported by the explicit Run action.
+        if (active && useWorkspaceStore.getState().workspaceVersion === version) {
+          useWorkspaceStore.setState({ testCases: [], contracts: [], hasMain: false, discoveryVersion: version });
+        }
+        // Explicit compilation reports worker errors in Problems.
       });
     }, 500);
     return () => { active = false; window.clearTimeout(timer); };

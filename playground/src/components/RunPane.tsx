@@ -11,6 +11,8 @@ export function RunPane(): JSX.Element {
   const results = useWorkspaceStore((s) => s.testResults);
   const resultsVersion = useWorkspaceStore((s) => s.testResultsVersion);
   const version = useWorkspaceStore((s) => s.workspaceVersion);
+  const hasMain = useWorkspaceStore((s) => s.hasMain);
+  const discovered = useWorkspaceStore((s) => s.discoveryVersion === s.workspaceVersion);
   const compiling = useWorkspaceStore((s) => s.compiling);
   const manualResult = useWorkspaceStore((s) => s.manualResult);
   const contracts = useWorkspaceStore((s) => s.contracts);
@@ -37,7 +39,7 @@ export function RunPane(): JSX.Element {
       {activity === "calls" ? <section role="tabpanel" id="calls-panel" aria-labelledby="calls-tab">
         <CallControls />
         <RecentActions />
-        {!actions.length && !contracts.length && !manualResult ? <pre className="run-pane__output">{running ? "" : formatExecution(null)}</pre> : null}
+        {!actions.length && !contracts.length && !manualResult ? <pre className="run-pane__output">{running ? "" : !discovered ? "Checking runnable code…" : hasMain ? formatExecution(null) : "No runnable functions in this file."}</pre> : null}
       </section> : <section role="tabpanel" id="tests-panel" aria-labelledby="tests-tab">
         <p className="call-controls__hint">Each test run starts from the beginning in a separate contract. Your calls in Try calls are untouched.</p>
         <button className="button button--primary" disabled={compiling || !cases.length} onClick={() => void run()}>{running ? "Running tests…" : "Run all tests from start"}</button>

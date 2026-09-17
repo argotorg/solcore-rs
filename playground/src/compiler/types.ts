@@ -9,6 +9,7 @@ export interface CompileInput {
     emitYul: boolean;
     emitSonatina: boolean;
     emitAbi: boolean;
+    emitBytecode?: boolean;
   };
 }
 
@@ -42,9 +43,11 @@ export interface CompileResult {
   yulOutputs: Array<{ name: string; code: string }>;
   sonatina: string | null;
   abi: string | null;
+  bytecode: Array<{ name: string; sections: Array<{ name: string; code: string }> }>;
   execution: ExecutionResult | null;
   tests: TestCase[];
   contracts: ContractInterface[];
+  hasMain: boolean;
   sandbox: { id: number; contract: string; address: string } | null;
   events: ExecutionEvent[];
 }

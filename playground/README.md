@@ -4,7 +4,7 @@ A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The
 
 ## Run a program
 
-Select **Hello contract** and click **Run main** to execute it in the browser. The
+Select **Hello contract** and click **Run** to execute it in the browser. The
 **Run** tab shows the return word, raw return data, gas used, and any revert
 or halt. revm runs inside the existing compiler WASM worker.
 
@@ -29,7 +29,7 @@ function add(a: uint256, b: uint256) public returns (uint256) {
 }
 ```
 
-Click **Run test** above a comment or **Run all tests** in the toolbar. Tests are
+Click **Run test** above a comment or **Run** in the toolbar. Tests are
 discovered in the entry file. Results appear beside their comments and in the
 Run tab under **Run tests**. Each run starts from the beginning in separate
 contracts, without changing your manual session. Expand a test to inspect its expected and actual values, gas, or source
@@ -52,18 +52,20 @@ JSON array. Integers may be quoted decimal strings; tuples use nested arrays.
 **Call function** runs one call and keeps its changes for subsequent calls. The
 first call also deploys the contract, with constructor arguments when required.
 **Reset contract**, a source change, or switching contracts starts a new deployment
-on the next call. The Calls list retains the last 20 calls and resets.
+on the next call. The Calls list retains the last 20 calls. Reset clears the call history and previous result.
 
 Running tests never replaces or changes the contract in Try calls. Playing a test
 copies its inputs into the call controls, but calling those inputs manually does
 not replay test setup or check its assertion. Test results stay in Run tests and
 are replaced when tests are run again.
 
-**More options** contains **Preview without saving**, which runs one call and
-discards its changes, and **Watch this call**. Watches do not deploy or recompile;
-they refresh against the manual contract when added and after manual calls. Source
-edits mark values outdated; Reset contract clears values while keeping watches.
-Up to 16 calls can be watched. Watches and call history last for the page session.
+## Bytecode
+
+Click **Compile** to generate outputs. The **Compiled** control opens a popover
+for inspecting and copying EVM bytecode; editing the source changes it back to **Compile**.
+Choose an object and its creation or runtime section. Creation code excludes
+constructor arguments. Plain functions expose runtime code only. The **ABI** tab
+also has a copy button. Generating these outputs does not deploy or execute code.
 
 ## Development
 
@@ -191,6 +193,7 @@ interface CompileInput {
     emitYul: boolean;
     emitSonatina: boolean;
     emitAbi: boolean;
+    emitBytecode?: boolean;
   };
 }
 
@@ -206,6 +209,7 @@ interface CompileResult {
   yulOutputs: Array<{ name: string; code: string }>;
   sonatina: string | null;
   abi: string | null;
+  bytecode: Array<{ name: string; sections: Array<{ name: string; code: string }> }>;
   execution: ExecutionResult | null;
 }
 ```
@@ -213,7 +217,7 @@ interface CompileResult {
 `success` describes compilation; `execution.status` describes execution.
 `execution` is null for Compile requests and compilation errors.
 
-The Playground requests Hull, Yul, Sonatina IR, and contract ABI JSON in one compile and exposes each
+The Playground requests Hull, Yul, Sonatina IR, bytecode, and contract ABI JSON in one compile and exposes each
 textual output in its own tab. For multiple contracts, the Yul tab selects one
 standalone deploy object at a time. Problems can be copied individually or together,
 including their locations, labels, notes, and help. Backend fields remain `null` when an output was not requested,

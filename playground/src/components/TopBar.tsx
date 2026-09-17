@@ -1,7 +1,7 @@
+import { CompileControl } from "./CompileControl";
 import {
   Braces,
   Check,
-  Hammer,
   ChevronDown,
   Link as LinkIcon,
   X,
@@ -43,16 +43,16 @@ export function TopBar({
   const order = useWorkspaceStore((state) => state.order);
   const entry = useWorkspaceStore((state) => state.entry);
   const compiling = useWorkspaceStore((state) => state.compiling);
-  const hasManualCalls = useWorkspaceStore((state) => state.contracts.some((c) => c.methods.length > 0));
+  const hasMain = useWorkspaceStore((state) => state.hasMain);
+  const discovered = useWorkspaceStore((state) => state.discoveryVersion === state.workspaceVersion);
   const testCount = useWorkspaceStore((state) => state.testCases.length);
-  const runLabel = testCount > 0 ? "Run all tests" : hasManualCalls ? "Open calls" : "Run main";
+  const runLabel = discovered && testCount > 0 ? "Run all tests" : "Run";
   const running = useWorkspaceStore((state) => state.running);
   const lastCompileDurationMs = useWorkspaceStore((state) => state.lastCompileDurationMs);
   const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
   const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
   const theme = useWorkspaceStore((state) => state.theme);
   const setEntry = useWorkspaceStore((state) => state.setEntry);
-  const compileNow = useWorkspaceStore((state) => state.compileNow);
   const runNow = useWorkspaceStore((state) => state.runNow);
   const toggleTheme = useWorkspaceStore((state) => state.toggleTheme);
   const resetWorkspace = useWorkspaceStore((state) => state.resetWorkspace);
@@ -184,33 +184,21 @@ export function TopBar({
           </span>
         </label>
 
-        <button
-          type="button"
-          className="button button--secondary"
-          disabled={compiling}
-          aria-label="Compile"
-          title="Compile"
-          onClick={() => {
-            void compileNow();
-          }}
-        >
-          {compiling && !running ? <Loader2 className="spin" size={16} /> : <Hammer size={16} />}
-          <span>{compiling && !running ? "Compiling" : "Compile"}</span>
-        </button>
+        <CompileControl />
 
-        <button
+        {(!discovered || testCount > 0 || hasMain) ? <button
           type="button"
           className="button button--primary"
-          disabled={compiling}
+          disabled={compiling || !discovered}
           aria-label={runLabel}
-          title={testCount > 0 ? "Run tests in fresh sandboxes" : hasManualCalls ? "Open the contract call controls" : "Compile and run main()"}
+          title={!discovered ? "Checking runnable code" : testCount > 0 ? "Run all tests from start" : "Compile and run main()"}
           onClick={() => {
             void runNow();
           }}
         >
-          {running ? <Loader2 className="spin" size={16} /> : hasManualCalls && !testCount ? <Braces size={16} /> : <Play size={16} />}
-          <span>{running ? "Running" : runLabel}</span>
-        </button>
+          {running ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+          <span>{running ? "Running" : "Run"}</span>
+        </button> : null}
 
         {compileTimeLabel ? (
           <span

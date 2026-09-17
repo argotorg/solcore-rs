@@ -25,6 +25,8 @@ const bundle = await build({
   }],
 });
 const { useWorkspaceStore: store } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+assert.equal(store.getState().outputTab, 'execution');
+assert.equal(store.getState().discoveryVersion, null);
 const execution = {
   status: 'success', phase: 'call', returnData: '0x', returnWord: '42',
   gasUsed: 21018, deploymentGasUsed: null, gasLimit: 1000000, message: null,
@@ -91,7 +93,7 @@ test('switching examples during Run preserves the new example output tab', async
   store.getState().loadExample('std-usage');
   request.resolve(result);
   await operation;
-  assert.equal(store.getState().outputTab, 'hull');
+  assert.equal(store.getState().outputTab, 'execution');
   assert.equal(store.getState().result, null);
   assert.equal(store.getState().running, false);
   assert.equal(visibleResult(), null);
@@ -152,7 +154,7 @@ test('test play fills the manual controls before running and edits detach the as
   store.getState().setContent('Calculator.sol', content);
   store.getState().resetSandbox();
   assert.equal(store.getState().manualResult, null);
-  assert.equal(store.getState().recentActions.at(-1).label, 'Reset contract');
+  assert.deepEqual(store.getState().recentActions, []);
   const rerun = store.getState().runCall();
   const next = pending.shift();
   assert.ok(next.input.sandboxEpoch > epoch);
@@ -204,7 +206,7 @@ test('watches refresh after a call, retain results on edits, and reject late rea
   assert.equal(store.getState().watches.length, 0);
 });
 
-test('recent actions preserve call identity, mode, deployment boundaries, and reset history', async () => {
+test('recent actions preserve call identity and clear when the contract is reset', async () => {
   store.getState().loadExample('std-usage');
   store.getState().setCallDraft({ contract: 'Counter', signature: 'set(uint256)', arguments: '[7]' });
   const sandbox = { id: 41, contract: 'Counter', address: '0x1234' };
@@ -227,12 +229,11 @@ test('recent actions preserve call identity, mode, deployment boundaries, and re
   store.getState().resetSandbox();
   assert.equal(store.getState().sandbox, null);
   assert.equal(store.getState().manualResult, null);
-  assert.equal(store.getState().recentActions[0].sandboxId, 41);
-  assert.equal(store.getState().recentActions.at(-1).label, 'Reset contract');
+  assert.deepEqual(store.getState().recentActions, []);
   for (let i = 0; i < 25; i++) store.getState().resetSandbox();
   actions = store.getState().recentActions;
-  assert.equal(actions.length, 20);
-  assert.equal(actions.at(-1).id, 28);
+  assert.equal(actions.length, 0);
+  assert.equal(store.getState().actionSequence, 0);
   store.getState().loadExample('trait');
   assert.equal(store.getState().recentActions.length, 0);
 });
@@ -284,4 +285,15 @@ test('test runs have separate results and never replace the manual session or hi
   assert.equal(store.getState().recentActions.length, 2);
   store.getState().resetSandbox();
   assert.equal(store.getState().testRun, testRun);
+});
+
+
+test('Run is the default tab on startup, example changes, and workspace reset', () => {
+  store.getState().loadExample('contract-output');
+  assert.equal(store.getState().outputTab, 'execution');
+  assert.equal(store.getState().discoveryVersion, null);
+  store.getState().setOutputTab('abi');
+  store.getState().resetWorkspace();
+  assert.equal(store.getState().outputTab, 'execution');
+  assert.equal(store.getState().options.emitBytecode, true);
 });

@@ -1,12 +1,10 @@
-import { StatePane } from "./StatePane";
-import { Play, RotateCcw, Eye } from "lucide-react";
+import { Play, RotateCcw } from "lucide-react";
 import { useWorkspaceStore } from "../store/workspace";
 
 export function CallControls(): JSX.Element | null {
   const contracts = useWorkspaceStore((s) => s.contracts);
   const draft = useWorkspaceStore((s) => s.callDraft);
   const selectedId = useWorkspaceStore((s) => s.selectedTestId);
-  const watches = useWorkspaceStore((s) => s.watches);
   const tests = useWorkspaceStore((s) => s.testCases);
   const compiling = useWorkspaceStore((s) => s.compiling);
   const sandbox = useWorkspaceStore((s) => s.sandbox);
@@ -15,8 +13,6 @@ export function CallControls(): JSX.Element | null {
   const update = useWorkspaceStore((s) => s.setCallDraft);
   const contract = contracts.find((c) => c.name === draft.contract) ?? contracts[0];
   const method = contract?.methods.find((m) => m.signature === draft.signature) ?? contract?.methods[0];
-  const watched = watches.some((watch) => watch.contract === contract?.name
-    && watch.signature === method?.signature && watch.arguments === draft.arguments.trim());
   const selected = tests.find((t) => t.id === selectedId);
   const deployed = sandbox?.contract === contract?.name && sandboxVersion === version;
   if (!contract) return null;
@@ -74,23 +70,6 @@ export function CallControls(): JSX.Element | null {
       </div>
       <p className="call-controls__hint">Each click calls this function once. Changes are kept until you reset the contract.</p>
       {selected ? <div className="call-controls__hint">Inputs copied from <code>{selected.file}:{selected.line}</code>. This calls the function without running its test setup.</div> : null}
-      <details className="call-controls__more"><summary>More options</summary>
-        <button className="button button--secondary" type="button" disabled={compiling || !method}
-          onClick={() => {
-            if (!method) return;
-            update({ contract: contract.name, signature: method.signature });
-            void useWorkspaceStore.getState().runCall(true);
-          }}>Preview without saving</button>
-        <p className="call-controls__hint">Preview runs one call against this contract and discards its changes.</p>
-      <div className="call-controls__actions">
-        <button className="button button--ghost" type="button" disabled={compiling || watched || !method?.returnsValue || watches.length >= 16}
-          title={watches.length >= 16 ? "Up to 16 watches" : "Simulate this call now and after runs; discard its changes"}
-          onClick={() => { if (method) useWorkspaceStore.getState().addWatch({
-            contract: contract.name, signature: method.signature, arguments: draft.arguments,
-          }); }}><Eye size={14} aria-hidden="true" />{watched ? "Watched" : "Watch this call"}</button>
-      </div>
-      <StatePane />
-      </details>
     </form>
   );
 }

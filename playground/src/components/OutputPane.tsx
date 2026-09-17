@@ -240,6 +240,9 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
               {yulOutputs.map((output) => <option key={output.name}>{output.name}</option>)}
             </select>
           </label> : null}
+          {outputTab === "abi" && result?.abi ? <div className="problems-toolbar">
+            <CopyButton label="Copy ABI" showLabel text={result.abi} />
+          </div> : null}
           <div className="artifact-editor"><Editor
             beforeMount={beforeMount}
             defaultLanguage="plaintext"

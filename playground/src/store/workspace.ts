@@ -25,6 +25,7 @@ interface WorkspaceOptions {
   emitYul: boolean;
   emitSonatina: boolean;
   emitAbi: boolean;
+  emitBytecode: boolean;
 }
 
 export interface WorkspaceState {
@@ -56,6 +57,8 @@ export interface WorkspaceState {
   compileNow: () => Promise<void>;
   runNow: (testId?: string) => Promise<void>;
   contracts: ContractInterface[];
+  hasMain: boolean;
+  discoveryVersion: number | null;
   callDraft: ManualCall;
   selectedTestId: string | null;
   sandbox: CompileResult["sandbox"];
@@ -308,9 +311,11 @@ function diagnosticResult(message: string): CompileResult {
     yulOutputs: [],
     sonatina: null,
     abi: null,
+    bytecode: [],
     execution: null,
     tests: [],
     contracts: [],
+    hasMain: false,
     sandbox: null,
     events: [],
   };
@@ -343,6 +348,8 @@ applyTheme(initialTheme);
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   ...initialWorkspace,
   contracts: [],
+  hasMain: false,
+  discoveryVersion: null,
   callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
   selectedTestId: null,
   runActivity: "calls", testRun: null,
@@ -359,10 +366,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
     watchRun += 1;
     set((s) => ({ sandbox: null, sandboxVersion: null, sandboxEpoch: s.sandboxEpoch + 1,
       sandboxAction: null, watchAction: null, manualResult: null, manualResultVersion: null,
-      actionSequence: s.actionSequence + 1,
-      recentActions: [...s.recentActions, { id: s.actionSequence + 1, label: "Reset contract",
-        version: s.workspaceVersion, sandboxId: null, events: [], result: null,
-        message: "The next call deploys a new contract." }].slice(-20),
+      actionSequence: 0,
+      recentActions: [],
       watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false }));
   },
   watches: [],
@@ -393,13 +398,14 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   workspaceVersion: 0,
   lastCompiledVersion: null,
   result: null,
-  outputTab: "hull",
+  outputTab: "execution",
   theme: initialTheme,
   options: {
     emitHull: true,
     emitYul: true,
     emitSonatina: true,
     emitAbi: true,
+    emitBytecode: true,
   },
 
   setContent(path, content) {
@@ -557,6 +563,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       ...nextWorkspace,
       watches: [], watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false,
       contracts: [],
+      hasMain: false,
+      discoveryVersion: null,
       callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
       selectedTestId: null,
       runActivity: "calls", testRun: null,
@@ -575,7 +583,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       result: null,
       lastCompileDurationMs: null,
       lastCompiledVersion: null,
-      outputTab: "hull",
+      outputTab: "execution",
       workspaceVersion: state.workspaceVersion + 1,
     }));
 
@@ -589,6 +597,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       ...nextWorkspace,
       watches: [], watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false,
       contracts: [],
+      hasMain: false,
+      discoveryVersion: null,
       callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
       selectedTestId: null,
       runActivity: "calls", testRun: null,
@@ -607,7 +617,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
       result: null,
       lastCompileDurationMs: null,
       lastCompiledVersion: null,
-      outputTab: "hull",
+      outputTab: "execution",
       workspaceVersion: state.workspaceVersion + 1,
     }));
 
@@ -692,6 +702,7 @@ async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCa
           recentActions: [...get().recentActions, action].slice(-20),
         } : {}),
         result,
+        ...(compileVersion === get().workspaceVersion ? { hasMain: result.hasMain ?? false, discoveryVersion: compileVersion } : {}),
         contracts: compileVersion === get().workspaceVersion ? (result.contracts ?? []) : get().contracts,
         ...(run && !testing ? {
           sandbox: result.sandbox ?? null,
