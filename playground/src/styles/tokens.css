@@ -5,6 +5,8 @@
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
     monospace;
 
+  --font-size-ui: 13px;
+
   --bg-canvas: #f5f7fb;
   --bg-subtle: #eef2f7;
   --surface-1: #ffffff;
