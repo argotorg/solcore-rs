@@ -18,6 +18,7 @@ import {
 import { useEffect, useState } from "react";
 import { version } from "../compiler/runtime";
 import { formatCompileDuration } from "../compiler/timing";
+import { copyText } from "../share/copyText";
 import { buildExampleLink } from "../share/exampleLink";
 import { examples } from "../store/workspace";
 import { useWorkspaceStore } from "../store/workspace";
@@ -94,10 +95,9 @@ export function TopBar({
 
   const copyExampleLink = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(buildExampleLink(window.location.href, selectedExample));
+      await copyText(buildExampleLink(window.location.href, selectedExample));
       setLinkCopyState("copied");
     } catch {
-      // Clipboard access needs a secure context and may be denied.
       setLinkCopyState("failed");
     }
   };
