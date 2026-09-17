@@ -167,14 +167,14 @@ export function App(): JSX.Element {
             onCollapse={() => setSidebarOpen(false)}
             onExpand={() => setSidebarOpen(true)}
           >
-            <FileExplorer />
+            <FileExplorer hidden={!sidebarOpen} />
           </Panel>
           <ResizeHandle />
 
           <Panel id="main" order={2} minSize={45}>
             <div ref={mainAreaRef} className="main-area">
               <PanelGroup direction={mainDirection} className="main-panels">
-                <Panel id="editor" order={1} defaultSize={62} minSize={32}>
+                <Panel id="editor" order={1} defaultSize={100 - Math.max(38, outputMinSize)} minSize={32}>
                   <EditorPane onCursorChange={setCursor} />
                 </Panel>
                 <ResizeHandle direction={mainDirection} />
@@ -182,14 +182,14 @@ export function App(): JSX.Element {
                   ref={outputRef}
                   id="output"
                   order={2}
-                  defaultSize={38}
+                  defaultSize={Math.max(38, outputMinSize)}
                   minSize={outputMinSize}
                   collapsible
                   collapsedSize={0}
                   onCollapse={() => setOutputOpen(false)}
                   onExpand={() => setOutputOpen(true)}
                 >
-                  <OutputPane />
+                  <OutputPane hidden={!outputOpen} />
                 </Panel>
               </PanelGroup>
             </div>

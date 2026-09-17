@@ -2,6 +2,11 @@
 
 A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The compile path runs in a Web Worker and calls the generated `solcore-wasm` package from `../crates/wasm/pkg`. Editor language features run in a separate LSP Worker backed by `solcore-lsp` from `../crates/lsp/pkg`.
 
+## Keyboard navigation
+
+Use Left/Right, Home, and End to move between source or output tabs. In the
+editor, Ctrl+M (Ctrl+Shift+M on macOS) toggles whether Tab indents or moves focus.
+
 ## Development
 
 On a fresh checkout, generate the local wasm packages once before installing JavaScript dependencies:
@@ -18,6 +23,13 @@ After dependencies are installed, `npm run dev` rebuilds both local wasm package
 - `../crates/lsp/pkg` for Monaco language features
 
 `package.json` depends on `solcore-wasm` and `solcore-lsp` through `file:` dependencies, so a normal install links the generated wasm-pack output into Vite without publishing it. If a dev server was already running while rebuilding wasm, restart with `npm run dev:force` once to clear Vite's dependency cache.
+
+## Styles
+
+`src/styles/tokens.css` defines shared colors, spacing, and typography. `base.css` sets
+inherited defaults; `app.css` contains component rules and responsive overrides.
+Use the typography tokens for UI text and keep responsive selectors scoped to the
+component they change. Monaco's code font sizes are configured in the editor components.
 
 ## Sharing examples
 

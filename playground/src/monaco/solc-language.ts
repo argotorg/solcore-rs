@@ -268,7 +268,8 @@ export function registerSolcoreLanguage(monaco: typeof Monaco): void {
     colors: {
       "editor.background": "#ffffff",
       "editor.foreground": "#1f2937",
-      "editorLineNumber.foreground": "#94a3b8",
+      "editorLineNumber.foreground": "#64748b",
+      "editorLineNumber.dimmedForeground": "#64748b",
       "editorLineNumber.activeForeground": "#b45309",
       "editorCursor.foreground": "#b45309",
       "editor.selectionBackground": "#fed7aa80",
@@ -288,7 +289,8 @@ export function registerSolcoreLanguage(monaco: typeof Monaco): void {
     colors: {
       "editor.background": "#111318",
       "editor.foreground": "#e5e7eb",
-      "editorLineNumber.foreground": "#64748b",
+      "editorLineNumber.foreground": "#94a3b8",
+      "editorLineNumber.dimmedForeground": "#94a3b8",
       "editorLineNumber.activeForeground": "#fb923c",
       "editorCursor.foreground": "#fb923c",
       "editor.selectionBackground": "#9a341280",
