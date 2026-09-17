@@ -5,7 +5,6 @@ import {
   ChevronDown,
   Link as LinkIcon,
   X,
-  Loader2,
   Moon,
   PanelBottomClose,
   PanelBottomOpen,
@@ -13,7 +12,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Play,
   RotateCcw,
   Sun,
 } from "lucide-react";
@@ -43,17 +41,11 @@ export function TopBar({
   const order = useWorkspaceStore((state) => state.order);
   const entry = useWorkspaceStore((state) => state.entry);
   const compiling = useWorkspaceStore((state) => state.compiling);
-  const hasMain = useWorkspaceStore((state) => state.hasMain);
-  const discovered = useWorkspaceStore((state) => state.discoveryVersion === state.workspaceVersion);
-  const testCount = useWorkspaceStore((state) => state.testCases.length);
-  const runLabel = discovered && testCount > 0 ? "Run all tests" : "Run";
-  const running = useWorkspaceStore((state) => state.running);
   const lastCompileDurationMs = useWorkspaceStore((state) => state.lastCompileDurationMs);
   const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
   const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
   const theme = useWorkspaceStore((state) => state.theme);
   const setEntry = useWorkspaceStore((state) => state.setEntry);
-  const runNow = useWorkspaceStore((state) => state.runNow);
   const toggleTheme = useWorkspaceStore((state) => state.toggleTheme);
   const resetWorkspace = useWorkspaceStore((state) => state.resetWorkspace);
   const loadExample = useWorkspaceStore((state) => state.loadExample);
@@ -185,20 +177,6 @@ export function TopBar({
         </label>
 
         <CompileControl />
-
-        {(!discovered || testCount > 0 || hasMain) ? <button
-          type="button"
-          className="button button--primary"
-          disabled={compiling || !discovered}
-          aria-label={runLabel}
-          title={!discovered ? "Checking runnable code" : testCount > 0 ? "Run all tests from start" : "Compile and run main()"}
-          onClick={() => {
-            void runNow();
-          }}
-        >
-          {running ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-          <span>{running ? "Running" : "Run"}</span>
-        </button> : null}
 
         {compileTimeLabel ? (
           <span

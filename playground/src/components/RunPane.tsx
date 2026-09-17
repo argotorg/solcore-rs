@@ -1,3 +1,4 @@
+import { Loader2, Play } from "lucide-react";
 import { RecentActions, TestSequence } from "./RecentActions";
 import { CallControls } from "./CallControls";
 import { formatExecution } from "../compiler/executionOutput";
@@ -37,6 +38,13 @@ export function RunPane(): JSX.Element {
         <button role="tab" id="tests-tab" aria-controls="tests-panel" aria-selected={activity === "tests"} disabled={compiling} onClick={() => setActivity("tests")}>Run tests ({cases.length})</button>
       </div>
       {activity === "calls" ? <section role="tabpanel" id="calls-panel" aria-labelledby="calls-tab">
+        {hasMain && !cases.length && !contracts.some((contract) => contract.methods.length > 0) ? <div className="run-pane__toolbar">
+          <button type="button" className="button button--primary" disabled={compiling || !discovered}
+            title="Compile and run main()" onClick={() => void run()}>
+            {running ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+            {running ? "Running…" : "Run"}
+          </button>
+        </div> : null}
         <CallControls />
         <RecentActions />
         {!actions.length && !contracts.length && !manualResult ? <pre className="run-pane__output">{running ? "" : !discovered ? "Checking runnable code…" : hasMain ? formatExecution(null) : "No runnable functions in this file."}</pre> : null}
