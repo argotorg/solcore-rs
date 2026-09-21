@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 import { FileProblemBadge, fileProblemSummaries } from "./FileProblemBadge";
 
-export function FileExplorer(): JSX.Element {
+export function FileExplorer({ hidden }: { hidden: boolean }): JSX.Element {
   const order = useWorkspaceStore((state) => state.order);
   const entry = useWorkspaceStore((state) => state.entry);
   const activePath = useWorkspaceStore((state) => state.activePath);
@@ -43,7 +43,7 @@ export function FileExplorer(): JSX.Element {
   };
 
   return (
-    <aside className="file-explorer" aria-label="Workspace files">
+    <aside id="workspace-files" hidden={hidden} className="file-explorer" aria-label="Workspace files">
       <div className="panel-heading">
         <div>
           <span className="panel-heading__eyebrow">Workspace</span>
@@ -66,6 +66,7 @@ export function FileExplorer(): JSX.Element {
               <button
                 type="button"
                 className="file-row__main"
+                aria-current={isActive ? "true" : undefined}
                 onClick={() => setActive(path)}
                 onDoubleClick={() => handleRename(path)}
                 title={path}
@@ -73,7 +74,7 @@ export function FileExplorer(): JSX.Element {
                 <FileCode2 size={16} aria-hidden="true" />
                 <span className="file-row__name">{path}</span>
                 {problemSummary ? <FileProblemBadge summary={problemSummary} /> : null}
-                {isEntry ? <span className="entry-dot" title="Entry file" /> : null}
+                {isEntry ? <span className="entry-dot" title="Entry file"><span className="sr-only">Entry file</span></span> : null}
               </button>
 
               <div className="file-row__actions">
@@ -85,7 +86,7 @@ export function FileExplorer(): JSX.Element {
                     title="Set as entry"
                   >
                     <span className="entry-target" aria-hidden="true" />
-                    <span className="sr-only">Set as entry</span>
+                    <span className="sr-only">Set {path} as entry</span>
                   </button>
                 ) : null}
                 <button
@@ -95,7 +96,7 @@ export function FileExplorer(): JSX.Element {
                   title="Rename"
                 >
                   <Pencil size={13} />
-                  <span className="sr-only">Rename</span>
+                  <span className="sr-only">Rename {path}</span>
                 </button>
                 <button
                   type="button"
@@ -105,7 +106,7 @@ export function FileExplorer(): JSX.Element {
                   title="Delete"
                 >
                   <Trash2 size={13} />
-                  <span className="sr-only">Delete</span>
+                  <span className="sr-only">Delete {path}</span>
                 </button>
               </div>
             </div>

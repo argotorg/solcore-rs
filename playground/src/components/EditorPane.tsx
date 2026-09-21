@@ -1,3 +1,4 @@
+import { TabList } from "./TabList";
 import Editor, { type BeforeMount, type OnMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -248,7 +249,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
 
   return (
     <section className="editor-pane" aria-label="Source editor">
-      <div className="tab-strip" role="tablist" aria-label="Open files">
+      <TabList className="tab-strip" label="Open files">
         {order.map((path) => {
           const problemSummary = problemsByFile.get(path);
 
@@ -258,6 +259,9 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
               type="button"
               role="tab"
               aria-selected={path === activePath}
+              id={`source-tab-${encodeURIComponent(path)}`}
+              aria-controls="source-panel"
+              tabIndex={path === activePath ? 0 : -1}
               className={`source-tab ${path === activePath ? "is-active" : ""}`}
               onClick={() => setActive(path)}
               title={path}
@@ -268,9 +272,9 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
             </button>
           );
         })}
-      </div>
+      </TabList>
 
-      <div className="editor-surface">
+      <div className="editor-surface" role="tabpanel" id="source-panel" aria-labelledby={`source-tab-${encodeURIComponent(activePath)}`} tabIndex={0}>
         <Editor
           beforeMount={beforeMount}
           defaultLanguage={SOLCORE_LANGUAGE_ID}
@@ -278,7 +282,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
           language={SOLCORE_LANGUAGE_ID}
           onChange={(value) => setContent(activePath, value ?? "")}
           onMount={onMount}
-          options={editorOptions}
+          options={{ ...editorOptions, ariaLabel: `${activePath} source` }}
           path={editorUri}
           theme={monacoThemeFor(theme)}
           value={activeFile?.content ?? ""}

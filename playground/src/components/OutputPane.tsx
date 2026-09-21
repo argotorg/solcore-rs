@@ -1,3 +1,4 @@
+import { TabList } from "./TabList";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
@@ -58,7 +59,7 @@ function outputText(
   return "";
 }
 
-export function OutputPane(): JSX.Element {
+export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
   const rawResult = useWorkspaceStore((state) => state.result);
   const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
   const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
@@ -105,12 +106,15 @@ export function OutputPane(): JSX.Element {
   );
 
   return (
-    <section className="output-pane" aria-label="Compiler output">
-      <div className="output-tabs" role="tablist" aria-label="Output tabs">
+    <section id="compiler-output" hidden={hidden} className="output-pane" aria-label="Compiler output">
+      <TabList className="output-tabs" label="Output tabs">
         <button
           type="button"
           role="tab"
           aria-selected={outputTab === "hull"}
+          id="output-tab-hull"
+          aria-controls="output-panel"
+          tabIndex={outputTab === "hull" ? 0 : -1}
           className={`output-tab ${outputTab === "hull" ? "is-active" : ""}`}
           onClick={() => setOutputTab("hull")}
         >
@@ -120,6 +124,9 @@ export function OutputPane(): JSX.Element {
           type="button"
           role="tab"
           aria-selected={outputTab === "yul"}
+          id="output-tab-yul"
+          aria-controls="output-panel"
+          tabIndex={outputTab === "yul" ? 0 : -1}
           className={`output-tab ${outputTab === "yul" ? "is-active" : ""}`}
           onClick={() => setOutputTab("yul")}
         >
@@ -129,6 +136,9 @@ export function OutputPane(): JSX.Element {
           type="button"
           role="tab"
           aria-selected={outputTab === "sonatina"}
+          id="output-tab-sonatina"
+          aria-controls="output-panel"
+          tabIndex={outputTab === "sonatina" ? 0 : -1}
           className={`output-tab ${outputTab === "sonatina" ? "is-active" : ""}`}
           onClick={() => setOutputTab("sonatina")}
         >
@@ -138,6 +148,9 @@ export function OutputPane(): JSX.Element {
           type="button"
           role="tab"
           aria-selected={outputTab === "abi"}
+          id="output-tab-abi"
+          aria-controls="output-panel"
+          tabIndex={outputTab === "abi" ? 0 : -1}
           className={`output-tab ${outputTab === "abi" ? "is-active" : ""}`}
           onClick={() => setOutputTab("abi")}
         >
@@ -147,15 +160,18 @@ export function OutputPane(): JSX.Element {
           type="button"
           role="tab"
           aria-selected={outputTab === "problems"}
+          id="output-tab-problems"
+          aria-controls="output-panel"
+          tabIndex={outputTab === "problems" ? 0 : -1}
           className={`output-tab ${outputTab === "problems" ? "is-active" : ""}`}
           onClick={() => setOutputTab("problems")}
         >
           Problems
           {problemCount > 0 ? <span className="tab-badge">{problemCount}</span> : null}
         </button>
-      </div>
+      </TabList>
 
-      <div className="output-content">
+      <div className="output-content" role="tabpanel" id="output-panel" aria-labelledby={`output-tab-${outputTab}`} tabIndex={0}>
         {outputTab === "problems" ? (
           <div className="problems-list">
             {diagnostics.length === 0 ? (
@@ -207,7 +223,7 @@ export function OutputPane(): JSX.Element {
             beforeMount={beforeMount}
             defaultLanguage="plaintext"
             language={outputTab === "abi" ? "json" : "plaintext"}
-            options={editorOptions}
+            options={{ ...editorOptions, ariaLabel: `${outputTab} output` }}
             theme={monacoThemeFor(theme)}
             value={renderedOutput}
           />

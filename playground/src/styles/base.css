@@ -1,3 +1,4 @@
+/* Document defaults and native controls. Component styles live in app.css. */
 * {
   box-sizing: border-box;
 }
@@ -15,13 +16,15 @@ body {
   background: var(--bg-canvas);
   color: var(--text-primary);
   font-family: var(--font-ui);
+  font-size: var(--font-size-ui);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
 
 button,
 select,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -31,7 +34,10 @@ button {
 
 button:focus-visible,
 select:focus-visible,
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
   outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
 }
@@ -64,4 +70,9 @@ button:disabled {
   to {
     transform: rotate(360deg);
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+  :root { --transition-fast: 0s; }
 }
