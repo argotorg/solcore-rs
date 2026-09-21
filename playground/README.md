@@ -2,74 +2,12 @@
 
 A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The compile path runs in a Web Worker and calls the generated `solcore-wasm` package from `../crates/wasm/pkg`. Editor language features run in a separate LSP Worker backed by `solcore-lsp` from `../crates/lsp/pkg`.
 
-## Run a program
+## Keyboard navigation
 
-Select **Hello contract** and click **Run** in the **Run** tab to execute it in the browser. The
-**Run** tab shows the return word, raw return data, gas used, and any revert
-or halt. revm runs inside the existing compiler WASM worker.
-
-Run supports a no-argument `main` returning one word, either as a plain function
-or the public runtime entry of a single contract with a no-argument constructor.
-Each run uses a new in-memory database. Constructor storage is available to `main`
-within that run. Recent actions keeps previous runs visible, including through source edits.
-
-The runner uses Osaka rules, a gas limit of 1,000,000 per transaction, and a 16 MiB
-EVM memory limit. Contract `main` receives empty calldata. A wrapper returns its
-word to the playground; the normal Compile artifacts are unchanged.
-
-## Run tests
-
-Public contract methods can carry the same test comments used by the compiler's
-E2E fixtures:
-
-```sol
-// #[(20, 22) -> 42]
-function add(a: uint256, b: uint256) public returns (uint256) {
-    return a + b;
-}
-```
-
-Click **Run test** above a comment or **Run all tests from start** under **Run tests** in the Run tab. Tests are
-discovered in the entry file. Results appear beside their comments and in the
-Run tab under **Run tests**. Each run starts from the beginning in separate
-contracts, without changing your manual session. Expand a test to inspect its expected and actual values, gas, or source
-location. Edits retain results, marked outdated until the next run.
-Playing a test also fills the Run controls with its function and arguments. The
-manual buttons run that call without checking the test assertion.
-
-Tests use the contract's normal selector dispatcher, so the contract must not
-have an explicit runtime `main`. Constructors currently take no arguments.
-The shared directive parser supports static ABI values and expected reverts.
-`// #[send(7)]` commits a state-changing call; ordinary assertions leave state
-unchanged. Tests run in source order within each contract, with contracts processed by name.
-Each contract starts with a new deployment.
-An individual test replays preceding sends for its contract first.
-
-## Call a contract
-
-Under **Try calls**, choose a public selector function and enter arguments as a
-JSON array. Integers may be quoted decimal strings; tuples use nested arrays.
-**Call function** runs one call and keeps its changes for subsequent calls. The
-first call also deploys the contract, with constructor arguments when required.
-**Reset contract**, a source change, or switching contracts starts a new deployment
-on the next call. The Calls list retains the last 20 calls. Reset clears the call history and previous result.
-
-Running tests never replaces or changes the contract in Try calls. Playing a test
-copies its inputs into the call controls, but calling those inputs manually does
-not replay test setup or check its assertion. Test results stay in Run tests and
-are replaced when tests are run again.
-
-## Bytecode
-
-Click **Compile** to generate outputs. The **Compiled** control opens a popover
-for inspecting and copying EVM bytecode; editing the source changes it back to **Compile**.
-Choose an object and its creation or runtime section. Creation code excludes
-constructor arguments. Plain functions expose runtime code only. The **ABI** tab
-also has a copy button. Generating these outputs does not deploy or execute code.
+Use Left/Right, Home, and End to move between source or output tabs. In the
+editor, Ctrl+M (Ctrl+Shift+M on macOS) toggles whether Tab indents or moves focus.
 
 ## Development
-
-Use wasm-pack 0.15.0, as pinned in CI, for the custom WASM build profile.
 
 On a fresh checkout, generate the local wasm packages once before installing JavaScript dependencies:
 
@@ -131,9 +69,6 @@ npm run build
 
 The build script rebuilds both wasm packages, runs `tsc --noEmit`, then runs `vite build`.
 
-After building, `npm run test:wasm` checks execution through the generated WASM
-package. `npm run test:unit` checks the JavaScript helpers and workspace updates.
-
 ## Deploy
 
 Deploy the generated `dist/` directory with static hosting that serves `.wasm` files. Vite emits the compiler and LSP wasm files as assets and rewrites the worker imports to those built assets.
@@ -173,17 +108,17 @@ is instead tuned for native compiler throughput. A final `wasm-opt -Oz` pass fro
 build:wasm` applies it automatically after `npm ci`; a missing optimizer is a build error rather
 than silently changing the bundle contents. `vite build` reports the current raw and gzipped asset
 sizes. The Playground imports `init`,
-`compile`, `run`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted
+`compile`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted
 `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The LSP worker imports
 `SolcoreLsp` from `solcore-lsp`; `src/languageServer/lsp.worker.ts` passes Vite's emitted
 `solcore_lsp_bg.wasm?url` asset to `init()`. The shared compiler API shape lives in
 `src/compiler/types.ts` and should stay the single source of truth for the Playground compile protocol.
 
-The compiler worker accepts compile and run messages:
+The compile worker protocol is intentionally Playground-specific batch compile messaging:
 
 ```ts
 // request
-{ id: number; kind: "compile" | "run"; input: CompileInput }
+{ id: number; kind: "compile"; input: CompileInput }
 
 interface CompileInput {
   files: Array<{ path: string; content: string }>;
@@ -193,7 +128,6 @@ interface CompileInput {
     emitYul: boolean;
     emitSonatina: boolean;
     emitAbi: boolean;
-    emitBytecode?: boolean;
   };
 }
 
@@ -206,21 +140,13 @@ interface CompileResult {
   diagnostics: Diag[];
   hull: string | null;
   yul: string | null;
-  yulOutputs: Array<{ name: string; code: string }>;
   sonatina: string | null;
   abi: string | null;
-  bytecode: Array<{ name: string; sections: Array<{ name: string; code: string }> }>;
-  execution: ExecutionResult | null;
 }
 ```
 
-`success` describes compilation; `execution.status` describes execution.
-`execution` is null for Compile requests and compilation errors.
-
-The Playground requests Hull, Yul, Sonatina IR, bytecode, and contract ABI JSON in one compile and exposes each
-textual output in its own tab. For multiple contracts, the Yul tab selects one
-standalone deploy object at a time. Problems can be copied individually or together,
-including their locations, labels, notes, and help. Backend fields remain `null` when an output was not requested,
+The Playground requests Hull, Yul, Sonatina IR, and contract ABI JSON in one compile and exposes each
+textual output in its own tab. Backend fields remain `null` when an output was not requested,
 compilation stopped before that backend ran, or (for ABI) the workspace contains no contract.
 
 ## File key contract
@@ -253,8 +179,3 @@ monaco.editor.setModelMarkers(model, "solcore-compile", markers);
 ```
 
 LSP diagnostics use Monaco marker owner `"solcore-lsp"` so compile diagnostics and LSP diagnostics can coexist.
-
-## Keyboard navigation
-
-Use Left/Right, Home, and End to move between source or output tabs. In the
-editor, Ctrl+M (Ctrl+Shift+M on macOS) toggles whether Tab indents or moves focus.

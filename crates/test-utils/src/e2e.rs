@@ -15,16 +15,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod directive;
 mod vector;
 
-pub use solcore_test_directives::*;
-
-impl From<DirectiveError> for E2eFailure {
-    fn from(error: DirectiveError) -> Self {
-        Self::new(FailureKind::Directive, error.to_string())
-    }
-}
-
+pub use directive::*;
 pub use vector::*;
 
 pub const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);

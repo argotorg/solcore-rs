@@ -7,7 +7,6 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-solcore-test-directives = { path = "../test-directives" }
 annotate-snippets = { workspace = true }
 hir = { workspace = true }
 insta = "1.43.2"

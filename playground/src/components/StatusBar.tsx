@@ -12,7 +12,6 @@ interface StatusBarProps {
 export function StatusBar({ cursor }: StatusBarProps): JSX.Element {
   const entry = useWorkspaceStore((state) => state.entry);
   const compiling = useWorkspaceStore((state) => state.compiling);
-  const running = useWorkspaceStore((state) => state.running);
   const rawResult = useWorkspaceStore((state) => state.result);
   const lastCompileDurationMs = useWorkspaceStore((state) => state.lastCompileDurationMs);
   const workspaceVersion = useWorkspaceStore((state) => state.workspaceVersion);
@@ -26,28 +25,23 @@ export function StatusBar({ cursor }: StatusBarProps): JSX.Element {
   const errorCount = diagnostics.filter((diagnostic) => diagnostic.severity === "error").length;
   const warningCount = diagnostics.filter((diagnostic) => diagnostic.severity === "warning").length;
   const status = compiling
-    ? (running ? "Running..." : "Compiling...")
+    ? "Compiling..."
     : compileIsOutdated
       ? "Needs compile"
       : errorCount > 0
         ? `${errorCount} error${errorCount === 1 ? "" : "s"}`
         : warningCount > 0
           ? `${warningCount} warning${warningCount === 1 ? "" : "s"}`
-          : result?.execution
-            ? (result.execution.status === "success" ? "Executed ✓" : "Execution failed")
-            : result
-              ? "Compiled ✓"
-              : "Ready";
-  const executionFailed = result?.execution && result.execution.status !== "success";
+          : result
+            ? "Compiled ✓"
+            : "Ready";
   const statusClass =
-    errorCount > 0 || executionFailed
-      ? "statusbar__error"
-      : !compiling && compileIsOutdated ? "statusbar__warning" : "";
+    errorCount > 0 ? "statusbar__error" : !compiling && compileIsOutdated ? "statusbar__warning" : "";
   const durationText =
     compileElapsedMs !== null
       ? `Elapsed ${formatCompileDuration(compileElapsedMs)}`
       : lastCompileDurationMs !== null
-        ? `Last operation ${formatCompileDuration(lastCompileDurationMs)}`
+        ? `Last compile ${formatCompileDuration(lastCompileDurationMs)}`
         : null;
 
   useEffect(() => {

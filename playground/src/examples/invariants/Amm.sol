@@ -11,10 +11,6 @@ contract Amm {
         pool = mkPool(uint256(10), uint256(1000));
     }
 
-    // With reserves (10, 1000), swapping 3 rounds down to 230.
-    // #[(0) -> 0]
-    // #[(3) -> 230]
-    // #[send(10)]
     function swap(amountIn: uint256) public returns (uint256) {
         match (swapXforY(pool, amountIn)) {
             case (next, amountOut) {
@@ -28,12 +24,10 @@ contract Amm {
         pool = addLiquidity(pool, dx, dy);
     }
 
-    // #[() -> 20]
     function poolX() public returns (uint256) {
         return reserveX(pool);
     }
 
-    // #[() -> 500]
     function poolY() public returns (uint256) {
         return reserveY(pool);
     }

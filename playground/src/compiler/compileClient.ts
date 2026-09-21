@@ -1,8 +1,7 @@
 import CompileWorker from "./compile.worker?worker";
-import type { CompileInput, CompileRequest, WorkerResponse, CompileResult, WatchInput, WatchResult } from "./types";
+import type { CompileInput, CompileRequest, CompileResponse, CompileResult } from "./types";
 
 interface PendingRequest {
-  kind: CompileRequest["kind"];
   resolve: (result: CompileResult) => void;
   reject: (reason: Error) => void;
 }
@@ -13,10 +12,6 @@ function createAbortError(message: string): Error {
 
 export class CompileClient {
   private readonly worker: Worker;
-  private readonly pendingWatches = new Map<number, {
-    resolve: (result: WatchResult[]) => void;
-    reject: (error: Error) => void;
-  }>();
   private nextId = 1;
   private latestId = 0;
   private readonly pending = new Map<number, PendingRequest>();
@@ -28,35 +23,12 @@ export class CompileClient {
   }
 
   compile(input: CompileInput): Promise<CompileResult> {
-    return this.request("compile", input);
-  }
-
-  run(input: CompileInput): Promise<CompileResult> {
-    return this.request("run", input);
-  }
-
-  discover(input: CompileInput): Promise<CompileResult> {
-    return this.request("discover", input);
-  }
-
-  watch(input: WatchInput): Promise<WatchResult[]> {
-    for (const pending of this.pendingWatches.values()) pending.reject(createAbortError("Watch request superseded"));
-    this.pendingWatches.clear();
-    const id = this.nextId++;
-    const promise = new Promise<WatchResult[]>((resolve, reject) => {
-      this.pendingWatches.set(id, { resolve, reject });
-    });
-    this.worker.postMessage({ id, kind: "watch", input });
-    return promise;
-  }
-
-  private request(kind: CompileRequest["kind"], input: CompileInput): Promise<CompileResult> {
     const id = this.nextId;
     this.nextId += 1;
-    if (kind !== "discover") this.latestId = id;
+    this.latestId = id;
 
     for (const [pendingId, pending] of this.pending) {
-      if ((pending.kind === "discover") === (kind === "discover") && pendingId < id) {
+      if (pendingId < id) {
         pending.reject(createAbortError("Compile request superseded"));
         this.pending.delete(pendingId);
       }
@@ -64,12 +36,12 @@ export class CompileClient {
 
     const request: CompileRequest = {
       id,
-      kind,
+      kind: "compile",
       input,
     };
 
     const promise = new Promise<CompileResult>((resolve, reject) => {
-      this.pending.set(id, { kind, resolve, reject });
+      this.pending.set(id, { resolve, reject });
     });
 
     this.worker.postMessage(request);
@@ -85,20 +57,10 @@ export class CompileClient {
       pending.reject(createAbortError("Compiler worker terminated"));
     }
     this.pending.clear();
-    for (const pending of this.pendingWatches.values()) pending.reject(createAbortError("Compiler worker terminated"));
-    this.pendingWatches.clear();
   }
 
-  private readonly handleMessage = (event: MessageEvent<WorkerResponse>): void => {
+  private readonly handleMessage = (event: MessageEvent<CompileResponse>): void => {
     const response = event.data;
-    const watch = this.pendingWatches.get(response.id);
-    if (watch) {
-      this.pendingWatches.delete(response.id);
-      if (response.kind === "watch-result") watch.resolve(response.result);
-      else watch.reject(new Error(response.kind === "error" ? response.message : "Unexpected watch response"));
-      return;
-    }
-    if (response.kind === "watch-result") return;
     const pending = this.pending.get(response.id);
 
     if (!pending) {
@@ -107,7 +69,7 @@ export class CompileClient {
 
     this.pending.delete(response.id);
 
-    if (pending.kind !== "discover" && response.id !== this.latestId) {
+    if (response.id !== this.latestId) {
       pending.reject(createAbortError("Compile response superseded"));
       return;
     }
@@ -126,8 +88,6 @@ export class CompileClient {
       pending.reject(error);
     }
     this.pending.clear();
-    for (const pending of this.pendingWatches.values()) pending.reject(error);
-    this.pendingWatches.clear();
   };
 }
 
