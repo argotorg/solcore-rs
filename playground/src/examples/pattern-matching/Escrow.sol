@@ -17,6 +17,9 @@ contract Escrow {
         phase = Phase.AwaitingPayment;
     }
 
+    // Fund once; a second deposit is rejected.
+    // #[send(42)]
+    // #[(7) -> revert]
     function deposit(amount: uint256) public {
         match (phase) {
             case Phase.AwaitingPayment {
@@ -28,6 +31,10 @@ contract Escrow {
         }
     }
 
+    // Commit the release before checking that it cannot be repeated.
+    // #[() -> 42]
+    // #[send()]
+    // #[() -> revert]
     function release() public returns (uint256) {
         match (phase) {
             case Phase.Funded(amount) {
@@ -42,6 +49,7 @@ contract Escrow {
     }
 
     // 0 = awaiting payment, 1 = funded, 2 = released
+    // #[() -> 2]
     function status() public returns (uint256) {
         match (phase) {
             case Phase.AwaitingPayment { return uint256(0); }

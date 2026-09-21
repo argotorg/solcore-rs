@@ -59,8 +59,16 @@ export function stubCompile(input: CompileInput): CompileResult {
       ],
       hull: null,
       yul: null,
+      yulOutputs: [],
       sonatina: null,
       abi: null,
+      bytecode: [],
+      execution: null,
+      tests: [],
+      contracts: [],
+      hasMain: false,
+      sandbox: null,
+      events: [],
     };
   }
 
@@ -69,8 +77,16 @@ export function stubCompile(input: CompileInput): CompileResult {
     diagnostics: [],
     hull: `// hull for ${input.entry}\nfunction main() { }`,
     yul: 'object "Output" { code { } }',
+    yulOutputs: [],
     sonatina: `; Sonatina IR for ${input.entry}\nfunc private %main() {}`,
     abi: null,
+    bytecode: [],
+    execution: null,
+    tests: [],
+    contracts: [],
+    hasMain: false,
+    sandbox: null,
+    events: [],
   };
 }
 

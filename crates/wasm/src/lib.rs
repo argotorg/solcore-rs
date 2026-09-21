@@ -1,6 +1,11 @@
 //! Browser-facing `wasm-bindgen` API for compiling in-memory Solcore sources.
 
-use std::{collections::BTreeMap, path::Path};
+mod bytecode;
+mod execution;
+mod sandbox;
+mod test_execution;
+
+use std::{cell::RefCell, collections::BTreeMap, path::Path};
 
 use nameres::Db as _;
 use serde::{Deserialize, Serialize};
@@ -22,7 +27,7 @@ pub fn __start() {
 /// `input` is a JS object:
 /// `{ files: [{ path: string, content: string }], entry: string,
 /// options?: { emitHull?: bool, emitYul?: bool, emitSonatina?: bool,
-/// emitAbi?: bool } }`.
+/// emitAbi?: bool, emitBytecode?: bool } }`.
 #[wasm_bindgen]
 pub fn compile(input: JsValue) -> Result<JsValue, JsValue> {
     let input = serde_wasm_bindgen::from_value(input)
@@ -31,6 +36,27 @@ pub fn compile(input: JsValue) -> Result<JsValue, JsValue> {
     result
         .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
         .map_err(|err| JsValue::from_str(&format!("failed to serialize compile result: {err}")))
+}
+
+/// Compiles and executes a no-argument main with revm.
+#[wasm_bindgen]
+pub fn run(input: JsValue) -> Result<JsValue, JsValue> {
+    let input = serde_wasm_bindgen::from_value(input)
+        .map_err(|err| JsValue::from_str(&format!("invalid run input: {err}")))?;
+    run_impl(input)
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+        .map_err(|err| JsValue::from_str(&format!("failed to serialize run result: {err}")))
+}
+
+/// Read watched calls from the existing deployment without committing changes.
+#[wasm_bindgen]
+pub fn watch(input: JsValue) -> Result<JsValue, JsValue> {
+    let input: sandbox::WatchInput = serde_wasm_bindgen::from_value(input)
+        .map_err(|err| JsValue::from_str(&format!("invalid watch input: {err}")))?;
+    sandbox::watch(&input)
+        .map_err(|err| JsValue::from_str(&err))?
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+        .map_err(|err| JsValue::from_str(&format!("failed to serialize watches: {err}")))
 }
 
 /// Returns the embedded standard library files as `{ path, content }` objects.
@@ -61,15 +87,28 @@ pub(crate) struct CompileInput {
     pub(crate) entry: String,
     #[serde(default)]
     pub(crate) options: Options,
+    #[serde(default)]
+    #[serde(rename = "testId")]
+    pub(crate) test_id: Option<String>,
+    #[serde(default)]
+    pub(crate) manual: Option<sandbox::Request>,
+    #[serde(default, rename = "sandboxEpoch")]
+    pub(crate) sandbox_epoch: u32,
 }
 
-#[derive(Deserialize)]
+impl CompileInput {
+    pub(crate) fn sandbox_key(&self) -> String {
+        serde_json::to_string(&(&self.entry, &self.files, self.sandbox_epoch)).unwrap()
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 pub(crate) struct FileInput {
     pub(crate) path: String,
     pub(crate) content: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Options {
     #[serde(default)]
@@ -80,20 +119,36 @@ pub(crate) struct Options {
     pub(crate) emit_sonatina: bool,
     #[serde(default)]
     pub(crate) emit_abi: bool,
+    #[serde(default)]
+    pub(crate) emit_bytecode: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CompileResult {
     pub(crate) success: bool,
     pub(crate) diagnostics: Vec<Diag>,
     pub(crate) hull: Option<String>,
     pub(crate) yul: Option<String>,
+    pub(crate) yul_outputs: Vec<YulOutput>,
     pub(crate) sonatina: Option<String>,
     pub(crate) abi: Option<String>,
+    pub(crate) bytecode: Vec<bytecode::Object>,
+    pub(crate) execution: Option<execution::RunResult>,
+    pub(crate) tests: Vec<test_execution::TestCase>,
+    pub(crate) contracts: Vec<sandbox::Contract>,
+    pub(crate) has_main: bool,
+    pub(crate) sandbox: Option<sandbox::Info>,
+    pub(crate) events: Vec<sandbox::Event>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
+pub(crate) struct YulOutput {
+    name: String,
+    code: String,
+}
+
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Diag {
     pub(crate) severity: String,
@@ -136,6 +191,51 @@ struct FileOutput {
 
 /// Compiles already-deserialized input. Tests use this native helper directly.
 pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
+    compile_workspace(input, false)
+}
+
+// One compiled manual workspace, bounded independently of the call history.
+thread_local! {
+    static MANUAL_COMPILE: RefCell<Option<(String, Options, CompileResult)>> = const { RefCell::new(None) };
+}
+
+pub(crate) fn run_impl(input: CompileInput) -> CompileResult {
+    let key = input.sandbox_key();
+    if let Some(request) = &input.manual {
+        let cached = MANUAL_COMPILE.with(|cache| {
+            cache
+                .borrow()
+                .as_ref()
+                .filter(|(saved_key, options, _)| *saved_key == key && *options == input.options)
+                .map(|(_, _, result)| result.clone())
+        });
+        if let Some(mut result) = cached {
+            sandbox::take_events();
+            if let Some(execution) = sandbox::execute_cached(request, &key, &result.contracts) {
+                result.execution = Some(execution);
+                result.sandbox = sandbox::info(&key);
+                result.events = sandbox::take_events();
+                return result;
+            }
+        }
+    }
+    let manual = input.manual.is_some();
+    let options = input.options.clone();
+    let result = compile_workspace(input, true);
+    if manual && result.success {
+        let mut artifacts = result.clone();
+        artifacts.execution = None;
+        artifacts.sandbox = None;
+        artifacts.events.clear();
+        MANUAL_COMPILE.with(|cache| *cache.borrow_mut() = Some((key, options, artifacts)));
+    }
+    result
+}
+
+fn compile_workspace(input: CompileInput, execute: bool) -> CompileResult {
+    if execute {
+        sandbox::take_events();
+    }
     if Path::new(&input.entry)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -152,11 +252,20 @@ pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
             )],
             hull: None,
             yul: None,
+            yul_outputs: vec![],
             sonatina: None,
             abi: None,
+            bytecode: vec![],
+            execution: None,
+            tests: vec![],
+            contracts: vec![],
+            has_main: false,
+            sandbox: None,
+            events: vec![],
         };
     }
 
+    let sandbox_key = input.sandbox_key();
     let mut workspace = Workspace::new();
     workspace.apply_file_changes(
         input
@@ -182,47 +291,90 @@ pub(crate) fn compile_impl(input: CompileInput) -> CompileResult {
         ));
     }
 
-    let mut hull = None;
-    let mut yul = None;
-    let mut sonatina = None;
-    let mut abi = None;
-    let wants_backend = input.options.emit_hull
+    let wants_backend = execute
+        || input.options.emit_hull
         || input.options.emit_yul
         || input.options.emit_sonatina
-        || input.options.emit_abi;
+        || input.options.emit_abi
+        || input.options.emit_bytecode;
+    let mut result = CompileResult {
+        success: false,
+        diagnostics,
+        hull: None,
+        yul: None,
+        yul_outputs: vec![],
+        sonatina: None,
+        abi: None,
+        bytecode: vec![],
+        execution: None,
+        tests: vec![],
+        contracts: vec![],
+        has_main: false,
+        sandbox: None,
+        events: vec![],
+    };
 
-    if wants_backend && !diagnostics.iter().any(Diag::is_error) {
+    if !result.diagnostics.iter().any(Diag::is_error) {
+        result.contracts = sandbox::discover(&workspace);
+        if let Some(module) = workspace
+            .entry_module()
+            .and_then(|entry| workspace.db().module_file(entry))
+        {
+            let db = workspace.db();
+            result.has_main = parser::parse_file_to_hir(db, module)
+                .module(db)
+                .items(db)
+                .iter()
+                .any(|item| match item {
+                    hir::ast::item::Item::FunctionDef(function) => {
+                        function.sig(db).name.atom().text(db) == "main"
+                    }
+                    hir::ast::item::Item::ContractDef(contract) => contract.has_runtime_main(db),
+                    _ => false,
+                });
+        }
+    }
+    result.tests = test_execution::discover(&workspace, &input.entry);
+    if wants_backend && !result.diagnostics.iter().any(Diag::is_error) {
         run_backend(
             &workspace,
             &input.options,
-            &mut diagnostics,
-            &mut hull,
-            &mut yul,
-            &mut sonatina,
-            &mut abi,
+            &mut result,
+            execute,
+            input.test_id.as_deref(),
+            input.manual.as_ref(),
+            &sandbox_key,
         );
     }
-
-    let success = !diagnostics.iter().any(Diag::is_error);
-    CompileResult {
-        success,
-        diagnostics,
-        hull,
-        yul,
-        sonatina,
-        abi,
+    if execute {
+        result.sandbox = sandbox::info(&sandbox_key);
+        result.events = sandbox::take_events();
     }
+    result.success = !result.diagnostics.iter().any(Diag::is_error);
+    result
 }
 
 fn run_backend(
     workspace: &Workspace,
     options: &Options,
-    diagnostics: &mut Vec<Diag>,
-    hull_text: &mut Option<String>,
-    yul_text: &mut Option<String>,
-    sonatina_text: &mut Option<String>,
-    abi_text: &mut Option<String>,
+    result: &mut CompileResult,
+    execute: bool,
+    test_id: Option<&str>,
+    manual: Option<&sandbox::Request>,
+    sandbox_key: &str,
 ) {
+    let CompileResult {
+        diagnostics,
+        hull: hull_text,
+        yul: yul_text,
+        yul_outputs,
+        sonatina: sonatina_text,
+        abi: abi_text,
+        bytecode,
+        execution,
+        tests,
+        ..
+    } = result;
     let db = workspace.db();
     let Some(entry) = workspace.entry_module() else {
         diagnostics.push(message_diag(
@@ -255,7 +407,12 @@ fn run_backend(
         }
     }
 
-    if options.emit_hull || options.emit_yul || options.emit_sonatina {
+    if execute
+        || options.emit_hull
+        || options.emit_yul
+        || options.emit_sonatina
+        || options.emit_bytecode
+    {
         let compiler::CheckedHull {
             program,
             diagnostics: backend_diagnostics,
@@ -278,8 +435,11 @@ fn run_backend(
             *hull_text = Some(hull::pretty_program(db, &program));
         }
         if options.emit_yul {
-            match yul::render_hull_program_object(db, &program, None) {
-                Ok(rendered) => *yul_text = Some(rendered),
+            match render_yul_outputs(db, &program) {
+                Ok(outputs) => {
+                    *yul_text = outputs.first().map(|output| output.code.clone());
+                    *yul_outputs = outputs;
+                }
                 Err(err) => diagnostics.push(message_diag(
                     DiagnosticSeverity::Error,
                     format!("Yul translation failed:\n  {err}"),
@@ -298,7 +458,46 @@ fn run_backend(
                 )),
             }
         }
+        if options.emit_bytecode && !diagnostics.iter().any(Diag::is_error) {
+            match bytecode::generate(db, &program) {
+                Ok(objects) => *bytecode = objects,
+                Err(message) => diagnostics.push(message_diag(DiagnosticSeverity::Error, message)),
+            }
+        }
+        if execute && !diagnostics.iter().any(Diag::is_error) {
+            *execution = Some(if let Some(request) = manual {
+                sandbox::execute(workspace, &program, request, sandbox_key)
+            } else if tests.is_empty() && test_id.is_none() {
+                execution::execute(workspace, &program)
+            } else {
+                test_execution::execute(workspace, &program, tests, test_id, sandbox_key)
+            });
+        }
     }
+}
+
+/// Each deployable object is a separate strict-assembly input.
+fn render_yul_outputs(
+    db: &AnalysisHost,
+    program: &hull::Program<'_>,
+) -> Result<Vec<YulOutput>, yul::TranslationError> {
+    if program.objects.is_empty() {
+        return Ok(vec![YulOutput {
+            name: "main".to_owned(),
+            code: yul::render_hull_program_object(db, program, None)?,
+        }]);
+    }
+    program
+        .objects
+        .iter()
+        .map(|object| {
+            let name = object.name.as_str();
+            Ok(YulOutput {
+                name: name.to_owned(),
+                code: yul::render_hull_program_object(db, program, Some(name))?,
+            })
+        })
+        .collect()
 }
 
 /// Renders ABI output as one JSON string: a single contract returns its ABI
@@ -534,6 +733,75 @@ mod tests {
             }],
             entry: "main.sol".to_owned(),
             options,
+            test_id: None,
+            manual: None,
+            sandbox_epoch: 0,
+        }
+    }
+
+    #[test]
+    fn bytecode_only_emits_each_object_without_execution() {
+        let source = "contract A { function main() public returns (word) { return 1; } }\ncontract B { function main() public returns (word) { return 2; } }";
+        let result = compile_impl(input(
+            source,
+            Options {
+                emit_bytecode: true,
+                ..Options::default()
+            },
+        ));
+        assert!(
+            result.success,
+            "{}",
+            serde_json::to_string(&result.diagnostics).unwrap()
+        );
+        assert!(result.execution.is_none());
+        assert!(result.sandbox.is_none());
+        assert!(result.hull.is_none());
+        assert!(result.sonatina.is_none());
+        assert_eq!(result.bytecode.len(), 2);
+        for object in &result.bytecode {
+            assert!(object.name.contains('A') || object.name.contains('B'));
+            for name in ["init", "runtime"] {
+                let section = object
+                    .sections
+                    .iter()
+                    .find(|section| section.name == name)
+                    .expect("EVM section");
+                let bytes = revm::primitives::hex::decode(section.code.strip_prefix("0x").unwrap())
+                    .unwrap();
+                assert!(!bytes.is_empty());
+            }
+        }
+        assert!(
+            compile_impl(input(source, Options::default()))
+                .bytecode
+                .is_empty()
+        );
+        let invalid = compile_impl(input(
+            "function main() returns (word) { return true; }",
+            Options {
+                emit_bytecode: true,
+                ..Options::default()
+            },
+        ));
+        assert!(!invalid.success);
+        assert!(invalid.bytecode.is_empty());
+    }
+
+    #[test]
+    fn discovery_reports_main_without_generating_artifacts() {
+        for (source, expected) in [
+            ("function main() returns (word) { return 42; }", true),
+            (
+                "contract Hello { function main() public returns (word) { return 42; } }",
+                true,
+            ),
+            ("function helper() returns (word) { return 42; }", false),
+        ] {
+            let result = compile_impl(input(source, Options::default()));
+            assert!(result.success);
+            assert_eq!(result.has_main, expected);
+            assert!(result.bytecode.is_empty());
         }
     }
 
@@ -550,6 +818,9 @@ mod tests {
             }],
             entry: "main.solc".to_owned(),
             options: Options::default(),
+            test_id: None,
+            manual: None,
+            sandbox_epoch: 0,
         });
         assert!(!invalid.success);
         assert!(invalid.diagnostics.iter().any(|diagnostic| {
@@ -577,6 +848,7 @@ mod tests {
                 emit_yul: true,
                 emit_sonatina: true,
                 emit_abi: true,
+                emit_bytecode: false,
             },
         ));
 
@@ -607,6 +879,7 @@ mod tests {
                 emit_yul: false,
                 emit_sonatina: true,
                 emit_abi: false,
+                emit_bytecode: false,
             },
         ));
 
@@ -622,7 +895,7 @@ mod tests {
     }
 
     #[test]
-    fn combined_artifacts_follow_cli_fail_fast_order() {
+    fn multiple_contracts_have_independent_yul_outputs() {
         let result = compile_impl(input(
             concat!(
                 "contract A { function main() public returns (word) { return 1; } }\n",
@@ -633,24 +906,86 @@ mod tests {
                 emit_yul: true,
                 emit_sonatina: true,
                 emit_abi: true,
+                emit_bytecode: false,
             },
         ));
+        assert!(
+            result.success,
+            "{}",
+            serde_json::to_string(&result.diagnostics).unwrap()
+        );
+        assert!(result.abi.is_some());
+        assert!(result.sonatina.is_some());
+        assert_eq!(result.yul_outputs.len(), 2);
+        assert_eq!(
+            result.yul.as_deref(),
+            Some(result.yul_outputs[0].code.as_str())
+        );
+        for output in &result.yul_outputs {
+            assert!(
+                output
+                    .code
+                    .starts_with(&format!("object \"{}\"", output.name))
+            );
+        }
+    }
 
-        assert!(!result.success);
+    #[test]
+    fn composition_runs_with_all_artifacts_enabled() {
+        let files = [
+            (
+                "Vaults.sol",
+                include_str!("../../../playground/src/examples/composition/Vaults.sol"),
+            ),
+            (
+                "context.sol",
+                include_str!("../../../playground/src/examples/composition/context.sol"),
+            ),
+            (
+                "engine.sol",
+                include_str!("../../../playground/src/examples/composition/engine.sol"),
+            ),
+        ]
+        .into_iter()
+        .map(|(path, content)| FileInput {
+            path: path.into(),
+            content: content.into(),
+        })
+        .collect();
+        let result = run_impl(CompileInput {
+            files,
+            entry: "Vaults.sol".into(),
+            options: Options {
+                emit_hull: true,
+                emit_yul: true,
+                emit_sonatina: true,
+                emit_abi: true,
+                emit_bytecode: false,
+            },
+            test_id: None,
+            sandbox_epoch: 0,
+            manual: Some(sandbox::Request {
+                contract: "VaultDirect".into(),
+                signature: "balanceOf(address)".into(),
+                arguments: r#"["0x1111111111111111111111111111111111111111"]"#.into(),
+                constructor_arguments: "[]".into(),
+                simulate: true,
+                reset: false,
+            }),
+        });
         assert!(
-            result.abi.is_some(),
-            "ABI is produced before backend rendering"
+            result.success,
+            "{}",
+            serde_json::to_string(&result.diagnostics).unwrap()
         );
-        assert!(result.yul.is_none());
-        assert!(
-            result.sonatina.is_none(),
-            "Sonatina is skipped after Yul fails"
+        assert_eq!(result.yul_outputs.len(), 3);
+        let execution = result.execution.unwrap();
+        assert_eq!(
+            execution.status,
+            execution::RunStatus::Success,
+            "{execution:?}"
         );
-        assert!(result.diagnostics.iter().any(|diagnostic| {
-            diagnostic
-                .message
-                .contains("strict-assembly output requires one top-level object")
-        }));
+        assert_eq!(execution.decoded.as_deref(), Some("0"));
     }
 
     #[test]
@@ -670,6 +1005,7 @@ mod tests {
                 emit_yul: false,
                 emit_sonatina: false,
                 emit_abi: true,
+                emit_bytecode: false,
             },
         ));
 
@@ -706,11 +1042,15 @@ mod tests {
                 },
             ],
             entry: "main.sol".to_owned(),
+            test_id: None,
+            manual: None,
+            sandbox_epoch: 0,
             options: Options {
                 emit_hull: false,
                 emit_yul: false,
                 emit_sonatina: false,
                 emit_abi: true,
+                emit_bytecode: false,
             },
         });
 
@@ -779,6 +1119,7 @@ mod tests {
                 emit_yul: false,
                 emit_sonatina: false,
                 emit_abi: false,
+                emit_bytecode: false,
             },
         ));
 
@@ -805,6 +1146,7 @@ mod tests {
                 emit_yul: true,
                 emit_sonatina: true,
                 emit_abi: false,
+                emit_bytecode: false,
             },
         ));
 

@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { compileClient } from "../compiler/compileClient";
+import { formatCall } from "../compiler/formatCall";
 import { nowMs } from "../compiler/timing";
-import type { CompileInput, CompileResult, Diag } from "../compiler/types";
+import type { CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall, WatchCall, WatchResult, RecentAction } from "../compiler/types";
 import {
   defaultExample,
   examples,
@@ -16,7 +17,7 @@ export interface WorkspaceFile {
   content: string;
 }
 
-export type OutputTab = "hull" | "yul" | "sonatina" | "abi" | "problems";
+export type OutputTab = "hull" | "yul" | "sonatina" | "abi" | "execution" | "problems";
 export type ThemeMode = "light" | "dark";
 
 interface WorkspaceOptions {
@@ -24,6 +25,7 @@ interface WorkspaceOptions {
   emitYul: boolean;
   emitSonatina: boolean;
   emitAbi: boolean;
+  emitBytecode: boolean;
 }
 
 export interface WorkspaceState {
@@ -33,6 +35,7 @@ export interface WorkspaceState {
   activePath: string;
   exampleId: string;
   compiling: boolean;
+  running: boolean;
   compileStartedAt: number | null;
   lastCompileDurationMs: number | null;
   workspaceVersion: number;
@@ -52,6 +55,39 @@ export interface WorkspaceState {
   loadExample: (id: string) => void;
   resetWorkspace: () => void;
   compileNow: () => Promise<void>;
+  runNow: (testId?: string) => Promise<void>;
+  contracts: ContractInterface[];
+  hasMain: boolean;
+  discoveryVersion: number | null;
+  callDraft: ManualCall;
+  selectedTestId: string | null;
+  sandbox: CompileResult["sandbox"];
+  sandboxVersion: number | null;
+  sandboxEpoch: number;
+  manualResult: CompileResult["execution"];
+  manualResultVersion: number | null;
+  setCallDraft: (patch: Partial<ManualCall>) => void;
+  runCall: (simulate?: boolean) => Promise<void>;
+  recentActions: RecentAction[];
+  runActivity: "calls" | "tests";
+  setRunActivity: (activity: "calls" | "tests") => void;
+  testRun: RecentAction | null;
+  actionSequence: number;
+  sandboxAction: number | null;
+  watchAction: number | null;
+  resetSandbox: () => void;
+  watches: WatchCall[];
+  watchValues: Record<string, WatchResult & { changed: boolean }>;
+  watchVersion: number | null;
+  watchEpoch: number | null;
+  watchRevision: number;
+  watchLoading: boolean;
+  addWatch: (call: Omit<WatchCall, "id">) => void;
+  removeWatch: (id: string) => void;
+  refreshWatches: () => Promise<void>;
+  testCases: TestCase[];
+  testResults: TestCase[];
+  testResultsVersion: number | null;
 }
 
 const WORKSPACE_STORAGE_KEY = "solcore-playground.workspace.v1";
@@ -59,6 +95,7 @@ const WORKSPACE_BACKUP_STORAGE_KEY = "solcore-playground.workspace.v1.backup";
 const THEME_STORAGE_KEY = "solcore-playground.theme.v1";
 
 let compileRun = 0;
+let watchRun = 0;
 
 function isBrowser(): boolean {
   return typeof window !== "undefined" && typeof document !== "undefined";
@@ -271,8 +308,16 @@ function diagnosticResult(message: string): CompileResult {
     diagnostics: [diagnostic],
     hull: null,
     yul: null,
+    yulOutputs: [],
     sonatina: null,
     abi: null,
+    bytecode: [],
+    execution: null,
+    tests: [],
+    contracts: [],
+    hasMain: false,
+    sandbox: null,
+    events: [],
   };
 }
 
@@ -302,19 +347,65 @@ applyTheme(initialTheme);
 
 export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   ...initialWorkspace,
+  contracts: [],
+  hasMain: false,
+  discoveryVersion: null,
+  callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
+  selectedTestId: null,
+  runActivity: "calls", testRun: null,
+  recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
+  sandbox: null,
+  sandboxVersion: null,
+  sandboxEpoch: 0,
+  manualResult: null,
+  manualResultVersion: null,
+  setRunActivity(runActivity) { set({ runActivity }); },
+  setCallDraft(patch) { set((s) => ({ callDraft: { ...s.callDraft, ...patch }, selectedTestId: null })); },
+  runCall: (simulate = false) => executeWorkspace(true, undefined, { ...get().callDraft, simulate }),
+  resetSandbox() {
+    watchRun += 1;
+    set((s) => ({ sandbox: null, sandboxVersion: null, sandboxEpoch: s.sandboxEpoch + 1,
+      sandboxAction: null, watchAction: null, manualResult: null, manualResultVersion: null,
+      actionSequence: 0,
+      recentActions: [],
+      watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false }));
+  },
+  watches: [],
+  watchValues: {},
+  watchVersion: null,
+  watchEpoch: null,
+  watchRevision: 0,
+  watchLoading: false,
+  addWatch(call) {
+    const normalized = { ...call, arguments: call.arguments.trim() };
+    const id = JSON.stringify([normalized.contract, normalized.signature, normalized.arguments]);
+    if (get().watches.length >= 16 || get().watches.some((watch) => watch.id === id)) return;
+    set((s) => ({ watches: [...s.watches, { ...normalized, id }] }));
+    void get().refreshWatches();
+  },
+  removeWatch(id) {
+    set((s) => ({ watches: s.watches.filter((watch) => watch.id !== id) }));
+  },
+  refreshWatches,
+
+  testCases: [],
+  testResults: [],
+  testResultsVersion: null,
   compiling: false,
+  running: false,
   compileStartedAt: null,
   lastCompileDurationMs: null,
   workspaceVersion: 0,
   lastCompiledVersion: null,
   result: null,
-  outputTab: "hull",
+  outputTab: "execution",
   theme: initialTheme,
   options: {
     emitHull: true,
     emitYul: true,
     emitSonatina: true,
     emitAbi: true,
+    emitBytecode: true,
   },
 
   setContent(path, content) {
@@ -466,13 +557,33 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   loadExample(id) {
+    compileRun += 1;
     const nextWorkspace = workspaceFromExample(getExample(id));
     set((state) => ({
       ...nextWorkspace,
+      watches: [], watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false,
+      contracts: [],
+      hasMain: false,
+      discoveryVersion: null,
+      callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
+      selectedTestId: null,
+      runActivity: "calls", testRun: null,
+      recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
+      sandbox: null,
+      sandboxVersion: null,
+      sandboxEpoch: state.sandboxEpoch + 1,
+      manualResult: null,
+      manualResultVersion: null,
+      testCases: [],
+      testResults: [],
+      testResultsVersion: null,
+      compiling: false,
+      running: false,
+      compileStartedAt: null,
       result: null,
       lastCompileDurationMs: null,
       lastCompiledVersion: null,
-      outputTab: "hull",
+      outputTab: "execution",
       workspaceVersion: state.workspaceVersion + 1,
     }));
 
@@ -480,72 +591,209 @@ export const useWorkspaceStore = create<WorkspaceState>()((set, get) => ({
   },
 
   resetWorkspace() {
+    compileRun += 1;
     const nextWorkspace = workspaceFromExample(defaultExample);
     set((state) => ({
       ...nextWorkspace,
+      watches: [], watchValues: {}, watchVersion: null, watchEpoch: null, watchLoading: false,
+      contracts: [],
+      hasMain: false,
+      discoveryVersion: null,
+      callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
+      selectedTestId: null,
+      runActivity: "calls", testRun: null,
+      recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
+      sandbox: null,
+      sandboxVersion: null,
+      sandboxEpoch: state.sandboxEpoch + 1,
+      manualResult: null,
+      manualResultVersion: null,
+      testCases: [],
+      testResults: [],
+      testResultsVersion: null,
+      compiling: false,
+      running: false,
+      compileStartedAt: null,
       result: null,
       lastCompileDurationMs: null,
       lastCompiledVersion: null,
-      outputTab: "hull",
+      outputTab: "execution",
       workspaceVersion: state.workspaceVersion + 1,
     }));
 
     persistWorkspace(get());
   },
 
-  async compileNow() {
-    const runId = compileRun + 1;
-    compileRun = runId;
-
+  compileNow: () => executeWorkspace(false),
+  runNow: (testId) => {
     const state = get();
-    const compileVersion = state.workspaceVersion;
-    const startedAt = nowMs();
-    const input: CompileInput = {
-      files: state.order
-        .map((path) => state.files[path])
-        .filter((file): file is WorkspaceFile => Boolean(file))
-        .map((file) => ({
-          path: file.path,
-          content: file.content,
-        })),
-      entry: state.entry,
-      options: state.options,
-    };
-
-    set({ compiling: true, compileStartedAt: startedAt });
-
-    try {
-      const result = await compileClient.compile(input);
-      const durationMs = nowMs() - startedAt;
-      if (runId === compileRun) {
-        set({
-          result,
-          compiling: false,
-          compileStartedAt: null,
-          lastCompileDurationMs: durationMs,
-          lastCompiledVersion: compileVersion,
-          outputTab: result.success ? get().outputTab : "problems",
-        });
-      }
-    } catch (error: unknown) {
-      if (error instanceof DOMException && error.name === "AbortError") {
-        return;
-      }
-
-      if (runId === compileRun) {
-        const durationMs = nowMs() - startedAt;
-        set({
-          result: diagnosticResult(error instanceof Error ? error.message : "Compile failed"),
-          compiling: false,
-          compileStartedAt: null,
-          lastCompileDurationMs: durationMs,
-          lastCompiledVersion: compileVersion,
-          outputTab: "problems",
-        });
+    if (!testId && !state.testCases.length) {
+      if (state.contracts.some((contract) => contract.methods.length > 0)) {
+        set({ outputTab: "execution", runActivity: "calls" });
+        return Promise.resolve();
       }
     }
+    return executeWorkspace(true, testId);
   },
 }));
+
+async function executeWorkspace(run: boolean, testId?: string, manual?: ManualCall): Promise<void> {
+  const get = useWorkspaceStore.getState;
+  const set = useWorkspaceStore.setState;
+  const runId = compileRun + 1;
+  compileRun = runId;
+
+  const state = get();
+  const compileVersion = state.workspaceVersion;
+  const startedAt = nowMs();
+  const input: CompileInput = {
+    files: state.order
+      .map((path) => state.files[path])
+      .filter((file): file is WorkspaceFile => Boolean(file))
+      .map((file) => ({
+        path: file.path,
+        content: file.content,
+      })),
+    entry: state.entry,
+    options: state.options,
+    testId,
+    manual,
+    sandboxEpoch: state.sandboxEpoch + state.workspaceVersion,
+  };
+
+  const testing = run && !manual && (Boolean(testId) || state.testCases.length > 0);
+  if (run && !testing) watchRun += 1;
+  const selected = testId ? state.testCases.find((t) => t.id === testId) : null;
+  set({
+    ...(run ? {
+      ...(!testing ? { watchLoading: false } : {}),
+      selectedTestId: testId ?? null,
+      runActivity: testing ? "tests" as const : "calls" as const,
+      ...(testing ? { testRun: null } : { manualResult: null, manualResultVersion: null }),
+      outputTab: "execution" as const,
+      ...(selected?.invocation ? { callDraft: {
+        contract: selected.contract, constructorArguments: state.callDraft.contract === selected.contract ? state.callDraft.constructorArguments : "[]", ...selected.invocation,
+      } } : {}),
+    } : {}),
+    compiling: true,
+    running: run,
+    ...(testing ? { testResults: [], testResultsVersion: null } : {}),
+    compileStartedAt: startedAt,
+    ...(run && state.result ? { result: { ...state.result, execution: null } } : {}),
+  });
+
+  try {
+    const result = await (run ? compileClient.run(input) : compileClient.compile(input));
+    const durationMs = nowMs() - startedAt;
+    if (runId === compileRun) {
+      const actionId = get().actionSequence + 1;
+      const label = manual
+        ? `${manual.simulate ? "Preview" : "Call"} ${manual.contract}.${formatCall(manual.signature, manual.arguments)}`
+        : selected ? `Run test · ${selected.file}:${selected.line}`
+        : input.testId ? "Run selected test" : result.tests.length ? "Run all tests" : "Run main";
+      const action: RecentAction = { id: actionId, label, version: compileVersion,
+        sandboxId: testing ? null : result.sandbox?.id ?? null, events: result.events ?? [], result: result.execution,
+        message: result.execution?.message ?? result.diagnostics.find((d) => d.severity === "error")?.message ?? null };
+      set({
+        ...(testing ? { testRun: action } : {}),
+        ...(run && !testing ? {
+          actionSequence: actionId,
+          sandboxAction: result.sandbox ? actionId : null,
+          recentActions: [...get().recentActions, action].slice(-20),
+        } : {}),
+        result,
+        ...(compileVersion === get().workspaceVersion ? { hasMain: result.hasMain ?? false, discoveryVersion: compileVersion } : {}),
+        contracts: compileVersion === get().workspaceVersion ? (result.contracts ?? []) : get().contracts,
+        ...(run && !testing ? {
+          sandbox: result.sandbox ?? null,
+          sandboxVersion: compileVersion,
+          ...(manual ? { manualResult: result.execution, manualResultVersion: compileVersion } : {}),
+        } : {}),
+        testCases: compileVersion === get().workspaceVersion ? result.tests : get().testCases,
+        ...(testing ? { testResults: result.tests, testResultsVersion: compileVersion } : {}),
+        compiling: false,
+        running: false,
+        compileStartedAt: null,
+        lastCompileDurationMs: durationMs,
+        lastCompiledVersion: compileVersion,
+        outputTab: compileVersion !== get().workspaceVersion
+          ? get().outputTab
+          : result.success ? (run ? "execution" : get().outputTab) : "problems",
+      });
+      if (run && !testing) void get().refreshWatches();
+    }
+  } catch (error: unknown) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return;
+    }
+
+    if (runId === compileRun) {
+      const durationMs = nowMs() - startedAt;
+      const message = error instanceof Error ? error.message : "Compile failed";
+      set({
+        ...(testing ? { testRun: { id: 0, label: "Test run failed", version: compileVersion,
+          sandboxId: null, events: [], result: null, message } } : {}),
+        ...(run && !testing ? {
+          actionSequence: get().actionSequence + 1,
+          recentActions: [...get().recentActions, { id: get().actionSequence + 1,
+            label: manual ? `${manual.simulate ? "Preview" : "Call"} ${manual.contract}.${formatCall(manual.signature, manual.arguments)}` : "Run failed",
+            version: compileVersion, sandboxId: null, events: [], result: null, message,
+          }].slice(-20),
+        } : {}),
+        result: diagnosticResult(message),
+        compiling: false,
+        running: false,
+        compileStartedAt: null,
+        lastCompileDurationMs: durationMs,
+        lastCompiledVersion: compileVersion,
+        outputTab: compileVersion === get().workspaceVersion ? "problems" : get().outputTab,
+      });
+    }
+  }
+}
+
+async function refreshWatches(): Promise<void> {
+  const get = useWorkspaceStore.getState;
+  const set = useWorkspaceStore.setState;
+  const state = get();
+  const requestId = ++watchRun;
+  const watches = state.watches.filter((watch) => watch.contract === state.sandbox?.contract);
+  if (state.compiling || !state.sandbox || state.sandboxVersion !== state.workspaceVersion || !watches.length) {
+    set({ watchLoading: false });
+    return;
+  }
+  const current = (): boolean => requestId === watchRun
+    && state.workspaceVersion === get().workspaceVersion
+    && state.sandboxEpoch === get().sandboxEpoch
+    && state.sandbox?.id === get().sandbox?.id;
+  set({ watchLoading: true });
+  try {
+    const results = await compileClient.watch({
+      workspace: {
+        files: state.order.map((path) => state.files[path]), entry: state.entry,
+        options: state.options, sandboxEpoch: state.sandboxEpoch + state.workspaceVersion,
+      }, watches,
+    });
+    if (!current()) return;
+    set({
+      watchValues: Object.fromEntries(results.filter((result) => get().watches.some((w) => w.id === result.id)).map((result) => [result.id, {
+        ...result, changed: result.value !== null && state.watchValues[result.id]?.value != null
+          && result.value !== state.watchValues[result.id].value,
+      }])),
+      watchAction: state.sandboxAction,
+      watchVersion: state.workspaceVersion, watchEpoch: state.sandboxEpoch,
+      watchRevision: state.watchRevision + 1,
+    });
+  } catch (error: unknown) {
+    if (!current() || error instanceof DOMException && error.name === "AbortError") return;
+    const message = error instanceof Error ? error.message : "Could not read watches";
+    set({ watchValues: Object.fromEntries(watches.map((watch) => [watch.id, {
+      id: watch.id, value: null, error: message, changed: false,
+    }])), watchVersion: state.workspaceVersion, watchEpoch: state.sandboxEpoch });
+  } finally {
+    if (requestId === watchRun) set({ watchLoading: false });
+  }
+}
 
 if (sharedExample) {
   // The shared example replaces any locally stored workspace: back the previous

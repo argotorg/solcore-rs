@@ -1,10 +1,10 @@
+import { CompileControl } from "./CompileControl";
 import {
   Braces,
   Check,
   ChevronDown,
   Link as LinkIcon,
   X,
-  Loader2,
   Moon,
   PanelBottomClose,
   PanelBottomOpen,
@@ -12,7 +12,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  Play,
   RotateCcw,
   Sun,
 } from "lucide-react";
@@ -47,7 +46,6 @@ export function TopBar({
   const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
   const theme = useWorkspaceStore((state) => state.theme);
   const setEntry = useWorkspaceStore((state) => state.setEntry);
-  const compileNow = useWorkspaceStore((state) => state.compileNow);
   const toggleTheme = useWorkspaceStore((state) => state.toggleTheme);
   const resetWorkspace = useWorkspaceStore((state) => state.resetWorkspace);
   const loadExample = useWorkspaceStore((state) => state.loadExample);
@@ -178,18 +176,7 @@ export function TopBar({
           </span>
         </label>
 
-        <button
-          type="button"
-          className="button button--primary"
-          aria-label={compiling ? "Compiling" : "Compile"}
-          disabled={compiling}
-          onClick={() => {
-            void compileNow();
-          }}
-        >
-          {compiling ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-          <span>{compiling ? "Compiling" : "Compile"}</span>
-        </button>
+        <CompileControl />
 
         {compileTimeLabel ? (
           <span
@@ -197,7 +184,7 @@ export function TopBar({
             title={
               compileIsOutdated && !compiling
                 ? "Workspace changed since the last compile"
-                : "Last compile duration"
+                : "Last compile or run duration"
             }
           >
             {compiling ? compileTimeLabel : `Last ${compileTimeLabel}`}
@@ -222,7 +209,7 @@ export function TopBar({
           title="Reset workspace"
         >
           <RotateCcw size={16} />
-          <span>Reset</span>
+          <span>Reset workspace</span>
         </button>
 
         <span className="version-pill">v{compilerVersion ?? "..."}</span>
