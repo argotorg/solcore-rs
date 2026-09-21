@@ -234,6 +234,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
       workspaceVersion: state.workspaceVersion + 1,
       outputTab: "execution",
       runActivity: "calls",
+      viewedTestId: null,
     }));
     persistWorkspace(get());
   };

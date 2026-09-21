@@ -8,18 +8,18 @@ import { useWorkspaceStore } from "../store/workspace";
 import { requestEditorNavigation } from "./editorNavigation";
 
 export function RunPane(): JSX.Element {
-  const selectedTestId = useWorkspaceStore((s) => s.selectedTestId);
+  const viewedTestId = useWorkspaceStore((s) => s.viewedTestId);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (!selectedTestId) return;
+    if (!viewedTestId) return;
     const details = Array.from(root.current?.querySelectorAll<HTMLDetailsElement>("[data-test-id]") ?? [])
-      .find((element) => element.dataset.testId === selectedTestId);
+      .find((element) => element.dataset.testId === viewedTestId);
     if (details) {
       const list = details.closest<HTMLDetailsElement>(".run-tests");
       if (list) list.open = true;
       details.open = true;
     }
-  }, [selectedTestId]);
+  }, [viewedTestId]);
   const activity = useWorkspaceStore((s) => s.runActivity);
   const setActivity = useWorkspaceStore((s) => s.setRunActivity);
   const cases = useWorkspaceStore((s) => s.testCases);
@@ -75,7 +75,7 @@ export function RunPane(): JSX.Element {
           <details className="run-test" key={test.id} data-test-id={test.id}
             onToggle={(event) => {
               const state = useWorkspaceStore.getState();
-              if (event.currentTarget.open && state.selectedTestId !== test.id) useWorkspaceStore.setState({ selectedTestId: test.id });
+              if (event.currentTarget.open && state.viewedTestId !== test.id) useWorkspaceStore.setState({ viewedTestId: test.id });
             }}>
             <summary>
               <span className={`run-test__status run-test__status--${test.status}`}>

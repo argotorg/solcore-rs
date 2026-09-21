@@ -32,6 +32,7 @@ export interface ViewSlice {
   outputTab: OutputTab;
   theme: ThemeMode;
   runActivity: "calls" | "tests";
+  viewedTestId: string | null;
   setOutputTab: (tab: OutputTab) => void;
   toggleTheme: () => void;
   setRunActivity: (activity: "calls" | "tests") => void;
@@ -42,6 +43,7 @@ export function createViewSlice(set: StoreApi<WorkspaceState>["setState"], get: 
     outputTab: "execution",
     theme: initialTheme,
     runActivity: "calls",
+    viewedTestId: null,
     setOutputTab(tab) { set({ outputTab: tab }); },
     setRunActivity(runActivity) { set({ runActivity }); },
     toggleTheme() {

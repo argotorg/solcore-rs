@@ -8,9 +8,9 @@ export function workspaceView(state: WorkspaceState): ExampleView {
   return {
     file: state.activePath !== findExample(state.exampleId)?.entry ? state.activePath : undefined,
     tab: state.outputTab !== "execution" ? state.outputTab : undefined,
-    view: state.runActivity !== "calls" ? state.runActivity : undefined,
-    contract: !state.selectedTestId && contract !== state.contracts[0] ? contract?.name : undefined,
-    function: !state.selectedTestId && method !== contract?.methods[0] ? method?.signature : undefined,
-    test: state.selectedTestId ?? undefined,
+    view: state.runActivity !== "calls" || state.viewedTestId ? state.runActivity : undefined,
+    contract: contract !== state.contracts[0] ? contract?.name : undefined,
+    function: method !== contract?.methods[0] ? method?.signature : undefined,
+    test: state.viewedTestId ?? undefined,
   };
 }
