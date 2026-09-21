@@ -139,17 +139,13 @@ jobs:
         working-directory: playground
         run: npm ci
 
-      - name: Test playground JavaScript
+      - name: Test playground language providers
         working-directory: playground
         run: npm run test:unit
 
       - name: Build release playground
         working-directory: playground
         run: npm run build
-
-      - name: Test playground WASM execution
-        working-directory: playground
-        run: npm run test:wasm
 
       - name: Validate VS Code extension package
         working-directory: editors/vscode-solcore

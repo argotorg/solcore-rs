@@ -2,14 +2,7 @@
 
 use std::{fmt, str::FromStr};
 
-fn encode_hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        write!(encoded, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    encoded
-}
+use super::{E2eFailure, FailureKind, encode_hex};
 
 /// One unsigned EVM word in big-endian byte order.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -319,6 +312,12 @@ impl fmt::Display for DirectiveError {
 
 impl std::error::Error for DirectiveError {}
 
+impl From<DirectiveError> for E2eFailure {
+    fn from(error: DirectiveError) -> Self {
+        Self::new(FailureKind::Directive, error.to_string())
+    }
+}
+
 /// Parses a source comment as an E2E directive.
 ///
 /// Ordinary comments return `Ok(None)`. Once the trimmed comment starts with
@@ -392,22 +391,20 @@ pub fn resolve_e2e_comments<'comment>(
     inputs: &[AbiShape],
     outputs: &[AbiShape],
     comments: impl IntoIterator<Item = &'comment str>,
-) -> Result<Vec<ResolvedE2eCall>, DirectiveError> {
+) -> Result<Vec<ResolvedE2eCall>, E2eFailure> {
     let signature = signature.into();
     let mut calls = Vec::new();
     for comment in comments {
-        let directive = parse_e2e_directive(comment)
-            .map_err(|error| DirectiveError::semantic(format!("{signature}: {error}")))?;
+        let directive = parse_e2e_directive(comment).map_err(|error| {
+            E2eFailure::new(FailureKind::Directive, format!("{signature}: {error}"))
+        })?;
         let Some(directive) = directive else {
             continue;
         };
-        calls.push(resolve_e2e_directive(
-            signature.clone(),
-            selector,
-            inputs,
-            outputs,
-            &directive,
-        )?);
+        calls.push(
+            resolve_e2e_directive(signature.clone(), selector, inputs, outputs, &directive)
+                .map_err(E2eFailure::from)?,
+        );
     }
     Ok(calls)
 }

@@ -9,9 +9,9 @@ import { TopBar } from "./components/TopBar";
 
 // Below this main-area width, the editor and output panes can no longer sit
 // side by side without either squeezing the editor unreasonably narrow or
-// letting the output tab strip (Hull/Yul/Sonatina IR/ABI/Execution/Problems) overflow.
+// letting the output tab strip (Hull/Yul/Sonatina IR/ABI/Problems) overflow.
 const EDITOR_MIN_PX = 320;
-const OUTPUT_TAB_SAFE_PX = 520;
+const OUTPUT_TAB_SAFE_PX = 420;
 const MAIN_DIRECTION_THRESHOLD_PX = EDITOR_MIN_PX + OUTPUT_TAB_SAFE_PX;
 // Small deadband around the threshold so a width sitting right on the edge
 // doesn't flip-flop between layouts every pixel.
@@ -101,7 +101,7 @@ export function App(): JSX.Element {
   }, [mainAreaWidth]);
 
   // In horizontal mode, cap how far the output pane can be dragged narrow so
-  // its tab strip (Hull/Yul/Sonatina IR/ABI/Execution/Problems) never overflows. Full
+  // its tab strip (Hull/Yul/Sonatina IR/ABI/Problems) never overflows. Full
   // width in vertical mode always fits the tabs, so a modest height-percent
   // minimum is enough there.
   const outputMinSize =

@@ -2,10 +2,7 @@ import { TabList } from "./TabList";
 import Editor, { type BeforeMount } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { CircleCheck, CircleX, Info, TriangleAlert } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
-import { CopyButton } from "./CopyButton";
-import { formatDiagnostic } from "../compiler/diagnostics";
-import { RunPane } from "./RunPane";
+import { useCallback, useMemo } from "react";
 import type { Diag, Pos, Severity } from "../compiler/types";
 import { monacoThemeFor, registerSolcoreLanguage } from "../monaco/solc-language";
 import { requestEditorNavigation } from "./editorNavigation";
@@ -74,9 +71,6 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
   const result = lastCompiledVersion === workspaceVersion ? rawResult : null;
 
   const diagnostics = result?.diagnostics ?? [];
-  const [yulObject, setYulObject] = useState("");
-  const yulOutputs = result?.yulOutputs ?? [];
-  const selectedYul = yulOutputs.find((output) => output.name === yulObject) ?? yulOutputs[0];
   const problemCount = diagnostics.filter(
     (diagnostic) => diagnostic.severity === "error" || diagnostic.severity === "warning",
   ).length;
@@ -106,7 +100,7 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
   const renderedOutput = outputText(
     outputTab,
     result?.hull ?? null,
-    selectedYul?.code ?? result?.yul ?? null,
+    result?.yul ?? null,
     result?.sonatina ?? null,
     result?.abi ?? null,
   );
@@ -114,18 +108,6 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
   return (
     <section id="compiler-output" hidden={hidden} className="output-pane" aria-label="Compiler output">
       <TabList className="output-tabs" label="Output tabs">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={outputTab === "execution"}
-          id="output-tab-execution"
-          aria-controls="output-panel"
-          tabIndex={outputTab === "execution" ? 0 : -1}
-          className={`output-tab ${outputTab === "execution" ? "is-active" : ""}`}
-          onClick={() => setOutputTab("execution")}
-        >
-          Run
-        </button>
         <button
           type="button"
           role="tab"
@@ -192,9 +174,6 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
       <div className="output-content" role="tabpanel" id="output-panel" aria-labelledby={`output-tab-${outputTab}`} tabIndex={0}>
         {outputTab === "problems" ? (
           <div className="problems-list">
-            {diagnostics.length ? <div className="problems-toolbar">
-              <CopyButton label="Copy all problems" showLabel text={diagnostics.map(formatDiagnostic).join("\n\n")} />
-            </div> : null}
             {diagnostics.length === 0 ? (
               <div className="empty-state">
                 <CircleCheck size={20} />
@@ -208,8 +187,20 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
                 const canNavigate = Boolean(range && files[range.file]);
 
                 return (
-                  <div key={`${diagnostic.code ?? "diag"}-${index}`}
-                    className={`problem-item problem-item--${diagnostic.severity}`}>
+                  <button
+                    type="button"
+                    key={`${diagnostic.code ?? "diag"}-${index}`}
+                    className={`problem-item problem-item--${diagnostic.severity}`}
+                    onClick={() => {
+                      if (!range || !canNavigate) {
+                        return;
+                      }
+
+                      setActive(range.file);
+                      requestEditorNavigation({ path: range.file, range });
+                    }}
+                    disabled={!canNavigate}
+                  >
                     <span className="problem-item__icon" aria-hidden="true">
                       {severityIcon(diagnostic.severity)}
                     </span>
@@ -220,41 +211,22 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
                         ) : null}
                         {diagnostic.message}
                       </span>
-                      {canNavigate && range ? <button type="button" className="problem-item__location problem-item__source"
-                        onClick={() => {
-                          setActive(range.file);
-                          requestEditorNavigation({ path: range.file, range });
-                        }}>{formatLocation(range)}</button>
-                        : <span className="problem-item__location">{formatLocation(range)}</span>}
-
+                      <span className="problem-item__location">{formatLocation(range)}</span>
                     </span>
-                    <CopyButton label={`Copy problem ${index + 1}`} text={formatDiagnostic(diagnostic)} />
-                  </div>
+                  </button>
                 );
               })
             )}
           </div>
-        ) : outputTab === "execution" ? (
-          <RunPane />
         ) : (
-          <div className="artifact-output">
-          {outputTab === "yul" && yulOutputs.length > 1 ? <label className="artifact-selector">Object
-            <select aria-label="Yul object" value={selectedYul?.name ?? ""} onChange={(event) => setYulObject(event.target.value)}>
-              {yulOutputs.map((output) => <option key={output.name}>{output.name}</option>)}
-            </select>
-          </label> : null}
-          {outputTab === "abi" && result?.abi ? <div className="problems-toolbar">
-            <CopyButton label="Copy ABI" showLabel text={result.abi} />
-          </div> : null}
-          <div className="artifact-editor"><Editor
+          <Editor
             beforeMount={beforeMount}
             defaultLanguage="plaintext"
             language={outputTab === "abi" ? "json" : "plaintext"}
             options={{ ...editorOptions, ariaLabel: `${outputTab} output` }}
             theme={monacoThemeFor(theme)}
             value={renderedOutput}
-          /></div>
-          </div>
+          />
         )}
       </div>
     </section>

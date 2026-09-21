@@ -28,12 +28,10 @@ contract LightSwitch {
         state = Switch.Off;
     }
 
-    // #[send()]
     function flip() public {
         state = Toggle.toggle(state);
     }
 
-    // #[() -> true]
     function isOn() public returns (bool) {
         match (state) {
             case Switch.On { return true; }
