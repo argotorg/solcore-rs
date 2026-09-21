@@ -23,20 +23,31 @@ export function readSharedExampleId(search) {
 }
 
 /** Builds the shareable link for an example id, based on the current href. */
-export function buildExampleLink(href, id) {
+export function buildExampleLink(href, id, view = {}) {
   const url = new URL(href);
   url.searchParams.delete(EXAMPLE_PARAM);
-  url.hash = `/examples/${encodeURIComponent(id)}`;
+  const params = new URLSearchParams();
+  for (const key of ["file", "tab", "view", "contract", "function", "test"]) {
+    if (view[key]) params.set(key, view[key]);
+  }
+  url.hash = `/examples/${encodeURIComponent(id)}${params.size ? `?${params}` : ""}`;
   return url.toString();
 }
 
 /** Reads the single example route; malformed and unrelated hashes are ignored. */
 export function readExampleRoute(hash) {
-  const match = /^#\/examples\/([^/]+)$/.exec(hash);
+  const match = /^#\/examples\/([^/?]+)(?:\?.*)?$/.exec(hash);
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]);
   } catch {
     return null;
   }
+}
+
+/** Optional view fields; callers validate names against the loaded workspace. */
+export function readExampleView(hash) {
+  const params = new URLSearchParams(hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "");
+  return Object.fromEntries(["file", "tab", "view", "contract", "function", "test"]
+    .map((key) => [key, params.get(key) || undefined]));
 }

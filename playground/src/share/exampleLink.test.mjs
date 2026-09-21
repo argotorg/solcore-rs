@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildExampleLink, readExampleRoute, readSharedExampleId } from "./exampleLink.js";
+import { buildExampleLink, readExampleRoute, readExampleView, readSharedExampleId } from "./exampleLink.js";
 
 test("reads the example id from a query string", () => {
   assert.equal(readSharedExampleId("?example=trait"), "trait");
@@ -41,4 +41,19 @@ test("links preserve other queries and encode the example id", () => {
   const link = buildExampleLink("https://example.org/app/?theme=dark&example=hello", "a/b");
   assert.equal(link, "https://example.org/app/?theme=dark#/examples/a%2Fb");
   assert.equal(readExampleRoute(new URL(link).hash), "a/b");
+});
+
+test("view links round-trip filenames and overloaded function signatures", () => {
+  const view = { file: "folder/a b.sol", tab: "run", view: "tests", contract: "C", function: "add(uint256,uint256)", test: "folder/a b.sol:42" };
+  const url = new URL(buildExampleLink("https://example.org/app/?keep=1", "trait", view));
+  assert.equal(readExampleRoute(url.hash), "trait");
+  assert.deepEqual(readExampleView(url.hash), view);
+  assert.equal(url.search, "?keep=1");
+});
+
+test("missing, empty and unknown view fields do not invent selections", () => {
+  const view = readExampleView("#/examples/trait?file=&unrelated=42");
+  assert.ok(Object.values(view).every((value) => value === undefined));
+  assert.equal(buildExampleLink("https://example.org/", "trait", view), "https://example.org/#/examples/trait");
+  assert.equal(readExampleRoute("#/examples/%zz?file=Hello.sol"), null);
 });

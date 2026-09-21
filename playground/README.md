@@ -101,7 +101,13 @@ Every bundled example has a hash route, for example:
 https://<host>/#/examples/trait
 ```
 
-The example picker updates the URL, and browser Back and Forward navigate between examples.
+The example picker, active file, and view selections update the URL. Browser Back and
+Forward restore those selections. Optional hash parameters are `file`, `tab`, `view`,
+`contract`, `function` (the full signature), and `test` (the discovered test ID).
+For example: `#/examples/option?file=option.sol&tab=run&view=tests`.
+Missing or stale selections fall back to the entry file, Run tab, or default function.
+Links select tests and functions without running them; they do not include edited
+source, manual arguments, call history, or contract state.
 The link button copies the selected example's URL. Links also work under deployment subpaths.
 Existing `?example=trait` links are accepted and converted to hash routes.
 

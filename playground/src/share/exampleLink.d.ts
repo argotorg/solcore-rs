@@ -2,6 +2,15 @@ export declare const EXAMPLE_PARAM: string;
 
 export function readSharedExampleId(search: string): string | null;
 
-export function buildExampleLink(href: string, id: string): string;
+export interface ExampleView {
+  file?: string;
+  tab?: string;
+  view?: string;
+  contract?: string;
+  function?: string;
+  test?: string;
+}
+export function buildExampleLink(href: string, id: string, view?: ExampleView): string;
+export function readExampleView(hash: string): ExampleView;
 
 export function readExampleRoute(hash: string): string | null;
