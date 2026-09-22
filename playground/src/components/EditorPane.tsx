@@ -204,11 +204,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
     const validRange = model.validateRange(range);
     const current = editor.getSelection();
     if (current && formatSourceSelection(current) === formatSourceSelection(validRange)) return;
-    if (validRange.endColumn === 1 && validRange.endLineNumber > validRange.startLineNumber) {
-      editor.setSelection(selectionAtRangeStart(validRange));
-    } else {
-      editor.setSelection(validRange);
-    }
+    editor.setSelection(validRange);
     editor.revealRangeInCenterIfOutsideViewport(validRange);
     editor.focus();
   }, []);
@@ -223,13 +219,15 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
       monacoRef.current = monaco;
       revealSourceSelection();
       const selectedLines = editor.createDecorationsCollection();
-      const updateSelectedLines = () => selectedLines.set((editor.getSelections() ?? [])
-        .filter((selection) => !selection.isEmpty())
-        .map((selection) => ({
+      const updateSelectedLines = () => {
+        const selections = (editor.getSelections() ?? []).filter((selection) => !selection.isEmpty());
+        editor.getDomNode()?.classList.toggle("has-source-selection", selections.length > 0);
+        selectedLines.set(selections.map((selection) => ({
           range: new monaco.Range(selection.startLineNumber, 1,
             selection.endLineNumber - (selection.endColumn === 1 ? 1 : 0), 1),
           options: { lineNumberClassName: "selected-line-number" },
         })));
+      };
       updateSelectedLines();
       const modelListener = editor.onDidChangeModel(updateSelectedLines);
       const selectionListener = editor.onDidChangeCursorSelection((event) => {
@@ -240,18 +238,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
         const selection = formatSourceSelection(event.selection);
         if (selection !== state.sourceSelection) useWorkspaceStore.setState({ sourceSelection: selection });
       });
-      const gutterListener = editor.onMouseDown((event) => {
-        if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS ||
-            event.event.shiftKey || !event.event.leftButton) return;
-        const selection = editor.getSelection();
-        const line = event.target.position?.lineNumber;
-        // A whole-line selection includes the newline, but its active line is the clicked line.
-        if (selection && selection.startLineNumber === line && selection.startColumn === 1 &&
-            selection.endLineNumber === line + 1 && selection.endColumn === 1) {
-          editor.setSelection(selectionAtRangeStart(selection));
-        }
-      });
-      editor.onDidDispose(() => { selectionListener.dispose(); gutterListener.dispose(); modelListener.dispose(); });
+      editor.onDidDispose(() => { selectionListener.dispose(); modelListener.dispose(); });
       monaco.editor.setTheme(monacoThemeFor(theme));
       onCursorChange({
         line: editor.getPosition()?.lineNumber ?? 1,
