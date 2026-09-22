@@ -222,7 +222,18 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
       editorRef.current = editor;
       monacoRef.current = monaco;
       revealSourceSelection();
+      const selectedLines = editor.createDecorationsCollection();
+      const updateSelectedLines = () => selectedLines.set((editor.getSelections() ?? [])
+        .filter((selection) => !selection.isEmpty())
+        .map((selection) => ({
+          range: new monaco.Range(selection.startLineNumber, 1,
+            selection.endLineNumber - (selection.endColumn === 1 ? 1 : 0), 1),
+          options: { lineNumberClassName: "selected-line-number" },
+        })));
+      updateSelectedLines();
+      const modelListener = editor.onDidChangeModel(updateSelectedLines);
       const selectionListener = editor.onDidChangeCursorSelection((event) => {
+        updateSelectedLines();
         if (event.source !== "mouse" && event.source !== "keyboard") return;
         const state = useWorkspaceStore.getState();
         if (editor.getModel()?.uri.toString() !== uriForWorkspacePath(state.activePath)) return;
@@ -240,7 +251,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
           editor.setSelection(selectionAtRangeStart(selection));
         }
       });
-      editor.onDidDispose(() => { selectionListener.dispose(); gutterListener.dispose(); });
+      editor.onDidDispose(() => { selectionListener.dispose(); gutterListener.dispose(); modelListener.dispose(); });
       monaco.editor.setTheme(monacoThemeFor(theme));
       onCursorChange({
         line: editor.getPosition()?.lineNumber ?? 1,

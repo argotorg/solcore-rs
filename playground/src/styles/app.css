@@ -730,6 +730,8 @@
   opacity: 0.65;
 }
 
+.monaco-editor .line-numbers.selected-line-number { color: var(--vscode-editorLineNumber-activeForeground); }
+
 .monaco-editor .test-result--passed { color: var(--success); }
 .monaco-editor .test-result--failed { color: var(--error); }
 .monaco-editor .test-result--outdated { color: var(--text-muted); font-style: italic; }
