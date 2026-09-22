@@ -204,8 +204,13 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
     const validRange = model.validateRange(range);
     const current = editor.getSelection();
     if (current && formatSourceSelection(current) === formatSourceSelection(validRange)) return;
-    editor.setSelection(validRange);
+    if (validRange.endColumn === 1 && validRange.endLineNumber > validRange.startLineNumber) {
+      editor.setSelection(selectionAtRangeStart(validRange));
+    } else {
+      editor.setSelection(validRange);
+    }
     editor.revealRangeInCenterIfOutsideViewport(validRange);
+    editor.focus();
   }, []);
 
   useEffect(revealSourceSelection, [activePath, sourceSelection, revealSourceSelection]);
@@ -224,7 +229,18 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
         const selection = formatSourceSelection(event.selection);
         if (selection !== state.sourceSelection) useWorkspaceStore.setState({ sourceSelection: selection });
       });
-      editor.onDidDispose(() => selectionListener.dispose());
+      const gutterListener = editor.onMouseUp((event) => {
+        if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS ||
+            event.event.shiftKey || !event.event.leftButton) return;
+        const selection = editor.getSelection();
+        const line = event.target.position?.lineNumber;
+        // A whole-line selection includes the newline, but its active line is the clicked line.
+        if (selection && selection.startLineNumber === line && selection.startColumn === 1 &&
+            selection.endLineNumber === line + 1 && selection.endColumn === 1) {
+          editor.setSelection(selectionAtRangeStart(selection));
+        }
+      });
+      editor.onDidDispose(() => { selectionListener.dispose(); gutterListener.dispose(); });
       monaco.editor.setTheme(monacoThemeFor(theme));
       onCursorChange({
         line: editor.getPosition()?.lineNumber ?? 1,
