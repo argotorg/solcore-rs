@@ -229,7 +229,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
         const selection = formatSourceSelection(event.selection);
         if (selection !== state.sourceSelection) useWorkspaceStore.setState({ sourceSelection: selection });
       });
-      const gutterListener = editor.onMouseUp((event) => {
+      const gutterListener = editor.onMouseDown((event) => {
         if (event.target.type !== monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS ||
             event.event.shiftKey || !event.event.leftButton) return;
         const selection = editor.getSelection();
