@@ -4,6 +4,7 @@ export function readSharedExampleId(search: string): string | null;
 
 export interface ExampleView {
   file?: string;
+  selection?: string;
   tab?: string;
   view?: string;
   contract?: string;

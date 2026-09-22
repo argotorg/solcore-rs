@@ -149,3 +149,35 @@ test('stale view parameters fall back without executing or adding history', t =>
   assert.equal(store.getState().callDraft.signature, first);
   assert.equal(window.history.entries.length, 0);
 });
+
+
+test('source selections restore without adding history', t => {
+  window.location.hash = '#/examples/std-usage?selection=12:3-15:8';
+  t.after(attachExampleRouter());
+  assert.equal(store.getState().sourceSelection, '12:3-15:8');
+  store.setState({ sourceSelection: '20:2' });
+  assert.match(window.location.hash, /selection=20%3A2/);
+  assert.equal(window.history.entries.length, 0);
+});
+
+test('cursor movement preserves pending function discovery', t => {
+  window.location.hash = `#/examples/std-usage?function=${encodeURIComponent(second)}`;
+  store.setState({ contracts: [], testCases: [], discoveryVersion: null });
+  t.after(attachExampleRouter());
+  store.setState({ sourceSelection: '4:1' });
+  discover();
+  assert.equal(store.getState().callDraft.signature, second);
+  assert.equal(store.getState().sourceSelection, '4:1');
+  assert.match(window.location.hash, /function=/);
+  assert.equal(window.history.entries.length, 0);
+});
+
+test('invalid selections and selections for missing files are ignored', t => {
+  t.after(attachExampleRouter());
+  for (const selection of ['0', '-1', 'hello', '3:9-2:1', '9007199254740992']) {
+    navigate(`#/examples/std-usage?selection=${selection}`);
+    assert.equal(store.getState().sourceSelection, null);
+  }
+  navigate('#/examples/std-usage?file=missing.sol&selection=4');
+  assert.equal(store.getState().sourceSelection, null);
+});

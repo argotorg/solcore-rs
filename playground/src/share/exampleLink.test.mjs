@@ -44,7 +44,7 @@ test("links preserve other queries and encode the example id", () => {
 });
 
 test("view links round-trip filenames and overloaded function signatures", () => {
-  const view = { file: "folder/a b.sol", tab: "run", view: "tests", contract: "C", function: "add(uint256,uint256)", test: "folder/a b.sol:42" };
+  const view = { file: "folder/a b.sol", tab: "run", view: "tests", contract: "C", function: "add(uint256,uint256)", test: "folder/a b.sol:42", selection: "12:3-15:8" };
   const url = new URL(buildExampleLink("https://example.org/app/?keep=1", "trait", view));
   assert.equal(readExampleRoute(url.hash), "trait");
   assert.deepEqual(readExampleView(url.hash), view);

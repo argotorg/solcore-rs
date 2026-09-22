@@ -1,3 +1,4 @@
+import { parseSourceSelection, formatSourceSelection } from "../share/sourceSelection";
 import { attachTestControls } from "../monaco/testControls";
 import { useTestDiscovery } from "./useTestDiscovery";
 import { TabList } from "./TabList";
@@ -136,6 +137,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
   const monacoRef = useRef<typeof Monaco | null>(null);
   const activePathRef = useRef(activePath);
 
+  const sourceSelection = useWorkspaceStore((state) => state.sourceSelection);
   const activeFile = files[activePath];
   const editorUri = uriForWorkspacePath(activePath);
   const result = lastCompiledVersion === workspaceVersion ? rawResult : null;
@@ -151,6 +153,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
       fontLigatures: false,
       fontSize: 14,
       lineHeight: 22,
+      lineNumbers: "on",
       minimap: { enabled: false },
       padding: { top: 18, bottom: 18 },
       renderLineHighlight: "gutter",
@@ -193,12 +196,35 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
     [revealRange],
   );
 
+  const revealSourceSelection = useCallback(() => {
+    const range = parseSourceSelection(useWorkspaceStore.getState().sourceSelection ?? undefined);
+    const editor = editorRef.current;
+    const model = editor?.getModel();
+    if (!range || !editor || !model) return;
+    const validRange = model.validateRange(range);
+    const current = editor.getSelection();
+    if (current && formatSourceSelection(current) === formatSourceSelection(validRange)) return;
+    editor.setSelection(validRange);
+    editor.revealRangeInCenterIfOutsideViewport(validRange);
+  }, []);
+
+  useEffect(revealSourceSelection, [activePath, sourceSelection, revealSourceSelection]);
+
   const onMount = useCallback<OnMount>(
     (editor, monaco) => {
       const tests = attachTestControls(editor, monaco);
       editor.onDidDispose(() => tests.dispose());
       editorRef.current = editor;
       monacoRef.current = monaco;
+      revealSourceSelection();
+      const selectionListener = editor.onDidChangeCursorSelection((event) => {
+        if (event.source !== "mouse" && event.source !== "keyboard") return;
+        const state = useWorkspaceStore.getState();
+        if (editor.getModel()?.uri.toString() !== uriForWorkspacePath(state.activePath)) return;
+        const selection = formatSourceSelection(event.selection);
+        if (selection !== state.sourceSelection) useWorkspaceStore.setState({ sourceSelection: selection });
+      });
+      editor.onDidDispose(() => selectionListener.dispose());
       monaco.editor.setTheme(monacoThemeFor(theme));
       onCursorChange({
         line: editor.getPosition()?.lineNumber ?? 1,
@@ -211,7 +237,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
         });
       });
     },
-    [onCursorChange, theme],
+    [onCursorChange, theme, revealSourceSelection],
   );
 
   useEffect(() => {

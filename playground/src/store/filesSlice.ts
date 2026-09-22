@@ -235,6 +235,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
       outputTab: "execution",
       runActivity: "calls",
       viewedTestId: null,
+      sourceSelection: null,
     }));
     persistWorkspace(get());
   };
@@ -279,6 +280,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
         },
         order: [...state.order, filePath],
         activePath: filePath,
+        sourceSelection: null,
         workspaceVersion: state.workspaceVersion + 1,
       }));
 
@@ -343,6 +345,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
         order: nextOrder,
         entry: nextEntry,
         activePath: nextActive,
+      sourceSelection: nextActive === state.activePath ? state.sourceSelection : null,
         workspaceVersion: state.workspaceVersion + 1,
       });
 
@@ -372,7 +375,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
         return;
       }
 
-      set({ activePath: normalizedPath });
+      set({ activePath: normalizedPath, ...(normalizedPath !== get().activePath ? { sourceSelection: null } : {}) });
       persistWorkspace(get());
     },
 

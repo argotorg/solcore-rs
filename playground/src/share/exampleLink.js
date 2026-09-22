@@ -1,8 +1,7 @@
 /**
  * Shareable example links.
  *
- * A link carries only the example id, so it always resolves against the
- * examples bundled with the deployed Playground: `https://host/#/examples/trait`.
+ * Links refer to examples bundled with the deployed Playground: `https://host/#/examples/trait`.
  */
 
 export const EXAMPLE_PARAM = "example";
@@ -27,7 +26,7 @@ export function buildExampleLink(href, id, view = {}) {
   const url = new URL(href);
   url.searchParams.delete(EXAMPLE_PARAM);
   const params = new URLSearchParams();
-  for (const key of ["file", "tab", "view", "contract", "function", "test"]) {
+  for (const key of ["file", "tab", "view", "contract", "function", "test", "selection"]) {
     if (view[key]) params.set(key, view[key]);
   }
   url.hash = `/examples/${encodeURIComponent(id)}${params.size ? `?${params}` : ""}`;
@@ -48,6 +47,6 @@ export function readExampleRoute(hash) {
 /** Optional view fields; callers validate names against the loaded workspace. */
 export function readExampleView(hash) {
   const params = new URLSearchParams(hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "");
-  return Object.fromEntries(["file", "tab", "view", "contract", "function", "test"]
+  return Object.fromEntries(["file", "tab", "view", "contract", "function", "test", "selection"]
     .map((key) => [key, params.get(key) || undefined]));
 }

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { findExample } from "../examples";
 import { useWorkspaceStore, type OutputTab } from "../store/workspace";
 import { buildExampleLink, readExampleRoute, readExampleView, readSharedExampleId, type ExampleView } from "./exampleLink";
+import { parseSourceSelection } from "./sourceSelection";
 import { workspaceView } from "./exampleView";
 
 const tabs: OutputTab[] = ["execution", "hull", "yul", "sonatina", "abi", "problems"];
@@ -39,6 +40,7 @@ export function attachExampleRouter(): () => void {
       const entry = Object.hasOwn(state.files, example.entry) ? example.entry : state.entry;
       state.setActive(view.file && Object.hasOwn(state.files, view.file) ? view.file : entry);
       useWorkspaceStore.setState({ outputTab: tabs.includes(tab as OutputTab) ? tab as OutputTab : "execution",
+        sourceSelection: (!view.file || Object.hasOwn(state.files, view.file)) && parseSourceSelection(view.selection) ? view.selection! : null,
         runActivity: view.view === "tests" ? "tests" : "calls", viewedTestId: null });
       if (state.discoveryVersion === state.workspaceVersion) applySelection(view);
       else pending = { view, version: state.workspaceVersion };
@@ -56,6 +58,14 @@ export function attachExampleRouter(): () => void {
   const unsubscribe = useWorkspaceStore.subscribe((state, previous) => {
     if (applying) return;
     const changed = state.exampleId !== previous.exampleId || JSON.stringify(workspaceView(state)) !== JSON.stringify(workspaceView(previous));
+    const selectionOnly = state.exampleId === previous.exampleId &&
+      JSON.stringify({ ...workspaceView(state), selection: undefined }) === JSON.stringify({ ...workspaceView(previous), selection: undefined });
+    if (changed && selectionOnly) {
+      const url = new URL(window.location.href);
+      const view = readExampleView(url.hash);
+      window.history.replaceState(null, "", buildExampleLink(url.href, state.exampleId, { ...view, selection: state.sourceSelection ?? undefined }));
+      return;
+    }
     if (pending && !changed && pending.version === state.workspaceVersion) {
       if (state.discoveryVersion === state.workspaceVersion) {
         const view = pending.view;

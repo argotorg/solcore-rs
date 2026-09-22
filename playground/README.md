@@ -103,7 +103,10 @@ https://<host>/#/examples/trait
 
 The example picker, active file, and view selections update the URL. Browser Back and
 Forward restore those selections. Optional hash parameters are `file`, `tab`, `view`,
-`contract`, `function` (the full signature), and `test` (the discovered test ID).
+`contract`, `function` (the full signature), `test` (the discovered test ID), and `selection`.
+Use `selection=12` for a line or `selection=12:3-15:8` for a range (one-based, end exclusive).
+The link button includes the cursor or selection. Cursor movement replaces the current URL
+without adding history. Out-of-bounds positions are clamped to the file.
 For example: `#/examples/option?file=option.sol&tab=run&view=tests`.
 Missing or stale selections fall back to the entry file, Run tab, or default function.
 Links select tests and functions without running them; they do not include edited
