@@ -5,6 +5,8 @@
  */
 
 export const EXAMPLE_PARAM = "example";
+export const NAVIGATION_FIELDS = ["file", "tab", "view", "contract", "function", "test"];
+const VIEW_FIELDS = [...NAVIGATION_FIELDS, "selection"];
 
 /** Reads the example id from a `location.search` string, if present. */
 export function readSharedExampleId(search) {
@@ -26,7 +28,7 @@ export function buildExampleLink(href, id, view = {}) {
   const url = new URL(href);
   url.searchParams.delete(EXAMPLE_PARAM);
   const params = new URLSearchParams();
-  for (const key of ["file", "tab", "view", "contract", "function", "test", "selection"]) {
+  for (const key of VIEW_FIELDS) {
     if (view[key]) params.set(key, view[key]);
   }
   url.hash = `/examples/${encodeURIComponent(id)}${params.size ? `?${params}` : ""}`;
@@ -47,6 +49,12 @@ export function readExampleRoute(hash) {
 /** Optional view fields; callers validate names against the loaded workspace. */
 export function readExampleView(hash) {
   const params = new URLSearchParams(hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "");
-  return Object.fromEntries(["file", "tab", "view", "contract", "function", "test", "selection"]
+  return Object.fromEntries(VIEW_FIELDS
     .map((key) => [key, params.get(key) || undefined]));
+}
+
+/** Reads an example and its optional view fields as one location. */
+export function readExampleLocation(hash) {
+  const id = readExampleRoute(hash);
+  return id === null ? null : { id, view: readExampleView(hash) };
 }

@@ -1,9 +1,9 @@
 import { useEffect } from "react";
 import { findExample } from "../examples";
 import { useWorkspaceStore, type OutputTab } from "../store/workspace";
-import { buildExampleLink, readExampleRoute, readExampleView, readSharedExampleId, type ExampleView } from "./exampleLink";
+import { buildExampleLink, readExampleLocation, readExampleView, readSharedExampleId, type ExampleView } from "./exampleLink";
 import { parseSourceSelection } from "./sourceSelection";
-import { workspaceView } from "./exampleView";
+import { sameNavigation, workspaceLocation } from "./exampleView";
 
 const tabs: OutputTab[] = ["execution", "hull", "yul", "sonatina", "abi", "problems"];
 
@@ -28,14 +28,15 @@ export function attachExampleRouter(): () => void {
   };
   const followRoute = (): void => {
     pending = null;
-    const id = readExampleRoute(window.location.hash);
-    const example = id ? findExample(id) : undefined;
+    const location = readExampleLocation(window.location.hash);
+    if (!location) return;
+    const example = findExample(location.id);
     if (!example) return;
     applying = true;
     try {
-      if (id !== useWorkspaceStore.getState().exampleId) useWorkspaceStore.getState().loadExample(example.id);
+      if (location.id !== useWorkspaceStore.getState().exampleId) useWorkspaceStore.getState().loadExample(example.id);
       const state = useWorkspaceStore.getState();
-      const view = readExampleView(window.location.hash);
+      const view = location.view;
       const tab = view.tab === "run" ? "execution" : view.tab;
       const entry = Object.hasOwn(state.files, example.entry) ? example.entry : state.entry;
       state.setActive(view.file && Object.hasOwn(state.files, view.file) ? view.file : entry);
@@ -51,19 +52,21 @@ export function attachExampleRouter(): () => void {
   const legacyId = readSharedExampleId(window.location.search);
   if (!window.location.hash && (!legacyId || findExample(legacyId))) {
     const state = useWorkspaceStore.getState();
-    window.history.replaceState(null, "", buildExampleLink(window.location.href, state.exampleId, workspaceView(state)));
+    window.history.replaceState(null, "", buildExampleLink(window.location.href, state.exampleId, workspaceLocation(state).view));
   }
   followRoute();
   window.addEventListener("hashchange", followRoute);
   const unsubscribe = useWorkspaceStore.subscribe((state, previous) => {
     if (applying) return;
-    const changed = state.exampleId !== previous.exampleId || JSON.stringify(workspaceView(state)) !== JSON.stringify(workspaceView(previous));
-    const selectionOnly = state.exampleId === previous.exampleId &&
-      JSON.stringify({ ...workspaceView(state), selection: undefined }) === JSON.stringify({ ...workspaceView(previous), selection: undefined });
-    if (changed && selectionOnly) {
-      const url = new URL(window.location.href);
-      const view = readExampleView(url.hash);
-      window.history.replaceState(null, "", buildExampleLink(url.href, state.exampleId, { ...view, selection: state.sourceSelection ?? undefined }));
+    const current = workspaceLocation(state);
+    const before = workspaceLocation(previous);
+    const navigationChanged = !sameNavigation(current, before);
+    const selectionChanged = current.view.selection !== before.view.selection;
+    const changed = navigationChanged || selectionChanged;
+    if (selectionChanged && !navigationChanged) {
+      const view = readExampleView(window.location.hash);
+      window.history.replaceState(null, "", buildExampleLink(window.location.href, current.id,
+        { ...view, selection: current.view.selection }));
       return;
     }
     if (pending && !changed && pending.version === state.workspaceVersion) {
@@ -77,7 +80,7 @@ export function attachExampleRouter(): () => void {
     }
     if (changed || (pending && pending.version !== state.workspaceVersion)) pending = null;
     if (changed) {
-      window.history.pushState(null, "", buildExampleLink(window.location.href, state.exampleId, workspaceView(state)));
+      window.history.pushState(null, "", buildExampleLink(window.location.href, current.id, current.view));
     }
   });
   return () => { window.removeEventListener("hashchange", followRoute); unsubscribe(); };

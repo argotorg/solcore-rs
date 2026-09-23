@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildExampleLink, readExampleRoute, readExampleView, readSharedExampleId } from "./exampleLink.js";
+import { buildExampleLink, readExampleLocation, readExampleRoute, readExampleView, readSharedExampleId } from "./exampleLink.js";
 
 test("reads the example id from a query string", () => {
   assert.equal(readSharedExampleId("?example=trait"), "trait");
@@ -47,6 +47,7 @@ test("view links round-trip filenames and overloaded function signatures", () =>
   const view = { file: "folder/a b.sol", tab: "run", view: "tests", contract: "C", function: "add(uint256,uint256)", test: "folder/a b.sol:42", selection: "12:3-15:8" };
   const url = new URL(buildExampleLink("https://example.org/app/?keep=1", "trait", view));
   assert.equal(readExampleRoute(url.hash), "trait");
+  assert.deepEqual(readExampleLocation(url.hash), { id: "trait", view });
   assert.deepEqual(readExampleView(url.hash), view);
   assert.equal(url.search, "?keep=1");
 });
