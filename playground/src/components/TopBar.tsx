@@ -129,7 +129,7 @@ export function TopBar({
         <label className="select-control">
           <span>Example</span>
           <span className="select-control__shell">
-            <select aria-label="Example" value={selectedExample} onChange={(event) => loadExample(event.target.value)}>
+            <select autoFocus aria-label="Example" value={selectedExample} onChange={(event) => loadExample(event.target.value)}>
               {examples.map((example) => (
                 <option key={example.id} value={example.id}>
                   {example.name}
