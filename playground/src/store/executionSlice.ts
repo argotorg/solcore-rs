@@ -141,6 +141,7 @@ export function createExecutionSlice(set: StoreApi<WorkspaceState>["setState"], 
       ...(run ? {
         ...(!testing ? { watchLoading: false } : {}),
         selectedTestId: testId ?? null,
+        ...(testId ? { viewedTestId: testId } : {}),
         runActivity: testing ? "tests" as const : "calls" as const,
         ...(testing ? { testRun: null } : { manualResult: null, manualResultVersion: null }),
         outputTab: "execution" as const,

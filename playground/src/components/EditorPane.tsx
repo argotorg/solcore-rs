@@ -1,3 +1,4 @@
+import { attachSourceSelection, revealSourceSelection } from "../monaco/sourceSelection";
 import { attachTestControls } from "../monaco/testControls";
 import { useTestDiscovery } from "./useTestDiscovery";
 import { TabList } from "./TabList";
@@ -136,6 +137,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
   const monacoRef = useRef<typeof Monaco | null>(null);
   const activePathRef = useRef(activePath);
 
+  const sourceSelection = useWorkspaceStore((state) => state.sourceSelection);
   const activeFile = files[activePath];
   const editorUri = uriForWorkspacePath(activePath);
   const result = lastCompiledVersion === workspaceVersion ? rawResult : null;
@@ -151,6 +153,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
       fontLigatures: false,
       fontSize: 14,
       lineHeight: 22,
+      lineNumbers: "on",
       minimap: { enabled: false },
       padding: { top: 18, bottom: 18 },
       renderLineHighlight: "gutter",
@@ -193,12 +196,17 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
     [revealRange],
   );
 
+  useEffect(() => revealSourceSelection(editorRef.current), [activePath, sourceSelection]);
+
   const onMount = useCallback<OnMount>(
     (editor, monaco) => {
       const tests = attachTestControls(editor, monaco);
       editor.onDidDispose(() => tests.dispose());
       editorRef.current = editor;
       monacoRef.current = monaco;
+      revealSourceSelection(editor);
+      const selection = attachSourceSelection(editor, monaco);
+      editor.onDidDispose(() => selection.dispose());
       monaco.editor.setTheme(monacoThemeFor(theme));
       onCursorChange({
         line: editor.getPosition()?.lineNumber ?? 1,

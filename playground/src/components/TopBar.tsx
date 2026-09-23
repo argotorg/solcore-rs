@@ -18,6 +18,8 @@ import {
 import { useEffect, useState } from "react";
 import { version } from "../compiler/runtime";
 import { formatCompileDuration } from "../compiler/timing";
+import { copyText } from "../share/copyText";
+import { workspaceView } from "../share/exampleView";
 import { buildExampleLink } from "../share/exampleLink";
 import { examples } from "../store/workspace";
 import { useWorkspaceStore } from "../store/workspace";
@@ -94,10 +96,9 @@ export function TopBar({
 
   const copyExampleLink = async (): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(buildExampleLink(window.location.href, selectedExample));
+      await copyText(buildExampleLink(window.location.href, selectedExample, workspaceView(useWorkspaceStore.getState())));
       setLinkCopyState("copied");
     } catch {
-      // Clipboard access needs a secure context and may be denied.
       setLinkCopyState("failed");
     }
   };
@@ -148,7 +149,7 @@ export function TopBar({
           }}
           title={
             linkCopyState === "failed"
-              ? "Copy failed - copy the address bar URL with ?example=" + selectedExample
+              ? "Copy failed - link: " + buildExampleLink(window.location.href, selectedExample, workspaceView(useWorkspaceStore.getState()))
               : "Copy a link to this example"
           }
           aria-label="Copy a link to this example"

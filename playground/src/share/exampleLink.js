@@ -1,11 +1,12 @@
 /**
  * Shareable example links.
  *
- * A link carries only the example id, so it always resolves against the
- * examples bundled with the deployed Playground: `https://host/?example=trait`.
+ * Links refer to examples bundled with the deployed Playground: `https://host/#/examples/trait`.
  */
 
 export const EXAMPLE_PARAM = "example";
+export const NAVIGATION_FIELDS = ["file", "tab", "view", "contract", "function", "test"];
+const VIEW_FIELDS = [...NAVIGATION_FIELDS, "selection"];
 
 /** Reads the example id from a `location.search` string, if present. */
 export function readSharedExampleId(search) {
@@ -23,20 +24,37 @@ export function readSharedExampleId(search) {
 }
 
 /** Builds the shareable link for an example id, based on the current href. */
-export function buildExampleLink(href, id) {
+export function buildExampleLink(href, id, view = {}) {
   const url = new URL(href);
-  url.hash = "";
-  url.searchParams.set(EXAMPLE_PARAM, id);
+  url.searchParams.delete(EXAMPLE_PARAM);
+  const params = new URLSearchParams();
+  for (const key of VIEW_FIELDS) {
+    if (view[key]) params.set(key, view[key]);
+  }
+  url.hash = `/examples/${encodeURIComponent(id)}${params.size ? `?${params}` : ""}`;
   return url.toString();
 }
 
-/** Returns the href without the example parameter. */
-export function stripExampleParam(href) {
-  const url = new URL(href);
-  if (!url.searchParams.has(EXAMPLE_PARAM)) {
-    return href;
+/** Reads the single example route; malformed and unrelated hashes are ignored. */
+export function readExampleRoute(hash) {
+  const match = /^#\/examples\/([^/?]+)(?:\?.*)?$/.exec(hash);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
   }
+}
 
-  url.searchParams.delete(EXAMPLE_PARAM);
-  return url.toString();
+/** Optional view fields; callers validate names against the loaded workspace. */
+export function readExampleView(hash) {
+  const params = new URLSearchParams(hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "");
+  return Object.fromEntries(VIEW_FIELDS
+    .map((key) => [key, params.get(key) || undefined]));
+}
+
+/** Reads an example and its optional view fields as one location. */
+export function readExampleLocation(hash) {
+  const id = readExampleRoute(hash);
+  return id === null ? null : { id, view: readExampleView(hash) };
 }

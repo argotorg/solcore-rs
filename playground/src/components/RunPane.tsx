@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { TabList } from "./TabList";
 import { Loader2, Play } from "lucide-react";
 import { RecentActions, TestSequence } from "./RecentActions";
@@ -7,6 +8,18 @@ import { useWorkspaceStore } from "../store/workspace";
 import { requestEditorNavigation } from "./editorNavigation";
 
 export function RunPane(): JSX.Element {
+  const viewedTestId = useWorkspaceStore((s) => s.viewedTestId);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!viewedTestId) return;
+    const details = Array.from(root.current?.querySelectorAll<HTMLDetailsElement>("[data-test-id]") ?? [])
+      .find((element) => element.dataset.testId === viewedTestId);
+    if (details) {
+      const list = details.closest<HTMLDetailsElement>(".run-tests");
+      if (list) list.open = true;
+      details.open = true;
+    }
+  }, [viewedTestId]);
   const activity = useWorkspaceStore((s) => s.runActivity);
   const setActivity = useWorkspaceStore((s) => s.setRunActivity);
   const cases = useWorkspaceStore((s) => s.testCases);
@@ -33,7 +46,7 @@ export function RunPane(): JSX.Element {
   const passed = completed.filter((test) => test.status === "passed").length;
 
   return (
-    <div className="run-pane">
+    <div className="run-pane" ref={root}>
       <TabList className="run-activities" label="Run activity">
         <button role="tab" id="calls-tab" aria-controls="calls-panel" aria-selected={activity === "calls"} tabIndex={activity === "calls" ? 0 : -1} disabled={compiling} onClick={() => setActivity("calls")}>Try calls</button>
         <button role="tab" id="tests-tab" aria-controls="tests-panel" aria-selected={activity === "tests"} tabIndex={activity === "tests" ? 0 : -1} disabled={compiling} onClick={() => setActivity("tests")}>Run tests ({cases.length})</button>
@@ -59,7 +72,11 @@ export function RunPane(): JSX.Element {
       {tests.length ? tests.map((test) => {
         const canRun = !compiling && cases.some((current) => current.id === test.id);
         return (
-          <details className="run-test" key={test.id} >
+          <details className="run-test" key={test.id} data-test-id={test.id}
+            onToggle={(event) => {
+              const state = useWorkspaceStore.getState();
+              if (event.currentTarget.open && state.viewedTestId !== test.id) useWorkspaceStore.setState({ viewedTestId: test.id });
+            }}>
             <summary>
               <span className={`run-test__status run-test__status--${test.status}`}>
                 {test.status === "passed" ? "✓" : test.status === "ready" ? "○" : "✗"}

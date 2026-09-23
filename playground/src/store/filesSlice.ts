@@ -1,6 +1,6 @@
 import type { StoreApi } from "zustand";
 import { defaultExample, findExample, getExample, type PlaygroundExample } from "../examples";
-import { readSharedExampleId } from "../share/exampleLink";
+import { readExampleRoute, readSharedExampleId } from "../share/exampleLink";
 import { freshExecutionState, invalidateExecution } from "./executionSlice";
 import { isBrowser } from "./isBrowser";
 import type { WorkspaceState } from "./workspace";
@@ -183,12 +183,17 @@ function readSharedExample(): PlaygroundExample | null {
     return null;
   }
 
-  const sharedId = readSharedExampleId(window.location.search);
+  const sharedId = window.location.hash
+    ? readExampleRoute(window.location.hash)
+    : readSharedExampleId(window.location.search);
   return sharedId ? (findExample(sharedId) ?? null) : null;
 }
 
 export const sharedExample = readSharedExample();
-const storedWorkspace = sharedExample ? null : readStoredWorkspace();
+export const savedWorkspace = readStoredWorkspace();
+export const storedWorkspace = sharedExample && sharedExample.id !== savedWorkspace?.exampleId
+  ? null
+  : savedWorkspace;
 export const initialWorkspace = storedWorkspace
   ? {
       files: createFileMap(storedWorkspace.files),
@@ -229,6 +234,8 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
       workspaceVersion: state.workspaceVersion + 1,
       outputTab: "execution",
       runActivity: "calls",
+      viewedTestId: null,
+      sourceSelection: null,
     }));
     persistWorkspace(get());
   };
@@ -273,6 +280,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
         },
         order: [...state.order, filePath],
         activePath: filePath,
+        sourceSelection: null,
         workspaceVersion: state.workspaceVersion + 1,
       }));
 
@@ -337,6 +345,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
         order: nextOrder,
         entry: nextEntry,
         activePath: nextActive,
+        sourceSelection: nextActive === state.activePath ? state.sourceSelection : null,
         workspaceVersion: state.workspaceVersion + 1,
       });
 
@@ -353,6 +362,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
       set({
         entry: normalizedPath,
         activePath: normalizedPath,
+        sourceSelection: normalizedPath === state.activePath ? state.sourceSelection : null,
         workspaceVersion:
           state.entry === normalizedPath ? state.workspaceVersion : state.workspaceVersion + 1,
       });
@@ -366,7 +376,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
         return;
       }
 
-      set({ activePath: normalizedPath });
+      set({ activePath: normalizedPath, ...(normalizedPath !== get().activePath ? { sourceSelection: null } : {}) });
       persistWorkspace(get());
     },
 
