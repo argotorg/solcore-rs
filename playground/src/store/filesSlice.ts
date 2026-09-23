@@ -345,7 +345,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
         order: nextOrder,
         entry: nextEntry,
         activePath: nextActive,
-      sourceSelection: nextActive === state.activePath ? state.sourceSelection : null,
+        sourceSelection: nextActive === state.activePath ? state.sourceSelection : null,
         workspaceVersion: state.workspaceVersion + 1,
       });
 
@@ -362,6 +362,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
       set({
         entry: normalizedPath,
         activePath: normalizedPath,
+        sourceSelection: normalizedPath === state.activePath ? state.sourceSelection : null,
         workspaceVersion:
           state.entry === normalizedPath ? state.workspaceVersion : state.workspaceVersion + 1,
       });
