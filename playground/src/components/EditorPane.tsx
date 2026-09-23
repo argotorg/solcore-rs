@@ -1,4 +1,4 @@
-import { parseSourceSelection, formatSourceSelection } from "../share/sourceSelection";
+import { attachSourceSelection, revealSourceSelection } from "../monaco/sourceSelection";
 import { attachTestControls } from "../monaco/testControls";
 import { useTestDiscovery } from "./useTestDiscovery";
 import { TabList } from "./TabList";
@@ -196,20 +196,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
     [revealRange],
   );
 
-  const revealSourceSelection = useCallback(() => {
-    const range = parseSourceSelection(useWorkspaceStore.getState().sourceSelection ?? undefined);
-    const editor = editorRef.current;
-    const model = editor?.getModel();
-    if (!range || !editor || !model) return;
-    const validRange = model.validateRange(range);
-    const current = editor.getSelection();
-    if (current && formatSourceSelection(current) === formatSourceSelection(validRange)) return;
-    editor.setSelection(validRange);
-    editor.revealRangeInCenterIfOutsideViewport(validRange);
-    editor.focus();
-  }, []);
-
-  useEffect(revealSourceSelection, [activePath, sourceSelection, revealSourceSelection]);
+  useEffect(() => revealSourceSelection(editorRef.current), [activePath, sourceSelection]);
 
   const onMount = useCallback<OnMount>(
     (editor, monaco) => {
@@ -217,28 +204,9 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
       editor.onDidDispose(() => tests.dispose());
       editorRef.current = editor;
       monacoRef.current = monaco;
-      revealSourceSelection();
-      const selectedLines = editor.createDecorationsCollection();
-      const updateSelectedLines = () => {
-        const selections = (editor.getSelections() ?? []).filter((selection) => !selection.isEmpty());
-        editor.getDomNode()?.classList.toggle("has-source-selection", selections.length > 0);
-        selectedLines.set(selections.map((selection) => ({
-          range: new monaco.Range(selection.startLineNumber, 1,
-            selection.endLineNumber - (selection.endColumn === 1 ? 1 : 0), 1),
-          options: { lineNumberClassName: "selected-line-number" },
-        })));
-      };
-      updateSelectedLines();
-      const modelListener = editor.onDidChangeModel(updateSelectedLines);
-      const selectionListener = editor.onDidChangeCursorSelection((event) => {
-        updateSelectedLines();
-        if (event.source !== "mouse" && event.source !== "keyboard") return;
-        const state = useWorkspaceStore.getState();
-        if (editor.getModel()?.uri.toString() !== uriForWorkspacePath(state.activePath)) return;
-        const selection = formatSourceSelection(event.selection);
-        if (selection !== state.sourceSelection) useWorkspaceStore.setState({ sourceSelection: selection });
-      });
-      editor.onDidDispose(() => { selectionListener.dispose(); modelListener.dispose(); });
+      revealSourceSelection(editor);
+      const selection = attachSourceSelection(editor, monaco);
+      editor.onDidDispose(() => selection.dispose());
       monaco.editor.setTheme(monacoThemeFor(theme));
       onCursorChange({
         line: editor.getPosition()?.lineNumber ?? 1,
@@ -251,7 +219,7 @@ export function EditorPane({ onCursorChange }: EditorPaneProps): JSX.Element {
         });
       });
     },
-    [onCursorChange, theme, revealSourceSelection],
+    [onCursorChange, theme],
   );
 
   useEffect(() => {
