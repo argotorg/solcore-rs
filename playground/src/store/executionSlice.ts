@@ -1,5 +1,6 @@
 import type { StoreApi } from "zustand";
 import { compileClient } from "../compiler/compileClient";
+import { ACCOUNTS } from "../compiler/accounts";
 import { formatCall } from "../compiler/formatCall";
 import { nowMs } from "../compiler/timing";
 import type { CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall, WatchCall, WatchResult, RecentAction } from "../compiler/types";
@@ -98,7 +99,7 @@ export interface ExecutionSlice extends ExecutionData {
 export function freshExecutionState(sandboxEpoch = 0, watchRevision = 0): ExecutionData {
   return {
     contracts: [], hasMain: false, discoveryVersion: null,
-    callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true },
+    callDraft: { contract: "", signature: "", arguments: "[]", constructorArguments: "[]", simulate: true, caller: ACCOUNTS[0] },
     selectedTestId: null,
     testRun: null, recentActions: [], actionSequence: 0, sandboxAction: null, watchAction: null,
     sandbox: null, sandboxVersion: null, sandboxEpoch,
@@ -146,7 +147,8 @@ export function createExecutionSlice(set: StoreApi<WorkspaceState>["setState"], 
         ...(testing ? { testRun: null } : { manualResult: null, manualResultVersion: null }),
         outputTab: "execution" as const,
         ...(selected?.invocation ? { callDraft: {
-          contract: selected.contract, constructorArguments: state.callDraft.contract === selected.contract ? state.callDraft.constructorArguments : "[]", ...selected.invocation,
+          contract: selected.contract, constructorArguments: state.callDraft.contract === selected.contract ? state.callDraft.constructorArguments : "[]",
+          caller: state.callDraft.caller, ...selected.invocation,
         } } : {}),
       } : {}),
       compiling: true,

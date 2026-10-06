@@ -6,7 +6,7 @@ use revm::{
     context::TxEnv,
     context_interface::result::{ExecutionResult, Output},
     database::InMemoryDB,
-    primitives::{Address, Bytes, TxKind, U256, hardfork::SpecId, hex},
+    primitives::{Address, Bytes, TxKind, U256, address, hardfork::SpecId, hex, uint},
     state::AccountInfo,
 };
 use serde::Serialize;
@@ -16,7 +16,23 @@ use vfs::Workspace;
 
 pub(crate) const GAS_LIMIT: u64 = 1_000_000;
 pub(crate) const MEMORY_LIMIT: u64 = 16 * 1024 * 1024;
-pub(crate) const CALLER: Address = Address::new([0x11; 20]);
+/// Callers for manual calls: anvil's ten default accounts. Keep in sync with
+/// `playground/src/compiler/accounts.ts`.
+pub(crate) const ACCOUNTS: [Address; 10] = [
+    address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"),
+    address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+    address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+    address!("0x90F79bf6EB2c4f870365E785982E1f101E93b906"),
+    address!("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
+    address!("0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"),
+    address!("0x976EA74026E726554dB657fA54763abd0C3a0aa9"),
+    address!("0x14dC79964da2C08b23698B3D3cc7Ca32193d9955"),
+    address!("0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f"),
+    address!("0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"),
+];
+pub(crate) const CALLER: Address = ACCOUNTS[0];
+/// Each account's starting balance: 10,000 ether, as in anvil.
+pub(crate) const STARTING_BALANCE: U256 = uint!(10_000_000_000_000_000_000_000_U256);
 const PROGRAM_ADDRESS: Address = Address::new([0x22; 20]);
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -226,7 +242,7 @@ fn execute_bytecode(bytecode: Bytes, contract: bool) -> RunResult {
     let mut db = InMemoryDB::default();
     db.insert_account_info(
         CALLER,
-        AccountInfo::default().with_balance(U256::from(10u64).pow(U256::from(20))),
+        AccountInfo::default().with_balance(STARTING_BALANCE),
     );
     if !contract {
         db.insert_account_info(

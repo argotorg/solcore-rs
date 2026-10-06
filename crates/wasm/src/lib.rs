@@ -971,6 +971,7 @@ mod tests {
                 constructor_arguments: "[]".into(),
                 simulate: true,
                 reset: false,
+                caller: None,
             }),
         });
         assert!(

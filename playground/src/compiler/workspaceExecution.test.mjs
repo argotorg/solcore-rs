@@ -126,11 +126,12 @@ test('test play fills the manual controls before running and edits detach the as
   const testcase = { id: 'Calculator.sol:20', contract: 'Calculator', invocation: {
     signature: 'viaOperator(uint256,uint256)', arguments: '["20","22"]', simulate: true,
   } };
-  store.setState({ testCases: [testcase] });
+  const caller = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
+  store.setState({ testCases: [testcase], callDraft: { ...store.getState().callDraft, caller } });
   const operation = store.getState().runNow(testcase.id);
   assert.equal(store.getState().outputTab, 'execution');
   assert.equal(store.getState().selectedTestId, testcase.id);
-  assert.deepEqual(store.getState().callDraft, { contract: 'Calculator', constructorArguments: '[]', ...testcase.invocation });
+  assert.deepEqual(store.getState().callDraft, { contract: 'Calculator', constructorArguments: '[]', caller, ...testcase.invocation });
   pending.shift().resolve({ ...result, tests: [testcase], sandbox: { contract: 'Calculator', address: '0x1234' } });
   await operation;
   store.getState().setCallDraft({ arguments: '[3,4]' });

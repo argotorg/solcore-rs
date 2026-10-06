@@ -87,6 +87,7 @@ export interface ManualCall {
   constructorArguments: string;
   simulate: boolean;
   reset?: boolean;
+  caller: string;
 }
 
 export interface ExecutionEvent {
@@ -95,6 +96,7 @@ export interface ExecutionEvent {
   signature: string;
   arguments: string;
   simulate: boolean;
+  caller: string;
   testId: string | null;
   expected: string | null;
   passed: boolean | null;

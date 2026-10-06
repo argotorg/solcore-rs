@@ -2,7 +2,7 @@
 use std::cell::{Cell, RefCell};
 
 use crate::{
-    execution::{CALLER, GAS_LIMIT, MEMORY_LIMIT, RunResult},
+    execution::{ACCOUNTS, CALLER, GAS_LIMIT, MEMORY_LIMIT, RunResult, STARTING_BALANCE},
     test_execution::{abi_shape, display_output},
 };
 use hir::ast::item::Item;
@@ -53,6 +53,18 @@ pub(crate) struct Request {
     pub simulate: bool,
     #[serde(default)]
     pub reset: bool,
+    /// Hex address of the account making the call; the default account if absent.
+    #[serde(default)]
+    pub caller: Option<String>,
+}
+impl Request {
+    fn caller(&self) -> Result<Address, String> {
+        self.caller.as_deref().map_or(Ok(CALLER), |caller| {
+            caller
+                .parse()
+                .map_err(|_| format!("Invalid caller address: {caller}"))
+        })
+    }
 }
 #[derive(Clone, Serialize)]
 pub(crate) struct Info {
@@ -173,6 +185,7 @@ pub(crate) struct Event {
     pub signature: String,
     pub arguments: String,
     pub simulate: bool,
+    pub caller: String,
     pub test_id: Option<String>,
     pub expected: Option<String>,
     pub passed: Option<bool>,
@@ -194,7 +207,6 @@ pub(crate) struct Sandbox {
     deployment: RunResult,
     db: InMemoryDB,
     address: Address,
-    nonce: u64,
     key: String,
     contract: String,
     methods: Vec<Method>,
@@ -208,9 +220,10 @@ impl Sandbox {
         contract: &str,
         args: &[u8],
         arguments: &str,
+        caller: Address,
         key: &str,
     ) -> Result<Self, String> {
-        let deployed = Self::deploy_inner(workspace, program, contract, args, key);
+        let deployed = Self::deploy_inner(workspace, program, contract, args, caller, key);
         let result = match &deployed {
             Ok(sandbox) => sandbox.deployment.clone(),
             Err(message) => RunResult::error("deploy", message),
@@ -221,6 +234,7 @@ impl Sandbox {
             signature: String::new(),
             arguments: arguments.to_owned(),
             simulate: false,
+            caller: caller.to_string(),
             test_id: None,
             expected: None,
             passed: None,
@@ -233,6 +247,7 @@ impl Sandbox {
         program: &hull::Program<'_>,
         contract: &str,
         args: &[u8],
+        caller: Address,
         key: &str,
     ) -> Result<Self, String> {
         let mut program = program.clone();
@@ -256,11 +271,14 @@ impl Sandbox {
             .find_map(|(n, s)| (n.0 == "init").then_some(s.bytes))
             .ok_or("Missing init bytecode.")?;
         bytecode.extend_from_slice(args);
+        // Like anvil, every account starts funded, whether or not it ever calls.
         let mut db = InMemoryDB::default();
-        db.insert_account_info(
-            CALLER,
-            AccountInfo::default().with_balance(U256::from(10u64).pow(U256::from(20))),
-        );
+        for account in ACCOUNTS {
+            db.insert_account_info(
+                account,
+                AccountInfo::default().with_balance(STARTING_BALANCE),
+            );
+        }
         let mut sandbox = Self {
             id: NEXT_ID.with(|id| {
                 let next = id.get() + 1;
@@ -270,7 +288,6 @@ impl Sandbox {
             deployment: RunResult::error("deploy", "Deployment has not run"),
             db,
             address: Address::ZERO,
-            nonce: 0,
             key: key.to_owned(),
             contract: contract.to_owned(),
             methods: discover(workspace)
@@ -279,7 +296,7 @@ impl Sandbox {
                 .map(|c| c.methods)
                 .unwrap_or_default(),
         };
-        let result = sandbox.transact(TxKind::Create, bytecode.into(), true)?;
+        let result = sandbox.transact(caller, TxKind::Create, bytecode.into(), true)?;
         sandbox.deployment = RunResult::from_evm(result.clone(), "deploy");
         sandbox.address = match result {
             ExecutionResult::Success {
@@ -292,10 +309,18 @@ impl Sandbox {
     }
     fn transact(
         &mut self,
+        caller: Address,
         kind: TxKind,
         data: Bytes,
         commit: bool,
     ) -> Result<ExecutionResult, String> {
+        // Each caller keeps its own nonce.
+        let nonce = self
+            .db
+            .cache
+            .accounts
+            .get(&caller)
+            .map_or(0, |account| account.info.nonce);
         let mut evm = Context::mainnet()
             .with_db(&mut self.db)
             .modify_cfg_chained(|cfg| {
@@ -310,25 +335,28 @@ impl Sandbox {
             })
             .build_mainnet();
         let tx = TxEnv::builder()
-            .caller(CALLER)
+            .caller(caller)
             .kind(kind)
             .data(data)
-            .nonce(self.nonce)
+            .nonce(nonce)
             .gas_limit(GAS_LIMIT)
             .gas_price(0)
             .build_fill();
         if commit {
-            let result = evm.transact_commit(tx).map_err(|e| e.to_string())?;
-            self.nonce += 1;
-            Ok(result)
+            evm.transact_commit(tx).map_err(|e| e.to_string())
         } else {
             evm.transact(tx)
                 .map(|r| r.result)
                 .map_err(|e| e.to_string())
         }
     }
-    pub(crate) fn call(&mut self, data: Bytes, commit: bool) -> Result<ExecutionResult, String> {
-        self.transact(TxKind::Call(self.address), data, commit)
+    pub(crate) fn call(
+        &mut self,
+        caller: Address,
+        data: Bytes,
+        commit: bool,
+    ) -> Result<ExecutionResult, String> {
+        self.transact(caller, TxKind::Call(self.address), data, commit)
     }
 }
 #[cfg(test)]
@@ -364,6 +392,7 @@ pub(crate) fn execute(
         let mut data = method.selector.to_vec();
         data.extend(encode(&request.arguments, &method.shapes)?);
         let args = encode(&request.constructor_arguments, &contract.constructor)?;
+        let caller = request.caller()?;
         SESSION.with(|session| {
             let mut session = session.borrow_mut();
             if request.reset
@@ -379,6 +408,7 @@ pub(crate) fn execute(
                     &contract.name,
                     &args,
                     &request.constructor_arguments,
+                    caller,
                     key,
                 )?);
             }
@@ -386,6 +416,7 @@ pub(crate) fn execute(
                 session.as_mut().unwrap(),
                 request,
                 method,
+                caller,
                 data.into(),
             ))
         })
@@ -418,14 +449,21 @@ pub(crate) fn execute_cached(
             let mut data = method.selector.to_vec();
             data.extend(encode(&request.arguments, &method.shapes)?);
             encode(&request.constructor_arguments, &contract.constructor)?;
-            Ok::<_, String>(invoke(session, request, method, data.into()))
+            let caller = request.caller()?;
+            Ok::<_, String>(invoke(session, request, method, caller, data.into()))
         })();
         Some(result.unwrap_or_else(|message| RunResult::error("prepare", message)))
     })
 }
 
-fn invoke(session: &mut Sandbox, request: &Request, method: &Method, data: Bytes) -> RunResult {
-    let called = session.call(data, !request.simulate);
+fn invoke(
+    session: &mut Sandbox,
+    request: &Request,
+    method: &Method,
+    caller: Address,
+    data: Bytes,
+) -> RunResult {
+    let called = session.call(caller, data, !request.simulate);
     let decoded = match &called {
         Ok(ExecutionResult::Success { output, .. }) => {
             Some(display_output(output.data(), &method.outputs))
@@ -442,6 +480,7 @@ fn invoke(session: &mut Sandbox, request: &Request, method: &Method, data: Bytes
         signature: request.signature.clone(),
         arguments: request.arguments.clone(),
         simulate: request.simulate,
+        caller: caller.to_string(),
         test_id: None,
         expected: None,
         passed: None,
@@ -493,7 +532,7 @@ pub(crate) fn watch(input: &WatchInput) -> Result<Vec<WatchResult>, String> {
                         .clone();
                     let mut data = method.selector.to_vec();
                     data.extend(encode(&request.arguments, &method.shapes)?);
-                    match sandbox.call(data.into(), false)? {
+                    match sandbox.call(CALLER, data.into(), false)? {
                         ExecutionResult::Success { output, .. } => {
                             Ok(display_output(output.data(), &method.outputs))
                         }
@@ -566,6 +605,7 @@ contract Counter {
             constructor_arguments: "[]".into(),
             simulate,
             reset: false,
+            caller: None,
         });
         let result = run_impl(input);
         assert!(
@@ -587,6 +627,7 @@ contract Counter {
             constructor_arguments: "[]".into(),
             simulate: false,
             reset: false,
+            caller: None,
         };
         assert_eq!(
             execute_cached(&request, &key, &first.contracts)
@@ -765,6 +806,97 @@ contract Counter {
     }
 
     #[test]
+    fn each_call_runs_as_the_chosen_caller() {
+        clear();
+        let source = r#"
+import * from std;
+import * from std.dispatch;
+import {caller} from std.opcodes;
+contract Tally {
+    counts: mapping(address => uint256);
+    constructor() {}
+    function bump() public returns (address) {
+        let who = address(caller());
+        counts[who] = counts[who] + uint256(1);
+        return who;
+    }
+    function countOf(who: address) public returns (uint256) { return counts[who]; }
+    function etherOf(who: address) public returns (uint256) {
+        let account = Typedef.rep(who);
+        let amount: word;
+        assembly { amount := balance(account) }
+        return uint256(amount);
+    }
+}
+"#;
+        let other = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
+        let run = |signature: &str, arguments: &str, caller: Option<&str>| {
+            let mut input = input(source);
+            input.manual = Some(Request {
+                contract: "Tally".into(),
+                signature: signature.into(),
+                arguments: arguments.into(),
+                constructor_arguments: "[]".into(),
+                simulate: false,
+                reset: false,
+                caller: caller.map(Into::into),
+            });
+            let result = run_impl(input);
+            assert!(
+                result.success,
+                "{}",
+                serde_json::to_string(&result.diagnostics).unwrap()
+            );
+            result
+        };
+        let first = run("bump()", "[]", None);
+        assert_eq!(first.events[0].kind, "deploy");
+        assert_eq!(first.events[0].caller, CALLER.to_string());
+        assert_eq!(first.events[1].caller, CALLER.to_string());
+        let ether = |who: &str| {
+            run("etherOf(address)", &format!(r#"["{who}"]"#), None)
+                .execution
+                .unwrap()
+                .decoded
+        };
+        // Every listed account is funded from the start.
+        assert_eq!(ether(other).as_deref(), Some("10000000000000000000000"));
+        // Repeated calls from a second account need that account's own nonce.
+        for _ in 0..2 {
+            let bumped = run("bump()", "[]", Some(other));
+            assert_eq!(bumped.events[0].caller, other);
+            assert_eq!(
+                bumped.execution.unwrap().decoded.as_deref(),
+                Some(other.to_lowercase().as_str())
+            );
+        }
+        let count = |who: &str| {
+            run("countOf(address)", &format!(r#"["{who}"]"#), None)
+                .execution
+                .unwrap()
+                .decoded
+        };
+        assert_eq!(count(&CALLER.to_string()).as_deref(), Some("1"));
+        assert_eq!(count(other).as_deref(), Some("2"));
+        assert_eq!(ether(other).as_deref(), Some("10000000000000000000000"));
+        let invalid = run("bump()", "[]", Some("0x1234"));
+        assert_eq!(
+            invalid.execution.unwrap().status,
+            crate::execution::RunStatus::Error
+        );
+    }
+
+    #[test]
+    fn playground_offers_the_funded_accounts_in_order() {
+        let listed: Vec<&str> = include_str!("../../../playground/src/compiler/accounts.ts")
+            .split('"')
+            .filter(|text| text.starts_with("0x") && text.len() == 42)
+            .collect();
+        let funded: Vec<String> = ACCOUNTS.iter().map(ToString::to_string).collect();
+        assert_eq!(listed, funded);
+    }
+
+    #[test]
     fn constructor_arguments_and_invalid_calls() {
         clear();
         let source = SOURCE.replace(
@@ -779,6 +911,7 @@ contract Counter {
             constructor_arguments: r#"["42"]"#.into(),
             simulate: true,
             reset: false,
+            caller: None,
         });
         let result = run_impl(input);
         assert!(result.success);

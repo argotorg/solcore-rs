@@ -54,6 +54,12 @@ first call also deploys the contract, with constructor arguments when required.
 **Reset contract**, a source change, or switching contracts starts a new deployment
 on the next call. The Calls list retains the last 20 calls. Reset clears the call history and previous result.
 
+**Caller** chooses the account that sends each call, from anvil's ten default
+accounts, each starting with 10,000 ether. The account that makes the first call
+also deploys the contract. The Calls list shows the caller of each call; the copy
+button next to **Caller** copies its address, for example to pass to
+`balanceOf`. Tests use Account 1.
+
 Running tests never replaces or changes the contract in Try calls. Playing a test
 copies its inputs into the call controls, but calling those inputs manually does
 not replay test setup or check its assertion. Test results stay in Run tests and
