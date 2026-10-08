@@ -1,5 +1,6 @@
 //! Source-comment tests executed through the contract's ordinary ABI dispatcher.
 
+use crate::backend::Backend;
 use crate::execution::{RunResult, RunStatus};
 use crate::sandbox::Sandbox;
 use hir::ast::item::{ContractItem, FuncKind, Item};
@@ -257,6 +258,7 @@ fn expected_text(action: &ResolvedE2eAction, outputs: &[AbiShape]) -> String {
 }
 
 pub(crate) fn execute(
+    backend: Backend,
     workspace: &Workspace,
     program: &hull::Program<'_>,
     tests: &mut [TestCase],
@@ -281,15 +283,20 @@ pub(crate) fn execute(
             .filter(|(_, t)| t.contract == contract)
             .map(|(i, _)| i)
             .collect::<Vec<_>>();
-        if let Err(message) = execute_contract(
-            workspace,
-            program,
-            tests,
-            &indices,
-            &contract,
-            selected,
-            sandbox_key,
-        ) {
+        let deploy = || {
+            Sandbox::deploy(
+                backend,
+                workspace,
+                program,
+                &contract,
+                &[],
+                "[]",
+                sandbox_key,
+            )
+        };
+        if let Err(message) =
+            execute_contract(workspace, tests, &indices, &contract, selected, deploy)
+        {
             for i in indices {
                 if selected.is_none_or(|id| tests[i].id == id) && tests[i].status == "ready" {
                     tests[i].status = "error";
@@ -315,12 +322,11 @@ pub(crate) fn execute(
 
 fn execute_contract(
     workspace: &Workspace,
-    program: &hull::Program<'_>,
     tests: &mut [TestCase],
     indices: &[usize],
     contract: &str,
     selected: Option<&str>,
-    sandbox_key: &str,
+    deploy: impl FnOnce() -> Result<Sandbox, String>,
 ) -> Result<(), String> {
     let abis = compiler::collect_contract_abis(
         workspace.db(),
@@ -339,7 +345,7 @@ fn execute_contract(
     }) {
         return Err("Tests currently require a constructor with no arguments.".to_owned());
     }
-    let mut sandbox = Sandbox::deploy(workspace, program, contract, &[], "[]", sandbox_key)?;
+    let mut sandbox = deploy()?;
     for &i in indices {
         let is_selected = selected.is_none_or(|id| tests[i].id == id);
         let Some(call) = tests[i].call.clone() else {
@@ -442,7 +448,7 @@ mod tests {
                 content: source.into(),
             }],
             entry: "main.sol".into(),
-            options: Options::default(),
+            options: Options::for_tests(),
             test_id,
             manual: None,
             sandbox_epoch: 0,

@@ -103,6 +103,7 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
     [],
   );
 
+  const backend = useWorkspaceStore((state) => state.options.backend);
   const renderedOutput = outputText(
     outputTab,
     result?.hull ?? null,
@@ -150,7 +151,7 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
         >
           Yul
         </button>
-        <button
+        {backend === "sonatina" ? <button
           type="button"
           role="tab"
           aria-selected={outputTab === "sonatina"}
@@ -161,7 +162,7 @@ export function OutputPane({ hidden }: { hidden: boolean }): JSX.Element {
           onClick={() => setOutputTab("sonatina")}
         >
           Sonatina IR
-        </button>
+        </button> : null}
         <button
           type="button"
           role="tab"

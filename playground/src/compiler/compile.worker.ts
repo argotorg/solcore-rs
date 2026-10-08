@@ -1,4 +1,4 @@
-import { compile, initializeCompiler, run, watch } from "./runtime";
+import { compile, initializeCompiler, initializeSolc, needsSolc, run, watch } from "./runtime";
 import type { WorkerRequest, WorkerResponse } from "./types";
 
 const workerScope = self as unknown as {
@@ -25,6 +25,9 @@ async function handleCompile(request: WorkerRequest): Promise<void> {
     if (request.kind === "watch") {
       workerScope.postMessage({ id: request.id, kind: "watch-result", result: watch(request.input) });
       return;
+    }
+    if (needsSolc(request.input, request.kind === "run")) {
+      await initializeSolc();
     }
     const result = request.kind === "run" ? run(request.input) : compile(request.input);
     const response: WorkerResponse = {

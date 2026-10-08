@@ -1,3 +1,5 @@
+export type Backend = "solc" | "sonatina";
+
 export interface CompileInput {
   files: Array<{ path: string; content: string }>;
   entry: string;
@@ -10,6 +12,7 @@ export interface CompileInput {
     emitSonatina: boolean;
     emitAbi: boolean;
     emitBytecode?: boolean;
+    backend?: Backend;
   };
 }
 

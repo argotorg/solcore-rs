@@ -1,15 +1,32 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import init, { compile, run, watch } from 'solcore-wasm';
+import NodeModule, { createRequire } from 'node:module';
+import { dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
+import init, { compile, run, set_solc, watch } from 'solcore-wasm';
+import { bindSolc } from '../src/compiler/solcBinding.js';
+import { SOLJSON_FILE } from '../src/compiler/solcRelease.js';
 
 // Exercise the actual browser WASM package and the examples shipped by the UI.
 await init({
   module_or_path: await readFile(new URL('../../crates/wasm/pkg/solcore_wasm_bg.wasm', import.meta.url)),
 });
-const options = { emitHull: true, emitYul: true, emitSonatina: true, emitAbi: true };
+// `npm run fetch:solc` downloads the soljson build the browser loads. It is a
+// CommonJS script, but this package treats `.js` files as ES modules.
+const soljsonPath = fileURLToPath(new URL(`../public/solc/${SOLJSON_FILE}`, import.meta.url));
+const soljson = { exports: {} };
+vm.runInThisContext(NodeModule.wrap(await readFile(soljsonPath, 'utf8')), { filename: soljsonPath })(
+  soljson.exports, createRequire(soljsonPath), soljson, soljsonPath, dirname(soljsonPath),
+);
+const solc = bindSolc(soljson.exports);
+set_solc(solc.compile);
 
-test('browser WASM runs the bundled Hello contract without changing Compile output', async () => {
+for (const backend of ['solc', 'sonatina']) {
+const options = { emitHull: true, emitYul: true, emitSonatina: true, emitAbi: true, backend };
+
+test(`${backend}: browser WASM runs the bundled Hello contract without changing Compile output`, async () => {
   const content = await readFile(new URL('../src/examples/contract-output/Hello.sol', import.meta.url), 'utf8');
   const input = { files: [{ path: 'Hello.sol', content }], entry: 'Hello.sol', options };
   const compiled = compile(input);
@@ -21,7 +38,7 @@ test('browser WASM runs the bundled Hello contract without changing Compile outp
   assert.deepEqual({ ...result, execution: null }, compiled);
 });
 
-test('browser WASM discovers and runs the bundled Calculator test', async () => {
+test(`${backend}: browser WASM discovers and runs the bundled Calculator test`, async () => {
   const content = await readFile(new URL('../src/examples/std-usage/Calculator.sol', import.meta.url), 'utf8');
   const result = run({ files: [{ path: 'Calculator.sol', content }], entry: 'Calculator.sol', options });
   assert.equal(result.success, true, JSON.stringify(result.diagnostics));
@@ -30,7 +47,7 @@ test('browser WASM discovers and runs the bundled Calculator test', async () => 
   assert.equal(result.tests[0].actual, '42');
 });
 
-test('a changed source is recompiled, and Compile does not execute', () => {
+test(`${backend}: a changed source is recompiled, and Compile does not execute`, () => {
   const input = {
     files: [{ path: 'main.sol', content: 'function main() returns (word) { return 99; }' }],
     entry: 'main.sol', options,
@@ -39,7 +56,7 @@ test('a changed source is recompiled, and Compile does not execute', () => {
   assert.equal(compile(input).execution, null);
 });
 
-test('browser WASM reports unsupported structured returns explicitly', () => {
+test(`${backend}: browser WASM reports unsupported structured returns explicitly`, () => {
   const result = run({
     files: [{ path: 'main.sol', content: 'function main() returns (bool) { return true; }' }],
     entry: 'main.sol', options,
@@ -50,7 +67,7 @@ test('browser WASM reports unsupported structured returns explicitly', () => {
   assert.match(result.execution.message, /returning one word/);
 });
 
-test('browser WASM preserves constructor effects only within each run', () => {
+test(`${backend}: browser WASM preserves constructor effects only within each run`, () => {
   const input = {
     files: [{ path: 'main.sol', content: `
 import * from std;
@@ -75,7 +92,7 @@ contract Counter {
   }
 });
 
-test('browser WASM replays sends for an individual test and renders booleans', async () => {
+test(`${backend}: browser WASM replays sends for an individual test and renders booleans`, async () => {
   const content = await readFile(new URL('../src/examples/trait/LightSwitch.sol', import.meta.url), 'utf8');
   const input = { files: [{ path: 'LightSwitch.sol', content }], entry: 'LightSwitch.sol', options };
   const compiled = compile(input);
@@ -91,7 +108,7 @@ test('browser WASM replays sends for an individual test and renders booleans', a
   assert.equal(result.tests[1].expected, 'true');
 });
 
-test('browser WASM test reruns leave manual contract state untouched', async () => {
+test(`${backend}: browser WASM test reruns leave manual contract state untouched`, async () => {
   const content = await readFile(new URL('../src/examples/trait/LightSwitch.sol', import.meta.url), 'utf8');
   const input = { files: [{ path: 'LightSwitch.sol', content }], entry: 'LightSwitch.sol', options, sandboxEpoch: 174 };
   const testcase = compile(input).tests[1];
@@ -111,7 +128,7 @@ test('browser WASM test reruns leave manual contract state untouched', async () 
   }
 });
 
-test('Composition exports each Yul object and runs the selected vault', async () => {
+test(`${backend}: Composition exports each Yul object and runs the selected vault`, async () => {
   const files = await Promise.all(['Vaults.sol', 'context.sol', 'engine.sol'].map(async path => ({
     path, content: await readFile(new URL(`../src/examples/composition/${path}`, import.meta.url), 'utf8'),
   })));
@@ -133,7 +150,7 @@ test('Composition exports each Yul object and runs the selected vault', async ()
 });
 
 
-test('AMM watches track committed swaps and discard changes from watched calls', async () => {
+test(`${backend}: AMM watches track committed swaps and discard changes from watched calls`, async () => {
   const files = await Promise.all(['Amm.sol', 'pool.sol'].map(async path => ({
     path, content: await readFile(new URL(`../src/examples/invariants/${path}`, import.meta.url), 'utf8'),
   })));
@@ -166,7 +183,7 @@ for (const [directory, entry, helpers, count] of [
   ['pattern-matching', 'Escrow.sol', [], 6],
   ['invariants', 'Amm.sol', ['pool.sol'], 5],
 ]) {
-  test(`${directory} example tests pass together and replay setup for the final check`, async () => {
+  test(`${backend}: ${directory} example tests pass together and replay setup for the final check`, async () => {
     const files = await Promise.all([entry, ...helpers].map(async path => ({
       path, content: await readFile(new URL(`../src/examples/${directory}/${path}`, import.meta.url), 'utf8'),
     })));
@@ -183,10 +200,10 @@ for (const [directory, entry, helpers, count] of [
 }
 
 
-test('bytecode output contains creation and runtime sections without deploying', () => {
+test(`${backend}: bytecode output contains creation and runtime sections without deploying`, () => {
   const input = {
     files: [{ path: 'main.sol', content: 'contract A { function main() public returns (word) { return 1; } } contract B { function main() public returns (word) { return 2; } }' }],
-    entry: 'main.sol', options: { emitBytecode: true },
+    entry: 'main.sol', options: { emitBytecode: true, backend },
   };
   const result = compile(input);
   assert.equal(result.success, true, JSON.stringify(result.diagnostics));
@@ -200,5 +217,6 @@ test('bytecode output contains creation and runtime sections without deploying',
   const main = compile({ ...input, files: [{ path: 'main.sol', content: 'function main() returns (word) { return 42; }' }] });
   assert.equal(main.hasMain, true);
   assert.deepEqual(main.bytecode[0].sections.map(section => section.name), ['runtime']);
-  assert.equal(compile({ ...input, options: {} }).bytecode.length, 0);
+  assert.equal(compile({ ...input, options: { backend } }).bytecode.length, 0);
 });
+}

@@ -37,7 +37,8 @@ export function attachExampleRouter(): () => void {
       if (location.id !== useWorkspaceStore.getState().exampleId) useWorkspaceStore.getState().loadExample(example.id);
       const state = useWorkspaceStore.getState();
       const view = location.view;
-      const tab = view.tab === "run" ? "execution" : view.tab;
+      const tab = view.tab === "run" || (view.tab === "sonatina" && view.backend !== "sonatina") ? "execution" : view.tab;
+      state.setBackend(view.backend === "sonatina" ? "sonatina" : "solc");
       const entry = Object.hasOwn(state.files, example.entry) ? example.entry : state.entry;
       state.setActive(view.file && Object.hasOwn(state.files, view.file) ? view.file : entry);
       useWorkspaceStore.setState({ outputTab: tabs.includes(tab as OutputTab) ? tab as OutputTab : "execution",

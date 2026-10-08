@@ -2,8 +2,9 @@
 
 use revm::primitives::hex;
 use serde::Serialize;
-use sonatina_codegen::{EvmCompile, OptLevel};
 use vfs::AnalysisHost;
+
+use crate::backend::{self, Backend};
 
 #[derive(Clone, Serialize)]
 pub(crate) struct Object {
@@ -18,29 +19,32 @@ pub(crate) struct Section {
 }
 
 pub(crate) fn generate(
+    backend: Backend,
     db: &AnalysisHost,
     program: &hull::Program<'_>,
 ) -> Result<Vec<Object>, String> {
-    let module = sonatina::translate_hull_program(db, program)
-        .map_err(|err| format!("Sonatina translation failed: {err}"))?;
-    let artifacts = EvmCompile::new(module)
-        .with_opt_level(OptLevel::O0)
-        .compile()
-        .map_err(|errors| format!("EVM bytecode generation failed: {errors:?}"))?;
-    Ok(artifacts
+    let objects = backend::compile_program(backend, db, program)?;
+    // An object-less main runs directly; its init section is not creation code.
+    let with_init = !program.objects.is_empty();
+    Ok(objects
         .into_iter()
-        .map(|artifact| Object {
-            name: artifact.object.0.to_string(),
-            sections: artifact
-                .sections
-                .into_iter()
-                // An object-less main runs directly; its init section is not creation code.
-                .filter(|(name, _)| !program.objects.is_empty() || name.0 != "init")
-                .map(|(name, section)| Section {
-                    name: name.0.to_string(),
-                    code: format!("0x{}", hex::encode(section.bytes)),
-                })
-                .collect(),
+        .map(|object| {
+            let mut sections = Vec::new();
+            if with_init {
+                sections.push(section("init", &object.init));
+            }
+            sections.push(section("runtime", &object.runtime));
+            Object {
+                name: object.name,
+                sections,
+            }
         })
         .collect())
+}
+
+fn section(name: &str, bytes: &[u8]) -> Section {
+    Section {
+        name: name.to_owned(),
+        code: format!("0x{}", hex::encode(bytes)),
+    }
 }

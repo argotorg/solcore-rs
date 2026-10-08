@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { version } from "../compiler/runtime";
+import { SOLC_VERSION } from "../compiler/solcRelease";
+import type { Backend } from "../compiler/types";
 import { formatCompileDuration } from "../compiler/timing";
 import { copyText } from "../share/copyText";
 import { workspaceView } from "../share/exampleView";
@@ -48,6 +50,8 @@ export function TopBar({
   const lastCompiledVersion = useWorkspaceStore((state) => state.lastCompiledVersion);
   const theme = useWorkspaceStore((state) => state.theme);
   const setEntry = useWorkspaceStore((state) => state.setEntry);
+  const backend = useWorkspaceStore((state) => state.options.backend);
+  const setBackend = useWorkspaceStore((state) => state.setBackend);
   const toggleTheme = useWorkspaceStore((state) => state.toggleTheme);
   const resetWorkspace = useWorkspaceStore((state) => state.resetWorkspace);
   const loadExample = useWorkspaceStore((state) => state.loadExample);
@@ -172,6 +176,17 @@ export function TopBar({
                   {path}
                 </option>
               ))}
+            </select>
+            <ChevronDown size={14} aria-hidden="true" />
+          </span>
+        </label>
+
+        <label className="select-control" title="EVM code generator for bytecode and execution">
+          <span>Backend</span>
+          <span className="select-control__shell">
+            <select aria-label="Backend" value={backend} onChange={(event) => setBackend(event.target.value as Backend)}>
+              <option value="solc">solc {SOLC_VERSION} (Yul)</option>
+              <option value="sonatina">Sonatina</option>
             </select>
             <ChevronDown size={14} aria-hidden="true" />
           </span>
