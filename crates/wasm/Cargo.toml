@@ -30,6 +30,7 @@ revm = { version = "43.0.2", default-features = false, features = ["std", "sha3-
 # Cryptographic dependencies obtain entropy through the browser Web Crypto API.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
+js-sys = "0.3"
 
 # wasm-pack's bundled wasm-opt is too old for reference-types (multiple tables).
 # Size is handled by the workspace `[profile.wasm-release]` (strip + opt-level=z + lto);

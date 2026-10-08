@@ -12,3 +12,6 @@ dist-ssr/
 
 # Generated wasm package is produced by `wasm-pack build crates/wasm --target web`
 # (referenced via the "solcore-wasm": "file:../crates/wasm/pkg" dependency)
+
+# soljson is downloaded by `npm run fetch:solc` (scripts/fetch-soljson.mjs)
+public/solc/

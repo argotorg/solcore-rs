@@ -13,6 +13,7 @@ export function workspaceView(state: WorkspaceState): ExampleView {
     contract: contract !== state.contracts[0] ? contract?.name : undefined,
     function: method !== contract?.methods[0] ? method?.signature : undefined,
     test: state.viewedTestId ?? undefined,
+    backend: state.options.backend !== "solc" ? state.options.backend : undefined,
   };
 }
 

@@ -288,6 +288,11 @@ jobs:
           cargo test --profile e2e -p solcore-yul -p solcore-sonatina
           --test e2e --locked -- --nocapture --test-threads=1
 
+      - name: Test playground execution through solc
+        env:
+          SOLCORE_WASM_TEST_BACKEND: solc
+        run: cargo test --profile e2e -p solcore-wasm --locked
+
   docs:
     name: Docs
     runs-on: ubuntu-latest

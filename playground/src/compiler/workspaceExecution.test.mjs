@@ -297,3 +297,21 @@ test('Run is the default tab on startup, example changes, and workspace reset', 
   assert.equal(store.getState().outputTab, 'execution');
   assert.equal(store.getState().options.emitBytecode, true);
 });
+
+test('Sonatina IR is requested and shown only with the Sonatina backend', async () => {
+  assert.equal(store.getState().options.backend, 'solc');
+  assert.equal(store.getState().options.emitSonatina, false);
+  store.getState().setBackend('sonatina');
+  assert.equal(store.getState().options.emitSonatina, true);
+  store.getState().setOutputTab('sonatina');
+  const operation = store.getState().compileNow();
+  const request = pending.shift();
+  assert.equal(request.input.options.backend, 'sonatina');
+  assert.equal(request.input.options.emitSonatina, true);
+  request.resolve({ ...result, execution: null });
+  await operation;
+  store.getState().setBackend('solc');
+  assert.equal(store.getState().options.emitSonatina, false);
+  assert.equal(store.getState().outputTab, 'execution');
+  assert.equal(store.getState().result, null);
+});

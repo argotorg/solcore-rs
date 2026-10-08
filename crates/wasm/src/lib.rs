@@ -1,5 +1,6 @@
 //! Browser-facing `wasm-bindgen` API for compiling in-memory Solcore sources.
 
+mod backend;
 mod bytecode;
 mod execution;
 mod sandbox;
@@ -27,7 +28,8 @@ pub fn __start() {
 /// `input` is a JS object:
 /// `{ files: [{ path: string, content: string }], entry: string,
 /// options?: { emitHull?: bool, emitYul?: bool, emitSonatina?: bool,
-/// emitAbi?: bool, emitBytecode?: bool } }`.
+/// emitAbi?: bool, emitBytecode?: bool, backend?: "solc" | "sonatina" } }`.
+/// The backend defaults to solc, which must first be registered with `set_solc`.
 #[wasm_bindgen]
 pub fn compile(input: JsValue) -> Result<JsValue, JsValue> {
     let input = serde_wasm_bindgen::from_value(input)
@@ -57,6 +59,16 @@ pub fn watch(input: JsValue) -> Result<JsValue, JsValue> {
         .map_err(|err| JsValue::from_str(&err))?
         .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
         .map_err(|err| JsValue::from_str(&format!("failed to serialize watches: {err}")))
+}
+
+/// Registers the solc Standard JSON compile function used by the solc backend.
+///
+/// `compile` takes Standard JSON input as a string and returns Standard JSON
+/// output as a string, like `solidity_compile` from the emscripten build.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn set_solc(compile: js_sys::Function) {
+    backend::solc::register(compile);
 }
 
 /// Returns the embedded standard library files as `{ path, content }` objects.
@@ -98,7 +110,13 @@ pub(crate) struct CompileInput {
 
 impl CompileInput {
     pub(crate) fn sandbox_key(&self) -> String {
-        serde_json::to_string(&(&self.entry, &self.files, self.sandbox_epoch)).unwrap()
+        serde_json::to_string(&(
+            &self.entry,
+            &self.files,
+            self.sandbox_epoch,
+            self.options.backend,
+        ))
+        .unwrap()
     }
 }
 
@@ -121,6 +139,8 @@ pub(crate) struct Options {
     pub(crate) emit_abi: bool,
     #[serde(default)]
     pub(crate) emit_bytecode: bool,
+    #[serde(default)]
+    pub(crate) backend: backend::Backend,
 }
 
 #[derive(Clone, Serialize)]
@@ -459,18 +479,25 @@ fn run_backend(
             }
         }
         if options.emit_bytecode && !diagnostics.iter().any(Diag::is_error) {
-            match bytecode::generate(db, &program) {
+            match bytecode::generate(options.backend, db, &program) {
                 Ok(objects) => *bytecode = objects,
                 Err(message) => diagnostics.push(message_diag(DiagnosticSeverity::Error, message)),
             }
         }
         if execute && !diagnostics.iter().any(Diag::is_error) {
             *execution = Some(if let Some(request) = manual {
-                sandbox::execute(workspace, &program, request, sandbox_key)
+                sandbox::execute(options.backend, workspace, &program, request, sandbox_key)
             } else if tests.is_empty() && test_id.is_none() {
-                execution::execute(workspace, &program)
+                execution::execute(options.backend, workspace, &program)
             } else {
-                test_execution::execute(workspace, &program, tests, test_id, sandbox_key)
+                test_execution::execute(
+                    options.backend,
+                    workspace,
+                    &program,
+                    tests,
+                    test_id,
+                    sandbox_key,
+                )
             });
         }
     }
@@ -721,6 +748,26 @@ impl<'a> LineIndex<'a> {
     }
 }
 
+/// Backend for the unit tests: `SOLCORE_WASM_TEST_BACKEND=solc` runs them
+/// through solc (see `SOLC`), and anything else runs them through Sonatina.
+#[cfg(test)]
+pub(crate) fn test_backend() -> backend::Backend {
+    match std::env::var("SOLCORE_WASM_TEST_BACKEND").as_deref() {
+        Ok("solc") => backend::Backend::Solc,
+        _ => backend::Backend::Sonatina,
+    }
+}
+
+#[cfg(test)]
+impl Options {
+    pub(crate) fn for_tests() -> Self {
+        Self {
+            backend: test_backend(),
+            ..Self::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -746,7 +793,7 @@ mod tests {
             source,
             Options {
                 emit_bytecode: true,
-                ..Options::default()
+                ..Options::for_tests()
             },
         ));
         assert!(
@@ -773,7 +820,7 @@ mod tests {
             }
         }
         assert!(
-            compile_impl(input(source, Options::default()))
+            compile_impl(input(source, Options::for_tests()))
                 .bytecode
                 .is_empty()
         );
@@ -781,7 +828,7 @@ mod tests {
             "function main() returns (word) { return true; }",
             Options {
                 emit_bytecode: true,
-                ..Options::default()
+                ..Options::for_tests()
             },
         ));
         assert!(!invalid.success);
@@ -798,7 +845,7 @@ mod tests {
             ),
             ("function helper() returns (word) { return 42; }", false),
         ] {
-            let result = compile_impl(input(source, Options::default()));
+            let result = compile_impl(input(source, Options::for_tests()));
             assert!(result.success);
             assert_eq!(result.has_main, expected);
             assert!(result.bytecode.is_empty());
@@ -807,7 +854,7 @@ mod tests {
 
     #[test]
     fn compile_accepts_only_sol_entry_files() {
-        let valid = compile_impl(input("function main() {}\n", Options::default()));
+        let valid = compile_impl(input("function main() {}\n", Options::for_tests()));
         assert!(valid.success);
         assert!(valid.diagnostics.is_empty());
 
@@ -817,7 +864,7 @@ mod tests {
                 content: "function main() {}\n".to_owned(),
             }],
             entry: "main.solc".to_owned(),
-            options: Options::default(),
+            options: Options::for_tests(),
             test_id: None,
             manual: None,
             sandbox_epoch: 0,
@@ -849,6 +896,7 @@ mod tests {
                 emit_sonatina: true,
                 emit_abi: true,
                 emit_bytecode: false,
+                backend: crate::test_backend(),
             },
         ));
 
@@ -880,6 +928,7 @@ mod tests {
                 emit_sonatina: true,
                 emit_abi: false,
                 emit_bytecode: false,
+                backend: crate::test_backend(),
             },
         ));
 
@@ -907,6 +956,7 @@ mod tests {
                 emit_sonatina: true,
                 emit_abi: true,
                 emit_bytecode: false,
+                backend: crate::test_backend(),
             },
         ));
         assert!(
@@ -961,6 +1011,7 @@ mod tests {
                 emit_sonatina: true,
                 emit_abi: true,
                 emit_bytecode: false,
+                backend: crate::test_backend(),
             },
             test_id: None,
             sandbox_epoch: 0,
@@ -1006,6 +1057,7 @@ mod tests {
                 emit_sonatina: false,
                 emit_abi: true,
                 emit_bytecode: false,
+                backend: crate::test_backend(),
             },
         ));
 
@@ -1051,6 +1103,7 @@ mod tests {
                 emit_sonatina: false,
                 emit_abi: true,
                 emit_bytecode: false,
+                backend: crate::test_backend(),
             },
         });
 
@@ -1120,6 +1173,7 @@ mod tests {
                 emit_sonatina: false,
                 emit_abi: false,
                 emit_bytecode: false,
+                backend: crate::test_backend(),
             },
         ));
 
@@ -1147,6 +1201,7 @@ mod tests {
                 emit_sonatina: true,
                 emit_abi: false,
                 emit_bytecode: false,
+                backend: crate::test_backend(),
             },
         ));
 

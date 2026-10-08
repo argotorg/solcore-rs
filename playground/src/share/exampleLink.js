@@ -5,7 +5,7 @@
  */
 
 export const EXAMPLE_PARAM = "example";
-export const NAVIGATION_FIELDS = ["file", "tab", "view", "contract", "function", "test"];
+export const NAVIGATION_FIELDS = ["file", "tab", "view", "contract", "function", "test", "backend"];
 const VIEW_FIELDS = [...NAVIGATION_FIELDS, "selection"];
 
 /** Reads the example id from a `location.search` string, if present. */

@@ -1,5 +1,5 @@
 export declare const EXAMPLE_PARAM: string;
-export declare const NAVIGATION_FIELDS: readonly ["file", "tab", "view", "contract", "function", "test"];
+export declare const NAVIGATION_FIELDS: readonly ["file", "tab", "view", "contract", "function", "test", "backend"];
 
 export function readSharedExampleId(search: string): string | null;
 
@@ -11,6 +11,7 @@ export interface ExampleView {
   contract?: string;
   function?: string;
   test?: string;
+  backend?: string;
 }
 export interface ExampleLocation {
   id: string;

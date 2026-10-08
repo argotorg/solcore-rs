@@ -18,8 +18,9 @@ use revm::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use solcore_test_directives::{AbiShape, DirectiveValue, Word256, encode_static_abi};
-use sonatina_codegen::{EvmCompile, OptLevel};
 use vfs::Workspace;
+
+use crate::backend::{self, Backend};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -203,6 +204,7 @@ thread_local! { static SESSION: RefCell<Option<Sandbox>> = const { RefCell::new(
 
 impl Sandbox {
     pub(crate) fn deploy(
+        backend: Backend,
         workspace: &Workspace,
         program: &hull::Program<'_>,
         contract: &str,
@@ -210,7 +212,7 @@ impl Sandbox {
         arguments: &str,
         key: &str,
     ) -> Result<Self, String> {
-        let deployed = Self::deploy_inner(workspace, program, contract, args, key);
+        let deployed = Self::deploy_inner(backend, workspace, program, contract, args, key);
         let result = match &deployed {
             Ok(sandbox) => sandbox.deployment.clone(),
             Err(message) => RunResult::error("deploy", message),
@@ -229,6 +231,7 @@ impl Sandbox {
         deployed
     }
     fn deploy_inner(
+        backend: Backend,
         workspace: &Workspace,
         program: &hull::Program<'_>,
         contract: &str,
@@ -244,16 +247,10 @@ impl Sandbox {
         if program.objects.len() != 1 {
             return Err("Could not find the contract's deploy object.".to_owned());
         }
-        let module = sonatina::translate_hull_program(workspace.db(), &program)
-            .map_err(|e| e.to_string())?;
-        let artifacts = EvmCompile::new(module)
-            .with_opt_level(OptLevel::O0)
-            .compile()
-            .map_err(|e| format!("{e:?}"))?;
-        let mut bytecode = artifacts
-            .into_iter()
-            .flat_map(|a| a.sections)
-            .find_map(|(n, s)| (n.0 == "init").then_some(s.bytes))
+        let mut bytecode = backend::compile_program(backend, workspace.db(), &program)?
+            .pop()
+            .map(|object| object.init)
+            .filter(|init| !init.is_empty())
             .ok_or("Missing init bytecode.")?;
         bytecode.extend_from_slice(args);
         let mut db = InMemoryDB::default();
@@ -345,6 +342,7 @@ pub(crate) fn info(key: &str) -> Option<Info> {
     })
 }
 pub(crate) fn execute(
+    backend: Backend,
     workspace: &Workspace,
     program: &hull::Program<'_>,
     request: &Request,
@@ -374,6 +372,7 @@ pub(crate) fn execute(
                 // Failed redeployment must not leave an unrelated instance callable.
                 *session = None;
                 *session = Some(Sandbox::deploy(
+                    backend,
                     workspace,
                     program,
                     &contract.name,
@@ -544,7 +543,7 @@ contract Counter {
                 content: source.into(),
             }],
             entry: "main.sol".into(),
-            options: Options::default(),
+            options: Options::for_tests(),
             test_id: None,
             manual: None,
             sandbox_epoch: 0,

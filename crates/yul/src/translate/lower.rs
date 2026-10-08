@@ -44,6 +44,60 @@ pub fn render_hull_program_object<'db>(
     render_strict_assembly_program(&program, object_name)
 }
 
+/// Renders a single-contract program so its runtime code calls `entry` and
+/// returns the resulting stack word as 32 bytes of return data.
+///
+/// The wrapper is appended after the runtime object's own code, so callers
+/// that want only `entry` to run should clear the runtime statements first.
+/// `entry` must take no arguments and return exactly one stack word.
+pub fn render_hull_program_returning_runtime_entry<'db>(
+    db: &'db dyn HirDb,
+    program: &HullProgram<'db>,
+    entry: &str,
+) -> Result<String, TranslationError> {
+    let [object] = program.objects.as_slice() else {
+        return Err(TranslationError::new(format!(
+            "a runtime entry wrapper requires exactly one top-level object, found {}",
+            program.objects.len()
+        )));
+    };
+    let [runtime] = object.inners.as_slice() else {
+        return Err(TranslationError::new(format!(
+            "object `{}` must have exactly one runtime object",
+            object.name
+        )));
+    };
+    let entry_function = runtime
+        .code
+        .functions
+        .iter()
+        .find(|function| function.name.as_str() == entry)
+        .ok_or_else(|| {
+            TranslationError::new(format!(
+                "runtime entry `{entry}` has no function body in object `{}`",
+                runtime.name
+            ))
+        })?;
+    if !entry_function.args.is_empty() || size_of_ty(&entry_function.ret)? != 1 {
+        return Err(TranslationError::new(format!(
+            "runtime entry `{entry}` must take no arguments and return exactly one stack word"
+        )));
+    }
+
+    let mut translated = translate_hull_program(db, program)?;
+    let Some(Inner::Object(runtime)) = translated.objects[0].inners.first_mut() else {
+        return Err(TranslationError::new(
+            "translated object has no runtime object",
+        ));
+    };
+    runtime.code.stmts.push(Stmt::Let {
+        names: vec!["_mainresult".into()],
+        init: Some(Expr::call(yul_fun_name(entry), Vec::new())),
+    });
+    runtime.code.stmts.extend(main_result_return_block());
+    render_strict_assembly_program(&translated, None)
+}
+
 impl<'db> Translator<'db> {
     fn translate_program(
         &mut self,

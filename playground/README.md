@@ -2,6 +2,17 @@
 
 A React + TypeScript + Vite frontend for the solcore-rs compiler Playground. The compile path runs in a Web Worker and calls the generated `solcore-wasm` package from `../crates/wasm/pkg`. Editor language features run in a separate LSP Worker backed by `solcore-lsp` from `../crates/lsp/pkg`.
 
+## Backends
+
+The **Backend** selector in the top bar chooses how EVM bytecode is generated for Compile, Run, calls, and tests.
+The default is solc, which compiles the generated Yul with the solc emscripten build (soljson) and its optimizer enabled.
+Sonatina compiles Hull directly at optimization level O0.
+The Sonatina IR tab appears only with the Sonatina backend.
+Switching backends discards the current outputs, deployment, and test results.
+
+soljson is pinned in `src/compiler/solcRelease.js` and loads in the compiler worker the first time a request needs solc.
+The worker fetches it from `solc/` under the deployment base path and registers its Standard JSON compile function with the compiler wasm through `set_solc`.
+
 ## Run a program
 
 Select **Hello contract** and click **Run** in the **Run** tab to execute it in the browser. The
@@ -79,7 +90,10 @@ npm install
 npm run dev
 ```
 
-After dependencies are installed, `npm run dev` rebuilds both local wasm packages before starting Vite:
+After dependencies are installed, `npm run dev` downloads soljson if needed and rebuilds both local wasm packages before starting Vite.
+`npm run fetch:solc` downloads the pinned soljson build into `public/solc/` and checks its sha256.
+`npm run dev`, `npm run build`, and `npm run test:wasm` run it first, and it does nothing when the file is already present and valid.
+The rebuilt wasm packages are:
 
 - `../crates/wasm/pkg` for compiler/runtime calls
 - `../crates/lsp/pkg` for Monaco language features
@@ -103,7 +117,7 @@ https://<host>/#/examples/trait
 
 The example picker, active file, and view selections update the URL. Browser Back and
 Forward restore those selections. Optional hash parameters are `file`, `tab`, `view`,
-`contract`, `function` (the full signature), `test` (the discovered test ID), and `selection`.
+`contract`, `function` (the full signature), `test` (the discovered test ID), `backend` (`sonatina`; solc when absent), and `selection`.
 Use `selection=12` for a line or `selection=12:3-15:8` for a range (one-based, end exclusive).
 The link button includes the cursor or selection. Cursor movement replaces the current URL
 without adding history. Out-of-bounds positions are clamped to the file.
@@ -135,14 +149,15 @@ Unknown or malformed routes leave the workspace and URL unchanged.
 npm run build
 ```
 
-The build script rebuilds both wasm packages, runs `tsc --noEmit`, then runs `vite build`.
+The build script downloads soljson, rebuilds both wasm packages, runs `tsc --noEmit`, then runs `vite build`.
 
 After building, `npm run test:wasm` checks execution through the generated WASM
-package. `npm run test:unit` checks the JavaScript helpers and workspace updates.
+package with each backend. `npm run test:unit` checks the JavaScript helpers and workspace updates.
 
 ## Deploy
 
 Deploy the generated `dist/` directory with static hosting that serves `.wasm` files. Vite emits the compiler and LSP wasm files as assets and rewrites the worker imports to those built assets.
+soljson is copied from `public/solc/` to `dist/solc/` unchanged.
 
 For static hosting under a subpath, set `VITE_BASE`:
 
@@ -187,7 +202,7 @@ is instead tuned for native compiler throughput. A final `wasm-opt -Oz` pass fro
 build:wasm` applies it automatically after `npm ci`; a missing optimizer is a build error rather
 than silently changing the bundle contents. `vite build` reports the current raw and gzipped asset
 sizes. The Playground imports `init`,
-`compile`, `run`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted
+`compile`, `run`, `set_solc`, `watch`, `std_files`, and `version` from `solcore-wasm`; `src/compiler/runtime.ts` passes Vite's emitted
 `solcore_wasm_bg.wasm?url` asset to `init()` and caches initialization. The LSP worker imports
 `SolcoreLsp` from `solcore-lsp`; `src/languageServer/lsp.worker.ts` passes Vite's emitted
 `solcore_lsp_bg.wasm?url` asset to `init()`. The shared compiler API shape lives in
@@ -208,6 +223,7 @@ interface CompileInput {
     emitSonatina: boolean;
     emitAbi: boolean;
     emitBytecode?: boolean;
+    backend?: "solc" | "sonatina"; // defaults to "solc"
   };
 }
 
@@ -231,7 +247,7 @@ interface CompileResult {
 `success` describes compilation; `execution.status` describes execution.
 `execution` is null for Compile requests and compilation errors.
 
-The Playground requests Hull, Yul, Sonatina IR, bytecode, and contract ABI JSON in one compile and exposes each
+The Playground requests Hull, Yul, bytecode, contract ABI JSON, and with the Sonatina backend Sonatina IR, in one compile and exposes each
 textual output in its own tab. For multiple contracts, the Yul tab selects one
 standalone deploy object at a time. Problems can be copied individually or together,
 including their locations, labels, notes, and help. Backend fields remain `null` when an output was not requested,

@@ -43,7 +43,7 @@ export const examples: PlaygroundExample[] = [
   {
     id: "contract-output",
     name: "Hello contract",
-    description: "A small contract that emits Hull, Yul, Sonatina IR, and ABI JSON.",
+    description: "A small contract that emits Hull, Yul, and ABI JSON.",
     entry: "Hello.sol",
     files: [
       { path: "Hello.sol", content: contractOutputHello },

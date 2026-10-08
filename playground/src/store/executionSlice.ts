@@ -2,7 +2,7 @@ import type { StoreApi } from "zustand";
 import { compileClient } from "../compiler/compileClient";
 import { formatCall } from "../compiler/formatCall";
 import { nowMs } from "../compiler/timing";
-import type { CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall, WatchCall, WatchResult, RecentAction } from "../compiler/types";
+import type { Backend, CompileInput, CompileResult, Diag, TestCase, ContractInterface, ManualCall, WatchCall, WatchResult, RecentAction } from "../compiler/types";
 import type { WorkspaceState } from "./workspace";
 import type { WorkspaceFile } from "./filesSlice";
 
@@ -81,10 +81,12 @@ export interface ExecutionOptions {
   emitSonatina: boolean;
   emitAbi: boolean;
   emitBytecode: boolean;
+  backend: Backend;
 }
 
 export interface ExecutionSlice extends ExecutionData {
   options: ExecutionOptions;
+  setBackend: (backend: Backend) => void;
   setCallDraft: (patch: Partial<ManualCall>) => void;
   runCall: (simulate?: boolean) => Promise<void>;
   resetSandbox: () => void;
@@ -272,9 +274,24 @@ export function createExecutionSlice(set: StoreApi<WorkspaceState>["setState"], 
     options: {
       emitHull: true,
       emitYul: true,
-      emitSonatina: true,
+      emitSonatina: false,
       emitAbi: true,
       emitBytecode: true,
+      backend: "solc",
+    },
+    setBackend(backend) {
+      if (get().options.backend === backend) return;
+      // Outputs and deployments from the other backend no longer apply.
+      invalidateExecution();
+      get().resetSandbox();
+      set((s) => ({
+        // Sonatina IR is only shown, and so only generated, with the Sonatina backend.
+        options: { ...s.options, backend, emitSonatina: backend === "sonatina" },
+        ...(s.outputTab === "sonatina" && backend !== "sonatina" ? { outputTab: "execution" as const } : {}),
+        result: null, lastCompiledVersion: null, lastCompileDurationMs: null,
+        compiling: false, running: false, compileStartedAt: null,
+        testResults: [], testResultsVersion: null, testRun: null,
+      }));
     },
     setCallDraft(patch) { set((s) => ({ callDraft: { ...s.callDraft, ...patch }, selectedTestId: null })); },
     runCall: (simulate = false) => executeWorkspace(true, undefined, { ...get().callDraft, simulate }),

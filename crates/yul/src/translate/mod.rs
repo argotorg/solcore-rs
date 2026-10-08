@@ -13,7 +13,10 @@ mod names;
 mod validate;
 
 use location::Location;
-pub use lower::{render_hull_program, render_hull_program_object, translate_hull_program};
+pub use lower::{
+    render_hull_program, render_hull_program_object, render_hull_program_returning_runtime_entry,
+    translate_hull_program,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranslationError {
