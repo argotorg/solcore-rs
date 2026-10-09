@@ -783,6 +783,9 @@
   border-radius: 4px; background: var(--surface-1); color: var(--text-primary); font: var(--font-size-ui) var(--font-mono);
 }
 .call-controls__actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
+.call-controls__caller { display: flex; align-items: end; gap: var(--space-1); flex: 1 1 140px; min-width: 0; }
+.call-controls__caller > label { flex: 1; }
+.call-controls__caller > button { align-self: end; }
 .call-controls__hint { font-size: var(--font-size-meta); color: var(--text-secondary); overflow-wrap: anywhere; }
 
 .problems-toolbar { display: flex; justify-content: flex-end; }

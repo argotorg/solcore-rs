@@ -1,5 +1,7 @@
 import { Play, RotateCcw } from "lucide-react";
+import { ACCOUNTS, accountLabel } from "../compiler/accounts";
 import { useWorkspaceStore } from "../store/workspace";
+import { CopyButton } from "./CopyButton";
 
 export function CallControls(): JSX.Element | null {
   const contracts = useWorkspaceStore((s) => s.contracts);
@@ -51,6 +53,15 @@ export function CallControls(): JSX.Element | null {
             {contract.methods.map((m) => <option key={m.signature}>{m.signature}</option>)}
           </select>
         </label>
+        <div className="call-controls__caller">
+          <label>Caller
+            <select value={draft.caller} disabled={compiling} title={draft.caller}
+              onChange={(e) => update({ caller: e.target.value })}>
+              {ACCOUNTS.map((a) => <option key={a} value={a}>{accountLabel(a)}</option>)}
+            </select>
+          </label>
+          <CopyButton text={draft.caller} label="Copy caller address" />
+        </div>
       </div>
       {contract.constructorInputs.length ? <label>Constructor arguments (JSON)
         <input aria-label="Constructor arguments" value={draft.constructorArguments}

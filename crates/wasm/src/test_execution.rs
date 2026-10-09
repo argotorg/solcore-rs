@@ -1,6 +1,6 @@
 //! Source-comment tests executed through the contract's ordinary ABI dispatcher.
 
-use crate::execution::{RunResult, RunStatus};
+use crate::execution::{CALLER, RunResult, RunStatus};
 use crate::sandbox::Sandbox;
 use hir::ast::item::{ContractItem, FuncKind, Item};
 use hir_ty::{AbiParam, AbiType};
@@ -339,7 +339,8 @@ fn execute_contract(
     }) {
         return Err("Tests currently require a constructor with no arguments.".to_owned());
     }
-    let mut sandbox = Sandbox::deploy(workspace, program, contract, &[], "[]", sandbox_key)?;
+    let mut sandbox =
+        Sandbox::deploy(workspace, program, contract, &[], "[]", CALLER, sandbox_key)?;
     for &i in indices {
         let is_selected = selected.is_none_or(|id| tests[i].id == id);
         let Some(call) = tests[i].call.clone() else {
@@ -355,7 +356,7 @@ fn execute_contract(
         }
         let data =
             hex::decode(call.calldata.trim_start_matches("0x")).map_err(|e| e.to_string())?;
-        let called = sandbox.call(Bytes::from(data), send);
+        let called = sandbox.call(CALLER, Bytes::from(data), send);
         let mut event_result = match &called {
             Ok(result) => RunResult::from_evm(result.clone(), "call"),
             Err(message) => RunResult::error("call", message),
@@ -373,6 +374,7 @@ fn execute_contract(
             signature: invocation.signature.clone(),
             arguments: invocation.arguments.clone(),
             simulate: !send,
+            caller: CALLER.to_string(),
             test_id: Some(tests[i].id.clone()),
             expected: tests[i].expected.clone(),
             passed: None,
