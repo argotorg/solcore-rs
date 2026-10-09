@@ -700,7 +700,10 @@ fn tuple_params<'db>(db: &'db dyn HirDb, ty: Ty<'db>) -> Vec<Ty<'db>> {
     }
 }
 
-fn product_ty<'db>(db: &'db dyn HirDb, elems: impl IntoIterator<Item = Ty<'db>>) -> Ty<'db> {
+pub(crate) fn product_ty<'db>(
+    db: &'db dyn HirDb,
+    elems: impl IntoIterator<Item = Ty<'db>>,
+) -> Ty<'db> {
     let mut elems = elems.into_iter();
     let Some(head) = elems.next() else {
         return Ty::unit(db);

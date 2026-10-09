@@ -1,0 +1,50 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_abi_evidence_budget/main.sol
+---
+error[SC0209]: cannot solve trait constraint `Level2<Wrap<Wrap<Wrap<Wrap<Box<uint256>>>>>>: ABIAttribs`: solver exceeded its iteration bound
+  --> /main/main.sol:37:3
+   |
+36 |   contract C {
+37 | /   constructor(
+38 | |     first: Level7<uint256>,
+39 | |     pad0: Pad0,
+40 | |     pad1: Pad1,
+41 | |     pad2: Pad2,
+42 | |     pad3: Pad3,
+43 | |     pad4: Pad4,
+44 | |     pad5: Pad5,
+45 | |     pad6: Pad6,
+46 | |     pad7: Pad7,
+47 | |     pad8: Pad8,
+48 | |     late: Late
+49 | |   ) {}
+   | |______^ constraint originates here
+50 |   }
+   |
+   = help: simplify the impl chain or add a more direct impl
+---
+
+error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDecode` evidence
+  --> /main/main.sol:37:3
+   |
+36 |   contract C {
+37 | /   constructor(
+38 | |     first: Level7<uint256>,
+39 | |     pad0: Pad0,
+40 | |     pad1: Pad1,
+41 | |     pad2: Pad2,
+42 | |     pad3: Pad3,
+43 | |     pad4: Pad4,
+44 | |     pad5: Pad5,
+45 | |     pad6: Pad6,
+46 | |     pad7: Pad7,
+47 | |     pad8: Pad8,
+48 | |     late: Late
+49 | |   ) {}
+   | |______^ external ABI evidence must be compiler-owned and canonical
+50 |   }
+   |
+   = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

@@ -1,0 +1,52 @@
+{
+  "C": {
+    "bytecode": "",
+    "contract": "C",
+    "tests": [
+      {
+        "input": {
+          "comment": "constructor()",
+          "calldata": "",
+          "value": "0"
+        },
+        "kind": "constructor"
+      },
+      {
+        "input": {
+          "comment": "hello(): generated dispatch",
+          "calldata": "19ff1d21",
+          "value": "0"
+        },
+        "kind": "call",
+        "output": {
+          "returndata": "0000000000000000000000000000000000000000000000000000000000000007",
+          "status": "success"
+        }
+      },
+      {
+        "input": {
+          "comment": "answer(): manual dispatch reached through the fallback",
+          "calldata": "85bb7d69",
+          "value": "0"
+        },
+        "kind": "call",
+        "output": {
+          "returndata": "000000000000000000000000000000000000000000000000000000000000002a",
+          "status": "success"
+        }
+      },
+      {
+        "input": {
+          "comment": "unknown selector: manual dispatch misses and fallback reverts",
+          "calldata": "deadc0de",
+          "value": "0"
+        },
+        "kind": "call",
+        "output": {
+          "returndata": "756e6b6e6f776e2073656c6563746f72",
+          "status": "failure"
+        }
+      }
+    ]
+  }
+}

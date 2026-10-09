@@ -1,0 +1,27 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_abi_attribs_fixed_representation/main.sol
+---
+error[SC0231]: public function `inspect` ABI for contract `FixedField` cannot use visible manual `ABIAttribs` evidence
+  --> /main/main.sol:16:3
+   |
+15 | contract FixedField {
+16 |   function inspect(value: Fixed) public returns (uint256) {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+17 |     return uint256(7);
+   |
+   = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
+---
+
+error[SC0231]: public function `inspect` ABI for contract `NestedParameter` cannot use visible manual `ABIAttribs` evidence
+  --> /main/main.sol:22:3
+   |
+21 | contract NestedParameter {
+22 |   function inspect(value: Box<Wrap<bool>>) public returns (uint256) {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+23 |     return uint256(7);
+   |
+   = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

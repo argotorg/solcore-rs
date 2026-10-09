@@ -1,0 +1,24 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_unit/main.sol
+---
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               (): SigString
+               overlaps with:
+               (): SigString
+  --> /main/main.sol:4:6
+   |
+ 3 |
+ 4 | impl SigString<()> {
+   |      ^^^^^^^^^^^^^ overlapping impl
+ 5 |   function sigStr(p: Proxy<()>) returns (string) { return "changed"; }
+   |
+  ::: /std/dispatch.sol:56
+   |
+56 | impl SigString<memory<bytes>> { function sigStr(x: Proxy<memory<bytes>>) returns (string) { "bytes" }}
+57 | impl SigString<()> { function sigStr(x: Proxy<()>) returns (string) { "" } }
+   |      ------------- previous overlapping impl
+58 |
+   |

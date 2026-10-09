@@ -42,8 +42,8 @@ use crate::{
     contract::{module_contract_diagnostics, module_manual_generic_abi_diagnostics},
     coverage::{BuiltinCoverageCtor, CoverageCtor, CoverageHead, CoveragePat},
     solver::{
-        DerivedClauseKind, Evidence, Solution, Substitution, TraitEnvId, collect_evidence_vars,
-        collect_pred_vars, collect_ty_vars, instance_soundness_diagnostics, solve_report,
+        DerivedClauseKind, Evidence, Solution, Substitution, TraitEnvId,
+        instance_soundness_diagnostics, solve_report, solver_answer_is_closed_over_goal,
     },
     trait_env_with_givens, type_alias_normalization_errors,
 };

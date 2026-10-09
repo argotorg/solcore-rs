@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_abi_constructor_decoder/main.sol
+---
+error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDecode` evidence
+  --> /main/main.sol:11:3
+   |
+10 | contract C {
+11 |   constructor(value: word) {}
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+12 | }
+   |
+   = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

@@ -76,7 +76,8 @@ use derived_abi::{
     visible_abi_clause_source,
 };
 pub(crate) use derived_abi::{
-    definition_supports_derived_abi, ty_mentions_adt as derived_abi_rep_mentions_adt,
+    definition_supports_derived_abi, derived_abi_delegated_evidence,
+    ty_mentions_adt as derived_abi_rep_mentions_adt,
 };
 pub(crate) use derived_class::class_derivation_diagnostics;
 pub use derived_class::derived_class_plans;
@@ -106,10 +107,10 @@ pub use env::{
 use evidence::{apply_evidence, clause_evidence, solution_from_answers};
 use instance_facts::{InstanceFact, module_instance_facts};
 use r#match::{
-    InstantiatedClause, MatchSubst, head_can_unify, instantiate_clause, match_head, max_pred_var,
-    offset_pred_vars, ty_equal, unify_ty,
+    InstantiatedClause, MatchSubst, instantiate_clause, match_head, max_pred_var, offset_pred_vars,
+    ty_equal, unify_ty,
 };
-pub(crate) use r#match::{collect_evidence_vars, collect_pred_vars, collect_ty_vars};
+use r#match::{collect_evidence_vars, collect_pred_vars, collect_ty_vars, head_can_unify};
 use module_lookup::{
     ident_text, module_for_def, scope_resolution_for_module_id, type_var_bindings, unique_modules,
     unique_preds, visible_class_modules,
@@ -444,6 +445,30 @@ pub struct SolverStats {
     pub generator_steps: usize,
     /// Number of fresh answers admitted to tables.
     pub answers_found: usize,
+}
+
+/// Returns whether selected evidence introduces no variables beyond the goal
+/// and its local assumptions. A unique but open answer is still ambiguous.
+pub(crate) fn solver_answer_is_closed_over_goal<'db>(
+    db: &'db dyn Db,
+    goal: Pred<'db>,
+    trait_env: TraitEnvId<'db>,
+    subst: &Substitution<'db>,
+    evidence: &Evidence<'db>,
+) -> bool {
+    let mut goal_vars = FxHashSet::default();
+    collect_pred_vars(db, goal, &mut goal_vars);
+    for given in trait_env.local_givens(db) {
+        collect_pred_vars(db, *given, &mut goal_vars);
+    }
+
+    let mut answer_vars = FxHashSet::default();
+    for (_, ty) in &subst.values {
+        collect_ty_vars(db, *ty, &mut answer_vars);
+    }
+    collect_evidence_vars(db, evidence, &mut answer_vars);
+
+    answer_vars.is_subset(&goal_vars)
 }
 
 /// Wraps a predicate as a solver goal.

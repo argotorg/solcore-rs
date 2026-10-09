@@ -710,7 +710,7 @@ pub fn module_typeck_diagnostics<'db>(
             .map(AnyDiagnostic::Typeck),
     );
     diagnostics.extend(
-        module_manual_generic_abi_diagnostics(db, source_module, trait_env)
+        module_manual_generic_abi_diagnostics(db, source_module, hir_module, trait_env)
             .into_iter()
             .map(AnyDiagnostic::Typeck),
     );

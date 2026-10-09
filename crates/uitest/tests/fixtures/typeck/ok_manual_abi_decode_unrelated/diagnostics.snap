@@ -1,0 +1,6 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/ok_manual_abi_decode_unrelated/main.sol
+---
+no diagnostics

@@ -524,5 +524,9 @@ fn fixture_url(key: &ModuleKey) -> Url {
 }
 
 fn normalize_rendered(output: &str) -> String {
-    output.replace('\\', "/")
+    // Dependencies use file URLs to retain canonical module identities, but
+    // snapshots must not depend on the absolute checkout location.
+    let repo_root = repo_root_from_manifest(env!("CARGO_MANIFEST_DIR"));
+    let repo_prefix = format!("{}/", repo_root.to_string_lossy().replace('\\', "/"));
+    output.replace('\\', "/").replace(&repo_prefix, "/")
 }

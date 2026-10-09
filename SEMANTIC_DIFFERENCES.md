@@ -253,6 +253,12 @@ representation. Recursion tracking distinguishes concrete instantiations, so
 finite shapes such as `Box<Box<uint256>>` remain valid, while a definition whose
 unspecialized representation mentions itself is rejected before expansion.
 `no-generic-instance-for` and visible manual `Generic` evidence remain errors.
+Manual `SigString`, `ABIAttribs`, `ABIEncode`, and `ABIDecode` instances are
+rejected only when selected by the generated external ABI. Unrelated instances,
+including those imported for a hand-written fallback dispatch table, remain
+usable as in the pinned reference. The check follows solver evidence for the
+selector, input decoder, and output encoder, including representation evidence
+selected by compiler-derived ABI instances in their defining modules.
 The `calldata<array<t>>` location itself remains input-only: the target std has
 no `ABIEncode` instance for that lazy handle, so Rust follows derived Generic
 representations and rejects the handle from every nested result position even

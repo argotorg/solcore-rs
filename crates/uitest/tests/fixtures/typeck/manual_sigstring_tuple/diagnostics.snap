@@ -1,0 +1,24 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_tuple/main.sol
+---
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               pair<uint256, bool>: SigString
+               overlaps with:
+               pair<_, _>: SigString
+  --> /main/main.sol:4:6
+   |
+ 3 |
+ 4 | impl SigString<(uint256, bool)> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^ overlapping impl
+ 5 |   function sigStr(p: Proxy<(uint256, bool)>) returns (string) { return "changed"; }
+   |
+  ::: /std/dispatch.sol:58
+   |
+58 |
+59 | impl<a, b> SigString<(a, b)> where a: SigString, b: SigString {
+   |            ----------------- previous overlapping impl
+60 |   function sigStr(x: Proxy<(a, b)>) returns (string) {
+   |

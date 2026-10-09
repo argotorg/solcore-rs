@@ -1,0 +1,27 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_abi_decode_fixed_representation/main.sol
+---
+error[SC0231]: constructor ABI for contract `FixedField` cannot use visible manual `ABIDecode` evidence
+  --> /main/main.sol:17:3
+   |
+16 | contract FixedField {
+17 |   constructor(value: Fixed) {}
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+18 | }
+   |
+   = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
+---
+
+error[SC0231]: constructor ABI for contract `NestedParameter` cannot use visible manual `ABIDecode` evidence
+  --> /main/main.sol:21:3
+   |
+20 | contract NestedParameter {
+21 |   constructor(value: Box<Wrap<word>>) {}
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+22 | }
+   |
+   = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

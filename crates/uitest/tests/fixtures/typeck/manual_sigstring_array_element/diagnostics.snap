@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_array_element/main.sol
+---
+error[SC0231]: public function `inspect` ABI for contract `C` cannot use visible manual `SigString` evidence
+  --> /main/main.sol:13:3
+   |
+12 | contract C {
+13 |   function inspect(values: calldata<array<Elem>>) public returns (uint256) {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+14 |     return uint256(0);
+   |
+   = note: impl `SigString` can override canonical `SigString` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

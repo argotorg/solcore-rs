@@ -1,0 +1,42 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_generated_name/main.sol
+---
+error[SC0218]: Overlapping impls are not supported
+               impl:
+               DispatchNameTy_C_hello: SigString
+               overlaps with:
+               DispatchNameTy_C_hello: SigString
+  --> /main/main.sol:4:6
+   |
+ 3 |
+ 4 | impl SigString<DispatchNameTy_C_hello> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ overlapping impl
+ 5 |   function sigStr(p: Proxy<DispatchNameTy_C_hello>) returns (string) { return "changed"; }
+...
+ 8 | contract C {
+ 9 |   function hello() public returns (uint256) {
+   |   ----------------------------------------- previous overlapping impl
+10 |     return uint256(7);
+   |
+---
+
+error[SC0103]: undefined type constructor: DispatchNameTy_C_hello
+ --> /main/main.sol:4:16
+  |
+3 |
+4 | impl SigString<DispatchNameTy_C_hello> {
+  |                ^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
+5 |   function sigStr(p: Proxy<DispatchNameTy_C_hello>) returns (string) { return "changed"; }
+  |
+---
+
+error[SC0103]: undefined type constructor: DispatchNameTy_C_hello
+ --> /main/main.sol:5:28
+  |
+4 | impl SigString<DispatchNameTy_C_hello> {
+5 |   function sigStr(p: Proxy<DispatchNameTy_C_hello>) returns (string) { return "changed"; }
+  |                            ^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
+6 | }
+  |

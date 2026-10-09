@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/manual_sigstring_nested_adt/main.sol
+---
+error[SC0231]: public function `roundtrip` ABI for contract `C` cannot use visible manual `SigString` evidence
+  --> /main/main.sol:14:3
+   |
+13 | contract C {
+14 |   function roundtrip(value: Outer) public returns (Outer) {
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+15 |     return value;
+   |
+   = note: impl `SigString` can override canonical `SigString` behavior
+   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI
