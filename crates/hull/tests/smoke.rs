@@ -2389,3 +2389,37 @@ fn repo_root() -> PathBuf {
         .expect("crate is under repo/crates/hull")
         .to_path_buf()
 }
+
+#[test]
+fn assembly_written_tuple_pattern_emits_and_checks() {
+    let (db, output) = specialize_src(
+        "assembly_written_tuple_pattern",
+        include_str!(
+            "../../parser/tests/fixtures/corpus/ok/test/examples/cases/asm-match-tuple-write-read.sol"
+        ),
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+}
+
+#[test]
+fn read_only_known_match_preserves_comptime_updates() {
+    let (db, output) = specialize_src(
+        "read_only_known_match",
+        r#"
+function main() returns (word) {
+    let values: (word, word) = (7, 0);
+    let result: word = 0;
+    match (values) { case (x, y) { result = x; } }
+    let answer: comptime<word> = result;
+    return answer;
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    let emitted = emit_module(db, &output.module, EmitOptions::default());
+    assert_eq!(emitted.diagnostics, Vec::new());
+    assert_eq!(check_program_with_db(db, &emitted.program), Vec::new());
+}

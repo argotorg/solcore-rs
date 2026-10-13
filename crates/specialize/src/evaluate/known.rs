@@ -4,8 +4,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{CEnv, TypeReg, VEnv, assigned::AssignedNames, value::BigInt};
 use crate::{
     ir::{
-        MonoArm, MonoBuiltinCtor, MonoExpr, MonoExprKind, MonoId, MonoParam, MonoPat, MonoPatKind,
-        MonoStmt, MonoStmtKind, MonoTy,
+        LetMode, MonoArm, MonoBuiltinCtor, MonoExpr, MonoExprKind, MonoId, MonoParam, MonoPat,
+        MonoPatKind, MonoStmt, MonoStmtKind, MonoTy,
         visit::{Visitor, walk_pat, walk_stmt},
     },
     string_literal::decode_string_literal,
@@ -39,6 +39,65 @@ fn collect_type_reg_stmts<'db>(stmts: &[MonoStmt<'db>], reg: &mut TypeReg<'db>) 
 
 struct TypeRegCollector<'reg, 'db> {
     reg: &'reg mut TypeReg<'db>,
+}
+
+pub(super) fn with_pattern_types<'db>(reg: &TypeReg<'db>, pats: &[MonoPat<'db>]) -> TypeReg<'db> {
+    let mut reg = reg.clone();
+    let mut collector = PatternTypeCollector { reg: &mut reg };
+    for pat in pats {
+        collector.visit_pat(pat);
+    }
+    reg
+}
+
+pub(super) fn known_pattern_bindings<'db>(
+    pats: &[MonoPat<'db>],
+    env: &VEnv<'db>,
+    needed: &FxHashSet<String>,
+) -> Option<Vec<MonoStmt<'db>>> {
+    fn collect<'db>(
+        pat: &MonoPat<'db>,
+        env: &VEnv<'db>,
+        needed: &FxHashSet<String>,
+        out: &mut Vec<MonoStmt<'db>>,
+    ) -> Option<()> {
+        match &pat.kind {
+            MonoPatKind::Var(id) if needed.contains(&id.name) => out.push(MonoStmt {
+                span: pat.span,
+                kind: MonoStmtKind::Let {
+                    mode: LetMode::Runtime,
+                    id: id.clone(),
+                    ty: Some(id.ty),
+                    init: Some(env.get(&id.name)?.clone()),
+                },
+            }),
+            MonoPatKind::Con { args, .. } | MonoPatKind::Tuple(args) => {
+                for pat in args {
+                    collect(pat, env, needed, out)?;
+                }
+            }
+            _ => {}
+        }
+        Some(())
+    }
+    let mut bindings = Vec::new();
+    for pat in pats {
+        collect(pat, env, needed, &mut bindings)?;
+    }
+    Some(bindings)
+}
+
+struct PatternTypeCollector<'reg, 'db> {
+    reg: &'reg mut TypeReg<'db>,
+}
+
+impl<'db> Visitor<'db> for PatternTypeCollector<'_, 'db> {
+    fn visit_pat(&mut self, pat: &MonoPat<'db>) {
+        if let MonoPatKind::Var(id) = &pat.kind {
+            self.reg.insert(id.name.clone(), id.clone());
+        }
+        walk_pat(self, pat);
+    }
 }
 
 impl<'reg, 'db> Visitor<'db> for TypeRegCollector<'reg, 'db> {
@@ -124,12 +183,12 @@ pub(super) fn bool_expr<'db>(value: bool, ty: MonoTy<'db>, span: Span<'db>) -> M
     }
 }
 
-pub(super) fn match_arms_with<'db, F>(
+pub(super) fn match_arms_with<'a, 'db, F>(
     env: &VEnv<'db>,
     scrutinees: &[MonoExpr<'db>],
-    arms: &[MonoArm<'db>],
+    arms: &'a [MonoArm<'db>],
     is_known: F,
-) -> Option<(VEnv<'db>, Vec<MonoStmt<'db>>)>
+) -> Option<(VEnv<'db>, &'a MonoArm<'db>)>
 where
     F: Fn(&MonoExpr<'db>) -> bool + Copy,
 {
@@ -141,7 +200,7 @@ where
         for (pat, value) in arm.pats.iter().zip(scrutinees) {
             env = match_pat(env, pat, value, is_known)?;
         }
-        Some((env, arm.body.clone()))
+        Some((env, arm))
     })
 }
 

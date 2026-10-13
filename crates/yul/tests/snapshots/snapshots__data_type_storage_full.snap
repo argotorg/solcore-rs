@@ -42,20 +42,24 @@ object "DataTypeStorageFullDeploy" {
         leave
       }
       function usr$Typedef_rep_d050560b4$storage_da801a38cLBox_dd7631d90J_word(src$x_7) -> gen$result_8 {
-        let src$w_9
-        src$w_9 := src$x_7
-        gen$result_8 := src$w_9
-        leave
+        {
+          let src$w_9
+          src$w_9 := src$x_7
+          gen$result_8 := src$w_9
+          leave
+        }
       }
       function usr$main_DataTypeStorageFull_main_dd6d1ea2d() -> gen$result_10 {
         let src$$match_scrutinee0_11
         let _v4
         _v4 := usr$CanStore_load_dfbf302d5$storage_da801a38cLBox_dd7631d90J_Box_dd7631d90(0)
         src$$match_scrutinee0_11 := _v4
-        let src$inner_12
-        src$inner_12 := src$$match_scrutinee0_11
-        gen$result_10 := src$inner_12
-        leave
+        {
+          let src$inner_12
+          src$inner_12 := src$$match_scrutinee0_11
+          gen$result_10 := src$inner_12
+          leave
+        }
       }
       function usr$opcodes_sload_d563fc2e8(src$a_13) -> gen$result_14 {
         let src$res_15

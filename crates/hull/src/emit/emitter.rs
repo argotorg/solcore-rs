@@ -1369,9 +1369,11 @@ impl<'db> Emitter<'db> {
     }
 
     pub(super) fn with_scope<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let predeclared = self.predeclared_lets.len();
         self.scopes.push(BTreeMap::new());
         let out = f(self);
         let _ = self.scopes.pop();
+        self.predeclared_lets.truncate(predeclared);
         out
     }
 
@@ -1401,44 +1403,6 @@ pub(super) fn expr_reads_var(expr: &Expr<'_>, expected: &str) -> bool {
                 || expr_reads_var(else_expr, expected)
         }
         ExprKind::Word(_) | ExprKind::Bool(_) | ExprKind::Unit => false,
-    }
-}
-
-fn collect_leaking_let_stmts<'a, 'db>(
-    stmts: &'a [MonoStmt<'db>],
-    out: &mut Vec<&'a MonoStmt<'db>>,
-) {
-    for stmt in stmts {
-        match &stmt.kind {
-            MonoStmtKind::Let { .. } => out.push(stmt),
-            MonoStmtKind::If {
-                then_body,
-                else_body,
-                ..
-            } => {
-                collect_leaking_let_stmts(then_body, out);
-                if let Some(else_body) = else_body {
-                    collect_leaking_let_stmts(else_body, out);
-                }
-            }
-            MonoStmtKind::For {
-                init, post, body, ..
-            } => {
-                collect_leaking_let_stmts(init, out);
-                collect_leaking_let_stmts(post, out);
-                collect_leaking_let_stmts(body, out);
-            }
-            // Explicit blocks and match alternatives retain lexical scopes.
-            MonoStmtKind::Match { .. }
-            | MonoStmtKind::Block(_)
-            | MonoStmtKind::Return(_)
-            | MonoStmtKind::Expr(_)
-            | MonoStmtKind::Assign { .. }
-            | MonoStmtKind::Assembly(_)
-            | MonoStmtKind::Break
-            | MonoStmtKind::Continue
-            | MonoStmtKind::Error => {}
-        }
     }
 }
 

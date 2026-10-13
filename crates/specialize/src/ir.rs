@@ -512,3 +512,43 @@ pub enum MonoPatKind<'db> {
     ComptimeLabel(MonoExpr<'db>),
     Error,
 }
+
+/// Collect declarations that share this statement list's source scope.
+/// If and for bodies share it; explicit blocks and match arms do not.
+pub fn collect_leaking_let_stmts<'a, 'db>(
+    stmts: &'a [MonoStmt<'db>],
+    out: &mut Vec<&'a MonoStmt<'db>>,
+) {
+    for stmt in stmts {
+        match &stmt.kind {
+            MonoStmtKind::Let { .. } => out.push(stmt),
+            MonoStmtKind::If {
+                then_body,
+                else_body,
+                ..
+            } => {
+                collect_leaking_let_stmts(then_body, out);
+                if let Some(else_body) = else_body {
+                    collect_leaking_let_stmts(else_body, out);
+                }
+            }
+            MonoStmtKind::For {
+                init, post, body, ..
+            } => {
+                collect_leaking_let_stmts(init, out);
+                collect_leaking_let_stmts(post, out);
+                collect_leaking_let_stmts(body, out);
+            }
+            // Explicit blocks and match alternatives retain lexical scopes.
+            MonoStmtKind::Match { .. }
+            | MonoStmtKind::Block(_)
+            | MonoStmtKind::Return(_)
+            | MonoStmtKind::Expr(_)
+            | MonoStmtKind::Assign { .. }
+            | MonoStmtKind::Assembly(_)
+            | MonoStmtKind::Break
+            | MonoStmtKind::Continue
+            | MonoStmtKind::Error => {}
+        }
+    }
+}

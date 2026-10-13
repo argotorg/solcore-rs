@@ -635,7 +635,12 @@ impl<'db> Emitter<'db> {
                     }
                 }
                 materialized.extend(this.emit_stmts(body));
-                materialized
+                // The arm's binders and locals belong to this lexical scope,
+                // including when a product match needs no runtime switch.
+                vec![Stmt {
+                    span,
+                    kind: StmtKind::Block(materialized),
+                }]
             }),
             DecisionTree::Fail { span } => vec![Stmt {
                 span: *span,

@@ -22,8 +22,10 @@ object "RGBDeploy" {
   object "RGB" {
     code {
       function usr$047rgb_RGB_main_d0a7ed26d() -> gen$result_1 {
-        gen$result_1 := 42
-        leave
+        {
+          gen$result_1 := 42
+          leave
+        }
       }
       let _v0
       _v0 := usr$047rgb_RGB_main_d0a7ed26d()

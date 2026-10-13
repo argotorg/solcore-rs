@@ -25,7 +25,7 @@ use parser::parse_file_to_hir;
 use specialize::{
     MonoArm, MonoBuiltinCtor, MonoCallOrigin, MonoContract, MonoEntry, MonoExpr, MonoExprArm,
     MonoExprKind, MonoFunction, MonoId, MonoIntrinsic, MonoItem, MonoModule, MonoPat, MonoPatKind,
-    MonoStmt, MonoStmtKind, MonoStorageIndexKind, decode_string_literal,
+    MonoStmt, MonoStmtKind, MonoStorageIndexKind, collect_leaking_let_stmts, decode_string_literal,
 };
 
 use crate::{
