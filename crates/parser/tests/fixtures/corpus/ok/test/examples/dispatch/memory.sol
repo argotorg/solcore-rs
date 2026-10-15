@@ -1,6 +1,6 @@
 import * from std;
 import * from std.dispatch;
-import {mstore} from std.opcodes;
+import { mstore } from std.opcodes;
 
 contract C {
     function dirty_allocate() public returns (memory<bytes>) {

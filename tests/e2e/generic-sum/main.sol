@@ -1,45 +1,55 @@
 import * from std;
 import * from std.dispatch;
-import {mload, mstore} from std.opcodes;
+import { mload, mstore } from std.opcodes;
 import * from std.Generic;
 import * from std.ABIGeneric;
 
 pragma no-generic-instance-for Option;
 
-enum Option<a> { None, Some(a) }
+enum Option<a> {
+    None,
+    Some(a)
+}
 
 // Only requirement: a Generic impl using the primitive sum type.
 // rep = sum((), uint256): inl(()) = None, inr(v) = Some(v)
 impl Generic<Option<uint256>, sum<(), uint256>> {
     function from(x: Option<uint256>) returns (sum<(), uint256>) {
         match (x) {
-case Option.None {
-return inl(());
-}
-case Option.Some(v) {
-return inr(v);
-}
-}
+            case Option.None {
+                return inl(());
+            }
+            case Option.Some(v) {
+                return inr(v);
+            }
+        }
     }
     function to(r: sum<(), uint256>) returns (Option<uint256>) {
         match (r) {
-case inl(_) {
-return Option.None;
-}
-case inr(v) {
-return Option.Some(v);
-}
-}
+            case inl(_) {
+                return Option.None;
+            }
+            case inr(v) {
+                return Option.Some(v);
+            }
+        }
     }
 }
 
+// #[scenario("generic_sum")]
+// #[deploy(0x) -> success]
+// #[raw(0xcc5ae1e8, label = "encodeNone() -> 0") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0xef5d5c21000000000000000000000000000000000000000000000000000000000000002a, label = "encodeSomeTag(42) -> 1") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x342242e80000000000000000000000000000000000000000000000000000000000000063, label = "encodePayload(99) -> 99") -> success(0x0000000000000000000000000000000000000000000000000000000000000063)]
+// #[raw(0xc222f3f50000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000004d, label = "decodeAndGet(tag=1, value=77) -> 77") -> success(0x000000000000000000000000000000000000000000000000000000000000004d)]
+// #[raw(0xc222f3f500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, label = "decodeAndGet(tag=0, value=0) -> 0 (None)") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 contract GenericSum {
     constructor() {}
 
     // Calls encode; returns the tag word (first 32 bytes).
     // None → 0
     function encodeNone() public returns (uint256) {
-        let x : Option<uint256> = Option.None;
+        let x: Option<uint256> = Option.None;
         let buf = allocate_zeroed_memory(64);
         encode(x, buf, 0, 64);
         return Typedef.abs(mload(buf));
@@ -48,7 +58,7 @@ contract GenericSum {
     // Calls encode; returns the tag word (first 32 bytes).
     // Some(n) → 1
     function encodeSomeTag(n: uint256) public returns (uint256) {
-        let x : Option<uint256> = Option.Some(n);
+        let x: Option<uint256> = Option.Some(n);
         let buf = allocate_zeroed_memory(64);
         encode(x, buf, 0, 64);
         return Typedef.abs(mload(buf));
@@ -56,7 +66,7 @@ contract GenericSum {
 
     // Calls encode; returns the payload word (bytes 32-63).
     function encodePayload(n: uint256) public returns (uint256) {
-        let x : Option<uint256> = Option.Some(n);
+        let x: Option<uint256> = Option.Some(n);
         let buf = allocate_zeroed_memory(64);
         encode(x, buf, 0, 64);
         return Typedef.abs(mload(buf + 32));
@@ -67,16 +77,16 @@ contract GenericSum {
         let buf = allocate_zeroed_memory(64);
         mstore(buf, Typedef.rep(tag));
         mstore(buf + 32, Typedef.rep(value));
-        let rdr : MemoryWordReader = MemoryWordReader(buf);
-        let dec : ABIDecoder<Option<uint256>, MemoryWordReader> = ABIDecoder(rdr);
-        let opt : Option<uint256> = decode(dec, 0);
+        let rdr: MemoryWordReader = MemoryWordReader(buf);
+        let dec: ABIDecoder<Option<uint256>, MemoryWordReader> = ABIDecoder(rdr);
+        let opt: Option<uint256> = decode(dec, 0);
         match (opt) {
-case Option.None {
-return uint256(0);
-}
-case Option.Some(v) {
-return v;
-}
-}
+            case Option.None {
+                return uint256(0);
+            }
+            case Option.Some(v) {
+                return v;
+            }
+        }
     }
 }

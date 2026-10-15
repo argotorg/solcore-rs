@@ -1,3 +1,3 @@
-import {fb} from a;
+import { fb } from a;
 
 function main() {}

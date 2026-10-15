@@ -1,34 +1,37 @@
-enum Proxy<a> { Proxy }
-
-function add(x:word, y: word) returns (word) {return x;}
-
-trait BaseMemoryType<self> {
-    function memorySize(x: Proxy<self>) returns (word) ;
+enum Proxy<a> {
+    Proxy
 }
 
+function add(x: word, y: word) returns (word) {
+    return x;
+}
+
+trait BaseMemoryType<self> {
+    function memorySize(x: Proxy<self>) returns (word);
+}
 
 impl BaseMemoryType<word> {
     function memorySize(x: Proxy<word>) returns (word) {
-      return 32;
+        return 32;
     }
 }
 
 impl<a, b> BaseMemoryType<(a, b)> where a: BaseMemoryType, b: BaseMemoryType {
 
     function memorySize(x: Proxy<(a, b)>) returns (word) { // not correct semantically, just for debugging
-            return add(BaseMemoryType.memorySize(@a),
+        return add(BaseMemoryType.memorySize(@a),
             // BaseMemoryType.memorySize(Proxy:Proxy(b))
-	    morefun(@b)
-	    );
+            morefun(@b)
+        );
     }
 }
 // this should trigger a type error.
 function morefun<t>(p: Proxy<t>) returns (word) {
-  return BaseMemoryType.memorySize(@t);
+    return BaseMemoryType.memorySize(@t);
 }
 
 contract TestMemoryType {
-  function main() public returns (word) {
-    return BaseMemoryType.memorySize(@(word, word));
-  }
+    function main() public returns (word) {
+        return BaseMemoryType.memorySize(@(word, word));
+    }
 }

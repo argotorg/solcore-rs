@@ -1,12 +1,12 @@
 import * from std;
 import * from std.dispatch;
-import {sender} from context;
-import {Option} from option;
-import {Stacked, NoHook} from hooks;
-import {balance, supply, apply} from erc20core;
-import {isPaused, setPaused, Pausable} from pausable;
-import {setCap, Capped} from capped;
-import {owner as storedOwner, initOwner, requireOwner, transferOwnership as setOwner} from ownable;
+import { sender } from context;
+import { Option } from option;
+import { Stacked, NoHook } from hooks;
+import { balance, supply, apply } from erc20core;
+import { isPaused, setPaused, Pausable } from pausable;
+import { setCap, Capped } from capped;
+import { owner as storedOwner, initOwner, requireOwner, transferOwnership as setOwner } from ownable;
 
 // A token composed from self-contained feature modules. Each module owns
 // its own storage and ships a transfer hook; the contract routes every

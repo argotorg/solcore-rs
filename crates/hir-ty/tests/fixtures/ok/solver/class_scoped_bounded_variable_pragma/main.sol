@@ -1,6 +1,8 @@
 pragma no-bounded-variable-condition Container;
 
-enum Box<a> { Box(word) }
+enum Box<a> {
+    Box(word)
+}
 trait Eq<a> {}
 trait Container<a, b> {}
 

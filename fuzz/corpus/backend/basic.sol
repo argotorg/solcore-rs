@@ -1,1 +1,3 @@
-function id(x: word) returns (word) { return x; }
+function id(x: word) returns (word) {
+    return x;
+}

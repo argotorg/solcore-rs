@@ -2,27 +2,27 @@ import * from std;
 import * from std.dispatch;
 
 contract Uint256Binops {
-  function mul_u256(x: uint256, y: uint256) public returns (uint256) {
-    return x * y;
-  }
+    function mul_u256(x: uint256, y: uint256) public returns (uint256) {
+        return x * y;
+    }
 
-  function div_u256(x: uint256, y: uint256) public returns (uint256) {
-    return x / y;
-  }
+    function div_u256(x: uint256, y: uint256) public returns (uint256) {
+        return x / y;
+    }
 
-  function mod_u256(x: uint256, y: uint256) public returns (uint256) {
-    return x % y;
-  }
+    function mod_u256(x: uint256, y: uint256) public returns (uint256) {
+        return x % y;
+    }
 
-  function band_u256(x: uint256, y: uint256) public returns (uint256) {
-    return x & y;
-  }
+    function band_u256(x: uint256, y: uint256) public returns (uint256) {
+        return x & y;
+    }
 
-  function bxor_u256(x: uint256, y: uint256) public returns (uint256) {
-    return x ^ y;
-  }
+    function bxor_u256(x: uint256, y: uint256) public returns (uint256) {
+        return x ^ y;
+    }
 
-  function bor_u256(x: uint256, y: uint256) public returns (uint256) {
-    return x | y;
-  }
+    function bor_u256(x: uint256, y: uint256) public returns (uint256) {
+        return x | y;
+    }
 }

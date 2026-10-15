@@ -1,16 +1,19 @@
-enum direction { north, south }
+enum direction {
+    north,
+    south
+}
 
 function pick(d: direction) returns (word) {
-  match (d) {
-case north {
-return 1;
-}
-case south {
-return 2;
-}
-}
+    match (d) {
+        case north {
+            return 1;
+        }
+        case south {
+            return 2;
+        }
+    }
 }
 
 function main() returns (word) {
-  return pick(direction.south);
+    return pick(direction.south);
 }

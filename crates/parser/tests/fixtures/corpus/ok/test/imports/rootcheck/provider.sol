@@ -1,5 +1,5 @@
-export {value};
+export { value };
 
 function value() returns (word) {
-  return 7;
+    return 7;
 }

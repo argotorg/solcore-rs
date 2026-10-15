@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/non_exhaustive_match/main.sol
 ---
 error[SC0302]: non-exhaustive pattern match
-  --> /main/main.sol:11:10
+  --> /main/main.sol:14:12
    |
-10 | function onlyA(b: B) returns (word) {
-11 |   match (b) {
-   |          ^ match is not exhaustive
-12 | case B.A {
+13 | function onlyA(b: B) returns (word) {
+14 |     match (b) {
+   |            ^ match is not exhaustive
+15 |         case B.A {
    |
    = note: missing case: _
    = note: help: add a default or catch-all arm that covers the remaining values

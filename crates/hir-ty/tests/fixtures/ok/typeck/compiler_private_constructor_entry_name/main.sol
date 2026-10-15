@@ -1,8 +1,14 @@
 import * from std;
 
-function init_(x: word) returns (word) { return x; }
+function init_(x: word) returns (word) {
+    return x;
+}
 
 contract C {
-  constructor(x: uint256) { let saved: word = init_(Typedef.rep(x)); }
-  function main() { return (); }
+    constructor(x: uint256) {
+        let saved: word = init_(Typedef.rep(x));
+    }
+    function main() {
+        return ();
+    }
 }

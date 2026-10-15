@@ -1,7 +1,7 @@
-import {Add} from std;
+import { Add } from std;
 
-export {inc};
+export { inc };
 
 function inc(x: word) returns (word) {
-  return x + 1;
+    return x + 1;
 }

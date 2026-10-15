@@ -1,5 +1,5 @@
 trait Foo<a> {
-  function foo(x: a) returns (word) ;
+    function foo(x: a) returns (word);
 }
 
 // here the constraint a : Foo is
@@ -7,11 +7,11 @@ trait Foo<a> {
 // error should be detected.
 
 function bla(x: a) returns (word) {
-  return Foo.foo(x);
+    return Foo.foo(x);
 }
 
 contract Test {
-  function main() public returns (word) {
-    return bla(1);
-  }
+    function main() public returns (word) {
+        return bla(1);
+    }
 }

@@ -16,26 +16,36 @@ import * from std.ABIGeneric;
 // The dynamic direction is what the sum(f,g):ABIEncode fix restores: before it,
 // encoding a decoded dynamic sum dropped everything but the tag, so the return
 // bytes could not match the input.
-enum D2 { L(uint256), R(memory<bytes>) }                // dynamic (shallow)
-enum D3 { X(uint256), Y(uint256), Z(memory<bytes>) }   // dynamic (deeply nested)
-enum S2 { P(uint256), Q(uint256) }                      // static
+enum D2 {
+    L(uint256),
+    R(memory<bytes>)
+} // dynamic (shallow)
+enum D3 {
+    X(uint256),
+    Y(uint256),
+    Z(memory<bytes>)
+} // dynamic (deeply nested)
+enum S2 {
+    P(uint256),
+    Q(uint256)
+} // static
 
 contract SumRoundtrip {
-  constructor() {}
+    constructor() {}
 
-  // dynamic, shallow: decode a sum(uint256, bytes) then re-encode it.
-  function rtD2(x: D2) public returns (D2) {
-    return x;
-  }
+    // dynamic, shallow: decode a sum(uint256, bytes) then re-encode it.
+    function rtD2(x: D2) public returns (D2) {
+        return x;
+    }
 
-  // dynamic, deeply right-nested: each nested dynamic level round-trips its own
-  // offset word.
-  function rtD3(x: D3) public returns (D3) {
-    return x;
-  }
+    // dynamic, deeply right-nested: each nested dynamic level round-trips its own
+    // offset word.
+    function rtD3(x: D3) public returns (D3) {
+        return x;
+    }
 
-  // static control: inline layout must round-trip unchanged.
-  function rtS2(x: S2) public returns (S2) {
-    return x;
-  }
+    // static control: inline layout must round-trip unchanged.
+    function rtS2(x: S2) public returns (S2) {
+        return x;
+    }
 }

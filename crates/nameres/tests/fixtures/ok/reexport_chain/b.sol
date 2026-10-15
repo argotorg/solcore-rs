@@ -1,1 +1,1 @@
-export a.{value};
+export a.{ value };

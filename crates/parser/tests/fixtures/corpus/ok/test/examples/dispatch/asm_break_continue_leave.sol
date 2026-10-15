@@ -13,10 +13,14 @@ contract C {
     // A miscompiled `continue` would also add 0 and 1 (=> 15); a broken `break`
     // would keep going and add 6..9 as well.
     function loopSum() public returns (uint256) {
-        let result : word;
+        let result: word;
         assembly {
             result := 0
-            for { let i := 0 } lt(i, 10) { i := add(i, 1) } {
+            for {
+                let i := 0
+            } lt(i, 10) {
+                i := add(i, 1)
+            } {
                 if lt(i, 2) {
                     continue
                 }
@@ -35,7 +39,7 @@ contract C {
     // A broken `leave` would fall through and add 100 to the x > 3 branch too
     // (clamp(9) => 103 => total 205).
     function clampSum() public returns (uint256) {
-        let result : word;
+        let result: word;
         assembly {
             function clamp(x) -> y {
                 y := x

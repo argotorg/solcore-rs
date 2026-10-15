@@ -3,18 +3,18 @@
 // Expected: main() folds to word literal 55 (fib(10)).
 
 function fib(comptime n: integer) returns (comptime<integer>) {
-  if (integerLt(n, 2)) {
-    return n;
-  } else {
-    return integerAdd(
-      fib(integerSub(n, 1)),
-      fib(integerSub(n, 2))
-    );
-  }
+    if (integerLt(n, 2)) {
+        return n;
+    } else {
+        return integerAdd(
+            fib(integerSub(n, 1)),
+            fib(integerSub(n, 2))
+        );
+    }
 }
 
 contract FibInteger {
-  function main() returns (word) {
-    return wordFromInteger(fib(10));
-  }
+    function main() returns (word) {
+        return wordFromInteger(fib(10));
+    }
 }

@@ -2,18 +2,20 @@ import * from std;
 import * from std.dispatch;
 
 contract Id1 {
-  function id(x: word) returns (word) {
-    return x ;
-  }
+    function id(x: word) returns (word) {
+        return x;
+    }
 
-  function nid(x: word) returns (word) {
-    return id(x);
-  }
+    function nid(x: word) returns (word) {
+        return id(x);
+    }
 
-  function const(x: word, y: word) returns (word) { return x; }
+    function const(x: word, y: word) returns (word) {
+        return x;
+    }
 
-  // #[() -> 42]
-  function run() public returns (uint256) {
-    return uint256(const(nid(42), id(1)));
-  }
+    // #[() -> 42]
+    function run() public returns (uint256) {
+        return uint256(const(nid(42), id(1)));
+    }
 }

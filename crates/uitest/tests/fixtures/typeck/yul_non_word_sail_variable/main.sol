@@ -1,5 +1,11 @@
 function main() returns (word) {
-  let b : bool = false;
-  assembly { b := add(1, 1) }
-  if ( b ) { return 1; } else { return 0; }
+    let b: bool = false;
+    assembly {
+        b := add(1, 1)
+    }
+    if (b) {
+        return 1;
+    } else {
+        return 0;
+    }
 }

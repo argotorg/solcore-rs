@@ -1,5 +1,5 @@
 export { deep };
 
 function deep() returns (word) {
-  return 9;
+    return 9;
 }

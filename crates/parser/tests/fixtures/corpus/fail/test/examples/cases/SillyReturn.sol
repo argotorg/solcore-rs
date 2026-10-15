@@ -1,13 +1,21 @@
-enum Nat { Zero, Succ(Nat) }
-enum Bool { True, False }
+enum Nat {
+    Zero,
+    Succ(Nat)
+}
+enum Bool {
+    True,
+    False
+}
 
 function even(n: word) returns (Bool) {
-  match (n) {
-case Nat.Zero {
-return 1; return Bool.True;
-}
-case Nat.Succ(m) {
-return 0; return Bool.False;
-}
-}
+    match (n) {
+        case Nat.Zero {
+            return 1;
+            return Bool.True;
+        }
+        case Nat.Succ(m) {
+            return 0;
+            return Bool.False;
+        }
+    }
 }

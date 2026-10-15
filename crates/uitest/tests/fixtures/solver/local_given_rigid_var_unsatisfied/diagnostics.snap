@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/local_given_rigid_var_unsatisfied/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: word: C
- --> /main/main.sol:6:10
+ --> /main/main.sol:6:12
   |
 5 | function bad<a>() returns (word) where a: C {
-6 |   return C.c(1);
-  |          ^^^^^^ constraint originates here
+6 |     return C.c(1);
+  |            ^^^^^^ constraint originates here
 7 | }
   |
   = note: no visible impl matches `word: C`

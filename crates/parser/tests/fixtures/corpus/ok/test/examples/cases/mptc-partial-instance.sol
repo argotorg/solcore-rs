@@ -9,37 +9,39 @@ pragma no-coverage-condition Nth;
 
 enum Zero {}
 enum Succ<a> {}
-enum Proxy<a> { Proxy }
+enum Proxy<a> {
+    Proxy
+}
 
 trait Nth<a, b, c> {
-    function nth(x: Proxy<a>, y: b) returns (c) ;
+    function nth(x: Proxy<a>, y: b) returns (c);
 }
 
 impl<a, b> Nth<Zero, (a, b), a> {
     function nth(x: Proxy<Zero>, y: (a, b)) returns (a) {
         match (y) {
-case (a, b) {
-return a;
-}
-}
+            case (a, b) {
+                return a;
+            }
+        }
     }
 }
 
 impl<n, a, b, c> Nth<Succ<n>, (a, b), c> where n: Nth<b, c> {
     function nth(x: Proxy<Succ<n>>, y: (a, b)) returns (c) {
         match (y) {
-case (a, b) {
-return Nth.nth(@n, b);
-}
-}
+            case (a, b) {
+                return Nth.nth(@n, b);
+            }
+        }
     }
 }
 
 contract C {
     constructor() {}
     function main() public returns (word) {
-        let p : (word, word, word) = (1, 2, 3);
-        let x : word = Nth.nth(@Zero, p);
+        let p: (word, word, word) = (1, 2, 3);
+        let x: word = Nth.nth(@Zero, p);
         return x;
     }
 }

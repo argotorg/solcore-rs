@@ -1,8 +1,7 @@
 function id(x: word) returns (word) {
-  return x;
+    return x;
 }
 
 function nid(x: word) returns (word) {
-  return id(x);
+    return id(x);
 }
-

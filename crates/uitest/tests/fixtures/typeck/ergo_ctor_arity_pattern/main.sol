@@ -1,9 +1,11 @@
-enum Pair<a, b> { Mk(a, b) }
+enum Pair<a, b> {
+    Mk(a, b)
+}
 
 function f(p: Pair<word, word>) returns (word) {
-  match (p) {
-case Pair.Mk(x) {
-return x;
-}
-}
+    match (p) {
+        case Pair.Mk(x) {
+            return x;
+        }
+    }
 }

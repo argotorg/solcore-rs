@@ -1,5 +1,5 @@
-export {offset};
+export { offset };
 
 function offset() returns (word) {
-  return 2;
+    return 2;
 }

@@ -1,2 +1,2 @@
-import {value} from a;
-import {value} from b;
+import { value } from a;
+import { value } from b;

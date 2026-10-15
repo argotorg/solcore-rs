@@ -1,12 +1,16 @@
 import * from std;
 
 function yul_asm_switch_body() {
-    let result : word = 0;
-    let flag : word = 1;
+    let result: word = 0;
+    let flag: word = 1;
     assembly {
         switch flag
-        case 0 { result := 0 }
-        default { result := callvalue() }
+        case 0 {
+            result := 0
+        }
+        default {
+            result := callvalue()
+        }
     }
 }
 

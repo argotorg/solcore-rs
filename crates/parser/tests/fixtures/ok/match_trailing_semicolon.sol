@@ -1,7 +1,7 @@
 function f() {
-  match (0) {
-default {
-return ();
-}
-}
+    match (0) {
+        default {
+            return ();
+        }
+    }
 }

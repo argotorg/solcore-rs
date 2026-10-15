@@ -1,17 +1,19 @@
 type W = word;
 
 trait FromWord<i> {
-  function fromWord(x: word) returns (i) ;
+    function fromWord(x: word) returns (i);
 }
 
 impl FromWord<word> {
-  function fromWord(x: word) returns (word) { x }
+    function fromWord(x: word) returns (word) {
+        x
+    }
 }
 
 contract C {
 
-  function main() public returns (W) {
-    let r : W = FromWord.fromWord(42);
-    return r;
-  }
+    function main() public returns (W) {
+        let r: W = FromWord.fromWord(42);
+        return r;
+    }
 }

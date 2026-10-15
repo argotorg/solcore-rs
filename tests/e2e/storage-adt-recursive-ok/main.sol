@@ -7,25 +7,33 @@ import * from std.StorageGeneric;
 // derivation for a recursive type is a SKIP, not a hard error. The type still
 // gets its Generic instance and remains usable everywhere except storage.
 
-enum IntList { Nil, Cons(uint256, IntList) }
+enum IntList {
+    Nil,
+    Cons(uint256, IntList)
+}
 
 function len(xs: IntList) returns (uint256) {
     match (xs) {
-case IntList.Nil {
-return uint256(0);
-}
-case IntList.Cons(_, r) {
-return uint256(1) + len(r);
-}
-}
+        case IntList.Nil {
+            return uint256(0);
+        }
+        case IntList.Cons(_, r) {
+            return uint256(1) + len(r);
+        }
+    }
 }
 
 // A non-recursive neighbour in the same module still gets its storage
 // instances, so the skip is per-type rather than per-module.
-enum Point { Point(uint256, uint256) }
+enum Point {
+    Point(uint256, uint256)
+}
 
+// #[scenario("storage_adt_recursive_ok")]
+// constructor() derives storage only for the non-recursive Point
+// #[deploy(0x) -> success]
 contract C {
-    p : Point;
+    p: Point;
 
     constructor() {
         p = Point(uint256(1), uint256(2));

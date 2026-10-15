@@ -1,16 +1,16 @@
-import {Token} from lib;
+import { Token } from lib;
 
 function mk(x: word) returns (Token) {
-  return Ok(x);
+    return Ok(x);
 }
 
 function classify(t: Token) returns (word) {
-  match (t) {
-case Ok(v) {
-return v;
-}
-case Token.Err(v) {
-return v;
-}
-}
+    match (t) {
+        case Ok(v) {
+            return v;
+        }
+        case Token.Err(v) {
+            return v;
+        }
+    }
 }

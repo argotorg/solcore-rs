@@ -1,19 +1,21 @@
-enum Wrap { Wrap(word) }
+enum Wrap {
+    Wrap(word)
+}
 
 trait Boxed<a> {
-  function unbox(x: a) returns (word) ;
+    function unbox(x: a) returns (word);
 }
 
 impl Boxed<Wrap> {
-  function unbox(x: Wrap) returns (word) {
-    match (x) {
-case Wrap.Wrap(w) {
-return w;
-}
-}
-  }
+    function unbox(x: Wrap) returns (word) {
+        match (x) {
+            case Wrap.Wrap(w) {
+                return w;
+            }
+        }
+    }
 }
 
 function main() returns (word) {
-  return Boxed.unbox(Wrap.Wrap(1));
+    return Boxed.unbox(Wrap.Wrap(1));
 }

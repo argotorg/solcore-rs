@@ -1,15 +1,17 @@
-enum Name { Name(word) }
+enum Name {
+    Name(word)
+}
 
 trait Token<a> {
-  function token(x: a) returns (word) ;
+    function token(x: a) returns (word);
 }
 
 default impl<a> Token<a> {
-  function token(x: a) returns (word) {
-    return 0;
-  }
+    function token(x: a) returns (word) {
+        return 0;
+    }
 }
 
 function main() returns (word) {
-  return Token.token(Name.Name(2));
+    return Token.token(Name.Name(2));
 }

@@ -1,1 +1,1 @@
-export types.{Box(*)};
+export types.{ Box(*) };

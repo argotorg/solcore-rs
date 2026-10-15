@@ -4,14 +4,21 @@ import * from std.dispatch;
 // Storage support for a `memory(bytes)` contract field: assigning to the
 // field copies the byte array into storage, reading it back loads it into
 // fresh memory. Exercises StorageSize / CanStore for memory(bytes).
+// #[scenario("storagebytes")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0x0399321e00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000004deadbeef00000000000000000000000000000000000000000000000000000000, label = "set(bytes) 0xdeadbeef -- short, stored in-place") -> success(0x)]
+// #[raw(0x6d4ce63c, label = "get() -> (bytes) returns the short value just stored") -> success(0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000004deadbeef00000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x0399321e0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002800112233445566778899aabbccddeeff00112233445566778899aabbccddeeff0011223344556677000000000000000000000000000000000000000000000000, label = "set(bytes) 40-byte value -- long, stored out-of-place") -> success(0x)]
+// #[raw(0x6d4ce63c, label = "get() -> (bytes) returns the long value just stored") -> success(0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002800112233445566778899aabbccddeeff00112233445566778899aabbccddeeff0011223344556677000000000000000000000000000000000000000000000000)]
 contract C {
-  content: bytes;
+    content: bytes;
 
-  function set(value: memory<bytes>) public {
-    content = value;
-  }
+    function set(value: memory<bytes>) public {
+        content = value;
+    }
 
-  function get() public returns (memory<bytes>) {
-    return content;
-  }
+    function get() public returns (memory<bytes>) {
+        return content;
+    }
 }

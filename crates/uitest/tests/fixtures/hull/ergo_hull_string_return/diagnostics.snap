@@ -4,13 +4,13 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/ergo_hull_string_return/main.sol
 ---
 error[SC0411]: runtime lowering cannot represent `string` in return type of `main`
- --> /main/main.sol:5:3
+ --> /main/main.sol:5:5
   |
 4 |   contract Answer {
-5 | /   function main() returns (string) {
-6 | |     return helper();
-7 | |   }
-  | |___^ not representable at runtime
+5 | /     function main() returns (string) {
+6 | |         return helper();
+7 | |     }
+  | |_____^ not representable at runtime
 8 |   }
   |
   = note: `integer`, `string`, and `comptime` values must be eliminated before runtime lowering

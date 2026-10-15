@@ -1,7 +1,7 @@
 function f(x: word) returns (word) {
-  return x;
+    return x;
 }
 
 function g() returns (word) {
-  return f();
+    return f();
 }

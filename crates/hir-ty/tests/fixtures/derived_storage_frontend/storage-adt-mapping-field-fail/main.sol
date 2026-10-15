@@ -12,10 +12,12 @@ import * from std.StorageGeneric;
 // (Even if it did, that instance's store/load are `unimplemented()`: copying a
 // mapping is not a meaningful storage operation.)
 
-enum Wrapper { Wrapper(mapping(uint256 => uint256)) }
+enum Wrapper {
+    Wrapper(mapping(uint256 => uint256))
+}
 
 contract C {
-    w : Wrapper;
+    w: Wrapper;
 
     constructor() {}
 }

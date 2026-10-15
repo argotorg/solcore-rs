@@ -1,15 +1,24 @@
-enum Proxy<a> { Proxy }
-enum dict<member, index> { dict(word, Proxy<member>, Proxy<index>) }
-enum address { address(word) }
-enum storage<a> { storage(word) }
-
-enum IndexAP<m, idx, member> { IndexAP(m, idx, Proxy<member>) }
-
-function wal(ref: storage<dict<address, word>>, src: address, amt: word) {
-  let ip = IndexAP(ref, src, @word);
-  Assign.assign(LVA.acc(ip), amt);
+enum Proxy<a> {
+    Proxy
+}
+enum dict<member, index> {
+    dict(word, Proxy<member>, Proxy<index>)
+}
+enum address {
+    address(word)
+}
+enum storage<a> {
+    storage(word)
 }
 
+enum IndexAP<m, idx, member> {
+    IndexAP(m, idx, Proxy<member>)
+}
+
+function wal(ref: storage<dict<address, word>>, src: address, amt: word) {
+    let ip = IndexAP(ref, src, @word);
+    Assign.assign(LVA.acc(ip), amt);
+}
 
 /* Expected:
 
@@ -39,17 +48,17 @@ b5 +-> e4 should really be b5 ~ e4
 
 */
 trait LVA<self, memberRefType> {
-    function acc(x: self) returns (memberRefType) ;
+    function acc(x: self) returns (memberRefType);
 }
 
 impl<index, member> LVA<IndexAP<storage<dict<index, member>>, index, member>, storage<member>> {
     function acc(x: IndexAP<storage<dict<index, member>>, index, member>) returns (storage<member>) {
-	    return storage(30);
+        return storage(30);
     }
 }
 
 trait Assign<lhs, rhs> {
-    function assign(l: lhs, r: rhs) ;
+    function assign(l: lhs, r: rhs);
 }
 
 impl<a> Assign<storage<a>, a> {

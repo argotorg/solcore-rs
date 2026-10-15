@@ -5,4 +5,6 @@ import traits;
 #[derive(traits.Marker)]
 enum Tagged {}
 
-function run(value: word) returns (word) { return value; }
+function run(value: word) returns (word) {
+    return value;
+}

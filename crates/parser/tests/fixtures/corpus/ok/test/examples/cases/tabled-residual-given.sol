@@ -6,13 +6,13 @@ trait Wanted<a> {}
 impl<a> Wanted<a> where a: Known {}
 
 function needsWanted<a>(x: a) where a: Wanted {
-  return ();
+    return ();
 }
 
 function passKnown<a>(x: a) where a: Known {
-  return needsWanted(x);
+    return needsWanted(x);
 }
 
 function main() {
-  return ();
+    return ();
 }

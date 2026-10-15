@@ -1,15 +1,15 @@
 import * from std;
 import * from std.dispatch;
-import {Option, contains} from option;
-import {sender} from context;
+import { Option, contains } from option;
+import { sender } from context;
 
 // A token either has an owner or does not exist: unset mapping entries
 // read back as Option.None.
 contract MiniNFT {
-    nextId : uint256;
-    owners : mapping(uint256 => Option<address>);
-    approvals : mapping(uint256 => Option<address>);
-    balances : mapping(address => uint256);
+    nextId: uint256;
+    owners: mapping(uint256 => Option<address>);
+    approvals: mapping(uint256 => Option<address>);
+    balances: mapping(address => uint256);
 
     constructor() {}
 
@@ -24,7 +24,9 @@ contract MiniNFT {
 
     function ownerOf(id: uint256) public returns (address) {
         match (owners[id]) {
-            case Option.Some(owner) { return owner; }
+            case Option.Some(owner) {
+                return owner;
+            }
             default {
                 require(false, "no such token");
                 return address(0);
@@ -53,8 +55,12 @@ contract MiniNFT {
 
     function exists(id: uint256) public returns (bool) {
         match (owners[id]) {
-            case Option.Some(_) { return true; }
-            default { return false; }
+            case Option.Some(_) {
+                return true;
+            }
+            default {
+                return false;
+            }
         }
     }
 }

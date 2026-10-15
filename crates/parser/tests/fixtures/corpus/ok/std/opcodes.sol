@@ -646,7 +646,7 @@ function callcode(a: word, b: word, c: word, d: word, e: word, f: word, g: word)
 
 function return_(a: word, b: word) returns (()) {
     assembly {
-        return(a, b)
+        return (a, b)
     }
 }
 

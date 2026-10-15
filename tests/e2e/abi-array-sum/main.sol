@@ -15,34 +15,54 @@ import * from std.ABIGeneric;
 // RValueIdxAccess) and `ops.length()` uses the Length-class UFCS — the same
 // surface syntax as storage arrays. `ops` is a parameter, so this relies on
 // value-receiver UFCS (NameResolution), not just the field-receiver form.
-enum Operation { Approve(uint256), Reject(uint256) }
+enum Operation {
+    Approve(uint256),
+    Reject(uint256)
+}
 
+// #[scenario("abi_array_sum")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0xc2fb594e0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000277b92c0722e5bbe8d1413b7fbec6093bc4dc966a65832498dc8c2c67d9a937cc000000000000000000000000000000000000000000000000000000000000000a230a38fb21a3287e57c3ebd56f136d3ad90c112593989004d4c1c05676c19def0000000000000000000000000000000000000000000000000000000000000014, label = "count([Approve(10),Reject(20)]) -> 2") -> success(0x0000000000000000000000000000000000000000000000000000000000000002)]
+// #[raw(0xdd072b8500000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000277b92c0722e5bbe8d1413b7fbec6093bc4dc966a65832498dc8c2c67d9a937cc000000000000000000000000000000000000000000000000000000000000000a230a38fb21a3287e57c3ebd56f136d3ad90c112593989004d4c1c05676c19def0000000000000000000000000000000000000000000000000000000000000014, label = "tagOf(ops,0) -> 16 (Approve)") -> success(0x0000000000000000000000000000000000000000000000000000000000000010)]
+// #[raw(0xdd072b8500000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000277b92c0722e5bbe8d1413b7fbec6093bc4dc966a65832498dc8c2c67d9a937cc000000000000000000000000000000000000000000000000000000000000000a230a38fb21a3287e57c3ebd56f136d3ad90c112593989004d4c1c05676c19def0000000000000000000000000000000000000000000000000000000000000014, label = "tagOf(ops,1) -> 32 (Reject)") -> success(0x0000000000000000000000000000000000000000000000000000000000000020)]
+// #[raw(0x94cc5e2c00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000277b92c0722e5bbe8d1413b7fbec6093bc4dc966a65832498dc8c2c67d9a937cc000000000000000000000000000000000000000000000000000000000000000a230a38fb21a3287e57c3ebd56f136d3ad90c112593989004d4c1c05676c19def0000000000000000000000000000000000000000000000000000000000000014, label = "amountOf(ops,0) -> 10") -> success(0x000000000000000000000000000000000000000000000000000000000000000a)]
+// #[raw(0x94cc5e2c00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000277b92c0722e5bbe8d1413b7fbec6093bc4dc966a65832498dc8c2c67d9a937cc000000000000000000000000000000000000000000000000000000000000000a230a38fb21a3287e57c3ebd56f136d3ad90c112593989004d4c1c05676c19def0000000000000000000000000000000000000000000000000000000000000014, label = "amountOf(ops,1) -> 20") -> success(0x0000000000000000000000000000000000000000000000000000000000000014)]
+// #[raw(0xdd072b8500000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000277b92c0722e5bbe8d1413b7fbec6093bc4dc966a65832498dc8c2c67d9a937cc000000000000000000000000000000000000000000000000000000000000000a230a38fb21a3287e57c3ebd56f136d3ad90c112593989004d4c1c05676c19def0000000000000000000000000000000000000000000000000000000000000014, label = "tagOf(ops,2) -> revert ArrayOutOfBounds (len 2)") -> revert(0x7f52b2bf)]
 contract Batch {
-  constructor() {}
+    constructor() {}
 
-  // Number of operations in the array.
-  function count(ops : calldata<array<Operation>>) public returns (uint256) {
-    return ops.length();
-  }
+    // Number of operations in the array.
+    function count(ops: calldata<array<Operation>>) public returns (uint256) {
+        return ops.length();
+    }
 
-  // Constructor of element i, mapped to a distinct sentinel: 16 for Approve,
-  // 32 for Reject. Deliberately arbitrary values so the result proves the match
-  // actually discriminates the constructor (via its keccak256("Name(argSigs)")
-  // wire tag) rather than echoing a raw positional index.
-  function tagOf(ops : calldata<array<Operation>>, i : uint256) public returns (uint256) {
-    let op : Operation = ops[i];
-    match (op ) {
-      case Operation.Approve(_) { return uint256(16);
-      } case Operation.Reject(_)  { return uint256(32);
-    } }
-  }
+    // Constructor of element i, mapped to a distinct sentinel: 16 for Approve,
+    // 32 for Reject. Deliberately arbitrary values so the result proves the match
+    // actually discriminates the constructor (via its keccak256("Name(argSigs)")
+    // wire tag) rather than echoing a raw positional index.
+    function tagOf(ops: calldata<array<Operation>>, i: uint256) public returns (uint256) {
+        let op: Operation = ops[i];
+        match (op) {
+            case Operation.Approve(_) {
+                return uint256(16);
+            }
+            case Operation.Reject(_) {
+                return uint256(32);
+            }
+        }
+    }
 
-  // Payload (the uint256) of element i, regardless of constructor.
-  function amountOf(ops : calldata<array<Operation>>, i : uint256) public returns (uint256) {
-    let op : Operation = ops[i];
-    match (op ) {
-      case Operation.Approve(v) { return v;
-      } case Operation.Reject(v)  { return v;
-    } }
-  }
+    // Payload (the uint256) of element i, regardless of constructor.
+    function amountOf(ops: calldata<array<Operation>>, i: uint256) public returns (uint256) {
+        let op: Operation = ops[i];
+        match (op) {
+            case Operation.Approve(v) {
+                return v;
+            }
+            case Operation.Reject(v) {
+                return v;
+            }
+        }
+    }
 }

@@ -11,69 +11,95 @@ import std;
 type uint = uint256; // misleads instance solver
 
 trait Int<i> {
-  function fromWord(x: word) returns (comptime<i>) ; // meaning result is comptime whenever arg is
+    function fromWord(x: word) returns (comptime<i>); // meaning result is comptime whenever arg is
 
-  function toWord(x: i) returns (comptime<word>) ;
+    function toWord(x: i) returns (comptime<word>);
 }
 
-
 impl Int<word> {
-  function fromWord(x: word) returns (comptime<word>) { x }
-  function toWord(x: word) returns (comptime<word>) { x }
+    function fromWord(x: word) returns (comptime<word>) {
+        x
+    }
+    function toWord(x: word) returns (comptime<word>) {
+        x
+    }
 }
 
 impl Int<uint> {
-  function fromWord(x: word) returns (comptime<uint>) { uint256(x) }
-  function toWord(x: uint) returns (comptime<word>) { Typedef.rep(x) }
+    function fromWord(x: word) returns (comptime<uint>) {
+        uint256(x)
+    }
+    function toWord(x: uint) returns (comptime<word>) {
+        Typedef.rep(x)
+    }
 }
 
-
 // specialised for numbers
-function fromInt<a, b>(x: a) returns (b) where a: Int, b: Int { Int.fromWord(Int.toWord(x)) }
-function staticInt<a, b>(comptime x: a) returns (comptime<b>) where a: Int, b: Int { Int.fromWord(Int.toWord(x)) }
+function fromInt<a, b>(x: a) returns (b) where a: Int, b: Int {
+    Int.fromWord(Int.toWord(x))
+}
+function staticInt<a, b>(comptime x: a) returns (comptime<b>) where a: Int, b: Int {
+    Int.fromWord(Int.toWord(x))
+}
 
 // limited usability
-function dynamic_cast<a, b, r>(x: a) returns (b) where a: Typedef<r>, b: Typedef<r> { Typedef.abs(Typedef.rep(x)) }
-function static_cast<a, b, r>(comptime x: a) returns (comptime<b>) where a: Typedef<r>, b: Typedef<r> { Typedef.abs(Typedef.rep(x)) }
+function dynamic_cast<a, b, r>(x: a) returns (b) where a: Typedef<r>, b: Typedef<r> {
+    Typedef.abs(Typedef.rep(x))
+}
+function static_cast<a, b, r>(comptime x: a) returns (comptime<b>) where a: Typedef<r>, b: Typedef<r> {
+    Typedef.abs(Typedef.rep(x))
+}
 
 // wider usability
-function dynamic_cast_via<a, b, r>(p: @r, x: a) returns (b) where a: Typedef<r>, b: Typedef<r> { Typedef.abs(Typedef.rep(x)) }
+function dynamic_cast_via<a, b, r>(p: @r, x: a) returns (b) where a: Typedef<r>, b: Typedef<r> {
+    Typedef.abs(Typedef.rep(x))
+}
 
-function static_cast_via<a, b, r>(comptime p: @r, comptime x: a) returns (comptime<b>) where a: Typedef<r>, b: Typedef<r> { Typedef.abs(Typedef.rep(x)) }
+function static_cast_via<a, b, r>(comptime p: @r, comptime x: a) returns (comptime<b>) where a: Typedef<r>, b: Typedef<r> {
+    Typedef.abs(Typedef.rep(x))
+}
 // maybe: `comptime function static_cast_via` as equivalent notation
 
 function notcomptime(x: word) returns (word) {
-  let res : word;
-  assembly {
-    res := mload(0)
-  }
-  return res;
+    let res: word;
+    assembly {
+        res := mload(0)
+    }
+    return res;
 }
 
-function id<a>(x: a) returns (comptime<a>) { x }
-function id_uint(x: uint) returns (comptime<uint>) { x }
+function id<a>(x: a) returns (comptime<a>) {
+    x
+}
+function id_uint(x: uint) returns (comptime<uint>) {
+    x
+}
 contract FromWord {
-  constructor() {}
-  function f1(x: word) returns (comptime<word>) { x }
-  function f2(x: uint) returns (comptime<uint>) { x }
-  function g() returns (uint) {
-    let y1 : comptime<uint256> = static_cast( // cast on top level of comptime let
-                                     f1(
-				        static_cast(42) //cast a literal - could be fromWord/staticInt
-				     ));
+    constructor() {}
+    function f1(x: word) returns (comptime<word>) {
+        x
+    }
+    function f2(x: uint) returns (comptime<uint>) {
+        x
+    }
+    function g() returns (uint) {
+        let y1: comptime<uint256> = static_cast( // cast on top level of comptime let
+            f1(
+                static_cast(42) //cast a literal - could be fromWord/staticInt
+            ));
 
-    let y2 : comptime<uint256> = staticInt( id_uint(staticInt(42)) ); // cast at literal, cast at let
+        let y2: comptime<uint256> = staticInt(id_uint(staticInt(42))); // cast at literal, cast at let
 
-    let z = notcomptime(Typedef.rep(y1)); // no cast - not comptime
-    let t = dynamic_cast(y1); // just testing
-    return t;
-  }
+        let z = notcomptime(Typedef.rep(y1)); // no cast - not comptime
+        let t = dynamic_cast(y1); // just testing
+        return t;
+    }
 
-  function h() returns (comptime<uint256>) {
-    let y2 : comptime<uint256> = staticInt( ( staticInt(42) )); // error w/o type annotation
-    return y2;
-  }
-  function main() returns (uint) {
-    return g();
-  }
+    function h() returns (comptime<uint256>) {
+        let y2: comptime<uint256> = staticInt((staticInt(42))); // error w/o type annotation
+        return y2;
+    }
+    function main() returns (uint) {
+        return g();
+    }
 }

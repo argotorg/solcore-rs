@@ -7,13 +7,13 @@
 import std;
 
 contract ComptimeParamRuntime {
-  function double(comptime x: word) returns (comptime<word>) {
-    return x + x;
-  }
-  function process(value: word) returns (word) {
-    return double(value);
-  }
-  function main() returns (word) {
-    return process(21);
-  }
+    function double(comptime x: word) returns (comptime<word>) {
+        return x + x;
+    }
+    function process(value: word) returns (word) {
+        return double(value);
+    }
+    function main() returns (word) {
+        return process(21);
+    }
 }

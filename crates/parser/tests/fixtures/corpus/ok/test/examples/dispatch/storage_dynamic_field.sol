@@ -3,10 +3,13 @@ import * from std.dispatch;
 import * from std.Generic;
 import * from std.StorageGeneric;
 
-enum Blob { NoBlob, SomeBytes(memory<bytes>) }
+enum Blob {
+    NoBlob,
+    SomeBytes(memory<bytes>)
+}
 
 contract C {
-    blob : Blob;
+    blob: Blob;
 
     constructor() {
         blob = Blob.NoBlob;
@@ -26,24 +29,25 @@ contract C {
 
     function getBytes() public returns (memory<bytes>) {
         match (blob) {
-case Blob.NoBlob {
-revertEmpty(); return memory(0);
-}
-case Blob.SomeBytes(b) {
-return b;
-}
-}
+            case Blob.NoBlob {
+                revertEmpty();
+                return memory(0);
+            }
+            case Blob.SomeBytes(b) {
+                return b;
+            }
+        }
     }
 
     // Loads the whole ADT back from storage and inspects its tag.
     function isEmpty() public returns (bool) {
         match (blob) {
-case Blob.NoBlob {
-return true;
-}
-case Blob.SomeBytes(_) {
-return false;
-}
-}
+            case Blob.NoBlob {
+                return true;
+            }
+            case Blob.SomeBytes(_) {
+                return false;
+            }
+        }
     }
 }

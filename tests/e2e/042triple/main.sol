@@ -3,16 +3,16 @@ import * from std.dispatch;
 
 contract Triple {
 
-  function asel(t: (word, word, word)) returns (word) {
-    match (t) {
-case (a,b,c) {
-return c;
-}
-}
-  }
+    function asel(t: (word, word, word)) returns (word) {
+        match (t) {
+            case (a, b, c) {
+                return c;
+            }
+        }
+    }
 
-  // #[() -> 42]
-  function run() public returns (uint256) {
-    return uint256(asel((1,21,42)));
-  }
+    // #[() -> 42]
+    function run() public returns (uint256) {
+        return uint256(asel((1, 21, 42)));
+    }
 }

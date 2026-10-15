@@ -4,13 +4,13 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_ambiguous_defaulting/main.sol
 ---
 error[SC0299]: ambiguous inferred type
-  --> /main/main.sol:30:29
+  --> /main/main.sol:32:29
    |
-29 |
-30 |   function f() returns (word) {
+31 |
+32 |   function f() returns (word) {
    |  _____________________________^
-31 | |   return Conv.out(Conv.make(1));
-32 | | }
+33 | |     return Conv.out(Conv.make(1));
+34 | | }
    | |_^ ambiguous inferred type
    |
    = note: <_> function() returns (word) where _: Conv

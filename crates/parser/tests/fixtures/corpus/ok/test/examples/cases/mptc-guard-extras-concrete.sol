@@ -3,19 +3,21 @@
 // `word` directly in the constraint, so freetv extras = [] and the function
 // compiles through normal type inference without phantom variable discovery.
 
-enum Box { Box(word) }
+enum Box {
+    Box(word)
+}
 
 trait Unbox<self, rep> {
-    function unbox(x: self) returns (rep) ;
+    function unbox(x: self) returns (rep);
 }
 
 impl Unbox<Box, word> {
     function unbox(x: Box) returns (word) {
         match (x) {
-case Box(w) {
-return w;
-}
-}
+            case Box(w) {
+                return w;
+            }
+        }
     }
 }
 

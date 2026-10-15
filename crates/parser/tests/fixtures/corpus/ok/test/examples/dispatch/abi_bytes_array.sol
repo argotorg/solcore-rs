@@ -11,15 +11,15 @@ import * from std.ABIGeneric;
 // element i's slot, and the memory(bytes) decoder follows that offset to the
 // element's length word — no ADT wrapper needed, unlike abi_batch_adt.
 contract BytesArray {
-  constructor() {}
+    constructor() {}
 
-  // The i-th bytes element.
-  function at(items: calldata<array<memory<bytes>>>, i: uint256) public returns (memory<bytes>) {
-    return items[i];
-  }
+    // The i-th bytes element.
+    function at(items: calldata<array<memory<bytes>>>, i: uint256) public returns (memory<bytes>) {
+        return items[i];
+    }
 
-  // Number of elements.
-  function count(items: calldata<array<memory<bytes>>>) public returns (uint256) {
-    return items.length();
-  }
+    // Number of elements.
+    function count(items: calldata<array<memory<bytes>>>) public returns (uint256) {
+        return items.length();
+    }
 }

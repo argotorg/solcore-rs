@@ -8,7 +8,7 @@ import std;
 import * from std;
 
 contract StringLitMem {
-  function main() public returns (memory<string>) {
-    return "abcd";
-  }
+    function main() public returns (memory<string>) {
+        return "abcd";
+    }
 }

@@ -1,25 +1,27 @@
-enum memory<t> { memory(word) }
+enum memory<t> {
+    memory(word)
+}
 
 trait ValueTy<t> {
-    function rep(x: t) returns (word) ;
+    function rep(x: t) returns (word);
 }
 
 impl ValueTy<memory<t>> {
     function rep(x: memory<t>) returns (word) {
         match (x) {
-case memory(w) {
-return w;
-}
-}
+            case memory(w) {
+                return w;
+            }
+        }
     }
 }
 
 trait Ref<ref, deref> {
-    function store(loc: ref, value: deref) ;
+    function store(loc: ref, value: deref);
 }
 
 impl Ref<memory<t>, t> {
-   function store(loc: memory<t>, value: t) {
+    function store(loc: memory<t>, value: t) {
         // We don't have a `ValueTy` bound on `t` anywhere, so this should raise a type error...
         let vw = ValueTy.rep(value);
     }

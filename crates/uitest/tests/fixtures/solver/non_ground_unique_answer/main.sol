@@ -5,13 +5,13 @@ trait Child<a, b> where a: Parent {}
 impl<b> Child<word, b> {}
 
 function use<a>(x: a) returns (a) where a: Parent {
-  return x;
+    return x;
 }
 
 function trigger<unused>() returns (word) {
-  return use(0);
+    return use(0);
 }
 
 function main() returns (word) {
-  return 0;
+    return 0;
 }

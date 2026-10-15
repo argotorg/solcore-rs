@@ -4,21 +4,23 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/duplicate_local_declarations/main.sol
 ---
 error[SC0108]: duplicate declaration `Foo` in type namespace
- --> /main/main.sol:2:6
+ --> /main/main.sol:4:6
   |
-1 | enum Foo { Foo }
+1 | enum Foo {
   |      --- previous declaration
-2 | type Foo = word;
+2 |     Foo
+3 | }
+4 | type Foo = word;
   |      ^^^ duplicate declaration
-3 |
+5 |
   |
 ---
 
 error[SC0108]: duplicate declaration `dup` in term namespace
- --> /main/main.sol:5:10
+ --> /main/main.sol:7:10
   |
-3 |
-4 | function dup() {}
+5 |
+6 | function dup() {}
   |          --- previous declaration
-5 | function dup() {}
+7 | function dup() {}
   |          ^^^ duplicate declaration

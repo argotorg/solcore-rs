@@ -7,7 +7,9 @@ import * from std.StorageGeneric;
 
 export { Pool, mkPool, reserveX, reserveY, swapXforY, addLiquidity };
 
-enum Pool { Pool(uint256, uint256) }
+enum Pool {
+    Pool(uint256, uint256)
+}
 
 // The single point where the nonzero-reserve invariant is established.
 function mkPool(x: uint256, y: uint256) returns (Pool) {
@@ -16,11 +18,19 @@ function mkPool(x: uint256, y: uint256) returns (Pool) {
 }
 
 function reserveX(p: Pool) returns (uint256) {
-    match (p) { case Pool(x, _) { return x; } }
+    match (p) {
+        case Pool(x, _) {
+            return x;
+        }
+    }
 }
 
 function reserveY(p: Pool) returns (uint256) {
-    match (p) { case Pool(_, y) { return y; } }
+    match (p) {
+        case Pool(_, y) {
+            return y;
+        }
+    }
 }
 
 // A swap may never decrease the product of the reserves. The rounding

@@ -1,9 +1,14 @@
-enum Option { None, Some(word) }
+enum Option {
+    None,
+    Some(word)
+}
 
-function apply(f: function(word) returns (Option)) returns (Option) {
-  return f(1);
+function apply(f: function (word) returns (Option)) returns (Option) {
+    return f(1);
 }
 
 function main() returns (Option) {
-  return apply(lam(x) { return .Some(x); });
+    return apply(lam (x) {
+            return .Some(x);
+        });
 }

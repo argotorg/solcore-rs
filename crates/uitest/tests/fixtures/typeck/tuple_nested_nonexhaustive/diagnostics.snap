@@ -9,7 +9,7 @@ error[SC0302]: non-exhaustive pattern match
 1 | function nested(p: ((), (bool, word))) returns (word) {
 2 |     match (p) {
   |            ^ non-exhaustive match
-3 |         case ((), (true, x)) { return x; }
+3 |         case ((), (true, x)) {
   |
   = note: missing case: pair((), pair(false, _))
   = note: help: add a clause that covers the missing case

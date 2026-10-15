@@ -4,10 +4,12 @@
 
 import pragma_merge_base;
 
-enum VerifyType<x> { VerifyType }
+enum VerifyType<x> {
+    VerifyType
+}
 
 // Would fail without imported pragma no-patterson-condition TestClassP3
-impl<a> TestClassP3<a, word> where (a, word): TestClassP3<a> {}
+impl<a> TestClassP3<a, word> where(a, word): TestClassP3<a> {}
 
 // Would fail without imported pragma no-coverage-condition TestClassC1
 impl<p, q> TestClassC1<VerifyType<p>, q> {}

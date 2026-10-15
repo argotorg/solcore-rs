@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/whole_mapping_private_full/main.sol
 ---
 error[SC0201]: type mismatch: expected mapping(address => uint256), found storage<mapping(address => uint256)>
-  --> /main/main.sol:10:12
+  --> /main/main.sol:18:16
    |
- 9 |   function leak() returns (mapping(address => uint256)) {
-10 |     return balances;
-   |            ^^^^^^^^ expression has mismatched type
-11 |   }
+17 |     function leak() returns (mapping(address => uint256)) {
+18 |         return balances;
+   |                ^^^^^^^^ expression has mismatched type
+19 |     }
    |
    = note: expected type: mapping(address => uint256)
    = note: found type: storage<mapping(address => uint256)>

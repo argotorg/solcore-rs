@@ -1,17 +1,23 @@
-enum Light { On, Off }
-enum Power { Plugged, Battery }
+enum Light {
+    On,
+    Off
+}
+enum Power {
+    Plugged,
+    Battery
+}
 
 function isOn(l: Light) returns (word) {
-  match (l) {
-case Light.On {
-return 1;
-}
-case Light.Off {
-return 0;
-}
-}
+    match (l) {
+        case Light.On {
+            return 1;
+        }
+        case Light.Off {
+            return 0;
+        }
+    }
 }
 
 function main() returns (word) {
-  return isOn(On);
+    return isOn(On);
 }

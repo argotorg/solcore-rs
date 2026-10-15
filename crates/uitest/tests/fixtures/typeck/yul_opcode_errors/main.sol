@@ -1,10 +1,10 @@
 function badYul() returns (word) {
-  let x : word;
-  assembly {
-    let one := add(1)
-    let two := add("bad", 1)
-    x := mstore(1, 1)
-    x := add(missing, 1)
-  }
-  return x;
+    let x: word;
+    assembly {
+        let one := add(1)
+        let two := add("bad", 1)
+        x := mstore(1, 1)
+        x := add(missing, 1)
+    }
+    return x;
 }

@@ -2,36 +2,36 @@ import * from std;
 import * from std.dispatch;
 
 contract StorageIndexOrder {
-  counter: word;
-  m: mapping(word => word);
+    counter: word;
+    m: mapping(word => word);
 
-  function next() returns (word) {
-    let cur: word = counter;
-    let res: word;
-    assembly {
-      res := add(cur, 1)
+    function next() returns (word) {
+        let cur: word = counter;
+        let res: word;
+        assembly {
+            res := add(cur, 1)
+        }
+        counter = res;
+        return res;
     }
-    counter = res;
-    return res;
-  }
 
-  // #[() -> 2]
-  function run() public returns (uint256) {
-    counter = 0;
-    m[1] = 0;
-    m[2] = 0;
-    m[next()] = next();
+    // #[() -> 2]
+    function run() public returns (uint256) {
+        counter = 0;
+        m[1] = 0;
+        m[2] = 0;
+        m[next()] = next();
 
-    let one: word = m[1];
-    let two: word = m[2];
-    let packed: word;
-    assembly {
-      packed := add(one, mul(two, 10))
+        let one: word = m[1];
+        let two: word = m[2];
+        let packed: word;
+        assembly {
+            packed := add(one, mul(two, 10))
+        }
+        return uint256(packed);
     }
-    return uint256(packed);
-  }
 
-  function get(k: word) returns (word) {
-    return m[k];
-  }
+    function get(k: word) returns (word) {
+        return m[k];
+    }
 }

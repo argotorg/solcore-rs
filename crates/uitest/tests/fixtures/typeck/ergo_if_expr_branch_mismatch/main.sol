@@ -1,4 +1,4 @@
 function f(b: bool) returns (word) {
-  let x =  b  ?  1  :  false;
-  return x;
+    let x = b ? 1 : false;
+    return x;
 }

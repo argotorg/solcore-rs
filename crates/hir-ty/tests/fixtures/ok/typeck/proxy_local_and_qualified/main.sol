@@ -1,9 +1,11 @@
 import lib;
-import {Proxy as Renamed} from lib;
+import { Proxy as Renamed } from lib;
 
 type Word = word;
 type Witness = lib.Proxy<word>;
-enum Proxy<t> { Proxy }
+enum Proxy<t> {
+    Proxy
+}
 
 function needsWord(p: Proxy<Word>) {}
 

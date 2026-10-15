@@ -4,19 +4,19 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/call_arg_defined_here/main.sol
 ---
 error[SC0201]: argument type mismatch in call to `paint`
- --> /main/main.sol:4:21
+ --> /main/main.sol:4:23
   |
 3 | function go() returns (L.Color) {
-4 |   return L.paint(1, true);
-  |                     ^^^^ argument has mismatched type
+4 |     return L.paint(1, true);
+  |                       ^^^^ argument has mismatched type
 5 | }
   |
- ::: /main/lib.sol:4
+ ::: /main/lib.sol:7
   |
-4 |
-5 | function paint(name: word, c: Color) returns (Color) {
+7 |
+8 | function paint(name: word, c: Color) returns (Color) {
   |                            - parameter `c` defined here
-6 |   return c;
+9 |     return c;
   |
   = note: expected `Color` because parameter `c` of `paint` has type `Color`
   = note: found type: bool

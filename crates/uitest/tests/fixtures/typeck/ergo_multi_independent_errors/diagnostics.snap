@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_multi_independent_errors/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
- --> /main/main.sol:2:10
+ --> /main/main.sol:2:12
   |
 1 | function a() returns (word) {
-2 |   return true;
-  |          ^^^^ expression has mismatched type
+2 |     return true;
+  |            ^^^^ expression has mismatched type
 3 | }
   |
   = note: expected type: word
@@ -16,11 +16,11 @@ error[SC0201]: type mismatch: expected word, found bool
 ---
 
 error[SC0201]: type mismatch: expected numeric, found bool
- --> /main/main.sol:6:10
+ --> /main/main.sol:6:12
   |
 5 | function b() returns (bool) {
-6 |   return 1;
-  |          ^ expression has mismatched type
+6 |     return 1;
+  |            ^ expression has mismatched type
 7 | }
   |
   = note: expected type: numeric
@@ -28,10 +28,10 @@ error[SC0201]: type mismatch: expected numeric, found bool
 ---
 
 error[SC0206]: non-callable value of type word
-  --> /main/main.sol:10:10
+  --> /main/main.sol:10:12
    |
  9 | function c(x: word) returns (word) {
-10 |   return x(1);
-   |          ^ callee is not callable
+10 |     return x(1);
+   |            ^ callee is not callable
 11 | }
    |

@@ -1,7 +1,7 @@
 function computeValue(x: word) returns (word) {
-  return x;
+    return x;
 }
 
 function main() returns (word) {
-  return computeVale(1);
+    return computeVale(1);
 }

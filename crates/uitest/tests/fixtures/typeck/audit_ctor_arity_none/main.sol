@@ -1,5 +1,8 @@
-enum Opt { Some(word), None }
+enum Opt {
+    Some(word),
+    None
+}
 
 function f() returns (Opt) {
-  return Opt.None(1);
+    return Opt.None(1);
 }

@@ -1,3 +1,5 @@
 export { wrapper(wrapper) };
 
-enum wrapper { wrapper(word) }
+enum wrapper {
+    wrapper(word)
+}

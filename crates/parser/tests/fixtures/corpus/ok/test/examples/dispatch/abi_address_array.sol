@@ -9,15 +9,15 @@ import * from std.ABIGeneric;
 // left-padded 20-byte address; decoding checks the high 12 bytes are zero
 // (DirtyHigherBitsForAddress). Exercises the static-element abiArrayGet branch.
 contract AddressArr {
-  constructor() {}
+    constructor() {}
 
-  // The i-th address.
-  function at(items: calldata<array<address>>, i: uint256) public returns (address) {
-    return items[i];
-  }
+    // The i-th address.
+    function at(items: calldata<array<address>>, i: uint256) public returns (address) {
+        return items[i];
+    }
 
-  // Number of elements.
-  function count(items: calldata<array<address>>) public returns (uint256) {
-    return items.length();
-  }
+    // Number of elements.
+    function count(items: calldata<array<address>>) public returns (uint256) {
+        return items.length();
+    }
 }

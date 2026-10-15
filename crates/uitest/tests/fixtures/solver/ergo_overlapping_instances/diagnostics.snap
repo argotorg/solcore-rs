@@ -13,10 +13,10 @@ error[SC0218]: Overlapping impls are not supported
  4 |
  5 | impl C<word> {
    |      ------- previous overlapping impl
- 6 |   function c(x: word) returns (word) {
+ 6 |     function c(x: word) returns (word) {
 ...
 10 |
 11 | impl C<word> {
    |      ^^^^^^^ overlapping impl
-12 |   function c(x: word) returns (word) {
+12 |     function c(x: word) returns (word) {
    |

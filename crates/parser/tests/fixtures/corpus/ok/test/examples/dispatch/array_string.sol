@@ -8,37 +8,37 @@ import * from std.dispatch;
 // Both the short (<32 bytes, inline) and long (>=32 bytes, keccak tail) string
 // encodings are exercised.
 contract ArrayString {
-  names : array<string>;
-  backup : array<string>;
+    names: array<string>;
+    backup: array<string>;
 
-  constructor() {}
+    constructor() {}
 
-  function pushName(s: memory<string>) public {
-    ArrayPush.push(names, s);
-  }
+    function pushName(s: memory<string>) public {
+        ArrayPush.push(names, s);
+    }
 
-  function setName(i: uint256, s: memory<string>) public {
-    names[i] = s;
-  }
+    function setName(i: uint256, s: memory<string>) public {
+        names[i] = s;
+    }
 
-  function getName(i: uint256) public returns (memory<string>) {
-    return names[i];
-  }
+    function getName(i: uint256) public returns (memory<string>) {
+        return names[i];
+    }
 
-  function len() public returns (uint256) {
-    return Length.length(names);
-  }
+    function len() public returns (uint256) {
+        return Length.length(names);
+    }
 
-  // backup = names
-  function saveBackup() public {
-    backup = names;
-  }
+    // backup = names
+    function saveBackup() public {
+        backup = names;
+    }
 
-  function getBackup(i: uint256) public returns (memory<string>) {
-    return backup[i];
-  }
+    function getBackup(i: uint256) public returns (memory<string>) {
+        return backup[i];
+    }
 
-  function lenBackup() public returns (uint256) {
-    return Length.length(backup);
-  }
+    function lenBackup() public returns (uint256) {
+        return Length.length(backup);
+    }
 }

@@ -8,8 +8,8 @@ error[SC0299]: ambiguous inferred type
   |
 1 |   function f() returns (word) {
   |  _____________________________^
-2 | |   let y = 7;
-3 | |   return 0;
+2 | |     let y = 7;
+3 | |     return 0;
 4 | | }
   | |_^ ambiguous inferred type
   |

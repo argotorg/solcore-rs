@@ -1,5 +1,5 @@
 export { foo };
 
 function foo(x: word) returns (word) {
-  return 1;
+    return 1;
 }

@@ -1,3 +1,6 @@
 export { Token(Ok, Err) };
 
-enum Token { Ok(word), Err(word) }
+enum Token {
+    Ok(word),
+    Err(word)
+}

@@ -15,14 +15,18 @@ enum Switch {
 impl Toggle<Switch> {
     function toggle(value: Switch) returns (Switch) {
         match (value) {
-            case Switch.Off { return Switch.On; }
-            case Switch.On { return Switch.Off; }
+            case Switch.Off {
+                return Switch.On;
+            }
+            case Switch.On {
+                return Switch.Off;
+            }
         }
     }
 }
 
 contract LightSwitch {
-    state : Switch;
+    state: Switch;
 
     constructor() {
         state = Switch.Off;
@@ -36,8 +40,12 @@ contract LightSwitch {
     // #[() -> true]
     function isOn() public returns (bool) {
         match (state) {
-            case Switch.On { return true; }
-            default { return false; }
+            case Switch.On {
+                return true;
+            }
+            default {
+                return false;
+            }
         }
     }
 }

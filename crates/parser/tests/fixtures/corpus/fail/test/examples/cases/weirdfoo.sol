@@ -1,5 +1,9 @@
-enum W<a> { W(a) }
-trait Foo<a> {function foo(); }
+enum W<a> {
+    W(a)
+}
+trait Foo<a> {
+    function foo();
+}
 impl Foo<(word, W<a>)> {
-  function foo() {}
+    function foo() {}
 }

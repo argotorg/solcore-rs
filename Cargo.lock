@@ -3519,6 +3519,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solcore-fmt"
+version = "0.1.0"
+dependencies = [
+ "solcore-parser",
+]
+
+[[package]]
 name = "solcore-hir"
 version = "0.1.0"
 dependencies = [

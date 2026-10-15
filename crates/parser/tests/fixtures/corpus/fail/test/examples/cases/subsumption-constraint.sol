@@ -1,8 +1,11 @@
 // This code should FAIL, but PASSES!
-enum Bool { True, False }
+enum Bool {
+    True,
+    False
+}
 
 trait MyCls<a> {
-  function f(x: a, y: a) returns (Bool) ;
+    function f(x: a, y: a) returns (Bool);
 }
 
 function the_bug<a>(x: a, y: a) returns (Bool) {

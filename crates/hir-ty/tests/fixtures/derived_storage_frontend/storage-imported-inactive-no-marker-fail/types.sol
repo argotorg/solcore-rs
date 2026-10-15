@@ -3,4 +3,6 @@ import * from std.Generic;
 
 export { Box(*) };
 
-enum Box<a> { Box(a) }
+enum Box<a> {
+    Box(a)
+}

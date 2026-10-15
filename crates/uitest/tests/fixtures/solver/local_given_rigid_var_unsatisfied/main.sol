@@ -1,7 +1,7 @@
 trait C<a> {
-  function c(x: a) returns (word) ;
+    function c(x: a) returns (word);
 }
 
 function bad<a>() returns (word) where a: C {
-  return C.c(1);
+    return C.c(1);
 }

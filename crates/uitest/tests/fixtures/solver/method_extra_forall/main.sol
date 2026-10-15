@@ -1,9 +1,11 @@
 trait C<a> {
-  function f(x: a) returns (word) ;
+    function f(x: a) returns (word);
 }
 
 trait D<b> {}
 
 impl C<word> {
-  function f<b>(x: word) returns (word) where b: D { return x; }
+    function f<b>(x: word) returns (word) where b: D {
+        return x;
+    }
 }

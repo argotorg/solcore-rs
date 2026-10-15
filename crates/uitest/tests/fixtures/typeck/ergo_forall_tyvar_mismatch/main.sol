@@ -1,3 +1,3 @@
 function ident<a>(x: a) returns (a) {
-  return 1;
+    return 1;
 }

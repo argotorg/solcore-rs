@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ct_let_runtime/main.sol
 ---
 error[SC0409]: comptime evaluation failed: comptime let 'y' is bound to a runtime expression
-  --> /main/main.sol:18:5
+  --> /main/main.sol:18:9
    |
-17 |   function main() returns (word) {
-18 |     let y : comptime<word> = sloadWord();
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
-19 |     return y;
+17 |     function main() returns (word) {
+18 |         let y: comptime<word> = sloadWord();
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ comptime evaluation failed here
+19 |         return y;
    |

@@ -7,23 +7,23 @@ import * from std;
 
 contract MatchLabels {
 
-  function dispatch(selector: word) returns (word) {
-    match (selector) {
-case comptime keccakLit("transfer(address,uint256)") {
-return 1;
-}
-case comptime keccakLit("balanceOf" + "(" + "address" + ")") {
-return 2;
-}
-default {
-return 0;
-}
-}
-  }
+    function dispatch(selector: word) returns (word) {
+        match (selector) {
+            case comptime keccakLit("transfer(address,uint256)") {
+                return 1;
+            }
+            case comptime keccakLit("balanceOf" + "(" + "address" + ")") {
+                return 2;
+            }
+            default {
+                return 0;
+            }
+        }
+    }
 
-  function main() returns (word) {
-    let t : comptime<word> = keccakLit("transfer(address,uint256)");
-    let b : comptime<word> = keccakLit("balanceOf(address)");
-    return dispatch(t) + dispatch(b) + dispatch(0);
-  }
+    function main() returns (word) {
+        let t: comptime<word> = keccakLit("transfer(address,uint256)");
+        let b: comptime<word> = keccakLit("balanceOf(address)");
+        return dispatch(t) + dispatch(b) + dispatch(0);
+    }
 }

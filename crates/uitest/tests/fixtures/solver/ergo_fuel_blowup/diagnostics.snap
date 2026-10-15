@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_fuel_blowup/main.sol
 ---
 error[SC0209]: cannot solve trait constraint `word: C`: solver exceeded its iteration bound
-  --> /main/main.sol:16:10
+  --> /main/main.sol:18:12
    |
-15 | function f() returns (word) {
-16 |   return C.c(0);
-   |          ^^^^^^ constraint originates here
-17 | }
+17 | function f() returns (word) {
+18 |     return C.c(0);
+   |            ^^^^^^ constraint originates here
+19 | }
    |
    = help: simplify the impl chain or add a more direct impl

@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_variant_tag_signature/main.sol
 ---
 error[SC0231]: public function `value` ABI for contract `C` cannot use visible manual `SigString` evidence
-  --> /main/main.sol:15:5
+  --> /main/main.sol:22:5
    |
-14 |     // The field signature changes First's wire tag even with no input selector.
-15 |     function value() public returns (Choice) {
+21 |     // The field signature changes First's wire tag even with no input selector.
+22 |     function value() public returns (Choice) {
    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-16 |         return Choice.First(Leaf(uint256(7)));
+23 |         return Choice.First(Leaf(uint256(7)));
    |
    = note: impl `SigString` can override canonical `SigString` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

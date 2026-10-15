@@ -1,3 +1,5 @@
-enum T { A }
+enum T {
+    A
+}
 
 export { T };

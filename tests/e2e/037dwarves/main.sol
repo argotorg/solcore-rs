@@ -2,32 +2,41 @@ import * from std;
 import * from std.dispatch;
 
 contract Dwarves {
-  enum Dwarf { Doc, Grumpy, Sleepy, Bashful, Happy, Sneezy, Dopey }
+    enum Dwarf {
+        Doc,
+        Grumpy,
+        Sleepy,
+        Bashful,
+        Happy,
+        Sneezy,
+        Dopey
+    }
 
+    function fromEnum(c: Dwarf) returns (word) {
+        match (c) {
+            case Dwarf.Doc {
+                return 1;
+            }
+            case Dwarf.Grumpy {
+                return 2;
+            }
+            case Dwarf.Sleepy {
+                return 3;
+            }
+            case Dwarf.Bashful {
+                return 4;
+            }
+            case Dwarf.Happy {
+                return 5;
+            }
+            default {
+                return 0;
+            }
+        }
+    }
 
-  function fromEnum(c: Dwarf) returns (word) {
-    match (c) {
-case Dwarf.Doc {
-return 1;
-}
-case Dwarf.Grumpy {
-return 2;
-}
-case Dwarf.Sleepy {
-return 3;
-}
-case Dwarf.Bashful {
-return 4;
-}
-case Dwarf.Happy {
-return 5;
-}
-default {
-return 0;
-}
-}
-  }
-
-  // #[() -> 5]
-  function run() public returns (uint256) { return uint256(fromEnum(Dwarf.Happy)); }
+    // #[() -> 5]
+    function run() public returns (uint256) {
+        return uint256(fromEnum(Dwarf.Happy));
+    }
 }

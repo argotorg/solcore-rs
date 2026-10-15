@@ -20,22 +20,24 @@ pragma no-patterson-condition;
 pragma no-coverage-condition;
 pragma no-bounded-variable-condition;
 
-enum Pair { MkPair(uint256, uint256) }
+enum Pair {
+    MkPair(uint256, uint256)
+}
 
 impl Generic<Pair, (uint256, uint256)> {
     function from(x: Pair) returns (uint256, uint256) {
         match (x) {
-case Pair.MkPair(a, b) {
-return (a, b);
-}
-}
+            case Pair.MkPair(a, b) {
+                return (a, b);
+            }
+        }
     }
     function to(x: (uint256, uint256)) returns (Pair) {
         match (x) {
-case (a, b) {
-return Pair.MkPair(a, b);
-}
-}
+            case (a, b) {
+                return Pair.MkPair(a, b);
+            }
+        }
     }
 }
 
@@ -43,20 +45,20 @@ contract BugSpecGenericLet {
     constructor() {}
 
     function roundtrip(a: uint256, b: uint256) returns (uint256) {
-        let p : Pair = Pair.MkPair(a, b);
-        let encoded : memory<bytes> = abi_encode(p);
-        let decoded : (uint256, uint256) = abi_decode(encoded, @(uint256, uint256), @MemoryWordReader);
+        let p: Pair = Pair.MkPair(a, b);
+        let encoded: memory<bytes> = abi_encode(p);
+        let decoded: (uint256, uint256) = abi_decode(encoded, @(uint256, uint256), @MemoryWordReader);
         match (decoded) {
-case (x, y) {
-match (and(Eq.eq(x, a), Eq.eq(y, b))) {
-case true {
-return uint256(1);
-}
-case false {
-return uint256(0);
-}
-}
-}
-}
+            case (x, y) {
+                match (and(Eq.eq(x, a), Eq.eq(y, b))) {
+                    case true {
+                        return uint256(1);
+                    }
+                    case false {
+                        return uint256(0);
+                    }
+                }
+            }
+        }
     }
 }

@@ -9,7 +9,7 @@ error[SC0207]: cannot satisfy trait constraint: Contract<Method<DispatchNameTy_W
 6 | // with a bounded solver diagnostic while that evidence is missing.
 7 | contract WordAbiProbe {
   |          ^^^^^^^^^^^^ constraint originates here
-8 |   function echo(value: word) public returns (word) {
+8 |     function echo(value: word) public returns (word) {
   |
   = note: no visible impl matches `Contract<Method<DispatchNameTy_WordAbiProbe_echo, NonPayable, word, word, function(word) returns (word)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract`
   = help: add a matching impl or strengthen the surrounding type context

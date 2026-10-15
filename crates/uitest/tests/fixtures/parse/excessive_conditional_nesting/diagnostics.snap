@@ -4,128 +4,128 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/excessive_conditional_nesting/main.sol
 ---
 error[SC0001]: expression nesting exceeds the compiler limit of 32
-  --> /main/main.sol:34:18
+  --> /main/main.sol:34:5
    |
-33 |                  true  ?  0  :
-34 |                  true  ?  0  :
-   |                  ^^^^
-35 |                  true  ?  0  :
-   |
----
-
-error[SC0001]: expression nesting exceeds the compiler limit of 32
-  --> /main/main.sol:34:27
-   |
-33 |                  true  ?  0  :
-34 |                  true  ?  0  :
-   |                           ^
-35 |                  true  ?  0  :
+33 |     true ? 0 :
+34 |     true ? 0 :
+   |     ^^^^
+35 |     true ? 0 :
    |
 ---
 
 error[SC0001]: expression nesting exceeds the compiler limit of 32
-   --> /main/main.sol:35:18
+  --> /main/main.sol:34:12
+   |
+33 |     true ? 0 :
+34 |     true ? 0 :
+   |            ^
+35 |     true ? 0 :
+   |
+---
+
+error[SC0001]: expression nesting exceeds the compiler limit of 32
+   --> /main/main.sol:35:5
     |
- 34 |                    true  ?  0  :
- 35 | /                  true  ?  0  :
- 36 | |                  true  ?  0  :
- 37 | |                  true  ?  0  :
- 38 | |                  true  ?  0  :
- 39 | |                  true  ?  0  :
- 40 | |                  true  ?  0  :
- 41 | |                  true  ?  0  :
- 42 | |                  true  ?  0  :
- 43 | |                  true  ?  0  :
- 44 | |                  true  ?  0  :
- 45 | |                  true  ?  0  :
- 46 | |                  true  ?  0  :
- 47 | |                  true  ?  0  :
- 48 | |                  true  ?  0  :
- 49 | |                  true  ?  0  :
- 50 | |                  true  ?  0  :
- 51 | |                  true  ?  0  :
- 52 | |                  true  ?  0  :
- 53 | |                  true  ?  0  :
- 54 | |                  true  ?  0  :
- 55 | |                  true  ?  0  :
- 56 | |                  true  ?  0  :
- 57 | |                  true  ?  0  :
- 58 | |                  true  ?  0  :
- 59 | |                  true  ?  0  :
- 60 | |                  true  ?  0  :
- 61 | |                  true  ?  0  :
- 62 | |                  true  ?  0  :
- 63 | |                  true  ?  0  :
- 64 | |                  true  ?  0  :
- 65 | |                  true  ?  0  :
- 66 | |                  true  ?  0  :
- 67 | |                  true  ?  0  :
- 68 | |                  true  ?  0  :
- 69 | |                  true  ?  0  :
- 70 | |                  true  ?  0  :
- 71 | |                  true  ?  0  :
- 72 | |                  true  ?  0  :
- 73 | |                  true  ?  0  :
- 74 | |                  true  ?  0  :
- 75 | |                  true  ?  0  :
- 76 | |                  true  ?  0  :
- 77 | |                  true  ?  0  :
- 78 | |                  true  ?  0  :
- 79 | |                  true  ?  0  :
- 80 | |                  true  ?  0  :
- 81 | |                  true  ?  0  :
- 82 | |                  true  ?  0  :
- 83 | |                  true  ?  0  :
- 84 | |                  true  ?  0  :
- 85 | |                  true  ?  0  :
- 86 | |                  true  ?  0  :
- 87 | |                  true  ?  0  :
- 88 | |                  true  ?  0  :
- 89 | |                  true  ?  0  :
- 90 | |                  true  ?  0  :
- 91 | |                  true  ?  0  :
- 92 | |                  true  ?  0  :
- 93 | |                  true  ?  0  :
- 94 | |                  true  ?  0  :
- 95 | |                  true  ?  0  :
- 96 | |                  true  ?  0  :
- 97 | |                  true  ?  0  :
- 98 | |                  true  ?  0  :
- 99 | |                  true  ?  0  :
-100 | |                  true  ?  0  :
-101 | |                  true  ?  0  :
-102 | |                  true  ?  0  :
-103 | |                  true  ?  0  :
-104 | |                  true  ?  0  :
-105 | |                  true  ?  0  :
-106 | |                  true  ?  0  :
-107 | |                  true  ?  0  :
-108 | |                  true  ?  0  :
-109 | |                  true  ?  0  :
-110 | |                  true  ?  0  :
-111 | |                  true  ?  0  :
-112 | |                  true  ?  0  :
-113 | |                  true  ?  0  :
-114 | |                  true  ?  0  :
-115 | |                  true  ?  0  :
-116 | |                  true  ?  0  :
-117 | |                  true  ?  0  :
-118 | |                  true  ?  0  :
-119 | |                  true  ?  0  :
-120 | |                  true  ?  0  :
-121 | |                  true  ?  0  :
-122 | |                  true  ?  0  :
-123 | |                  true  ?  0  :
-124 | |                  true  ?  0  :
-125 | |                  true  ?  0  :
-126 | |                  true  ?  0  :
-127 | |                  true  ?  0  :
-128 | |                  true  ?  0  :
-129 | |                  true  ?  0  :
-130 | |                  true  ?  0  :
-131 | |                  true  ?  0  :
-132 | |                  true  ?  0  :
-133 | |   0;
-    | |___^
+ 34 |       true ? 0 :
+ 35 | /     true ? 0 :
+ 36 | |     true ? 0 :
+ 37 | |     true ? 0 :
+ 38 | |     true ? 0 :
+ 39 | |     true ? 0 :
+ 40 | |     true ? 0 :
+ 41 | |     true ? 0 :
+ 42 | |     true ? 0 :
+ 43 | |     true ? 0 :
+ 44 | |     true ? 0 :
+ 45 | |     true ? 0 :
+ 46 | |     true ? 0 :
+ 47 | |     true ? 0 :
+ 48 | |     true ? 0 :
+ 49 | |     true ? 0 :
+ 50 | |     true ? 0 :
+ 51 | |     true ? 0 :
+ 52 | |     true ? 0 :
+ 53 | |     true ? 0 :
+ 54 | |     true ? 0 :
+ 55 | |     true ? 0 :
+ 56 | |     true ? 0 :
+ 57 | |     true ? 0 :
+ 58 | |     true ? 0 :
+ 59 | |     true ? 0 :
+ 60 | |     true ? 0 :
+ 61 | |     true ? 0 :
+ 62 | |     true ? 0 :
+ 63 | |     true ? 0 :
+ 64 | |     true ? 0 :
+ 65 | |     true ? 0 :
+ 66 | |     true ? 0 :
+ 67 | |     true ? 0 :
+ 68 | |     true ? 0 :
+ 69 | |     true ? 0 :
+ 70 | |     true ? 0 :
+ 71 | |     true ? 0 :
+ 72 | |     true ? 0 :
+ 73 | |     true ? 0 :
+ 74 | |     true ? 0 :
+ 75 | |     true ? 0 :
+ 76 | |     true ? 0 :
+ 77 | |     true ? 0 :
+ 78 | |     true ? 0 :
+ 79 | |     true ? 0 :
+ 80 | |     true ? 0 :
+ 81 | |     true ? 0 :
+ 82 | |     true ? 0 :
+ 83 | |     true ? 0 :
+ 84 | |     true ? 0 :
+ 85 | |     true ? 0 :
+ 86 | |     true ? 0 :
+ 87 | |     true ? 0 :
+ 88 | |     true ? 0 :
+ 89 | |     true ? 0 :
+ 90 | |     true ? 0 :
+ 91 | |     true ? 0 :
+ 92 | |     true ? 0 :
+ 93 | |     true ? 0 :
+ 94 | |     true ? 0 :
+ 95 | |     true ? 0 :
+ 96 | |     true ? 0 :
+ 97 | |     true ? 0 :
+ 98 | |     true ? 0 :
+ 99 | |     true ? 0 :
+100 | |     true ? 0 :
+101 | |     true ? 0 :
+102 | |     true ? 0 :
+103 | |     true ? 0 :
+104 | |     true ? 0 :
+105 | |     true ? 0 :
+106 | |     true ? 0 :
+107 | |     true ? 0 :
+108 | |     true ? 0 :
+109 | |     true ? 0 :
+110 | |     true ? 0 :
+111 | |     true ? 0 :
+112 | |     true ? 0 :
+113 | |     true ? 0 :
+114 | |     true ? 0 :
+115 | |     true ? 0 :
+116 | |     true ? 0 :
+117 | |     true ? 0 :
+118 | |     true ? 0 :
+119 | |     true ? 0 :
+120 | |     true ? 0 :
+121 | |     true ? 0 :
+122 | |     true ? 0 :
+123 | |     true ? 0 :
+124 | |     true ? 0 :
+125 | |     true ? 0 :
+126 | |     true ? 0 :
+127 | |     true ? 0 :
+128 | |     true ? 0 :
+129 | |     true ? 0 :
+130 | |     true ? 0 :
+131 | |     true ? 0 :
+132 | |     true ? 0 :
+133 | |     0;
+    | |_____^
 134 |   }
     |

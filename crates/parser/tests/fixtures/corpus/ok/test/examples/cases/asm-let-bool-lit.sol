@@ -2,12 +2,12 @@
 // `true` in an assembly block must type-check as `word`. Before the fix
 // `tcYLit YulTrue/YulFalse` called `notImplemented`, crashing the compiler.
 contract Test {
-  function main() public returns (word) {
-    let r : word = 0;
-    assembly {
-      let x := true
-      r := x
+    function main() public returns (word) {
+        let r: word = 0;
+        assembly {
+            let x := true
+            r := x
+        }
+        return r;
     }
-    return r;
-  }
 }

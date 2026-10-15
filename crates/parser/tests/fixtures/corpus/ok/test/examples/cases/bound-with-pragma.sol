@@ -7,7 +7,9 @@ pragma no-patterson-condition TestBound; // Also disable Patterson to avoid that
 trait TestBound<a> {}
 trait TestHelper<a, b> {}
 
-enum TestType<x> { TestType }
+enum TestType<x> {
+    TestType
+}
 
 // Variable 'bad' appears in context but not in instance head
 // But pragma disables the check, so should pass

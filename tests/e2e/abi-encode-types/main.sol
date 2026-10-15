@@ -1,8 +1,8 @@
 import * from std;
 import * from std.dispatch;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
 // Direct tests for the top-level `abi_encode` function (std.sol) across both
 // static and dynamic types.
@@ -20,43 +20,55 @@ pragma no-bounded-variable-condition ;
 // Dynamic types put an offset word in the head pointing at a tail:
 //   * string                      -> [0x20][len][data]      (length 0x60 here)
 //   * uint256[]                   -> [0x20][len][elems]      (length 0xa0 here)
+// #[scenario("abi_encode_types")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0x0b3ba28c000000000000000000000000000000000000000000000000000000000000002a, label = "encUint(42) -> abi_encode(uint256)") -> success(0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000002a)]
+// #[raw(0x0b3ba28c0000000000000000000000000000000000000000000000000000000000000000, label = "encUint(0) -> abi_encode(uint256)") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x0b3ba28cffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, label = "encUint(115792089237316195423570985008687907853269984665640564039457584007913129639935) -> abi_encode(uint256)") -> success(0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000020ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff)]
+// #[raw(0x6a33dc520000000000000000000000000000000000000000000000000000000000000001, label = "encBool(true) -> abi_encode(bool)") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x6a33dc520000000000000000000000000000000000000000000000000000000000000000, label = "encBool(false) -> abi_encode(bool)") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0xd6b277dd0000000000000000000000001111111111111111111111111111111111111111, label = "encAddr(0x1111..1111) -> abi_encode(address)") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000200000000000000000000000001111111111111111111111111111111111111111)]
+// #[raw(0x4c09b15900000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000008, label = "encPair(7,8) -> abi_encode((uint256,uint256)) static, len 0x40") -> success(0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000008)]
+// #[raw(0x115e83d5, label = "encStr() -> abi_encode(string \"abc\") dynamic, len 0x60") -> success(0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000036162630000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x06557ada, label = "encArr() -> abi_encode(uint256[11,22,33]) dynamic, len 0xa0") -> success(0x000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000000b00000000000000000000000000000000000000000000000000000000000000160000000000000000000000000000000000000000000000000000000000000021)]
 contract AbiEncodeTypes {
-  constructor() {}
+    constructor() {}
 
-  // --- static ---
+    // --- static ---
 
-  // uint256 is written directly into the head as one word.
-  function encUint(x: uint256) public returns (memory<bytes>) {
-    return abi_encode(x);
-  }
+    // uint256 is written directly into the head as one word.
+    function encUint(x: uint256) public returns (memory<bytes>) {
+        return abi_encode(x);
+    }
 
-  // bool encodes as a single 0/1 word.
-  function encBool(x: bool) public returns (memory<bytes>) {
-    return abi_encode(x);
-  }
+    // bool encodes as a single 0/1 word.
+    function encBool(x: bool) public returns (memory<bytes>) {
+        return abi_encode(x);
+    }
 
-  // address is left-padded into a single word.
-  function encAddr(x: address) public returns (memory<bytes>) {
-    return abi_encode(x);
-  }
+    // address is left-padded into a single word.
+    function encAddr(x: address) public returns (memory<bytes>) {
+        return abi_encode(x);
+    }
 
-  // A fully static tuple has both words in the head, with no offset.
-  function encPair(a: uint256, b: uint256) public returns (memory<bytes>) {
-    return abi_encode((a, b));
-  }
+    // A fully static tuple has both words in the head, with no offset.
+    function encPair(a: uint256, b: uint256) public returns (memory<bytes>) {
+        return abi_encode((a, b));
+    }
 
-  // --- dynamic ---
+    // --- dynamic ---
 
-  // A string gets a head offset word pointing at a `[len][data]` tail.
-  function encStr() public returns (memory<bytes>) {
-    let raw : string = "abc";
-    let s : memory<string> = Str.fromString(raw);
-    return abi_encode(s);
-  }
+    // A string gets a head offset word pointing at a `[len][data]` tail.
+    function encStr() public returns (memory<bytes>) {
+        let raw: string = "abc";
+        let s: memory<string> = Str.fromString(raw);
+        return abi_encode(s);
+    }
 
-  // A dynamic array gets a head offset word pointing at a `[len][elems]` tail.
-  function encArr() public returns (memory<bytes>) {
-    let a : memory<DynArray<uint256>> = [11, 22, 33];
-    return abi_encode(a);
-  }
+    // A dynamic array gets a head offset word pointing at a `[len][elems]` tail.
+    function encArr() public returns (memory<bytes>) {
+        let a: memory<DynArray<uint256>> = [11, 22, 33];
+        return abi_encode(a);
+    }
 }

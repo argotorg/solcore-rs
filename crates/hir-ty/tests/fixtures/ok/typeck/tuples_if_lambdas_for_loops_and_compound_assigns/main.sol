@@ -1,91 +1,93 @@
 trait Add<t> {
-  function add(l: t, r: t) returns (t) ;
+    function add(l: t, r: t) returns (t);
 }
 
 trait Mod<t> {
-  function mod(l: t, r: t) returns (t) ;
+    function mod(l: t, r: t) returns (t);
 }
 
 trait BitAnd<t> {
-  function band(l: t, r: t) returns (t) ;
+    function band(l: t, r: t) returns (t);
 }
 
 trait BitOr<t> {
-  function bor(l: t, r: t) returns (t) ;
+    function bor(l: t, r: t) returns (t);
 }
 
 trait BitXor<t> {
-  function bxor(l: t, r: t) returns (t) ;
+    function bxor(l: t, r: t) returns (t);
 }
 
 trait Ord<t> {
-  function gt(l: t, r: t) returns (bool) ;
+    function gt(l: t, r: t) returns (bool);
 }
 
 trait Eq<t> {
-  function eq(l: t, r: t) returns (bool) ;
+    function eq(l: t, r: t) returns (bool);
 }
 
 impl Add<word> {
-  function add(l: word, r: word) returns (word) {
-    return primAddWord(l, r);
-  }
+    function add(l: word, r: word) returns (word) {
+        return primAddWord(l, r);
+    }
 }
 
 impl Mod<word> {
-  function mod(l: word, r: word) returns (word) {
-    return l;
-  }
+    function mod(l: word, r: word) returns (word) {
+        return l;
+    }
 }
 
 impl BitAnd<word> {
-  function band(l: word, r: word) returns (word) {
-    return l;
-  }
+    function band(l: word, r: word) returns (word) {
+        return l;
+    }
 }
 
 impl BitOr<word> {
-  function bor(l: word, r: word) returns (word) {
-    return l;
-  }
+    function bor(l: word, r: word) returns (word) {
+        return l;
+    }
 }
 
 impl BitXor<word> {
-  function bxor(l: word, r: word) returns (word) {
-    return l;
-  }
+    function bxor(l: word, r: word) returns (word) {
+        return l;
+    }
 }
 
 impl Ord<word> {
-  function gt(l: word, r: word) returns (bool) {
-    return true;
-  }
+    function gt(l: word, r: word) returns (bool) {
+        return true;
+    }
 }
 
 impl Eq<word> {
-  function eq(l: word, r: word) returns (bool) {
-    return true;
-  }
+    function eq(l: word, r: word) returns (bool) {
+        return true;
+    }
 }
 
 function lt(l: word, r: word) returns (bool) {
-  return Ord.gt(r, l);
+    return Ord.gt(r, l);
 }
 
 function main() returns (word) {
-  let f = lam(x: word) { return x; };
-  let acc : word = 0;
-  for (let i : word = 0; i < 3; i = i + 1) {
-    acc += f(i);
-    acc ^= 1;
-    acc &= 7;
-    acc |= 2;
-    acc %= 5;
-  }
-  let t : (word, word) = (acc, 1);
-  match (t) {
-case (x, _) {
-return  x == 0  ?  1  :  x;
-}
-}
+    let f = lam (x: word) {
+        return x;
+    };
+    let acc: word = 0;
+    for (let i: word = 0; i < 3; i = i + 1) {
+        acc += f(i);
+        acc ^= 1;
+        acc &= 7;
+        acc |= 2;
+        acc %= 5;
+    }
+    let t: (word, word) = (acc, 1);
+    match (t) {
+        case (x, _) {
+            return x == 0 ? 1 : x;
+        }
+    }
 }

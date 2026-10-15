@@ -1,6 +1,6 @@
 import * from std;
 import * from std.dispatch;
-import {address as address_} from std.opcodes;
+import { address as address_ } from std.opcodes;
 
 function self() returns (address) {
     return address(address_());
@@ -19,10 +19,10 @@ contract C {
         let sel: bytes32 = bytes32(0xa7a0d53700000000000000000000000000000000000000000000000000000000);
         let payload = truncate(to_bytes(sel), 4);
         match (raw_call(self(), uint256(0), payload)) {
-case (ok, ret) {
-return (ok, ret);
-}
-}
+            case (ok, ret) {
+                return (ok, ret);
+            }
+        }
     }
 
     // Same shape, but the selector (0xdeadc0de) matches no entry point, so dispatch
@@ -33,10 +33,10 @@ return (ok, ret);
         let sel: bytes32 = bytes32(0xdeadc0de00000000000000000000000000000000000000000000000000000000);
         let payload = truncate(to_bytes(sel), 4);
         match (raw_call(self(), uint256(0), payload)) {
-case (ok, ret) {
-return (ok, ret);
-}
-}
+            case (ok, ret) {
+                return (ok, ret);
+            }
+        }
     }
 
     function something() public returns (uint256) {
@@ -44,11 +44,11 @@ return (ok, ret);
     }
 
     function add2(x: uint256, y: uint256) public returns (uint256) {
-        return Add.add(x,y);
+        return Add.add(x, y);
     }
 
     function add3(x: uint256, y: uint256, z: uint256) public returns (uint256) {
-        return Add.add(z, Add.add(x,y));
+        return Add.add(z, Add.add(x, y));
     }
 
     function addmod3(x: uint256, y: uint256, k: uint256) public returns (uint256) {
@@ -95,56 +95,56 @@ return (ok, ret);
     // Compound assignment statement sugar: each `acc op= y` desugars to
     // `acc := acc op y`, so these must agree with the binary operators above.
     function pluseq(x: uint256, y: uint256) public returns (uint256) {
-        let acc : uint256 = x;
+        let acc: uint256 = x;
         acc += y;
         return acc;
     }
 
     function minuseq(x: uint256, y: uint256) public returns (uint256) {
-        let acc : uint256 = x;
+        let acc: uint256 = x;
         acc -= y;
         return acc;
     }
 
     function timeseq(x: uint256, y: uint256) public returns (uint256) {
-        let acc : uint256 = x;
+        let acc: uint256 = x;
         acc *= y;
         return acc;
     }
 
     function divideeq(x: uint256, y: uint256) public returns (uint256) {
-        let acc : uint256 = x;
+        let acc: uint256 = x;
         acc /= y;
         return acc;
     }
 
     function modeq(x: uint256, y: uint256) public returns (uint256) {
-        let acc : uint256 = x;
+        let acc: uint256 = x;
         acc %= y;
         return acc;
     }
 
     function bxoreq(x: uint256, y: uint256) public returns (uint256) {
-        let acc : uint256 = x;
+        let acc: uint256 = x;
         acc ^= y;
         return acc;
     }
 
     function bandeq(x: uint256, y: uint256) public returns (uint256) {
-        let acc : uint256 = x;
+        let acc: uint256 = x;
         acc &= y;
         return acc;
     }
 
     function boreq(x: uint256, y: uint256) public returns (uint256) {
-        let acc : uint256 = x;
+        let acc: uint256 = x;
         acc |= y;
         return acc;
     }
 
     // In-place unary bitwise NOT: `acc ~=` desugars to `acc := ~acc`.
     function bnoteq(x: uint256) public returns (uint256) {
-        let acc : uint256 = x;
+        let acc: uint256 = x;
         acc ~=;
         return acc;
     }

@@ -2,18 +2,18 @@ import * from std;
 import * from std.dispatch;
 
 function my_revert() returns (word) {
-  revertLit("regression");
-  return 0;
+    revertLit("regression");
+    return 0;
 }
 
 contract Foo {
-  constructor() {}
+    constructor() {}
 
-  function noAnswer() public returns (uint256) {
-    return uint256(my_revert());
-  }
+    function noAnswer() public returns (uint256) {
+        return uint256(my_revert());
+    }
 
-  function answer() public returns (uint256) {
-    return uint256(42);
-  }
+    function answer() public returns (uint256) {
+        return uint256(42);
+    }
 }

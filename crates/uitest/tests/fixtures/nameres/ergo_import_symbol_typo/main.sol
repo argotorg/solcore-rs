@@ -1,5 +1,5 @@
-import {valu} from util;
+import { valu } from util;
 
 function main() returns (word) {
-  return valu(1);
+    return valu(1);
 }

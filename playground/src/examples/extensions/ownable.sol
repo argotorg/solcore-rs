@@ -1,6 +1,6 @@
 import * from std;
-import {sload, sstore} from std.opcodes;
-import {sender} from context;
+import { sload, sstore } from std.opcodes;
+import { sender } from context;
 
 export { owner, initOwner, requireOwner, transferOwnership };
 

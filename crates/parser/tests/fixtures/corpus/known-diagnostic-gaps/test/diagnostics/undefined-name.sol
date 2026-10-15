@@ -1,1 +1,3 @@
-function main() returns (word) { return missing; }
+function main() returns (word) {
+    return missing;
+}

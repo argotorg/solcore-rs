@@ -7,20 +7,20 @@
 // Expected: main() folds to word literal 55 (fib(10)).
 
 function fib(comptime n: integer) returns (comptime<integer>) {
-  if (integerLt(n, 2)) {
-    return n;
-  } else {
-    return integerAdd(
-      fib(integerSub(n, 1)),
-      fib(integerSub(n, 2))
-    );
-  }
+    if (integerLt(n, 2)) {
+        return n;
+    } else {
+        return integerAdd(
+            fib(integerSub(n, 1)),
+            fib(integerSub(n, 2))
+        );
+    }
 }
 
 contract IntegerLit {
-  function main() returns (word) {
-    let x : comptime<integer> = 10;
-    let res : comptime<word> = wordFromInteger(fib(x));
-    return res;
-  }
+    function main() returns (word) {
+        let x: comptime<integer> = 10;
+        let res: comptime<word> = wordFromInteger(fib(x));
+        return res;
+    }
 }

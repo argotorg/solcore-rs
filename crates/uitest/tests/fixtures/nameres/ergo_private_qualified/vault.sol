@@ -1,9 +1,9 @@
 export { opened };
 
 function opened(x: word) returns (word) {
-  return secret(x);
+    return secret(x);
 }
 
 function secret(x: word) returns (word) {
-  return x;
+    return x;
 }

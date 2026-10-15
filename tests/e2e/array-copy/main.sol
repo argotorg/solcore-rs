@@ -4,43 +4,72 @@ import * from std.dispatch;
 // Whole-array assignment `a = b` follows Solidity: it is a deep copy, not an
 // alias; assigning an array to itself is a no-op; and a copy that shrinks the
 // destination clears the slots it abandons, so regrowing yields zeros.
+// #[scenario("array_copy")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0xec219f470000000000000000000000000000000000000000000000000000000000000001, label = "pushB(1)") -> success(0x)]
+// #[raw(0xec219f470000000000000000000000000000000000000000000000000000000000000002, label = "pushB(2)") -> success(0x)]
+// #[raw(0xec219f470000000000000000000000000000000000000000000000000000000000000003, label = "pushB(3)") -> success(0x)]
+// #[raw(0x8b57a142, label = "copyBintoA() - a = b") -> success(0x)]
+// #[raw(0x2f343887, label = "lenA() - 3") -> success(0x0000000000000000000000000000000000000000000000000000000000000003)]
+// #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000000, label = "getA(0) - 1") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000002, label = "getA(2) - 3") -> success(0x0000000000000000000000000000000000000000000000000000000000000003)]
+// #[raw(0xf318054600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000063, label = "setB(0,99) - mutate the source") -> success(0x)]
+// #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000000, label = "getA(0) - still 1, so a = b copied") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x17b1c941, label = "copyAintoA() - a = a is a no-op") -> success(0x)]
+// #[raw(0x2f343887, label = "lenA() - still 3") -> success(0x0000000000000000000000000000000000000000000000000000000000000003)]
+// #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000000, label = "getA(0) - still 1") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000002, label = "getA(2) - still 3") -> success(0x0000000000000000000000000000000000000000000000000000000000000003)]
+// #[raw(0xeff2b3840000000000000000000000000000000000000000000000000000000000000000, label = "growA(0) - empty a") -> success(0x)]
+// #[raw(0x40bb882d000000000000000000000000000000000000000000000000000000000000005a, label = "pushA(90)") -> success(0x)]
+// #[raw(0x40bb882d000000000000000000000000000000000000000000000000000000000000005b, label = "pushA(91)") -> success(0x)]
+// #[raw(0x40bb882d000000000000000000000000000000000000000000000000000000000000005c, label = "pushA(92)") -> success(0x)]
+// #[raw(0x40bb882d000000000000000000000000000000000000000000000000000000000000005d, label = "pushA(93)") -> success(0x)]
+// #[raw(0x40bb882d000000000000000000000000000000000000000000000000000000000000005e, label = "pushA(94)") -> success(0x)]
+// #[raw(0x2f343887, label = "lenA() - 5") -> success(0x0000000000000000000000000000000000000000000000000000000000000005)]
+// #[raw(0x8b57a142, label = "copyBintoA() - a = b shrinks 5 -> 3") -> success(0x)]
+// #[raw(0x2f343887, label = "lenA() - 3") -> success(0x0000000000000000000000000000000000000000000000000000000000000003)]
+// #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000000, label = "getA(0) - 99, the mutated source value") -> success(0x0000000000000000000000000000000000000000000000000000000000000063)]
+// #[raw(0xeff2b3840000000000000000000000000000000000000000000000000000000000000005, label = "growA(5) - regrow past the copied length") -> success(0x)]
+// #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000003, label = "getA(3) - 0, not the abandoned 93") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0xd82cf7900000000000000000000000000000000000000000000000000000000000000004, label = "getA(4) - 0, not the abandoned 94") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 contract ArrayCopy {
-  a : array<uint256>;
-  b : array<uint256>;
+    a: array<uint256>;
+    b: array<uint256>;
 
-  constructor() {}
+    constructor() {}
 
-  function pushA(v: uint256) public {
-    ArrayPush.push(a, v);
-  }
+    function pushA(v: uint256) public {
+        ArrayPush.push(a, v);
+    }
 
-  function pushB(v: uint256) public {
-    ArrayPush.push(b, v);
-  }
+    function pushB(v: uint256) public {
+        ArrayPush.push(b, v);
+    }
 
-  // a = b
-  function copyBintoA() public {
-    a = b;
-  }
+    // a = b
+    function copyBintoA() public {
+        a = b;
+    }
 
-  // a = a  (must be a no-op, not a self-clobbering copy)
-  function copyAintoA() public {
-    a = a;
-  }
+    // a = a  (must be a no-op, not a self-clobbering copy)
+    function copyAintoA() public {
+        a = a;
+    }
 
-  function setB(i: uint256, v: uint256) public {
-    b[i] = v;
-  }
+    function setB(i: uint256, v: uint256) public {
+        b[i] = v;
+    }
 
-  function growA(n: uint256) public {
-    Array.setLength(a, n);
-  }
+    function growA(n: uint256) public {
+        Array.setLength(a, n);
+    }
 
-  function lenA() public returns (uint256) {
-    return Length.length(a);
-  }
+    function lenA() public returns (uint256) {
+        return Length.length(a);
+    }
 
-  function getA(i: uint256) public returns (uint256) {
-    return a[i];
-  }
+    function getA(i: uint256) public returns (uint256) {
+        return a[i];
+    }
 }

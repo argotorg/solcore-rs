@@ -11,10 +11,13 @@ import * from std.StorageGeneric;
 // The failure surfaces at the use site (the field assignment), not at
 // derivation time, which is the design stated in DeriveGeneric.
 
-enum IntList { Nil, Cons(uint256, IntList) }
+enum IntList {
+    Nil,
+    Cons(uint256, IntList)
+}
 
 contract C {
-    xs : IntList;
+    xs: IntList;
 
     constructor() {
         xs = IntList.Nil;

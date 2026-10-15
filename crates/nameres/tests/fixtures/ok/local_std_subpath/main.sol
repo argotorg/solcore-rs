@@ -1,5 +1,5 @@
-import {value} from std.a.b;
+import { value } from std.a.b;
 
 function main(x: word) returns (word) {
-  return value(x);
+    return value(x);
 }

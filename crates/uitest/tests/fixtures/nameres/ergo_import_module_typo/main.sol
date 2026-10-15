@@ -1,5 +1,5 @@
-import {helperValue} from helprs;
+import { helperValue } from helprs;
 
 function main() returns (word) {
-  return helperValue(1);
+    return helperValue(1);
 }

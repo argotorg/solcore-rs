@@ -1,7 +1,7 @@
 import * from std;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
 contract Bug {
     function main() public returns (word) {
@@ -9,8 +9,8 @@ contract Bug {
     }
 
     function makeClosure(e: word) public returns (word) {
-        let f = lam (x : word) {
-            return e + x;  // Uses Add.add typeclass method
+        let f = lam (x: word) {
+            return e + x; // Uses Add.add typeclass method
         };
         return f(1);
     }

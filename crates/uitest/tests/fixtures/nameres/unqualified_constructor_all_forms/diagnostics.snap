@@ -4,55 +4,55 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/unqualified_constructor_all_forms/main.sol
 ---
 error[SC0106]: unqualified constructor: Some
- --> /main/main.sol:4:54
-  |
-3 |
-4 | function exprCall(x: word) returns (Option) { return Some(x); }
-  |                                                      ^^^^ constructor must be qualified
-5 | function exprBare(f: flag) returns (flag) { return on; }
-  |
-  = help: use `Option.Some`
+  --> /main/main.sol:11:12
+   |
+10 | function exprCall(x: word) returns (Option) {
+11 |     return Some(x);
+   |            ^^^^ constructor must be qualified
+12 | }
+   |
+   = help: use `Option.Some`
 ---
 
 error[SC0106]: unqualified constructor: on
- --> /main/main.sol:5:52
-  |
-4 | function exprCall(x: word) returns (Option) { return Some(x); }
-5 | function exprBare(f: flag) returns (flag) { return on; }
-  |                                                    ^^ constructor must be qualified
-6 |
-  |
-  = help: use `flag.on`
+  --> /main/main.sol:14:12
+   |
+13 | function exprBare(f: flag) returns (flag) {
+14 |     return on;
+   |            ^^ constructor must be qualified
+15 | }
+   |
+   = help: use `flag.on`
 ---
 
 error[SC0106]: unqualified constructor: off
-  --> /main/main.sol:9:6
+  --> /main/main.sol:19:14
    |
- 8 |   match (f) {
- 9 | case off {
-   |      ^^^ constructor must be qualified
-10 | return 0;
+18 |     match (f) {
+19 |         case off {
+   |              ^^^ constructor must be qualified
+20 |             return 0;
    |
    = help: use `flag.off`
 ---
 
 error[SC0106]: unqualified constructor: on
-  --> /main/main.sol:12:6
+  --> /main/main.sol:22:14
    |
-11 | }
-12 | case on {
-   |      ^^ constructor must be qualified
-13 | return 1;
+21 |         }
+22 |         case on {
+   |              ^^ constructor must be qualified
+23 |             return 1;
    |
    = help: use `flag.on`
 ---
 
 error[SC0106]: unqualified constructor: None
-  --> /main/main.sol:20:6
+  --> /main/main.sol:30:14
    |
-19 |   match (o) {
-20 | case None {
-   |      ^^^^ constructor must be qualified
-21 | return 0;
+29 |     match (o) {
+30 |         case None {
+   |              ^^^^ constructor must be qualified
+31 |             return 0;
    |
    = help: use `Option.None`

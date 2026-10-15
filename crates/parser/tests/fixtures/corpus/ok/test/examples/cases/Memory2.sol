@@ -1,5 +1,7 @@
-enum Memory<a> { Memory(word) }
+enum Memory<a> {
+    Memory(word)
+}
 
 function g() {
-    let x : Memory<Memory<word>> = Memory(0);
+    let x: Memory<Memory<word>> = Memory(0);
 }

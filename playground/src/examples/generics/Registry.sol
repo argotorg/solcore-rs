@@ -7,7 +7,9 @@ import * from std.StorageGeneric;
 // Candidate standard-library inventory: a generic max belongs in std
 // eventually.
 function max<a>(x: a, y: a) returns (a) where a: Ord {
-    if (x > y) { return x; }
+    if (x > y) {
+        return x;
+    }
     return y;
 }
 
@@ -17,13 +19,17 @@ enum Version {
 
 function major(v: Version) returns (uint256) {
     match (v) {
-        case Version(value, _) { return value; }
+        case Version(value, _) {
+            return value;
+        }
     }
 }
 
 function minor(v: Version) returns (uint256) {
     match (v) {
-        case Version(_, value) { return value; }
+        case Version(_, value) {
+            return value;
+        }
     }
 }
 
@@ -36,13 +42,15 @@ impl Eq<Version> {
 // Ord requires Eq: the compiler checks the trait hierarchy.
 impl Ord<Version> {
     function gt(a: Version, b: Version) returns (bool) {
-        if (major(a) == major(b)) { return minor(a) > minor(b); }
+        if (major(a) == major(b)) {
+            return minor(a) > minor(b);
+        }
         return major(a) > major(b);
     }
 }
 
 contract Registry {
-    newest : Version;
+    newest: Version;
 
     constructor() {
         newest = Version(uint256(0), uint256(0));

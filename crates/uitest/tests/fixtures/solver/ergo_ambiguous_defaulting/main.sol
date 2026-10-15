@@ -1,32 +1,34 @@
-enum Wrap { Wrap(word) }
+enum Wrap {
+    Wrap(word)
+}
 
 trait Conv<a> {
-  function make(x: word) returns (a) ;
-  function out(y: a) returns (word) ;
+    function make(x: word) returns (a);
+    function out(y: a) returns (word);
 }
 
 impl Conv<word> {
-  function make(x: word) returns (word) {
-    return x;
-  }
-  function out(y: word) returns (word) {
-    return y;
-  }
+    function make(x: word) returns (word) {
+        return x;
+    }
+    function out(y: word) returns (word) {
+        return y;
+    }
 }
 
 impl Conv<Wrap> {
-  function make(x: word) returns (Wrap) {
-    return Wrap(x);
-  }
-  function out(y: Wrap) returns (word) {
-    match (y) {
-case Wrap(w) {
-return w;
-}
-}
-  }
+    function make(x: word) returns (Wrap) {
+        return Wrap(x);
+    }
+    function out(y: Wrap) returns (word) {
+        match (y) {
+            case Wrap(w) {
+                return w;
+            }
+        }
+    }
 }
 
 function f() returns (word) {
-  return Conv.out(Conv.make(1));
+    return Conv.out(Conv.make(1));
 }

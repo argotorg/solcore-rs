@@ -4,12 +4,16 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/final_if_branch_mismatch/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found ()
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
-1 | function f(x: bool) returns (word) {
-2 |   if ( x ) { 1; } else { true; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expression has mismatched type
-3 | }
+1 |   function f(x: bool) returns (word) {
+2 | /     if (x) {
+3 | |         1;
+4 | |     } else {
+5 | |         true;
+6 | |     }
+  | |_____^ expression has mismatched type
+7 |   }
   |
   = note: expected type: word
   = note: found type: ()

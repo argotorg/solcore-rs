@@ -1,6 +1,6 @@
-export a.{T};
-export b.{T};
+export a.{ T };
+export b.{ T };
 
 function main() returns (word) {
-  return 0;
+    return 0;
 }

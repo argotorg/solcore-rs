@@ -4,13 +4,13 @@
 import std;
 
 contract ComptimeChainOk {
-  function increment(comptime x: word) returns (comptime<word>) {
-    return x + 1;
-  }
-  function double(comptime x: word) returns (comptime<word>) {
-    return x + x;
-  }
-  function main() returns (word) {
-    return double(increment(20));
-  }
+    function increment(comptime x: word) returns (comptime<word>) {
+        return x + 1;
+    }
+    function double(comptime x: word) returns (comptime<word>) {
+        return x + x;
+    }
+    function main() returns (word) {
+        return double(increment(20));
+    }
 }

@@ -2,30 +2,34 @@ import * from std;
 import * from std.dispatch;
 
 trait Enum<a> {
-  function fromEnum(x: a) returns (word) ;
+    function fromEnum(x: a) returns (word);
 }
 
-enum Food { Curry, Beans, Other }
+enum Food {
+    Curry,
+    Beans,
+    Other
+}
 
 impl Enum<Food> {
-  function fromEnum(x: Food) returns (word) {
-     match (x) {
-case Food.Curry {
-return 1;
-}
-case Food.Beans {
-return 2;
-}
-case Food.Other {
-return 3;
-}
-}
-  }
+    function fromEnum(x: Food) returns (word) {
+        match (x) {
+            case Food.Curry {
+                return 1;
+            }
+            case Food.Beans {
+                return 2;
+            }
+            case Food.Other {
+                return 3;
+            }
+        }
+    }
 }
 
 contract FoodContract {
-  // #[() -> 2]
-  function run() public returns (uint256) {
+    // #[() -> 2]
+    function run() public returns (uint256) {
         return uint256(Enum.fromEnum(Food.Beans));
-  }
+    }
 }

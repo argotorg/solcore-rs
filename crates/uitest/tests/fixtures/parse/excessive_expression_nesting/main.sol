@@ -1,1 +1,3 @@
-function main() returns (word) { return !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!true; }
+function main() returns (word) {
+    return !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!true;
+}

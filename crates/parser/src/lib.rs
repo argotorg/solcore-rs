@@ -11,6 +11,8 @@ use hir::{
 use logos::Logos;
 use tracing::{Level, field};
 
+/// Source formatting built on the parser's lexical and syntax spans.
+pub mod format;
 /// Token definitions used by the parser.
 pub mod lexer;
 /// Lowering from parsed syntax into HIR.

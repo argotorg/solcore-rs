@@ -1,3 +1,6 @@
 export { RightOpt(*) };
 
-enum RightOpt { None, Some(word) }
+enum RightOpt {
+    None,
+    Some(word)
+}

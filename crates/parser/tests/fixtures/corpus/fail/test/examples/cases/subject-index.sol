@@ -1,27 +1,37 @@
-enum storage<a> { storage(word) }
-enum storageRef<a> { storageRef(word) }
-enum Proxy<a> { Proxy }
+enum storage<a> {
+    storage(word)
+}
+enum storageRef<a> {
+    storageRef(word)
+}
+enum Proxy<a> {
+    Proxy
+}
 
-enum mapping<member, index> { mapping(word, Proxy<member>, Proxy<index>) }
+enum mapping<member, index> {
+    mapping(word, Proxy<member>, Proxy<index>)
+}
 
 trait Assign<lhs, rhs> {
-    function assign(l: lhs, r: rhs) ;
+    function assign(l: lhs, r: rhs);
 }
 
 impl<a> Assign<storageRef<a>, a> {
-    function assign(l:storageRef<a>, y:a) {
+    function assign(l: storageRef<a>, y: a) {
     }
 }
 
 trait CStructField<self, fieldType, offsetType> {}
-enum StructField<structType, fieldSelector> { StructField(structType) }
+enum StructField<structType, fieldSelector> {
+    StructField(structType)
+}
 
-
-enum MemberAccessProxy<a, field, offset> { MemberAccessProxy(a, field) }
-
+enum MemberAccessProxy<a, field, offset> {
+    MemberAccessProxy(a, field)
+}
 
 trait LValueMemberAccess<self, memberRefType> {
-    function memberAccess(x: self) returns (memberRefType) ;
+    function memberAccess(x: self) returns (memberRefType);
 }
 
 // ------------------------------------------------------------------
@@ -38,37 +48,45 @@ impl<cxt, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessP
 // Indexed access
 // ------------------------------------------------------------------
 
-enum mapping<index, member> { mapping(word) }
-enum IndexAccessProxy<map, index, member> { IndexAccessProxy(map, index) }
+enum mapping<index, member> {
+    mapping(word)
+}
+enum IndexAccessProxy<map, index, member> {
+    IndexAccessProxy(map, index)
+}
 
 impl<map, index, member> LValueMemberAccess<IndexAccessProxy<storageRef<map>, index, member>, storageRef<member>> {
     function memberAccess(x: IndexAccessProxy<storageRef<map>, index, member>) returns (storageRef<member>) {
-	    return storageRef(0);
+        return storageRef(0);
     }
 }
 
-enum MintCtx { MintCtx }
-enum balances_sel { balances_sel }
+enum MintCtx {
+    MintCtx
+}
+enum balances_sel {
+    balances_sel
+}
 impl CStructField<StructField<MintCtx, balances_sel>, mapping(word => word), ()> {}
 
-   function mint(amount:word) {
-     let bal_prx = MemberAccessProxy(MintCtx, balances_sel);
-     let bal_ref = LValueMemberAccess.memberAccess(bal_prx);
+function mint(amount: word) {
+    let bal_prx = MemberAccessProxy(MintCtx, balances_sel);
+    let bal_ref = LValueMemberAccess.memberAccess(bal_prx);
 
-     Assign.assign(
-       LValueMemberAccess.memberAccess(
-         IndexAccessProxy(
-	 // bal_ref // this works, but inlining bal_ref leads to error
-	 LValueMemberAccess.memberAccess(bal_prx)
-	 , 0
-	 )
-       )
-     , amount
-     ) ;
+    Assign.assign(
+        LValueMemberAccess.memberAccess(
+            IndexAccessProxy(
+                // bal_ref // this works, but inlining bal_ref leads to error
+                LValueMemberAccess.memberAccess(bal_prx)
+                , 0
+            )
+        )
+        , amount
+    );
 
-   }
+}
 contract Map {
-   function main() public {
-      mint(1000);
-   }
+    function main() public {
+        mint(1000);
+    }
 }

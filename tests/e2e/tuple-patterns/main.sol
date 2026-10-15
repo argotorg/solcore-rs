@@ -1,12 +1,19 @@
 import * from std;
 import * from std.dispatch;
 
-enum TupleBox { TupleBox(uint256, (uint256, uint256)) }
-struct TupleFields { first: uint256; pair: (uint256, uint256); }
+enum TupleBox {
+    TupleBox(uint256, (uint256, uint256))
+}
+struct TupleFields {
+    first: uint256;
+    pair: (uint256, uint256);
+}
 
 function firstAfterUnit(p: ((), (uint256, uint256))) returns (uint256) {
     match (p) {
-        case ((), (x, y)) { return x; }
+        case ((), (x, y)) {
+            return x;
+        }
     }
 }
 
@@ -14,7 +21,9 @@ function lastInTail(p: (uint256, uint256, uint256)) returns (uint256) {
     match (p) {
         case (x, rest) {
             match (rest) {
-                case (y, z) { return z; }
+                case (y, z) {
+                    return z;
+                }
             }
         }
     }
@@ -37,7 +46,9 @@ contract TuplePatterns {
     function constructorTail(x: uint256, y: uint256, z: uint256) public returns (uint256) {
         let boxed = TupleBox(x, (y, z));
         match (boxed) {
-            case TupleBox(a, (b, c)) { return c; }
+            case TupleBox(a, (b, c)) {
+                return c;
+            }
         }
     }
 
@@ -45,7 +56,9 @@ contract TuplePatterns {
     function structTail(x: uint256, y: uint256, z: uint256) public returns (uint256) {
         let fields = TupleFields(x, (y, z));
         match (fields.pair) {
-            case (a, b) { return a; }
+            case (a, b) {
+                return a;
+            }
         }
     }
 
@@ -54,8 +67,12 @@ contract TuplePatterns {
     // #[(false, 7) -> 0]
     function covered(flag: bool, value: uint256) public returns (uint256) {
         match (((), (flag, value))) {
-            case ((), (true, x)) { return x; }
-            case ((), (false, x)) { return uint256(0); }
+            case ((), (true, x)) {
+                return x;
+            }
+            case ((), (false, x)) {
+                return uint256(0);
+            }
         }
     }
 }

@@ -15,7 +15,9 @@
 import std;
 import * from std;
 
-enum Wrapped { Wrapped(memory<string>) }
+enum Wrapped {
+    Wrapped(memory<string>)
+}
 
 impl Str<Wrapped> {
     function fromString(s: string) returns (Wrapped) {
@@ -25,16 +27,16 @@ impl Str<Wrapped> {
 
 function unwrap(w: Wrapped) returns (memory<string>) {
     match (w) {
-case Wrapped(m) {
-return m;
-}
-}
+        case Wrapped(m) {
+            return m;
+        }
+    }
 }
 
 contract StringParamErasure {
-  function main() returns (word) {
-     let direct : Wrapped = "abcd";
-     let folded : Wrapped = concatLit("ab", "cd");
-     return strlen(unwrap(direct)) + strlen(unwrap(folded));
-  }
+    function main() returns (word) {
+        let direct: Wrapped = "abcd";
+        let folded: Wrapped = concatLit("ab", "cd");
+        return strlen(unwrap(direct)) + strlen(unwrap(folded));
+    }
 }

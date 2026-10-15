@@ -1,5 +1,7 @@
-enum Foo { Foo }
+enum Foo {
+    Foo
+}
 
 function main() returns (Foo) {
-  return Foo.Foo;
+    return Foo.Foo;
 }

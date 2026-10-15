@@ -1,5 +1,9 @@
-enum Food { Beans }
+enum Food {
+    Beans
+}
 contract Food {}
 
 contract Point {}
-struct Point { x: word; }
+struct Point {
+    x: word;
+}

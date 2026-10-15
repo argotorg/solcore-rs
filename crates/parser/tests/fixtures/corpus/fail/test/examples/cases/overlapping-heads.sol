@@ -1,15 +1,15 @@
 trait Foo<a, b> {
-  function foo(x: a, y: word) returns (b) ;
+    function foo(x: a, y: word) returns (b);
 }
 
 impl Foo<(), ()> {
-  function foo(x: (), y: word) {
-    return ();
-  }
+    function foo(x: (), y: word) {
+        return ();
+    }
 }
 
 impl<a> Foo<a, ()> {
-  function foo(x: a, y: word) {
-    return ();
-  }
+    function foo(x: a, y: word) {
+        return ();
+    }
 }

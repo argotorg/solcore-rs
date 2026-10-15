@@ -1,13 +1,17 @@
-
 trait A<self> {}
 trait B<self> {}
 trait C<self> {}
 trait D<self> {}
 
-
-enum Uint256 { U }
-enum T<x> { T }
-enum S<x> { SCons }
+enum Uint256 {
+    U
+}
+enum T<x> {
+    T
+}
+enum S<x> {
+    SCons
+}
 
 // This works.
 impl<U> D<T<U>> where U: A {}

@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/duplicate_selector/main.sol
 ---
 error[SC0117]: duplicate name `value` in selective import
- --> /main/main.sol:1:16
+ --> /main/main.sol:1:17
   |
-1 | import {value, value} from util;
-  |         -----  ^^^^^ duplicate selected import
-  |         |
-  |         first selected import with this name
+1 | import { value, value } from util;
+  |          -----  ^^^^^ duplicate selected import
+  |          |
+  |          first selected import with this name
   |
   = note: list each selected or hidden name only once

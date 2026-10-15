@@ -1,2 +1,4 @@
-export {Proxy};
-enum Proxy<t> { Proxy }
+export { Proxy };
+enum Proxy<t> {
+    Proxy
+}

@@ -1,5 +1,7 @@
-enum Pair<a, b> { Mk(a, b) }
+enum Pair<a, b> {
+    Mk(a, b)
+}
 
 function f() returns (Pair<word, word>) {
-  return Pair.Mk(1);
+    return Pair.Mk(1);
 }

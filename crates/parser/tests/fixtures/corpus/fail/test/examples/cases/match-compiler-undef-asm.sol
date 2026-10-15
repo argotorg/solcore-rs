@@ -1,20 +1,22 @@
-enum Foo<a> { Foo(word) }
+enum Foo<a> {
+    Foo(word)
+}
 
 function read<a>(x: Foo<a>) returns (word) {
-  let res : word;
-  match (x) {
-case Foo(w) {
-assembly {
-      res := w
+    let res: word;
+    match (x) {
+        case Foo(w) {
+            assembly {
+                res := w
+            }
+        }
     }
-}
-}
-  return res;
+    return res;
 }
 
 contract Bla {
 
-  function main() public returns (word) {
-    return read(Foo(42));
-  }
+    function main() public returns (word) {
+        return read(Foo(42));
+    }
 }

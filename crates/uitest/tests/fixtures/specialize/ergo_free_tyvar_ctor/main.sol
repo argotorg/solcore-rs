@@ -3,11 +3,14 @@
 // points at `None` and names the type variable usefully.
 import std;
 
-enum Option<a> { None, Some(a) }
+enum Option<a> {
+    None,
+    Some(a)
+}
 
 contract FreeTyVarCtor {
-  function main() returns (word) {
-    let x = Option.None;
-    return 1;
-  }
+    function main() returns (word) {
+        let x = Option.None;
+        return 1;
+    }
 }

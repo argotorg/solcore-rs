@@ -1,4 +1,4 @@
-export a.{fa};
+export a.{ fa };
 
 function fb() {}
 

@@ -1,10 +1,15 @@
-enum Color { Red, Green }
-enum Shape { Circle(word) }
+enum Color {
+    Red,
+    Green
+}
+enum Shape {
+    Circle(word)
+}
 
 function f(c: Color) returns (word) {
-  match (c) {
-case Shape.Circle(r) {
-return r;
-}
-}
+    match (c) {
+        case Shape.Circle(r) {
+            return r;
+        }
+    }
 }

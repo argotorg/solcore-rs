@@ -1,19 +1,22 @@
-contract C { function main() returns (word) { return 0; }
-  seed: word =  true  ?  false  :  1;
+contract C {
+    function main() returns (word) {
+        return 0;
+    }
+    seed: word = true ? false : 1;
 }
 
 function pat_source(p: (word, word)) returns (word) {
-  match (p) {
-case (a, b, c) {
-return a;
-}
-}
+    match (p) {
+        case (a, b, c) {
+            return a;
+        }
+    }
 }
 
 function if_source(b: bool) returns (word) {
-  return  b  ?  1  :  false;
+    return b ? 1 : false;
 }
 
 function bool_source() returns (word) {
-  return true;
+    return true;
 }

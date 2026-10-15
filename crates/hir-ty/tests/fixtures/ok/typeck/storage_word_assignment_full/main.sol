@@ -1,29 +1,31 @@
-enum storage<t> { storage(word) }
+enum storage<t> {
+    storage(word)
+}
 
 trait CanStore<a, b> {
-  function store(r: a, v: b) ;
-  function load(r: a) returns (b) ;
+    function store(r: a, v: b);
+    function load(r: a) returns (b);
 }
 
 impl CanStore<storage<word>, word> {
-  function store(dst: storage<word>, src: word) {
-    return ();
-  }
+    function store(dst: storage<word>, src: word) {
+        return ();
+    }
 
-  function load(src: storage<word>) returns (word) {
-    return 0;
-  }
+    function load(src: storage<word>) returns (word) {
+        return 0;
+    }
 }
 
 contract StorageWordAssign {
-  x: word;
+    x: word;
 
-  function setx() {
-    x = 8;
-  }
+    function setx() {
+        x = 8;
+    }
 
-  function main() public returns (word) {
-    setx();
-    return x;
-  }
+    function main() public returns (word) {
+        setx();
+        return x;
+    }
 }

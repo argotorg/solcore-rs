@@ -13,10 +13,10 @@ function useWord3(x: Word3) returns (word) {
 
 function usePair3(p: Pair3) returns (word) {
     match (p) {
-case pair(x, _) {
-return x;
-}
-}
+        case pair(x, _) {
+            return x;
+        }
+    }
 }
 
 function main() returns (word) {

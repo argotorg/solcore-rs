@@ -1,5 +1,8 @@
-enum Choice { Same(word), Same(bool) }
+enum Choice {
+    Same(word),
+    Same(bool)
+}
 
 function ambiguous() returns (Choice) {
-  return .Same(1);
+    return .Same(1);
 }

@@ -1,11 +1,11 @@
 function a() returns (word) {
-  return true;
+    return true;
 }
 
 function b() returns (bool) {
-  return 1;
+    return 1;
 }
 
 function c(x: word) returns (word) {
-  return x(1);
+    return x(1);
 }

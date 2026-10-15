@@ -1,7 +1,7 @@
 contract C {
-  function main() public {
-    assembly {
-      return(0,0)
+    function main() public {
+        assembly {
+            return (0, 0)
+        }
     }
-  }
 }

@@ -5,4 +5,6 @@ import * as api from traits;
 #[derive(api.Marker)]
 enum Tagged {}
 
-function run(value: word) returns (word) { return value; }
+function run(value: word) returns (word) {
+    return value;
+}

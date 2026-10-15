@@ -5,7 +5,7 @@ import * from std.dispatch;
 // provide its selector/decode/encode evidence. The frontend must terminate
 // with a bounded solver diagnostic while that evidence is missing.
 contract WordAbiProbe {
-  function echo(value: word) public returns (word) {
-    return value;
-  }
+    function echo(value: word) public returns (word) {
+        return value;
+    }
 }

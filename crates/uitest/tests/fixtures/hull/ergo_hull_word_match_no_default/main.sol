@@ -2,14 +2,14 @@ import * from std;
 import * from std.dispatch;
 
 contract Digits {
-  function name(d: uint256) public returns (uint256) {
-    match (d) {
-case 0 {
-return 100;
-}
-case 1 {
-return 101;
-}
-}
-  }
+    function name(d: uint256) public returns (uint256) {
+        match (d) {
+            case 0 {
+                return 100;
+            }
+            case 1 {
+                return 101;
+            }
+        }
+    }
 }

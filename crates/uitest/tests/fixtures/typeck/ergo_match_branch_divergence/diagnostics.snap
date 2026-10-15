@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_match_branch_divergence/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
-  --> /main/main.sol:9:8
+  --> /main/main.sol:12:20
    |
- 8 | case Shape.Square(w) {
- 9 | return true;
-   |        ^^^^ expression has mismatched type
-10 | }
+11 |         case Shape.Square(w) {
+12 |             return true;
+   |                    ^^^^ expression has mismatched type
+13 |         }
    |
    = note: expected type: word
    = note: found type: bool

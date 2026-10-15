@@ -1,4 +1,6 @@
 import * from std;
-export {choose};
+export { choose };
 
-function choose(n: uint256) returns (uint256) { return 99; }
+function choose(n: uint256) returns (uint256) {
+    return 99;
+}

@@ -7,21 +7,21 @@
 import std;
 
 trait Wrap<t> {
-  function unwrap(comptime x: t) returns (comptime<word>) ;
+    function unwrap(comptime x: t) returns (comptime<word>);
 }
 
 impl Wrap<word> {
-  function unwrap(comptime x: word) returns (comptime<word>) {
-    return x;
-  }
+    function unwrap(comptime x: word) returns (comptime<word>) {
+        return x;
+    }
 }
 
 function process<t>(z: t) returns (word) where t: Wrap {
-  return Wrap.unwrap(z);
+    return Wrap.unwrap(z);
 }
 
 contract ComptimeParamPolyRuntime {
-  function main() returns (word) {
-    return process(42);
-  }
+    function main() returns (word) {
+        return process(42);
+    }
 }

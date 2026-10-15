@@ -4,21 +4,25 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/duplicate_contract_type/main.sol
 ---
 error[SC0108]: duplicate declaration `Food` in type namespace
- --> /main/main.sol:2:10
+ --> /main/main.sol:4:10
   |
-1 | enum Food { Beans }
+1 | enum Food {
   |      ---- previous declaration
-2 | contract Food {}
+2 |     Beans
+3 | }
+4 | contract Food {}
   |          ^^^^ duplicate declaration
-3 |
+5 |
   |
 ---
 
 error[SC0108]: duplicate declaration `Point` in type namespace
- --> /main/main.sol:5:8
+ --> /main/main.sol:7:8
   |
-3 |
-4 | contract Point {}
+5 |
+6 | contract Point {}
   |          ----- previous declaration
-5 | struct Point { x: word; }
+7 | struct Point {
   |        ^^^^^ duplicate declaration
+8 |     x: word;
+  |

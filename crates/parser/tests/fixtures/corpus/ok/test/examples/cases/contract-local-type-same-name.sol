@@ -6,31 +6,37 @@
 import * from std;
 
 contract A {
-  enum T { Foo, Bar }
+    enum T {
+        Foo,
+        Bar
+    }
 
-  function pickA() public returns (word) {
-    match (T.Foo) {
-case T.Foo {
-return 1;
-}
-case T.Bar {
-return 2;
-}
-}
-  }
+    function pickA() public returns (word) {
+        match (T.Foo) {
+            case T.Foo {
+                return 1;
+            }
+            case T.Bar {
+                return 2;
+            }
+        }
+    }
 }
 
 contract B {
-  enum T { Baz, Qux }
+    enum T {
+        Baz,
+        Qux
+    }
 
-  function pickB() public returns (word) {
-    match (T.Qux) {
-case T.Baz {
-return 3;
-}
-case T.Qux {
-return 4;
-}
-}
-  }
+    function pickB() public returns (word) {
+        match (T.Qux) {
+            case T.Baz {
+                return 3;
+            }
+            case T.Qux {
+                return 4;
+            }
+        }
+    }
 }

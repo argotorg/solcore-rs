@@ -2,11 +2,11 @@
 import std;
 
 contract ComptimeLetOk {
-  function double(comptime x: word) returns (comptime<word>) {
-    return x + x;
-  }
-  function main() returns (word) {
-    let y : comptime<word> = double(21);
-    return y;
-  }
+    function double(comptime x: word) returns (comptime<word>) {
+        return x + x;
+    }
+    function main() returns (word) {
+        let y: comptime<word> = double(21);
+        return y;
+    }
 }

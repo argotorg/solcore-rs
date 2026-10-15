@@ -1,6 +1,10 @@
-enum Foo { Bar }
-enum Foo { Baz }
+enum Foo {
+    Bar
+}
+enum Foo {
+    Baz
+}
 
 function main() {
-  let x = Foo.Baz;
+    let x = Foo.Baz;
 }

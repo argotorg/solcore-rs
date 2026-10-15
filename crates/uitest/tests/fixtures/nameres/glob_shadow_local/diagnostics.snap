@@ -11,5 +11,5 @@ error[SC0108]: duplicate declaration `value` in term namespace
 2 |
 3 | function value(x: word) returns (word) {
   |          ^^^^^ duplicate declaration
-4 |   return x;
+4 |     return x;
   |

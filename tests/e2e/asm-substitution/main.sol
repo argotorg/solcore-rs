@@ -5,6 +5,11 @@ import * from std.dispatch;
 // partial evaluator must apply in a scope- and flow-aware way.  A single,
 // uniform substitution map (built from every literal-valued local in scope)
 // used to be inlined into the whole block at once, producing wrong code.
+// #[scenario("asm_subst")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0x8decb8c5, label = "asmFlow()(uint256) -> 6 (x := 5; y := add(x, 1))") -> success(0x0000000000000000000000000000000000000000000000000000000000000006)]
+// #[raw(0x2b591092, label = "asmLoopFlow()(uint256) -> 3 (accumulate s across 3 iterations)") -> success(0x0000000000000000000000000000000000000000000000000000000000000003)]
 contract C {
     constructor() {}
 
@@ -13,11 +18,11 @@ contract C {
     // folded the second statement to `add(0, 1)` and returned 1; the correct
     // result is 6.
     function asmFlow() public returns (uint256) {
-        let x : word = 0;
-        let y : word = 0;
+        let x: word = 0;
+        let y: word = 0;
         assembly {
-          x := add(5, sload(1))
-          y := add(x, 1)
+            x := add(5, sload(1))
+            y := add(x, 1)
         }
         return uint256(y);
     }
@@ -29,11 +34,15 @@ contract C {
     // three iterations is 3.  The asm-local counter `j` (no outer counterpart)
     // exercises the loop without any name collision.
     function asmLoopFlow() public returns (uint256) {
-        let s : word = 0;
+        let s: word = 0;
         assembly {
-          for { let j := 0 } lt(j, 3) { j := add(j, 1) } {
-            s := add(s, 1)
-          }
+            for {
+                let j := 0
+            } lt(j, 3) {
+                j := add(j, 1)
+            } {
+                s := add(s, 1)
+            }
         }
         return uint256(s);
     }

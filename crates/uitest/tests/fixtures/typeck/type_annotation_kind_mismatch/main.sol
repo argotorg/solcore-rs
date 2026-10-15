@@ -1,5 +1,7 @@
-enum P<a> { Mk(a) }
+enum P<a> {
+    Mk(a)
+}
 
 function f(x: P<word<word>>) returns (word) {
-  return 0;
+    return 0;
 }

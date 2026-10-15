@@ -10,14 +10,16 @@
 // this program.
 
 trait Assign2<lhs, rhs> {
-    function assign(l: lhs, r: rhs) ;
+    function assign(l: lhs, r: rhs);
 }
 
 trait Mk<s, o> {
-    function mk(x: s) returns (o) ;
+    function mk(x: s) returns (o);
 }
 
-enum R<a> { R(a) }
+enum R<a> {
+    R(a)
+}
 
 impl<a> Assign2<R<a>, a> {
     function assign(l: R<a>, r: a) {
@@ -25,7 +27,9 @@ impl<a> Assign2<R<a>, a> {
     }
 }
 
-enum S { S }
+enum S {
+    S
+}
 
 impl Mk<S, R<word>> {
     function mk(x: S) returns (R<word>) {

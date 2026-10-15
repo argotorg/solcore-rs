@@ -13,19 +13,21 @@
 // interfere with the normal specialisation of `mapEncode` when called
 // from a concrete call site.
 
-enum Foo { Foo(word) }
+enum Foo {
+    Foo(word)
+}
 
 trait Encoder<self, rep> {
-    function encode(x: self, hint: word) returns (rep) ;
+    function encode(x: self, hint: word) returns (rep);
 }
 
 impl Encoder<Foo, word> {
     function encode(x: Foo, hint: word) returns (word) {
         match (x) {
-case Foo(v) {
-return v;
-}
-}
+            case Foo(v) {
+                return v;
+            }
+        }
     }
 }
 

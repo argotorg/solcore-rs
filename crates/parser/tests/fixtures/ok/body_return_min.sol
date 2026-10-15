@@ -1,3 +1,3 @@
 function main() returns (word) {
-  return 1;
+    return 1;
 }

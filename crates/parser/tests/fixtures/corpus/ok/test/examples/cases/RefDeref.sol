@@ -1,9 +1,9 @@
 trait Loadable<ref, deref> {
-    function load(r: ref) returns (deref) ;
+    function load(r: ref) returns (deref);
 }
 
 trait Storable<ref, deref> {
-    function store(r: ref, d: deref) ;
+    function store(r: ref, d: deref);
 }
 
 // haskell style class constraints

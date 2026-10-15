@@ -9,5 +9,5 @@ error[SC0217]: trait arity mismatch for `Rel`: expected 1, got 0
 4 |
 5 | impl Rel<word> {
   |      ^^^^^^^^^ trait predicate arity mismatch
-6 |   function rel(x: word, y: word) returns (word) {
+6 |     function rel(x: word, y: word) returns (word) {
   |

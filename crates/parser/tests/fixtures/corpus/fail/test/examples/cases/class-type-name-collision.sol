@@ -1,5 +1,7 @@
-enum Foo { MkFoo }
+enum Foo {
+    MkFoo
+}
 
 trait Foo<a> {
-  function foo(x: a) returns (word) ;
+    function foo(x: a) returns (word);
 }

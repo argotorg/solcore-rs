@@ -3,13 +3,13 @@
 // Before the fix `tcYulStmt` dropped `YLet ns Nothing`, so `x` never entered
 // the env and the read `r := x` failed to resolve.
 contract Test {
-  function main() public returns (word) {
-    let r : word = 0;
-    assembly {
-      let x
-      x := add(1, 1)
-      r := x
+    function main() public returns (word) {
+        let r: word = 0;
+        assembly {
+            let x
+            x := add(1, 1)
+            r := x
+        }
+        return r;
     }
-    return r;
-  }
 }

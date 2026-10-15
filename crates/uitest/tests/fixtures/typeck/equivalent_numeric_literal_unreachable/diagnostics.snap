@@ -4,26 +4,26 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/equivalent_numeric_literal_unreachable/main.sol
 ---
 warning[SC0303]: unreachable match arm
- --> /main/main.sol:6:1
+ --> /main/main.sol:6:9
   |
-5 |   }
-6 | / case 10 {
-7 | | return 1;
-8 | | }
-  | |_^ this arm is unreachable
-9 |   default {
+5 |           }
+6 | /         case 10 {
+7 | |             return 1;
+8 | |         }
+  | |_________^ this arm is unreachable
+9 |           default {
   |
   = note: this arm is covered by previous match arms
 ---
 
 warning[SC0303]: unreachable match arm
-  --> /main/main.sol:20:1
+  --> /main/main.sol:20:9
    |
-19 |   }
-20 | / case 115792089237316195423570985008687907853269984665640564039457584007913129639936 {
-21 | | return 1;
-22 | | }
-   | |_^ this arm is unreachable
-23 |   default {
+19 |           }
+20 | /         case 115792089237316195423570985008687907853269984665640564039457584007913129639936 {
+21 | |             return 1;
+22 | |         }
+   | |_________^ this arm is unreachable
+23 |           default {
    |
    = note: this arm is covered by previous match arms

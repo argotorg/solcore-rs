@@ -2,21 +2,21 @@ import * from std;
 import * from std.dispatch;
 
 contract CompositeValues {
-  constructor() {}
+    constructor() {}
 
-  // #[((7, 1), 9) -> (7, 1, 9)]
-  function pack(point: (uint256, uint256), tag: uint256) public returns ((uint256, uint256), uint256) {
-    return (point, tag);
-  }
+    // #[((7, 1), 9) -> (7, 1, 9)]
+    function pack(point: (uint256, uint256), tag: uint256) public returns ((uint256, uint256), uint256) {
+        return (point, tag);
+    }
 
-  // #[((7, 1, 9)) -> (7, 1, 9)]
-  function unpack(tagged: ((uint256, uint256), uint256)) public returns ((uint256, uint256), uint256) {
-    return tagged;
-  }
+    // #[((7, 1, 9)) -> (7, 1, 9)]
+    function unpack(tagged: ((uint256, uint256), uint256)) public returns ((uint256, uint256), uint256) {
+        return tagged;
+    }
 
-  // #[((0, 0, 0)) -> (0, 0, 0)]
-  // #[((42, 1, 99)) -> (42, 1, 99)]
-  function echo(tagged: ((uint256, uint256), uint256)) public returns ((uint256, uint256), uint256) {
-    return tagged;
-  }
+    // #[((0, 0, 0)) -> (0, 0, 0)]
+    // #[((42, 1, 99)) -> (42, 1, 99)]
+    function echo(tagged: ((uint256, uint256), uint256)) public returns ((uint256, uint256), uint256) {
+        return tagged;
+    }
 }

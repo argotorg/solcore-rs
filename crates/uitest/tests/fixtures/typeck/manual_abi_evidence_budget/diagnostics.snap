@@ -4,47 +4,47 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_evidence_budget/main.sol
 ---
 error[SC0209]: cannot solve trait constraint `Level2<Wrap<Wrap<Wrap<Wrap<Box<uint256>>>>>>: ABIAttribs`: solver exceeded its iteration bound
-  --> /main/main.sol:37:3
+  --> /main/main.sol:77:5
    |
-36 |   contract C {
-37 | /   constructor(
-38 | |     first: Level7<uint256>,
-39 | |     pad0: Pad0,
-40 | |     pad1: Pad1,
-41 | |     pad2: Pad2,
-42 | |     pad3: Pad3,
-43 | |     pad4: Pad4,
-44 | |     pad5: Pad5,
-45 | |     pad6: Pad6,
-46 | |     pad7: Pad7,
-47 | |     pad8: Pad8,
-48 | |     late: Late
-49 | |   ) {}
-   | |______^ constraint originates here
-50 |   }
+76 |   contract C {
+77 | /     constructor(
+78 | |         first: Level7<uint256>,
+79 | |         pad0: Pad0,
+80 | |         pad1: Pad1,
+81 | |         pad2: Pad2,
+82 | |         pad3: Pad3,
+83 | |         pad4: Pad4,
+84 | |         pad5: Pad5,
+85 | |         pad6: Pad6,
+86 | |         pad7: Pad7,
+87 | |         pad8: Pad8,
+88 | |         late: Late
+89 | |     ) {}
+   | |________^ constraint originates here
+90 |   }
    |
    = help: simplify the impl chain or add a more direct impl
 ---
 
 error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDecode` evidence
-  --> /main/main.sol:37:3
+  --> /main/main.sol:77:5
    |
-36 |   contract C {
-37 | /   constructor(
-38 | |     first: Level7<uint256>,
-39 | |     pad0: Pad0,
-40 | |     pad1: Pad1,
-41 | |     pad2: Pad2,
-42 | |     pad3: Pad3,
-43 | |     pad4: Pad4,
-44 | |     pad5: Pad5,
-45 | |     pad6: Pad6,
-46 | |     pad7: Pad7,
-47 | |     pad8: Pad8,
-48 | |     late: Late
-49 | |   ) {}
-   | |______^ external ABI evidence must be compiler-owned and canonical
-50 |   }
+76 |   contract C {
+77 | /     constructor(
+78 | |         first: Level7<uint256>,
+79 | |         pad0: Pad0,
+80 | |         pad1: Pad1,
+81 | |         pad2: Pad2,
+82 | |         pad3: Pad3,
+83 | |         pad4: Pad4,
+84 | |         pad5: Pad5,
+85 | |         pad6: Pad6,
+86 | |         pad7: Pad7,
+87 | |         pad8: Pad8,
+88 | |         late: Late
+89 | |     ) {}
+   | |________^ external ABI evidence must be compiler-owned and canonical
+90 |   }
    |
    = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

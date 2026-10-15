@@ -1,8 +1,8 @@
 import * from std;
-import {sload, sstore} from std.opcodes;
-import {Option} from option;
-import {TransferHook} from hooks;
-import {supply} from erc20core;
+import { sload, sstore } from std.opcodes;
+import { Option } from option;
+import { TransferHook } from hooks;
+import { supply } from erc20core;
 
 export { setCap, requireUnderCap, Capped(*) };
 
@@ -21,13 +21,17 @@ function requireUnderCap(newSupply: uint256) {
 }
 
 // Transfer hook: minting may not push supply over the cap.
-enum Capped { Capped }
+enum Capped {
+    Capped
+}
 
 impl TransferHook<Capped> {
     function on(hook: Capped, from: Option<address>, to: Option<address>, amount: uint256) {
         match (from) {
-            case Option.Some(src) { }
-            default { requireUnderCap(supply() + amount); }
+            case Option.Some(src) {}
+            default {
+                requireUnderCap(supply() + amount);
+            }
         }
     }
 }

@@ -17,16 +17,24 @@ import * from std.StorageGeneric;
 //
 // `Green` is the only constructor that exercises the `inr(inl(...))` path,
 // which is exactly the sum nesting that CanStore.load has to reconstruct.
-enum Color { Red, Green, Blue }
+enum Color {
+    Red,
+    Green,
+    Blue
+}
 
 // A three-constructor sum whose branches carry payloads of different widths.
 // rep = sum(uint256, sum((uint256, uint256), ())), so
 //   size = 1 + max(1, 1 + max(2, 0)) = 4.
-enum Shape { Dot(uint256), Seg(uint256, uint256), Nothing }
+enum Shape {
+    Dot(uint256),
+    Seg(uint256, uint256),
+    Nothing
+}
 
 contract C {
-    color : Color;
-    shape : Shape;
+    color: Color;
+    shape: Shape;
 
     constructor() {
         color = Color.Red;
@@ -52,16 +60,16 @@ contract C {
 
     function tag() public returns (uint256) {
         match (color) {
-case Color.Red {
-return uint256(0);
-}
-case Color.Green {
-return uint256(1);
-}
-case Color.Blue {
-return uint256(2);
-}
-}
+            case Color.Red {
+                return uint256(0);
+            }
+            case Color.Green {
+                return uint256(1);
+            }
+            case Color.Blue {
+                return uint256(2);
+            }
+        }
     }
 
     function setDot(a: uint256) public {
@@ -79,29 +87,29 @@ return uint256(2);
 
     function shapeSum() public returns (uint256) {
         match (shape) {
-case Shape.Dot(a) {
-return a;
-}
-case Shape.Seg(a, b) {
-return a + b;
-}
-case Shape.Nothing {
-return uint256(0);
-}
-}
+            case Shape.Dot(a) {
+                return a;
+            }
+            case Shape.Seg(a, b) {
+                return a + b;
+            }
+            case Shape.Nothing {
+                return uint256(0);
+            }
+        }
     }
 
     function shapeTag() public returns (uint256) {
         match (shape) {
-case Shape.Dot(_) {
-return uint256(0);
-}
-case Shape.Seg(_, _) {
-return uint256(1);
-}
-case Shape.Nothing {
-return uint256(2);
-}
-}
+            case Shape.Dot(_) {
+                return uint256(0);
+            }
+            case Shape.Seg(_, _) {
+                return uint256(1);
+            }
+            case Shape.Nothing {
+                return uint256(2);
+            }
+        }
     }
 }

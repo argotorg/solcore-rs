@@ -1,7 +1,7 @@
 function double(x: word) returns (word) {
-  return x;
+    return x;
 }
 
 function g() returns (word) {
-  return double(1, 2, 3);
+    return double(1, 2, 3);
 }

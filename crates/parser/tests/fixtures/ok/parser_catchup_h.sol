@@ -1,9 +1,13 @@
-enum First { First(word) }
-enum Second { Second }
+enum First {
+    First(word)
+}
+enum Second {
+    Second
+}
 
 export mod;
 export mod as M;
-export mod.{a};
+export mod.{ a };
 export { T(*) };
 
-import {T} from m;
+import { T } from m;

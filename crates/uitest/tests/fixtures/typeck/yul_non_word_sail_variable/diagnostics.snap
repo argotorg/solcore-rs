@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/yul_non_word_sail_variable/main.sol
 ---
 error[SC0204]: Yul reference `b` requires word type, got bool
- --> /main/main.sol:3:14
+ --> /main/main.sol:4:9
   |
-2 |   let b : bool = false;
-3 |   assembly { b := add(1, 1) }
-  |              ^ Yul reference has non-word type
-4 |   if ( b ) { return 1; } else { return 0; }
+3 |     assembly {
+4 |         b := add(1, 1)
+  |         ^ Yul reference has non-word type
+5 |     }
   |

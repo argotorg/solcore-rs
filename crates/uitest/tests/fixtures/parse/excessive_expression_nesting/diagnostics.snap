@@ -4,7 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/parse/excessive_expression_nesting/main.sol
 ---
 error[SC0001]: expression nesting exceeds the compiler limit of 32
- --> /main/main.sol:1:73
+ --> /main/main.sol:2:44
   |
-1 | function main() returns (word) { return !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!true; }
-  |                                                                         ^^^^^^^^^^^^
+1 | function main() returns (word) {
+2 |     return !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!true;
+  |                                            ^^^^^^^^^^^^
+3 | }
+  |

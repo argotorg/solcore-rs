@@ -2,16 +2,16 @@
 // its length must work even before `push` accepts dynamic values; the element
 // slot itself is what holds the length / short-string encoding.
 import * from std;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
 contract ArrayOfDynamic {
-  reserved : word; // forge uses at least 1 storage slot
-  names : array<string>;
-  blobs : array<bytes>;
+    reserved: word; // forge uses at least 1 storage slot
+    names: array<string>;
+    blobs: array<bytes>;
 
-  function main() returns (uint256) {
-    return Length.length(names) + Length.length(blobs);
-  }
+    function main() returns (uint256) {
+        return Length.length(names) + Length.length(blobs);
+    }
 }

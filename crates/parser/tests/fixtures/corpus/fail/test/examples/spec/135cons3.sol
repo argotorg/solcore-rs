@@ -2,48 +2,47 @@
 import * from std;
 // import prelude;
 
-
 function log1<t>(v: t, topic: word) where t: Typedef<word> {
-  let w : word = Typedef.rep(v);
-  assembly {
-    mstore(0,w)
-    log1(0,32,topic)
-  }
+    let w: word = Typedef.rep(v);
+    assembly {
+        mstore(0, w)
+        log1(0, 32, topic)
+    }
 }
 
 contract Counter {
 
-  // setCounter & getCounter are intentionally low-level to avoid clutter
-  function setCounter(v: uint256) public {
-    match (v) {
-case uint256(w) {
-assembly {
-	sstore(0x00, w)
-      }
-}
-}
-  }
-
-  function getCounter() public returns (uint256) {
-    let res;
-    assembly {
-      res := sload(0x00)
+    // setCounter & getCounter are intentionally low-level to avoid clutter
+    function setCounter(v: uint256) public {
+        match (v) {
+            case uint256(w) {
+                assembly {
+                    sstore(0x00, w)
+                }
+            }
+        }
     }
-    return uint256(res);
-  }
 
-  constructor(x:uint256, y:uint256, z:uint256)
-  // function  myconstructor(x:uint256, y:uint256, z:uint256) -> ()
-  {
-   log1(x, 0xc1);
-   log1(y, 0xc2);
-   log1(z, 0xc3);
-   setCounter(Add.add(Add.add(x,y),z));
-  }
+    function getCounter() public returns (uint256) {
+        let res;
+        assembly {
+            res := sload(0x00)
+        }
+        return uint256(res);
+    }
 
-/* This should desugar to: (check with --dump-dispatch */
+    constructor(x: uint256, y: uint256, z: uint256)
+    // function  myconstructor(x:uint256, y:uint256, z:uint256) -> ()
+    {
+        log1(x, 0xc1);
+        log1(y, 0xc2);
+        log1(z, 0xc3);
+        setCounter(Add.add(Add.add(x, y), z));
+    }
 
-/*
+    /* This should desugar to: (check with --dump-dispatch */
+
+    /*
   init_(x:uint256, y:uint256, z:uint256)
   // function  myconstructor(x:uint256, y:uint256, z:uint256) -> ()
   {
@@ -90,9 +89,9 @@ assembly {
   }
  */
 
- // TODO: remove main, use dispatch instead
-  function main() returns (uint256) {
-    return getCounter();
-  }
+    // TODO: remove main, use dispatch instead
+    function main() returns (uint256) {
+        return getCounter();
+    }
 
 }

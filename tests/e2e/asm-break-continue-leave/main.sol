@@ -4,6 +4,11 @@ import * from std.dispatch;
 // End-to-end (runs on evmone via the testrunner) check that Yul `break`,
 // `continue` and `leave` in inline assembly don't just parse, but actually
 // execute with the right control-flow semantics.
+// #[scenario("asm_break_continue_leave")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0x7ae9260b, label = "loopSum()(uint256) -> 14 (continue skips 0,1; break stops at 6; 2+3+4+5)") -> success(0x000000000000000000000000000000000000000000000000000000000000000e)]
+// #[raw(0xfd339a24, label = "clampSum()(uint256) -> 105 (leave early-returns clamp(9)=3; 102+3)") -> success(0x0000000000000000000000000000000000000000000000000000000000000069)]
 contract C {
     constructor() {}
 
@@ -13,10 +18,14 @@ contract C {
     // A miscompiled `continue` would also add 0 and 1 (=> 15); a broken `break`
     // would keep going and add 6..9 as well.
     function loopSum() public returns (uint256) {
-        let result : word;
+        let result: word;
         assembly {
             result := 0
-            for { let i := 0 } lt(i, 10) { i := add(i, 1) } {
+            for {
+                let i := 0
+            } lt(i, 10) {
+                i := add(i, 1)
+            } {
                 if lt(i, 2) {
                     continue
                 }
@@ -35,7 +44,7 @@ contract C {
     // A broken `leave` would fall through and add 100 to the x > 3 branch too
     // (clamp(9) => 103 => total 205).
     function clampSum() public returns (uint256) {
-        let result : word;
+        let result: word;
         assembly {
             function clamp(x) -> y {
                 y := x

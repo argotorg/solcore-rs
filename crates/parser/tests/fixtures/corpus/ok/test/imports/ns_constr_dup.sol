@@ -1,6 +1,10 @@
-enum Foo { Same }
-enum Bar { Same }
+enum Foo {
+    Same
+}
+enum Bar {
+    Same
+}
 
 function main() returns (word) {
-  return 0;
+    return 0;
 }

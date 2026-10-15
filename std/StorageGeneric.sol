@@ -8,7 +8,7 @@ export {
 };
 
 import * from std;
-import {sload, sstore} from std.opcodes;
+import { sload, sstore } from std.opcodes;
 import * from std.Generic;
 
 // Marker class. Importing this module brings StorageDeriving into scope, which
@@ -35,9 +35,9 @@ trait StorageDeriving<self> {}
 // (StorageSize for () and (a, b) is already provided by std.)
 
 impl<f, g> StorageSize<sum<f, g>> where f: StorageSize, g: StorageSize {
-    function size(x : Proxy<sum<f, g>>) returns (word) {
-        let f_sz : word = StorageSize.size(@f);
-        let g_sz : word = StorageSize.size(@g);
+    function size(x: Proxy<sum<f, g>>) returns (word) {
+        let f_sz: word = StorageSize.size(@f);
+        let g_sz: word = StorageSize.size(@g);
         return 1 + maxWord(f_sz, g_sz);
     }
 }
@@ -46,10 +46,10 @@ impl<f, g> StorageSize<sum<f, g>> where f: StorageSize, g: StorageSize {
 // The unit type occupies no slots, so load/store are no-ops.
 
 impl StorageType<()> {
-    function load(ptr : word) returns (()) {
+    function load(ptr: word) returns (()) {
         return;
     }
-    function store(ptr : word, value : ()) returns (()) {
+    function store(ptr: word, value: ()) returns (()) {
         return;
     }
 }
@@ -59,19 +59,20 @@ impl StorageType<()> {
 //          [ptr + size(a) ..             ]       : b
 
 impl<a, b> StorageType<(a, b)> where a: StorageType, a: StorageSize, b: StorageType {
-    function load(ptr : word) returns ((a, b)) {
-        let a_sz : word = StorageSize.size(@a);
-        let x : a = StorageType.load(ptr);
-        let y : b = StorageType.load(ptr + a_sz);
+    function load(ptr: word) returns ((a, b)) {
+        let a_sz: word = StorageSize.size(@a);
+        let x: a = StorageType.load(ptr);
+        let y: b = StorageType.load(ptr + a_sz);
         return (x, y);
     }
-    function store(ptr : word, value : (a, b)) returns (()) {
-        match (value ) {
-        case (x, y) {
-            let a_sz : word = StorageSize.size(@a);
-            StorageType.store(ptr, x);
-            StorageType.store(ptr + a_sz, y);
-        } }
+    function store(ptr: word, value: (a, b)) returns (()) {
+        match (value) {
+            case (x, y) {
+                let a_sz: word = StorageSize.size(@a);
+                StorageType.store(ptr, x);
+                StorageType.store(ptr + a_sz, y);
+            }
+        }
     }
 }
 
@@ -81,26 +82,30 @@ impl<a, b> StorageType<(a, b)> where a: StorageType, a: StorageSize, b: StorageT
 //   [ptr + 1 ..    ] : encoded branch payload
 
 impl<f, g> StorageType<sum<f, g>> where f: StorageType, g: StorageType {
-    function load(ptr : word) returns (sum<f, g>) {
-        let tag : word = sload(ptr);
-        match (tag ) {
-        case 0 {
-            let v : f = StorageType.load(ptr + 1);
-            return inl(v);
-        } default {
-            let v : g = StorageType.load(ptr + 1);
-            return inr(v);
-        } }
+    function load(ptr: word) returns (sum<f, g>) {
+        let tag: word = sload(ptr);
+        match (tag) {
+            case 0 {
+                let v: f = StorageType.load(ptr + 1);
+                return inl(v);
+            }
+            default {
+                let v: g = StorageType.load(ptr + 1);
+                return inr(v);
+            }
+        }
     }
-    function store(ptr : word, value : sum<f, g>) returns (()) {
-        match (value ) {
-        case inl(v) {
-            sstore(ptr, 0);
-            StorageType.store(ptr + 1, v);
-        } case inr(v) {
-            sstore(ptr, 1);
-            StorageType.store(ptr + 1, v);
-        } }
+    function store(ptr: word, value: sum<f, g>) returns (()) {
+        match (value) {
+            case inl(v) {
+                sstore(ptr, 0);
+                StorageType.store(ptr + 1, v);
+            }
+            case inr(v) {
+                sstore(ptr, 1);
+                StorageType.store(ptr + 1, v);
+            }
+        }
     }
 }
 
@@ -125,56 +130,59 @@ impl<f, g> StorageType<sum<f, g>> where f: StorageType, g: StorageType {
 
 // The unit type occupies no slots.
 impl CanStore<storage<()>, ()> {
-    function store(r : storage<()>, v : ()) returns (()) {
+    function store(r: storage<()>, v: ()) returns (()) {
         return;
     }
-    function load(r : storage<()>) returns (()) {
+    function load(r: storage<()>) returns (()) {
         return;
     }
 }
 
 // Product: store `a` at the base slot, `b` size(a) slots later.
 impl<a, b> CanStore<storage<(a, b)>, (a, b)> where storage<a>: CanStore<a>, a: StorageSize, storage<b>: CanStore<b> {
-    function store(r : storage<(a, b)>, v : (a, b)) returns (()) {
-        match (v ) {
-        case (x, y) {
-            let base : word = Typedef.rep(r);
-            let a_sz : word = StorageSize.size(@a);
-            let syntaxValue1: storage<a> = storage(base);
-            CanStore.store(syntaxValue1, x);
-            let syntaxValue2: storage<b> = storage(base + a_sz);
-            CanStore.store(syntaxValue2, y);
-        } }
+    function store(r: storage<(a, b)>, v: (a, b)) returns (()) {
+        match (v) {
+            case (x, y) {
+                let base: word = Typedef.rep(r);
+                let a_sz: word = StorageSize.size(@a);
+                let syntaxValue1: storage<a> = storage(base);
+                CanStore.store(syntaxValue1, x);
+                let syntaxValue2: storage<b> = storage(base + a_sz);
+                CanStore.store(syntaxValue2, y);
+            }
+        }
     }
-    function load(r : storage<(a, b)>) returns ((a, b)) {
-        let base : word = Typedef.rep(r);
-        let a_sz : word = StorageSize.size(@a);
+    function load(r: storage<(a, b)>) returns ((a, b)) {
+        let base: word = Typedef.rep(r);
+        let a_sz: word = StorageSize.size(@a);
         let syntaxValue3: storage<a> = storage(base);
-        let x : a = CanStore.load(syntaxValue3);
+        let x: a = CanStore.load(syntaxValue3);
         let syntaxValue4: storage<b> = storage(base + a_sz);
-        let y : b = CanStore.load(syntaxValue4);
+        let y: b = CanStore.load(syntaxValue4);
         return (x, y);
     }
 }
 
 // Tagged union: slot 0 holds the tag, the branch payload follows.
 impl<f, g> CanStore<storage<sum<f, g>>, sum<f, g>> where storage<f>: CanStore<f>, storage<g>: CanStore<g> {
-    function store(r : storage<sum<f, g>>, v : sum<f, g>) returns (()) {
-        let base : word = Typedef.rep(r);
-        match (v ) {
-        case inl(x) {
-            sstore(base, 0);
-            let syntaxValue5: storage<f> = storage(base + 1);
-            CanStore.store(syntaxValue5, x);
-        } case inr(y) {
-            sstore(base, 1);
-            let syntaxValue6: storage<g> = storage(base + 1);
-            CanStore.store(syntaxValue6, y);
-        } }
+    function store(r: storage<sum<f, g>>, v: sum<f, g>) returns (()) {
+        let base: word = Typedef.rep(r);
+        match (v) {
+            case inl(x) {
+                sstore(base, 0);
+                let syntaxValue5: storage<f> = storage(base + 1);
+                CanStore.store(syntaxValue5, x);
+            }
+            case inr(y) {
+                sstore(base, 1);
+                let syntaxValue6: storage<g> = storage(base + 1);
+                CanStore.store(syntaxValue6, y);
+            }
+        }
     }
-    function load(r : storage<sum<f, g>>) returns (sum<f, g>) {
-        let base : word = Typedef.rep(r);
-        let tag : word = sload(base);
+    function load(r: storage<sum<f, g>>) returns (sum<f, g>) {
+        let base: word = Typedef.rep(r);
+        let tag: word = sload(base);
         // NOTE: the loaded payload is inlined directly into inl(...) / inr(...)
         // rather than bound to a `let x : f` / `let y : g` first. Binding the
         // payload to an intermediate of the branch type (f or g) makes the
@@ -182,14 +190,16 @@ impl<f, g> CanStore<storage<sum<f, g>>, sum<f, g>> where storage<f>: CanStore<f>
         // of the full sum(f, g), so it emits e.g. `inr<g>(y)` and Yul codegen
         // rejects it (sum nesting off by one). Inlining matches the working
         // ABIGeneric.decode pattern, so inl/inr pick up the full sum(f, g).
-        match (tag ) {
-        case 0 {
-            let syntaxValue7: storage<f> = storage(base + 1);
-            return inl(CanStore.load(syntaxValue7));
-        } default {
-            let syntaxValue8: storage<g> = storage(base + 1);
-            return inr(CanStore.load(syntaxValue8));
-        } }
+        match (tag) {
+            case 0 {
+                let syntaxValue7: storage<f> = storage(base + 1);
+                return inl(CanStore.load(syntaxValue7));
+            }
+            default {
+                let syntaxValue8: storage<g> = storage(base + 1);
+                return inr(CanStore.load(syntaxValue8));
+            }
+        }
     }
 }
 
@@ -198,22 +208,22 @@ impl<f, g> CanStore<storage<sum<f, g>>, sum<f, g>> where storage<f>: CanStore<f>
 // the storage(memory(bytes)) / storage(memory(string)) handle the structural
 // decomposition asks for, so a memory(bytes) field inside an ADT is storable.
 impl CanStore<storage<memory<bytes>>, memory<bytes>> {
-    function store(r : storage<memory<bytes>>, v : memory<bytes>) returns (()) {
+    function store(r: storage<memory<bytes>>, v: memory<bytes>) returns (()) {
         let syntaxValue9: storage<bytes> = storage(Typedef.rep(r));
         CanStore.store(syntaxValue9, v);
     }
-    function load(r : storage<memory<bytes>>) returns (memory<bytes>) {
+    function load(r: storage<memory<bytes>>) returns (memory<bytes>) {
         let syntaxValue10: storage<bytes> = storage(Typedef.rep(r));
         return CanStore.load(syntaxValue10);
     }
 }
 
 impl CanStore<storage<memory<string>>, memory<string>> {
-    function store(r : storage<memory<string>>, v : memory<string>) returns (()) {
+    function store(r: storage<memory<string>>, v: memory<string>) returns (()) {
         let syntaxValue11: storage<string> = storage(Typedef.rep(r));
         CanStore.store(syntaxValue11, v);
     }
-    function load(r : storage<memory<string>>) returns (memory<string>) {
+    function load(r: storage<memory<string>>) returns (memory<string>) {
         let syntaxValue12: storage<string> = storage(Typedef.rep(r));
         return CanStore.load(syntaxValue12);
     }
@@ -238,11 +248,11 @@ impl CanStore<storage<memory<string>>, memory<string>> {
 // Convenience wrappers mirroring std.ABIGeneric's encode / decode: persist or
 // read back any 'a' that has a Generic(rep) instance at a raw storage slot.
 
-function storeGeneric<a, rep>(slot : word, value : a) returns (())  where a: Generic<rep>, rep: StorageType {
+function storeGeneric<a, rep>(slot: word, value: a) returns (()) where a: Generic<rep>, rep: StorageType {
     StorageType.store(slot, Generic.from(value));
 }
 
-function loadGeneric<a, rep>(slot : word) returns (a)  where a: Generic<rep>, rep: StorageType {
-    let r : rep = StorageType.load(slot);
+function loadGeneric<a, rep>(slot: word) returns (a) where a: Generic<rep>, rep: StorageType {
+    let r: rep = StorageType.load(slot);
     return Generic.to(r);
 }

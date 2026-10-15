@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_ctor_arity_pattern/main.sol
 ---
 error[SC0203]: constructor pattern expects 2 arguments, but 1 was provided
- --> /main/main.sol:5:6
+ --> /main/main.sol:7:14
   |
-4 |   match (p) {
-5 | case Pair.Mk(x) {
-  |      ^^^^^^^^^^ wrong number of arguments
-6 | return x;
+6 |     match (p) {
+7 |         case Pair.Mk(x) {
+  |              ^^^^^^^^^^ wrong number of arguments
+8 |             return x;
   |
   = note: expected 2 arguments
   = note: found 1 argument

@@ -1,12 +1,15 @@
-enum Shape { Circle(word), Square(word) }
+enum Shape {
+    Circle(word),
+    Square(word)
+}
 
 function area(s: Shape) returns (word) {
-  match (s) {
-case Shape.Circle(r) {
-return r;
-}
-case Shape.Square(w) {
-return true;
-}
-}
+    match (s) {
+        case Shape.Circle(r) {
+            return r;
+        }
+        case Shape.Square(w) {
+            return true;
+        }
+    }
 }

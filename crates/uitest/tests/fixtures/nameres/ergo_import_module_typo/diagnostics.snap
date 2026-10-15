@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_import_module_typo/main.sol
 ---
 error[SC0109]: import helprs: file not found
- --> /main/main.sol:1:27
+ --> /main/main.sol:1:29
   |
-1 | import {helperValue} from helprs;
-  |                           ^^^^^^ module reference
+1 | import { helperValue } from helprs;
+  |                             ^^^^^^ module reference
 2 |
 3 | function main() returns (word) {
   |

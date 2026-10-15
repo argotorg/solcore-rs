@@ -3,12 +3,14 @@
 This corpus ports every source under `test/examples/` from
 [`argotorg/solcore@2f372bde`](https://github.com/argotorg/solcore/tree/2f372bde2801612814015a22319d0bc51486cbf0/test/examples).
 The 499 examples keep the snapshot's module layout and semantics while using
-the canonical `.sol` syntax.
+the canonical `.sol` syntax. Parseable sources also receive local whitespace-only
+formatting with `solcore-fmt`; intentional syntax-error fixtures remain unchanged.
 Sources accepted by the reference frontend live under `ok/test/examples/`;
 reference failures and timeouts live under `fail/test/examples/`.
 
 The standard-library sources in `ok/std/` track the current `a7b7afb0`
-snapshot, independently of these historical examples/verdicts. They are byte-identical to [`std/`](../../../../../std/); see
+snapshot with local whitespace-only formatting, independently of these historical
+examples/verdicts. They are byte-identical to [`std/`](../../../../../std/); see
 [`std/README.md`](../../../../../std/README.md) for the synchronization
 policy. The `test/imports/` and `known-diagnostic-gaps/` trees are Rust-specific
 regressions and are not part of the reference example snapshot.

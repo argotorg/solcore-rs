@@ -1,9 +1,9 @@
 import * from std;
 
 contract TupleRet {
-  constructor() {}
+    constructor() {}
 
-  function pair() returns (uint256, uint256) {
-    return (uint256(7), uint256(11));
-  }
+    function pair() returns (uint256, uint256) {
+        return (uint256(7), uint256(11));
+    }
 }

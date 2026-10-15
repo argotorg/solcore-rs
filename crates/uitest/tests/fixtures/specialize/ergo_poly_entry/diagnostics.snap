@@ -8,7 +8,7 @@ error[SC0401]: entry point must have a concrete, non-polymorphic type before spe
   |
 4 |
 5 | / function main<a>(x: a) returns (a) {
-6 | |   return x;
+6 | |     return x;
 7 | | }
   | |_^ type must be concrete here
   |

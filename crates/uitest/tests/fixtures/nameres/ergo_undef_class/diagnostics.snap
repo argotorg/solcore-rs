@@ -8,6 +8,6 @@ error[SC0105]: undefined trait: NoSuchClass
   |
 1 | impl NoSuchClass<word> {
   |      ^^^^^^^^^^^ undefined trait
-2 |   function frob(x: word) returns (word) {
-3 |     return x;
+2 |     function frob(x: word) returns (word) {
+3 |         return x;
   |

@@ -6,7 +6,7 @@ import * from std;
 import * from std.dispatch;
 
 contract CtPublicParam {
-  function double(comptime x: word) public returns (word) {
-    return x + x;
-  }
+    function double(comptime x: word) public returns (word) {
+        return x + x;
+    }
 }

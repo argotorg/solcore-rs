@@ -4,20 +4,20 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/hull/ergo_hull_multi_error/main.sol
 ---
 error[SC0421]: cannot lower literal `"oops"` to Hull
- --> /main/main.sol:5:12
+ --> /main/main.sol:5:16
   |
-4 |   function main() public returns (string) {
-5 |     return "oops";
-  |            ^^^^^^ unsupported literal
-6 |   }
+4 |     function main() public returns (string) {
+5 |         return "oops";
+  |                ^^^^^^ unsupported literal
+6 |     }
   |
 ---
 
 error[SC0421]: cannot lower literal `"also bad"` to Hull
-  --> /main/main.sol:11:12
+  --> /main/main.sol:11:16
    |
-10 |   function main() public returns (string) {
-11 |     return "also bad";
-   |            ^^^^^^^^^^ unsupported literal
-12 |   }
+10 |     function main() public returns (string) {
+11 |         return "also bad";
+   |                ^^^^^^^^^^ unsupported literal
+12 |     }
    |

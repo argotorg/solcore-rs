@@ -3,8 +3,7 @@ function id(x: word) returns (word) {
 }
 
 contract Id {
-  function main() public returns (word) {
-    return id(0);
-  }
+    function main() public returns (word) {
+        return id(0);
+    }
 }
-

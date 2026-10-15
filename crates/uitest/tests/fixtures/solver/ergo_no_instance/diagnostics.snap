@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/ergo_no_instance/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: Bool: Eq
-  --> /main/main.sol:14:10
+  --> /main/main.sol:17:12
    |
-13 | function f() returns (Bool) {
-14 |   return Eq.eq(Bool.True, Bool.False);
-   |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constraint originates here
-15 | }
+16 | function f() returns (Bool) {
+17 |     return Eq.eq(Bool.True, Bool.False);
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ constraint originates here
+18 | }
    |
    = note: no visible impl matches `Bool: Eq`
    = help: add a matching impl or strengthen the surrounding type context

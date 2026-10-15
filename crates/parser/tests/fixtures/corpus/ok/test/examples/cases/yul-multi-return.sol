@@ -3,16 +3,16 @@
 // so the type checker must accept it (regression for the arity check that used
 // to collapse every non-empty return list to a single 'word').
 contract YulMultiRet {
-  function main() public returns (word) {
-    let x : word;
-    let y : word;
-    assembly {
-      function pair() -> a, b {
-        a := 1
-        b := 2
-      }
-      x, y := pair()
+    function main() public returns (word) {
+        let x: word;
+        let y: word;
+        assembly {
+            function pair() -> a, b {
+                a := 1
+                b := 2
+            }
+            x, y := pair()
+        }
+        return x;
     }
-    return x;
-  }
 }

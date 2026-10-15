@@ -1,11 +1,11 @@
 import * from std;
 import * from std.dispatch;
-import {Pool, mkPool, reserveX, reserveY, swapXforY, addLiquidity} from pool;
+import { Pool, mkPool, reserveX, reserveY, swapXforY, addLiquidity } from pool;
 
 // Outside pool.sol the Pool constructor is not in scope, so no code path
 // can put a zero-reserve pool into storage.
 contract Amm {
-    pool : Pool;
+    pool: Pool;
 
     constructor() {
         pool = mkPool(uint256(10), uint256(1000));

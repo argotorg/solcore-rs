@@ -11,10 +11,10 @@ function makePoint(x: word, y: word) returns (Point) {
 
 function getX(p: Point) returns (word) {
     match (p) {
-case pair(x, _) {
-return x;
-}
-}
+        case pair(x, _) {
+            return x;
+        }
+    }
 }
 
 function main() returns (word) {

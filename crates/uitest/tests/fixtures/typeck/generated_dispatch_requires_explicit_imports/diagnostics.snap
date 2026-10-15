@@ -8,8 +8,8 @@ error[SC0101]: undefined name: Contract
   |
 1 | contract C {
   |          ^ unknown name
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+3 |         return value;
   |
 ---
 
@@ -18,8 +18,8 @@ error[SC0101]: undefined name: Fallback
   |
 1 | contract C {
   |          ^ unknown name
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+3 |         return value;
   |
 ---
 
@@ -28,8 +28,8 @@ error[SC0101]: undefined name: Method
   |
 1 | contract C {
   |          ^ unknown name
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+3 |         return value;
   |
   = help: did you mean `echo`?
 ---
@@ -39,8 +39,8 @@ error[SC0101]: undefined name: Proxy
   |
 1 | contract C {
   |          ^ unknown name
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+3 |         return value;
   |
 ---
 
@@ -49,8 +49,8 @@ error[SC0101]: undefined name: RunContract
   |
 1 | contract C {
   |          ^ unknown name
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+3 |         return value;
   |
 ---
 
@@ -59,8 +59,8 @@ error[SC0101]: undefined name: fallback_default_implementation
   |
 1 | contract C {
   |          ^ unknown name
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+3 |         return value;
   |
 ---
 
@@ -69,8 +69,8 @@ error[SC0103]: undefined type constructor: NonPayable
   |
 1 | contract C {
   |          ^ undefined type constructor
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+3 |         return value;
   |
 ---
 
@@ -79,96 +79,96 @@ error[SC0103]: undefined type constructor: Proxy
   |
 1 | contract C {
   |          ^ undefined type constructor
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+3 |         return value;
   |
 ---
 
 error[SC0103]: undefined type constructor: NonPayable
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
 1 | contract C {
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
+3 |         return value;
   |
 ---
 
 error[SC0103]: undefined type constructor: Proxy
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
 1 | contract C {
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
+3 |         return value;
   |
 ---
 
 error[SC0103]: undefined type constructor: string
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
 1 | contract C {
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined type constructor
+3 |         return value;
   |
 ---
 
 error[SC0105]: undefined trait: SigString
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
 1 | contract C {
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined trait
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ undefined trait
+3 |         return value;
   |
 ---
 
 error[SC0231]: ABI output cannot be represented in the ABI: <error>
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
 1 | contract C {
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+3 |         return value;
   |
 ---
 
 error[SC0231]: ABI parameter cannot be represented in the ABI: <error>
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
 1 | contract C {
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+3 |         return value;
   |
 ---
 
 error[SC0231]: echo cannot be represented in the ABI: <error>
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
 1 | contract C {
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+3 |         return value;
   |
 ---
 
 error[SC0103]: undefined type constructor: uint256
- --> /main/main.sol:2:24
+ --> /main/main.sol:2:26
   |
 1 | contract C {
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-  |                        ^^^^^^^ undefined type constructor
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+  |                          ^^^^^^^ undefined type constructor
+3 |         return value;
   |
 ---
 
 error[SC0103]: undefined type constructor: uint256
- --> /main/main.sol:2:49
+ --> /main/main.sol:2:51
   |
 1 | contract C {
-2 |   function echo(value: uint256) public returns (uint256) { return value; }
-  |                                                 ^^^^^^^ undefined type constructor
-3 | }
+2 |     function echo(value: uint256) public returns (uint256) {
+  |                                                   ^^^^^^^ undefined type constructor
+3 |         return value;
   |

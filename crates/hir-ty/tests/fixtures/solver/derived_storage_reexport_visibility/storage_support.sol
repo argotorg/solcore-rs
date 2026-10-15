@@ -9,7 +9,9 @@ trait StorageDeriving<self> {}
 trait StorageSize<self> {}
 trait CanStore<slot, value> {}
 
-enum storage<ty> { storage(word) }
+enum storage<ty> {
+    storage(word)
+}
 
 impl StorageSize<word> {}
 impl CanStore<storage<word>, word> {}

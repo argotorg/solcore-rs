@@ -1,3 +1,5 @@
-export {T};
+export { T };
 
-enum T { T }
+enum T {
+    T
+}

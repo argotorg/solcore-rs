@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/word_literals_nonexhaustive/main.sol
 ---
 error[SC0302]: non-exhaustive pattern match
- --> /main/main.sol:2:10
+ --> /main/main.sol:2:12
   |
 1 | function pick(x: word) returns (word) {
-2 |   match (x) {
-  |          ^ non-exhaustive match
-3 | case 0 {
+2 |     match (x) {
+  |            ^ non-exhaustive match
+3 |         case 0 {
   |
   = note: missing case: _
   = note: help: add a clause that covers the missing case

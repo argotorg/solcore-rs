@@ -1,7 +1,10 @@
 import * from std;
 import * from std.dispatch;
 
-struct Words { first: word; second: word; }
+struct Words {
+    first: word;
+    second: word;
+}
 
 contract ComptimeMaterialize {
     // A known comptime number becomes a runtime word at each use.

@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/comptime/ergo_ct_fuel_infinite/main.sol
 ---
 error[SC0410]: comptime evaluation fuel exhausted in spin at 128 unfold steps
- --> /main/main.sol:6:10
+ --> /main/main.sol:6:12
   |
 5 | function spin(comptime n: integer) returns (comptime<integer>) {
-6 |   return spin(integerAdd(n, 1));
-  |          ^^^^^^^^^^^^^^^^^^^^^^ comptime fuel limit reached here
+6 |     return spin(integerAdd(n, 1));
+  |            ^^^^^^^^^^^^^^^^^^^^^^ comptime fuel limit reached here
 7 | }
   |
   = note: comptime evaluation did not finish before the fuel limit was reached

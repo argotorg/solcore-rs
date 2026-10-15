@@ -1,11 +1,11 @@
 contract Modifiers {
-  constructor() {}
+    constructor() {}
 
-  function ping() public {}
+    function ping() public {}
 
-  function deposit() public payable returns (uint256) {
-    return 0;
-  }
+    function deposit() public payable returns (uint256) {
+        return 0;
+    }
 
-  fallback() payable {}
+    fallback() payable {}
 }

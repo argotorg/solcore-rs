@@ -1,3 +1,3 @@
 function f() returns (word, word, word) {
-  return (1, 2);
+    return (1, 2);
 }

@@ -5,19 +5,21 @@
 import std;
 
 function sloadWord() returns (word) {
-  let v : word;
-  assembly {
-    v := sload(0)
-  }
-  return v;
+    let v: word;
+    assembly {
+        v := sload(0)
+    }
+    return v;
 }
 
 contract CtIndirectEscape {
-  function double(comptime x: word) returns (comptime<word>) {
-    return x + x;
-  }
-  function main() returns (word) {
-    let g = lam (y : word) { return double(y); };
-    return g(sloadWord());
-  }
+    function double(comptime x: word) returns (comptime<word>) {
+        return x + x;
+    }
+    function main() returns (word) {
+        let g = lam (y: word) {
+            return double(y);
+        };
+        return g(sloadWord());
+    }
 }

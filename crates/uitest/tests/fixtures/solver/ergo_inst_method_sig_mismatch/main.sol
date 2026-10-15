@@ -1,11 +1,14 @@
-enum Bool { True, False }
+enum Bool {
+    True,
+    False
+}
 
 trait Sz<a> {
-  function size(x: a) returns (word) ;
+    function size(x: a) returns (word);
 }
 
 impl Sz<Bool> {
-  function size(x: Bool) returns (Bool) {
-    return x;
-  }
+    function size(x: Bool) returns (Bool) {
+        return x;
+    }
 }

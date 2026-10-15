@@ -1,5 +1,5 @@
-import {Bool} from booldef;
+import { Bool } from booldef;
 
 function mkTrue() returns (Bool) {
-  return True;
+    return True;
 }

@@ -1,22 +1,22 @@
 // This should trigger a warning and an error in the specialiser
 // due to unability to resolve result type of require
-import {uint256,lt,not,Eq,ne,Proxy,bytes4,string} from std;
+import { uint256, lt, not, Eq, ne, Proxy, bytes4, string } from std;
 import * from std.dispatch;
 
 function myrevert<a>(offset: word, length: word) returns (a) {
-        assembly {
-            revert(offset, length)
-        }
+    assembly {
+        revert(offset, length)
+    }
 
 }
 function require(cond: bool) {
     if (!cond) {
-     myrevert(0,0);
+        myrevert(0, 0);
     }
 }
 
 function callvalue() returns (uint256) {
-    let res : word;
+    let res: word;
     assembly {
         res := callvalue()
     }
@@ -24,12 +24,12 @@ function callvalue() returns (uint256) {
 }
 
 contract Deposit {
-function deposit() public {
-    require(callvalue() != uint256(0));
-    return ();
-  }
+    function deposit() public {
+        require(callvalue() != uint256(0));
+        return ();
+    }
 
-function main() public {
-  deposit();
-}
+    function main() public {
+        deposit();
+    }
 }

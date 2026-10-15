@@ -1,9 +1,9 @@
 trait C<a> {
-  function f(x: a) returns (a) ;
+    function f(x: a) returns (a);
 }
 
 impl C<word> {
-  function f(x: word) returns (bool) {
-    return true;
-  }
+    function f(x: word) returns (bool) {
+        return true;
+    }
 }

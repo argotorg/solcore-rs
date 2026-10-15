@@ -2,25 +2,25 @@ import * from std;
 import * from std.dispatch;
 
 contract AbiBoundaries {
-  // #[(0) -> 0]
-  // #[(0x8000000000000000000000000000000000000000000000000000000000000000) -> 0x8000000000000000000000000000000000000000000000000000000000000000]
-  // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) -> 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
-  function echoUint(value: uint256) public returns (uint256) {
-    return value;
-  }
+    // #[(0) -> 0]
+    // #[(0x8000000000000000000000000000000000000000000000000000000000000000) -> 0x8000000000000000000000000000000000000000000000000000000000000000]
+    // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) -> 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
+    function echoUint(value: uint256) public returns (uint256) {
+        return value;
+    }
 
-  // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 1) -> 0]
-  function wrappingAdd(lhs: uint256, rhs: uint256) public returns (uint256) {
-    return lhs + rhs;
-  }
+    // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 1) -> 0]
+    function wrappingAdd(lhs: uint256, rhs: uint256) public returns (uint256) {
+        return lhs + rhs;
+    }
 
-  // #[(0xffffffffffffffffffffffffffffffffffffffff) -> 0xffffffffffffffffffffffffffffffffffffffff]
-  function echoAddress(value: address) public returns (address) {
-    return value;
-  }
+    // #[(0xffffffffffffffffffffffffffffffffffffffff) -> 0xffffffffffffffffffffffffffffffffffffffff]
+    function echoAddress(value: address) public returns (address) {
+        return value;
+    }
 
-  // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) -> 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
-  function echoBytes32(value: bytes32) public returns (bytes32) {
-    return value;
-  }
+    // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) -> 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
+    function echoBytes32(value: bytes32) public returns (bytes32) {
+        return value;
+    }
 }

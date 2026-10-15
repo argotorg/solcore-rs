@@ -1,1 +1,3 @@
-function caller() returns (word) { return missing; }
+function caller() returns (word) {
+    return missing;
+}

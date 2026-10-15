@@ -5,7 +5,10 @@ pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
 #[derive(Eq, Ord)]
-enum Action { Transfer(word, word), Approve(word) }
+enum Action {
+    Transfer(word, word),
+    Approve(word)
+}
 
 function sameTransfer() returns (bool) {
     return Eq.eq(Action.Transfer(1, 100), Action.Transfer(1, 100));

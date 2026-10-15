@@ -15,7 +15,7 @@ use solcore_test_utils::{
     e2e::{
         AbiShape, E2eExecution, E2eFailure, FailureKind, RAW_E2E_TARGET_EVM_VERSION,
         ResolvedE2eCall, e2e_enabled, e2e_pipeline_only, e2e_required, encode_hex,
-        load_raw_e2e_vector, parse_e2e_directive, resolve_e2e_comments, with_shared_evm_harness,
+        parse_e2e_directive, resolve_e2e_comments, source_e2e_scenario, with_shared_evm_harness,
     },
     load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls,
     repo_root_from_manifest, run_in_large_stack,
@@ -174,7 +174,7 @@ fn lower_fixture(path: &Path) -> Result<LoweredFixture, E2eFailure> {
         .ok_or_else(|| pipeline_error("entry source file is missing"))?;
     let hir = parse_file_to_hir(db, file).module(db);
     let specialized = specialize_module(db, hir, SpecializeOptions::default());
-    let raw_vector = load_raw_e2e_vector(path)?;
+    let raw_vector = source_e2e_scenario(db, hir)?;
     finish_lowering(db, specialized, raw_vector)
 }
 

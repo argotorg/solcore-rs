@@ -1,8 +1,12 @@
 trait C<a> {
-  function f(x: a) returns (word) ;
+    function f(x: a) returns (word);
 }
 
 impl C<word> {
-  function f(x: word) returns (word) { return x; }
-  function g(x: word) returns (word) { return x; }
+    function f(x: word) returns (word) {
+        return x;
+    }
+    function g(x: word) returns (word) {
+        return x;
+    }
 }

@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/unknown_field/main.sol
 ---
 error[SC0205]: cannot resolve field `foo`
- --> /main/main.sol:2:12
+ --> /main/main.sol:2:14
   |
 1 | function f(x: word) returns (word) {
-2 |   return x.foo;
-  |            ^^^ unknown field
+2 |     return x.foo;
+  |              ^^^ unknown field
 3 | }
   |
   = help: check that the receiver has this field or constructor path

@@ -9,7 +9,7 @@ error[SC0299]: ambiguous inferred type
 6 |
 7 | impl C<word> {
   |      ^^^^^^^ ambiguous inferred type
-8 |   function f<b>(x: word) returns (word) where b: D { return x; }
+8 |     function f<b>(x: word) returns (word) where b: D {
   |
   = note: <b> function(word) returns (word) where b: D
   = help: add a type annotation or a matching impl to fix the ambiguous type variable

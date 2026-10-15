@@ -1,8 +1,13 @@
 import * from std;
 
-enum Choice { Left(word), Right(word) }
+enum Choice {
+    Left(word),
+    Right(word)
+}
 
 contract C {
-  constructor(value: Choice) {}
-  function main() { return (); }
+    constructor(value: Choice) {}
+    function main() {
+        return ();
+    }
 }

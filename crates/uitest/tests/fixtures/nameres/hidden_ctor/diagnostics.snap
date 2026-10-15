@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/hidden_ctor/main.sol
 ---
 error[SC0101]: undefined name: Err
- --> /main/main.sol:4:16
+ --> /main/main.sol:4:18
   |
 3 | function main() returns (Token) {
-4 |   return Token.Err(0);
-  |                ^^^ unknown name
+4 |     return Token.Err(0);
+  |                  ^^^ unknown name
 5 | }
   |

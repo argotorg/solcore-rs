@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/nested_constructor_nonexhaustive/main.sol
 ---
 error[SC0302]: non-exhaustive pattern match
- --> /main/main.sol:5:10
-  |
-4 | function pick(x: Outer) returns (word) {
-5 |   match (x) {
-  |          ^ non-exhaustive match
-6 | case Outer.Other {
-  |
-  = note: missing case: Outer.Wrap(Inner.B)
-  = note: help: add a clause that covers the missing case
+  --> /main/main.sol:11:12
+   |
+10 | function pick(x: Outer) returns (word) {
+11 |     match (x) {
+   |            ^ non-exhaustive match
+12 |         case Outer.Other {
+   |
+   = note: missing case: Outer.Wrap(Inner.B)
+   = note: help: add a clause that covers the missing case

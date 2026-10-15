@@ -4,4 +4,6 @@ import * from std.StorageGeneric;
 
 export { Inner(*) };
 
-enum Inner { Inner(uint256) }
+enum Inner {
+    Inner(uint256)
+}

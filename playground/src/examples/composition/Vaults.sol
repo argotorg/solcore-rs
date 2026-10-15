@@ -1,6 +1,6 @@
 import * from std;
 import * from std.dispatch;
-import {settle, Direct, Signed, NoFee, FlatFee, BasisFee, Stacked} from engine;
+import { settle, Direct, Signed, NoFee, FlatFee, BasisFee, Stacked } from engine;
 
 // Three deployable vaults sharing the engine module, each binding its own
 // context and fee choice. This file is the counterpart of an inheritance
@@ -10,11 +10,13 @@ import {settle, Direct, Signed, NoFee, FlatFee, BasisFee, Stacked} from engine;
 // credits only; token custody is omitted.
 
 contract VaultDirect {
-    balances : mapping(address => uint256);
+    balances: mapping(address => uint256);
 
     function deposit(amount: uint256) public {
         match (settle(Direct, NoFee, amount)) {
-            case (who, credited) { balances[who] = balances[who] + credited; }
+            case (who, credited) {
+                balances[who] = balances[who] + credited;
+            }
         }
     }
 
@@ -28,9 +30,9 @@ contract VaultDirect {
 // nonce, the chain id, and the vault address into the digest to prevent
 // replay.
 contract VaultGasless {
-    balances : mapping(address => uint256);
-    collected : uint256;
-    flatFee : uint256;
+    balances: mapping(address => uint256);
+    collected: uint256;
+    flatFee: uint256;
 
     constructor(fee: uint256) {
         flatFee = fee;
@@ -58,12 +60,14 @@ contract VaultGasless {
 // Stacked fees: a protocol fee in basis points, then a flat tip, ordered by
 // the expression below.
 contract VaultPremium {
-    balances : mapping(address => uint256);
+    balances: mapping(address => uint256);
 
     function deposit(amount: uint256) public {
         let policy = Stacked(BasisFee(uint256(30)), FlatFee(uint256(2)));
         match (settle(Direct, policy, amount)) {
-            case (who, credited) { balances[who] = balances[who] + credited; }
+            case (who, credited) {
+                balances[who] = balances[who] + credited;
+            }
         }
     }
 

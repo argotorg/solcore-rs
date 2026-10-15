@@ -3,11 +3,18 @@ import * from std.dispatch;
 import * from std.Generic;
 import * from std.ABIGeneric;
 
-enum Leaf { Leaf(uint256) }
-enum Choice { First(Leaf), Last(uint256) }
+enum Leaf {
+    Leaf(uint256)
+}
+enum Choice {
+    First(Leaf),
+    Last(uint256)
+}
 
 impl SigString<Leaf> {
-    function sigStr(p: Proxy<Leaf>) returns (string) { return "changed"; }
+    function sigStr(p: Proxy<Leaf>) returns (string) {
+        return "changed";
+    }
 }
 
 contract C {

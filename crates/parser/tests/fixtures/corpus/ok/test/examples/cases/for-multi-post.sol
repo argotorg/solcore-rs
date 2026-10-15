@@ -1,4 +1,4 @@
-import {Num,Add,Sub,Eq,Ord,Bounded,Typedef,le} from std;
+import { Num, Add, Sub, Eq, Ord, Bounded, Typedef, le } from std;
 
 contract ForMultiPost {
     function main() returns (word) {

@@ -1,3 +1,3 @@
 trait Foo<b, self> {
-    function foo(x: self) returns (b) ;
+    function foo(x: self) returns (b);
 }

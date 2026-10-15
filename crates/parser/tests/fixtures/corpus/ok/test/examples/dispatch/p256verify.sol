@@ -1,6 +1,6 @@
 import * from std;
 import * from std.dispatch;
-import {p256verify} from std.eip7951;
+import { p256verify } from std.eip7951;
 
 // Exercises the P256VERIFY (secp256r1) precompile at address 0x100, introduced
 // by EIP-7951, through the std `p256verify` helper. It returns true for a valid

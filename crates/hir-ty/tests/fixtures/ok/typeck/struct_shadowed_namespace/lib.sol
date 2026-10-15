@@ -1,2 +1,4 @@
 export { x };
-function x() returns (word) { return 0; }
+function x() returns (word) {
+    return 0;
+}

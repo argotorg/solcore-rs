@@ -1,12 +1,12 @@
 function foo(x: word) returns (word) {
-  return bar(x);
+    return bar(x);
 }
 function bar(x: word) returns (word) {
-  return foo(x);
+    return foo(x);
 }
 
 contract C {
-  function main() public returns (word) {
-    return foo(1);
-  }
+    function main() public returns (word) {
+        return foo(1);
+    }
 }

@@ -1,15 +1,18 @@
-enum Bool { True, False }
+enum Bool {
+    True,
+    False
+}
 
 trait Eq<a> {
-  function eq(x: a, y: a) returns (Bool) ;
+    function eq(x: a, y: a) returns (Bool);
 }
 
 impl Eq<word> {
-  function eq(x: word, y: word) returns (Bool) {
-    return Bool.True;
-  }
+    function eq(x: word, y: word) returns (Bool) {
+        return Bool.True;
+    }
 }
 
 function f() returns (Bool) {
-  return Eq.eq(Bool.True, Bool.False);
+    return Eq.eq(Bool.True, Bool.False);
 }

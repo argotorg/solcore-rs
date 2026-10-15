@@ -1,14 +1,14 @@
 trait Fallback<a> {
-  function tag(x: a) returns (word) ;
+    function tag(x: a) returns (word);
 }
 
 default impl<a> Fallback<a> {
-  function tag(x: a) returns (word) {
-    return 7;
-  }
+    function tag(x: a) returns (word) {
+        return 7;
+    }
 }
 
 function main() returns (word) {
-  let value: word = 0;
-  return Fallback.tag(value);
+    let value: word = 0;
+    return Fallback.tag(value);
 }

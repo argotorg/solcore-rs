@@ -1,14 +1,14 @@
 // test single contract field
 import std;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
 contract Counter {
-  counter : word;
+    counter: word;
 
-  function main() public returns (word) {
-    counter = std.addWord(counter, 1);
-    return counter;
-  }
+    function main() public returns (word) {
+        counter = std.addWord(counter, 1);
+        return counter;
+    }
 }

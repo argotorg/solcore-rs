@@ -2,32 +2,35 @@ import * from std;
 import * from std.dispatch;
 
 contract Not {
-  enum Bool { False, True }
+    enum Bool {
+        False,
+        True
+    }
 
-  // #[() -> 1]
-  function run() public returns (uint256) {
-    return uint256(fromBool(bnot(Bool.False)));
-  }
+    // #[() -> 1]
+    function run() public returns (uint256) {
+        return uint256(fromBool(bnot(Bool.False)));
+    }
 
-  function fromBool(b: Bool) returns (word) {
-    match (b) {
-case Bool.False {
-return 0;
-}
-case Bool.True {
-return 1;
-}
-}
-  }
+    function fromBool(b: Bool) returns (word) {
+        match (b) {
+            case Bool.False {
+                return 0;
+            }
+            case Bool.True {
+                return 1;
+            }
+        }
+    }
 
-  function bnot(b: Bool) returns (Bool) {
-    match (b) {
-case Bool.False {
-return Bool.True;
-}
-case Bool.True {
-return Bool.False;
-}
-}
-  }
+    function bnot(b: Bool) returns (Bool) {
+        match (b) {
+            case Bool.False {
+                return Bool.True;
+            }
+            case Bool.True {
+                return Bool.False;
+            }
+        }
+    }
 }

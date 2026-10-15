@@ -15,37 +15,40 @@ import * from std;
 // never reaches the UFCS rule.
 
 trait Combiner<a> {
-  function combine(x: a, y: word) returns (word) ;
+    function combine(x: a, y: word) returns (word);
 }
 
 impl Combiner<word> {
-  function combine(x: word, y: word) returns (word) {
-    return y;
-  }
+    function combine(x: word, y: word) returns (word) {
+        return y;
+    }
 }
 
-enum Color { Red, Green }
+enum Color {
+    Red,
+    Green
+}
 
 contract UfcsNoConflict {
-  val : word;
+    val: word;
 
-  constructor() {}
+    constructor() {}
 
-  // UFCS receiver call on a contract field.
-  function viaUfcs(z: word) public returns (word) {
-    return val.combine(z);
-  }
+    // UFCS receiver call on a contract field.
+    function viaUfcs(z: word) public returns (word) {
+        return val.combine(z);
+    }
 
-  // The explicit qualified class call for the same method: NOT rewritten by
-  // UFCS (receiver is the class name `Combiner`, not a field).
-  function viaQualified(z: word) public returns (word) {
-    return Combiner.combine(val, z);
-  }
+    // The explicit qualified class call for the same method: NOT rewritten by
+    // UFCS (receiver is the class name `Combiner`, not a field).
+    function viaQualified(z: word) public returns (word) {
+        return Combiner.combine(val, z);
+    }
 
-  // A dotted constructor and a bare field read still resolve normally
-  // alongside the UFCS rule.
-  function dottedConstructorAndFieldRead() public returns (word) {
-    let c : Color = Color.Red;
-    return val;
-  }
+    // A dotted constructor and a bare field read still resolve normally
+    // alongside the UFCS rule.
+    function dottedConstructorAndFieldRead() public returns (word) {
+        let c: Color = Color.Red;
+        return val;
+    }
 }

@@ -4,18 +4,20 @@
 import * from std;
 
 contract A {
-  enum Secret { S }
+    enum Secret {
+        S
+    }
 
-  function useIt() public returns (word) {
-    match (Secret.S) {
-case Secret.S {
-return 1;
-}
-}
-  }
+    function useIt() public returns (word) {
+        match (Secret.S) {
+            case Secret.S {
+                return 1;
+            }
+        }
+    }
 }
 
 // `Secret` is not in scope here — it belongs to contract A.
 function leak(x: Secret) returns (word) {
-  return 0;
+    return 0;
 }

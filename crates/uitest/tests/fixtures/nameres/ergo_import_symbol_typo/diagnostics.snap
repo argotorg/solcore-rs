@@ -4,10 +4,10 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_import_symbol_typo/main.sol
 ---
 error[SC0110]: unknown import item `valu`
- --> /main/main.sol:1:9
+ --> /main/main.sol:1:10
   |
-1 | import {valu} from util;
-  |         ^^^^ unknown import item
+1 | import { valu } from util;
+  |          ^^^^ unknown import item
 2 |
 3 | function main() returns (word) {
   |

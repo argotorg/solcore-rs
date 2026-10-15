@@ -1,5 +1,5 @@
 import * from abi;
-import {Leaf} from reexport;
+import { Leaf } from reexport;
 
 export { keepCompetitorReachable };
 
@@ -7,8 +7,14 @@ export { keepCompetitorReachable };
 // module that defines Box. A derived wrapper must replay definition-side
 // evidence rather than scanning every reachable environment.
 impl ABIAttribs<Leaf> {
-  function headSize(ty: Proxy<Leaf>) returns (word) { return 64; }
-  function isStatic(ty: Proxy<Leaf>) returns (bool) { return true; }
+    function headSize(ty: Proxy<Leaf>) returns (word) {
+        return 64;
+    }
+    function isStatic(ty: Proxy<Leaf>) returns (bool) {
+        return true;
+    }
 }
 
-function keepCompetitorReachable() returns (word) { return 0; }
+function keepCompetitorReachable() returns (word) {
+    return 0;
+}

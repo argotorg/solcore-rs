@@ -1,4 +1,6 @@
 contract C {
-  x: word = true;
-  function main() { return (); }
+    x: word = true;
+    function main() {
+        return ();
+    }
 }

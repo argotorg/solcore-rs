@@ -1,8 +1,8 @@
 function id(x: word) returns (word) {
-  return x;
+    return x;
 }
 
 function id_ct(x: word) returns (comptime<word>) {
-  let y : comptime<word> = id(x);
-  return id(x);
+    let y: comptime<word> = id(x);
+    return id(x);
 }

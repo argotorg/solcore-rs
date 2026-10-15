@@ -8,9 +8,9 @@ impl Seed<word> {}
 impl<a> Derived<a> where a: Seed {}
 
 function needsDerivedTwice<a>(x: a) where a: Derived, a: Derived {
-  return ();
+    return ();
 }
 
 function main() {
-  return needsDerivedTwice(0);
+    return needsDerivedTwice(0);
 }

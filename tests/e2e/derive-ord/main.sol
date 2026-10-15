@@ -12,81 +12,95 @@ pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
 #[derive(Eq, Ord)]
-enum Color { Red, Green, Blue }
+enum Color {
+    Red,
+    Green,
+    Blue
+}
 
 #[derive(Eq, Ord)]
-enum Point { Point(uint256, uint256) }
+enum Point {
+    Point(uint256, uint256)
+}
 
+// #[scenario("derive_ord")]
+// #[deploy(0x) -> success]
+// #[raw(0xd69e3995, label = "eqRedRed() -> 1") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0xeac29ce7, label = "eqRedBlue() -> 0") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x4dc00b0d, label = "gtGreenRed() -> 1 (Green > Red)") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x43a0cf63, label = "gtRedGreen() -> 0 (Red < Green)") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0xddb51f53, label = "eqPointSame() -> 1") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x41410a98, label = "gtPointLex() -> 1 (Point(1,100) > Point(1,50))") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
 contract DeriveOrd {
     constructor() {}
 
     // enum equality (reaches the () and sum universe instances)
     function eqRedRed() public returns (uint256) {
         match (Eq.eq(Color.Red, Color.Red)) {
-case true {
-return uint256(1);
-}
-case false {
-return uint256(0);
-}
-}
+            case true {
+                return uint256(1);
+            }
+            case false {
+                return uint256(0);
+            }
+        }
     }
 
     function eqRedBlue() public returns (uint256) {
         match (Eq.eq(Color.Red, Color.Blue)) {
-case true {
-return uint256(1);
-}
-case false {
-return uint256(0);
-}
-}
+            case true {
+                return uint256(1);
+            }
+            case false {
+                return uint256(0);
+            }
+        }
     }
 
     // enum ordering follows declaration order: Red < Green < Blue
     function gtGreenRed() public returns (uint256) {
         match (Ord.gt(Color.Green, Color.Red)) {
-case true {
-return uint256(1);
-}
-case false {
-return uint256(0);
-}
-}
+            case true {
+                return uint256(1);
+            }
+            case false {
+                return uint256(0);
+            }
+        }
     }
 
     function gtRedGreen() public returns (uint256) {
         match (Ord.gt(Color.Red, Color.Green)) {
-case true {
-return uint256(1);
-}
-case false {
-return uint256(0);
-}
-}
+            case true {
+                return uint256(1);
+            }
+            case false {
+                return uint256(0);
+            }
+        }
     }
 
     // product equality (reaches the pair universe instance)
     function eqPointSame() public returns (uint256) {
         match (Eq.eq(Point(uint256(1), uint256(2)), Point(uint256(1), uint256(2)))) {
-case true {
-return uint256(1);
-}
-case false {
-return uint256(0);
-}
-}
+            case true {
+                return uint256(1);
+            }
+            case false {
+                return uint256(0);
+            }
+        }
     }
 
     // product ordering is lexicographic: the second field breaks the tie
     function gtPointLex() public returns (uint256) {
         match (Ord.gt(Point(uint256(1), uint256(100)), Point(uint256(1), uint256(50)))) {
-case true {
-return uint256(1);
-}
-case false {
-return uint256(0);
-}
-}
+            case true {
+                return uint256(1);
+            }
+            case false {
+                return uint256(0);
+            }
+        }
     }
 }

@@ -1,14 +1,16 @@
 import * from std;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
-enum FooCxt { FooCxt }
+enum FooCxt {
+    FooCxt
+}
 
 contract Foo {
-  x: word;
+    x: word;
 
-  function get() public returns (word) {
-    return x;
-  }
+    function get() public returns (word) {
+        return x;
+    }
 }

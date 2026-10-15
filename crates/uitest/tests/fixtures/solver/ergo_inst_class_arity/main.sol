@@ -1,9 +1,9 @@
 trait Rel<a, b> {
-  function rel(x: a, y: b) returns (word) ;
+    function rel(x: a, y: b) returns (word);
 }
 
 impl Rel<word> {
-  function rel(x: word, y: word) returns (word) {
-    return 1;
-  }
+    function rel(x: word, y: word) returns (word) {
+        return 1;
+    }
 }

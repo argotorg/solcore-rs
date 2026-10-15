@@ -8,9 +8,9 @@ impl<a> A<a> where a: B {}
 impl<a> B<a> where a: A {}
 
 function needsA<a>(x: a) where a: A {
-  return ();
+    return ();
 }
 
 function main() {
-  return needsA(0);
+    return needsA(0);
 }

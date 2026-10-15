@@ -3,17 +3,17 @@
    The evaluator runs in comptime mode for the RHS of `let x : comptime`.
 */
 function storeLoad(x: word) returns (word) {
-  let r : word;
-  assembly {
-    mstore(0, x)
-    r := mload(0)
-  }
-  return r;
+    let r: word;
+    assembly {
+        mstore(0, x)
+        r := mload(0)
+    }
+    return r;
 }
 
 contract ComptimeAsmMem {
-  function main() returns (word) {
-    let res : comptime<word> = storeLoad(42);
-    return res;
-  }
+    function main() returns (word) {
+        let res: comptime<word> = storeLoad(42);
+        return res;
+    }
 }

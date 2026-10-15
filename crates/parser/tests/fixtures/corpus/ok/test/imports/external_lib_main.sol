@@ -1,9 +1,9 @@
 import @extlib.math.api;
 
 contract External {
-  constructor() {}
+    constructor() {}
 
-  function main() public returns (word) {
-    return math.api.sum(39);
-  }
+    function main() public returns (word) {
+        return math.api.sum(39);
+    }
 }

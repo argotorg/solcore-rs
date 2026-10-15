@@ -9,8 +9,8 @@ error[SC0299]: ambiguous inferred type
 4 |
 5 |   function f() returns (word) {
   |  _____________________________^
-6 | |   let y = poly(7);
-7 | |   return 0;
+6 | |     let y = poly(7);
+7 | |     return 0;
 8 | | }
   | |_^ ambiguous inferred type
   |

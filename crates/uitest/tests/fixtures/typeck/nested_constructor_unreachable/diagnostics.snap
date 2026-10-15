@@ -4,13 +4,13 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/nested_constructor_unreachable/main.sol
 ---
 warning[SC0303]: unreachable match arm
-  --> /main/main.sol:9:1
+  --> /main/main.sol:15:9
    |
- 8 |   }
- 9 | / case Outer.Wrap(Inner.A) {
-10 | | return 1;
-11 | | }
-   | |_^ this arm is unreachable
-12 |   case Outer.Other {
+14 |           }
+15 | /         case Outer.Wrap(Inner.A) {
+16 | |             return 1;
+17 | |         }
+   | |_________^ this arm is unreachable
+18 |           case Outer.Other {
    |
    = note: this arm is covered by previous match arms

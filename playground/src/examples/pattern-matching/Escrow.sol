@@ -52,9 +52,15 @@ contract Escrow {
     // #[() -> 2]
     function status() public returns (uint256) {
         match (phase) {
-            case Phase.AwaitingPayment { return 0; }
-            case Phase.Funded(_) { return 1; }
-            case Phase.Released(_) { return 2; }
+            case Phase.AwaitingPayment {
+                return 0;
+            }
+            case Phase.Funded(_) {
+                return 1;
+            }
+            case Phase.Released(_) {
+                return 2;
+            }
         }
     }
 }

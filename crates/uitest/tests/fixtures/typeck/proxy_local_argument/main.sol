@@ -1,4 +1,6 @@
-enum Proxy<t> { Proxy }
+enum Proxy<t> {
+    Proxy
+}
 
 function needsBool(p: Proxy<bool>) {}
 

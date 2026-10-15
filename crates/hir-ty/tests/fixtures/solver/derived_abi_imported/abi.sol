@@ -3,13 +3,13 @@ pragma no-bounded-variable-condition;
 pragma no-coverage-condition;
 
 export {
-  Generic,
-  ABIDeriving,
-  ABIAttribs,
-  ABIDecode,
-  WordReader,
-  ABIDecoder(*),
-  Reader
+    Generic,
+    ABIDeriving,
+    ABIAttribs,
+    ABIDecode,
+    WordReader,
+    ABIDecoder(*),
+    Reader
 };
 
 trait Generic<a, rep> {}
@@ -18,8 +18,12 @@ trait ABIAttribs<self> {}
 trait ABIDecode<decoder, decoded> {}
 trait WordReader<reader> {}
 
-enum ABIDecoder<ty, reader> { ABIDecoder(reader) }
-enum Reader { Reader }
+enum ABIDecoder<ty, reader> {
+    ABIDecoder(reader)
+}
+enum Reader {
+    Reader
+}
 
 impl WordReader<Reader> {}
 impl ABIAttribs<word> {}

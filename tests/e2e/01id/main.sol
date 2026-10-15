@@ -3,16 +3,21 @@ import * from std.dispatch;
 
 contract Id1 {
 
-  enum Bool { False, True }
+    enum Bool {
+        False,
+        True
+    }
 
-  function id(x: word) returns (word) {
-    return x ;
-  }
+    function id(x: word) returns (word) {
+        return x;
+    }
 
-  function const(x: word, y: Bool) returns (word) { return x; }
+    function const(x: word, y: Bool) returns (word) {
+        return x;
+    }
 
-  // #[() -> 42]
-  function run() public returns (uint256) {
-    return uint256(const(id(42), Bool.False));
-  }
+    // #[() -> 42]
+    function run() public returns (uint256) {
+        return uint256(const(id(42), Bool.False));
+    }
 }

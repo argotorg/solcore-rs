@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/ergo_free_tyvar_ctor/main.sol
 ---
 error[SC0401]: cannot specialize expression: unresolved type parameter in Option(_)
-  --> /main/main.sol:10:13
+  --> /main/main.sol:13:17
    |
- 9 |   function main() returns (word) {
-10 |     let x = Option.None;
-   |             ^^^^^^^^^^^ type must be concrete here
-11 |     return 1;
+12 |     function main() returns (word) {
+13 |         let x = Option.None;
+   |                 ^^^^^^^^^^^ type must be concrete here
+14 |         return 1;
    |
    = note: this can happen when a constructor or expression leaves a type parameter unresolved
    = note: help: add a type annotation that fixes the concrete type

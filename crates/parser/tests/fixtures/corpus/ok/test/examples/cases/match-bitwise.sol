@@ -1,30 +1,30 @@
 import * from std;
-import {mstore} from std.opcodes;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+import { mstore } from std.opcodes;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
 // Regression for parsing the bitwise-or operator inside a match case block.
 // The `|` inside the call is an expression operator; `case` starts the next
 // arm, and each expression statement uses the canonical trailing semicolon.
 function emit(x: word) {
-  match (x) {
-case 0 {
-mstore(0, x | 1);
-}
-case 1 {
-mstore(0, x & 1);
-}
-default {
-mstore(0, x);
-}
-}
+    match (x) {
+        case 0 {
+            mstore(0, x | 1);
+        }
+        case 1 {
+            mstore(0, x & 1);
+        }
+        default {
+            mstore(0, x);
+        }
+    }
 }
 
 contract MatchBitwise {
-  // `0 | 1` still folds to 1 at the top level.
-  function main() public returns (word) {
-    emit(0);
-    return 0 | 1;
-  }
+    // `0 | 1` still folds to 1 at the top level.
+    function main() public returns (word) {
+        emit(0);
+        return 0 | 1;
+    }
 }

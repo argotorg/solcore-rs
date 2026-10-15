@@ -1,40 +1,45 @@
 import * from std;
 import * from std.dispatch;
-import {address, uint256, mapping, Num, Add, Sub, Bounded, Eq, Ord, Typedef, ge, ne, not} from std;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+import { address, uint256, mapping, Num, Add, Sub, Bounded, Eq, Ord, Typedef, ge, ne, not } from std;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
 function caller() returns (address) {
-  let res: word;
-  assembly {
-     res := caller()
-  }
-  return address(res);
+    let res: word;
+    assembly {
+        res := caller()
+    }
+    return address(res);
 }
 
 function myrevert(msg: word) {
-       assembly { mstore(0, msg) revert(0, 32) }
+    assembly {
+        mstore(0, msg)
+        revert(0, 32)
+    }
 }
 
 function myrequire(cond: bool, msg: word) {
-      if( !cond ) { myrevert(msg); }
+    if (!cond) {
+        myrevert(msg);
+    }
 }
 
 contract MiniERC20 {
-  reserved : word; // forge idiosyncrasies
-  owner : address;
-  decimals : uint256;
-  totalSupply : uint256;
-  balances : mapping(address => uint256);
-  allowance : mapping(address => mapping(address => uint256));
+    reserved: word; // forge idiosyncrasies
+    owner: address;
+    decimals: uint256;
+    totalSupply: uint256;
+    balances: mapping(address => uint256);
+    allowance: mapping(address => mapping(address => uint256));
 
-  function mint(amount: uint256) {
-    balances[owner] = Num.add(balances[owner], amount);
-    totalSupply = Num.add(totalSupply, amount);
-  }
+    function mint(amount: uint256) {
+        balances[owner] = Num.add(balances[owner], amount);
+        totalSupply = Num.add(totalSupply, amount);
+    }
 
-/*  // original:
+    /*  // original:
     function transferFrom(address src, address dst, uint256 amt) public returns (bool) {
         myrequire(balanceOf[src] >= amt, "token/insufficient-balance");
         if (src != msg.sender && allowance[src][msg.sender] != type(uint256).max) {
@@ -49,24 +54,24 @@ contract MiniERC20 {
     }
 */
 
-  function transferFrom(src: address, dst: address, amt: uint256) returns (bool) {
-     let msg_sender = caller();
-     myrequire( balances[src] >= amt /* "token/insufficient-balance" */
+    function transferFrom(src: address, dst: address, amt: uint256) returns (bool) {
+        let msg_sender = caller();
+        myrequire(balances[src] >= amt /* "token/insufficient-balance" */
             , 0x746f6b656e2f696e73756666696369656e742d62616c616e6365
-	    );
+        );
 
-     if (src != msg_sender && allowance[src][msg_sender] != (Num.maxVal())) {
-        myrequire( allowance[src][msg_sender] >= amt /* "token/insufficient-allowance" */
-	       , 0x746f6b656e2f696e73756666696369656e742d616c6c6f77616e6365
-	       );
-        allowance[src][msg_sender] -= amt;
-     }
-     balances[src] = balances[src] - amt;
-     balances[dst] = balances[dst] + amt;
-     return true;
-  }
+        if (src != msg_sender && allowance[src][msg_sender] != (Num.maxVal())) {
+            myrequire(allowance[src][msg_sender] >= amt /* "token/insufficient-allowance" */
+                , 0x746f6b656e2f696e73756666696369656e742d616c6c6f77616e6365
+            );
+            allowance[src][msg_sender] -= amt;
+        }
+        balances[src] = balances[src] - amt;
+        balances[dst] = balances[dst] + amt;
+        return true;
+    }
 
-/*
+    /*
     function approve(address usr, uint256 amt) public returns (bool) {
         allowance[msg.sender][usr] = amt;
         emit Approval(msg.sender, usr, amt);
@@ -74,27 +79,27 @@ contract MiniERC20 {
     }
 */
 
-  function approve(usr: address, amt: uint256) returns (bool) {
-      let msg_sender = caller();
-      allowance[msg_sender][usr] = amt;
-      // emit Approval(msg.sender, usr, amt);
-      return true;
+    function approve(usr: address, amt: uint256) returns (bool) {
+        let msg_sender = caller();
+        allowance[msg_sender][usr] = amt;
+        // emit Approval(msg.sender, usr, amt);
+        return true;
 
-  }
+    }
 
-  function init() {
-    owner = address(0x123456789abcdef);
-    decimals = uint256(18); // Num.fromWord(18) fails, which may be a problem
-  }
+    function init() {
+        owner = address(0x123456789abcdef);
+        decimals = uint256(18); // Num.fromWord(18) fails, which may be a problem
+    }
 
-  // #[() -> 958]
-  function run() public returns (uint256) {
-    let msg_sender = caller();
-    init();
-    mint(uint256(1000));
-    allowance[owner][msg_sender] = uint256(1000);
-    transferFrom(owner, msg_sender, uint256(42));
+    // #[() -> 958]
+    function run() public returns (uint256) {
+        let msg_sender = caller();
+        init();
+        mint(uint256(1000));
+        allowance[owner][msg_sender] = uint256(1000);
+        transferFrom(owner, msg_sender, uint256(42));
 
-    return allowance[owner][msg_sender];
-  }
+        return allowance[owner][msg_sender];
+    }
 }

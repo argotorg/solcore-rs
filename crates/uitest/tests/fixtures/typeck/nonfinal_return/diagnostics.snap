@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/nonfinal_return/main.sol
 ---
 error[SC0222]: illegal return statement
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
 1 | function g() returns (word) {
-2 |   return 1;
-  |   ^^^^^^^^^ return before end of block
-3 |   return 2;
+2 |     return 1;
+  |     ^^^^^^^^^ return before end of block
+3 |     return 2;
   |
   = note: return statements must be the final statement in a block

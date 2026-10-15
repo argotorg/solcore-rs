@@ -1,4 +1,6 @@
-enum Foo { Foo }
+enum Foo {
+    Foo
+}
 type Foo = word;
 
 function dup() {}

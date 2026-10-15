@@ -1,1 +1,3 @@
-function foo(x:word) { return foo(word); }
+function foo(x: word) {
+    return foo(word);
+}

@@ -2,22 +2,28 @@ import * from std;
 import * from std.dispatch;
 
 contract RGB {
-  enum Color { R, G, B }
+    enum Color {
+        R,
+        G,
+        B
+    }
 
-  function fromEnum(c: Color) returns (word) {
-    match (c) {
-case Color.R {
-return 4;
-}
-case Color.G {
-return 2;
-}
-case Color.B {
-return 42;
-}
-}
-  }
+    function fromEnum(c: Color) returns (word) {
+        match (c) {
+            case Color.R {
+                return 4;
+            }
+            case Color.G {
+                return 2;
+            }
+            case Color.B {
+                return 42;
+            }
+        }
+    }
 
-  // #[() -> 42]
-  function run() public returns (uint256) { return uint256(fromEnum(Color.B)); }
+    // #[() -> 42]
+    function run() public returns (uint256) {
+        return uint256(fromEnum(Color.B));
+    }
 }

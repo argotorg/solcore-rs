@@ -1,1 +1,1 @@
-import {A as B, (^^)} from mod hiding {C};
+import { A as B, (^ ^) } from mod hiding { C };

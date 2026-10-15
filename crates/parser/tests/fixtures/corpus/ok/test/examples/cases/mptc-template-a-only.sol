@@ -3,19 +3,21 @@
 // fire.  The specialiser must discover rep=word solely via Template A:
 //   specmgu (Box -> word) (Box -> freshV)  =>  freshV = word  =>  rep = word
 
-enum Box { Box(word) }
+enum Box {
+    Box(word)
+}
 
 trait Unbox<self, rep> {
-    function unbox(x: self) returns (rep) ;
+    function unbox(x: self) returns (rep);
 }
 
 impl Unbox<Box, word> {
     function unbox(x: Box) returns (word) {
         match (x) {
-case Box(w) {
-return w;
-}
-}
+            case Box(w) {
+                return w;
+            }
+        }
     }
 }
 

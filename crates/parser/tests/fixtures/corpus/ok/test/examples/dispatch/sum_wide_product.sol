@@ -12,7 +12,10 @@ import * from std.dispatch;
 // No storage and no Generic derivation involved — just constructing and matching
 // an ordinary algebraic data type.
 
-enum Shape { Dot, Tri(uint256, uint256, uint256) }
+enum Shape {
+    Dot,
+    Tri(uint256, uint256, uint256)
+}
 
 contract C {
     constructor() {}
@@ -20,14 +23,14 @@ contract C {
     // Build Tri(a,b,c) then match it back out: exercises a sum whose payload is
     // a 3-field product.
     function triSum(a: uint256, b: uint256, c: uint256) public returns (uint256) {
-        let s : Shape = Shape.Tri(a, b, c);
+        let s: Shape = Shape.Tri(a, b, c);
         match (s) {
-case Shape.Dot {
-return uint256(0);
-}
-case Shape.Tri(x, y, z) {
-return x + y + z;
-}
-}
+            case Shape.Dot {
+                return uint256(0);
+            }
+            case Shape.Tri(x, y, z) {
+                return x + y + z;
+            }
+        }
     }
 }

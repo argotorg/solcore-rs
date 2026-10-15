@@ -1,4 +1,6 @@
-enum bytes32 { bytes32(word) }
+enum bytes32 {
+    bytes32(word)
+}
 
 trait Memory<t> {
     function encodeInto(v: t, target: word);

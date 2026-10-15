@@ -1,1 +1,1 @@
-import {a, b,} from m;
+import { a, b, } from m;

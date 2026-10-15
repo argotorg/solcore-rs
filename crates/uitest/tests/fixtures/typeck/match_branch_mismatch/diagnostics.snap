@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/match_branch_mismatch/main.sol
 ---
 error[SC0201]: type mismatch: expected word, found bool
- --> /main/main.sol:7:8
+ --> /main/main.sol:7:20
   |
-6 | case false {
-7 | return true;
-  |        ^^^^ expression has mismatched type
-8 | }
+6 |         case false {
+7 |             return true;
+  |                    ^^^^ expression has mismatched type
+8 |         }
   |
   = note: expected type: word
   = note: found type: bool

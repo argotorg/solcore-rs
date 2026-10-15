@@ -8,8 +8,8 @@ function makePair(x: word, y: word) returns (MyPair<word, word>) {
 function main() returns (word) {
     let p: IntPair = makePair(42, 100);
     match (p) {
-case pair(x, _) {
-return x;
-}
-}
+        case pair(x, _) {
+            return x;
+        }
+    }
 }

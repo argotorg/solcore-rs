@@ -4,133 +4,133 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_value_namespace_matrix/main.sol
 ---
 error[SC0228]: type name used as value: `Opt`
-  --> /main/main.sol:9:10
+  --> /main/main.sol:16:12
    |
- 8 | function adt_value() returns (word) {
- 9 |   return Opt;
-   |          ^^^ not a value
-10 | }
+15 | function adt_value() returns (word) {
+16 |     return Opt;
+   |            ^^^ not a value
+17 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as value: `Alias`
-  --> /main/main.sol:13:10
+  --> /main/main.sol:20:12
    |
-12 | function alias_value() returns (word) {
-13 |   return Alias;
-   |          ^^^^^ not a value
-14 | }
+19 | function alias_value() returns (word) {
+20 |     return Alias;
+   |            ^^^^^ not a value
+21 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as value: `K`
-  --> /main/main.sol:17:10
+  --> /main/main.sol:24:12
    |
-16 | function contract_value() returns (word) {
-17 |   return K;
-   |          ^ not a value
-18 | }
+23 | function contract_value() returns (word) {
+24 |     return K;
+   |            ^ not a value
+25 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: trait name used as value: `C`
-  --> /main/main.sol:21:10
+  --> /main/main.sol:28:12
    |
-20 | function class_value() returns (word) {
-21 |   return C;
-   |          ^ not a value
-22 | }
+27 | function class_value() returns (word) {
+28 |     return C;
+   |            ^ not a value
+29 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as value: `word`
-  --> /main/main.sol:25:10
+  --> /main/main.sol:32:12
    |
-24 | function builtin_type_value() returns (word) {
-25 |   return word;
-   |          ^^^^ not a value
-26 | }
+31 | function builtin_type_value() returns (word) {
+32 |     return word;
+   |            ^^^^ not a value
+33 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: trait name used as value: `Int`
-  --> /main/main.sol:29:10
+  --> /main/main.sol:36:12
    |
-28 | function builtin_class_value() returns (word) {
-29 |   return Int;
-   |          ^^^ not a value
-30 | }
+35 | function builtin_class_value() returns (word) {
+36 |     return Int;
+   |            ^^^ not a value
+37 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type variable used as value: `a`
-  --> /main/main.sol:33:10
+  --> /main/main.sol:40:12
    |
-32 | function type_var_value<a>() returns (word) {
-33 |   return a;
-   |          ^ not a value
-34 | }
+39 | function type_var_value<a>() returns (word) {
+40 |     return a;
+   |            ^ not a value
+41 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: module used as value: `U`
-  --> /main/main.sol:37:10
+  --> /main/main.sol:44:12
    |
-36 | function module_value() returns (word) {
-37 |   return U;
-   |          ^ not a value
-38 | }
+43 | function module_value() returns (word) {
+44 |     return U;
+   |            ^ not a value
+45 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: type name used as callee: `Opt`
-  --> /main/main.sol:41:10
+  --> /main/main.sol:48:12
    |
-40 | function type_as_callee() returns (word) {
-41 |   return Opt();
-   |          ^^^ not a value
-42 | }
+47 | function type_as_callee() returns (word) {
+48 |     return Opt();
+   |            ^^^ not a value
+49 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0228]: module used as callee: `U`
-  --> /main/main.sol:45:10
+  --> /main/main.sol:52:12
    |
-44 | function module_as_callee() returns (word) {
-45 |   return U();
-   |          ^ not a value
-46 | }
+51 | function module_as_callee() returns (word) {
+52 |     return U();
+   |            ^ not a value
+53 | }
    |
    = help: use a constructor or value binding here, not a namespace name
 ---
 
 error[SC0207]: cannot satisfy trait constraint: operator Add.add
-  --> /main/main.sol:49:10
+  --> /main/main.sol:56:12
    |
-48 | function type_in_binop() returns (word) {
-49 |   return Opt + 1;
-   |          ^^^^^^^ constraint originates here
-50 | }
+55 | function type_in_binop() returns (word) {
+56 |     return Opt + 1;
+   |            ^^^^^^^ constraint originates here
+57 | }
    |
    = note: no visible impl matches `operator Add.add`
    = help: add a matching impl or strengthen the surrounding type context
 ---
 
 error[SC0228]: type name used as value: `Opt`
-  --> /main/main.sol:49:10
+  --> /main/main.sol:56:12
    |
-48 | function type_in_binop() returns (word) {
-49 |   return Opt + 1;
-   |          ^^^ not a value
-50 | }
+55 | function type_in_binop() returns (word) {
+56 |     return Opt + 1;
+   |            ^^^ not a value
+57 | }
    |
    = help: use a constructor or value binding here, not a namespace name

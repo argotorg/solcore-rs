@@ -1,5 +1,5 @@
-import {Token} from hidden_ctor_lib;
+import { Token } from hidden_ctor_lib;
 
 function main() returns (Token) {
-  return .Err(1);
+    return .Err(1);
 }

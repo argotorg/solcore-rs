@@ -1,7 +1,9 @@
 export { T(A), mk };
 
-enum T { A }
+enum T {
+    A
+}
 
 function mk() returns (T) {
-  return T.A;
+    return T.A;
 }

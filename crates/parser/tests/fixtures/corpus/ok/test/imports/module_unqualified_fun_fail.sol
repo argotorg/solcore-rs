@@ -1,5 +1,5 @@
 import foo;
 
 function main() returns (word) {
-  return base();
+    return base();
 }

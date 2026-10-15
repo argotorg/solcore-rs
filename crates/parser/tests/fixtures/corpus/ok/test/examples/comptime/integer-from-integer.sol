@@ -4,14 +4,14 @@ import * from std;
 // Also tests the full design-doc pattern: comptime integer fib result converted via Num.fromInteger.
 
 function fib(comptime n: integer) returns (comptime<integer>) {
-  if (integerLt(n, wordToInteger(2))) {
-    return n;
-  } else {
-    return integerAdd(
-      fib(integerSub(n, wordToInteger(1))),
-      fib(integerSub(n, wordToInteger(2)))
-    );
-  }
+    if (integerLt(n, wordToInteger(2))) {
+        return n;
+    } else {
+        return integerAdd(
+            fib(integerSub(n, wordToInteger(1))),
+            fib(integerSub(n, wordToInteger(2)))
+        );
+    }
 }
 
 // Exercises both instances.
@@ -20,9 +20,9 @@ function fib(comptime n: integer) returns (comptime<integer>) {
 // Returns Typedef.rep(u) = 55, demonstrating the uint256 round-trip.
 // Expected: main() folds to word literal 55.
 contract IntegerFromInteger {
-  function main() returns (word) {
-    let w : comptime<word>    = Num.fromInteger(wordToInteger(42));
-    let u : comptime<uint256> = Num.fromInteger(fib(wordToInteger(10)));
-    return Typedef.rep(u);
-  }
+    function main() returns (word) {
+        let w: comptime<word> = Num.fromInteger(wordToInteger(42));
+        let u: comptime<uint256> = Num.fromInteger(fib(wordToInteger(10)));
+        return Typedef.rep(u);
+    }
 }

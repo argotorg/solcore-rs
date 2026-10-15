@@ -1,4 +1,4 @@
-import {Eq, Ord, absurd} from std;
+import { Eq, Ord, absurd } from std;
 
 function eqUnit(x: (), y: ()) returns (bool) {
     return Eq.eq(x, y);

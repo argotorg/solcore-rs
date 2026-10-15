@@ -6,15 +6,17 @@ import * from std.Generic;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
-enum Foo { MkFoo(word) }
+enum Foo {
+    MkFoo(word)
+}
 
 impl Generic<Foo, word> {
     function from(x: Foo) returns (word) {
         match (x) {
-case Foo.MkFoo(v) {
-return v;
-}
-}
+            case Foo.MkFoo(v) {
+                return v;
+            }
+        }
     }
     function to(v: word) returns (Foo) {
         return Foo.MkFoo(v);

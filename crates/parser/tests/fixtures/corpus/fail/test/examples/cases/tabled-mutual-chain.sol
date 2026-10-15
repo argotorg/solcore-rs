@@ -1,5 +1,9 @@
-enum WrapA<a> { WrapA(a) }
-enum WrapB<a> { WrapB(a) }
+enum WrapA<a> {
+    WrapA(a)
+}
+enum WrapB<a> {
+    WrapB(a)
+}
 
 trait A<a> {}
 trait B<a> {}
@@ -10,9 +14,9 @@ impl<a> B<WrapB<a>> where a: A {}
 impl<a> A<WrapA<a>> where a: B {}
 
 function needsA<a>(x: a) where a: A {
-  return ();
+    return ();
 }
 
 function main() {
-  return needsA(WrapA(WrapB(0)));
+    return needsA(WrapA(WrapB(0)));
 }

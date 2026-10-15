@@ -1,15 +1,15 @@
 import * from std;
 
 function countdown(n: word) returns (word) {
-  if (n == 0) {
-    return 0;
-  } else {
-    return countdown(n - 1);
-  }
+    if (n == 0) {
+        return 0;
+    } else {
+        return countdown(n - 1);
+    }
 }
 
 contract Counter {
-  function main() public returns (word) {
-    return countdown(3);
-  }
+    function main() public returns (word) {
+        return countdown(3);
+    }
 }

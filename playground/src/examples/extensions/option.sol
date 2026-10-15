@@ -21,14 +21,22 @@ function checkedDiv(a: uint256, b: uint256) returns (Option<uint256>) {
 
 function unwrapOr<a>(option: Option<a>, orElse: a) returns (a) {
     match (option) {
-        case Option.Some(value) { return value; }
-        default { return orElse; }
+        case Option.Some(value) {
+            return value;
+        }
+        default {
+            return orElse;
+        }
     }
 }
 
 function contains<a>(option: Option<a>, value: a) returns (bool) where a: Eq {
     match (option) {
-        case Option.Some(inner) { return inner == value; }
-        default { return false; }
+        case Option.Some(inner) {
+            return inner == value;
+        }
+        default {
+            return false;
+        }
     }
 }

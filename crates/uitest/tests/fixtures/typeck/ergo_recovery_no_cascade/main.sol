@@ -1,16 +1,16 @@
 function first(p: (word, word)) returns (word) {
-  match (p) {
-case (a, b) {
-return a;
-}
-}
+    match (p) {
+        case (a, b) {
+            return a;
+        }
+    }
 }
 
 function f() returns (word) {
-  let x = first(true);
-  return x;
+    let x = first(true);
+    return x;
 }
 
 function g() returns (bool) {
-  return 42;
+    return 42;
 }

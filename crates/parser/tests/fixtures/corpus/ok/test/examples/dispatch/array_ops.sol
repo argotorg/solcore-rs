@@ -6,28 +6,28 @@ import * from std.dispatch;
 // that abandoned slots are zeroed -- so regrowing an array never resurrects the
 // values that `pop` or a shrinking `setLength` dropped.
 contract ArrayOps {
-  xs : array<uint256>;
+    xs: array<uint256>;
 
-  constructor() {}
+    constructor() {}
 
-  // NOTE: not named `add` -- that collides with the Yul builtin of the same name.
-  function pushVal(v: uint256) public {
-    ArrayPush.push(xs, v);
-  }
+    // NOTE: not named `add` -- that collides with the Yul builtin of the same name.
+    function pushVal(v: uint256) public {
+        ArrayPush.push(xs, v);
+    }
 
-  function popArr() public {
-    Array.pop(xs);
-  }
+    function popArr() public {
+        Array.pop(xs);
+    }
 
-  function len() public returns (uint256) {
-    return Length.length(xs);
-  }
+    function len() public returns (uint256) {
+        return Length.length(xs);
+    }
 
-  function get(i: uint256) public returns (uint256) {
-    return xs[i];
-  }
+    function get(i: uint256) public returns (uint256) {
+        return xs[i];
+    }
 
-  function grow(n: uint256) public {
-    Array.setLength(xs, n);
-  }
+    function grow(n: uint256) public {
+        Array.setLength(xs, n);
+    }
 }

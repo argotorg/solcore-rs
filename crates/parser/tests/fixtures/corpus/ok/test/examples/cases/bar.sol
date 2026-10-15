@@ -1,6 +1,8 @@
 pragma no-coverage-condition Bar;
 
-enum Wrap<a> { Wrap(a) }
+enum Wrap<a> {
+    Wrap(a)
+}
 
 trait Foo<self, rep> {}
 

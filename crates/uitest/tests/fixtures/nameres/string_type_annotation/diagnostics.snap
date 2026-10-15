@@ -8,6 +8,6 @@ error[SC0103]: undefined type constructor: string
   |
 1 | function f() returns (string) {
   |                       ^^^^^^ undefined type constructor
-2 |   return "ok";
+2 |     return "ok";
 3 | }
   |

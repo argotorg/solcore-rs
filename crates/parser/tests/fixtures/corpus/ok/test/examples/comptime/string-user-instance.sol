@@ -11,7 +11,9 @@
 import std;
 import * from std;
 
-enum Tag { Tag(word) }
+enum Tag {
+    Tag(word)
+}
 
 impl Str<Tag> {
     function fromString(s: string) returns (Tag) {
@@ -21,15 +23,15 @@ impl Str<Tag> {
 
 function tagLength(t: Tag) returns (word) {
     match (t) {
-case Tag(n) {
-return n;
-}
-}
+        case Tag(n) {
+            return n;
+        }
+    }
 }
 
 contract StringUserInstance {
-  function main() returns (word) {
-     let t : Tag = "abcd";
-     return tagLength(t);
-  }
+    function main() returns (word) {
+        let t: Tag = "abcd";
+        return tagLength(t);
+    }
 }

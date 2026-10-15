@@ -21,11 +21,15 @@ trait TestClassB3<a> {}
 
 // --- Data Types ---
 
-enum TestType1<x> { TestType1 }
-enum TestType2 { TestType2 }
+enum TestType1<x> {
+    TestType1
+}
+enum TestType2 {
+    TestType2
+}
 
 // Fails Patterson: context constraint not smaller then head
-impl<U> TestClassP1<U> where (U, word): TestClassP1 {}
+impl<U> TestClassP1<U> where(U, word): TestClassP1 {}
 
 // Patterson OK: No context predicates
 impl TestClassP2<TestType2> {}

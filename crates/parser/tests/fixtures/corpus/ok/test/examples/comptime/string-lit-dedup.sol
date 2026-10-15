@@ -6,10 +6,10 @@ import std;
 import * from std;
 
 contract StringDedup {
-  function main() public returns (word) {
-    let x : memory<string> = "alpha";
-    let y : memory<string> = "beta";
-    let z : memory<string> = "alpha";
-    return strlen(x) + strlen(y) + strlen(z);
-  }
+    function main() public returns (word) {
+        let x: memory<string> = "alpha";
+        let y: memory<string> = "beta";
+        let z: memory<string> = "alpha";
+        return strlen(x) + strlen(y) + strlen(z);
+    }
 }

@@ -1,5 +1,8 @@
-enum Color { Red, Green }
+enum Color {
+    Red,
+    Green
+}
 
 function f(c: Color) returns (word) {
-  return c.red;
+    return c.red;
 }

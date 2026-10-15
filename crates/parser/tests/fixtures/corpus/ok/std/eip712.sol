@@ -1,9 +1,9 @@
 import * from std;
-import {mstore, keccak256, shl} from std.opcodes;
+import { mstore, keccak256, shl } from std.opcodes;
 
 export {
-  eip712Digest,
-  eip712DomainSeparator
+    eip712Digest,
+    eip712DomainSeparator
 };
 
 // --- EIP-712 (typed structured data hashing & signing) ---
@@ -37,10 +37,10 @@ function eip712DomainSeparator(
     // preimage is consumed immediately by keccak256 and never needs to persist,
     // so there is no need to bump the free pointer.
     let ptr = get_free_memory();
-    mstore(ptr,       typeHash);
-    mstore(ptr + 32,  Typedef.rep(nameHash));
-    mstore(ptr + 64,  Typedef.rep(versionHash));
-    mstore(ptr + 96,  Typedef.rep(chainId));
+    mstore(ptr, typeHash);
+    mstore(ptr + 32, Typedef.rep(nameHash));
+    mstore(ptr + 64, Typedef.rep(versionHash));
+    mstore(ptr + 96, Typedef.rep(chainId));
     mstore(ptr + 128, Typedef.rep(verifyingContract));
     return bytes32(keccak256(ptr, 160));
 }
@@ -50,8 +50,8 @@ function eip712DomainSeparator(
 // two-byte 0x1901 prefix occupies the leading bytes of the first word.
 function eip712Digest(domainSeparator: bytes32, structHash: bytes32) returns (bytes32) {
     let ptr = get_free_memory();
-    mstore(ptr,      shl(240, 0x1901));            // 0x1901 in the leading two bytes
-    mstore(ptr + 2,  Typedef.rep(domainSeparator));
+    mstore(ptr, shl(240, 0x1901)); // 0x1901 in the leading two bytes
+    mstore(ptr + 2, Typedef.rep(domainSeparator));
     mstore(ptr + 34, Typedef.rep(structHash));
     return bytes32(keccak256(ptr, 66));
 }

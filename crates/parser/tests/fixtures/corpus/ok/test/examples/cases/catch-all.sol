@@ -1,18 +1,21 @@
-enum Bool { False, True }
+enum Bool {
+    False,
+    True
+}
 
 contract CatchAll {
     function catchAll(x: Bool, y: Bool) public returns (Bool) {
-      match (x, y) {
-case (Bool.True, Bool.True) {
-return Bool.True;
-}
-case (z, w) {
-return z;
-}
-}
+        match (x, y) {
+            case (Bool.True, Bool.True) {
+                return Bool.True;
+            }
+            case (z, w) {
+                return z;
+            }
+        }
     }
 
-  function main() public returns (Bool) {
-    catchAll(Bool.True, Bool.False)
-  }
+    function main() public returns (Bool) {
+        catchAll(Bool.True, Bool.False)
+    }
 }

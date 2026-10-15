@@ -5,10 +5,10 @@
 import std;
 
 contract ComptimeParamOk {
-  function double(comptime x: word) returns (comptime<word>) {
-    return x + x;
-  }
-  function main() returns (word) {
-    return double(21);
-  }
+    function double(comptime x: word) returns (comptime<word>) {
+        return x + x;
+    }
+    function main() returns (word) {
+        return double(21);
+    }
 }

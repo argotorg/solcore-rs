@@ -1,1 +1,1 @@
-export types.{Leaf(*)};
+export types.{ Leaf(*) };

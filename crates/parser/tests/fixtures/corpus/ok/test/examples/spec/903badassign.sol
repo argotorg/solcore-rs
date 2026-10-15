@@ -1,39 +1,44 @@
 contract Option {
-  enum Option<a> { None, Some(a) }
+    enum Option<a> {
+        None,
+        Some(a)
+    }
 
-  function just(x: word) public returns (Option<word>) { return Option.Some(x); }
+    function just(x: word) public returns (Option<word>) {
+        return Option.Some(x);
+    }
 
-  function maybe(n: word, o: Option<word>) public returns (word) {
-    match (o) {
-case Option.None {
-return n;
-}
-case Option.Some(x) {
-return x;
-}
-}
-  }
+    function maybe(n: word, o: Option<word>) public returns (word) {
+        match (o) {
+            case Option.None {
+                return n;
+            }
+            case Option.Some(x) {
+                return x;
+            }
+        }
+    }
 
-  function join(mmx: Option<Option<word>>) public returns (Option<word>) {
-    let result = Option.None;
-    match (mmx) {
-case Option.Some(Option.Some(x)) {
-result = Option.Some(x);
-}
-case Option.None {
-result = Option.None;
-}
-case Option.Some(Option.None) {
-result = Option.None;
-}
-default {
-result = Option.None;
-}
-}
-    return result;
-  }
+    function join(mmx: Option<Option<word>>) public returns (Option<word>) {
+        let result = Option.None;
+        match (mmx) {
+            case Option.Some(Option.Some(x)) {
+                result = Option.Some(x);
+            }
+            case Option.None {
+                result = Option.None;
+            }
+            case Option.Some(Option.None) {
+                result = Option.None;
+            }
+            default {
+                result = Option.None;
+            }
+        }
+        return result;
+    }
 
-  function main() public returns (word) {
-    return maybe(0, join(Option.Some(Option.Some(42))));
-  }
+    function main() public returns (word) {
+        return maybe(0, join(Option.Some(Option.Some(42))));
+    }
 }

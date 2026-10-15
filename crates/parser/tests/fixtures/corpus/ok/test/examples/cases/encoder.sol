@@ -1,29 +1,37 @@
-enum TagA { TagA(word) }
-enum TagB { TagB(word) }
-
-trait Tag<self, rep> {
-    function getTag(x: self) returns (rep) ;
+enum TagA {
+    TagA(word)
+}
+enum TagB {
+    TagB(word)
 }
 
-enum TypeA { TypeA(word) }
+trait Tag<self, rep> {
+    function getTag(x: self) returns (rep);
+}
+
+enum TypeA {
+    TypeA(word)
+}
 impl Tag<TypeA, TagA> {
     function getTag(x: TypeA) returns (TagA) {
         match (x) {
-case TypeA(w) {
-return TagA(w);
-}
-}
+            case TypeA(w) {
+                return TagA(w);
+            }
+        }
     }
 }
 
-enum TypeB { TypeB(word) }
+enum TypeB {
+    TypeB(word)
+}
 impl Tag<TypeB, TagB> {
     function getTag(x: TypeB) returns (TagB) {
         match (x) {
-case TypeB(w) {
-return TagB(w);
-}
-}
+            case TypeB(w) {
+                return TagB(w);
+            }
+        }
     }
 }
 
@@ -35,11 +43,11 @@ contract C {
     constructor() {}
 
     function main() public returns (word) {
-        let r : TagA = tagFirst(TypeA(42), TypeB(7));
+        let r: TagA = tagFirst(TypeA(42), TypeB(7));
         match (r) {
-case TagA(w) {
-return w;
-}
-}
+            case TagA(w) {
+                return w;
+            }
+        }
     }
 }

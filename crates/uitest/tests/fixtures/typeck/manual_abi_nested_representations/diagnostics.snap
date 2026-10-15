@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_nested_representations/main.sol
 ---
 error[SC0231]: public function `inspect` ABI for contract `C` cannot use visible manual `ABIEncode` evidence
-  --> /main/main.sol:17:3
+  --> /main/main.sol:23:5
    |
-16 | contract C {
-17 |   function inspect(value: Box<Wrap<X>>) public returns (Box<Wrap<X>>) {
-   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-18 |     return value;
+22 | contract C {
+23 |     function inspect(value: Box<Wrap<X>>) public returns (Box<Wrap<X>>) {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+24 |         return value;
    |
    = note: impl `ABIEncode` can override canonical `ABIEncode` behavior
    = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

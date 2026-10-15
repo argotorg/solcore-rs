@@ -1,16 +1,24 @@
-enum address { address(word) }
-enum uint256 { uint256(word) }
-enum mapping<index, member> { mapping(word) }
-enum storage<t> { storage(word) }
+enum address {
+    address(word)
+}
+enum uint256 {
+    uint256(word)
+}
+enum mapping<index, member> {
+    mapping(word)
+}
+enum storage<t> {
+    storage(word)
+}
 
 contract C {
-  balances : mapping(address => uint256);
+    balances: mapping(address => uint256);
 
-  function leak() returns (mapping(address => uint256)) {
-    return balances;
-  }
+    function leak() returns (mapping(address => uint256)) {
+        return balances;
+    }
 
-  function main() returns (word) {
-    return 0;
-  }
+    function main() returns (word) {
+        return 0;
+    }
 }

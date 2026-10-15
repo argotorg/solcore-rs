@@ -1,12 +1,12 @@
 contract C {
-  function main() public returns (word) {
-    let x : word;
-    assembly {
-      function dbl(a) -> r {
-        r := add(a, a)
-      }
-      x := dbl(1, 2)
+    function main() public returns (word) {
+        let x: word;
+        assembly {
+            function dbl(a) -> r {
+                r := add(a, a)
+            }
+            x := dbl(1, 2)
+        }
+        return x;
     }
-    return x;
-  }
 }

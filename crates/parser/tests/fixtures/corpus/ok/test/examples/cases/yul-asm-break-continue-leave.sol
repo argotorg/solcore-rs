@@ -1,7 +1,7 @@
 import * from std;
 
 function yul_asm_break_continue_leave() {
-    let result : word = 0;
+    let result: word = 0;
     assembly {
         function clamp(x) -> y {
             y := x
@@ -10,7 +10,11 @@ function yul_asm_break_continue_leave() {
                 leave
             }
         }
-        for { let i := 0 } lt(i, 10) { i := add(i, 1) } {
+        for {
+            let i := 0
+        } lt(i, 10) {
+            i := add(i, 1)
+        } {
             if lt(i, 2) {
                 continue
             }

@@ -1,22 +1,23 @@
 // v4: Simplified Member AccessProxy (no Proxy(offset))
 // variables holding field MAPs
 
-function add(x : word, y : word) {
-  let res: word;
-  assembly {
-     res := add(x, y)
-  }
-  return res;
+function add(x: word, y: word) {
+    let res: word;
+    assembly {
+        res := add(x, y)
+    }
+    return res;
 }
 
 /////// Construction
 trait Typedef<abs, rep> {
-    function rep(x: abs) returns (rep) ;
-    function abs(x: rep) returns (abs) ;
+    function rep(x: abs) returns (rep);
+    function abs(x: rep) returns (abs);
 }
 
-
-enum uint { uint(word) }
+enum uint {
+    uint(word)
+}
 
 // this does not work :(
 /*
@@ -30,29 +31,37 @@ forall a
 impl Typedef<uint, word> {
     function rep(x: uint) returns (word) {
         match (x) {
-case uint(y) {
-return y;
-}
-}
+            case uint(y) {
+                return y;
+            }
+        }
     }
     function abs(x: word) returns (uint) {
         return uint(x);
     }
 }
 
-enum storage<a> { storage(word) }
-enum ContractStorage<cxt> { ContractStorage(cxt) }
+enum storage<a> {
+    storage(word)
+}
+enum ContractStorage<cxt> {
+    ContractStorage(cxt)
+}
 
-enum storageRef<a> { storageRef(word) }
-enum Proxy<a> { Proxy }
+enum storageRef<a> {
+    storageRef(word)
+}
+enum Proxy<a> {
+    Proxy
+}
 
 impl<a> Typedef<storage<a>, word> {
     function rep(x: storage<a>) returns (word) {
         match (x) {
-case storage(y) {
-return y;
-}
-}
+            case storage(y) {
+                return y;
+            }
+        }
     }
     function abs(x: word) returns (storage<a>) {
         return storage(x);
@@ -62,10 +71,10 @@ return y;
 impl<a> Typedef<storageRef<a>, word> {
     function rep(x: storageRef<a>) returns (word) {
         match (x) {
-case storageRef(y) {
-return y;
-}
-}
+            case storageRef(y) {
+                return y;
+            }
+        }
     }
     function abs(x: word) returns (storageRef<a>) {
         return storageRef(x);
@@ -73,10 +82,12 @@ return y;
 }
 
 trait Assign<lhs, rhs> {
-    function assign(l: lhs, r: rhs) ;
+    function assign(l: lhs, r: rhs);
 }
 
-enum ref<a> { ref(a) }
+enum ref<a> {
+    ref(a)
+}
 
 impl<a> Assign<ref<a>, a> {
     function assign(l: ref<a>, r: a) {
@@ -86,30 +97,31 @@ impl<a> Assign<ref<a>, a> {
 }
 
 trait StorageType<self> {
-    function sload(ptr: word) returns (self) ;
-    function store(ptr: word, value: self) ;
+    function sload(ptr: word) returns (self);
+    function store(ptr: word, value: self);
 }
 
 trait StorageSize<self> {
-    function size(x: Proxy<self>) returns (word) ;
+    function size(x: Proxy<self>) returns (word);
 }
-
 
 function sload_(x: word) returns (word) {
     let res: word;
     assembly {
-       res := sload(x)
+        res := sload(x)
     }
     return res;
-  }
+}
 
-function sstore_(a:word, v:word) {
-    assembly { sstore(a,v) }
+function sstore_(a: word, v: word) {
+    assembly {
+        sstore(a, v)
+    }
 }
 
 impl StorageType<word> {
     function sload(ptr: word) returns (word) {
-        let r:word;
+        let r: word;
         assembly {
             r := sload(ptr)
         }
@@ -137,33 +149,35 @@ impl<a> Assign<storageRef<a>, a> where a: StorageType {
     }
 }
 
-
-
-enum MemberAccessProxy<a, field, offset> { MemberAccessProxy(a, field) }
+enum MemberAccessProxy<a, field, offset> {
+    MemberAccessProxy(a, field)
+}
 function memberAccessD1<a, field, offset>(x: MemberAccessProxy<a, field, offset>) returns (a) {
     match (x) {
-case MemberAccessProxy(y,z) {
-return y;
-}
-}
+        case MemberAccessProxy(y, z) {
+            return y;
+        }
+    }
 }
 
 trait LValueMemberAccess<self, memberRefType> {
-    function memberAccess(x: self) returns (memberRefType) ;
+    function memberAccess(x: self) returns (memberRefType);
 }
 
 trait RValueMemberAccess<self, memberValueType> {
-    function memberAccess(x: self) returns (memberValueType) ;
+    function memberAccess(x: self) returns (memberValueType);
 }
 
 trait CStructField<self, fieldType, offsetType> {}
 
-enum StructField<structType, fieldSelector> { StructField(structType) }
+enum StructField<structType, fieldSelector> {
+    StructField(structType)
+}
 
 impl<structType, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessProxy<storage<structType>, fieldSelector, offsetType>, storageRef<fieldType>> where StructField<structType, fieldSelector>: CStructField<fieldType, offsetType>, offsetType: StorageSize {
     function memberAccess(x: MemberAccessProxy<storage<structType>, fieldSelector, offsetType>) returns (storageRef<fieldType>) {
-        let ptr:word = Typedef.rep(memberAccessD1(x));
-        let size:word = StorageSize.size(@offsetType);
+        let ptr: word = Typedef.rep(memberAccessD1(x));
+        let size: word = StorageSize.size(@offsetType);
         assembly {
             ptr := add(ptr, size)
         }
@@ -189,7 +203,6 @@ impl StorageSize<uint> {
     }
 }
 
-
 /*
 // fails Patterson cond
 forall a b . a:Typedef(b), b:StorageSize
@@ -202,8 +215,8 @@ forall a b . a:Typedef(b), b:StorageSize
 
 impl<a, b> StorageSize<(a, b)> where a: StorageSize, b: StorageSize {
     function size(x: Proxy<(a, b)>) returns (word) {
-        let a_sz:word = StorageSize.size(@a);
-        let b_sz:word = StorageSize.size(@b);
+        let a_sz: word = StorageSize.size(@a);
+        let b_sz: word = StorageSize.size(@b);
         assembly {
             a_sz := add(a_sz, b_sz)
         }
@@ -216,8 +229,8 @@ pragma no-coverage-condition LValueMemberAccess, RValueMemberAccess;
 
 impl<cxt, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessProxy<ContractStorage<cxt>, fieldSelector, offsetType>, storageRef<fieldType>> where StructField<ContractStorage<cxt>, fieldSelector>: CStructField<fieldType, offsetType>, offsetType: StorageSize {
     function memberAccess(x: MemberAccessProxy<ContractStorage<cxt>, fieldSelector, offsetType>) returns (storageRef<fieldType>) {
-        let ptr:word = 0x100; // forge uses at least 1 storage slot
-        let offsetSize:word = StorageSize.size(@offsetType);
+        let ptr: word = 0x100; // forge uses at least 1 storage slot
+        let offsetSize: word = StorageSize.size(@offsetType);
 
         assembly {
             ptr := add(ptr, offsetSize)
@@ -228,12 +241,12 @@ impl<cxt, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessP
 
 impl<cxt, fieldSelector, fieldType, offsetType> RValueMemberAccess<MemberAccessProxy<ContractStorage<cxt>, fieldSelector, offsetType>, fieldType> where StructField<ContractStorage<cxt>, fieldSelector>: CStructField<fieldType, offsetType>, fieldType: StorageType, offsetType: StorageSize {
     function memberAccess(x: MemberAccessProxy<ContractStorage<cxt>, fieldSelector, offsetType>) returns (fieldType) {
-        let ptr:word = 0x100;
-        let offsetSize:word = StorageSize.size(@offsetType);
+        let ptr: word = 0x100;
+        let offsetSize: word = StorageSize.size(@offsetType);
         return StorageType.sload(add(ptr, offsetSize));
     }
 }
 
 function rval<a, b>(x: a) returns (b) where a: RValueMemberAccess<b> {
-  return RValueMemberAccess.memberAccess(x);
+    return RValueMemberAccess.memberAccess(x);
 }

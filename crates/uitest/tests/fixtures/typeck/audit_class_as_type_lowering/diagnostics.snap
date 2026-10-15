@@ -4,20 +4,20 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_class_as_type_lowering/main.sol
 ---
 error[SC0229]: trait name used as type: `C`
- --> /main/main.sol:4:10
+ --> /main/main.sol:4:12
   |
 3 | function class_annotation() returns (word) {
-4 |   let x: C;
-  |          ^ trait is not a type
-5 |   return 0;
+4 |     let x: C;
+  |            ^ trait is not a type
+5 |     return 0;
   |
 ---
 
 error[SC0229]: trait name used as type: `Int`
-  --> /main/main.sol:9:10
+  --> /main/main.sol:9:12
    |
  8 | function builtin_class_annotation() returns (word) {
- 9 |   let x: Int = 1;
-   |          ^^^ trait is not a type
-10 |   return x;
+ 9 |     let x: Int = 1;
+   |            ^^^ trait is not a type
+10 |     return x;
    |

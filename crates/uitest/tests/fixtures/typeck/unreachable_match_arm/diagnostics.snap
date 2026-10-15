@@ -4,13 +4,13 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/unreachable_match_arm/main.sol
 ---
 warning[SC0303]: unreachable match arm
-  --> /main/main.sol:8:1
+  --> /main/main.sol:11:9
    |
- 7 |   }
- 8 | / case Flag.Off {
- 9 | | return 1;
-10 | | }
-   | |_^ this arm is unreachable
-11 |   }
+10 |           }
+11 | /         case Flag.Off {
+12 | |             return 1;
+13 | |         }
+   | |_________^ this arm is unreachable
+14 |       }
    |
    = note: this arm is covered by previous match arms

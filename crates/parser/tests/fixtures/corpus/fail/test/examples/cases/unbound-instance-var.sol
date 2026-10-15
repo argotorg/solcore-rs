@@ -1,5 +1,5 @@
 trait C<self> {
-    function size(x: self) returns (word) ;
+    function size(x: self) returns (word);
 }
 
 impl C<()> {

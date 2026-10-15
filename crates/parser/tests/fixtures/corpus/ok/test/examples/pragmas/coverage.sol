@@ -1,7 +1,13 @@
-pragma no-coverage-condition ;
+pragma no-coverage-condition;
 
-enum List<a> { Nil, Cons(a, List<a>) }
-enum Bool { True, False }
+enum List<a> {
+    Nil,
+    Cons(a, List<a>)
+}
+enum Bool {
+    True,
+    False
+}
 
 trait C<a, b, c> {}
 

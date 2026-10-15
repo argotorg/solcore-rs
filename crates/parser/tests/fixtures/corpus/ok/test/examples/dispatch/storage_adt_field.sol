@@ -10,13 +10,18 @@ import * from std.StorageGeneric;
 //  - triple     : Triple           (product,        rep (uint256,(uint256,uint256)) -> 3 slots)
 //  - someTriple : Option(Triple)   (sum of product, rep sum((), Triple)         -> 4 slots)
 
-enum Option<a> { None, Some(a) }
-enum Triple { Triple(uint256, uint256, uint256) }
+enum Option<a> {
+    None,
+    Some(a)
+}
+enum Triple {
+    Triple(uint256, uint256, uint256)
+}
 
 contract C {
-    someValue : Option<uint256>;
-    triple : Triple;
-    someTriple : Option<Triple>;
+    someValue: Option<uint256>;
+    triple: Triple;
+    someTriple: Option<Triple>;
 
     constructor() {
         // sum:            1 tag + max(size (), size uint256) = 1 + 1 = 2
@@ -37,24 +42,25 @@ contract C {
 
     function getValue() public returns (uint256) {
         match (someValue) {
-case Option.None {
-revertEmpty(); return uint256(0);
-}
-case Option.Some(v) {
-return v;
-}
-}
+            case Option.None {
+                revertEmpty();
+                return uint256(0);
+            }
+            case Option.Some(v) {
+                return v;
+            }
+        }
     }
 
     function isSome() public returns (bool) {
         match (someValue) {
-case Option.None {
-return false;
-}
-case Option.Some(_) {
-return true;
-}
-}
+            case Option.None {
+                return false;
+            }
+            case Option.Some(_) {
+                return true;
+            }
+        }
     }
 
     function setTriple(a: uint256, b: uint256, c: uint256) public {
@@ -63,10 +69,10 @@ return true;
 
     function tripleSum() public returns (uint256) {
         match (triple) {
-case Triple(a, b, c) {
-return a + b + c;
-}
-}
+            case Triple(a, b, c) {
+                return a + b + c;
+            }
+        }
     }
 
     // Nested ADT: Option(Triple).
@@ -80,27 +86,28 @@ return a + b + c;
 
     function someTripleSum() public returns (uint256) {
         match (someTriple) {
-case Option.None {
-revertEmpty(); return uint256(0);
-}
-case Option.Some(t) {
-match (t) {
-case Triple(a, b, c) {
-return a + b + c;
-}
-}
-}
-}
+            case Option.None {
+                revertEmpty();
+                return uint256(0);
+            }
+            case Option.Some(t) {
+                match (t) {
+                    case Triple(a, b, c) {
+                        return a + b + c;
+                    }
+                }
+            }
+        }
     }
 
     function hasSomeTriple() public returns (bool) {
         match (someTriple) {
-case Option.None {
-return false;
-}
-case Option.Some(_) {
-return true;
-}
-}
+            case Option.None {
+                return false;
+            }
+            case Option.Some(_) {
+                return true;
+            }
+        }
     }
 }

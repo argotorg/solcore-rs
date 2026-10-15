@@ -8,7 +8,7 @@ contract YulSpecialIdentifiers {
     // This exercises those names through both executable backends.
     // #[() -> 42]
     function identifiers() public returns (uint256) {
-        let result : word;
+        let result: word;
         assembly {
             function $add(_left, right$) -> _total {
                 _total := add(_left, right$)

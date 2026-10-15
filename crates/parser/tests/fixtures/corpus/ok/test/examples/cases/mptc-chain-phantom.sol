@@ -7,23 +7,25 @@
 // sink's specialisation name is being built, which would produce sink$rep
 // (wrong) instead of sink$word (correct).
 
-enum Foo { Foo(word) }
+enum Foo {
+    Foo(word)
+}
 
 trait Encoder<self, rep> {
-    function encode(x: self, hint: word) returns (rep) ;
+    function encode(x: self, hint: word) returns (rep);
 }
 
 trait Sink<rep, r> {
-    function sink(x: rep) ;
+    function sink(x: rep);
 }
 
 impl Encoder<Foo, word> {
     function encode(x: Foo, hint: word) returns (word) {
         match (x) {
-case Foo(v) {
-return v;
-}
-}
+            case Foo(v) {
+                return v;
+            }
+        }
     }
 }
 
@@ -38,7 +40,7 @@ impl Sink<word, word> {
 // resolveMPTCsFromPreds must bind rep=word so that sink specialises
 // to sink$word (not sink$rep).
 function f<a, rep>(x: a) where a: Encoder<rep>, rep: Sink<word> {
-    let r : rep = Encoder.encode(x, 0);
+    let r: rep = Encoder.encode(x, 0);
     Sink.sink(r);
     return ();
 }

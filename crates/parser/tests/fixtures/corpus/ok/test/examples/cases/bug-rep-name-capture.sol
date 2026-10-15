@@ -17,8 +17,8 @@ contract Bug {
     constructor() {}
 
     function f(a: uint256) returns (uint256) {
-        let rep : uint256 = a;
-        let w : word = Typedef.rep(a);
+        let rep: uint256 = a;
+        let w: word = Typedef.rep(a);
         return Typedef.abs(w);
     }
 }

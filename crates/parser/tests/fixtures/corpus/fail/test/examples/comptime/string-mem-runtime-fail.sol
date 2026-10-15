@@ -6,8 +6,8 @@ import std;
 import * from std;
 
 contract StringMemRuntimeFail {
-  function f() public returns (memory<string>) {
-    let s : string = "x";
-    return s;
-  }
+    function f() public returns (memory<string>) {
+        let s: string = "x";
+        return s;
+    }
 }

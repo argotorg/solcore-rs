@@ -1,3 +1,3 @@
-import * from util hiding {hidden};
+import * from util hiding { hidden };
 
 function main() {}

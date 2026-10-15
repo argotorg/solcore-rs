@@ -1,7 +1,7 @@
 import * from std;
-import {sload, sstore} from std.opcodes;
-import {Option} from option;
-import {TransferHook} from hooks;
+import { sload, sstore } from std.opcodes;
+import { Option } from option;
+import { TransferHook } from hooks;
 
 export { isPaused, setPaused, requireNotPaused, Pausable(*) };
 
@@ -28,7 +28,9 @@ function requireNotPaused() {
 }
 
 // Transfer hook: no balance may change while paused.
-enum Pausable { Pausable }
+enum Pausable {
+    Pausable
+}
 
 impl TransferHook<Pausable> {
     function on(hook: Pausable, from: Option<address>, to: Option<address>, amount: uint256) {

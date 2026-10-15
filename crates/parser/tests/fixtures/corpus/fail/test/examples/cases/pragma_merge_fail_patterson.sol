@@ -2,7 +2,6 @@
 
 import pragma_merge_base;
 
-
 // --- Patterson Violation ---
 
 trait TestFailClass<a> {}

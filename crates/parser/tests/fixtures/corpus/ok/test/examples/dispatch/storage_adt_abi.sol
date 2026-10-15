@@ -18,10 +18,13 @@ import * from std.StorageGeneric;
 // at +32. So `Some(42)` is 0x...01 followed by 0x...2a, and `None` is 0x...00
 // followed by a don't-care word.
 
-enum Option<a> { None, Some(a) }
+enum Option<a> {
+    None,
+    Some(a)
+}
 
 contract C {
-    stored : Option<uint256>;
+    stored: Option<uint256>;
 
     constructor() {
         stored = Option.None;
@@ -45,23 +48,23 @@ contract C {
 
     function isSome() public returns (bool) {
         match (stored) {
-case Option.None {
-return false;
-}
-case Option.Some(_) {
-return true;
-}
-}
+            case Option.None {
+                return false;
+            }
+            case Option.Some(_) {
+                return true;
+            }
+        }
     }
 
     function unwrapOr(d: uint256) public returns (uint256) {
         match (stored) {
-case Option.None {
-return d;
-}
-case Option.Some(v) {
-return v;
-}
-}
+            case Option.None {
+                return d;
+            }
+            case Option.Some(v) {
+                return v;
+            }
+        }
     }
 }

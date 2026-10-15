@@ -1,3 +1,7 @@
 function f(x: bool) returns (word) {
-  if ( x ) { 1; } else { true; }
+    if (x) {
+        1;
+    } else {
+        true;
+    }
 }

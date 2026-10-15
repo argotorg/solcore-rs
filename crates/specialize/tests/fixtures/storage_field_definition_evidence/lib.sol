@@ -2,12 +2,14 @@ import * from std;
 
 export { keepLibReachable };
 
-function keepLibReachable() returns (word) { return 0; }
+function keepLibReachable() returns (word) {
+    return 0;
+}
 
 contract C {
-  value : uint256;
+    value: uint256;
 
-  function main() returns (uint256) {
-    return value;
-  }
+    function main() returns (uint256) {
+        return value;
+    }
 }

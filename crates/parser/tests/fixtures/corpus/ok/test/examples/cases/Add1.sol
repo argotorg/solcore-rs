@@ -1,9 +1,9 @@
 contract Add1 {
-  function main() public returns (word) {
-    let res: word;
-    assembly {
-       res := add(40, 2)
+    function main() public returns (word) {
+        let res: word;
+        assembly {
+            res := add(40, 2)
+        }
+        return res;
     }
-    return res;
-  }
 }

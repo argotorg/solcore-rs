@@ -4,10 +4,10 @@
 import * from std;
 
 contract Uint256Lit {
-  function main() returns (word) {
-    let a : uint256 = 3;
-    // 2^256 + 5 must truncate to 5.
-    let b : uint256 = 0x10000000000000000000000000000000000000000000000000000000000000005;
-    return Typedef.rep(a) + Typedef.rep(b);
-  }
+    function main() returns (word) {
+        let a: uint256 = 3;
+        // 2^256 + 5 must truncate to 5.
+        let b: uint256 = 0x10000000000000000000000000000000000000000000000000000000000000005;
+        return Typedef.rep(a) + Typedef.rep(b);
+    }
 }

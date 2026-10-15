@@ -12,18 +12,18 @@ function makePoint(x: Int, y: Int) returns (Point) {
 
 function getX(p: Point) returns (Int) {
     match (p) {
-case pair(x, _) {
-return x;
-}
-}
+        case pair(x, _) {
+            return x;
+        }
+    }
 }
 
 function getY(p: Point) returns (Int) {
     match (p) {
-case pair(_, y) {
-return y;
-}
-}
+        case pair(_, y) {
+            return y;
+        }
+    }
 }
 
 function main() returns (word) {

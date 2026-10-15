@@ -1,9 +1,9 @@
 contract C {
-  function main() public returns (word) {
-    let x : word;
-    assembly {
-      x := someUndefinedThing
+    function main() public returns (word) {
+        let x: word;
+        assembly {
+            x := someUndefinedThing
+        }
+        return x;
     }
-    return x;
-  }
 }

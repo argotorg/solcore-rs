@@ -2,60 +2,64 @@ import * from std;
 import * from std.dispatch;
 
 contract Option {
-  enum Option<a> { None, Some(a) }
+    enum Option<a> {
+        None,
+        Some(a)
+    }
 
-  function just(x: word) returns (Option<word>) { return Option.Some(x); }
+    function just(x: word) returns (Option<word>) {
+        return Option.Some(x);
+    }
 
-  function maybe(n: word, o: Option<word>) returns (word) {
-    match (o) {
-case Option.None {
-return n;
-}
-case Option.Some(x) {
-return x;
-}
-}
-  }
+    function maybe(n: word, o: Option<word>) returns (word) {
+        match (o) {
+            case Option.None {
+                return n;
+            }
+            case Option.Some(x) {
+                return x;
+            }
+        }
+    }
 
-  function join(mmx: Option<Option<word>>) returns (Option<word>) {
-    let result = Option.None;
-    match (mmx) {
-case Option.Some(Option.Some(x)) {
-result = Option.Some(x);
-}
-case Option.None {
-result = Option.None;
-}
-case Option.Some(Option.None) {
-result = Option.None;
-}
-default {
-result = Option.None;
-}
-}
-    return result;
-  }
+    function join(mmx: Option<Option<word>>) returns (Option<word>) {
+        let result = Option.None;
+        match (mmx) {
+            case Option.Some(Option.Some(x)) {
+                result = Option.Some(x);
+            }
+            case Option.None {
+                result = Option.None;
+            }
+            case Option.Some(Option.None) {
+                result = Option.None;
+            }
+            default {
+                result = Option.None;
+            }
+        }
+        return result;
+    }
 
- function extract(mx: Option<word>) returns (word) {
-   match (mx) {
-case Option.Some(x) {
-return x;
-}
-case Option.None {
-return 0;
-}
-}
- }
+    function extract(mx: Option<word>) returns (word) {
+        match (mx) {
+            case Option.Some(x) {
+                return x;
+            }
+            case Option.None {
+                return 0;
+            }
+        }
+    }
 
-  function cojoin(x: Option<word>) returns (Option<Option<word>>) { // Test that sum types can grow
-    let result = Option.None;
-    result = Option.Some(x);
-    return result;
-   }
+    function cojoin(x: Option<word>) returns (Option<Option<word>>) { // Test that sum types can grow
+        let result = Option.None;
+        result = Option.Some(x);
+        return result;
+    }
 
-
-  // #[() -> 42]
-  function run() public returns (uint256) {
-    return uint256(maybe(0, join(cojoin(Option.Some(42)))));
-  }
+    // #[() -> 42]
+    function run() public returns (uint256) {
+        return uint256(maybe(0, join(cojoin(Option.Some(42)))));
+    }
 }

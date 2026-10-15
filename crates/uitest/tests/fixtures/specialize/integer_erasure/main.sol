@@ -1,5 +1,5 @@
 contract C {
-  function main() public returns (integer) {
-    return 1;
-  }
+    function main() public returns (integer) {
+        return 1;
+    }
 }

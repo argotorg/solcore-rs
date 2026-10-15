@@ -1,9 +1,9 @@
 import * from std;
 contract Counter {
-  counter : word;
+    counter: word;
 
-  function main() public returns (word) {
-    counter = Num.add(counter, 42);
-    return counter;
-  }
+    function main() public returns (word) {
+        counter = Num.add(counter, 42);
+        return counter;
+    }
 }

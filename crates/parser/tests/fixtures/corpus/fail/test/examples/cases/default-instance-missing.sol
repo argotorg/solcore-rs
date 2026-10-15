@@ -1,12 +1,20 @@
-trait Test<self> { function f(x:self); }
+trait Test<self> {
+    function f(x: self);
+}
 
-enum memory<a> { memory(word) }
-enum Proxy<a> { Proxy }
+enum memory<a> {
+    memory(word)
+}
+enum Proxy<a> {
+    Proxy
+}
 
-impl Test<memory<memory<word>>> { function f(x:self) {}}
+impl Test<memory<memory<word>>> {
+    function f(x: self) {}
+}
 
 function f<a>(p: Proxy<a>) {
-    let x:memory<a>;
+    let x: memory<a>;
     Test.f(x);
 }
 

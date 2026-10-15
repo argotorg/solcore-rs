@@ -1,11 +1,11 @@
 contract GetSet {
-  value : Word ;
+    value: Word;
 
-  function setValue(x: Word) public {
-    value = x ;
-  }
+    function setValue(x: Word) public {
+        value = x;
+    }
 
-  function getValue() public returns (Word) {
-    return value ;
-  }
+    function getValue() public returns (Word) {
+        return value;
+    }
 }

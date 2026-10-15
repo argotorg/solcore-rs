@@ -19,49 +19,59 @@ import * from std.ABIGeneric;
 // word, so a deeply nested variant encodes as nested offsets, not flat tags.
 // A static sum stays inline as [tag][branch] with no leading offset — its wire
 // form is unchanged by the fix.
-enum D2 { L(uint256), R(memory<bytes>) }
-enum D3 { X(uint256), Y(uint256), Z(memory<bytes>) }
-enum S2 { P(uint256), Q(uint256) }
+enum D2 {
+    L(uint256),
+    R(memory<bytes>)
+}
+enum D3 {
+    X(uint256),
+    Y(uint256),
+    Z(memory<bytes>)
+}
+enum S2 {
+    P(uint256),
+    Q(uint256)
+}
 
 contract DynSumRet {
-  constructor() {}
+    constructor() {}
 
-  // ── shallow dynamic sum ────────────────────────────────────────────────
-  // inl branch (static uint256 payload) of a dynamic sum: still takes the
-  // dynamic encode path (offset word + inline [tag][value] in the tail).
-  function makeL(n: uint256) public returns (D2) {
-    return D2.L(n);
-  }
+    // ── shallow dynamic sum ────────────────────────────────────────────────
+    // inl branch (static uint256 payload) of a dynamic sum: still takes the
+    // dynamic encode path (offset word + inline [tag][value] in the tail).
+    function makeL(n: uint256) public returns (D2) {
+        return D2.L(n);
+    }
 
-  // inr branch carrying a dynamic bytes payload: [off][1][off][len][data].
-  function makeR(b: memory<bytes>) public returns (D2) {
-    return D2.R(b);
-  }
+    // inr branch carrying a dynamic bytes payload: [off][1][off][len][data].
+    function makeR(b: memory<bytes>) public returns (D2) {
+        return D2.R(b);
+    }
 
-  // ── deeply right-nested dynamic sum ────────────────────────────────────
-  // outer inl: [off][0][value]
-  function makeX(n: uint256) public returns (D3) {
-    return D3.X(n);
-  }
+    // ── deeply right-nested dynamic sum ────────────────────────────────────
+    // outer inl: [off][0][value]
+    function makeX(n: uint256) public returns (D3) {
+        return D3.X(n);
+    }
 
-  // inr(inl …): two dynamic-sum levels, so two nested offsets: [off][1][off][0][value]
-  function makeY(n: uint256) public returns (D3) {
-    return D3.Y(n);
-  }
+    // inr(inl …): two dynamic-sum levels, so two nested offsets: [off][1][off][0][value]
+    function makeY(n: uint256) public returns (D3) {
+        return D3.Y(n);
+    }
 
-  // inr(inr bytes): nested offsets down to the bytes leaf:
-  // [off][1][off][1][off][len][data]
-  function makeZ(b: memory<bytes>) public returns (D3) {
-    return D3.Z(b);
-  }
+    // inr(inr bytes): nested offsets down to the bytes leaf:
+    // [off][1][off][1][off][len][data]
+    function makeZ(b: memory<bytes>) public returns (D3) {
+        return D3.Z(b);
+    }
 
-  // ── static sum control ─────────────────────────────────────────────────
-  // Byte-identical to the pre-fix output: inline [tag][value], no offset word.
-  function makeP(n: uint256) public returns (S2) {
-    return S2.P(n);
-  }
+    // ── static sum control ─────────────────────────────────────────────────
+    // Byte-identical to the pre-fix output: inline [tag][value], no offset word.
+    function makeP(n: uint256) public returns (S2) {
+        return S2.P(n);
+    }
 
-  function makeQ(n: uint256) public returns (S2) {
-    return S2.Q(n);
-  }
+    function makeQ(n: uint256) public returns (S2) {
+        return S2.Q(n);
+    }
 }

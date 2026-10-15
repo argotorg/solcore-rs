@@ -5,13 +5,13 @@ import * from std.dispatch;
 // field copies the byte array into storage, reading it back loads it into
 // fresh memory. Exercises StorageSize / CanStore for memory(bytes).
 contract C {
-  content: bytes;
+    content: bytes;
 
-  function set(value: memory<bytes>) public {
-    content = value;
-  }
+    function set(value: memory<bytes>) public {
+        content = value;
+    }
 
-  function get() public returns (memory<bytes>) {
-    return content;
-  }
+    function get() public returns (memory<bytes>) {
+        return content;
+    }
 }

@@ -1,11 +1,11 @@
 import * from std;
 import * from std.dispatch;
 contract Counter {
-  counter : word;
+    counter: word;
 
-  // #[() -> 42]
-  function run() public returns (uint256) {
-    counter = Num.add(counter, 42);
-    return uint256(counter);
-  }
+    // #[() -> 42]
+    function run() public returns (uint256) {
+        counter = Num.add(counter, 42);
+        return uint256(counter);
+    }
 }

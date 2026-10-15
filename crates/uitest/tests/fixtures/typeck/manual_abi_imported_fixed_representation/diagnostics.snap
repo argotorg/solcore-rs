@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_abi_imported_fixed_representation/main.sol
 ---
 error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDecode` evidence
- --> /main/main.sol:6:3
+ --> /main/main.sol:6:5
   |
 5 | contract C {
-6 |   constructor(value: Decoded) {}
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+6 |     constructor(value: Decoded) {}
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
 7 |
   |
   = note: impl `ABIDecode` can override canonical `ABIDecode` behavior
@@ -16,12 +16,12 @@ error[SC0231]: constructor ABI for contract `C` cannot use visible manual `ABIDe
 ---
 
 error[SC0231]: public function `inspect` ABI for contract `C` cannot use visible manual `ABIAttribs` evidence
- --> /main/main.sol:8:3
+ --> /main/main.sol:8:5
   |
 7 |
-8 |   function inspect(value: Fixed) public returns (uint256) {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
-9 |     return uint256(7);
+8 |     function inspect(value: Fixed) public returns (uint256) {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ external ABI evidence must be compiler-owned and canonical
+9 |         return uint256(7);
   |
   = note: impl `ABIAttribs` can override canonical `ABIAttribs` behavior
   = help: remove the visible manual ABI impl or keep this declaration out of the external ABI

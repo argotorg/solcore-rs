@@ -4,42 +4,42 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/manual_generic_adt_external_abi/main.sol
 ---
 error[SC0207]: cannot satisfy trait constraint: Contract<Method<DispatchNameTy_Shapes_roundtrip, NonPayable, Point, Point, function(Point) returns (Point)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract
- --> /main/main.sol:7:10
-  |
-6 |
-7 | contract Shapes {
-  |          ^^^^^^ constraint originates here
-8 |   function roundtrip(p: Point) public returns (Point) { return p; }
-  |
-  = note: no visible impl matches `Contract<Method<DispatchNameTy_Shapes_roundtrip, NonPayable, Point, Point, function(Point) returns (Point)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract`
-  = help: add a matching impl or strengthen the surrounding type context
+  --> /main/main.sol:9:10
+   |
+ 8 |
+ 9 | contract Shapes {
+   |          ^^^^^^ constraint originates here
+10 |     function roundtrip(p: Point) public returns (Point) {
+   |
+   = note: no visible impl matches `Contract<Method<DispatchNameTy_Shapes_roundtrip, NonPayable, Point, Point, function(Point) returns (Point)>, Fallback<NonPayable, (), (), function() returns (())>>: RunContract`
+   = help: add a matching impl or strengthen the surrounding type context
 ---
 
 error[SC0231]: ABI output cannot be represented in the ABI: Point (manual or excluded Generic representations are not canonical ABI layouts)
- --> /main/main.sol:8:3
-  |
-7 | contract Shapes {
-8 |   function roundtrip(p: Point) public returns (Point) { return p; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
-9 | }
-  |
+  --> /main/main.sol:10:5
+   |
+ 9 | contract Shapes {
+10 |     function roundtrip(p: Point) public returns (Point) {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+11 |         return p;
+   |
 ---
 
 error[SC0231]: ABI parameter cannot be represented in the ABI: Point (manual or excluded Generic representations are not canonical ABI layouts)
- --> /main/main.sol:8:3
-  |
-7 | contract Shapes {
-8 |   function roundtrip(p: Point) public returns (Point) { return p; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
-9 | }
-  |
+  --> /main/main.sol:10:5
+   |
+ 9 | contract Shapes {
+10 |     function roundtrip(p: Point) public returns (Point) {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+11 |         return p;
+   |
 ---
 
 error[SC0231]: roundtrip cannot be represented in the ABI: Point (manual or excluded Generic representations are not canonical ABI layouts)
- --> /main/main.sol:8:3
-  |
-7 | contract Shapes {
-8 |   function roundtrip(p: Point) public returns (Point) { return p; }
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
-9 | }
-  |
+  --> /main/main.sol:10:5
+   |
+ 9 | contract Shapes {
+10 |     function roundtrip(p: Point) public returns (Point) {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsupported ABI type
+11 |         return p;
+   |

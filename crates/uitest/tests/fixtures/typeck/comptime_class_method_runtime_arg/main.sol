@@ -1,27 +1,27 @@
 trait Wrap<t> {
-  function unwrap(comptime x: t) returns (comptime<word>) ;
+    function unwrap(comptime x: t) returns (comptime<word>);
 }
 
 impl Wrap<word> {
-  function unwrap(comptime x: word) returns (comptime<word>) {
-    return x;
-  }
+    function unwrap(comptime x: word) returns (comptime<word>) {
+        return x;
+    }
 }
 
 function process<t>(z: t) returns (word) where t: Wrap {
-  return Wrap.unwrap(z);
+    return Wrap.unwrap(z);
 }
 
 function sloadWord() returns (word) {
-  let v : word;
-  assembly {
-    v := sload(0)
-  }
-  return v;
+    let v: word;
+    assembly {
+        v := sload(0)
+    }
+    return v;
 }
 
 contract C {
-  function main() public returns (word) {
-    return process(sloadWord());
-  }
+    function main() public returns (word) {
+        return process(sloadWord());
+    }
 }

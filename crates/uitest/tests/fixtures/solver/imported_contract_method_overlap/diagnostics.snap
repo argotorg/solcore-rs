@@ -8,15 +8,15 @@ error[SC0218]: Overlapping impls are not supported
                word: Marker
                overlaps with:
                word: Marker
-  --> /main/main.sol:19:6
+  --> /main/main.sol:21:6
    |
 14 |
 15 | impl Marker<word> {
    |      ------------ previous overlapping impl
-16 |   function mark(x: word) returns (word) { return 1; }
-17 | }
-18 |
-19 | impl Marker<word> {
+16 |     function mark(x: word) returns (word) {
+...
+20 |
+21 | impl Marker<word> {
    |      ^^^^^^^^^^^^ overlapping impl
-20 |   function mark(x: word) returns (word) { return 2; }
+22 |     function mark(x: word) returns (word) {
    |

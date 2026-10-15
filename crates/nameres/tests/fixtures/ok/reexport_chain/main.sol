@@ -1,3 +1,3 @@
-import {value} from b;
+import { value } from b;
 
 function main() {}

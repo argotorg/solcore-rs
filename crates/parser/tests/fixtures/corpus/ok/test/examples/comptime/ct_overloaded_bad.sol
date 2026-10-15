@@ -6,22 +6,22 @@
 import std;
 
 trait Scale<a> {
-  function scale(comptime factor: word, comptime x: a) returns (comptime<a>) ;
+    function scale(comptime factor: word, comptime x: a) returns (comptime<a>);
 }
 
 impl Scale<word> {
-  function scale(comptime factor: word, comptime x: word) returns (comptime<word>) {
-    let base : word;
-    assembly {
-      base := sload(0)
+    function scale(comptime factor: word, comptime x: word) returns (comptime<word>) {
+        let base: word;
+        assembly {
+            base := sload(0)
+        }
+        return base + x * factor;
     }
-    return base + x * factor;
-  }
 }
 
 contract ComptimeOverloadedBad {
-  function main() returns (word) {
-    let a : comptime<word> = Scale.scale(3, 10);
-    return a;
-  }
+    function main() returns (word) {
+        let a: comptime<word> = Scale.scale(3, 10);
+        return a;
+    }
 }

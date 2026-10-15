@@ -1,7 +1,7 @@
 // Candidate standard-library inventory: this module should disappear once
 // std provides transaction context helpers.
 import * from std;
-import {caller} from std.opcodes;
+import { caller } from std.opcodes;
 
 export { sender };
 

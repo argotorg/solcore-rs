@@ -1,11 +1,11 @@
 function f(x: word) returns (word) {
-  return x;
+    return x;
 }
 
 function f(x: word) returns (word) {
-  return 10;
+    return 10;
 }
 
 function g(x: word) returns (word) {
-  return f(x);
+    return f(x);
 }

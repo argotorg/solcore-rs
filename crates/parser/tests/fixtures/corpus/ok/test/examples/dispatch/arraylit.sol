@@ -7,65 +7,65 @@ import * from std.dispatch;
 // Solidity's memory -> storage copy: it resizes the field and clears the
 // abandoned tail, so shrinking must not leave old elements reachable.
 contract ArrayLit {
-  xs : array<uint256>;
+    xs: array<uint256>;
 
-  constructor() {}
+    constructor() {}
 
-  // --- memory literals ---
+    // --- memory literals ---
 
-  // Reads back an element of a memory literal. Element 0 must be the first
-  // element, not the length word stored ahead of it.
-  function memAt(i: uint256) public returns (uint256) {
-    let m : memory<DynArray<uint256>> = [11, 22, 33];
-    return m[i];
-  }
-
-  function memSum() public returns (uint256) {
-    let m : memory<DynArray<uint256>> = [1, 2, 3, 4];
-    let acc : uint256 = uint256(0);
-    let i : uint256;
-    for (i = uint256(0); i < uint256(4); i = i + uint256(1)) {
-      acc = acc + m[i];
+    // Reads back an element of a memory literal. Element 0 must be the first
+    // element, not the length word stored ahead of it.
+    function memAt(i: uint256) public returns (uint256) {
+        let m: memory<DynArray<uint256>> = [11, 22, 33];
+        return m[i];
     }
-    return acc;
-  }
 
-  // Nested literal: the element type is itself a memory array.
-  function nested() public returns (uint256) {
-    let g : memory<DynArray<memory<DynArray<uint256>>>> = [[1, 2], [3, 4]];
-    let row : memory<DynArray<uint256>> = g[uint256(1)];
-    return row[uint256(0)];
-  }
+    function memSum() public returns (uint256) {
+        let m: memory<DynArray<uint256>> = [1, 2, 3, 4];
+        let acc: uint256 = uint256(0);
+        let i: uint256;
+        for (i = uint256(0); i < uint256(4); i = i + uint256(1)) {
+            acc = acc + m[i];
+        }
+        return acc;
+    }
 
-  // --- storage literals ---
+    // Nested literal: the element type is itself a memory array.
+    function nested() public returns (uint256) {
+        let g: memory<DynArray<memory<DynArray<uint256>>>> = [[1, 2], [3, 4]];
+        let row: memory<DynArray<uint256>> = g[uint256(1)];
+        return row[uint256(0)];
+    }
 
-  function setThree() public {
-    xs = [10, 20, 30];
-  }
+    // --- storage literals ---
 
-  function setFive() public {
-    xs = [1, 2, 3, 4, 5];
-  }
+    function setThree() public {
+        xs = [10, 20, 30];
+    }
 
-  function setTwo() public {
-    xs = [7, 8];
-  }
+    function setFive() public {
+        xs = [1, 2, 3, 4, 5];
+    }
 
-  function clear() public {
-    xs = [];
-  }
+    function setTwo() public {
+        xs = [7, 8];
+    }
 
-  function len() public returns (uint256) {
-    return Length.length(xs);
-  }
+    function clear() public {
+        xs = [];
+    }
 
-  function get(i: uint256) public returns (uint256) {
-    return xs[i];
-  }
+    function len() public returns (uint256) {
+        return Length.length(xs);
+    }
 
-  // Grow the array back without writing elements. Anything the shrink abandoned
-  // must read as zero, not as the old value.
-  function grow(n: uint256) public {
-    Array.setLength(xs, n);
-  }
+    function get(i: uint256) public returns (uint256) {
+        return xs[i];
+    }
+
+    // Grow the array back without writing elements. Anything the shrink abandoned
+    // must read as zero, not as the old value.
+    function grow(n: uint256) public {
+        Array.setLength(xs, n);
+    }
 }

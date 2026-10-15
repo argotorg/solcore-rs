@@ -7,23 +7,23 @@
 import * from std;
 
 trait Scale<a> {
-  function scale(comptime factor: word, comptime x: a) returns (comptime<a>) ;
+    function scale(comptime factor: word, comptime x: a) returns (comptime<a>);
 }
 
 impl Scale<word> {
-  function scale(comptime factor: word, comptime x: word) returns (comptime<word>) {
-    if (factor == 1) {
-      return x;
-    } else {
-      return x * factor;
+    function scale(comptime factor: word, comptime x: word) returns (comptime<word>) {
+        if (factor == 1) {
+            return x;
+        } else {
+            return x * factor;
+        }
     }
-  }
 }
 
 contract ComptimeOverloadedOk {
-  function main() returns (word) {
-    let a : comptime<word> = Scale.scale(1, 32);
-    let b : comptime<word> = Scale.scale(3, 10);
-    return a + b;
-  }
+    function main() returns (word) {
+        let a: comptime<word> = Scale.scale(1, 32);
+        let b: comptime<word> = Scale.scale(3, 10);
+        return a + b;
+    }
 }

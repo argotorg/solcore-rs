@@ -2,16 +2,16 @@ import * from std;
 import * from std.dispatch;
 
 function add(x: word, y: word) returns (word) {
-  let res: word;
-  assembly {
-     res := add(x, y)
-  }
-  return res;
+    let res: word;
+    assembly {
+        res := add(x, y)
+    }
+    return res;
 }
 
 contract Add1 {
-  // #[() -> 42]
-  function run() public returns (uint256) {
-    return uint256(add(40, 2));
-  }
+    // #[() -> 42]
+    function run() public returns (uint256) {
+        return uint256(add(40, 2));
+    }
 }

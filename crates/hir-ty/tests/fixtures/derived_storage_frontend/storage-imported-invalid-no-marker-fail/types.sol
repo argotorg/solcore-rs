@@ -4,4 +4,6 @@ import * from std.StorageGeneric;
 
 export { Wrapper(*) };
 
-enum Wrapper { Wrapper(mapping(uint256 => uint256)) }
+enum Wrapper {
+    Wrapper(mapping(uint256 => uint256))
+}

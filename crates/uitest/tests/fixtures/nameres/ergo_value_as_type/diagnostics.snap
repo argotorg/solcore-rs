@@ -4,14 +4,16 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/nameres/ergo_value_as_type/main.sol
 ---
 error[SC0103]: undefined type constructor: MkPair
- --> /main/main.sol:3:19
+ --> /main/main.sol:5:19
   |
-1 | enum Pair { MkPair(word, word) }
-  |             ------ constructor declared here
-2 |
-3 | function first(p: MkPair) returns (word) {
+1 | enum Pair {
+2 |     MkPair(word, word)
+  |     ------ constructor declared here
+3 | }
+4 |
+5 | function first(p: MkPair) returns (word) {
   |                   ^^^^^^ undefined type constructor
-4 |   match (p) {
+6 |     match (p) {
   |
   = note: `MkPair` is a constructor of type `Pair`
   = help: use `Pair` as the type name

@@ -1,11 +1,11 @@
 function twice(x: word) returns (word) {
-  return x;
+    return x;
 }
 
 function helper(y: word) returns (word) {
-  return y;
+    return y;
 }
 
 function twice(x: word) returns (word) {
-  return x;
+    return x;
 }

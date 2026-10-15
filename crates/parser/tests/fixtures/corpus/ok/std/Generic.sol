@@ -11,6 +11,6 @@ import * from std;
 //   (f, g)     pair (product)
 //   ()         unit
 trait Generic<a, rep> {
-    function from(x : a) returns (rep);
-    function to(x : rep) returns (a);
+    function from(x: a) returns (rep);
+    function to(x: rep) returns (a);
 }

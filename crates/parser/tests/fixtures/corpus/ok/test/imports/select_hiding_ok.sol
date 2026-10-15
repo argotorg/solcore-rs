@@ -1,5 +1,5 @@
-import {keep, drop} from selectlib hiding {drop};
+import { keep, drop } from selectlib hiding { drop };
 
 function main(x: word) returns (word) {
-  return keep(x);
+    return keep(x);
 }

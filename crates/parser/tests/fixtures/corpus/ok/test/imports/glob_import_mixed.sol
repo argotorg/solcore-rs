@@ -1,5 +1,5 @@
 import * from globlib;
 
 function main(x: word) returns (word) {
-  return idWord(x);
+    return idWord(x);
 }

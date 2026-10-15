@@ -1,5 +1,8 @@
-struct Point { x: word; y: word; }
+struct Point {
+    x: word;
+    y: word;
+}
 
 function update(p: Point) returns (()) {
-  p.x = 1;
+    p.x = 1;
 }

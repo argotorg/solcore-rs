@@ -3,5 +3,5 @@
 // context "entry specialization".  Judge the phrasing of that message.
 
 function main<a>(x: a) returns (a) {
-  return x;
+    return x;
 }

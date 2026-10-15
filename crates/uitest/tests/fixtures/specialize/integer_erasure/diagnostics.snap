@@ -4,13 +4,13 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/specialize/integer_erasure/main.sol
 ---
 error[SC0411]: runtime lowering cannot represent `integer` in return type of `main`
- --> /main/main.sol:2:3
+ --> /main/main.sol:2:5
   |
 1 |   contract C {
-2 | /   function main() public returns (integer) {
-3 | |     return 1;
-4 | |   }
-  | |___^ not representable at runtime
+2 | /     function main() public returns (integer) {
+3 | |         return 1;
+4 | |     }
+  | |_____^ not representable at runtime
 5 |   }
   |
   = note: `integer`, `string`, and `comptime` values must be eliminated before runtime lowering

@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_field_access_non_struct/main.sol
 ---
 error[SC0205]: cannot resolve field `red`
- --> /main/main.sol:4:12
+ --> /main/main.sol:7:14
   |
-3 | function f(c: Color) returns (word) {
-4 |   return c.red;
-  |            ^^^ unknown field
-5 | }
+6 | function f(c: Color) returns (word) {
+7 |     return c.red;
+  |              ^^^ unknown field
+8 | }
   |
   = help: check that the receiver has this field or constructor path

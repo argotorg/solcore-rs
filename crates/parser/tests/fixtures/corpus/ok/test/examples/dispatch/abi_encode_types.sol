@@ -1,8 +1,8 @@
 import * from std;
 import * from std.dispatch;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
 // Direct tests for the top-level `abi_encode` function (std.sol) across both
 // static and dynamic types.
@@ -21,42 +21,42 @@ pragma no-bounded-variable-condition ;
 //   * string                      -> [0x20][len][data]      (length 0x60 here)
 //   * uint256[]                   -> [0x20][len][elems]      (length 0xa0 here)
 contract AbiEncodeTypes {
-  constructor() {}
+    constructor() {}
 
-  // --- static ---
+    // --- static ---
 
-  // uint256 is written directly into the head as one word.
-  function encUint(x: uint256) public returns (memory<bytes>) {
-    return abi_encode(x);
-  }
+    // uint256 is written directly into the head as one word.
+    function encUint(x: uint256) public returns (memory<bytes>) {
+        return abi_encode(x);
+    }
 
-  // bool encodes as a single 0/1 word.
-  function encBool(x: bool) public returns (memory<bytes>) {
-    return abi_encode(x);
-  }
+    // bool encodes as a single 0/1 word.
+    function encBool(x: bool) public returns (memory<bytes>) {
+        return abi_encode(x);
+    }
 
-  // address is left-padded into a single word.
-  function encAddr(x: address) public returns (memory<bytes>) {
-    return abi_encode(x);
-  }
+    // address is left-padded into a single word.
+    function encAddr(x: address) public returns (memory<bytes>) {
+        return abi_encode(x);
+    }
 
-  // A fully static tuple has both words in the head, with no offset.
-  function encPair(a: uint256, b: uint256) public returns (memory<bytes>) {
-    return abi_encode((a, b));
-  }
+    // A fully static tuple has both words in the head, with no offset.
+    function encPair(a: uint256, b: uint256) public returns (memory<bytes>) {
+        return abi_encode((a, b));
+    }
 
-  // --- dynamic ---
+    // --- dynamic ---
 
-  // A string gets a head offset word pointing at a `[len][data]` tail.
-  function encStr() public returns (memory<bytes>) {
-    let raw : string = "abc";
-    let s : memory<string> = Str.fromString(raw);
-    return abi_encode(s);
-  }
+    // A string gets a head offset word pointing at a `[len][data]` tail.
+    function encStr() public returns (memory<bytes>) {
+        let raw: string = "abc";
+        let s: memory<string> = Str.fromString(raw);
+        return abi_encode(s);
+    }
 
-  // A dynamic array gets a head offset word pointing at a `[len][elems]` tail.
-  function encArr() public returns (memory<bytes>) {
-    let a : memory<DynArray<uint256>> = [11, 22, 33];
-    return abi_encode(a);
-  }
+    // A dynamic array gets a head offset word pointing at a `[len][elems]` tail.
+    function encArr() public returns (memory<bytes>) {
+        let a: memory<DynArray<uint256>> = [11, 22, 33];
+        return abi_encode(a);
+    }
 }

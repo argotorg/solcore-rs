@@ -1,6 +1,6 @@
 import * from abi;
-import {Box} from types;
+import { Box } from types;
 
 function keepBoxVisible(x: Box<word>) returns (Box<word>) {
-  return x;
+    return x;
 }

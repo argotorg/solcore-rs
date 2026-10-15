@@ -1,4 +1,6 @@
-enum Box<a> { Box(a) }
+enum Box<a> {
+    Box(a)
+}
 
 trait C<a> {}
 

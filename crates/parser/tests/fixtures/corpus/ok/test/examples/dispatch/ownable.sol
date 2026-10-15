@@ -5,27 +5,27 @@ import * from std.dispatch;
 // so every contract must define its own
 
 function caller() returns (address) {
-  let res: word;
-  assembly {
-     res := caller()
-  }
-  return address(res);
+    let res: word;
+    assembly {
+        res := caller()
+    }
+    return address(res);
 }
 
 contract Ownable {
-  owner : address;
+    owner: address;
 
-  constructor() {
-    owner = caller();
-  }
+    constructor() {
+        owner = caller();
+    }
 
-  // named getOwner() instead of owner() to avoid collision with the field name
-  function getOwner() public returns (address) {
-    return owner;
-  }
+    // named getOwner() instead of owner() to avoid collision with the field name
+    function getOwner() public returns (address) {
+        return owner;
+    }
 
-  function changeOwner(newOwner: address) public {
-    require(caller() == owner, Error(0x12b0c500)); // OwnableUnauthorizedAccount()
-    owner = newOwner;
-  }
+    function changeOwner(newOwner: address) public {
+        require(caller() == owner, Error(0x12b0c500)); // OwnableUnauthorizedAccount()
+        owner = newOwner;
+    }
 }

@@ -6,7 +6,7 @@ input_file: crates/uitest/tests/fixtures/typeck/function_tuple_parameter_arity/m
 error[SC0203]: call expects 1 argument, but 2 were provided
  --> /main/main.sol:2:12
   |
-1 | function invokePair(f: function((word, word)) returns (word), x: word, y: word) returns (word) {
+1 | function invokePair(f: function ((word, word)) returns (word), x: word, y: word) returns (word) {
 2 |     return f(x, y);
   |            ^^^^^^^ wrong number of arguments
 3 | }
@@ -18,7 +18,7 @@ error[SC0203]: call expects 1 argument, but 2 were provided
 error[SC0201]: type mismatch: expected pair<word, word>, found word
  --> /main/main.sol:2:14
   |
-1 | function invokePair(f: function((word, word)) returns (word), x: word, y: word) returns (word) {
+1 | function invokePair(f: function ((word, word)) returns (word), x: word, y: word) returns (word) {
 2 |     return f(x, y);
   |              ^ expression has mismatched type
 3 | }

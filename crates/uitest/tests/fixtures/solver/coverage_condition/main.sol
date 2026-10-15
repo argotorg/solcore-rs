@@ -1,4 +1,6 @@
-enum Box<a> { Box(word) }
+enum Box<a> {
+    Box(word)
+}
 trait MyClass<a, b> {}
 
 impl<a, b> MyClass<Box<a>, b> {}

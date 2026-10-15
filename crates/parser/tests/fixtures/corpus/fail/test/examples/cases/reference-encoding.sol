@@ -1,37 +1,43 @@
-
 /////// Construction
 trait Typedef<abs, rep> {
-    function rep(x: abs) returns (rep) ;
-    function abs(x: rep) returns (abs) ;
+    function rep(x: abs) returns (rep);
+    function abs(x: rep) returns (abs);
 }
 
-
-enum uint { uint(word) }
+enum uint {
+    uint(word)
+}
 
 impl Typedef<uint, word> {
     function rep(x: uint) returns (word) {
         match (x) {
-case uint(y) {
-return y;
-}
-}
+            case uint(y) {
+                return y;
+            }
+        }
     }
     function abs(x: word) returns (uint) {
         return uint(x);
     }
 }
 
-enum memory<a> { memory(word) }
-enum memoryRef<a> { memoryRef(word) }
-enum Proxy<a> { Proxy }
+enum memory<a> {
+    memory(word)
+}
+enum memoryRef<a> {
+    memoryRef(word)
+}
+enum Proxy<a> {
+    Proxy
+}
 
 impl Typedef<memory<a>, word> {
     function rep(x: memory<a>) returns (word) {
         match (x) {
-case memory(y) {
-return y;
-}
-}
+            case memory(y) {
+                return y;
+            }
+        }
     }
     function abs(x: word) returns (memory<a>) {
         return memory(x);
@@ -40,10 +46,10 @@ return y;
 impl Typedef<memoryRef<a>, word> {
     function rep(x: memoryRef<a>) returns (word) {
         match (x) {
-case memoryRef(y) {
-return y;
-}
-}
+            case memoryRef(y) {
+                return y;
+            }
+        }
     }
     function abs(x: word) returns (memoryRef<a>) {
         return memoryRef(x);
@@ -51,10 +57,12 @@ return y;
 }
 
 trait Assign<lhs, rhs> {
-    function assign(l: lhs, r: rhs) ;
+    function assign(l: lhs, r: rhs);
 }
 
-enum ref<a> { ref(a) }
+enum ref<a> {
+    ref(a)
+}
 
 impl Assign<ref<a>, a> {
     function assign(l: ref<a>, r: a) {
@@ -64,17 +72,17 @@ impl Assign<ref<a>, a> {
 }
 
 trait MemoryType<self> {
-    function load(ptr: word) returns (self) ;
-    function store(ptr: word, value: self) ;
+    function load(ptr: word) returns (self);
+    function store(ptr: word, value: self);
 }
 
 trait MemorySize<self> {
-    function size(x: Proxy<self>) returns (word) ;
+    function size(x: Proxy<self>) returns (word);
 }
 
 impl MemoryType<word> {
     function load(ptr: word) returns (word) {
-        let r:word;
+        let r: word;
         assembly {
             r := mload(ptr)
         }
@@ -97,39 +105,41 @@ impl MemoryType<uint> {
 }
 
 impl<a> Assign<memoryRef<a>, a> where a: MemoryType {
-    function assign(l:memoryRef<a>, y:a) {
+    function assign(l: memoryRef<a>, y: a) {
         MemoryType.store(Typedef.rep(l), y);
     }
 }
 
-
-
-enum MemberAccessProxy<a, field> { MemberAccessProxy(a, field) }
+enum MemberAccessProxy<a, field> {
+    MemberAccessProxy(a, field)
+}
 
 function memberAccessD1<a, field>(x: MemberAccessProxy<a, field>) returns (a) {
     match (x) {
-case MemberAccessProxy(y,z) {
-return y;
-}
-}
+        case MemberAccessProxy(y, z) {
+            return y;
+        }
+    }
 }
 
 trait LValueMemberAccess<self, memberRefType> {
-    function memberAccess(x: self) returns (memberRefType) ;
+    function memberAccess(x: self) returns (memberRefType);
 }
 
 trait RValueMemberAccess<self, memberValueType> {
-    function memberAccess(x: self) returns (memberValueType) ;
+    function memberAccess(x: self) returns (memberValueType);
 }
 
 // This is *a lot* of pragmas...
 trait CStructField<self, fieldType, offsetType> {}
-enum StructField<structType, fieldSelector> { StructField(structType) }
+enum StructField<structType, fieldSelector> {
+    StructField(structType)
+}
 
 impl<structType, fieldSelector, fieldType, offsetType> LValueMemberAccess<MemberAccessProxy<memory<structType>, fieldSelector>, memoryRef<fieldType>> where StructField<structType, fieldSelector>: CStructField<fieldType, offsetType>, offsetType: MemorySize {
     function memberAccess(x: MemberAccessProxy<memory<structType>, fieldSelector>) returns (memoryRef<fieldType>) {
-        let ptr:word = Typedef.rep(memberAccessD1(x));
-        let size:word = MemorySize.size(@offsetType);
+        let ptr: word = Typedef.rep(memberAccessD1(x));
+        let size: word = MemorySize.size(@offsetType);
         assembly {
             ptr := add(ptr, size)
         }
@@ -149,7 +159,6 @@ impl MemorySize<word> {
     }
 }
 
-
 impl MemorySize<uint> {
     function size(x: Proxy<uint>) returns (word) {
         return 32;
@@ -158,8 +167,8 @@ impl MemorySize<uint> {
 
 impl<a, b> MemorySize<(a, b)> where a: MemorySize, b: MemorySize {
     function size(x: Proxy<(a, b)>) returns (word) {
-        let a_sz:word = MemorySize.size(@a);
-        let b_sz:word = MemorySize.size(@b);
+        let a_sz: word = MemorySize.size(@a);
+        let b_sz: word = MemorySize.size(@b);
         assembly {
             a_sz := add(a_sz, b_sz)
         }
@@ -169,8 +178,8 @@ impl<a, b> MemorySize<(a, b)> where a: MemorySize, b: MemorySize {
 
 impl<structType, fieldSelector, fieldType, offsetType> RValueMemberAccess<MemberAccessProxy<memory<structType>, fieldSelector>, fieldType> where StructField<structType, fieldSelector>: CStructField<fieldType, offsetType>, fieldType: MemoryType, offsetType: MemorySize {
     function memberAccess(x: MemberAccessProxy<memory<structType>, fieldSelector>) returns (fieldType) {
-        let ptr:word = Typedef.rep(memberAccessD1(x));
-        let size:word = MemorySize.size(@offsetType);
+        let ptr: word = Typedef.rep(memberAccessD1(x));
+        let size: word = MemorySize.size(@offsetType);
         // BUG: Something wrong here? Complains about ptr not being word...
         /*assembly {
                      ptr := add(ptr, size)
@@ -182,10 +191,18 @@ impl<structType, fieldSelector, fieldType, offsetType> RValueMemberAccess<Member
 ////// Testing
 
 // struct S { x:word; y:uint; z:word; }
-enum S { S(word, uint, word) }
-enum x_sel { x_sel }
-enum y_sel { y_sel }
-enum z_sel { z_sel }
+enum S {
+    S(word, uint, word)
+}
+enum x_sel {
+    x_sel
+}
+enum y_sel {
+    y_sel
+}
+enum z_sel {
+    z_sel
+}
 
 impl CStructField<StructField<S, x_sel>, word, ()> {}
 impl CStructField<StructField<S, y_sel>, uint, word> {}
@@ -195,10 +212,9 @@ impl CStructField<StructField<S, y_sel>, uint, word> {}
 // So instead I use:
 impl CStructField<StructField<S, z_sel>, word, word> {}
 
-
 function f() {
-    let x:memory<word>;
-    let y:memory<word>;
+    let x: memory<word>;
+    let y: memory<word>;
     // x = y
     Assign.assign(ref(x), y);
     /*
@@ -212,9 +228,9 @@ function f() {
 }
 
 function g() {
-    let s:memory<S> = Typedef.abs(0x80);
-    let y:word = 42;
-    let z:uint = uint(42);
+    let s: memory<S> = Typedef.abs(0x80);
+    let y: word = 42;
+    let z: uint = uint(42);
     // s.x = y
     Assign.assign(LValueMemberAccess.memberAccess(MemberAccessProxy(s, x_sel)), y);
     // s.y = 21

@@ -8,7 +8,7 @@ export {
 };
 
 import * from std;
-import {mstore} from std.opcodes;
+import { mstore } from std.opcodes;
 import * from std.Generic;
 
 // ─── ABIAttribs for the primitive sum(f, g) type ─────────────────────────
@@ -16,13 +16,13 @@ import * from std.Generic;
 
 impl<f, g> ABIAttribs<sum<f, g>> where f: ABIAttribs, g: ABIAttribs {
     function headSize(ty: Proxy<sum<f, g>>) returns (word) {
-        let pf : Proxy<f>;
-        let pg : Proxy<g>;
+        let pf: Proxy<f>;
+        let pg: Proxy<g>;
         return 32 + maxWord(ABIAttribs.headSize(pf), ABIAttribs.headSize(pg));
     }
     function isStatic(ty: Proxy<sum<f, g>>) returns (bool) {
-        let pf : Proxy<f>;
-        let pg : Proxy<g>;
+        let pf: Proxy<f>;
+        let pg: Proxy<g>;
         return and(ABIAttribs.isStatic(pf), ABIAttribs.isStatic(pg));
     }
 }
@@ -35,15 +35,15 @@ impl<f, g> ABIAttribs<sum<f, g>> where f: ABIAttribs, g: ABIAttribs {
 impl<f, g> ABIEncode<sum<f, g>> where f: ABIAttribs, f: ABIEncode, g: ABIAttribs, g: ABIEncode {
     function encodeInto(x: sum<f, g>, basePtr: word, offset: word, tail: word) returns (word) {
         match (x) {
-case inl(v) {
-mstore(basePtr + offset, 0);
-            return ABIEncode.encodeInto(v, basePtr, offset + 32, tail);
-}
-case inr(v) {
-mstore(basePtr + offset, 1);
-            return ABIEncode.encodeInto(v, basePtr, offset + 32, tail);
-}
-}
+            case inl(v) {
+                mstore(basePtr + offset, 0);
+                return ABIEncode.encodeInto(v, basePtr, offset + 32, tail);
+            }
+            case inr(v) {
+                mstore(basePtr + offset, 1);
+                return ABIEncode.encodeInto(v, basePtr, offset + 32, tail);
+            }
+        }
     }
 }
 
@@ -53,20 +53,20 @@ mstore(basePtr + offset, 1);
 impl<f, g, reader> ABIDecode<ABIDecoder<sum<f, g>, reader>, sum<f, g>> where reader: WordReader, f: ABIAttribs, ABIDecoder<f, reader>: ABIDecode<f>, ABIDecoder<g, reader>: ABIDecode<g> {
     function decode(ptr: ABIDecoder<sum<f, g>, reader>, headOffset: word) returns (sum<f, g>) {
         match (ptr) {
-case ABIDecoder(rdr) {
-let tag = WordReader.read(WordReader.advance(rdr, headOffset));
-            match (tag) {
-case 0 {
-let dec_f : ABIDecoder<f, reader> = ABIDecoder(rdr);
-                return inl(ABIDecode.decode(dec_f, headOffset + 32));
-}
-default {
-let dec_g : ABIDecoder<g, reader> = ABIDecoder(rdr);
-                return inr(ABIDecode.decode(dec_g, headOffset + 32));
-}
-}
-}
-}
+            case ABIDecoder(rdr) {
+                let tag = WordReader.read(WordReader.advance(rdr, headOffset));
+                match (tag) {
+                    case 0 {
+                        let dec_f: ABIDecoder<f, reader> = ABIDecoder(rdr);
+                        return inl(ABIDecode.decode(dec_f, headOffset + 32));
+                    }
+                    default {
+                        let dec_g: ABIDecoder<g, reader> = ABIDecoder(rdr);
+                        return inr(ABIDecode.decode(dec_g, headOffset + 32));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -75,11 +75,11 @@ let dec_g : ABIDecoder<g, reader> = ABIDecoder(rdr);
 
 default impl<a, rep> ABIAttribs<a> where a: Generic<rep>, rep: ABIAttribs {
     function headSize(ty: Proxy<a>) returns (word) {
-        let prx : Proxy<rep>;
+        let prx: Proxy<rep>;
         return ABIAttribs.headSize(prx);
     }
     function isStatic(ty: Proxy<a>) returns (bool) {
-        let prx : Proxy<rep>;
+        let prx: Proxy<rep>;
         return ABIAttribs.isStatic(prx);
     }
 }
@@ -95,7 +95,7 @@ default impl<a, rep> ABIEncode<a> where a: Generic<rep>, rep: ABIAttribs, rep: A
 // Only the Generic instance is required — ABIEncode is resolved via the bridge.
 
 function encode<a, rep>(x: a, basePtr: word, offset: word, tail: word) returns (word) where a: Generic<rep>, rep: ABIAttribs, rep: ABIEncode {
-    let xrep : rep = Generic.from(x);
+    let xrep: rep = Generic.from(x);
     return ABIEncode.encodeInto(xrep, basePtr, offset, tail);
 }
 
@@ -105,9 +105,9 @@ function encode<a, rep>(x: a, basePtr: word, offset: word, tail: word) returns (
 
 function decode<a, rep, reader>(ptr: ABIDecoder<a, reader>, headOffset: word) returns (a) where a: Generic<rep>, reader: WordReader, ABIDecoder<rep, reader>: ABIDecode<rep> {
     match (ptr) {
-case ABIDecoder(rdr) {
-let rep_ptr : ABIDecoder<rep, reader> = ABIDecoder(rdr);
-        return Generic.to(ABIDecode.decode(rep_ptr, headOffset));
-}
-}
+        case ABIDecoder(rdr) {
+            let rep_ptr: ABIDecoder<rep, reader> = ABIDecoder(rdr);
+            return Generic.to(ABIDecode.decode(rep_ptr, headOffset));
+        }
+    }
 }

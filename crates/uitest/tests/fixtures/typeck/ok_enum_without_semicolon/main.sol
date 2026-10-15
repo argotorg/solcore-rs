@@ -1,1 +1,3 @@
-enum D { C }
+enum D {
+    C
+}

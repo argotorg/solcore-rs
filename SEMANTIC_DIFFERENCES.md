@@ -9,8 +9,9 @@ verdict ledgers describe particular compiler modes, not the language specificati
 - Haskell: [`argotorg/solcore@a7b7afb0`](https://github.com/argotorg/solcore/tree/a7b7afb0638e50895008d778a167afd0e50a2c86),
   the upstream HEAD checked on 2026-10-10.
 - All eight `.sol` files in [`std/`](std/) and
-  [`corpus/ok/std/`](crates/parser/tests/fixtures/corpus/ok/std/) are byte-for-byte
-  copies of that upstream revision.
+  [`corpus/ok/std/`](crates/parser/tests/fixtures/corpus/ok/std/) come from that
+  upstream revision, with local whitespace-only formatting by `solcore-fmt`.
+  Both local copies remain byte-for-byte identical to each other.
 - Both compilers now use the canonical
   [source syntax](https://github.com/argotorg/solcore/blob/a7b7afb0638e50895008d778a167afd0e50a2c86/doc/src/sail/syntax.md).
   The older Haskell spellings are not a compatibility target.
@@ -166,10 +167,12 @@ E2E=1 E2E_REQUIRED=1 cargo test --profile e2e \
 
 ## Standard-library update policy
 
-Prefer byte-exact upstream library sources and record their full revision.
-Copy updates into both std locations together. When upstream has a confirmed
-bug or specification defect, document the witness and the chosen correction;
+Preserve upstream library sources apart from local whitespace-only formatting
+with `solcore-fmt`, and record their full revision. Copy and format updates in
+both std locations together, keeping the local copies byte-for-byte identical.
+When upstream has a confirmed bug or specification defect, document the witness
+and the chosen correction;
 there is no requirement to reproduce that defect or obtain an upstream fix
 before preserving correct Rust behavior. Compiler-side corrections should be
-kept explicit. If a library deviation becomes necessary, document it per file
-instead of continuing to claim byte-exact synchronization.
+kept explicit. If a library deviation beyond whitespace formatting becomes
+necessary, document it per file instead of continuing to claim source alignment.

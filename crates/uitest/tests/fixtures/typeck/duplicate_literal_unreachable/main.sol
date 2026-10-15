@@ -1,13 +1,13 @@
 function pick(x: word) returns (word) {
-  match (x) {
-case 0 {
-return 0;
-}
-case 0 {
-return 1;
-}
-default {
-return 2;
-}
-}
+    match (x) {
+        case 0 {
+            return 0;
+        }
+        case 0 {
+            return 1;
+        }
+        default {
+            return 2;
+        }
+    }
 }

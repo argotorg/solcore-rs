@@ -14,5 +14,5 @@ type T12 = (T11, T11);
 type T13 = (T12, T12);
 
 function use_bomb(x: T13) returns (T13) {
-  return x;
+    return x;
 }

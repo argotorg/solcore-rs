@@ -12,16 +12,21 @@ import * from std.StorageGeneric;
 // A multi-slot value in a mapping occupies hash2(slot, key) .. + size(v) - 1,
 // exactly as Solidity lays out a struct behind a mapping.
 
-enum Option<a> { None, Some(a) }
-enum Pair { Pair(uint256, uint256) }
+enum Option<a> {
+    None,
+    Some(a)
+}
+enum Pair {
+    Pair(uint256, uint256)
+}
 
 contract C {
     // 2 slots per entry: tag + payload
-    opts : mapping(uint256 => Option<uint256>);
+    opts: mapping(uint256 => Option<uint256>);
     // 2 slots per entry: no tag, two words
-    pairs : mapping(uint256 => Pair);
+    pairs: mapping(uint256 => Pair);
     // 3 slots per entry: tag + max(0, 2)
-    optPairs : mapping(uint256 => Option<Pair>);
+    optPairs: mapping(uint256 => Option<Pair>);
 
     constructor() {
         assert(StorageSize.size(@Option<uint256>) == 2);
@@ -40,24 +45,25 @@ contract C {
     // Unset keys read back as the zero slot pattern, i.e. tag 0 = None.
     function hasOpt(k: uint256) public returns (bool) {
         match (opts[k]) {
-case Option.None {
-return false;
-}
-case Option.Some(_) {
-return true;
-}
-}
+            case Option.None {
+                return false;
+            }
+            case Option.Some(_) {
+                return true;
+            }
+        }
     }
 
     function getOpt(k: uint256) public returns (uint256) {
         match (opts[k]) {
-case Option.None {
-revertEmpty(); return uint256(0);
-}
-case Option.Some(v) {
-return v;
-}
-}
+            case Option.None {
+                revertEmpty();
+                return uint256(0);
+            }
+            case Option.Some(v) {
+                return v;
+            }
+        }
     }
 
     function putPair(k: uint256, a: uint256, b: uint256) public {
@@ -66,10 +72,10 @@ return v;
 
     function pairSum(k: uint256) public returns (uint256) {
         match (pairs[k]) {
-case Pair(a, b) {
-return a + b;
-}
-}
+            case Pair(a, b) {
+                return a + b;
+            }
+        }
     }
 
     function putOptPair(k: uint256, a: uint256, b: uint256) public {
@@ -82,16 +88,17 @@ return a + b;
 
     function optPairSum(k: uint256) public returns (uint256) {
         match (optPairs[k]) {
-case Option.None {
-revertEmpty(); return uint256(0);
-}
-case Option.Some(p) {
-match (p) {
-case Pair(a, b) {
-return a + b;
-}
-}
-}
-}
+            case Option.None {
+                revertEmpty();
+                return uint256(0);
+            }
+            case Option.Some(p) {
+                match (p) {
+                    case Pair(a, b) {
+                        return a + b;
+                    }
+                }
+            }
+        }
     }
 }

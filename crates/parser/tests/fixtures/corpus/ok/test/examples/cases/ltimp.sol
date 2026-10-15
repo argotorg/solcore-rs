@@ -1,5 +1,7 @@
-import {ltproxy} from ltproxy;
+import { ltproxy } from ltproxy;
 
 contract LtImp {
-  function main() public returns (bool) { ltproxy() }
+    function main() public returns (bool) {
+        ltproxy()
+    }
 }

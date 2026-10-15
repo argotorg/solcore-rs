@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/occurs_check/main.sol
 ---
 error[SC0202]: recursive type would be required
- --> /main/main.sol:2:30
+ --> /main/main.sol:3:16
   |
-1 | function f() {
-2 |   let self = lam(x) { return x(x); };
-  |                              ^^^^ recursive type required here
-3 |   return ();
+2 |     let self = lam (x) {
+3 |         return x(x);
+  |                ^^^^ recursive type required here
+4 |     };
   |
   = note: an inferred type would need to contain itself
   = note: recursive shape: function(_) returns (_)

@@ -3,11 +3,11 @@
 import std;
 
 function spin(comptime n: integer) returns (comptime<integer>) {
-  return spin(integerAdd(n, 1));
+    return spin(integerAdd(n, 1));
 }
 
 contract CtFuelInfinite {
-  function main() returns (word) {
-    return wordFromInteger(spin(0));
-  }
+    function main() returns (word) {
+        return wordFromInteger(spin(0));
+    }
 }

@@ -1,5 +1,7 @@
-enum Other { Other }
+enum Other {
+    Other
+}
 
 function noMatch() returns (Other) {
-  return .Some(1);
+    return .Some(1);
 }

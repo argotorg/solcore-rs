@@ -3,13 +3,13 @@ trait B<a> where a: A {}
 trait C<a> {}
 
 function needsC<a>(x: a) where a: C {
-  return ();
+    return ();
 }
 
 function cannotGetC<a>(x: a) where a: A {
-  return needsC(x);
+    return needsC(x);
 }
 
 function main() {
-  return ();
+    return ();
 }

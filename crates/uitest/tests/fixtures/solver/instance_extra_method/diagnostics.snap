@@ -4,15 +4,15 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/solver/instance_extra_method/main.sol
 ---
 error[SC0202]: undefined name: C.g
- --> /main/main.sol:7:12
-  |
-1 | trait C<a> {
-  |       - trait defined here
-2 |   function f(x: a) returns (word) ;
-3 | }
+  --> /main/main.sol:9:14
+   |
+ 1 | trait C<a> {
+   |       - trait defined here
+ 2 |     function f(x: a) returns (word);
+ 3 | }
 ...
-6 |   function f(x: word) returns (word) { return x; }
-7 |   function g(x: word) returns (word) { return x; }
-  |            ^ unknown name
-8 | }
-  |
+ 8 |     }
+ 9 |     function g(x: word) returns (word) {
+   |              ^ unknown name
+10 |         return x;
+   |

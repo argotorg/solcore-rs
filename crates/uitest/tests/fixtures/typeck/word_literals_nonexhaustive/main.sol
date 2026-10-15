@@ -1,10 +1,10 @@
 function pick(x: word) returns (word) {
-  match (x) {
-case 0 {
-return 0;
-}
-case 1 {
-return 1;
-}
-}
+    match (x) {
+        case 0 {
+            return 0;
+        }
+        case 1 {
+            return 1;
+        }
+    }
 }

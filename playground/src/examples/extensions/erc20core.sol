@@ -1,7 +1,7 @@
 import * from std;
-import {sload, sstore} from std.opcodes;
-import {Option} from option;
-import {TransferHook} from hooks;
+import { sload, sstore } from std.opcodes;
+import { Option } from option;
+import { TransferHook } from hooks;
 
 export { balance, supply, apply };
 
@@ -29,7 +29,7 @@ function balance(who: address) returns (uint256) {
 // chains run around the effects, so none of them can be skipped. A side
 // with no hooks takes NoHook. from = None mints, to = None burns.
 function apply<b, a>(before: b, after: a, from: Option<address>, to: Option<address>, amount: uint256)
-    where b: TransferHook, a: TransferHook
+where b: TransferHook, a: TransferHook
 {
     TransferHook.on(before, from, to, amount);
     match (from) {

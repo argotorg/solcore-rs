@@ -1,24 +1,38 @@
-enum mapping<key, value> { mapping(word) }
-enum uint256 { uint256(word) }
+enum mapping<key, value> {
+    mapping(word)
+}
+enum uint256 {
+    uint256(word)
+}
 
 trait Add<t> {
-  function add(l: t, r: t) returns (t) ;
+    function add(l: t, r: t) returns (t);
 }
 trait Sub<t> {
-  function sub(l: t, r: t) returns (t) ;
+    function sub(l: t, r: t) returns (t);
 }
 impl Add<word> {
-  function add(l: word, r: word) returns (word) { return l; }
+    function add(l: word, r: word) returns (word) {
+        return l;
+    }
 }
 impl Sub<word> {
-  function sub(l: word, r: word) returns (word) { return l; }
+    function sub(l: word, r: word) returns (word) {
+        return l;
+    }
 }
 impl Add<uint256> {
-  function add(l: uint256, r: uint256) returns (uint256) { return l; }
+    function add(l: uint256, r: uint256) returns (uint256) {
+        return l;
+    }
 }
 
 contract C {
-  m: mapping(word => bool);
-  function f(k: word) { m[k] -= true; }
-  function main() { return (); }
+    m: mapping(word => bool);
+    function f(k: word) {
+        m[k] -= true;
+    }
+    function main() {
+        return ();
+    }
 }

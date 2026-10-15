@@ -1,8 +1,8 @@
 import * from std;
 import * from std.dispatch;
-pragma no-patterson-condition ;
-pragma no-coverage-condition ;
-pragma no-bounded-variable-condition ;
+pragma no-patterson-condition;
+pragma no-coverage-condition;
+pragma no-bounded-variable-condition;
 
 // Regression test for the field-access desugarer (transRhs in
 // src/Solcore/Desugarer/FieldAccess.hs).
@@ -18,10 +18,14 @@ pragma no-bounded-variable-condition ;
 // storage-array field access, each nested inside a tuple literal passed as a
 // single argument. `abi_encode` accepts a tuple argument this way (and, unlike
 // `concat`, is available in this PR).
+// #[scenario("field_access_in_tuple")]
+// #[deploy(0x) -> success]
+// #[raw(0xc42ecbf4, label = "encFields()") -> success(0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000002)]
+// #[raw(0xa4b94d830000000000000000000000000000000000000000000000000000000000000000, label = "encIndexed(uint256)") -> success(0x0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002)]
 contract C {
-    a : uint256;
-    b : uint256;
-    xs : array<uint256>;
+    a: uint256;
+    b: uint256;
+    xs: array<uint256>;
 
     constructor() {
         a = 1;

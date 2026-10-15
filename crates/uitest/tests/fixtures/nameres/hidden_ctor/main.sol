@@ -1,5 +1,5 @@
-import {Token} from lib;
+import { Token } from lib;
 
 function main() returns (Token) {
-  return Token.Err(0);
+    return Token.Err(0);
 }

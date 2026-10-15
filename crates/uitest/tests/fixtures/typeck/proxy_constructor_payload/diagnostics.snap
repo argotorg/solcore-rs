@@ -4,12 +4,12 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/proxy_constructor_payload/main.sol
 ---
 error[SC0203]: constructor Proxy.Proxy expects 1 argument, but 0 were provided
- --> /main/main.sol:4:12
+ --> /main/main.sol:6:12
   |
-3 | function value() returns (Proxy<word>) {
-4 |     return @word;
+5 | function value() returns (Proxy<word>) {
+6 |     return @word;
   |            ^^^^^ wrong number of arguments
-5 | }
+7 | }
   |
   = note: expected 1 argument
   = note: found 0 arguments

@@ -1,6 +1,10 @@
-enum A { A(B) }
-enum B { B(A) }
+enum A {
+    A(B)
+}
+enum B {
+    B(A)
+}
 
 function f(x: A) returns (word) {
-  return 0;
+    return 0;
 }

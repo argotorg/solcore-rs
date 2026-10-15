@@ -4,11 +4,11 @@ expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_type_as_value/main.sol
 ---
 error[SC0228]: type name used as value: `Pair`
- --> /main/main.sol:4:11
+ --> /main/main.sol:6:13
   |
-3 | function main() returns (word) {
-4 |   let p = Pair;
-  |           ^^^^ not a value
-5 |   return 0;
+5 | function main() returns (word) {
+6 |     let p = Pair;
+  |             ^^^^ not a value
+7 |     return 0;
   |
   = help: use a constructor or value binding here, not a namespace name

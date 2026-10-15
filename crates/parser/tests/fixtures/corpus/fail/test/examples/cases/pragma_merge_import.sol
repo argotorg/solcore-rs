@@ -10,10 +10,10 @@ trait TestClassC3<a, b> {}
 trait TestClassB4<a> {}
 
 // fails coverage & patterson (pragma set here)
-impl<i, j> TestClassC3<i, j> where (i, j): TestClassP1 {}
+impl<i, j> TestClassC3<i, j> where(i, j): TestClassP1 {}
 
 // fails coverage & patterson (pragma set in base)
-impl<i, j> TestClassP3<i, j> where (i, j): TestClassP1 {}
+impl<i, j> TestClassP3<i, j> where(i, j): TestClassP1 {}
 
 // fails bound var & patterson (pragma set here)
 impl<a, c> TestClassB4<TestType1<a>> where c: TestClassB1<a> {}

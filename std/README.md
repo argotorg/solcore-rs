@@ -1,7 +1,7 @@
 # Solcore standard library snapshot
 
-The `.sol` files in this directory are byte-for-byte copies of the Haskell
-reference standard library at revision
+The `.sol` files in this directory come from the Haskell reference standard
+library at revision
 `a7b7afb0638e50895008d778a167afd0e50a2c86`:
 
 ```text
@@ -9,6 +9,8 @@ https://github.com/argotorg/solcore/tree/a7b7afb0638e50895008d778a167afd0e50a2c8
 ```
 
 Upstream now uses canonical `.sol` syntax, so no syntax migration is required.
+Local whitespace-only formatting is applied with `solcore-fmt`; source tokens,
+literals, and comments are retained.
 The copies under
 `crates/parser/tests/fixtures/corpus/ok/std/` are parser fixtures and must remain
 byte-for-byte identical to the files here.
@@ -18,8 +20,9 @@ snapshot.
 
 ## Synchronization policy
 
-Keep the vendored sources aligned with the recorded upstream revision. When
-upstream changes, update all eight files and their parser-corpus copies together.
+Keep the vendored sources aligned with the recorded upstream revision, allowing
+local whitespace-only formatting with `solcore-fmt`. When upstream changes,
+update and format all eight files and their parser-corpus copies together.
 
 Do not reproduce an upstream compiler bug or problematic specification merely
 for compatibility. Record confirmed upstream problems in the local `issues.md`

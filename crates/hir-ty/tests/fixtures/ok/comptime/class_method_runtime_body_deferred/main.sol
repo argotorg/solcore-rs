@@ -1,28 +1,30 @@
-enum Box { Box(word) }
+enum Box {
+    Box(word)
+}
 
 trait Scale<a> {
-  function scale(comptime factor: word, comptime x: a) returns (comptime<a>) ;
+    function scale(comptime factor: word, comptime x: a) returns (comptime<a>);
 }
 
 impl Scale<word> {
-  function scale(comptime factor: word, comptime x: word) returns (comptime<word>) {
-    return x;
-  }
+    function scale(comptime factor: word, comptime x: word) returns (comptime<word>) {
+        return x;
+    }
 }
 
 impl Scale<Box> {
-  function scale(comptime factor: word, comptime x: Box) returns (comptime<Box>) {
-    let y : word;
-    assembly {
-      y := sload(0)
+    function scale(comptime factor: word, comptime x: Box) returns (comptime<Box>) {
+        let y: word;
+        assembly {
+            y := sload(0)
+        }
+        return Box(y);
     }
-    return Box(y);
-  }
 }
 
 contract C {
-  function main() returns (word) {
-    let a : comptime<word> = Scale.scale(1, 2);
-    return a;
-  }
+    function main() returns (word) {
+        let a: comptime<word> = Scale.scale(1, 2);
+        return a;
+    }
 }
