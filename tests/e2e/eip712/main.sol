@@ -70,6 +70,13 @@ function mailDigest() returns (bytes32) {
     return eip712Digest(mailDomainSeparator(), mailStructHash());
 }
 
+// #[scenario("eip712")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0xf698da25, label = "domainSeparator()(bytes32)") -> success(0xf2cee375fa42b42143804025fc449deafd50cc031ca257e0b194a650a912090f)]
+// #[raw(0x220861ea, label = "structHash()(bytes32)") -> success(0xc52c0ee5d84264471806290a3f2c4cecfc5490626bf912d01f240d7a274b371e)]
+// #[raw(0x52a82b65, label = "digest()(bytes32)") -> success(0xbe609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2)]
+// #[raw(0xfc735e99, label = "verify()(address)") -> success(0x000000000000000000000000cd2a3d9f938e13cd947ec05abc7fe734df8dd826)]
 contract EIP712Mail {
     constructor() {}
 

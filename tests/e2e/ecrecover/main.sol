@@ -1,6 +1,12 @@
 import * from std;
 import * from std.dispatch;
 
+// #[scenario("ecrecover")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0xce746024, label = "recover()(address)") -> success(0x0000000000000000000000007e5f4552091a69125d5dfcb7b8c2659029395bdf)]
+// #[raw(0x75ebe7ac, label = "recoverFail()(address)") -> revert(0x4fbfae63)]
+// #[raw(0x5dc458b7, label = "recoverFailBadV()(address)") -> revert(0x4fbfae63)]
 contract EcrecoverTest {
     function recover() public returns (address) {
         let h: bytes32 = bytes32(0xaabbccddeeff00112233445566778899aabbccddeeff00112233445566778899);

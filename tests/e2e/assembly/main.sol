@@ -1,6 +1,10 @@
 import * from std;
 import * from std.dispatch;
 
+// #[scenario("assembly")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0x7d4bb2ec, label = "asmBool()(uint256) -> 1 (Yul `true` is word 1)") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
 contract C {
     constructor() {}
 

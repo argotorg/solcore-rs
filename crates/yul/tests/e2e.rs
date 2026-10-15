@@ -18,8 +18,8 @@ use solcore_test_utils::{
     define_frontend_test_db,
     e2e::{
         AbiShape, COMMAND_TIMEOUT, E2eExecution, E2eFailure, FailureKind, ResolvedE2eCall,
-        command_available, e2e_enabled, e2e_pipeline_only, load_raw_e2e_vector, looks_like_hex,
-        parse_e2e_directive, resolve_e2e_comments, run_command, with_shared_evm_harness,
+        command_available, e2e_enabled, e2e_pipeline_only, looks_like_hex, parse_e2e_directive,
+        resolve_e2e_comments, run_command, source_e2e_scenario, with_shared_evm_harness,
     },
     load_fixture_case_with_file_urls, load_reachable_modules_with_file_urls,
     repo_root_from_manifest, run_in_large_stack,
@@ -111,7 +111,7 @@ fn render_fixture(path: &Path) -> Result<RenderedFixture, E2eFailure> {
         )));
     }
 
-    let raw_vector = load_raw_e2e_vector(path)?;
+    let raw_vector = source_e2e_scenario(db, source_module)?;
     let (contract, execution) = match raw_vector {
         Some(vector) => {
             let contract = vector.contract.clone();

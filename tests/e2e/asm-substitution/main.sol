@@ -5,6 +5,11 @@ import * from std.dispatch;
 // partial evaluator must apply in a scope- and flow-aware way.  A single,
 // uniform substitution map (built from every literal-valued local in scope)
 // used to be inlined into the whole block at once, producing wrong code.
+// #[scenario("asm_subst")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0x8decb8c5, label = "asmFlow()(uint256) -> 6 (x := 5; y := add(x, 1))") -> success(0x0000000000000000000000000000000000000000000000000000000000000006)]
+// #[raw(0x2b591092, label = "asmLoopFlow()(uint256) -> 3 (accumulate s across 3 iterations)") -> success(0x0000000000000000000000000000000000000000000000000000000000000003)]
 contract C {
     constructor() {}
 

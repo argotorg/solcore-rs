@@ -1,6 +1,17 @@
 import * from std;
 import * from std.dispatch;
 
+// #[scenario("forloops")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0xc5d339a8, label = "break_sum()(uint256) -> 0+1+2+3+4 = 10") -> success(0x000000000000000000000000000000000000000000000000000000000000000a)]
+// #[raw(0xe26b41bc, label = "continue_sum()(uint256) -> 5+6+7+8+9 = 35") -> success(0x0000000000000000000000000000000000000000000000000000000000000023)]
+// #[raw(0x73c5c5b9, label = "empty_init()(uint256) -> 3+4+5+6 = 18") -> success(0x0000000000000000000000000000000000000000000000000000000000000012)]
+// #[raw(0xf2efd0fe, label = "empty_post()(uint256) -> 0+1+2+3 = 6") -> success(0x0000000000000000000000000000000000000000000000000000000000000006)]
+// #[raw(0xf837ea36, label = "cond_side_effect()(uint256) -> bump() called until it returns 5 -> counter = 5") -> success(0x0000000000000000000000000000000000000000000000000000000000000005)]
+// #[raw(0x846ca1fa, label = "post_side_effect()(uint256) -> bump() runs once per iteration, 3 iterations -> counter = 3") -> success(0x0000000000000000000000000000000000000000000000000000000000000003)]
+// #[raw(0xe819651a, label = "double_loop()(uint256) -> sum_{i,j in 1..3} i*j = 36") -> success(0x0000000000000000000000000000000000000000000000000000000000000024)]
+// #[raw(0x8ada066e, label = "getCounter()(uint256) -> last call was post_side_effect, so counter = 3") -> success(0x0000000000000000000000000000000000000000000000000000000000000003)]
 contract C {
     counter : uint256;
 

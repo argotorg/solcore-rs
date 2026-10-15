@@ -3,6 +3,10 @@ function writeSlot() returns (word) {
     return 0;
 }
 function second(first: word, value: word) returns (word) { return value; }
+// #[scenario("ignored_call_effects")]
+// #[deploy(0x) -> success]
+// #[raw(0x, label = "suite `ignored_call_effects` test #2") -> success(0x0000000000000000000000000000000000000000000000000000000000000047)]
+// #[raw(0x, label = "suite `ignored_call_effects` test #3") -> success(0x0000000000000000000000000000000000000000000000000000000000000048)]
 contract IgnoredCallEffects {
     function main() returns (word) {
         // Even an unused argument must execute exactly once.

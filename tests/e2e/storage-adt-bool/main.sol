@@ -23,6 +23,35 @@ function toBool(v: uint256) returns (bool) {
     return v != uint256(0);
 }
 
+// #[scenario("storage_adt_bool")]
+// constructor() (asserts size(bool)=1, size(Flags)=2, size(Toggle)=2)
+// #[deploy(0x) -> success]
+// #[raw(0x33ef2640, label = "getBare() -> false (set by the constructor)") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x6de65b180000000000000000000000000000000000000000000000000000000000000001, label = "setBare(1) stores true through storage(bool):CanStore(bool)") -> success(0x)]
+// #[raw(0x33ef2640, label = "getBare() -> true") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x6de65b180000000000000000000000000000000000000000000000000000000000000000, label = "setBare(0) stores false back") -> success(0x)]
+// #[raw(0x33ef2640, label = "getBare() -> false") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0xe9a37061, label = "firstFlag() -> false (constructor)") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x459a2790, label = "secondFlag() -> false") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0xc469153a00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000, label = "setFlags(1, 0): bool leaves inside a product") -> success(0x)]
+// #[raw(0xe9a37061, label = "firstFlag() -> true") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x459a2790, label = "secondFlag() -> false (the two bool slots are independent)") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0xc469153a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001, label = "setFlags(0, 1)") -> success(0x)]
+// #[raw(0xe9a37061, label = "firstFlag() -> false") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x459a2790, label = "secondFlag() -> true") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x175bbecf, label = "isOn() -> false (Off, from the constructor)") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x1f6f59be, label = "toggleValue() reverts on Off") -> revert(0x)]
+// #[raw(0x681580480000000000000000000000000000000000000000000000000000000000000000, label = "turnOn(0) stores On(false): a bool leaf under a sum tag") -> success(0x)]
+// #[raw(0x175bbecf, label = "isOn() -> true (the tag distinguishes On(false) from Off)") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x1f6f59be, label = "toggleValue() -> false") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x681580480000000000000000000000000000000000000000000000000000000000000001, label = "turnOn(1) stores On(true)") -> success(0x)]
+// #[raw(0x175bbecf, label = "isOn() -> true") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x1f6f59be, label = "toggleValue() -> true") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0xaf10c810, label = "turnOff() writes the Off tag over On(true)") -> success(0x)]
+// #[raw(0x175bbecf, label = "isOn() -> false") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x1f6f59be, label = "toggleValue() reverts again (the stale payload slot must not resurrect On)") -> revert(0x)]
+// #[raw(0x33ef2640, label = "getBare() -> false (writing `toggle` never disturbed `bare`)") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x459a2790, label = "secondFlag() -> true (writing `toggle` never disturbed `flags`)") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
 contract C {
     bare : bool;
     flags : Flags;

@@ -1,3 +1,7 @@
+// #[scenario("asm_scope")]
+// #[deploy(0x) -> success]
+// #[raw(0x, label = "suite `asm_scope` test #2") -> success(0x0000000000000000000000000000000000000000000000000000000000000093)]
+// #[raw(0x00, label = "suite `asm_scope` test #3") -> success(0x00000000000000000000000000000000000000000000000000000000000000fc)]
 contract AssemblyScope {
     function main() returns (word) {
         let seed: comptime<word> = 7;

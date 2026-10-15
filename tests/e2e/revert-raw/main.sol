@@ -6,6 +6,11 @@ function my_revert() returns (word) {
   return 0;
 }
 
+// #[scenario("Foo")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0x08ad856f, label = "noAnswer()") -> revert(0x72656772657373696f6e)]
+// #[raw(0x85bb7d69, label = "answer()(uint256)") -> success(0x000000000000000000000000000000000000000000000000000000000000002a)]
 contract Foo {
   constructor() {}
 

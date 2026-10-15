@@ -4,6 +4,11 @@ import * from std.dispatch;
 // End-to-end (runs on evmone via the testrunner) check that Yul `break`,
 // `continue` and `leave` in inline assembly don't just parse, but actually
 // execute with the right control-flow semantics.
+// #[scenario("asm_break_continue_leave")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0x7ae9260b, label = "loopSum()(uint256) -> 14 (continue skips 0,1; break stops at 6; 2+3+4+5)") -> success(0x000000000000000000000000000000000000000000000000000000000000000e)]
+// #[raw(0xfd339a24, label = "clampSum()(uint256) -> 105 (leave early-returns clamp(9)=3; 102+3)") -> success(0x0000000000000000000000000000000000000000000000000000000000000069)]
 contract C {
     constructor() {}
 

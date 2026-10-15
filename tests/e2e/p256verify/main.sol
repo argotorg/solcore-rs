@@ -5,6 +5,11 @@ import {p256verify} from std.eip7951;
 // Exercises the P256VERIFY (secp256r1) precompile at address 0x100, introduced
 // by EIP-7951, through the std `p256verify` helper. It returns true for a valid
 // signature and false for an invalid one.
+// #[scenario("p256verify", evm = "osaka")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0xd7e8fff9, label = "verifyValid()(bool) - valid P-256 signature returns true") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x887dcd86, label = "verifyInvalid()(bool) - tampered hash returns false") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
 contract P256Test {
     constructor() {}
 

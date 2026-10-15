@@ -24,6 +24,9 @@ return uint256(1) + len(r);
 // instances, so the skip is per-type rather than per-module.
 enum Point { Point(uint256, uint256) }
 
+// #[scenario("storage_adt_recursive_ok")]
+// constructor() derives storage only for the non-recursive Point
+// #[deploy(0x) -> success]
 contract C {
     p : Point;
 

@@ -82,6 +82,10 @@ return Total.total(xb, yb);
   }
 }
 
+// #[scenario("SpecialiseSumOfProduct")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0xb74af5a9, label = "probe()(uint256) -> 6 : Total over sum((word,word),word) on inl((1,2)) = (1+1)+(2+2). Regression for the specMatch substitution-leak bug (yule used to reject the hull).") -> success(0x0000000000000000000000000000000000000000000000000000000000000006)]
 contract SpecialiseSumOfProduct {
     constructor() {}
 

@@ -12,6 +12,12 @@ function twiceAddress(value: memory<string>) returns (word) {
     } }
 }
 
+// #[scenario("ignored_builtin_effects")]
+// #[deploy(0x) -> success]
+// #[raw(0x222b1407, label = "direct(): unused revertLit") -> revert(0x646972656374)]
+// #[raw(0x50e70d48, label = "wrapped(): unused revertLit through a helper") -> revert(0x77726170706564)]
+// #[raw(0xc195542e, label = "ignoredString(): result 7, allocated 64 bytes") -> success(0x00000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000040)]
+// #[raw(0x96418f1c, label = "reusedString(): both addresses equal allocation start, offset 7, allocated 64 bytes") -> success(0x00000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000040)]
 contract IgnoredBuiltinEffects {
     function direct() public returns (uint256) {
         // Ignoring the unit result must not suppress a direct revert.

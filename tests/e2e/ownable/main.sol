@@ -12,6 +12,13 @@ function caller() returns (address) {
   return address(res);
 }
 
+// #[scenario("ownable")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0x893d20e8, label = "getOwner()(address) - should return deployer address") -> success(0x0000000000000000000000001212121212121212121212121212120000000012)]
+// #[raw(0xa6f9dae1000000000000000000000000000000000000000000000000000000000000dead, label = "changeOwner(address) to 0xdead - should succeed from owner") -> success(0x)]
+// #[raw(0x893d20e8, label = "getOwner()(address) - should now return 0xdead") -> success(0x000000000000000000000000000000000000000000000000000000000000dead)]
+// #[raw(0xa6f9dae1000000000000000000000000000000000000000000000000000000000000beef, label = "changeOwner(address) - should fail, caller is no longer owner") -> revert(0x12b0c500)]
 contract Ownable {
   owner : address;
 

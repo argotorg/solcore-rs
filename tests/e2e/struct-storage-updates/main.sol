@@ -3,6 +3,10 @@ import * from std.dispatch;
 import * from std.Generic;
 import * from std.StorageGeneric;
 
+// #[scenario("struct_storage_updates")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0xd32cb0fe, label = "exercise() returns updated x=22, preserved y=7, restored array value=12, and four index evaluations") -> success(0x00000000000000000000000000000000000000000000000000000000000000160000000000000000000000000000000000000000000000000000000000000007000000000000000000000000000000000000000000000000000000000000000c0000000000000000000000000000000000000000000000000000000000000004)]
 contract StructStorageUpdates {
   struct Point {
     x: uint256;

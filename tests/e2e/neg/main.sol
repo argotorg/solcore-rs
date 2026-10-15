@@ -67,6 +67,10 @@ return 1;
 }
 }
 
+// #[scenario("NegPair")]
+// constructor()
+// #[deploy(0x) -> success]
+// #[raw(0xce61a134, label = "negPair()") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
 contract NegPair {
  constructor() {}
  function negPair() public returns (uint256) { return uint256(fromB(pairfst(Neg.neg(Pair(B.F,B.T))))); }

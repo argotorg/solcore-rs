@@ -20,7 +20,7 @@ argument or result with the wrong type or arity is rejected while resolving the
 fixture, before any EVM call is made. The execution fixtures deliberately use
 only selector ABI types supported by the shared reference std. In particular,
 they do not expose primitive `word`. Direct ADTs and the
-`calldata<array<T>>` ADT surface use raw JSON vectors instead: their selectors
+`calldata<array<T>>` ADT surface use raw scenario comments instead: their selectors
 are derived from `T`'s structural Generic representation, and
 algebraic/dynamic-array values are outside the inline directive value grammar.
 
@@ -57,24 +57,56 @@ and a scalar are written as `((7, 1), 9)`. The complete shared example is in
 `composite-values/main.sol`. Normal comments are ignored, while a malformed
 comment beginning with `#[` is an error.
 
-For ABI shapes that the compiler metadata cannot describe yet, a fixture may
-instead place an upstream-compatible `main.json` next to `main.sol`. The JSON
-supplies complete calldata, call value, expected raw returndata or revert
-payload, the contract name, and optionally the upstream EVM-version metadata.
-Within each compiled backend/codegen variant, every entry is executed once as
-a real transaction from `0x1212121212121212121212121212120000000012`; the same
-execution supplies both the status/output assertion and the state observed by
-later entries. Both backends compile and execute every raw vector against
-Osaka, regardless of the optional `evmVersion` metadata, and each vector runs
-on a fresh, dedicated Osaka Anvil instance. Both backend pipelines therefore
-use the same runtime. Imported upstream cases retain their calldata, output, and EVM
-metadata; fixtures may also append documented local regression cases.
+Raw scenarios handle ABI shapes not supported by typed expectations, arbitrary
+calldata, value transfers, constructor failures, and ordered transactions. Put
+consecutive scenario comments directly before the contract declaration:
 
-The historical 2f372bde snapshot supplied 51 executable source/vector pairs.
-Their Core sources were syntax-migrated semantic ports. The current set also
-includes newer upstream vectors and local regressions, so it is not a byte-exact
-copy of that historical snapshot. Its remaining `template.json` is a source-less
-placeholder used by the upstream generator, not an executable fixture.
+```solcore
+// #[scenario("value-transfer")]
+// #[deploy(0x, value = 42) -> success]
+// #[raw(0xb69ef8a8, label = "balance()") -> success(0x000000000000000000000000000000000000000000000000000000000000002a)]
+// #[raw(0xdeadbeef, value = 1, label = "unknown selector") -> revert(0x4924aef0)]
+contract C {
+  // ...
+}
+```
+
+`scenario("name", evm = "osaka")` is optional descriptive metadata; the contract
+to deploy is the declaration owning the comments. `deploy(bytes, value = n)`
+appends the supplied bytes to creation bytecode. It must precede all calls and
+may appear only once. Omitting it deploys with empty arguments and zero value.
+A deployment may expect `success`, `success(bytes)`, `revert`, or `revert(bytes)`;
+omitting bytes checks only the status, whereas `success(0x)` or `revert(0x)`
+requires empty output. A constructor-only scenario is supported, and no call may
+follow a deployment expected to fail.
+
+`raw(bytes, value = n, label = "description")` supplies complete calldata,
+including any selector. `value` defaults to zero and `label` is optional.
+Successful raw calls require `success(bytes)` so their output is always checked;
+`revert` accepts any revert payload and `revert(bytes)` requires an exact match.
+Byte strings use a `0x` prefix and an even number of hexadecimal digits, including
+`0x` for empty bytes. Values are decimal or hexadecimal uint256 amounts in wei.
+Names and labels are quoted strings supporting `\\`, `\"`, `\n`, `\r`, and `\t`.
+Each directive occupies one line comment or one block comment; a block comment
+can wrap a long directive over multiple lines. Ordinary comments are ignored.
+Malformed directives, multiple contract scenarios, and mixing a scenario with
+typed method expectations are errors rather than silently skipped tests.
+
+Within each compiled backend/codegen variant, raw steps execute in source order
+as real transactions from `0x1212121212121212121212121212120000000012`. The same
+execution supplies the status/output assertion and the state observed by later
+steps. Both backends compile and execute these scenarios against Osaka, regardless
+of the optional `evm` metadata, on a fresh dedicated Osaka Anvil instance. Typed
+method expectations keep their existing behavior: ordinary expectations use
+`eth_call`, while `#[send(...)]` persists state but has no output expectation.
+Raw scenarios are supported by the native backend E2E runners.
+
+The upstream raw vectors have been migrated into these source comments. Their
+calldata, value transfers, expected status/output, call order, labels, and EVM
+metadata are retained; there are no companion JSON files. The historical
+2f372bde snapshot supplied 51 executable source/vector pairs; later upstream and
+local regressions extend that corpus. Core sources are syntax-migrated semantic
+ports, not byte-exact copies of that snapshot.
 
 The active std/semantic target is now `a7b7afb0`. Variant-related raw vectors
 have been updated to its constructor-keccak tags, and latest struct,
@@ -102,7 +134,7 @@ bytecode, deployed to Anvil, and called through the generated ABI selector.
 Set `E2E=1` to run execution tests. `E2E_PIPELINE_ONLY=1` stops after backend
 code generation; `E2E_REQUIRED=1` makes missing tools an error. Anvil defaults
 to the Osaka hardfork for directive fixtures; `ANVIL_HARDFORK` can override it
-for an alternate Yul runtime. Raw vectors always compile and run against Osaka.
+for an alternate Yul runtime. Raw scenarios always compile and run against Osaka.
 
 For local optimized runs, use the workspace's E2E profile. It uses moderate
 optimization (`opt-level = 2`) without LTO, keeping execution representative

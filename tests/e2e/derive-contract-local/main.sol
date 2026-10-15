@@ -11,6 +11,14 @@ import * from std.Generic;
 pragma no-patterson-condition;
 pragma no-bounded-variable-condition;
 
+// #[scenario("derive_contract_local")]
+// #[deploy(0x) -> success]
+// #[raw(0xd69e3995, label = "eqRedRed() -> 1") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0xeac29ce7, label = "eqRedBlue() -> 0") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0x4dc00b0d, label = "gtGreenRed() -> 1 (Green > Red)") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x43a0cf63, label = "gtRedGreen() -> 0 (Red < Green)") -> success(0x0000000000000000000000000000000000000000000000000000000000000000)]
+// #[raw(0xddb51f53, label = "eqPointSame() -> 1") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
+// #[raw(0x41410a98, label = "gtPointLex() -> 1 (Point(1,100) > Point(1,50))") -> success(0x0000000000000000000000000000000000000000000000000000000000000001)]
 contract DeriveContractLocal {
     #[derive(Eq, Ord)]
     enum Color { Red, Green, Blue }

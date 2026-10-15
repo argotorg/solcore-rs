@@ -2,6 +2,9 @@
 
 use std::{fmt, str::FromStr};
 
+mod scenario;
+pub use scenario::*;
+
 fn encode_hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut encoded = String::with_capacity(bytes.len() * 2);

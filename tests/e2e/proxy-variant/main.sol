@@ -7,6 +7,9 @@ function choose(proxy: Proxy<word>) returns (word) {
     }
 }
 
+// #[scenario("proxy_variant")]
+// #[deploy(0x) -> success]
+// #[raw(0x, label = "suite `proxy_variant` test #2") -> success(0x000000000000000000000000000000000000000000000000000000000000002a)]
 contract ProxyVariant {
     function main() returns (word) {
         let chosen: comptime<word> = choose(@word);
