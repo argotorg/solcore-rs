@@ -611,20 +611,20 @@ impl<'db> InferCtx<'db> {
             && pending.args.is_empty()
             && self.is_concrete_non_numeric(pending.main.clone())
         {
-            let actual_ty = self.normalize_aliases(pending.main.clone());
-            let actual = self.display_infer_ty(actual_ty);
+            let inferred_ty = self.normalize_aliases(pending.main.clone());
+            let inferred = self.display_infer_ty(inferred_ty);
             return match pending.source {
                 ObligationSource::IntegerLiteral { body, expr } => {
                     self.poison_expr(body, expr);
-                    let actual = self
+                    let expected = self
                         .expected_expr_displays
                         .get(&(body, expr))
                         .cloned()
-                        .unwrap_or_else(|| actual.clone());
+                        .unwrap_or_else(|| inferred.clone());
                     Some(TypeckDiagnostic::Mismatch {
                         span: self.expr_label_span(body, expr),
-                        expected: "numeric".to_owned(),
-                        actual,
+                        expected,
+                        actual: "numeric".to_owned(),
                     })
                 }
                 ObligationSource::IntegerLiteralPattern { body, pat } => {
@@ -632,7 +632,7 @@ impl<'db> InferCtx<'db> {
                     Some(TypeckDiagnostic::Mismatch {
                         span: self.pat_label_span(body, pat),
                         expected: "numeric".to_owned(),
-                        actual,
+                        actual: inferred,
                     })
                 }
                 _ => None,

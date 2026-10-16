@@ -1119,6 +1119,42 @@ impl<'db> Evaluator<'db> {
             }
             MonoExprKind::BinOp { lhs, op, rhs } => {
                 let lhs = self.eval_expr(env, comptime_env, *lhs);
+                if matches!(op, BinOp::And | BinOp::Or) {
+                    let Some(lhs_value) = known_bool(self.db, &lhs) else {
+                        let rhs = self.eval_expr(env, comptime_env, *rhs);
+                        return MonoExpr {
+                            span,
+                            ty,
+                            kind: MonoExprKind::BinOp {
+                                lhs: Box::new(lhs),
+                                op,
+                                rhs: Box::new(rhs),
+                            },
+                        };
+                    };
+                    let short_circuits = match op {
+                        BinOp::And => !lhs_value,
+                        BinOp::Or => lhs_value,
+                        _ => unreachable!(),
+                    };
+                    if short_circuits {
+                        return bool_expr(lhs_value, ty, span);
+                    }
+
+                    let rhs = self.eval_expr(env, comptime_env, *rhs);
+                    if let Some(rhs_value) = known_bool(self.db, &rhs) {
+                        return bool_expr(rhs_value, ty, span);
+                    }
+                    return MonoExpr {
+                        span,
+                        ty,
+                        kind: MonoExprKind::BinOp {
+                            lhs: Box::new(lhs),
+                            op,
+                            rhs: Box::new(rhs),
+                        },
+                    };
+                }
                 let rhs = self.eval_expr(env, comptime_env, *rhs);
                 if let Some(result) = self.eval_binop(&lhs, op, &rhs, ty, span) {
                     return result;

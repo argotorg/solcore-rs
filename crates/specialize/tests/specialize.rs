@@ -2137,7 +2137,7 @@ fn overloaded_binary_operators_specialize_through_instances() {
     assert_eq!(output.diagnostics, Vec::new(), "visible boolean functions");
     assert_eq!(
         main_return_number(&output),
-        Some("99".to_owned()),
+        Some("0".to_owned()),
         "visible boolean functions"
     );
 }
@@ -2197,13 +2197,13 @@ contract C {
             "And",
             "function and(x:bool, y:bool) returns (bool) { return false; }",
             "true && true",
-            "0",
+            "97",
         ),
         (
             "Or",
             "function or(x:bool, y:bool) returns (bool) { return false; }",
             "false || true",
-            "0",
+            "97",
         ),
         (
             "Not",

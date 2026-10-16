@@ -1,0 +1,111 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/and_or_require_bool_operands/main.sol
+---
+error[SC0201]: type mismatch: expected bool, found word
+  --> /main/main.sol:10:12
+   |
+ 9 | function and_left(x: word) returns (bool) {
+10 |     return x && true;
+   |            ^ expression has mismatched type
+11 | }
+   |
+   = note: expected type: bool
+   = note: found type: word
+---
+
+error[SC0201]: type mismatch: expected bool, found word
+  --> /main/main.sol:14:21
+   |
+13 | function and_right(x: word) returns (bool) {
+14 |     return false && x;
+   |                     ^ expression has mismatched type
+15 | }
+   |
+   = note: expected type: bool
+   = note: found type: word
+---
+
+error[SC0201]: type mismatch: expected bool, found word
+  --> /main/main.sol:18:12
+   |
+17 | function or_left(x: word) returns (bool) {
+18 |     return x || false;
+   |            ^ expression has mismatched type
+19 | }
+   |
+   = note: expected type: bool
+   = note: found type: word
+---
+
+error[SC0201]: type mismatch: expected bool, found word
+  --> /main/main.sol:22:20
+   |
+21 | function or_right(x: word) returns (bool) {
+22 |     return true || x;
+   |                    ^ expression has mismatched type
+23 | }
+   |
+   = note: expected type: bool
+   = note: found type: word
+---
+
+error[SC0201]: type mismatch: expected bool, found numeric
+  --> /main/main.sol:26:20
+   |
+25 | function hex_operand() returns (bool) {
+26 |     return true && 0x1;
+   |                    ^^^ expression has mismatched type
+27 | }
+   |
+   = note: expected type: bool
+   = note: found type: numeric
+---
+
+error[SC0201]: type mismatch: expected bool, found numeric
+  --> /main/main.sol:31:16
+   |
+30 |     function main() public returns (bool) {
+31 |         return 1 && 2;
+   |                ^ expression has mismatched type
+32 |     }
+   |
+   = note: expected type: bool
+   = note: found type: numeric
+---
+
+error[SC0201]: type mismatch: expected bool, found numeric
+  --> /main/main.sol:31:21
+   |
+30 |     function main() public returns (bool) {
+31 |         return 1 && 2;
+   |                     ^ expression has mismatched type
+32 |     }
+   |
+   = note: expected type: bool
+   = note: found type: numeric
+---
+
+error[SC0201]: type mismatch: expected bool, found numeric
+  --> /main/main.sol:35:16
+   |
+34 |     function other() public returns (bool) {
+35 |         return 1 || 2;
+   |                ^ expression has mismatched type
+36 |     }
+   |
+   = note: expected type: bool
+   = note: found type: numeric
+---
+
+error[SC0201]: type mismatch: expected bool, found numeric
+  --> /main/main.sol:35:21
+   |
+34 |     function other() public returns (bool) {
+35 |         return 1 || 2;
+   |                     ^ expression has mismatched type
+36 |     }
+   |
+   = note: expected type: bool
+   = note: found type: numeric

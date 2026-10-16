@@ -1348,15 +1348,14 @@ impl<'db> InferCtx<'db> {
                 )
             }
             BinOp::And | BinOp::Or => {
+                // `&&`/`||` are built-in short-circuit operators (see
+                // specialize's evaluator and the hull emitter's native
+                // if/then/else lowering), not overloadable via `and`/`or`
+                // functions, so both operands must be `bool` directly.
                 let bool_ty = self.bool();
-                self.infer_operator_function_call_expected(
-                    body,
-                    expr,
-                    lhs_expr,
-                    rhs_expr,
-                    if op == BinOp::And { "and" } else { "or" },
-                    Some(bool_ty),
-                )
+                self.infer_expr_expected(body, lhs_expr, Some(bool_ty.clone()));
+                self.infer_expr_expected(body, rhs_expr, Some(bool_ty.clone()));
+                bool_ty
             }
             BinOp::Error => InferTy::Error,
         }

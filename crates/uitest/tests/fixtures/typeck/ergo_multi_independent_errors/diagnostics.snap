@@ -15,7 +15,7 @@ error[SC0201]: type mismatch: expected word, found bool
   = note: found type: bool
 ---
 
-error[SC0201]: type mismatch: expected numeric, found bool
+error[SC0201]: type mismatch: expected bool, found numeric
  --> /main/main.sol:6:10
   |
 5 | function b() returns (bool) {
@@ -23,8 +23,8 @@ error[SC0201]: type mismatch: expected numeric, found bool
   |          ^ expression has mismatched type
 7 | }
   |
-  = note: expected type: numeric
-  = note: found type: bool
+  = note: expected type: bool
+  = note: found type: numeric
 ---
 
 error[SC0206]: non-callable value of type word

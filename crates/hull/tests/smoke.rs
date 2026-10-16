@@ -1367,7 +1367,80 @@ contract C {
         ],
     );
     assert!(!main.contains("return sload(0)"), "{main}\n{hull}");
+    assert_contains_in_order(
+        "short-circuit and lowering",
+        main,
+        &["if<", "flag then", "inr<", "else", "inl<"],
+    );
+    assert!(!main.contains("std_and_"), "{main}\n{hull}");
+}
 
+#[test]
+fn and_runtime_lhs_still_lowers_closure_literal_in_rhs_baseline() {
+    // Baseline without `&&`: confirms this closure-literal-call shape erases
+    // cleanly on its own, so the follow-up test below isolates the `&&` bug.
+    pretty_src_hull_with_std(
+        "and_runtime_lhs_closure_rhs_baseline",
+        r#"
+import * from std;
+import * from std.dispatch;
+
+function twice(f: function(uint256) returns (uint256), x: uint256) returns (uint256) {
+    return f(f(x));
+}
+
+contract C {
+    function run(x: uint256) public returns (uint256) {
+        return twice(lam (v: uint256) -> uint256 { return v; }, x);
+    }
+}
+"#,
+    );
+}
+
+#[test]
+fn and_with_runtime_lhs_still_lowers_closure_literal_in_rhs() {
+    // Regression test: when the `&&`/`||` LHS isn't known at compile time,
+    // the evaluator used to return the RHS unprocessed instead of running it
+    // through `eval_expr`, so closure lowering never happened and emission
+    // failed with SC0422 (unsupported mono construct).
+    pretty_src_hull_with_std(
+        "and_runtime_lhs_closure_rhs",
+        r#"
+import * from std;
+import * from std.dispatch;
+
+function twice(f: function(uint256) returns (uint256), x: uint256) returns (uint256) {
+    return f(f(x));
+}
+
+contract C {
+    function run(flag: bool, x: uint256) public returns (bool) {
+        return flag && (twice(lam (v: uint256) -> uint256 { return v; }, x) == x);
+    }
+}
+"#,
+    );
+}
+
+#[test]
+fn audit_std_and_match_binders_do_not_shadow_arguments() {
+    let hull = pretty_src_hull_with_std(
+        "std_and_match_binders",
+        r#"
+import * from std;
+
+contract C {
+    x: word;
+
+    function test(flag: bool) returns (bool) {
+        return and(flag, true);
+    }
+
+    function main() public returns (bool) { return test(tobool(x)); }
+}
+"#,
+    );
     let and = hull_function(&hull, "std_and_");
     assert_contains_in_order(
         "match binder shadowing",

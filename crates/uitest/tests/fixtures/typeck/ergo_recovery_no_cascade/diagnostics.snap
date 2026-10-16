@@ -21,7 +21,7 @@ error[SC0201]: argument type mismatch in call to `first`
    = note: `first` has signature `first(p: (word, word)) returns (word)`
 ---
 
-error[SC0201]: type mismatch: expected numeric, found bool
+error[SC0201]: type mismatch: expected bool, found numeric
   --> /main/main.sol:15:10
    |
 14 | function g() returns (bool) {
@@ -29,5 +29,5 @@ error[SC0201]: type mismatch: expected numeric, found bool
    |          ^^ expression has mismatched type
 16 | }
    |
-   = note: expected type: numeric
-   = note: found type: bool
+   = note: expected type: bool
+   = note: found type: numeric

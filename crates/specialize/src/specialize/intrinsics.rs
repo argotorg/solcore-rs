@@ -64,8 +64,6 @@ pub(super) fn plain_operator_function(op: BinOp) -> Option<&'static str> {
         BinOp::NotEq => Some("ne"),
         BinOp::LtEq => Some("le"),
         BinOp::GtEq => Some("ge"),
-        BinOp::And => Some("and"),
-        BinOp::Or => Some("or"),
         _ => None,
     }
 }

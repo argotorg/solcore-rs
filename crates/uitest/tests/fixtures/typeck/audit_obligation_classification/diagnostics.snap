@@ -3,7 +3,7 @@ source: crates/test-utils/src/lib.rs
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/audit_obligation_classification/main.sol
 ---
-error[SC0201]: type mismatch: expected numeric, found function() returns (word)
+error[SC0201]: type mismatch: expected function() returns (word), found numeric
  --> /main/main.sol:2:10
   |
 1 | function literal_as_callee() returns (word) {
@@ -11,8 +11,8 @@ error[SC0201]: type mismatch: expected numeric, found function() returns (word)
   |          ^ expression has mismatched type
 3 | }
   |
-  = note: expected type: numeric
-  = note: found type: function() returns (word)
+  = note: expected type: function() returns (word)
+  = note: found type: numeric
 ---
 
 error[SC0206]: non-callable value of type word

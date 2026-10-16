@@ -4,7 +4,7 @@ assertion_line: 409
 expression: rendered
 input_file: crates/uitest/tests/fixtures/typeck/ergo_tuple_arity_mismatch/main.sol
 ---
-error[SC0201]: type mismatch: expected numeric, found pair<word, word>
+error[SC0201]: type mismatch: expected pair<word, word>, found numeric
  --> /main/main.sol:2:14
   |
 1 | function f() returns (word, word, word) {
@@ -12,5 +12,5 @@ error[SC0201]: type mismatch: expected numeric, found pair<word, word>
   |              ^ expression has mismatched type
 3 | }
   |
-  = note: expected type: numeric
-  = note: found type: pair<word, word>
+  = note: expected type: pair<word, word>
+  = note: found type: numeric

@@ -13,7 +13,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             | BinOp::BitOr
             | BinOp::Eq
             | BinOp::Gt => self.overloaded_bin_op_expr(expr),
-            BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::GtEq | BinOp::And | BinOp::Or => {
+            BinOp::NotEq | BinOp::Lt | BinOp::LtEq | BinOp::GtEq => {
                 self.operator_function_bin_op_expr(expr)
             }
             _ => Some(MonoExprKind::BinOp {
