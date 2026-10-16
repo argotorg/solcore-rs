@@ -2389,3 +2389,76 @@ fn repo_root() -> PathBuf {
         .expect("crate is under repo/crates/hull")
         .to_path_buf()
 }
+
+#[test]
+fn inferred_local_lambdas_emit_and_check() {
+    for (name, src) in [
+        (
+            "SimpleLambda",
+            include_str!(
+                "../../parser/tests/fixtures/corpus/ok/test/examples/cases/SimpleLambda.sol"
+            ),
+        ),
+        (
+            "closure-free-var-local",
+            include_str!(
+                "../../parser/tests/fixtures/corpus/ok/test/examples/cases/closure-free-var-local.sol"
+            ),
+        ),
+        (
+            "closure-free-var-std",
+            include_str!(
+                "../../parser/tests/fixtures/corpus/ok/test/examples/cases/closure-free-var-std.sol"
+            ),
+        ),
+        (
+            "closure-free-var",
+            include_str!(
+                "../../parser/tests/fixtures/corpus/ok/test/examples/cases/closure-free-var.sol"
+            ),
+        ),
+        (
+            "inc-closure",
+            include_str!(
+                "../../parser/tests/fixtures/corpus/ok/test/examples/cases/inc-closure.sol"
+            ),
+        ),
+        (
+            "user-op-lambda",
+            include_str!("fixtures/local-lambda-helper.sol"),
+        ),
+    ] {
+        let (db, output) = specialize_src_with_std(name, src);
+        assert_eq!(output.diagnostics, Vec::new(), "{name}");
+        let emitted = emit_module(db, &output.module, EmitOptions::default());
+        assert_eq!(emitted.diagnostics, Vec::new(), "{name}");
+        assert_eq!(
+            check_program_with_db(db, &emitted.program),
+            Vec::new(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn recursive_inferred_callable_signature_is_diagnosed() {
+    let (_, output) = specialize_src(
+        "recursive_inferred_callable_signature",
+        r#"
+contract C {
+    function main() returns (word) {
+        let f = lam (x) { return 0; };
+        return f(f);
+    }
+}
+"#,
+    );
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| matches!(
+            &diagnostic.kind,
+            SpecializeDiagnosticKind::FreeTypeVariable { .. }
+        )),
+        "{:?}",
+        output.diagnostics
+    );
+}

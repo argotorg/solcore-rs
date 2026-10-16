@@ -387,6 +387,10 @@ pub struct InferenceResult<'db> {
     pub pat_tys: Vec<PatTy<'db>>,
     /// Let binding type table.
     pub let_tys: Vec<LetTy<'db>>,
+    /// Resolved callable signatures of compiler-generated nominal closures.
+    /// Their identities remain nominal while selecting trait evidence; backends
+    /// can erase the representation without reconstructing the signature.
+    pub closure_tys: Vec<(DefId<'db>, Ty<'db>)>,
     /// Deferred obligations that the future solver must resolve.
     pub obligations: Vec<DeferredObligation<'db>>,
     /// Evidence for obligations solved by the trait solver.

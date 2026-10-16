@@ -22,6 +22,7 @@ pub(super) struct BodyCtx<'a, 'db> {
 }
 
 pub(super) struct BodyIndex<'db> {
+    closure_tys: FxHashMap<DefId<'db>, Ty<'db>>,
     expr_tys: FxHashMap<(FuncBody<'db>, Id<Expr<'db>>), Ty<'db>>,
     pat_tys: FxHashMap<(FuncBody<'db>, Id<Pat<'db>>), Ty<'db>>,
     let_tys: FxHashMap<(FuncBody<'db>, Id<Stmt<'db>>), Ty<'db>>,
@@ -43,6 +44,7 @@ impl<'db> BodyIndex<'db> {
         body_map: &hir_nameres::BodyResolutionMap<'db>,
     ) -> Self {
         let mut index = Self {
+            closure_tys: result.closure_tys.iter().copied().collect(),
             expr_tys: FxHashMap::default(),
             pat_tys: FxHashMap::default(),
             let_tys: FxHashMap::default(),
@@ -797,18 +799,22 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             params: param_tys, ..
         } = ty.kind(self.driver.db)
         else {
-            return Some(MonoExprKind::Lambda {
-                name,
-                params: Vec::new(),
-                body: Vec::new(),
+            self.driver.diagnostics.push(SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::MissingEvidence {
+                    context: "lambda callable signature".to_owned(),
+                },
+                span: Some(span),
             });
+            return None;
         };
         if params.len() != param_tys.len() {
-            return Some(MonoExprKind::Lambda {
-                name,
-                params: Vec::new(),
-                body: Vec::new(),
+            self.driver.diagnostics.push(SpecializeDiagnostic {
+                kind: SpecializeDiagnosticKind::MissingEvidence {
+                    context: "lambda parameter signature".to_owned(),
+                },
+                span: Some(span),
             });
+            return None;
         }
 
         let mut locals = self.locals.clone();
@@ -1405,15 +1411,65 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
     }
 
     fn normalize_body_ty(&self, ty: Ty<'db>) -> Ty<'db> {
-        let Some(resolution) = self.driver.try_module_resolution(self.info.module) else {
-            return ty;
+        // Recursive callable signatures have no finite Mono representation.
+        // mono_ty reports the existing non-concrete-type diagnostic for them.
+        self.erase_closure_ty(ty, &mut FxHashSet::default())
+            .unwrap_or_else(|| Ty::unknown(self.driver.db))
+    }
+
+    // Instance selection has already used the nominal closure identity. Mono
+    // needs its callable representation, including inside tuple/function types.
+    fn erase_closure_ty(
+        &self,
+        ty: Ty<'db>,
+        visiting: &mut FxHashSet<DefId<'db>>,
+    ) -> Option<Ty<'db>> {
+        let db = self.driver.db;
+        let ty = match self.driver.try_module_resolution(self.info.module) {
+            Some(resolution) => {
+                AliasNormalizer::new(db, self.info.module, &resolution.item_resolutions)
+                    .normalize_ty(ty)
+            }
+            None => ty,
         };
-        AliasNormalizer::new(
-            self.driver.db,
-            self.info.module,
-            &resolution.item_resolutions,
-        )
-        .normalize_ty(ty)
+        Some(match ty.kind(db) {
+            TyKind::Named {
+                ctor: TyCtor::User(user),
+                args,
+            } if args.is_empty() && self.index.closure_tys.contains_key(&user.def) => {
+                if !visiting.insert(user.def) {
+                    return None;
+                }
+                let signature = self.subst.apply_ty(db, self.index.closure_tys[&user.def]);
+                let signature = self.erase_closure_ty(signature, visiting)?;
+                visiting.remove(&user.def);
+                signature
+            }
+            TyKind::Named { ctor, args } => Ty::named(
+                db,
+                *ctor,
+                args.iter()
+                    .map(|ty| self.erase_closure_ty(*ty, visiting))
+                    .collect::<Option<_>>()?,
+            ),
+            TyKind::Function { params, ret } => Ty::function(
+                db,
+                params
+                    .iter()
+                    .map(|ty| self.erase_closure_ty(*ty, visiting))
+                    .collect::<Option<_>>()?,
+                self.erase_closure_ty(*ret, visiting)?,
+            ),
+            TyKind::Tuple(elems) => Ty::tuple(
+                db,
+                elems
+                    .iter()
+                    .map(|ty| self.erase_closure_ty(*ty, visiting))
+                    .collect::<Option<_>>()?,
+            ),
+            TyKind::Comptime(inner) => Ty::comptime(db, self.erase_closure_ty(*inner, visiting)?),
+            TyKind::Error | TyKind::Unknown | TyKind::BoundVar(_) => ty,
+        })
     }
 
     fn array_lit_expr(

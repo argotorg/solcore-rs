@@ -158,6 +158,16 @@ impl<'db> InferCtx<'db> {
                 });
             }
         }
+        let closure_tys = std::mem::take(&mut self.closure_sigs)
+            .into_iter()
+            .map(|(def, sig)| {
+                let ty = self.engine.ground_ty(InferTy::Function {
+                    params: sig.params,
+                    ret: Box::new(sig.ret),
+                });
+                (def, ty)
+            })
+            .collect();
         let expr_tys = self
             .expr_tys
             .into_iter()
@@ -218,6 +228,7 @@ impl<'db> InferCtx<'db> {
             expr_tys,
             pat_tys,
             let_tys,
+            closure_tys,
             obligations,
             obligation_evidence: solved.evidence,
             call_site_evidence: solved.call_site_evidence,
