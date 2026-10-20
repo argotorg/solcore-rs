@@ -9,7 +9,8 @@ use parser::parse_file_to_hir;
 use rustc_hash::FxHashSet;
 
 use crate::{
-    BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtor, support::is_canonical_std_def_named,
+    BuiltinTyCtor, Db, Ty, TyCtor, TyKind, UserTyCtor,
+    support::{is_canonical_std_def_named, is_canonical_std_module_def_named},
 };
 
 type AbiAdtStack<'db> = Vec<Ty<'db>>;
@@ -654,13 +655,13 @@ fn abi_item_type_resolutions<'db>(
 
 fn canonical_user_abi_name(db: &dyn Db, user: &UserTyCtor<'_>) -> Option<String> {
     let name = user.def.name(db)?;
-    if !is_canonical_std_def_named(db, user.def, &name) {
-        return None;
-    }
-    match name.as_str() {
-        "uint256" | "address" | "bytes4" | "bytes32" => Some(name),
-        _ => None,
-    }
+    let module = match name.as_str() {
+        "uint256" | "address" | "bytes4" | "bytes32" => "std",
+        "int8" | "int16" | "int32" | "int64" | "int128" | "int256" => "signed",
+        "uint8" | "uint16" | "uint32" | "uint64" | "uint128" => "unsigned",
+        _ => return None,
+    };
+    is_canonical_std_module_def_named(db, user.def, module, &name).then_some(name)
 }
 
 fn contains_canonical_calldata_array<'db>(db: &'db dyn Db, ty: Ty<'db>) -> bool {

@@ -1,0 +1,194 @@
+// std.unsigned: arithmetic, bitwise, comparison and bounds per width.
+// Parameters and results are raw words: each function rebuilds the uintN
+// value with Typedef.abs and returns Typedef.rep of the result. Operations
+// wrap modulo 2^N (results are masked to the type's width).
+// cmp* returns a bitmask: lt=1, gt=2, le=4, ge=8, eq=16, ne=32.
+import * from std;
+import * from std.unsigned;
+import * from std.dispatch;
+
+contract UnsignedIntegers {
+  // ---- uint64 ----
+  // #[(1, 2) -> 3]
+  // #[(18446744073709551615, 1) -> 0]
+  // #[(18446744073709551615, 18446744073709551615) -> 18446744073709551614]
+  function addU64(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    let y: uint64 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x + y));
+  }
+  // #[(5, 3) -> 2]
+  // #[(0, 1) -> 18446744073709551615]
+  // #[(3, 5) -> 18446744073709551614]
+  function subU64(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    let y: uint64 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x - y));
+  }
+  // #[(6, 7) -> 42]
+  // #[(18446744073709551615, 2) -> 18446744073709551614]
+  // #[(4294967296, 4294967296) -> 0]
+  function mulU64(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    let y: uint64 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x * y));
+  }
+  // #[(7, 2) -> 3]
+  // #[(18446744073709551615, 1) -> 18446744073709551615]
+  // #[(18446744073709551615, 18446744073709551615) -> 1]
+  function divU64(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    let y: uint64 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x / y));
+  }
+  // #[(7, 3) -> 1]
+  // #[(18446744073709551615, 10) -> 5]
+  // #[(3, 7) -> 3]
+  function modU64(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    let y: uint64 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x % y));
+  }
+  // #[(18446744073709551615, 15) -> 15]
+  // #[(240, 60) -> 48]
+  function andU64(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    let y: uint64 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x & y));
+  }
+  // #[(240, 15) -> 255]
+  // #[(18446744073709551614, 1) -> 18446744073709551615]
+  function orU64(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    let y: uint64 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x | y));
+  }
+  // #[(18446744073709551615, 1) -> 18446744073709551614]
+  // #[(255, 15) -> 240]
+  function xorU64(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    let y: uint64 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x ^ y));
+  }
+  // #[(0) -> 18446744073709551615]
+  // #[(18446744073709551615) -> 0]
+  // #[(15) -> 18446744073709551600]
+  function notU64(a: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    return uint256(Typedef.rep(~x));
+  }
+  // #[(1, 2) -> 37]
+  // #[(2, 1) -> 42]
+  // #[(18446744073709551615, 18446744073709551615) -> 28]
+  // #[(0, 18446744073709551615) -> 37]
+  function cmpU64(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint64 = Typedef.abs(Typedef.rep(a));
+    let y: uint64 = Typedef.abs(Typedef.rep(b));
+    let r: uint256 = uint256(0);
+    if (x < y) { r = r + uint256(1); }
+    if (x > y) { r = r + uint256(2); }
+    if (x <= y) { r = r + uint256(4); }
+    if (x >= y) { r = r + uint256(8); }
+    if (x == y) { r = r + uint256(16); }
+    if (x != y) { r = r + uint256(32); }
+    return r;
+  }
+  // #[() -> (0, 18446744073709551615)]
+  function boundsU64() public returns (uint256, uint256) {
+    let lo: uint64 = Bounded.minVal();
+    let hi: uint64 = Bounded.maxVal();
+    return (uint256(Typedef.rep(lo)), uint256(Typedef.rep(hi)));
+  }
+
+  // ---- uint128 ----
+  // #[(1, 2) -> 3]
+  // #[(0xffffffffffffffffffffffffffffffff, 1) -> 0]
+  // #[(0xffffffffffffffffffffffffffffffff, 0xffffffffffffffffffffffffffffffff) -> 0xfffffffffffffffffffffffffffffffe]
+  function addU128(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    let y: uint128 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x + y));
+  }
+  // #[(5, 3) -> 2]
+  // #[(0, 1) -> 0xffffffffffffffffffffffffffffffff]
+  // #[(3, 5) -> 0xfffffffffffffffffffffffffffffffe]
+  function subU128(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    let y: uint128 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x - y));
+  }
+  // #[(6, 7) -> 42]
+  // #[(0xffffffffffffffffffffffffffffffff, 2) -> 0xfffffffffffffffffffffffffffffffe]
+  // #[(0x10000000000000000, 0x10000000000000000) -> 0]
+  function mulU128(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    let y: uint128 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x * y));
+  }
+  // #[(7, 2) -> 3]
+  // #[(0xffffffffffffffffffffffffffffffff, 1) -> 0xffffffffffffffffffffffffffffffff]
+  // #[(0xffffffffffffffffffffffffffffffff, 0xffffffffffffffffffffffffffffffff) -> 1]
+  function divU128(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    let y: uint128 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x / y));
+  }
+  // #[(7, 3) -> 1]
+  // #[(0xffffffffffffffffffffffffffffffff, 10) -> 5]
+  // #[(3, 7) -> 3]
+  function modU128(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    let y: uint128 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x % y));
+  }
+  // #[(0xffffffffffffffffffffffffffffffff, 15) -> 15]
+  // #[(240, 60) -> 48]
+  function andU128(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    let y: uint128 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x & y));
+  }
+  // #[(240, 15) -> 255]
+  // #[(0xfffffffffffffffffffffffffffffffe, 1) -> 0xffffffffffffffffffffffffffffffff]
+  function orU128(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    let y: uint128 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x | y));
+  }
+  // #[(0xffffffffffffffffffffffffffffffff, 1) -> 0xfffffffffffffffffffffffffffffffe]
+  // #[(255, 15) -> 240]
+  function xorU128(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    let y: uint128 = Typedef.abs(Typedef.rep(b));
+    return uint256(Typedef.rep(x ^ y));
+  }
+  // #[(0) -> 0xffffffffffffffffffffffffffffffff]
+  // #[(0xffffffffffffffffffffffffffffffff) -> 0]
+  // #[(15) -> 0xfffffffffffffffffffffffffffffff0]
+  function notU128(a: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    return uint256(Typedef.rep(~x));
+  }
+  // #[(1, 2) -> 37]
+  // #[(2, 1) -> 42]
+  // #[(0xffffffffffffffffffffffffffffffff, 0xffffffffffffffffffffffffffffffff) -> 28]
+  // #[(0, 0xffffffffffffffffffffffffffffffff) -> 37]
+  function cmpU128(a: uint256, b: uint256) public returns (uint256) {
+    let x: uint128 = Typedef.abs(Typedef.rep(a));
+    let y: uint128 = Typedef.abs(Typedef.rep(b));
+    let r: uint256 = uint256(0);
+    if (x < y) { r = r + uint256(1); }
+    if (x > y) { r = r + uint256(2); }
+    if (x <= y) { r = r + uint256(4); }
+    if (x >= y) { r = r + uint256(8); }
+    if (x == y) { r = r + uint256(16); }
+    if (x != y) { r = r + uint256(32); }
+    return r;
+  }
+  // #[() -> (0, 0xffffffffffffffffffffffffffffffff)]
+  function boundsU128() public returns (uint256, uint256) {
+    let lo: uint128 = Bounded.minVal();
+    let hi: uint128 = Bounded.maxVal();
+    return (uint256(Typedef.rep(lo)), uint256(Typedef.rep(hi)));
+  }
+}

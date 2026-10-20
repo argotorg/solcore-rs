@@ -182,6 +182,16 @@ fn insert_real_std_modules(db: &mut TestDb) {
             "/std/eip7951.sol",
             include_str!("../../../std/eip7951.sol"),
         ),
+        (
+            "signed",
+            "/std/signed.sol",
+            include_str!("../../../std/signed.sol"),
+        ),
+        (
+            "unsigned",
+            "/std/unsigned.sol",
+            include_str!("../../../std/unsigned.sol"),
+        ),
     ] {
         insert_module_source(
             db,
@@ -872,6 +882,71 @@ contract Bytes4Echo {
     let abi = contract_abi_json(&db, module, contract).expect("bytes4 ABI JSON");
     assert!(abi.contains("\"internalType\": \"bytes4\""), "{abi}");
     assert!(abi.contains("\"type\": \"bytes4\""), "{abi}");
+}
+
+#[test]
+fn std_signed_and_unsigned_integers_are_supported_by_the_public_abi_surface() {
+    let (mut db, key) = db_with_main(
+        r#"
+import * from std;
+import * from std.signed;
+import * from std.unsigned;
+
+contract IntEcho {
+  function echo(a: int8, b: int256, c: uint64) public returns (int8, int256, uint64) {
+    return (a, b, c);
+  }
+}
+"#,
+    );
+    insert_real_std_modules(&mut db);
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "IntEcho");
+    let surface = contract_dispatch_surface(&db, module, contract);
+    assert!(
+        surface
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code.as_deref() != Some("SC0231")),
+        "{:?}",
+        surface.diagnostics
+    );
+    let method = &surface.methods[0];
+    assert_eq!(method.signature, "echo(int8,int256,uint64)");
+
+    let abi = contract_abi_json(&db, module, contract).expect("integer ABI JSON");
+    for ty in ["int8", "int256", "uint64"] {
+        assert!(abi.contains(&format!("\"type\": \"{ty}\"")), "{abi}");
+    }
+}
+
+#[test]
+fn integer_names_outside_std_signed_and_unsigned_are_not_canonical_abi_types() {
+    let (mut db, key) = db_with_main(
+        r#"
+import * from std;
+
+enum int8 { int8(word) }
+
+contract LocalInt {
+  function echo(value: int8) public returns (int8) { return value; }
+}
+"#,
+    );
+    insert_real_std_modules(&mut db);
+    let file = db.module_files[&key];
+    let module = parse_file_to_hir(&db, file).module(&db);
+    let contract = contract_named(&db, module, "LocalInt");
+    let surface = contract_dispatch_surface(&db, module, contract);
+    assert!(
+        surface
+            .methods
+            .iter()
+            .all(|method| method.signature != "echo(int8)"),
+        "{:?}",
+        surface.methods
+    );
 }
 
 #[test]
