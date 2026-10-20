@@ -9,8 +9,10 @@ contract AbiBoundaries {
         return value;
     }
 
-    // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 1) -> 0]
-    function wrappingAdd(lhs: uint256, rhs: uint256) public returns (uint256) {
+    // uint256 arithmetic is checked: overflow reverts with Panic(0x11).
+    // #[(0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe, 1) -> 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff]
+    // #[(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff, 1) -> revert(0x4e487b710000000000000000000000000000000000000000000000000000000000000011)]
+    function checkedAdd(lhs: uint256, rhs: uint256) public returns (uint256) {
         return lhs + rhs;
     }
 

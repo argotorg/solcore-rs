@@ -17,7 +17,8 @@ use super::{
     CEnv, TypeReg, VEnv, YulState,
     assigned::{AssignedNames, invalidate_assigned},
     effects::{
-        compute_comptime_pure_funs, compute_pure_funs, compute_write_effects, expr_is_pure,
+        compute_comptime_inlinable_funs, compute_comptime_pure_funs, compute_inlinable_funs,
+        compute_pure_funs, compute_write_effects, expr_is_pure,
         expr_write_effects_from_call_summaries, intrinsic_is_pure, storage_field_names,
     },
     erasure::{
@@ -113,7 +114,11 @@ pub(super) struct Evaluator<'db> {
     pub(super) db: &'db dyn Db,
     functions: FxHashMap<String, MonoFunction<'db>>,
     pure_funs: FxHashSet<String>,
+    // `pure_funs` plus functions whose only effects are guarded statement
+    // calls (such as checked-arithmetic panics); see `compute_inlinable_funs`.
+    inlinable_funs: FxHashSet<String>,
     comptime_pure_funs: FxHashSet<String>,
+    comptime_inlinable_funs: FxHashSet<String>,
     write_effects: FxHashMap<String, AssignedNames>,
     pub(super) diagnostics: Vec<SpecializeDiagnostic<'db>>,
     inline_stack: Vec<InlineFrame<'db>>,
@@ -187,13 +192,18 @@ impl<'db> Evaluator<'db> {
             .collect::<FxHashMap<_, _>>();
         let storage_fields = storage_field_names(db, module);
         let pure_funs = compute_pure_funs(db, &functions, &storage_fields);
+        let inlinable_funs = compute_inlinable_funs(db, &functions, &storage_fields);
         let comptime_pure_funs = compute_comptime_pure_funs(db, &functions, &storage_fields);
+        let comptime_inlinable_funs =
+            compute_comptime_inlinable_funs(db, &functions, &storage_fields);
         let write_effects = compute_write_effects(&functions, &storage_fields);
         Self {
             db,
             functions,
             pure_funs,
+            inlinable_funs,
             comptime_pure_funs,
+            comptime_inlinable_funs,
             write_effects,
             diagnostics: Vec::new(),
             inline_stack: Vec::new(),
@@ -1786,7 +1796,9 @@ impl<'db> Evaluator<'db> {
                 if ret_comptime {
                     expr = materialize_comptime_value(self.db, expr);
                 }
-                Some(expr)
+                // A returned lambda may still capture this callee's parameters,
+                // which do not exist in the caller.
+                self.close_escaping_closures(expr, &function.params, args)
             }
             FoldOutcome::ReturnedUnknownAbort | FoldOutcome::FellThroughContinue(_, _) => None,
         }
@@ -1856,8 +1868,14 @@ impl<'db> Evaluator<'db> {
             if self.pure_funs.contains(&function.name) {
                 self.pure_funs.insert(name.clone());
             }
+            if self.inlinable_funs.contains(&function.name) {
+                self.inlinable_funs.insert(name.clone());
+            }
             if self.comptime_pure_funs.contains(&function.name) {
                 self.comptime_pure_funs.insert(name.clone());
+            }
+            if self.comptime_inlinable_funs.contains(&function.name) {
+                self.comptime_inlinable_funs.insert(name.clone());
             }
             self.write_effects.insert(
                 name.clone(),
@@ -2050,7 +2068,7 @@ impl<'db> Evaluator<'db> {
     }
 
     fn function_can_inline(&self, name: &str, function: &MonoFunction<'db>) -> bool {
-        self.pure_funs.contains(name) || self.function_is_std_dispatch(function)
+        self.inlinable_funs.contains(name) || self.function_is_std_dispatch(function)
     }
 
     fn function_is_std_dispatch(&self, function: &MonoFunction<'db>) -> bool {
@@ -2165,6 +2183,12 @@ impl<'db> Evaluator<'db> {
                 MonoStmtKind::Let { id, mode, init, .. } => {
                     let comptime = mode.is_comptime();
                     let init = init.map(|expr| self.eval_expr(&env, &comptime_env, expr));
+                    if init
+                        .as_ref()
+                        .is_some_and(|expr| self.residual_has_effects(expr))
+                    {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    }
                     let init_is_comptime = init
                         .as_ref()
                         .is_some_and(|expr| self.expr_is_comptime(expr, &comptime_env));
@@ -2186,6 +2210,9 @@ impl<'db> Evaluator<'db> {
                 } => {
                     let (lhs, target) = self.eval_lvalue(&env, &comptime_env, lhs);
                     let rhs = self.eval_expr(&env, &comptime_env, rhs);
+                    if self.residual_has_effects(&rhs) {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    }
                     if let Some(id) = target {
                         let rhs_is_comptime = self.expr_is_comptime(&rhs, &comptime_env);
                         if self.expr_is_known_value(&rhs) {
@@ -2220,6 +2247,15 @@ impl<'db> Evaluator<'db> {
                     } else {
                         FoldOutcome::ReturnedUnknownAbort
                     };
+                }
+                // Pure statements are droppable. An inlinable function may
+                // guard an effect here (for example a panic); unfold past it
+                // only if evaluation makes it vanish.
+                MonoStmtKind::Expr(expr) if !expr_is_pure(&expr, &self.pure_funs) => {
+                    let expr = self.eval_expr(&env, &comptime_env, expr);
+                    if self.residual_has_effects(&expr) {
+                        return FoldOutcome::ReturnedUnknownAbort;
+                    }
                 }
                 MonoStmtKind::Expr(_) => {}
                 MonoStmtKind::Match { scrutinees, arms } => {
@@ -2327,6 +2363,13 @@ impl<'db> Evaluator<'db> {
         FoldOutcome::FellThroughContinue(env, comptime_env)
     }
 
+    /// Whether an expression left after evaluation may still have an effect
+    /// (for example an unfolded checked-arithmetic call that could revert).
+    /// Unfolding a function body past such a residual would discard it.
+    fn residual_has_effects(&self, expr: &MonoExpr<'db>) -> bool {
+        !self.expr_is_known_value(expr) && !expr_is_pure(expr, &self.pure_funs)
+    }
+
     fn check_comptime_params(
         &mut self,
         name: &str,
@@ -2386,8 +2429,13 @@ impl<'db> Evaluator<'db> {
             } => {
                 let callee_is_comptime = match origin {
                     MonoCallOrigin::Builtin(intrinsic) => intrinsic_is_pure(*intrinsic),
+                    // A guarded effect (such as an overflow panic) only means
+                    // the call may fail to fold. With every argument known,
+                    // evaluation already tried, so a surviving call reached it.
                     MonoCallOrigin::Source(_) | MonoCallOrigin::ByName => {
                         self.comptime_pure_funs.contains(&callee.name)
+                            || (self.comptime_inlinable_funs.contains(&callee.name)
+                                && !args.iter().all(|arg| self.expr_is_known_value(arg)))
                     }
                 };
                 callee_is_comptime
