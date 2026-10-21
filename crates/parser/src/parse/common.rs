@@ -97,6 +97,7 @@ contextual_keyword_parser!(trait_kw_parser, "trait");
 contextual_keyword_parser!(impl_kw_parser, "impl");
 contextual_keyword_parser!(mapping_kw_parser, "mapping");
 contextual_keyword_parser!(while_kw_parser, "while");
+contextual_keyword_parser!(unchecked_kw_parser, "unchecked");
 
 pub(super) fn hiding_kw_parser<'src, I>() -> impl Parser<'src, I, (), ParserErr<'src>>
 where

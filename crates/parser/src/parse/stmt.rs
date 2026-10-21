@@ -363,6 +363,20 @@ where
             })
             .boxed();
 
+        // `unchecked` stays a valid identifier: only `unchecked {` starts a block.
+        let unchecked_stmt = unchecked_kw_parser()
+            .then(
+                stmt.clone()
+                    .repeated()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+            )
+            .map_with(|(keyword, body), e| ParsedStmt {
+                span: e.span(),
+                kind: ParsedStmtKind::Unchecked { keyword, body },
+            })
+            .boxed();
+
         let block_stmt = stmt
             .clone()
             .repeated()
@@ -413,6 +427,7 @@ where
             while_stmt,
             if_stmt,
             assembly_stmt,
+            unchecked_stmt,
             block_stmt,
             break_stmt,
             continue_stmt,

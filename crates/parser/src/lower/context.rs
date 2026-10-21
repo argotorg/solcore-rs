@@ -15,6 +15,8 @@ pub(super) struct LoweringCtx<'db, 'a> {
     pub(super) source: &'a str,
     pub(super) parse_errors: &'a mut Vec<ParsedError>,
     pub(super) expression_nesting: usize,
+    /// Whether lowering is lexically inside an `unchecked` block.
+    pub(super) unchecked: bool,
 }
 
 impl<'db, 'a> LoweringCtx<'db, 'a> {
@@ -36,6 +38,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             source,
             parse_errors,
             expression_nesting: 0,
+            unchecked: false,
         }
     }
 

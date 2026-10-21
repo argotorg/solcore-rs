@@ -1538,11 +1538,12 @@ fn intrinsic_name(intrinsic: MonoIntrinsic) -> &'static str {
 
 fn bin_op_name(op: BinOp) -> Option<&'static str> {
     match op {
-        BinOp::Add => Some("add"),
-        BinOp::Sub => Some("sub"),
-        BinOp::Mul => Some("mul"),
-        BinOp::Div => Some("div"),
-        BinOp::Mod => Some("mod"),
+        // Primitive words already wrap, so an unchecked operator lowers alike.
+        BinOp::Add | BinOp::UncheckedAdd => Some("add"),
+        BinOp::Sub | BinOp::UncheckedSub => Some("sub"),
+        BinOp::Mul | BinOp::UncheckedMul => Some("mul"),
+        BinOp::Div | BinOp::UncheckedDiv => Some("div"),
+        BinOp::Mod | BinOp::UncheckedMod => Some("mod"),
         BinOp::BitAnd => Some("and"),
         BinOp::BitXor => Some("xor"),
         BinOp::BitOr => Some("or"),

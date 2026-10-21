@@ -214,9 +214,14 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         let lhs = self.lower_expr(anchor, base_start, lhs, arenas);
         let rhs = self.lower_expr(anchor, base_start, rhs, arenas);
         let op_span = span_from_absolute(anchor, op.span, base_start);
+        let op = if self.unchecked {
+            op.elem.unchecked()
+        } else {
+            op.elem
+        };
         function::ExprKind::BinOp {
             lhs,
-            op: SpannedElem::new(op.elem, op_span),
+            op: SpannedElem::new(op, op_span),
             rhs,
         }
     }
@@ -339,6 +344,9 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
         let mut lambda_arenas = BodyArenas::new();
         let mut top_level_stmts = Vec::with_capacity(parsed_body.output.len());
         self.with_owner(body_def, |ctx| {
+            // A lambda is a separate function: like a called function, its
+            // body is not affected by an enclosing `unchecked` block.
+            let enclosing_unchecked = std::mem::replace(&mut ctx.unchecked, false);
             for stmt in parsed_body.output {
                 top_level_stmts.push(ctx.lower_stmt(
                     body_anchor,
@@ -347,6 +355,7 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
                     &mut lambda_arenas,
                 ));
             }
+            ctx.unchecked = enclosing_unchecked;
         });
 
         let lowered_body_span = span_from_absolute(body_anchor, body_span, body_span.start);
@@ -456,6 +465,18 @@ impl<'db, 'a> LoweringCtx<'db, 'a> {
             ParsedStmtKind::Block { body } => function::StmtKind::Block {
                 body: self.lower_stmt_block(anchor, base_start, body, arenas),
             },
+            ParsedStmtKind::Unchecked { keyword, body } => {
+                if self.unchecked {
+                    self.parse_errors.push(ParsedError::new(
+                        keyword,
+                        "`unchecked` blocks cannot be nested",
+                    ));
+                }
+                let enclosing_unchecked = std::mem::replace(&mut self.unchecked, true);
+                let body = self.lower_stmt_block(anchor, base_start, body, arenas);
+                self.unchecked = enclosing_unchecked;
+                function::StmtKind::Block { body }
+            }
             ParsedStmtKind::Assembly { body } => function::StmtKind::Assembly {
                 body: body
                     .into_iter()

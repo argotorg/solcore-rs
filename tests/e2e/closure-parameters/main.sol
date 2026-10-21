@@ -70,6 +70,15 @@ contract ClosureParameters {
         return twice(makeAdder(uint256(10)), x);
     }
 
+    // The factory argument is a runtime value and the closure body performs a
+    // checked addition, so the capture must survive inlining makeAdder.
+    // #[(5, 37) -> 42]
+    // #[(1, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) -> revert(0x4e487b710000000000000000000000000000000000000000000000000000000000000011)]
+    function runtimeFactory(step: uint256, x: uint256) public returns (uint256) {
+        let f = makeAdder(step);
+        return f(x);
+    }
+
     // #[(40) -> 42]
     function shadowed(x: uint256) public returns (uint256) {
         let v = uint256(99);

@@ -786,6 +786,14 @@ pub(crate) enum ParsedStmtKind<'src> {
         /// Parsed Yul statements.
         body: Vec<ParsedYulStmt<'src>>,
     },
+    /// `unchecked { ... }`: arithmetic operators written directly inside the
+    /// block lower to the wrapping `std.unchecked` classes.
+    Unchecked {
+        /// Span of the contextual `unchecked` keyword.
+        keyword: LexSpan,
+        /// Statements inside the block.
+        body: Vec<ParsedStmt<'src>>,
+    },
     /// Break statement.
     Break,
     /// Continue statement.

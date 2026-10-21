@@ -5,7 +5,10 @@
 
 use super::*;
 use crate::evaluate::{
-    effects::{function_is_comptime_pure, function_is_pure},
+    effects::{
+        function_is_comptime_inlinable, function_is_comptime_pure, function_is_inlinable,
+        function_is_pure,
+    },
     known::collect_pat_binders,
 };
 use crate::ir::{MonoFunctionOrigin, MonoParam, ParamMode, visit::walk_expr};
@@ -62,6 +65,66 @@ impl<'db> Evaluator<'db> {
             self.bound_closure(&target, values, expr.ty, expr.span),
             bindings,
         )
+    }
+
+    /// Closes every lambda in an inlined callee's result over the call's
+    /// arguments. A capture names a callee parameter, which is unbound in the
+    /// caller; it becomes the bound argument instead. Returns `None` when a
+    /// capture is a callee local, which the caller cannot provide.
+    pub(super) fn close_escaping_closures(
+        &mut self,
+        expr: MonoExpr<'db>,
+        params: &[MonoParam<'db>],
+        args: &[MonoExpr<'db>],
+    ) -> Option<MonoExpr<'db>> {
+        let MonoExpr { span, ty, kind } = expr;
+        let kind = match kind {
+            MonoExprKind::TypeAnnot { expr, ty } => MonoExprKind::TypeAnnot {
+                expr: Box::new(self.close_escaping_closures(*expr, params, args)?),
+                ty,
+            },
+            MonoExprKind::Tuple(elems) => MonoExprKind::Tuple(
+                elems
+                    .into_iter()
+                    .map(|elem| self.close_escaping_closures(elem, params, args))
+                    .collect::<Option<_>>()?,
+            ),
+            MonoExprKind::Con { ctor, args: fields } => MonoExprKind::Con {
+                ctor,
+                args: fields
+                    .into_iter()
+                    .map(|field| self.close_escaping_closures(field, params, args))
+                    .collect::<Option<_>>()?,
+            },
+            kind @ MonoExprKind::Lambda { .. } => {
+                let lambda = MonoExpr { span, ty, kind };
+                let MonoExprKind::Lambda {
+                    params: lambda_params,
+                    body,
+                    ..
+                } = &lambda.kind
+                else {
+                    unreachable!("matched a lambda")
+                };
+                if self.closure_captures(lambda_params, body).is_empty() {
+                    return Some(lambda);
+                }
+                let (target, captures) = self.lift_closure(&lambda)?;
+                let values = captures
+                    .iter()
+                    .map(|capture| {
+                        let MonoExprKind::Var(id) = &capture.kind else {
+                            return None;
+                        };
+                        let index = params.iter().position(|param| param.name == id.name)?;
+                        args.get(index).cloned()
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                return Some(self.bound_closure(&target, values, ty, span));
+            }
+            kind => kind,
+        };
+        Some(MonoExpr { span, ty, kind })
     }
 
     pub(super) fn try_clone_closure_call(
@@ -328,6 +391,15 @@ impl<'db> Evaluator<'db> {
         ) {
             self.pure_funs.insert(function.name.clone());
         }
+        if function_is_inlinable(
+            self.db,
+            &function,
+            &self.inlinable_funs,
+            &function.name,
+            &self.storage_fields,
+        ) {
+            self.inlinable_funs.insert(function.name.clone());
+        }
         if function_is_comptime_pure(
             self.db,
             &function,
@@ -336,6 +408,15 @@ impl<'db> Evaluator<'db> {
             &self.storage_fields,
         ) {
             self.comptime_pure_funs.insert(function.name.clone());
+        }
+        if function_is_comptime_inlinable(
+            self.db,
+            &function,
+            &self.comptime_inlinable_funs,
+            &function.name,
+            &self.storage_fields,
+        ) {
+            self.comptime_inlinable_funs.insert(function.name.clone());
         }
         // A closure's writes depend on its bound callable arguments. Until its
         // body has been evaluated, use a conservative summary at all call sites.

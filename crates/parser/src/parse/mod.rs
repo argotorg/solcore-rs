@@ -463,7 +463,9 @@ fn validate_expression_statement_terminators(
                     validate_expression_statement_terminators(&arm.body, false, errors);
                 }
             }
-            ParsedStmtKind::For { body, .. } | ParsedStmtKind::Block { body } => {
+            ParsedStmtKind::For { body, .. }
+            | ParsedStmtKind::Block { body }
+            | ParsedStmtKind::Unchecked { body, .. } => {
                 validate_expression_statement_terminators(body, false, errors);
             }
             ParsedStmtKind::If {

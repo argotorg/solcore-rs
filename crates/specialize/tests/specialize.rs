@@ -3183,6 +3183,145 @@ contract C {
 }
 
 #[test]
+fn checked_uint256_arithmetic_folds_at_comptime() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+
+function double(comptime value: uint256) returns (comptime<uint256>) {
+  return value + value;
+}
+
+contract C {
+  function main() public returns (uint256) {
+    let r: comptime<uint256> = double(uint256(21));
+    return r;
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), Some("42".to_owned()));
+}
+
+#[test]
+fn checked_uint256_overflow_at_comptime_is_a_comptime_failure() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+
+function double(comptime value: uint256) returns (comptime<uint256>) {
+  return value + value;
+}
+
+contract C {
+  function main() public returns (uint256) {
+    let r: comptime<uint256> = double(uint256(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff));
+    return r;
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.diagnostics.iter().any(|diagnostic| matches!(
+            diagnostic.kind,
+            SpecializeDiagnosticKind::ComptimeEvaluationFailed { .. }
+        )),
+        "{:?}",
+        output.diagnostics
+    );
+}
+
+#[test]
+fn checked_arithmetic_folds_only_when_its_guard_is_statically_false() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+
+contract C {
+  function main() public returns (uint256) {
+    return uint256(2) + uint256(3);
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), Some("5".to_owned()));
+
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+
+contract C {
+  function main() public returns (uint256) {
+    return uint256(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) + uint256(1);
+  }
+}
+"#,
+    );
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), None);
+    assert!(
+        function_names(&output)
+            .iter()
+            .any(|name| name.contains("uAddChecked")),
+        "the overflowing addition must remain a runtime call"
+    );
+}
+
+#[test]
+fn unchecked_block_arithmetic_folds_with_wrapping() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+import * from std.unchecked.unsigned;
+
+contract C {
+  function main() public returns (uint256) {
+    unchecked {
+      return uint256(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) + uint256(1);
+    }
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), Some("0".to_owned()));
+}
+
+#[test]
+fn unfolding_never_discards_an_unused_checked_operation() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+
+function k(u: uint256) returns (uint256) {
+  let unused: uint256 = u + u;
+  return uint256(1);
+}
+
+contract C {
+  function main(x: uint256) public returns (uint256) {
+    return k(x);
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), None);
+    assert!(
+        function_names(&output)
+            .iter()
+            .any(|name| name.contains("uAddChecked")),
+        "folding k(x) to 1 would drop the overflow check of u + u"
+    );
+}
+
+#[test]
 fn assembly_substitution_does_not_reuse_values_after_an_in_block_write() {
     let (db, output) = specialize_src(
         r#"
@@ -4381,12 +4520,18 @@ fn main_return_expr<'a, 'db>(output: &'a SpecializeOutput<'db>) -> Option<&'a Mo
         let MonoItem::Function(function) = item else {
             return None;
         };
-        main_names.contains(&function.name).then(|| {
-            function.body.iter().find_map(|stmt| match &stmt.kind {
-                MonoStmtKind::Return(Some(expr)) => Some(expr),
-                _ => None,
-            })
-        })?
+        main_names
+            .contains(&function.name)
+            .then(|| first_return_expr(&function.body))?
+    })
+}
+
+fn first_return_expr<'a, 'db>(stmts: &'a [MonoStmt<'db>]) -> Option<&'a MonoExpr<'db>> {
+    stmts.iter().find_map(|stmt| match &stmt.kind {
+        MonoStmtKind::Return(Some(expr)) => Some(expr),
+        // An `unchecked { ... }` block lowers to a plain block.
+        MonoStmtKind::Block(body) => first_return_expr(body),
+        _ => None,
     })
 }
 

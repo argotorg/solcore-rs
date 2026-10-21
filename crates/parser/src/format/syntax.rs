@@ -401,7 +401,9 @@ impl<'src> Collector<'src> {
                     self.statements(body, true);
                 }
             }
-            ParsedStmtKind::Block { body } => self.statements(body, true),
+            ParsedStmtKind::Block { body } | ParsedStmtKind::Unchecked { body, .. } => {
+                self.statements(body, true)
+            }
             ParsedStmtKind::Assembly { body } => {
                 self.pending.extend(body.into_iter().map(Node::YulStmt));
             }

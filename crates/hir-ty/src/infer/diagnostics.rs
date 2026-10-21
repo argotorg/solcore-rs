@@ -645,11 +645,19 @@ impl TypeckDiagnostic {
                 diagnostic.with_note("rename or remove the duplicate type definition")
             }
             TypeckDiagnostic::UnsatisfiedConstraint { span, pred } => {
+                // Operators inside `unchecked` desugar to std.unchecked traits,
+                // which are only visible through an explicit import.
+                let help = if pred.starts_with("operator Unchecked") || pred.contains(": Unchecked")
+                {
+                    "arithmetic inside `unchecked` requires `import * from std.unchecked.unsigned;` (word, uintN) or `import * from std.unchecked.signed;` (intN)"
+                } else {
+                    "add a matching impl or strengthen the surrounding type context"
+                };
                 Diagnostic::error(format!("cannot satisfy trait constraint: {pred}"))
                     .with_code(DiagnosticCode::TYPECK_UNSATISFIED_CONSTRAINT)
                     .with_primary_label_span(span.clone(), Some("constraint originates here"))
                     .with_note(format!("no visible impl matches `{pred}`"))
-                    .with_help("add a matching impl or strengthen the surrounding type context")
+                    .with_help(help)
             }
             TypeckDiagnostic::AmbiguousConstraint {
                 span,
