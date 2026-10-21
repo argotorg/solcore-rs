@@ -27,6 +27,20 @@ pub(super) fn compute_pure_funs<'db>(
     compute_pure_funs_with(db, functions, storage_fields, PurityMode::Evaluation)
 }
 
+/// Functions the evaluator may unfold. This is `compute_pure_funs` widened by
+/// one rule: an expression statement may call an effectful function (for
+/// example a reverting `panic(0x11)` guard) when its arguments are pure.
+/// Unfolding such a function is sound only because `eval_fun_body` aborts as
+/// soon as an effectful residual survives evaluation, so checked arithmetic
+/// still folds whenever its guards are statically false.
+pub(super) fn compute_inlinable_funs<'db>(
+    db: &'db dyn Db,
+    functions: &FxHashMap<String, MonoFunction<'db>>,
+    storage_fields: &FxHashSet<String>,
+) -> FxHashSet<String> {
+    compute_pure_funs_with(db, functions, storage_fields, PurityMode::Inlining)
+}
+
 /// Structural comptime classification cannot assume the evaluator's memory
 /// state. Memory operations may fold during evaluation, but an unevaluated
 /// memory read or write is never evidence that a call is comptime.
@@ -38,10 +52,23 @@ pub(super) fn compute_comptime_pure_funs<'db>(
     compute_pure_funs_with(db, functions, storage_fields, PurityMode::Comptime)
 }
 
+/// `compute_comptime_pure_funs` widened like `compute_inlinable_funs`: a
+/// comptime call to one of these folds unless a guarded effect is reached, in
+/// which case the call site reports that it could not be evaluated.
+pub(super) fn compute_comptime_inlinable_funs<'db>(
+    db: &'db dyn Db,
+    functions: &FxHashMap<String, MonoFunction<'db>>,
+    storage_fields: &FxHashSet<String>,
+) -> FxHashSet<String> {
+    compute_pure_funs_with(db, functions, storage_fields, PurityMode::ComptimeInlining)
+}
+
 #[derive(Clone, Copy)]
 enum PurityMode {
     Evaluation,
+    Inlining,
     Comptime,
+    ComptimeInlining,
 }
 
 fn compute_pure_funs_with<'db>(
@@ -108,6 +135,40 @@ pub(super) fn function_is_pure<'db>(
         self_name,
         storage_fields,
         PurityMode::Evaluation,
+    )
+}
+
+pub(super) fn function_is_inlinable<'db>(
+    db: &'db dyn Db,
+    function: &MonoFunction<'db>,
+    inlinable: &FxHashSet<String>,
+    self_name: &str,
+    storage_fields: &FxHashSet<String>,
+) -> bool {
+    function_is_pure_with(
+        db,
+        function,
+        inlinable,
+        self_name,
+        storage_fields,
+        PurityMode::Inlining,
+    )
+}
+
+pub(super) fn function_is_comptime_inlinable<'db>(
+    db: &'db dyn Db,
+    function: &MonoFunction<'db>,
+    inlinable: &FxHashSet<String>,
+    self_name: &str,
+    storage_fields: &FxHashSet<String>,
+) -> bool {
+    function_is_pure_with(
+        db,
+        function,
+        inlinable,
+        self_name,
+        storage_fields,
+        PurityMode::ComptimeInlining,
     )
 }
 
@@ -179,6 +240,16 @@ impl<'db> PurityChecker<'_, 'db> {
                 true
             }
             MonoStmtKind::Return(expr) => expr.as_ref().is_none_or(|expr| self.expr(expr)),
+            MonoStmtKind::Expr(MonoExpr {
+                kind: MonoExprKind::Call { args, .. },
+                ..
+            }) if matches!(
+                self.mode,
+                PurityMode::Inlining | PurityMode::ComptimeInlining
+            ) =>
+            {
+                args.iter().all(|arg| self.expr(arg))
+            }
             MonoStmtKind::Expr(expr) => self.expr(expr),
             MonoStmtKind::Assign { lhs, rhs, .. } => {
                 !lvalue_writes_storage(lhs, self.storage_fields, locals)
@@ -226,8 +297,12 @@ impl<'db> PurityChecker<'_, 'db> {
                 self.stmts(body, &mut block_locals)
             }
             MonoStmtKind::Assembly(body) => match self.mode {
-                PurityMode::Evaluation => asm_is_interpretable(self.db, body),
-                PurityMode::Comptime => asm_is_comptime_pure(self.db, body),
+                PurityMode::Evaluation | PurityMode::Inlining => {
+                    asm_is_interpretable(self.db, body)
+                }
+                PurityMode::Comptime | PurityMode::ComptimeInlining => {
+                    asm_is_comptime_pure(self.db, body)
+                }
             },
             MonoStmtKind::Break | MonoStmtKind::Continue => true,
             MonoStmtKind::Error => false,

@@ -1,4 +1,4 @@
-import { add, sub, mul, div, mod, addmod as addmod_, mulmod as mulmod_, and as and_, or as or_, xor as xor_, shl, shr, eq, not as not_, gt as gt_, iszero, keccak256, mstore, mload, mcopy, sstore, sload, gas, caller as caller_, callvalue as callvalue_, calldataload, calldatacopy, returndatasize, returndatacopy, log1 as log1_, call, staticcall, revert_, invalid } from std.opcodes;
+import { add, sub, mul, div, mod, sdiv, smod, addmod as addmod_, mulmod as mulmod_, and as and_, or as or_, xor as xor_, shl, shr, eq, not as not_, gt as gt_, slt, sgt, iszero, keccak256, mstore, mload, mcopy, sstore, sload, gas, caller as caller_, callvalue as callvalue_, calldataload, calldatacopy, returndatasize, returndatacopy, log1 as log1_, call, staticcall, revert_, invalid } from std.opcodes;
 
 pragma no-patterson-condition ABIEncode, Num, Array, ArrayPush, Eq, Ord;
 pragma no-coverage-condition ABIDecode, MemoryType, Array, ArrayPush, RValueIdxAccess;
@@ -111,6 +111,17 @@ export {
     not,
     or,
     out_of_bounds,
+    panic,
+    uAddChecked,
+    uSubChecked,
+    uMulChecked,
+    uDivChecked,
+    uModChecked,
+    sAddChecked,
+    sSubChecked,
+    sMulChecked,
+    sDivChecked,
+    sModChecked,
     raw_call,
     readStorage,
     returndata(*),
@@ -647,6 +658,132 @@ function subWord(l: word, r: word) returns (word) {
     return sub(l, r);
 }
 
+// --- Checked arithmetic helpers ---
+// These operate on raw words and revert with a Solidity Panic when an
+// operation overflows/underflows (code 0x11) or divides by zero (0x12),
+// matching Solidity 0.8+ checked-arithmetic semantics. The per-type integer
+// instances (uint256 here; uint8..uint128 in std.unsigned; int8..int256 in
+// std.signed) delegate to these, passing their own bounds as word literals.
+//
+// For a narrow width the [minv, maxv] range check alone catches overflow
+// (the raw opcode cannot wrap a 256-bit word at that width). For the full
+// 256-bit widths the range check is inert (bounds are the word extremes) and
+// the wrap/sign checks (carry, sign of operands vs. result, div-back) catch it.
+
+// Solidity Panic(uint256): selector 0x4e487b71 followed by the 32-byte code.
+function panic(code: word) returns (()) {
+    mstore(0, shl(224, 0x4e487b71));
+    mstore(4, code);
+    revert_(0, 0x24);
+}
+
+// Unsigned, range [0, maxv]. For uint256 pass maxv = not_(0) (2^256-1).
+// Conditions are bound to locals to keep call nesting shallow.
+function uAddChecked(a: word, b: word, maxv: word) returns (word) {
+    let r: word = add(a, b);
+    let wrapped: word = gt_(a, r);
+    let outOfRange: word = gt_(r, maxv);
+    if (tobool(or_(wrapped, outOfRange))) {
+        panic(0x11);
+    }
+    return r;
+}
+
+function uSubChecked(a: word, b: word) returns (word) {
+    if (tobool(gt_(b, a))) {
+        panic(0x11);
+    }
+    return sub(a, b);
+}
+
+function uMulChecked(a: word, b: word, maxv: word) returns (word) {
+    if (tobool(iszero(a))) {
+        return 0;
+    }
+    let r: word = mul(a, b);
+    let q: word = div(r, a);
+    let wrapped: word = iszero(eq(q, b));
+    let outOfRange: word = gt_(r, maxv);
+    if (tobool(or_(wrapped, outOfRange))) {
+        panic(0x11);
+    }
+    return r;
+}
+
+function uDivChecked(a: word, b: word) returns (word) {
+    if (tobool(iszero(b))) {
+        panic(0x12);
+    }
+    return div(a, b);
+}
+
+function uModChecked(a: word, b: word) returns (word) {
+    if (tobool(iszero(b))) {
+        panic(0x12);
+    }
+    return mod(a, b);
+}
+
+// Signed (two's complement, sign-extended words), range [minv, maxv].
+// For int256 pass minv/maxv = the 256-bit extremes (range check is inert).
+function sAddChecked(a: word, b: word, minv: word, maxv: word) returns (word) {
+    let r: word = add(a, b);
+    let outOfRange: word = or_(slt(r, minv), sgt(r, maxv));
+    let posWrap: word = and_(sgt(b, 0), slt(r, a));
+    let negWrap: word = and_(slt(b, 0), sgt(r, a));
+    let wrapped: word = or_(posWrap, negWrap);
+    if (tobool(or_(outOfRange, wrapped))) {
+        panic(0x11);
+    }
+    return r;
+}
+
+function sSubChecked(a: word, b: word, minv: word, maxv: word) returns (word) {
+    let r: word = sub(a, b);
+    let outOfRange: word = or_(slt(r, minv), sgt(r, maxv));
+    let negWrap: word = and_(slt(b, 0), slt(r, a));
+    let posWrap: word = and_(sgt(b, 0), sgt(r, a));
+    let wrapped: word = or_(negWrap, posWrap);
+    if (tobool(or_(outOfRange, wrapped))) {
+        panic(0x11);
+    }
+    return r;
+}
+
+function sMulChecked(a: word, b: word, minv: word, maxv: word) returns (word) {
+    if (tobool(iszero(a))) {
+        return 0;
+    }
+    let r: word = mul(a, b);
+    let outOfRange: word = or_(slt(r, minv), sgt(r, maxv));
+    let q: word = sdiv(r, a);
+    let wrapped: word = iszero(eq(q, b));
+    let minByNegOne: word = and_(eq(a, not_(0)), eq(b, minv));
+    let overflow: word = or_(wrapped, minByNegOne);
+    if (tobool(or_(outOfRange, overflow))) {
+        panic(0x11);
+    }
+    return r;
+}
+
+function sDivChecked(a: word, b: word, minv: word) returns (word) {
+    if (tobool(iszero(b))) {
+        panic(0x12);
+    }
+    let minByNegOne: word = and_(eq(a, minv), eq(b, not_(0)));
+    if (tobool(minByNegOne)) {
+        panic(0x11);
+    }
+    return sdiv(a, b);
+}
+
+function sModChecked(a: word, b: word) returns (word) {
+    if (tobool(iszero(b))) {
+        panic(0x12);
+    }
+    return smod(a, b);
+}
+
 // Bitwise AND
 function bandWord(x: word, y: word) returns (word) {
     return and_(x, y);
@@ -821,31 +958,31 @@ impl Typedef<uint256, word> {
 }
 impl Add<uint256> {
     function add(x: uint256, y: uint256) returns (uint256) {
-        return Typedef.abs(Add.add(Typedef.rep(x), Typedef.rep(y)));
+        return Typedef.abs(uAddChecked(Typedef.rep(x), Typedef.rep(y), not_(0)));
     }
 }
 
 impl Sub<uint256> {
     function sub(x: uint256, y: uint256) returns (uint256) {
-        return Typedef.abs(Sub.sub(Typedef.rep(x), Typedef.rep(y)));
+        return Typedef.abs(uSubChecked(Typedef.rep(x), Typedef.rep(y)));
     }
 }
 
 impl Mul<uint256> {
     function mul(x: uint256, y: uint256) returns (uint256) {
-        return Typedef.abs(Mul.mul(Typedef.rep(x), Typedef.rep(y)));
+        return Typedef.abs(uMulChecked(Typedef.rep(x), Typedef.rep(y), not_(0)));
     }
 }
 
 impl Div<uint256> {
     function div(x: uint256, y: uint256) returns (uint256) {
-        return Typedef.abs(Div.div(Typedef.rep(x), Typedef.rep(y)));
+        return Typedef.abs(uDivChecked(Typedef.rep(x), Typedef.rep(y)));
     }
 }
 
 impl Mod<uint256> {
     function mod(x: uint256, y: uint256) returns (uint256) {
-        return Typedef.abs(Mod.mod(Typedef.rep(x), Typedef.rep(y)));
+        return Typedef.abs(uModChecked(Typedef.rep(x), Typedef.rep(y)));
     }
 }
 

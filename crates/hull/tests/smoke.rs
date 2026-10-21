@@ -189,6 +189,53 @@ fn function_typed_closure_parameters_emit_and_check() {
 }
 
 #[test]
+fn closures_escaping_an_inlined_callee_bind_its_parameters() {
+    // A lambda returned by an inlined callee must not keep the callee's
+    // parameter free in the caller, whether the captured argument is a
+    // constant or a runtime value and whether the body is pure or effectful.
+    for (name, body, arg) in [
+        ("pure_constant", "addWord(value, other)", "10"),
+        ("pure_runtime", "addWord(value, other)", "Typedef.rep(x)"),
+        ("effectful_constant", "touch(addWord(value, other))", "10"),
+        (
+            "effectful_runtime",
+            "touch(addWord(value, other))",
+            "Typedef.rep(x)",
+        ),
+    ] {
+        let src = format!(
+            r#"
+import * from std;
+import * from std.dispatch;
+import {{sstore}} from std.opcodes;
+
+function touch(x: word) returns (word) {{ sstore(0, x); return x; }}
+
+function makeAdder(value: word) returns (function(word) returns (word)) {{
+  return lam (other: word) -> word {{ return {body}; }};
+}}
+
+contract C {{
+  function shifted(x: uint256) public returns (uint256) {{
+    let f = makeAdder({arg});
+    return uint256(f(Typedef.rep(x)));
+  }}
+}}
+"#
+        );
+        let (db, output) = specialize_src_with_std(name, &src);
+        assert_eq!(output.diagnostics, Vec::new(), "{name}");
+        let emitted = emit_module(db, &output.module, EmitOptions::default());
+        assert_eq!(emitted.diagnostics, Vec::new(), "{name}");
+        assert_eq!(
+            check_program_with_db(db, &emitted.program),
+            Vec::new(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn objectless_string_materializers_are_content_deduplicated() {
     let (db, output) = specialize_src_with_std(
         "objectless_string_materializer",

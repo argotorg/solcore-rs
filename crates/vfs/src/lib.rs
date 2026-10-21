@@ -82,6 +82,17 @@ pub const STD_FILES: &[(&str, &str)] = &[
             "/../../std/eip7951.sol"
         )),
     ),
+    (
+        "signed.sol",
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../std/signed.sol")),
+    ),
+    (
+        "unsigned.sol",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../std/unsigned.sol"
+        )),
+    ),
 ];
 
 /// Concrete Salsa database used by the in-memory analysis host.
@@ -1365,7 +1376,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_std_file_set_is_exactly_the_expected_eight_files() {
+    fn embedded_std_file_set_is_exactly_the_expected_ten_files() {
         let names = STD_FILES
             .iter()
             .map(|(name, _)| *name)
@@ -1380,7 +1391,9 @@ mod tests {
                 "eip712.sol",
                 "eip7951.sol",
                 "opcodes.sol",
+                "signed.sol",
                 "std.sol",
+                "unsigned.sol",
             ])
         );
         assert!(STD_FILES.iter().all(|(_, contents)| !contents.is_empty()));

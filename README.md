@@ -13,8 +13,9 @@ The source-language and standard-library target is the Haskell implementation
 at [`argotorg/solcore@a7b7afb0`](https://github.com/argotorg/solcore/tree/a7b7afb0638e50895008d778a167afd0e50a2c86).
 Both implementations now use the canonical `.sol`
 [source syntax](https://github.com/argotorg/solcore/blob/a7b7afb0638e50895008d778a167afd0e50a2c86/doc/src/sail/syntax.md).
-The eight library sources in `std/` come from that revision, with local
-whitespace-only formatting applied by `solcore-fmt`.
+The library sources in `std/` come from that revision, with local
+whitespace-only formatting applied by `solcore-fmt`, apart from the local
+exceptions listed in [`std/README.md`](std/README.md).
 
 See [`SEMANTIC_DIFFERENCES.md`](SEMANTIC_DIFFERENCES.md) for intentional
 corrections to upstream defects, ABI limitations, and validation scope. Rust
