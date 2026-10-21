@@ -1,0 +1,15 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/typeck/unchecked_without_import/main.sol
+---
+error[SC0207]: cannot satisfy trait constraint: operator UncheckedAdd.add
+ --> /main/main.sol:5:16
+  |
+4 |     unchecked {
+5 |         return x + y;
+  |                ^^^^^ constraint originates here
+6 |     }
+  |
+  = note: no visible impl matches `operator UncheckedAdd.add`
+  = help: arithmetic inside `unchecked` requires `import * from std.unchecked.unsigned;` (word, uintN) or `import * from std.unchecked.signed;` (intN)

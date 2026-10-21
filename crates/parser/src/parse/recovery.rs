@@ -98,7 +98,7 @@ fn is_statement_start_token(token: &Token<'_>) -> bool {
             | Token::LBrace
             | Token::Break
             | Token::Continue
-    ) || matches!(token, Token::Ident("while"))
+    ) || matches!(token, Token::Ident("while" | "unchecked"))
 }
 
 pub(super) fn refine_body_parse_error<'src>(

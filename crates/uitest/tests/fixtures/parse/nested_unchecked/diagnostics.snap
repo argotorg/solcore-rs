@@ -1,0 +1,13 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/nested_unchecked/main.sol
+---
+error[SC0001]: `unchecked` blocks cannot be nested
+ --> /main/main.sol:3:9
+  |
+2 |     unchecked {
+3 |         unchecked {
+  |         ^^^^^^^^^
+4 |             return x + x;
+  |

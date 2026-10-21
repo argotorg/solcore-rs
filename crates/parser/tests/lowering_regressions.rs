@@ -1052,6 +1052,119 @@ fn compound_assignments_lower_through_binary_operator_calls() {
     ));
 }
 
+fn bin_ops(db: &TestDb, body: hir::ast::function::FuncBody<'_>) -> Vec<BinOp> {
+    let mut ops = body
+        .exprs(db)
+        .iter()
+        .filter_map(|(_, expr)| match &expr.kind {
+            ExprKind::BinOp { op, .. } => Some(*op.atom()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    ops.sort_by_key(|op| format!("{op:?}"));
+    ops
+}
+
+#[test]
+fn unchecked_blocks_lower_arithmetic_to_unchecked_operators() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "unchecked-block",
+        "function f(x: word, y: word) returns (word) {\n\
+           let a: word = x + y;\n\
+           unchecked {\n\
+             let b: word = x + y - x * y / y % y;\n\
+             x += y;\n\
+             let c: bool = x < y;\n\
+             let d: word = x & y;\n\
+           }\n\
+           return a - y;\n\
+         }",
+    );
+    assert!(diagnostics(&db, file).is_empty());
+    let body = top_function(&db, module, "f").body(&db).expect("body");
+    let mut expected = vec![
+        // Outside the block: checked.
+        BinOp::Add,
+        BinOp::Sub,
+        // Inside the block: arithmetic only, including the `+=` desugaring.
+        BinOp::UncheckedAdd,
+        BinOp::UncheckedSub,
+        BinOp::UncheckedMul,
+        BinOp::UncheckedDiv,
+        BinOp::UncheckedMod,
+        BinOp::UncheckedAdd,
+        BinOp::Lt,
+        BinOp::BitAnd,
+    ];
+    expected.sort_by_key(|op| format!("{op:?}"));
+    assert_eq!(bin_ops(&db, body), expected);
+}
+
+#[test]
+fn lambdas_inside_unchecked_blocks_keep_checked_arithmetic() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "unchecked-lambda",
+        "function f(x: word, y: word) returns (word) {\n\
+           unchecked {\n\
+             let g = lam (v: word) -> word { return v + y; };\n\
+             return g(x) + y;\n\
+           }\n\
+         }",
+    );
+    assert!(diagnostics(&db, file).is_empty());
+    let body = top_function(&db, module, "f").body(&db).expect("body");
+    assert_eq!(bin_ops(&db, body), [BinOp::UncheckedAdd]);
+    let lambda_body = body
+        .exprs(&db)
+        .iter()
+        .find_map(|(_, expr)| match &expr.kind {
+            ExprKind::Lambda { body, .. } => Some(*body),
+            _ => None,
+        })
+        .expect("lambda");
+    assert_eq!(bin_ops(&db, lambda_body), [BinOp::Add]);
+}
+
+#[test]
+fn nested_unchecked_blocks_are_rejected() {
+    let db = TestDb::default();
+    let (file, _) = parse_module(
+        &db,
+        "nested-unchecked",
+        "function f(x: word) returns (word) {\n\
+           unchecked {\n\
+             unchecked { return x + x; }\n\
+           }\n\
+         }",
+    );
+    let messages = diagnostics(&db, file)
+        .into_iter()
+        .map(|diagnostic| diagnostic.message)
+        .collect::<Vec<_>>();
+    assert_eq!(messages, ["`unchecked` blocks cannot be nested"]);
+}
+
+#[test]
+fn unchecked_remains_a_valid_identifier() {
+    let db = TestDb::default();
+    let (file, module) = parse_module(
+        &db,
+        "unchecked-identifier",
+        "function unchecked(x: word) returns (word) { return x; }\n\
+         function f(unchecked: word) returns (word) {\n\
+           let r: word = unchecked;\n\
+           return r;\n\
+         }",
+    );
+    assert!(diagnostics(&db, file).is_empty());
+    let body = top_function(&db, module, "f").body(&db).expect("body");
+    assert!(bin_ops(&db, body).is_empty());
+}
+
 #[test]
 fn derive_attributes_lower_qualified_targets_and_precise_spans() {
     let db = TestDb::default();

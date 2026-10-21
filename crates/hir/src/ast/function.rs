@@ -451,8 +451,33 @@ pub enum BinOp {
     And,
     /// Logical or.
     Or,
+    /// Wrapping addition written inside an `unchecked` block.
+    UncheckedAdd,
+    /// Wrapping subtraction written inside an `unchecked` block.
+    UncheckedSub,
+    /// Wrapping multiplication written inside an `unchecked` block.
+    UncheckedMul,
+    /// Division written inside an `unchecked` block (`MIN / -1` wraps).
+    UncheckedDiv,
+    /// Remainder written inside an `unchecked` block.
+    UncheckedMod,
     /// Parser recovery placeholder.
     Error,
+}
+
+impl BinOp {
+    /// The operator an `unchecked` block substitutes for `self`. Only the
+    /// arithmetic operators have unchecked counterparts.
+    pub fn unchecked(self) -> Self {
+        match self {
+            Self::Add => Self::UncheckedAdd,
+            Self::Sub => Self::UncheckedSub,
+            Self::Mul => Self::UncheckedMul,
+            Self::Div => Self::UncheckedDiv,
+            Self::Mod => Self::UncheckedMod,
+            op => op,
+        }
+    }
 }
 
 /// Unary operators represented in HIR.

@@ -3272,6 +3272,27 @@ contract C {
 }
 
 #[test]
+fn unchecked_block_arithmetic_folds_with_wrapping() {
+    let output = specialize_src_with_std(
+        r#"
+import * from std;
+import * from std.unchecked.unsigned;
+
+contract C {
+  function main() public returns (uint256) {
+    unchecked {
+      return uint256(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff) + uint256(1);
+    }
+  }
+}
+"#,
+    );
+
+    assert_eq!(output.diagnostics, Vec::new());
+    assert_eq!(main_return_number(&output), Some("0".to_owned()));
+}
+
+#[test]
 fn unfolding_never_discards_an_unused_checked_operation() {
     let output = specialize_src_with_std(
         r#"
@@ -4499,12 +4520,18 @@ fn main_return_expr<'a, 'db>(output: &'a SpecializeOutput<'db>) -> Option<&'a Mo
         let MonoItem::Function(function) = item else {
             return None;
         };
-        main_names.contains(&function.name).then(|| {
-            function.body.iter().find_map(|stmt| match &stmt.kind {
-                MonoStmtKind::Return(Some(expr)) => Some(expr),
-                _ => None,
-            })
-        })?
+        main_names
+            .contains(&function.name)
+            .then(|| first_return_expr(&function.body))?
+    })
+}
+
+fn first_return_expr<'a, 'db>(stmts: &'a [MonoStmt<'db>]) -> Option<&'a MonoExpr<'db>> {
+    stmts.iter().find_map(|stmt| match &stmt.kind {
+        MonoStmtKind::Return(Some(expr)) => Some(expr),
+        // An `unchecked { ... }` block lowers to a plain block.
+        MonoStmtKind::Block(body) => first_return_expr(body),
+        _ => None,
     })
 }
 

@@ -58,6 +58,7 @@ reference behavior. The following Rust corrections remain intentional.
 | Assembly lexical scopes | Deeply nested let names can incorrectly conceal writes to outer variables, yielding stale constants. Loop initializer masking and later assembly blocks can also retain erased comptime identifiers. | Track writes in their actual scopes, substitute initializers before binding names, and preserve untouched outer constants. `asm-scope` executes both conditional-write paths. | [#614](https://github.com/argotorg/solcore/issues/614) |
 | Compile-time heap invalidation | A runtime memory write can leave an older compile-time heap value available to a later comptime load. | Invalidate heap facts after residual memory effects. `ct_memory_after_runtime_asm` rejects direct, wrapped, branch, loop, and compound-expression witnesses. | [#615](https://github.com/argotorg/solcore/issues/615) |
 | Effectful call arguments | Inlining an unused parameter can discard its runtime argument's side effect, including a write before a later memory read. | Keep calls whose arguments retain observable effects. `ignored-call-effects` and `ignored-builtin-effects` verify that writes, reverts, and allocations execute exactly once per call. | [#616](https://github.com/argotorg/solcore/issues/616) |
+| `unchecked` blocks | The grammar accepts `unchecked { ... }`, but name resolution lowers it to an ordinary block, so its arithmetic stays checked. | Give the block its Solidity meaning: `+ - * / %` (and compound assignments) written directly inside it desugar to the `std.unchecked` traits and wrap; division or modulo by zero still reverts. The scope is lexical (not called functions or lambda bodies) and nesting is rejected. Covered by `unchecked-scope`, `unchecked-{signed,unsigned}-integers` and the `unchecked_*` parser tests. | — |
 | Checked-arithmetic folding | Not yet compared: the checked `std.signed`/`std.unsigned`/`uint256` arithmetic is ported ahead of upstream (see [`std/README.md`](std/README.md)). | Unfold a function whose only effect is a guarded call (the `Panic` of a `*Checked` helper) only while that guard is statically false. Constant operands that overflow keep the runtime call and revert. In a comptime context they are an `SC0409` comptime-evaluation failure. Unused checked operations are never discarded. Covered by the `checked_*` and `unfolding_never_discards_an_unused_checked_operation` specialization tests. | — |
 | Instance signatures | With specialization disabled, the frontend with legacy typeclass resolution accepts the narrowed `MemoryType.size` implementation in `ixa`. | Keep the instantiated class-signature check (`SC0221`). | [#606](https://github.com/argotorg/solcore/issues/606) |
 | Runtime `main` | Any contract-local `main` suppresses dispatch, including a function with parameters. | Keep suppression, but require zero parameters (`SC0236`). The runtime has no argument source for this entry. | [#607](https://github.com/argotorg/solcore/issues/607) |
@@ -157,7 +158,8 @@ Use the existing workflows for verification:
 
 ```sh
 for file in ABIGeneric.sol Generic.sol StorageGeneric.sol dispatch.sol \
-  eip712.sol eip7951.sol opcodes.sol signed.sol std.sol unsigned.sol; do
+  eip712.sol eip7951.sol opcodes.sol signed.sol std.sol unsigned.sol \
+  unchecked/signed.sol unchecked/unsigned.sol; do
   cmp "std/$file" "crates/parser/tests/fixtures/corpus/ok/std/$file" || exit 1
 done
 cargo fmt --all -- --check

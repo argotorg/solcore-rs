@@ -1675,6 +1675,13 @@ impl<'db> Evaluator<'db> {
                 BinOp::Mul => Some(int_expr(lhs_int.mul(&rhs_int).mod_word(), ty, span)),
                 BinOp::Div => Some(int_expr(word_div(lhs_int, rhs_int), ty, span)),
                 BinOp::Mod => Some(int_expr(word_mod(lhs_int, rhs_int), ty, span)),
+                BinOp::UncheckedAdd => Some(int_expr(lhs_int.add(&rhs_int).mod_word(), ty, span)),
+                BinOp::UncheckedSub => Some(int_expr(lhs_int.sub(&rhs_int).mod_word(), ty, span)),
+                BinOp::UncheckedMul => Some(int_expr(lhs_int.mul(&rhs_int).mod_word(), ty, span)),
+                // Unchecked division by zero still reverts: leave it to runtime.
+                BinOp::UncheckedDiv | BinOp::UncheckedMod if rhs_int.mod_word().is_zero() => None,
+                BinOp::UncheckedDiv => Some(int_expr(word_div(lhs_int, rhs_int), ty, span)),
+                BinOp::UncheckedMod => Some(int_expr(word_mod(lhs_int, rhs_int), ty, span)),
                 BinOp::BitAnd => Some(int_expr(bitand_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitOr => Some(int_expr(bitor_word(&lhs_int, &rhs_int), ty, span)),
                 BinOp::BitXor => Some(int_expr(bitxor_word(&lhs_int, &rhs_int), ty, span)),

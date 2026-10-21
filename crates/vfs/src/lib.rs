@@ -93,6 +93,20 @@ pub const STD_FILES: &[(&str, &str)] = &[
             "/../../std/unsigned.sol"
         )),
     ),
+    (
+        "unchecked/signed.sol",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../std/unchecked/signed.sol"
+        )),
+    ),
+    (
+        "unchecked/unsigned.sol",
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../std/unchecked/unsigned.sol"
+        )),
+    ),
 ];
 
 /// Concrete Salsa database used by the in-memory analysis host.
@@ -1376,7 +1390,7 @@ mod tests {
     }
 
     #[test]
-    fn embedded_std_file_set_is_exactly_the_expected_ten_files() {
+    fn embedded_std_file_set_is_exactly_the_expected_twelve_files() {
         let names = STD_FILES
             .iter()
             .map(|(name, _)| *name)
@@ -1393,6 +1407,8 @@ mod tests {
                 "opcodes.sol",
                 "signed.sol",
                 "std.sol",
+                "unchecked/signed.sol",
+                "unchecked/unsigned.sol",
                 "unsigned.sol",
             ])
         );

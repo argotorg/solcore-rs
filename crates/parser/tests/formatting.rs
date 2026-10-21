@@ -68,6 +68,16 @@ fn keeps_empty_for_clauses_inline() {
 }
 
 #[test]
+fn formats_unchecked_blocks_like_blocks() {
+    let source = "function f(x:word)returns(word){unchecked{let y=x+x;x-=y;return x;}}";
+    assert_eq!(
+        format(source),
+        "function f(x: word) returns (word) {\n    unchecked {\n        let y = x + x;\n        x -= y;\n        return x;\n    }\n}\n"
+    );
+    assert_stable(source);
+}
+
+#[test]
 fn rejects_invalid_input_without_returning_partial_output() {
     for source in [
         "function f(){let x=;}",

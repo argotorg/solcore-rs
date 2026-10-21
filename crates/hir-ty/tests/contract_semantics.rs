@@ -192,12 +192,22 @@ fn insert_real_std_modules(db: &mut TestDb) {
             "/std/unsigned.sol",
             include_str!("../../../std/unsigned.sol"),
         ),
+        (
+            "unchecked/signed",
+            "/std/unchecked/signed.sol",
+            include_str!("../../../std/unchecked/signed.sol"),
+        ),
+        (
+            "unchecked/unsigned",
+            "/std/unchecked/unsigned.sol",
+            include_str!("../../../std/unchecked/unsigned.sol"),
+        ),
     ] {
         insert_module_source(
             db,
             ModuleKey {
                 library: LibraryId::Std,
-                logical_path: vec![logical.to_owned()],
+                logical_path: logical.split('/').map(str::to_owned).collect(),
             },
             path,
             source,
