@@ -181,7 +181,7 @@ fn signature_type_string<'db>(
             {
                 return Ok(name);
             }
-            if let Some(element) = canonical_calldata_array_element(db, user, args)? {
+            if let Some(element) = canonical_array_element(db, user, args)? {
                 return Ok(format!(
                     "{}[]",
                     abi_type_sig_string(db, element, adt_stack, abi_evidence)?
@@ -407,9 +407,7 @@ fn abi_value_type_of<'db>(
             {
                 return Ok((AbiType::Named(name), Vec::new()));
             }
-            if let Some(element) = canonical_calldata_array_element(db, user, args)?
-                .or(canonical_memory_array_element(db, user, args)?)
-            {
+            if let Some(element) = canonical_array_element(db, user, args)? {
                 let (element_ty, components) = abi_value_type_of(
                     db,
                     element,
@@ -465,6 +463,19 @@ fn validate_product_members(db: &dyn Db, elems: &[Ty<'_>]) -> Result<(), String>
         }
     }
     Ok(())
+}
+
+/// Returns the element of an externally supported array: the input-only
+/// `calldata<array<t>>` or the memory array `memory<DynArray<t>>` (`T[]`).
+fn canonical_array_element<'db>(
+    db: &'db dyn Db,
+    user: &UserTyCtor<'db>,
+    args: &[Ty<'db>],
+) -> Result<Option<Ty<'db>>, String> {
+    match canonical_memory_array_element(db, user, args)? {
+        Some(element) => Ok(Some(element)),
+        None => canonical_calldata_array_element(db, user, args),
+    }
 }
 
 /// Returns the element of the one externally supported calldata location:
@@ -591,7 +602,7 @@ fn generic_sig_string<'db>(
             {
                 return Ok(name);
             }
-            if let Some(element) = canonical_calldata_array_element(db, user, args)? {
+            if let Some(element) = canonical_array_element(db, user, args)? {
                 return Ok(format!(
                     "{}[]",
                     abi_type_sig_string(db, element, adt_stack, abi_evidence)?
@@ -913,13 +924,13 @@ fn canonical_location_abi_name<'db>(
     } = inner.kind(db)
     else {
         return Err(format!(
-            "{} (only memory<string> and memory<bytes> have canonical ABI evidence)",
+            "{} (only memory<string>, memory<bytes> and memory arrays `T[]` have canonical ABI evidence)",
             inner.display(db)
         ));
     };
     if !inner_args.is_empty() {
         return Err(format!(
-            "{} (only memory<string> and memory<bytes> have canonical ABI evidence)",
+            "{} (only memory<string>, memory<bytes> and memory arrays `T[]` have canonical ABI evidence)",
             inner.display(db)
         ));
     }
@@ -932,7 +943,7 @@ fn canonical_location_abi_name<'db>(
         return Ok(Some(inner_name));
     }
     Err(format!(
-        "{} (only memory<string> and memory<bytes> have canonical ABI evidence)",
+        "{} (only memory<string>, memory<bytes> and memory arrays `T[]` have canonical ABI evidence)",
         inner.display(db)
     ))
 }
