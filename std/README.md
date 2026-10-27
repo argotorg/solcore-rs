@@ -77,6 +77,55 @@ signed types, and shifts never revert, inside or outside `unchecked`.
 Regressions: `tests/e2e/shift-operators` and the shift part of the shared
 matrix in `crates/test-utils/src/e2e/integers.rs`.
 
+## Arrays and slices
+
+The array syntax follows Solidity. The meaning of `T[]` depends on where it is
+written:
+
+- in a contract field it is a storage array `array<T>`;
+- in a local, a parameter or a return type it is a memory array
+  `memory<DynArray<T>>`;
+- inside `storage<...>`, `mapping(...)` or `calldata<...>` it is `array<T>`;
+- inside `memory<...>` it is `DynArray<T>`.
+
+Fixed-size arrays `T[k]` are rejected.
+
+`new T[](n)` allocates `n` zeroed elements with `newArray`. For
+`new T[][](n)`, `newNestedArray` points every element at the empty array at
+`0x60`.
+
+Element access:
+
+- `a[i]` and `a[i] = v` on memory arrays go through the `RValueIdxAccess`,
+  `LValueIdxAccess` and `CanStore` instances.
+- Any other collection with an `RValueIdxAccess` instance can also be indexed.
+- `a.length` reads `Length.length(a)` unless the value has a `length` field.
+- `push` and `pop` exist only for storage arrays; memory arrays have a fixed
+  length.
+
+Slices:
+
+- `a[s:e]`, `a[s:]`, `a[:e]` and `a[:]` call `sliceRange`, `sliceFrom`,
+  `sliceTo` and `sliceAll`.
+- Each returns a read-only `arraySlice<B>` view over any base `B` with `Length`
+  and `RValueIdxAccess` instances: memory, storage and calldata arrays, or
+  another slice.
+- `toArray(s)` copies a slice into a fresh memory array.
+
+Memory arrays of word-sized elements may appear in public signatures, where
+they sign as `T[]`.
+
+Errors use Solidity's panic codes:
+
+| Code | Cause |
+|---|---|
+| `0x32` | An index or slice bound is out of range. |
+| `0x31` | `pop` on an empty storage array. |
+| `0x41` | An allocation or storage array is too large. |
+
+Regressions:
+`tests/e2e/{array-syntax,mem-array,array-slice,calldata-slice,memory-array-abi,user-collection-index,allocator-bounds,memory-allocation-bounds}`.
+
 ## Verification
 
 After every std update, verify at least:
