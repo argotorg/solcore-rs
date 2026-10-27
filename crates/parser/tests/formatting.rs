@@ -135,6 +135,16 @@ fn formats_new_array_allocations_and_keeps_new_as_an_identifier() {
 }
 
 #[test]
+fn formats_slices_without_spaces_around_the_colon() {
+    let source = "pragma solcore;\nfunction f(a:uint256[],c:bool)returns(uint256){return a[1 : 3][ : 2].length+a[c?1:2 :][i+1: ].length;}";
+    assert_eq!(
+        format(source),
+        "pragma solcore;\nfunction f(a: uint256[], c: bool) returns (uint256) {\n    return a[1:3][:2].length + a[c ? 1 : 2:][i + 1:].length;\n}\n"
+    );
+    assert_stable(source);
+}
+
+#[test]
 fn rejects_invalid_input_without_returning_partial_output() {
     for source in [
         "pragma solcore; function f(){let x=;}",

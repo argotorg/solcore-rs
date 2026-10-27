@@ -525,6 +525,12 @@ impl<'db> DesugarCollector<'db> {
                 self.expr(*base);
                 self.expr(*index);
             }
+            ExprKind::Slice { base, start, end } => {
+                self.expr(*base);
+                for bound in start.iter().chain(end) {
+                    self.expr(*bound);
+                }
+            }
             ExprKind::Call { callee, args } => {
                 if !self.is_direct_call(*callee) {
                     let evidence = self

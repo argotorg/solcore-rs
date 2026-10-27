@@ -517,6 +517,7 @@ fn expr_token_span<'db>(
         | ExprKind::Lambda { .. }
         | ExprKind::BinOp { .. }
         | ExprKind::Index { .. }
+        | ExprKind::Slice { .. }
         | ExprKind::Call { .. }
         | ExprKind::TypeAnnot { .. }
         | ExprKind::UnaryOp { .. }

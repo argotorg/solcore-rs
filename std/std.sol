@@ -124,6 +124,12 @@ export {
     newNestedArray,
     out_of_bounds,
     panic,
+    arraySlice(*),
+    sliceAll,
+    sliceFrom,
+    sliceRange,
+    sliceTo,
+    toArray,
     uAddChecked,
     uSubChecked,
     uMulChecked,
@@ -3130,6 +3136,83 @@ function ridx<col, idx, val>(c: col, i: idx) returns (val) where(col, idx): RVal
 // emits assignRef(lidx(c, i), v), so every type stays visible in the arguments.
 function assignRef<r, v>(ref: r, val: v) returns (()) where r: Assign<v> {
     Assign.assign(ref, val);
+}
+
+// --- Array slices ---
+
+// `a[start:end]` is a read-only view (base, start, length) over any collection
+// with Length and RValueIdxAccess instances: memory, storage and calldata
+// arrays, and other slices. There is deliberately no LValueIdxAccess instance,
+// so `s[i] = v` is rejected.
+enum arraySlice<coll> {
+    arraySlice(coll, uint256, uint256)
+}
+
+impl<coll> Length<arraySlice<coll>> {
+    function length(s: arraySlice<coll>) returns (uint256) {
+        match (s) {
+            case arraySlice(base, start, len) {
+                return len;
+            }
+        }
+    }
+}
+
+// `s[i]` checks `i` against the view and reads element `start + i` of the base.
+impl<coll, v, i> RValueIdxAccess<(arraySlice<coll>, i), v> where(coll, uint256): RValueIdxAccess<v>, i: Typedef<word> {
+    function lookup(xi: (arraySlice<coll>, i)) returns (v) {
+        match (xi) {
+            case (s, j) {
+                match (s) {
+                    case arraySlice(base, start, len) {
+                        let idx: word = Typedef.rep(j);
+                        if (idx >= Typedef.rep(len)) {
+                            out_of_bounds();
+                        }
+                        return ridx(base, uint256(Typedef.rep(start) + idx));
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The compiler lowers `a[s:e]`, `a[s:]`, `a[:e]` and `a[:]` to these helpers.
+// Missing bounds are filled here, so the base is evaluated exactly once.
+// As in Solidity, `start > end` or `end > length` panics with 0x32.
+function sliceRange<coll>(base: coll, start: uint256, end: uint256) returns (arraySlice<coll>) where coll: Length {
+    let s: word = Typedef.rep(start);
+    let e: word = Typedef.rep(end);
+    if (s > e) {
+        out_of_bounds();
+    }
+    if (e > Typedef.rep(Length.length(base))) {
+        out_of_bounds();
+    }
+    return arraySlice(base, start, uint256(e - s));
+}
+
+function sliceFrom<coll>(base: coll, start: uint256) returns (arraySlice<coll>) where coll: Length {
+    return sliceRange(base, start, Length.length(base));
+}
+
+function sliceTo<coll>(base: coll, end: uint256) returns (arraySlice<coll>) where coll: Length {
+    return sliceRange(base, uint256(0), end);
+}
+
+function sliceAll<coll>(base: coll) returns (arraySlice<coll>) where coll: Length {
+    return sliceRange(base, uint256(0), Length.length(base));
+}
+
+// Copies a slice into a fresh zero-based memory array of word-sized elements.
+function toArray<coll, t>(s: arraySlice<coll>) returns (memory<DynArray<t>>) where(coll, uint256): RValueIdxAccess<t>, t: Typedef<word> {
+    let n: uint256 = Length.length(s);
+    let out: memory<DynArray<t>> = newArray(n);
+    let len: word = Typedef.rep(n);
+    for (let i: word = 0; i < len; i = i + 1) {
+        assignRef(lidx(out, uint256(i)), ridx(s, uint256(i)));
+    }
+    return out;
 }
 
 // --- Memory Encoding ---

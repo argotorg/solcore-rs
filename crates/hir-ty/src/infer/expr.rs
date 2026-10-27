@@ -122,6 +122,9 @@ impl<'db> InferCtx<'db> {
                     }
                 }
             }
+            ExprKind::Slice { base, start, end } => {
+                self.infer_slice_expr(body, expr_id, *base, start.iter().chain(end).copied())
+            }
             ExprKind::Call { callee, args } => {
                 if let Some(ty) =
                     self.infer_str_from_string_call(body, expr_id, *callee, args, expected.clone())

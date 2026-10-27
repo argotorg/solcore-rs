@@ -429,6 +429,12 @@ impl<'db> ComptimeChecker<'db> {
                 self.classify_expr(body, *base),
                 self.classify_expr(body, *index),
             ]),
+            ExprKind::Slice { base, start, end } => ComptimeValue::from_all(
+                std::iter::once(*base)
+                    .chain(*start)
+                    .chain(*end)
+                    .map(|expr| self.classify_expr(body, expr)),
+            ),
             ExprKind::Call { callee, args } => self.classify_call(body, expr_id, *callee, args),
             ExprKind::Field { base, .. } => {
                 if self.expr_resolution(body, expr_id).is_some() {

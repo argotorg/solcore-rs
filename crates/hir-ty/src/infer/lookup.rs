@@ -405,6 +405,7 @@ pub(super) fn expr_is_literal_comptime<'db>(
         | ExprKind::Call { .. }
         | ExprKind::Field { .. }
         | ExprKind::Index { .. }
+        | ExprKind::Slice { .. }
         | ExprKind::Lambda { .. }
         | ExprKind::Error => false,
     }

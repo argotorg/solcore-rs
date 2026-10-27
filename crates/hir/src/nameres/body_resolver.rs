@@ -202,6 +202,12 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                 self.expr(body, *base);
                 self.expr(body, *index);
             }
+            ExprKind::Slice { base, start, end } => {
+                self.expr(body, *base);
+                for bound in start.iter().chain(end) {
+                    self.expr(body, *bound);
+                }
+            }
             ExprKind::Call { callee, args } => {
                 self.call_callee(body, *callee);
                 for arg in args {

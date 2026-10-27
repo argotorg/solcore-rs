@@ -964,6 +964,12 @@ impl<'db> BodyCollector<'db> {
                 self.expr(*base);
                 self.expr(*index);
             }
+            ExprKind::Slice { base, start, end } => {
+                self.expr(*base);
+                for bound in start.iter().chain(end) {
+                    self.expr(*bound);
+                }
+            }
             ExprKind::Call { callee, args } => {
                 self.expr(*callee);
                 for arg in args {
@@ -1133,6 +1139,12 @@ impl<'a, 'db> FieldInitCollector<'a, 'db> {
             ExprKind::Index { base, index } => {
                 self.expr(*base);
                 self.expr(*index);
+            }
+            ExprKind::Slice { base, start, end } => {
+                self.expr(*base);
+                for bound in start.iter().chain(end) {
+                    self.expr(*bound);
+                }
             }
             ExprKind::Call { callee, args } => {
                 self.expr(*callee);

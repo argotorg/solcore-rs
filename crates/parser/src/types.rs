@@ -617,6 +617,17 @@ pub(crate) enum ParsedExprKind<'src> {
         /// Index expression.
         index: Box<ParsedExpr<'src>>,
     },
+    /// Array slice `base[start:end]`; either bound may be omitted.
+    Slice {
+        /// Sliced expression.
+        base: Box<ParsedExpr<'src>>,
+        /// Inclusive start bound.
+        start: Option<Box<ParsedExpr<'src>>>,
+        /// Span of the `:` separator.
+        colon: LexSpan,
+        /// Exclusive end bound.
+        end: Option<Box<ParsedExpr<'src>>>,
+    },
     /// Call expression.
     Call {
         /// Callee expression.

@@ -159,13 +159,34 @@ impl<'db> InferCtx<'db> {
             return false;
         };
         let base_ty = self.infer_expr(body, base);
-        if self.calldata_array_elem_ty(base_ty.clone()).is_none() {
+        let (index_result_ty, expected) = if self.calldata_array_elem_ty(base_ty.clone()).is_some()
+        {
+            (
+                self.infer_calldata_array_index_read(
+                    body,
+                    index_expr,
+                    index,
+                    base_ty.clone(),
+                    None,
+                ),
+                "assignable storage-backed index",
+            )
+        } else if self.is_array_slice_ty(base_ty.clone()) {
+            (
+                self.infer_user_collection_index_read(
+                    body,
+                    index_expr,
+                    index,
+                    base_ty.clone(),
+                    None,
+                ),
+                "assignable index (array slices are read-only)",
+            )
+        } else {
             return false;
-        }
+        };
 
-        let index_result_ty = self
-            .infer_calldata_array_index_read(body, index_expr, index, base_ty.clone(), None)
-            .unwrap_or_else(|| self.engine.fresh_var());
+        let index_result_ty = index_result_ty.unwrap_or_else(|| self.engine.fresh_var());
         let lhs_ty = self.record_read_only_array_index_lhs_ty(body, lhs, index_result_ty);
         self.infer_expr_expected(body, rhs, Some(lhs_ty));
         let actual = self.display_infer_ty(base_ty);
@@ -174,11 +195,64 @@ impl<'db> InferCtx<'db> {
             lhs,
             TypeckDiagnostic::Mismatch {
                 span: self.expr_label_span(body, lhs),
-                expected: "assignable storage-backed index".to_owned(),
+                expected: expected.to_owned(),
                 actual,
             },
         );
         true
+    }
+
+    fn is_array_slice_ty(&mut self, ty: InferTy<'db>) -> bool {
+        matches!(
+            self.engine.resolve(ty),
+            InferTy::Named { ctor: TyCtor::User(user), .. }
+                if crate::support::is_canonical_std_def_named(self.db, user.def, "arraySlice")
+        )
+    }
+
+    /// `a[start:end]` is the std view `arraySlice<B>` over a base `B` with a
+    /// `Length` instance; omitted bounds are filled by the std helpers.
+    pub(super) fn infer_slice_expr(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        base: Id<Expr<'db>>,
+        bounds: impl IntoIterator<Item = Id<Expr<'db>>>,
+    ) -> InferTy<'db> {
+        let base_ty = self.infer_expr(body, base);
+        let uint256 =
+            crate::support::canonical_std_adt_def(self.db, "uint256").map(|def| InferTy::Named {
+                ctor: TyCtor::User(crate::UserTyCtor {
+                    def,
+                    kind: UserTyCtorKind::Adt,
+                }),
+                args: Vec::new(),
+            });
+        for bound in bounds {
+            let actual = self.infer_expr_expected(body, bound, uint256.clone());
+            if let Some(uint256) = uint256.clone() {
+                self.unify_expr(body, bound, uint256, actual);
+            }
+        }
+        let (Some(slice), Some(class)) = (
+            crate::support::canonical_std_adt_def(self.db, "arraySlice"),
+            self.lookup_class_id("Length"),
+        ) else {
+            return InferTy::Error;
+        };
+        self.pending.push(PendingObligation {
+            class,
+            main: base_ty.clone(),
+            args: Vec::new(),
+            source: ObligationSource::ClassMethod { body, expr },
+        });
+        InferTy::Named {
+            ctor: TyCtor::User(crate::UserTyCtor {
+                def: slice,
+                kind: UserTyCtorKind::Adt,
+            }),
+            args: vec![base_ty],
+        }
     }
 
     /// Returns the underlying index and its operands after peeling transparent

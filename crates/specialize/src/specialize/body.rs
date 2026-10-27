@@ -574,6 +574,9 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             ExprKind::Ident(name) => self.ident_expr(expr_id, name, mono_ty, expr.span),
             ExprKind::Tuple(elems) => self.tuple_expr(expr_id, elems, ty, expr.span)?.kind,
             ExprKind::NewArray { len, .. } => self.new_array_expr(*len, ty, expr.span)?.kind,
+            ExprKind::Slice { base, start, end } => {
+                self.slice_expr(*base, *start, *end, ty, expr.span)?.kind
+            }
             ExprKind::Array(elems) => self.array_lit_expr(elems, ty, expr.span)?.kind,
             ExprKind::Call { callee, args } => {
                 self.call_expr(expr_id, *callee, args, ty, expr.span)?
@@ -2433,6 +2436,29 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             "newArray"
         };
         self.synthetic_std_call(helper, vec![len], ty, span)
+    }
+
+    /// `a[s:e]`, `a[s:]`, `a[:e]` and `a[:]` call the matching std helper,
+    /// which fills the missing bounds so the base is evaluated once.
+    fn slice_expr(
+        &mut self,
+        base: Id<Expr<'db>>,
+        start: Option<Id<Expr<'db>>>,
+        end: Option<Id<Expr<'db>>>,
+        ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let helper = match (start, end) {
+            (Some(_), Some(_)) => "sliceRange",
+            (Some(_), None) => "sliceFrom",
+            (None, Some(_)) => "sliceTo",
+            (None, None) => "sliceAll",
+        };
+        let mut args = vec![self.expr(base)?];
+        for bound in start.into_iter().chain(end) {
+            args.push(self.expr(bound)?);
+        }
+        self.synthetic_std_call(helper, args, ty, span)
     }
 
     /// The base and index of `m[i]` when `m` is a memory array, after peeling

@@ -18,6 +18,11 @@ const MAX_EXPRESSION_PARSE_NESTING: usize = 32;
 #[derive(Debug, Clone)]
 enum ParsedPostfixOp<'src> {
     Index(ParsedExpr<'src>),
+    Slice {
+        start: Option<Box<ParsedExpr<'src>>>,
+        colon: LexSpan,
+        end: Option<Box<ParsedExpr<'src>>>,
+    },
     Call(Vec<ParsedExpr<'src>>),
     Field(SpannedStr<'src>),
 }
@@ -96,6 +101,12 @@ fn limit_expr_depth<'src>(
             }
             ParsedExprKind::Field { base, .. } => pending.push((base, depth + 1)),
             ParsedExprKind::NewArray { len, .. } => pending.push((len, depth + 1)),
+            ParsedExprKind::Slice {
+                base, start, end, ..
+            } => {
+                pending.push((base, depth + 1));
+                pending.extend(start.iter().chain(end).map(|bound| (&**bound, depth + 1)));
+            }
             ParsedExprKind::UnaryOp { expr, .. } => pending.push((expr, depth + 1)),
             ParsedExprKind::If {
                 cond,
@@ -302,10 +313,32 @@ where
         .recover_with(via_parser(atom_recovery))
         .boxed();
 
+    // `[i]` indexes; a `:` makes it a slice `[start:end]` with optional
+    // bounds. A ternary bound such as `a[c ? x : y:]` consumes its own colon
+    // first.
     let index_op = expr
         .clone()
+        .or_not()
+        .then(
+            just(Token::Colon)
+                .map_with(|_, e| e.span())
+                .then(expr.clone().or_not())
+                .or_not(),
+        )
         .delimited_by(just(Token::LBracket), just(Token::RBracket))
-        .map(ParsedPostfixOp::Index);
+        .try_map(|(start, slice), span| match (start, slice) {
+            (start, Some((colon, end))) => Ok(ParsedPostfixOp::Slice {
+                start: start.map(Box::new),
+                colon,
+                end: end.map(Box::new),
+            }),
+            (Some(index), None) => Ok(ParsedPostfixOp::Index(index)),
+            (None, None) => Err(Rich::custom(
+                span,
+                "expected an index or a slice `start:end` inside `[...]`",
+            )),
+        })
+        .boxed();
     let call_op = expr
         .clone()
         .separated_by(just(Token::Comma))
@@ -327,6 +360,12 @@ where
                             ParsedPostfixOp::Index(index) => ParsedExprKind::Index {
                                 base: Box::new(base),
                                 index: Box::new(index),
+                            },
+                            ParsedPostfixOp::Slice { start, colon, end } => ParsedExprKind::Slice {
+                                base: Box::new(base),
+                                start,
+                                colon,
+                                end,
                             },
                             ParsedPostfixOp::Call(args) => ParsedExprKind::Call {
                                 callee: Box::new(base),

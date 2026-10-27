@@ -283,6 +283,15 @@ pub enum ExprKind<'db> {
         /// Index expression.
         index: Id<Expr<'db>>,
     },
+    /// Read-only array slice `base[start:end]`; either bound may be omitted.
+    Slice {
+        /// Sliced expression.
+        base: Id<Expr<'db>>,
+        /// Inclusive start bound.
+        start: Option<Id<Expr<'db>>>,
+        /// Exclusive end bound.
+        end: Option<Id<Expr<'db>>>,
+    },
     /// Function or constructor call.
     Call {
         /// Callee expression.

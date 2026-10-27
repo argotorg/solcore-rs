@@ -1619,6 +1619,43 @@ match (left, right) {
     }
 
     #[test]
+    fn brackets_with_a_colon_parse_as_slices_with_optional_bounds() {
+        fn bounds(source: &str) -> (Option<&str>, Option<&str>) {
+            let parsed = parse_body_statements(source, (0..source.len()).into());
+            assert!(parsed.errors.is_empty(), "{source}: {:#?}", parsed.errors);
+            let [
+                ParsedStmt {
+                    kind: ParsedStmtKind::Return(Some(expr)),
+                    ..
+                },
+            ] = parsed.output.as_slice()
+            else {
+                panic!("expected a return: {:#?}", parsed.output);
+            };
+            let ParsedExprKind::Slice { start, end, .. } = &expr.kind else {
+                panic!("expected a slice: {expr:#?}");
+            };
+            (
+                start.as_ref().map(|start| &source[start.span.into_range()]),
+                end.as_ref().map(|end| &source[end.span.into_range()]),
+            )
+        }
+        assert_eq!(bounds("{ return a[i:j]; }"), (Some("i"), Some("j")));
+        assert_eq!(bounds("{ return a[i + 1:]; }"), (Some("i + 1"), None));
+        assert_eq!(bounds("{ return a[:j]; }"), (None, Some("j")));
+        assert_eq!(bounds("{ return a[:]; }"), (None, None));
+        // A ternary bound keeps its own colon.
+        assert_eq!(
+            bounds("{ return a[c ? x : y:z]; }"),
+            (Some("c ? x : y"), Some("z"))
+        );
+
+        let source = "{ return a[]; }";
+        let parsed = parse_body_statements(source, (0..source.len()).into());
+        assert!(!parsed.errors.is_empty());
+    }
+
+    #[test]
     fn if_statement_requires_a_parenthesized_condition() {
         let source = "{ if (condition) { return 1; } else { return 0; } }";
         let parsed = parse_body_statements(source, (0..source.len()).into());

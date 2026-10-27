@@ -2319,6 +2319,7 @@ fn expr_reference_span<'db>(db: &'db dyn hir_ty::Db, expr: &Expr<'db>) -> Option
         | ExprKind::Lambda { .. }
         | ExprKind::BinOp { .. }
         | ExprKind::Index { .. }
+        | ExprKind::Slice { .. }
         | ExprKind::Call { .. }
         | ExprKind::TypeAnnot { .. }
         | ExprKind::UnaryOp { .. }

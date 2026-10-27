@@ -303,6 +303,7 @@ fn needs_space(
     };
     if layout.pragma_hyphens.contains(&previous.range.start)
         || layout.pragma_hyphens.contains(&current.range.start)
+        || layout.slice_colons.contains(&previous.range.start)
     {
         return false;
     }

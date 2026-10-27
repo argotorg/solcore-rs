@@ -1599,6 +1599,11 @@ fn collect_uninitialized_let_type_refs_from_expr<'db>(
             collect_uninitialized_let_type_refs_from_expr(db, body, *base, out);
             collect_uninitialized_let_type_refs_from_expr(db, body, *index, out);
         }
+        ExprKind::Slice { base, start, end } => {
+            for expr in std::iter::once(base).chain(start).chain(end) {
+                collect_uninitialized_let_type_refs_from_expr(db, body, *expr, out);
+            }
+        }
         ExprKind::If {
             cond,
             then_expr,
