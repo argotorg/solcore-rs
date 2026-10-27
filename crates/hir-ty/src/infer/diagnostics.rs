@@ -659,6 +659,11 @@ impl TypeckDiagnostic {
                 } else if pred.contains(": Shl<") || pred.contains(": Shr<") {
                     // As in Solidity, only unsigned types are shift amounts.
                     "the shift amount must be an unsigned type (`word`, `uint8` .. `uint256`); signed amounts are not allowed"
+                } else if pred.starts_with("memory<DynArray<")
+                    && (pred.contains(": ArrayPush") || pred.contains(": Array"))
+                {
+                    // As in Solidity, only storage arrays grow or shrink.
+                    "memory arrays have a fixed length; allocate one with `new T[](length)` or use a storage array"
                 } else {
                     "add a matching impl or strengthen the surrounding type context"
                 };

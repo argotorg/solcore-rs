@@ -307,6 +307,44 @@ impl<'db> InferCtx<'db> {
         self.infer_class_index_read(body, expr, index, base_ty, expected)
     }
 
+    /// `a.length` without parentheses, as in Solidity: on a value that has no
+    /// `length` field it is `Length.length(a)`, a `uint256`.
+    pub(super) fn infer_length_property(
+        &mut self,
+        body: FuncBody<'db>,
+        expr: Id<Expr<'db>>,
+        receiver: InferTy<'db>,
+    ) -> Option<InferTy<'db>> {
+        let ExprKind::Field { field, .. } = &body.exprs(self.db).get(expr).kind else {
+            return None;
+        };
+        if (*field.atom()).text(self.db) != "length" {
+            return None;
+        }
+        let class = self.lookup_class_id("Length")?;
+        if !matches!(
+            class,
+            ClassId::User(def)
+                if crate::support::is_canonical_std_def_named(self.db, def, "Length")
+        ) {
+            return None;
+        }
+        let uint256 = crate::support::canonical_std_adt_def(self.db, "uint256")?;
+        self.pending.push(PendingObligation {
+            class,
+            main: receiver,
+            args: Vec::new(),
+            source: ObligationSource::ClassMethod { body, expr },
+        });
+        Some(InferTy::Named {
+            ctor: TyCtor::User(crate::UserTyCtor {
+                def: uint256,
+                kind: UserTyCtorKind::Adt,
+            }),
+            args: Vec::new(),
+        })
+    }
+
     /// `c[i]` on any other user-defined collection, such as an array slice,
     /// reads through the std `RValueIdxAccess` instance for `(c, i)`, as the
     /// reference `ridx` desugaring does.

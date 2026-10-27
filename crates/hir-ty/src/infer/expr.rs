@@ -159,10 +159,15 @@ impl<'db> InferCtx<'db> {
                     (!self.is_namespace_expr(body, *base)).then(|| self.infer_expr(body, *base));
                 let resolution = self.expr_resolutions.get(&(body, expr_id)).cloned();
                 if resolution.is_none()
-                    && let Some(receiver) = receiver
+                    && let Some(receiver) = receiver.clone()
                     && let Some(field_ty) = self.infer_struct_field(body, expr_id, *base, receiver)
                 {
                     field_ty
+                } else if resolution.is_none()
+                    && let Some(receiver) = receiver
+                    && let Some(length_ty) = self.infer_length_property(body, expr_id, receiver)
+                {
+                    length_ty
                 } else {
                     let resolution = if let Some(resolution) = resolution {
                         resolution

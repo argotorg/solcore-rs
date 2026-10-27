@@ -669,6 +669,8 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
                             field: ident_text(self.driver.db, field),
                         },
                     }
+                } else if ident_text(self.driver.db, field) == "length" {
+                    self.length_property(expr_id, *base, ty, expr.span)?.kind
                 } else {
                     MonoExprKind::Field {
                         base: Box::new(self.expr(*base)?),
@@ -2484,26 +2486,65 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             vec![base.ty.ty(), index.ty.ty()],
         );
         let pair = product_expr_from_elems(self.driver.db, &[base, index], pair_ty, span);
-        let callee_ty = Ty::function(self.driver.db, vec![pair_ty], result_ty);
-        let class =
-            self.driver.classes.keys().copied().find(|class| {
-                is_canonical_std_def_named(self.driver.db, *class, "RValueIdxAccess")
-            });
+        self.std_class_method_call(
+            expr,
+            "RValueIdxAccess",
+            "lookup",
+            vec![pair],
+            result_ty,
+            span,
+        )
+    }
+
+    /// `a.length` on a value without a `length` field: `Length.length(a)`.
+    fn length_property(
+        &mut self,
+        expr: Id<Expr<'db>>,
+        base: Id<Expr<'db>>,
+        result_ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let receiver = self.expr(base)?;
+        self.std_class_method_call(expr, "Length", "length", vec![receiver], result_ty, span)
+    }
+
+    /// Calls a method of a canonical std class with the evidence inference
+    /// recorded for `expr`, solving it again if none was recorded.
+    fn std_class_method_call(
+        &mut self,
+        expr: Id<Expr<'db>>,
+        class_name: &str,
+        method: &str,
+        args: Vec<MonoExpr<'db>>,
+        result_ty: Ty<'db>,
+        span: Span<'db>,
+    ) -> Option<MonoExpr<'db>> {
+        let callee_ty = Ty::function(
+            self.driver.db,
+            args.iter().map(|arg| arg.ty.ty()).collect(),
+            result_ty,
+        );
+        let class = self
+            .driver
+            .classes
+            .keys()
+            .copied()
+            .find(|class| is_canonical_std_def_named(self.driver.db, *class, class_name));
         let evidence = class.and_then(|class| {
             self.class_method_value_evidence(expr, class)
                 .map(|evidence| self.specialize_evidence(evidence))
                 .or_else(|| {
                     self.driver
-                        .solve_class_method_pred(class, "lookup", callee_ty, Some(span))
+                        .solve_class_method_pred(class, method, callee_ty, Some(span))
                 })
         });
         let Some(name) = evidence.and_then(|evidence| {
             self.driver
-                .resolve_class_method_call("lookup", evidence, callee_ty, span, self.depth)
+                .resolve_class_method_call(method, evidence, callee_ty, span, self.depth)
         }) else {
             self.driver.diagnostics.push(SpecializeDiagnostic {
                 kind: SpecializeDiagnosticKind::MissingEvidence {
-                    context: "RValueIdxAccess.lookup".to_owned(),
+                    context: format!("{class_name}.{method}"),
                 },
                 span: Some(span),
             });
@@ -2513,16 +2554,16 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             span,
             ty: self
                 .driver
-                .mono_ty(result_ty, "calldata array index result", span)?,
+                .mono_ty(result_ty, "std class method result", span)?,
             kind: MonoExprKind::Call {
                 callee: MonoId {
                     name,
                     ty: self
                         .driver
-                        .mono_ty(callee_ty, "calldata array index callee", span)?,
+                        .mono_ty(callee_ty, "std class method callee", span)?,
                     span,
                 },
-                args: vec![pair],
+                args,
                 origin: MonoCallOrigin::ByName,
             },
         })
