@@ -64,7 +64,6 @@ const STORAGE_INDEX_SLOT: &str = "__solcore_storage_index_slot";
 const STORAGE_HASH2_HELPER: &str = "__solcore_storage_hash2";
 const STORAGE_ARRAY_SLOT_HELPER: &str = "__solcore_storage_array_slot";
 const STORAGE_MAPPING_VALUE_HELPER: &str = "__solcore_storage_mapping_value";
-const MEMORY_ARRAY_INDEX_HELPER: &str = "__solcore_memory_array_index";
 /// Error selector of std's `Unimplemented` error
 /// (`Error(0x6e128399)` raised by `unimplemented()` in std.sol).
 const UNIMPLEMENTED_SELECTOR: &str = "0x6e128399";
@@ -88,7 +87,6 @@ struct Emitter<'db> {
     /// expression, preserving conditional and argument evaluation boundaries.
     revert_literals: BTreeMap<String, RevertLiteralHelper<'db>>,
     next_revert_literal: usize,
-    memory_array_index_used: bool,
     storage_array_index_used: bool,
     fresh: usize,
 }

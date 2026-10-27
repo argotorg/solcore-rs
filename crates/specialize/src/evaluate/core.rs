@@ -1496,21 +1496,6 @@ impl<'db> Evaluator<'db> {
                     target,
                 )
             }
-            MonoExprKind::MemoryArrayIndex { base, index } => {
-                let base = self.eval_expr(env, comptime_env, *base);
-                let index = self.eval_expr(env, comptime_env, *index);
-                (
-                    MonoExpr {
-                        span,
-                        ty,
-                        kind: MonoExprKind::MemoryArrayIndex {
-                            base: Box::new(base),
-                            index: Box::new(index),
-                        },
-                    },
-                    None,
-                )
-            }
             MonoExprKind::StorageIndex {
                 storage_kind,
                 base,
@@ -1762,14 +1747,6 @@ impl<'db> Evaluator<'db> {
                 span,
                 ty,
                 kind: MonoExprKind::Index {
-                    base: Box::new(self.eval_expr(env, comptime_env, *base)),
-                    index: Box::new(self.eval_expr(env, comptime_env, *index)),
-                },
-            },
-            MonoExprKind::MemoryArrayIndex { base, index } => MonoExpr {
-                span,
-                ty,
-                kind: MonoExprKind::MemoryArrayIndex {
                     base: Box::new(self.eval_expr(env, comptime_env, *base)),
                     index: Box::new(self.eval_expr(env, comptime_env, *index)),
                 },
@@ -3339,7 +3316,7 @@ impl<'db> Evaluator<'db> {
                 self.expr_is_comptime(base, comptime_env)
                     && self.expr_is_comptime(index, comptime_env)
             }
-            MonoExprKind::MemoryArrayIndex { .. } | MonoExprKind::StorageIndex { .. } => false,
+            MonoExprKind::StorageIndex { .. } => false,
             MonoExprKind::Field { base, .. } => self.expr_is_comptime(base, comptime_env),
             MonoExprKind::TypeAnnot { expr, .. } => self.expr_is_comptime(expr, comptime_env),
             MonoExprKind::Match { scrutinee, arms } => {

@@ -117,9 +117,7 @@ where
             visitor.visit_expr(rhs);
         }
         MonoExprKind::UnaryOp { expr, .. } => visitor.visit_expr(expr),
-        MonoExprKind::Index { base, index }
-        | MonoExprKind::MemoryArrayIndex { base, index }
-        | MonoExprKind::StorageIndex { base, index, .. } => {
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index, .. } => {
             visitor.visit_expr(base);
             visitor.visit_expr(index);
         }

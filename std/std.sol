@@ -63,6 +63,7 @@ export {
     addWord,
     addmod,
     allocateDynamicArray,
+    assignRef,
     address(*),
     allocate_memory,
     allocate_zeroed_memory,
@@ -118,6 +119,9 @@ export {
     ne,
     not,
     or,
+    newArray,
+    newArrayP,
+    newNestedArray,
     out_of_bounds,
     panic,
     uAddChecked,
@@ -206,9 +210,9 @@ function unimplemented() returns (()) {
     revertWithError(Unimplemented);
 }
 
+// An array index or slice bound outside the array: Solidity's Panic(0x32).
 function out_of_bounds() returns (()) {
-    let OutOfBounds = Error(0xb4120f14);
-    revertWithError(OutOfBounds);
+    panic(0x32);
 }
 
 // ------------------------------------------------------------------
@@ -1317,16 +1321,14 @@ function set_free_memory(loc: word) returns (()) {
 }
 
 // Allocate memory and update the memory pointer.
+// Wrapping the free pointer panics with Solidity's Panic(0x41).
 function allocate_memory(size: word) returns (word) {
-    let ptr: word;
-    assembly {
-        ptr := mload(0x40)
-        let end := add(ptr, size)
-        if lt(end, ptr) {
-            revert(0, 0)
-        }
-        mstore(0x40, end)
+    let ptr: word = get_free_memory();
+    let end: word = ptr + size;
+    if (end < ptr) {
+        panic(0x41);
     }
+    set_free_memory(end);
     return ptr;
 }
 
@@ -1363,20 +1365,12 @@ enum DynArray<t> {}
 // An index is in bounds when i < length.
 impl<t> IndexAccess<memory<DynArray<t>>, t> where t: Typedef<word> {
     function get(ptr: memory<DynArray<t>>, i: uint256) returns (t) {
-        let i_: word = Typedef.rep(i);
-        let loc: word = Typedef.rep(ptr);
-        if (i_ >= mload(loc)) {
-            out_of_bounds();
-        }
-        return Typedef.abs(mload(loc + 32 + (i_ * 32)));
+        let cell: memory<t> = lidx(ptr, i);
+        return CanStore.load(cell);
     }
     function set(arr: memory<DynArray<t>>, i: uint256, val: t) returns (()) {
-        let i_: word = Typedef.rep(i);
-        let loc: word = Typedef.rep(arr);
-        if (i_ >= mload(loc)) {
-            out_of_bounds();
-        }
-        mstore(loc + 32 + (i_ * 32), Typedef.rep(val));
+        let cell: memory<t> = lidx(arr, i);
+        CanStore.store(cell, val);
     }
 }
 
@@ -1396,19 +1390,44 @@ function arrayLitInit<t>(arr: memory<DynArray<t>>, i: uint256, v: t) returns (me
     return arr;
 }
 
+// Allocates the length word and `length` element words; the elements are not
+// initialised. A length whose byte size would overflow panics with 0x41.
 function allocateDynamicArray<t>(prx: Proxy<t>, length: word) returns (memory<DynArray<t>>) {
-    // Include the length header without allowing word arithmetic to wrap the
-    // allocation size. Otherwise enormous arrays can alias later allocations.
     if (length >= ~0 / 32) {
-        assembly {
-            revert(0, 0)
-        }
+        panic(0x41);
     }
-    let sz: word = (length + 1) * 32;
-    // The allocator also checks overflow of the current pointer plus size.
-    let free: word = allocate_memory(sz);
+    let free: word = allocate_memory((length + 1) * 32);
+    mstore(free, length);
+    let res: memory<DynArray<t>> = Typedef.abs(free);
+    return res;
+}
 
-    // write array length and return
+// `new T[](n)`: a memory array of n zero-initialised elements. Fresh memory is
+// not assumed to be zero, since encoders write past the free pointer.
+function newArray<t>(n: uint256) returns (memory<DynArray<t>>) where t: Typedef<word> {
+    let prx: Proxy<t>;
+    return newArrayP(prx, n);
+}
+
+// `new T[][](n)`: as in Solidity, each element starts as the empty array
+// at the zero slot 0x60 (left untouched by memoryguard), not as a null pointer.
+function newNestedArray<t>(n: uint256) returns (memory<DynArray<memory<t>>>) {
+    let prx: Proxy<memory<t>>;
+    let arr: memory<DynArray<memory<t>>> = newArrayP(prx, n);
+    let loc: word = Typedef.rep(arr);
+    let length: word = Typedef.rep(n);
+    for (let i: word = 0; i < length; i = i + 1) {
+        mstore(loc + 32 + i * 32, 0x60);
+    }
+    return arr;
+}
+
+function newArrayP<t>(prx: Proxy<t>, n: uint256) returns (memory<DynArray<t>>) {
+    let length: word = Typedef.rep(n);
+    if (length >= ~0 / 32) {
+        panic(0x41);
+    }
+    let free: word = allocate_zeroed_memory((length + 1) * 32);
     mstore(free, length);
     let res: memory<DynArray<t>> = Typedef.abs(free);
     return res;
@@ -2291,7 +2310,9 @@ function abiArrayLength<t>(a: calldata<array<t>>) returns (uint256) {
 function abiArrayGet<t, t_decoded>(a: calldata<array<t>>, i: uint256) returns (t_decoded) where ABIElement<t>: ABIElementAttribs, ABIDecoder<ABIElement<t>, CalldataWordReader>: ABIDecode<t_decoded> {
     // Bounds check: valid indices are [0, length); i == length is already past
     // the last element, so reject i >= length (mirrors the storage-array guard).
-    require(i < abiArrayLength(a), Error(0x7f52b2bf)); // ArrayOutOfBounds()
+    if (i >= abiArrayLength(a)) {
+        out_of_bounds();
+    }
     let base = CalldataWordReader(Typedef.rep(a));
     let elemRdr = WordReader.advance(base, 32);
     let stride = ABIElementAttribs.headSize(@ABIElement<t>);
@@ -2603,6 +2624,13 @@ impl<t> Length<calldata<array<t>>> {
     }
 }
 
+// A memory array stores its length in the word at its pointer.
+impl<t> Length<memory<DynArray<t>>> {
+    function length(arr: memory<DynArray<t>>) returns (uint256) {
+        return uint256(mload(Typedef.rep(arr)));
+    }
+}
+
 // All array operations use the same typed layout, including zero-sized values.
 // Reject lengths/indices whose element offsets would wrap and alias earlier
 // elements. Adding the offset to the hashed base still uses EVM slot arithmetic.
@@ -2610,7 +2638,7 @@ function storageArrayOffset<t>(index: word, p: Proxy<t>) returns (word) where t:
     let stride: word = StorageSize.size(p);
     if (stride != 0) {
         if (index > ~0 / stride) {
-            out_of_bounds();
+            panic(0x41);
         }
     }
     return index * stride;
@@ -2642,7 +2670,7 @@ impl<t> Array<storage<array<t>>> where t: StorageSize {
         let slot: word = Typedef.rep(arr);
         let n: word = sload(slot);
         if (n == 0) {
-            out_of_bounds();
+            panic(0x31);
         }
         Array.setLength(arr, uint256(n - 1));
     }
@@ -2658,7 +2686,7 @@ impl<t, v> ArrayPush<storage<array<t>>, v> where storage<t>: CanStore<v>, t: Sto
         let slot: word = Typedef.rep(arr);
         let n: word = sload(slot);
         if (n == ~0) {
-            out_of_bounds();
+            panic(0x41);
         }
         Array.setLength(arr, uint256(n + 1));
         CanStore.store(storageArrayElement(arr, n), val);
@@ -3035,15 +3063,36 @@ impl<t, t_decoded, i> RValueIdxAccess<(calldata<array<t>>, i), t_decoded> where 
     }
 }
 
-// Memory arrays are read-only through `m[i]`: there is no memory cell reference
-// type, so they get an RValue instance but no LValue one.
-impl<t, i> RValueIdxAccess<(memory<DynArray<t>>, i), t> where t: Typedef<word>, i: Typedef<word> {
-    function lookup(xi: (memory<DynArray<t>>, i)) returns (t) {
+// A memory cell holding a word-sized value, such as a memory array element.
+impl<t> CanStore<memory<t>, t> where t: Typedef<word> {
+    function store(r: memory<t>, v: t) returns (()) {
+        mstore(Typedef.rep(r), Typedef.rep(v));
+    }
+    function load(r: memory<t>) returns (t) {
+        return Typedef.abs(mload(Typedef.rep(r)));
+    }
+}
+
+// `m[i]` on a memory array designates the cell at `loc + 32 + i*32`, after
+// checking that i < length. Reads and writes go through this one check.
+impl<t, i> LValueIdxAccess<(memory<DynArray<t>>, i), memory<t>> where i: Typedef<word> {
+    function lookup(xi: (memory<DynArray<t>>, i)) returns (memory<t>) {
         match (xi) {
             case (x, j) {
-                return IndexAccess.get(x, uint256(Typedef.rep(j)));
+                let loc: word = Typedef.rep(x);
+                let idx: word = Typedef.rep(j);
+                if (idx >= mload(loc)) {
+                    out_of_bounds();
+                }
+                return memory(loc + 32 + idx * 32);
             }
         }
+    }
+}
+
+impl<t, i> RValueIdxAccess<(memory<DynArray<t>>, i), t> where t: Typedef<word>, i: Typedef<word> {
+    function lookup(xi: (memory<DynArray<t>>, i)) returns (t) {
+        return CanStore.load(LValueIdxAccess.lookup(xi));
     }
 }
 
@@ -3075,6 +3124,12 @@ function lidx<col, idx, ref>(c: col, i: idx) returns (ref) where(col, idx): LVal
 
 function ridx<col, idx, val>(c: col, i: idx) returns (val) where(col, idx): RValueIdxAccess<val> {
     return RValueIdxAccess.lookup((c, i));
+}
+
+// `c[i] = v` for collections without a dedicated store path: the compiler
+// emits assignRef(lidx(c, i), v), so every type stays visible in the arguments.
+function assignRef<r, v>(ref: r, val: v) returns (()) where r: Assign<v> {
+    Assign.assign(ref, val);
 }
 
 // --- Memory Encoding ---

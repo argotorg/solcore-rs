@@ -4866,10 +4866,6 @@ fn expr_has_storage_array_index(expr: &MonoExpr<'_>) -> bool {
             base: lhs,
             index: rhs,
         }
-        | MonoExprKind::MemoryArrayIndex {
-            base: lhs,
-            index: rhs,
-        }
         | MonoExprKind::StorageIndex {
             base: lhs,
             index: rhs,
@@ -4998,10 +4994,6 @@ fn collect_storage_indexes<'a, 'db>(
         | MonoExprKind::Index {
             base: lhs,
             index: rhs,
-        }
-        | MonoExprKind::MemoryArrayIndex {
-            base: lhs,
-            index: rhs,
         } => {
             collect_storage_indexes(lhs, indexes);
             collect_storage_indexes(rhs, indexes);
@@ -5058,9 +5050,7 @@ fn collect_expr_call_names(expr: &MonoExpr<'_>, names: &mut BTreeSet<String>) {
         MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
             collect_expr_call_names(expr, names);
         }
-        MonoExprKind::Index { base, index }
-        | MonoExprKind::MemoryArrayIndex { base, index }
-        | MonoExprKind::StorageIndex { base, index, .. } => {
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index, .. } => {
             collect_expr_call_names(base, names);
             collect_expr_call_names(index, names);
         }
@@ -5098,9 +5088,7 @@ fn expr_has_call(expr: &MonoExpr<'_>) -> bool {
         MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
             expr_has_call(expr)
         }
-        MonoExprKind::Index { base, index }
-        | MonoExprKind::MemoryArrayIndex { base, index }
-        | MonoExprKind::StorageIndex { base, index, .. } => {
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index, .. } => {
             expr_has_call(base) || expr_has_call(index)
         }
         MonoExprKind::Field { base, .. } => expr_has_call(base),
@@ -5208,9 +5196,7 @@ fn expr_has_number_literal(expr: &MonoExpr<'_>, expected: &str) -> bool {
         MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
             expr_has_number_literal(expr, expected)
         }
-        MonoExprKind::Index { base, index }
-        | MonoExprKind::MemoryArrayIndex { base, index }
-        | MonoExprKind::StorageIndex { base, index, .. } => {
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index, .. } => {
             expr_has_number_literal(base, expected) || expr_has_number_literal(index, expected)
         }
         MonoExprKind::Field { base, .. } => expr_has_number_literal(base, expected),
@@ -5295,9 +5281,7 @@ fn expr_has_closure_dispatch(expr: &MonoExpr<'_>) -> bool {
         MonoExprKind::UnaryOp { expr, .. } | MonoExprKind::TypeAnnot { expr, .. } => {
             expr_has_closure_dispatch(expr)
         }
-        MonoExprKind::Index { base, index }
-        | MonoExprKind::MemoryArrayIndex { base, index }
-        | MonoExprKind::StorageIndex { base, index, .. } => {
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index, .. } => {
             expr_has_closure_dispatch(base) || expr_has_closure_dispatch(index)
         }
         MonoExprKind::Field { base, .. } => expr_has_closure_dispatch(base),

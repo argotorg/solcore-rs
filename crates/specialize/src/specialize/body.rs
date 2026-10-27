@@ -2397,22 +2397,11 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         result_ty: Ty<'db>,
         span: Span<'db>,
     ) -> Option<MonoExpr<'db>> {
-        // The backend helper operates on raw words. Preserve arbitrary
-        // (including non-identity) Typedef representations at both edges.
+        // The std RValueIdxAccess instance owns the bounds check and preserves
+        // the element and index Typedef representations.
         let base = self.expr(base)?;
-        let base = self.typedef_rep(base, span)?;
         let index = self.expr(index)?;
-        let index = self.typedef_rep(index, span)?;
-        let word = Ty::word(self.driver.db);
-        let raw = MonoExpr {
-            span,
-            ty: self.driver.mono_ty(word, "memory array word", span)?,
-            kind: MonoExprKind::MemoryArrayIndex {
-                base: Box::new(base),
-                index: Box::new(index),
-            },
-        };
-        self.typedef_abs(raw, result_ty, span)
+        self.synthetic_std_call("ridx", vec![base, index], result_ty, span)
     }
 
     fn calldata_array_index(
@@ -2488,18 +2477,6 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
             Ty::word(self.driver.db),
             span,
         )
-    }
-
-    fn typedef_abs(
-        &mut self,
-        value: MonoExpr<'db>,
-        result_ty: Ty<'db>,
-        span: Span<'db>,
-    ) -> Option<MonoExpr<'db>> {
-        if ty_is_builtin_word(self.driver.db, result_ty) {
-            return Some(value);
-        }
-        self.resolved_class_call("Typedef", "abs", vec![value], result_ty, span)
     }
 
     fn resolved_class_call(
@@ -2924,9 +2901,7 @@ fn replace_desugared_read_at_span<'db>(
         | MonoExprKind::TypeAnnot { expr, .. } => {
             replace_desugared_read_at_span(expr, target_span, target_ty, saved, matches_kind);
         }
-        MonoExprKind::Index { base, index }
-        | MonoExprKind::MemoryArrayIndex { base, index }
-        | MonoExprKind::StorageIndex { base, index, .. } => {
+        MonoExprKind::Index { base, index } | MonoExprKind::StorageIndex { base, index, .. } => {
             replace_desugared_read_at_span(base, target_span, target_ty, saved, matches_kind);
             replace_desugared_read_at_span(index, target_span, target_ty, saved, matches_kind);
         }

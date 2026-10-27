@@ -439,11 +439,6 @@ pub enum MonoExprKind<'db> {
         base: Box<MonoExpr<'db>>,
         index: Box<MonoExpr<'db>>,
     },
-    /// Checked read from a `memory<DynArray<t>>` value.
-    MemoryArrayIndex {
-        base: Box<MonoExpr<'db>>,
-        index: Box<MonoExpr<'db>>,
-    },
     StorageIndex {
         storage_kind: MonoStorageIndexKind,
         base: Box<MonoExpr<'db>>,
