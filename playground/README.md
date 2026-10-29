@@ -24,9 +24,9 @@ or the public runtime entry of a single contract with a no-argument constructor.
 Each run uses a new in-memory database. Constructor storage is available to `main`
 within that run. Recent actions keeps previous runs visible, including through source edits.
 
-The runner uses Osaka rules, a gas limit of 1,000,000 per transaction, and a 16 MiB
-EVM memory limit. Contract `main` receives empty calldata. A wrapper returns its
-word to the playground; the normal Compile artifacts are unchanged.
+The runner uses Osaka rules, a gas limit of 1,000,000 per call and 10,000,000 per
+deployment, and a 16 MiB EVM memory limit. Contract `main` receives empty calldata.
+A wrapper returns its word to the playground; the normal Compile artifacts are unchanged.
 
 ## Run tests
 
@@ -87,6 +87,10 @@ also has a copy button. Generating these outputs does not deploy or execute code
 ## Development
 
 Use Node.js 22 or newer and wasm-pack 0.15.0 for the custom WASM build profile.
+Playground development and builds are independent of the tutorial and do not
+require mdBook. The [Solcore Tutorial](../solcore-tutorial/README.md) owns its
+curriculum sources and bundles this application through the generic project
+interface described below.
 
 On a fresh checkout, install the locked JavaScript dependencies, then build:
 
@@ -148,19 +152,69 @@ location.href = location.pathname;
 
 Unknown or malformed routes leave the workspace and URL unchanged.
 
+## Loading a project
+
+A site can supply any project without adding it to the built-in example registry.
+Put a JSON manifest on the same origin as the Playground and open:
+
+```text
+playground/index.html?project=../projects/hello.json#/project?tab=run&view=tests
+```
+
+The `project` URL is resolved relative to the Playground page, so this works under
+a deployment subpath. Add `&embed=1` before the hash for a compact iframe view.
+The full-tab view uses the same project URL without `embed=1`. The generic
+`#/project` route accepts the same view parameters as built-in example routes.
+
+The version 1 manifest contains its complete source tree:
+
+```json
+{
+  "version": 1,
+  "id": "hello",
+  "name": "Hello",
+  "description": "A small project",
+  "entry": "Hello.sol",
+  "files": [
+    { "path": "Hello.sol", "content": "function main() returns (word) { return 42; }" }
+  ]
+}
+```
+
+`description` is optional. File paths must be unique relative paths with no empty,
+`.` or `..` segments; the entry must be present. Only same-origin HTTP(S) manifests
+are accepted, and redirects are rejected. Loading and validation complete before
+the workspace or editor initializes. A missing or invalid manifest shows an error
+and **Retry**, without changing a saved workspace.
+
+Each canonical manifest URL has a separate saved workspace, even if two manifests
+share an `id`. This also isolates imported projects from the ordinary Playground.
+**Reset project** restores the loaded manifest's source. Editing the manifest at
+the same URL does not overwrite existing saved edits; reset to load the new source.
+Saved code is local to the browser and is not embedded in links. Avoid editing the
+same project in multiple tabs simultaneously.
+
 ## Build
 
 ```sh
 npm run build
 ```
 
-The build script downloads the checksum-verified soljson, rebuilds both wasm packages
-with Cargo's `--locked` option, checks TypeScript, then runs `vite build`. The pinned
-Binaryen version performs the final WASM optimization. Keep `Cargo.lock` and
-`package-lock.json` committed with every release.
+The build script downloads the checksum-verified soljson, rebuilds both WASM packages
+with Cargo's `--locked` option, checks TypeScript, and builds the Playground into
+`dist/`. The pinned Binaryen version performs the final WASM optimization.
+Keep `Cargo.lock` and `package-lock.json` committed with every release.
+
+The reusable `buildPlayground({ outDir, base })` function in `scripts/build.mjs`
+also lets another static site bundle the same editor and runtime.
+It includes local compiler, LSP, and solc assets, with no
+knowledge of the site's content.
+The same module exports `previewStaticSite({ outDir, port })`, a Vite preview
+server for built static sites with missing-file 404 responses.
 
 After building, `npm run test:wasm` checks execution through the generated WASM
-package with each backend. `npm run test:unit` checks the JavaScript helpers and workspace updates.
+package with each backend. `npm run test:unit` checks the JavaScript helpers,
+project loading, routing, and workspace updates.
 
 ## Deploy
 

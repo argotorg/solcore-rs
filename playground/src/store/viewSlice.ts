@@ -17,9 +17,13 @@ function readInitialTheme(): ThemeMode {
     return "dark";
   }
 
-  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-  if (storedTheme === "light" || storedTheme === "dark") {
-    return storedTheme;
+  try {
+    const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (storedTheme === "light" || storedTheme === "dark") {
+      return storedTheme;
+    }
+  } catch {
+    // Local storage may be disabled for an embedded document.
   }
 
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -52,7 +56,11 @@ export function createViewSlice(set: StoreApi<WorkspaceState>["setState"], get: 
       const nextTheme: ThemeMode = get().theme === "dark" ? "light" : "dark";
       set({ theme: nextTheme });
       applyTheme(nextTheme);
-      if (isBrowser()) window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      try {
+        if (isBrowser()) window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+      } catch {
+        // The selected theme still applies for this session.
+      }
     },
   };
 }

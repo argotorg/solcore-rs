@@ -1,5 +1,7 @@
 import CompileWorker from "./compile.worker?worker";
-import type { CompileInput, CompileRequest, WorkerResponse, CompileResult, WatchInput, WatchResult } from "./types";
+import type { CompileInput, CompileRequest, ConfigureRuntimeRequest, WorkerResponse, CompileResult, WatchInput, WatchResult } from "./types";
+import { SOLJSON_FILE } from "./solcRelease";
+import { runtimeAssetUrl } from "./runtimeAssets";
 
 interface PendingRequest {
   kind: CompileRequest["kind"];
@@ -25,6 +27,12 @@ export class CompileClient {
     this.worker = new CompileWorker();
     this.worker.addEventListener("message", this.handleMessage);
     this.worker.addEventListener("error", this.handleWorkerError);
+    // A relative Vite base must resolve from the page. A worker's own URL is
+    // inside assets/, which would otherwise request assets/solc/ incorrectly.
+    this.worker.postMessage({
+      kind: "configure-runtime",
+      solcUrl: runtimeAssetUrl(import.meta.env.BASE_URL, `solc/${SOLJSON_FILE}`, document.baseURI),
+    } satisfies ConfigureRuntimeRequest);
   }
 
   compile(input: CompileInput): Promise<CompileResult> {

@@ -4,7 +4,7 @@ import { Option, checkedDiv, unwrapOr } from option;
 
 contract Splitter {
     // Each recipient's equal share of the pot; zero recipients yields
-    // zero instead of reverting on division.
+    // Option.None, which unwrapOr replaces with zero.
     // #[(10, 3) -> 3]
     // #[(10, 0) -> 0]
     function share(pot: uint256, recipients: uint256) public returns (uint256) {

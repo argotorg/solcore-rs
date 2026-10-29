@@ -3,10 +3,8 @@ import { defaultExample, findExample, getExample, type PlaygroundExample } from 
 import { readExampleRoute, readSharedExampleId } from "../share/exampleLink";
 import { freshExecutionState, invalidateExecution } from "./executionSlice";
 import { isBrowser } from "./isBrowser";
+import { projectSource, workspaceStorage } from "./session";
 import type { WorkspaceState } from "./workspace";
-
-const WORKSPACE_STORAGE_KEY = "solcore-playground.workspace.v1";
-const WORKSPACE_BACKUP_STORAGE_KEY = "solcore-playground.workspace.v1.backup";
 
 function normalizePath(path: string): string {
   const normalized = path.trim().replace(/\\/g, "/").replace(/^\/+/, "");
@@ -83,7 +81,7 @@ function readStoredWorkspace(): PersistedWorkspace | null {
   }
 
   try {
-    const raw = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    const raw = window.localStorage.getItem(workspaceStorage.key);
     if (!raw) {
       return null;
     }
@@ -130,10 +128,10 @@ function readStoredWorkspace(): PersistedWorkspace | null {
       return null;
     }
 
-    const exampleId =
+    const exampleId = projectSource?.id ?? (
       typeof parsed.exampleId === "string" && findExample(parsed.exampleId)
         ? parsed.exampleId
-        : defaultExample.id;
+        : defaultExample.id);
 
     return { files, order, entry, activePath, exampleId };
   } catch {
@@ -149,9 +147,9 @@ export function backupStoredWorkspace(): void {
   }
 
   try {
-    const raw = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    const raw = window.localStorage.getItem(workspaceStorage.key);
     if (raw !== null) {
-      window.localStorage.setItem(WORKSPACE_BACKUP_STORAGE_KEY, raw);
+      window.localStorage.setItem(workspaceStorage.backupKey, raw);
     }
   } catch {
     // Best effort; never block loading the shared example.
@@ -175,10 +173,15 @@ export function persistWorkspace(state: WorkspaceState): void {
     exampleId: state.exampleId,
   };
 
-  window.localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(payload));
+  try {
+    window.localStorage.setItem(workspaceStorage.key, JSON.stringify(payload));
+  } catch {
+    // Editing and execution still work if storage is disabled or full.
+  }
 }
 
 function readSharedExample(): PlaygroundExample | null {
+  if (projectSource) return projectSource;
   if (!isBrowser()) {
     return null;
   }
@@ -380,7 +383,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
       persistWorkspace(get());
     },
 
-    loadExample(id) { replaceExample(getExample(id)); },
-    resetWorkspace() { replaceExample(defaultExample); },
+    loadExample(id) { if (!projectSource) replaceExample(getExample(id)); },
+    resetWorkspace() { replaceExample(projectSource ?? defaultExample); },
   };
 }

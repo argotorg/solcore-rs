@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildExampleLink, readExampleLocation, readExampleRoute, readExampleView, readSharedExampleId } from "./exampleLink.js";
+import { buildExampleLink, buildProjectLink, readExampleLocation, readExampleRoute, readExampleView, readProjectView, readSharedExampleId } from "./exampleLink.js";
 
 test("reads the example id from a query string", () => {
   assert.equal(readSharedExampleId("?example=trait"), "trait");
@@ -57,4 +57,20 @@ test("missing, empty and unknown view fields do not invent selections", () => {
   assert.ok(Object.values(view).every((value) => value === undefined));
   assert.equal(buildExampleLink("https://example.org/", "trait", view), "https://example.org/#/examples/trait");
   assert.equal(readExampleRoute("#/examples/%zz?file=Hello.sol"), null);
+});
+
+test("external project view links preserve the manifest URL and embedded mode", () => {
+  const href = buildProjectLink('https://example.org/editor/?embed=1&project=../projects/a.json&example=old', {
+    file: 'lib/a b.sol', tab: 'run', view: 'tests', function: 'add(uint256,uint256)',
+  });
+  const url = new URL(href);
+  assert.equal(url.searchParams.get('project'), '../projects/a.json');
+  assert.equal(url.searchParams.get('embed'), '1');
+  assert.equal(url.searchParams.has('example'), false);
+  assert.equal(readProjectView(url.hash).file, 'lib/a b.sol');
+  assert.equal(readProjectView(url.hash).function, 'add(uint256,uint256)');
+  assert.equal(readExampleRoute(url.hash), null);
+  for (const hash of ['#/examples/contract-output', '#/project/extra', '#project', '#/projects']) {
+    assert.equal(readProjectView(hash), null);
+  }
 });

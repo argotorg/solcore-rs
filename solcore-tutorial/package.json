@@ -1,0 +1,15 @@
+{
+  "name": "solcore-tutorial",
+  "private": true,
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "build": "npm --prefix ../playground run prepare:runtime && node scripts/build.mjs",
+    "build:book": "node scripts/build.mjs",
+    "preview": "node scripts/preview.mjs",
+    "test": "node --test tests/tutorial.test.mjs tests/tutorial-build.test.mjs",
+    "test:wasm": "node --test tests/run-wasm.test.mjs tests/exercises-wasm.test.mjs tests/ticket-office-wasm.test.mjs",
+    "test:bundle": "node scripts/check-tutorial-bundle.mjs"
+  }
+}

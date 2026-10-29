@@ -3,6 +3,7 @@ import test from 'node:test';
 import { build } from 'esbuild';
 
 const workers = [];
+globalThis.document = { baseURI: 'https://example.org/course/playground/index.html?embed=1' };
 globalThis.__WatchTestWorker = class {
   listeners = new Map();
   requests = [];
@@ -16,6 +17,7 @@ globalThis.__WatchTestWorker = class {
 const bundle = await build({
   entryPoints: [new URL('./compileClient.ts', import.meta.url).pathname],
   bundle: true, write: false, format: 'esm', platform: 'node',
+  define: { 'import.meta.env.BASE_URL': JSON.stringify('./') },
   plugins: [{ name: 'worker', setup(build) {
     build.onResolve({ filter: /compile\.worker\?worker$/ }, () => ({ path: 'worker', namespace: 'mock' }));
     build.onLoad({ filter: /.*/, namespace: 'mock' }, () => ({ contents: 'export default globalThis.__WatchTestWorker;' }));
@@ -23,9 +25,18 @@ const bundle = await build({
 });
 const { CompileClient } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 
+test('the compiler worker receives its document-relative assets before requests', () => {
+  const client = new CompileClient();
+  const worker = workers.at(-1);
+  assert.equal(worker.requests[0].kind, 'configure-runtime');
+  assert.match(worker.requests[0].solcUrl, /^https:\/\/example\.org\/course\/playground\/solc\/soljson-/);
+  client.terminate();
+});
+
 test('watch refreshes supersede one another without cancelling Run', async () => {
   const client = new CompileClient();
   const worker = workers.at(-1);
+  worker.requests.shift(); // Runtime configuration is sent before execution.
   const run = client.run({});
   const first = client.watch({});
   const rejected = assert.rejects(first, { name: 'AbortError' });

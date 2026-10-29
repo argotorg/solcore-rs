@@ -2,7 +2,10 @@
 use std::cell::{Cell, RefCell};
 
 use crate::{
-    execution::{ACCOUNTS, CALLER, GAS_LIMIT, MEMORY_LIMIT, RunResult, STARTING_BALANCE},
+    execution::{
+        ACCOUNTS, CALLER, DEPLOYMENT_GAS_LIMIT, MEMORY_LIMIT, RunResult, STARTING_BALANCE,
+        transaction_gas_limit,
+    },
     test_execution::{abi_shape, display_output},
 };
 use hir::ast::item::Item;
@@ -327,7 +330,7 @@ impl Sandbox {
             })
             .modify_block_chained(|block| {
                 block.basefee = 0;
-                block.gas_limit = GAS_LIMIT;
+                block.gas_limit = DEPLOYMENT_GAS_LIMIT;
                 block.number = U256::from(1);
                 block.timestamp = U256::from(1);
             })
@@ -337,7 +340,7 @@ impl Sandbox {
             .kind(kind)
             .data(data)
             .nonce(nonce)
-            .gas_limit(GAS_LIMIT)
+            .gas_limit(transaction_gas_limit(kind))
             .gas_price(0)
             .build_fill();
         if commit {
@@ -563,7 +566,50 @@ pub(crate) fn watch(input: &WatchInput) -> Result<Vec<WatchResult>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::CALL_GAS_LIMIT;
     use crate::{CompileInput, FileInput, Options, compile_impl, run_impl};
+
+    #[test]
+    fn transactions_use_separate_deployment_and_call_gas_budgets() {
+        let mut db = InMemoryDB::default();
+        db.insert_account_info(
+            CALLER,
+            AccountInfo::default().with_balance(STARTING_BALANCE),
+        );
+        let mut sandbox = Sandbox {
+            id: 0,
+            deployment: RunResult::error("deploy", "Deployment has not run"),
+            db,
+            address: Address::ZERO,
+            key: String::new(),
+            contract: String::new(),
+            methods: vec![],
+        };
+        // A 6,000-byte runtime whose first instruction sequence loops forever.
+        // Depositing it needs over 1m gas, but calling it must still stop at 1m.
+        let mut init = revm::primitives::hex::decode("61177061000d5f396117705ff35b600056").unwrap();
+        init.resize(13 + 6_000, 0);
+        let deployment = sandbox
+            .transact(CALLER, TxKind::Create, init.into(), true)
+            .unwrap();
+        assert!(deployment.tx_gas_used() > CALL_GAS_LIMIT);
+        assert!(deployment.tx_gas_used() < DEPLOYMENT_GAS_LIMIT);
+        let reported = RunResult::from_evm(deployment.clone(), "deploy");
+        assert_eq!(reported.gas_limit, DEPLOYMENT_GAS_LIMIT);
+        let ExecutionResult::Success {
+            output: Output::Create(_, Some(address)),
+            ..
+        } = deployment
+        else {
+            panic!("large runtime should deploy: {reported:?}");
+        };
+        sandbox.address = address;
+        let call = sandbox.call(CALLER, Bytes::new(), true).unwrap();
+        assert_eq!(call.tx_gas_used(), CALL_GAS_LIMIT);
+        assert!(matches!(call, ExecutionResult::Halt { .. }));
+        assert_eq!(RunResult::from_evm(call, "call").gas_limit, CALL_GAS_LIMIT);
+    }
+
     const SOURCE: &str = r#"
 import * from std;
 import * from std.dispatch;

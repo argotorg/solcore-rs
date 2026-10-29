@@ -20,6 +20,8 @@ export interface ExampleLocation {
 
 export function readExampleLocation(hash: string): ExampleLocation | null;
 export function buildExampleLink(href: string, id: string, view?: ExampleView): string;
+export function buildProjectLink(href: string, view?: ExampleView): string;
+export function readProjectView(hash: string): ExampleView | null;
 export function readExampleView(hash: string): ExampleView;
 
 export function readExampleRoute(hash: string): string | null;

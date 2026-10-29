@@ -35,6 +35,22 @@ export function buildExampleLink(href, id, view = {}) {
   return url.toString();
 }
 
+/** External projects use view-only routing; their identity is the project URL. */
+export function buildProjectLink(href, view = {}) {
+  const url = new URL(href);
+  url.searchParams.delete(EXAMPLE_PARAM);
+  const params = new URLSearchParams();
+  for (const key of VIEW_FIELDS) {
+    if (view[key]) params.set(key, view[key]);
+  }
+  url.hash = `/project${params.size ? `?${params}` : ""}`;
+  return url.toString();
+}
+
+export function readProjectView(hash) {
+  return /^#\/project(?:\?.*)?$/.test(hash) ? readExampleView(hash) : null;
+}
+
 /** Reads the single example route; malformed and unrelated hashes are ignored. */
 export function readExampleRoute(hash) {
   const match = /^#\/examples\/([^/?]+)(?:\?.*)?$/.exec(hash);

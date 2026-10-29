@@ -8,7 +8,6 @@ import init, {
 } from "solcore-wasm";
 import wasmUrl from "solcore-wasm/solcore_wasm_bg.wasm?url";
 import { bindSolc } from "./solcBinding";
-import { SOLJSON_FILE } from "./solcRelease";
 import type { CompileInput, CompileResult, WatchInput, WatchResult } from "./types";
 
 export interface StdFile {
@@ -20,6 +19,11 @@ let initPromise: Promise<void> | null = null;
 let versionPromise: Promise<string> | null = null;
 let stdFilesPromise: Promise<StdFile[]> | null = null;
 let solcPromise: Promise<string> | null = null;
+let solcUrl: string | null = null;
+
+export function configureSolcUrl(url: string): void {
+  solcUrl = url;
+}
 
 export function initializeCompiler(): Promise<void> {
   if (!initPromise) {
@@ -40,7 +44,8 @@ export function needsSolc(input: CompileInput, execute: boolean): boolean {
  */
 export function initializeSolc(): Promise<string> {
   solcPromise ??= (async () => {
-    const url = `${import.meta.env.BASE_URL}solc/${SOLJSON_FILE}`;
+    const url = solcUrl;
+    if (!url) throw new Error("The compiler runtime asset URL has not been configured.");
     const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`Could not load solc from ${url} (HTTP ${response.status}).`);

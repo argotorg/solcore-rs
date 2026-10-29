@@ -10,14 +10,20 @@ test("backend loading preserves run and watch order and recovers after failure",
   const executed = [];
   const responses = [];
   let deployment;
+  let solcUrl;
+  const runtimeUrl = "https://tutorial.example/course/playground/solc/soljson.js";
   const originalSelf = globalThis.self;
   globalThis.self = {
     addEventListener(_name, listener) { receive = listener; },
     postMessage(response) { responses.push(response); },
   };
   globalThis.__solcoreWorkerAuditRuntime = {
+    configureSolcUrl: (url) => { solcUrl = url; },
     initializeCompiler: async () => {},
-    initializeSolc: () => loading,
+    initializeSolc: () => {
+      assert.equal(solcUrl, runtimeUrl, "the bundled runtime must be configured before loading");
+      return loading;
+    },
     needsSolc: (input) => input.backend === "solc",
     compile: () => { throw new Error("invalid compile request"); },
     run: (input) => {
@@ -34,11 +40,14 @@ test("backend loading preserves run and watch order and recovers after failure",
       plugins: [{ name: "runtime", setup(api) {
         api.onResolve({ filter: /^\.\/runtime$/ }, () => ({ path: "runtime", namespace: "mock" }));
         api.onLoad({ filter: /.*/, namespace: "mock" }, () => ({
-          contents: "export const { initializeCompiler, initializeSolc, needsSolc, compile, run, watch } = globalThis.__solcoreWorkerAuditRuntime;",
+          contents: "export const { configureSolcUrl, initializeCompiler, initializeSolc, needsSolc, compile, run, watch } = globalThis.__solcoreWorkerAuditRuntime;",
         }));
       } }],
     });
     await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString("base64")}`);
+    receive({ data: { kind: "configure-runtime", solcUrl: runtimeUrl } });
+    assert.equal(solcUrl, runtimeUrl);
+    assert.deepEqual(responses, [], "configuration must not produce a compile response");
     receive({ data: { id: 1, kind: "run", input: { backend: "solc", contract: "old" } } });
     receive({ data: { id: 2, kind: "run", input: { backend: "sonatina", contract: "current" } } });
     receive({ data: { id: 3, kind: "watch", input: {} } });

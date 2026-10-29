@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { findExample } from "../examples";
+import { projectSource } from "../store/session";
 import { useWorkspaceStore, type OutputTab } from "../store/workspace";
-import { buildExampleLink, readExampleLocation, readExampleView, readSharedExampleId, type ExampleView } from "./exampleLink";
+import { readExampleLocation, readExampleView, readProjectView, readSharedExampleId, type ExampleView } from "./exampleLink";
 import { parseSourceSelection } from "./sourceSelection";
-import { sameNavigation, workspaceLocation } from "./exampleView";
+import { sameNavigation, workspaceLink, workspaceLocation } from "./exampleView";
 
 const tabs: OutputTab[] = ["execution", "hull", "yul", "sonatina", "abi", "problems"];
 
@@ -28,13 +29,16 @@ export function attachExampleRouter(): () => void {
   };
   const followRoute = (): void => {
     pending = null;
-    const location = readExampleLocation(window.location.hash);
+    const projectView = projectSource ? readProjectView(window.location.hash) : null;
+    const location = projectSource
+      ? (projectView ? { id: projectSource.id, view: projectView } : null)
+      : readExampleLocation(window.location.hash);
     if (!location) return;
-    const example = findExample(location.id);
+    const example = projectSource ?? findExample(location.id);
     if (!example) return;
     applying = true;
     try {
-      if (location.id !== useWorkspaceStore.getState().exampleId) useWorkspaceStore.getState().loadExample(example.id);
+      if (!projectSource && location.id !== useWorkspaceStore.getState().exampleId) useWorkspaceStore.getState().loadExample(example.id);
       const state = useWorkspaceStore.getState();
       const view = location.view;
       const tab = view.tab === "run" || (view.tab === "sonatina" && view.backend !== "sonatina") ? "execution" : view.tab;
@@ -51,9 +55,9 @@ export function attachExampleRouter(): () => void {
 
   // Keep unknown links intact. Normalize empty and legacy URLs without adding history.
   const legacyId = readSharedExampleId(window.location.search);
-  if (!window.location.hash && (!legacyId || findExample(legacyId))) {
+  if ((projectSource && !readProjectView(window.location.hash)) || (!window.location.hash && (!legacyId || findExample(legacyId)))) {
     const state = useWorkspaceStore.getState();
-    window.history.replaceState(null, "", buildExampleLink(window.location.href, state.exampleId, workspaceLocation(state).view));
+    window.history.replaceState(null, "", workspaceLink(window.location.href, state.exampleId, workspaceLocation(state).view));
   }
   followRoute();
   window.addEventListener("hashchange", followRoute);
@@ -66,7 +70,7 @@ export function attachExampleRouter(): () => void {
     const changed = navigationChanged || selectionChanged;
     if (selectionChanged && !navigationChanged) {
       const view = readExampleView(window.location.hash);
-      window.history.replaceState(null, "", buildExampleLink(window.location.href, current.id,
+      window.history.replaceState(null, "", workspaceLink(window.location.href, current.id,
         { ...view, selection: current.view.selection }));
       return;
     }
@@ -81,7 +85,7 @@ export function attachExampleRouter(): () => void {
     }
     if (changed || (pending && pending.version !== state.workspaceVersion)) pending = null;
     if (changed) {
-      window.history.pushState(null, "", buildExampleLink(window.location.href, current.id, current.view));
+      window.history.pushState(null, "", workspaceLink(window.location.href, current.id, current.view));
     }
   });
   return () => { window.removeEventListener("hashchange", followRoute); unsubscribe(); };

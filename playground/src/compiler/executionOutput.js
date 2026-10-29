@@ -21,7 +21,7 @@ export function formatExecution(result, tests = []) {
     if (result.deploymentGasUsed !== null) {
       lines.push(`Gas used (deployment): ${result.deploymentGasUsed}`);
     }
-    lines.push(`Gas limit per transaction: ${result.gasLimit}`);
+    lines.push(`Gas limit (${result.phase === 'deploy' ? 'deployment' : 'call'}): ${result.gasLimit}`);
   }
   return lines.join('\n');
 }

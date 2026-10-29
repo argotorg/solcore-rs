@@ -1,0 +1,22 @@
+[book]
+title = "The Solcore Tutorial"
+description = "Learn Solcore by reading, running, and changing tested examples."
+authors = ["Solcore contributors"]
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+# Let the host handle missing pages; mdBook's 404 page requires a fixed site URL.
+input-404 = ""
+default-theme = "light"
+preferred-dark-theme = "navy"
+additional-css = ["theme/tutorial.css"]
+additional-js = ["theme/solcore-highlight.js", "theme/tutorial.js"]
+git-repository-url = "https://github.com/argotorg/solcore-rs"
+
+[output.html.playground]
+runnable = false

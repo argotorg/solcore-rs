@@ -14,6 +14,17 @@ test('execution displays return words as strings and separates deployment gas', 
   assert.doesNotMatch(text, /Osaka|fresh state/i);
   assert.match(text, /Gas used \(call\): 21018/);
   assert.match(text, /Gas used \(deployment\): 60000/);
+  assert.match(text, /Gas limit \(call\): 1000000/);
+});
+
+test('deployment results label their separate gas budget', () => {
+  const text = formatExecution({
+    ...result, phase: 'deploy', returnWord: null, deploymentGasUsed: null,
+    gasUsed: 1200000, gasLimit: 10000000,
+  });
+  assert.match(text, /Gas used \(deployment\): 1200000/);
+  assert.match(text, /Gas limit \(deployment\): 10000000/);
+  assert.doesNotMatch(text, /Gas limit \(call\)/);
 });
 
 test('reverts retain raw data and do not display a successful return word', () => {

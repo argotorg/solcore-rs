@@ -15,8 +15,18 @@ use vfs::Workspace;
 
 use crate::backend::{self, Backend};
 
-pub(crate) const GAS_LIMIT: u64 = 1_000_000;
+pub(crate) const CALL_GAS_LIMIT: u64 = 1_000_000;
+// Deployment pays for storing the runtime bytecode as well as executing the
+// constructor. Keep that budget separate from repeated calls and test steps.
+pub(crate) const DEPLOYMENT_GAS_LIMIT: u64 = 10_000_000;
 pub(crate) const MEMORY_LIMIT: u64 = 16 * 1024 * 1024;
+
+pub(crate) fn transaction_gas_limit(kind: TxKind) -> u64 {
+    match kind {
+        TxKind::Create => DEPLOYMENT_GAS_LIMIT,
+        TxKind::Call(_) => CALL_GAS_LIMIT,
+    }
+}
 /// Callers for manual calls: anvil's ten default accounts. Keep in sync with
 /// `playground/src/compiler/accounts.ts`.
 pub(crate) const ACCOUNTS: [Address; 10] = [
@@ -62,6 +72,14 @@ pub(crate) struct RunResult {
 }
 
 impl RunResult {
+    fn gas_limit_for_phase(phase: &str) -> u64 {
+        if phase == "deploy" {
+            DEPLOYMENT_GAS_LIMIT
+        } else {
+            CALL_GAS_LIMIT
+        }
+    }
+
     pub(crate) fn error(phase: &'static str, message: impl Into<String>) -> Self {
         Self {
             status: RunStatus::Error,
@@ -71,7 +89,7 @@ impl RunResult {
             decoded: None,
             gas_used: 0,
             deployment_gas_used: None,
-            gas_limit: GAS_LIMIT,
+            gas_limit: Self::gas_limit_for_phase(phase),
             message: Some(message.into()),
         }
     }
@@ -103,7 +121,7 @@ impl RunResult {
             decoded: None,
             gas_used,
             deployment_gas_used: None,
-            gas_limit: GAS_LIMIT,
+            gas_limit: Self::gas_limit_for_phase(phase),
             message,
         }
     }
@@ -264,7 +282,7 @@ fn execute_bytecode(bytecode: Bytes, contract: bool) -> RunResult {
         })
         .modify_block_chained(|block| {
             block.basefee = 0;
-            block.gas_limit = GAS_LIMIT;
+            block.gas_limit = DEPLOYMENT_GAS_LIMIT;
             block.number = U256::from(1);
             block.timestamp = U256::from(1);
         })
@@ -275,7 +293,7 @@ fn execute_bytecode(bytecode: Bytes, contract: bool) -> RunResult {
             .kind(kind)
             .data(data)
             .nonce(nonce)
-            .gas_limit(GAS_LIMIT)
+            .gas_limit(transaction_gas_limit(kind))
             .gas_price(0)
             .build_fill()
     };
@@ -469,7 +487,41 @@ contract Counter {
         let result = execute_bytecode(hex::decode("60006000fd").unwrap().into(), true);
         assert_eq!(result.status, RunStatus::Revert);
         assert_eq!(result.phase, "deploy");
+        assert_eq!(result.gas_limit, DEPLOYMENT_GAS_LIMIT);
         assert!(result.deployment_gas_used.is_none());
+    }
+
+    #[test]
+    fn large_runtime_deployment_has_a_separate_gas_budget() {
+        // Return 6,000 STOP bytes as runtime code. Its code-deposit charge alone
+        // exceeds the call budget, even though calling it does no work.
+        let mut init = hex::decode("61177061000d5f396117705ff3").unwrap();
+        init.resize(init.len() + 6_000, 0);
+        let result = execute_bytecode(init.into(), true);
+        assert_eq!(result.status, RunStatus::Success, "{result:?}");
+        assert_eq!(result.phase, "call");
+        assert!(
+            result
+                .deployment_gas_used
+                .is_some_and(|gas| gas > CALL_GAS_LIMIT)
+        );
+        assert!(
+            result
+                .deployment_gas_used
+                .is_some_and(|gas| gas < DEPLOYMENT_GAS_LIMIT)
+        );
+        assert_eq!(result.gas_limit, CALL_GAS_LIMIT);
+    }
+
+    #[test]
+    fn deployment_loop_exhausts_its_gas_budget() {
+        // JUMPDEST; PUSH1 0; JUMP, executed as the constructor.
+        let result = execute_bytecode(hex::decode("5b600056").unwrap().into(), true);
+        assert_eq!(result.status, RunStatus::Halt);
+        assert_eq!(result.phase, "deploy");
+        assert_eq!(result.gas_limit, DEPLOYMENT_GAS_LIMIT);
+        assert_eq!(result.gas_used, DEPLOYMENT_GAS_LIMIT);
+        assert!(result.message.as_deref().unwrap().contains("OutOfGas"));
     }
 
     #[test]
@@ -477,7 +529,8 @@ contract Counter {
         // JUMPDEST; PUSH1 0; JUMP.
         let result = execute_bytecode(hex::decode("5b600056").unwrap().into(), false);
         assert_eq!(result.status, RunStatus::Halt);
-        assert_eq!(result.gas_used, GAS_LIMIT);
+        assert_eq!(result.gas_used, CALL_GAS_LIMIT);
+        assert_eq!(result.gas_limit, CALL_GAS_LIMIT);
         assert!(result.message.as_deref().unwrap().contains("OutOfGas"));
     }
 }

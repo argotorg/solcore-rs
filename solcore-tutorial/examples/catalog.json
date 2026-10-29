@@ -1,0 +1,176 @@
+[
+  {
+    "id": "contract-output",
+    "name": "Hello contract",
+    "description": "A first contract with a public function returning 42.",
+    "entry": "Hello.sol",
+    "files": [
+      "Hello.sol"
+    ]
+  },
+  {
+    "id": "std-usage",
+    "name": "Std usage",
+    "description": "Calls a standard-library trait method directly; the + operator desugars to the same call.",
+    "entry": "Calculator.sol",
+    "files": [
+      "Calculator.sol"
+    ]
+  },
+  {
+    "id": "trait",
+    "name": "Trait",
+    "description": "One Toggle trait defines an operation implemented for both Switch and Door.",
+    "entry": "LightSwitch.sol",
+    "files": [
+      "LightSwitch.sol"
+    ]
+  },
+  {
+    "id": "generics",
+    "name": "Generics",
+    "description": "A where-constrained generic max works for a user-defined Version type via its Ord impl.",
+    "entry": "Registry.sol",
+    "files": [
+      "Registry.sol"
+    ]
+  },
+  {
+    "id": "option",
+    "name": "Option",
+    "description": "A reusable Option module and a splitter contract: checked division represents a zero divisor with None.",
+    "entry": "Splitter.sol",
+    "files": [
+      "Splitter.sol",
+      "option.sol"
+    ]
+  },
+  {
+    "id": "pattern-matching",
+    "name": "Pattern matching",
+    "description": "An escrow whose lifecycle is an enum stored in a contract field, driven by match.",
+    "entry": "Escrow.sol",
+    "files": [
+      "Escrow.sol"
+    ]
+  },
+  {
+    "id": "mini-nft",
+    "name": "Mini NFT",
+    "description": "An NFT with typed ownership: tokens either have an owner or do not exist, with no zero-address sentinels.",
+    "entry": "MiniNFT.sol",
+    "files": [
+      "MiniNFT.sol",
+      "option.sol",
+      "context.sol"
+    ]
+  },
+  {
+    "id": "composition",
+    "name": "Composition",
+    "description": "Three deployable vaults share one engine module: traits compose where Classic Solidity builds inheritance diamonds.",
+    "entry": "Vaults.sol",
+    "files": [
+      "Vaults.sol",
+      "engine.sol",
+      "context.sol"
+    ]
+  },
+  {
+    "id": "invariants",
+    "name": "Invariants",
+    "description": "A constant-product pool as an opaque type: it can only be created or changed through module operations that preserve the invariant.",
+    "entry": "Amm.sol",
+    "files": [
+      "Amm.sol",
+      "pool.sol"
+    ]
+  },
+  {
+    "id": "extensions",
+    "name": "Extensions",
+    "description": "A token composed from feature modules: each owns its storage and ships a transfer hook, chained once in a single update function.",
+    "entry": "Token.sol",
+    "files": [
+      "Token.sol",
+      "erc20core.sol",
+      "pausable.sol",
+      "capped.sol",
+      "ownable.sol",
+      "hooks.sol",
+      "option.sol",
+      "context.sol"
+    ]
+  },
+  {
+    "id": "reentrancy",
+    "name": "Reentrancy",
+    "description": "Read and write locks as wrapper functions: protected bodies are lambdas, and reads are guarded against read-only reentrancy.",
+    "entry": "Vault.sol",
+    "files": [
+      "Vault.sol",
+      "reentrancy.sol",
+      "context.sol"
+    ]
+  },
+  {
+    "id": "comptime",
+    "name": "Comptime",
+    "description": "Evaluates a typed computation at compile time and embeds its result.",
+    "entry": "Answer.sol",
+    "files": [
+      "Answer.sol"
+    ]
+  },
+  {
+    "id": "tutorial-basics",
+    "name": "Tutorial: basics",
+    "description": "Small examples of functions, local variables, reassignment, conditionals, and loops.",
+    "entry": "Basics.sol",
+    "files": [
+      "Basics.sol"
+    ]
+  },
+  {
+    "id": "tutorial-counter",
+    "name": "Tutorial: counter",
+    "description": "A counter introduces zero-initialized persistent storage and stateful tests.",
+    "entry": "Counter.sol",
+    "files": [
+      "Counter.sol"
+    ]
+  },
+  {
+    "id": "tutorial-bounded-counter",
+    "name": "Tutorial: bounded counter",
+    "description": "Practice persistent state: preserve a capacity invariant with an explicit guard and test expected reverts.",
+    "entry": "BoundedCounter.sol",
+    "files": [
+      "BoundedCounter.sol"
+    ]
+  },
+  {
+    "id": "tutorial-ticket-office-starter",
+    "name": "TicketOffice: starter",
+    "description": "Complete an event booking contract using pricing traits, generic functions, enum state, modules, and compile-time capacity.",
+    "entry": "TicketOffice.sol",
+    "files": [
+      "TicketOffice.sol",
+      "pricing.sol",
+      "booking.sol",
+      "context.sol"
+    ]
+  },
+  {
+    "id": "tutorial-ticket-office",
+    "name": "TicketOffice: solution",
+    "description": "A complete event booking ledger with two pricing policies, per-caller reservations, cancellation, and organizer-controlled closing.",
+    "entry": "TicketOffice.sol",
+    "files": [
+      "TicketOffice.sol",
+      "pricing.sol",
+      "booking.sol",
+      "context.sol"
+    ]
+  }
+]

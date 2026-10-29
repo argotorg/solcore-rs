@@ -136,6 +136,9 @@ jobs:
       - name: Install wasm-pack
         run: cargo install wasm-pack --version 0.15.0 --locked
 
+      - name: Install tutorial builder
+        run: cargo install mdbook --version 0.4.52 --locked
+
       - name: Install playground dependencies
         working-directory: playground
         run: npm ci
@@ -147,6 +150,14 @@ jobs:
       - name: Build release playground
         working-directory: playground
         run: npm run build
+
+      - name: Test and build standalone tutorial
+        working-directory: solcore-tutorial
+        run: |
+          npm test
+          npm run build:book
+          npm run test:bundle
+          npm run test:wasm
 
       - name: Test playground WASM execution
         working-directory: playground

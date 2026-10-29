@@ -21,10 +21,10 @@ import { SOLC_VERSION } from "../compiler/solcRelease";
 import type { Backend } from "../compiler/types";
 import { formatCompileDuration } from "../compiler/timing";
 import { copyText } from "../share/copyText";
-import { workspaceView } from "../share/exampleView";
-import { buildExampleLink } from "../share/exampleLink";
+import { workspaceLink, workspaceView } from "../share/exampleView";
 import { examples } from "../store/workspace";
 import { useWorkspaceStore } from "../store/workspace";
+import { embedded, projectSource } from "../store/session";
 import { useCompileElapsed } from "./useCompileElapsed";
 
 interface TopBarProps {
@@ -100,7 +100,7 @@ export function TopBar({
 
   const copyExampleLink = async (): Promise<void> => {
     try {
-      await copyText(buildExampleLink(window.location.href, selectedExample, workspaceView(useWorkspaceStore.getState())));
+      await copyText(workspaceLink(window.location.href, selectedExample, workspaceView(useWorkspaceStore.getState())));
       setLinkCopyState("copied");
     } catch {
       setLinkCopyState("failed");
@@ -126,15 +126,15 @@ export function TopBar({
           <span className="brand__mark" aria-hidden="true">
             <Braces size={20} />
           </span>
-          <h1 className="brand__text">solcore playground</h1>
+          <h1 className="brand__text">{projectSource?.name ?? (embedded ? "Solcore editor" : "solcore playground")}</h1>
         </div>
       </div>
 
       <div className="topbar__controls">
-        <label className="select-control">
+        {!projectSource ? <label className="select-control">
           <span>Example</span>
           <span className="select-control__shell">
-            <select autoFocus aria-label="Example" value={selectedExample} onChange={(event) => loadExample(event.target.value)}>
+            <select autoFocus={!embedded} aria-label="Example" value={selectedExample} onChange={(event) => loadExample(event.target.value)}>
               {examples.map((example) => (
                 <option key={example.id} value={example.id}>
                   {example.name}
@@ -143,9 +143,9 @@ export function TopBar({
             </select>
             <ChevronDown size={14} aria-hidden="true" />
           </span>
-        </label>
+        </label> : null}
 
-        <button
+        {!embedded ? <button
           type="button"
           className="icon-button"
           onClick={() => {
@@ -153,10 +153,10 @@ export function TopBar({
           }}
           title={
             linkCopyState === "failed"
-              ? "Copy failed - link: " + buildExampleLink(window.location.href, selectedExample, workspaceView(useWorkspaceStore.getState()))
-              : "Copy a link to this example"
+              ? "Copy failed - link: " + workspaceLink(window.location.href, selectedExample, workspaceView(useWorkspaceStore.getState()))
+              : `Copy a link to this ${projectSource ? "project" : "example"}`
           }
-          aria-label="Copy a link to this example"
+          aria-label={`Copy a link to this ${projectSource ? "project" : "example"}`}
         >
           {linkCopyState === "copied" ? (
             <Check size={18} />
@@ -165,9 +165,9 @@ export function TopBar({
           ) : (
             <LinkIcon size={18} />
           )}
-        </button>
+        </button> : null}
 
-        <label className="select-control">
+        {!embedded || solFiles.length > 1 ? <label className="select-control">
           <span>Entry</span>
           <span className="select-control__shell">
             <select aria-label="Entry" value={entry} onChange={(event) => setEntry(event.target.value)}>
@@ -179,9 +179,9 @@ export function TopBar({
             </select>
             <ChevronDown size={14} aria-hidden="true" />
           </span>
-        </label>
+        </label> : null}
 
-        <label className="select-control" title="EVM code generator for bytecode and execution">
+        {!embedded ? <label className="select-control" title="EVM code generator for bytecode and execution">
           <span>Backend</span>
           <span className="select-control__shell">
             <select aria-label="Backend" value={backend} onChange={(event) => setBackend(event.target.value as Backend)}>
@@ -190,7 +190,7 @@ export function TopBar({
             </select>
             <ChevronDown size={14} aria-hidden="true" />
           </span>
-        </label>
+        </label> : null}
 
         <CompileControl />
 
@@ -221,14 +221,14 @@ export function TopBar({
           type="button"
           className="button button--secondary"
           onClick={resetWorkspace}
-          aria-label="Reset workspace"
-          title="Reset workspace"
+          aria-label={projectSource ? "Reset project" : "Reset workspace"}
+          title={projectSource ? "Restore the original project files" : "Reset workspace"}
         >
           <RotateCcw size={16} />
-          <span>Reset workspace</span>
+          <span>{projectSource ? "Reset project" : "Reset workspace"}</span>
         </button>
 
-        <span className="version-pill">v{compilerVersion ?? "..."}</span>
+        {!embedded ? <span className="version-pill">v{compilerVersion ?? "..."}</span> : null}
 
         <button
           type="button"

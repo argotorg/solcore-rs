@@ -77,7 +77,7 @@ export const examples: PlaygroundExample[] = [
   {
     id: "option",
     name: "Option",
-    description: "A reusable Option module and a splitter contract: checked division returns an Option instead of reverting.",
+    description: "A reusable Option module and a splitter contract: checked division represents a zero divisor with None.",
     entry: "Splitter.sol",
     files: [
       { path: "Splitter.sol", content: optionSplitter },

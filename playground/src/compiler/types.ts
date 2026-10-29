@@ -147,4 +147,8 @@ export interface WatchInput {
   watches: WatchCall[];
 }
 export type WorkerRequest = CompileRequest | { id: number; kind: "watch"; input: WatchInput };
+export interface ConfigureRuntimeRequest {
+  kind: "configure-runtime";
+  solcUrl: string;
+}
 export type WorkerResponse = CompileResponse | { id: number; kind: "watch-result"; result: WatchResult[] };

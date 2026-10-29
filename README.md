@@ -8,6 +8,12 @@ This is a prototype implementation of Solidity's new type system. It is function
 
 Try it in the [online playground](https://playground.solcore.soliditylang.org/).
 
+Learn with the English [Solcore Tutorial](solcore-tutorial/README.md): a guided
+path from your first program to traits, compile-time computation, and a tested
+contract. The tutorial owns and tests its source examples.
+The book bundles the Playground editor and compiler to run those projects in
+the page and can be distributed as a standalone static site.
+
 ## Installation
 
 Release archives include the compiler, formatter and matching language server;

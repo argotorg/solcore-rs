@@ -8,11 +8,14 @@ import { StatusBar } from "./components/StatusBar";
 import { TopBar } from "./components/TopBar";
 
 import { useExampleRouter } from "./share/useExampleRouter";
+import { embedded } from "./store/session";
 
 // Below this main-area width, the editor and output panes can no longer sit
 // side by side without either squeezing the editor unreasonably narrow or
 // letting the output tab strip (Hull/Yul/Sonatina IR/ABI/Execution/Problems) overflow.
-const EDITOR_MIN_PX = 320;
+// Embedded editors often share space with surrounding content. Keep code
+// readable before choosing the two-column layout inside that narrower frame.
+const EDITOR_MIN_PX = embedded ? 480 : 320;
 const OUTPUT_TAB_SAFE_PX = 520;
 const MAIN_DIRECTION_THRESHOLD_PX = EDITOR_MIN_PX + OUTPUT_TAB_SAFE_PX;
 // Small deadband around the threshold so a width sitting right on the edge
@@ -65,7 +68,7 @@ function useElementWidth(): [RefObject<HTMLDivElement>, number] {
 
 export function App(): JSX.Element {
   useExampleRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(!embedded);
   const [outputOpen, setOutputOpen] = useState(true);
   // The sidebar's own auto-collapse still just follows the window - it isn't
   // part of the tab-overflow problem the main-area measurement below solves.
@@ -117,7 +120,7 @@ export function App(): JSX.Element {
   // Collapse (not unmount) on narrow viewports so react-resizable-panels
   // keeps tracking the panel's identity/layout across the transition.
   useEffect(() => {
-    if (isNarrow) {
+    if (isNarrow || embedded) {
       sidebarRef.current?.collapse();
     }
   }, [isNarrow]);
@@ -147,7 +150,7 @@ export function App(): JSX.Element {
   }, []);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${embedded ? " app-shell--embedded" : ""}`}>
       <TopBar
         sidebarOpen={sidebarOpen}
         onToggleSidebar={toggleSidebar}
@@ -162,7 +165,7 @@ export function App(): JSX.Element {
             ref={sidebarRef}
             id="sidebar"
             order={1}
-            defaultSize={18}
+            defaultSize={embedded ? 0 : 18}
             minSize={14}
             maxSize={28}
             collapsible

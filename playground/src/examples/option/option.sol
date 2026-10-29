@@ -11,7 +11,7 @@ enum Option<a> {
     Some(a)
 }
 
-// Division by zero yields Option.None instead of reverting.
+// A zero divisor explicitly yields Option.None rather than a numeric result.
 function checkedDiv(a: uint256, b: uint256) returns (Option<uint256>) {
     if (b == uint256(0)) {
         return Option.None;
