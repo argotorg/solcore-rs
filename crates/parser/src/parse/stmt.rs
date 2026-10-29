@@ -53,7 +53,7 @@ fn assign_stmt_kind<'src>(
 ) -> ParsedStmtKind<'src> {
     match tail {
         Some(ParsedAssignTail::Binary(op, rhs)) => {
-            // Match the reference frontend: compound assignment is ordinary
+            // Compound assignment is ordinary
             // assignment whose right-hand side is the corresponding binary
             // operator expression. This keeps type-class resolution and
             // backend specialization identical to `lhs = lhs op rhs`.

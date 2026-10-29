@@ -65,7 +65,7 @@ const STORAGE_HASH2_HELPER: &str = "__solcore_storage_hash2";
 const STORAGE_ARRAY_SLOT_HELPER: &str = "__solcore_storage_array_slot";
 const STORAGE_MAPPING_VALUE_HELPER: &str = "__solcore_storage_mapping_value";
 const MEMORY_ARRAY_INDEX_HELPER: &str = "__solcore_memory_array_index";
-/// Error selector of the reference std's `Unimplemented` error
+/// Error selector of std's `Unimplemented` error
 /// (`Error(0x6e128399)` raised by `unimplemented()` in std.sol).
 const UNIMPLEMENTED_SELECTOR: &str = "0x6e128399";
 const OUT_OF_BOUNDS_SELECTOR: &str = "0xb4120f14";

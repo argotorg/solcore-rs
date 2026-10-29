@@ -3,7 +3,7 @@ import * from std.dispatch;
 import { setValue } from lib;
 
 // Issue #48: the contract method shadows the imported function. The recursive
-// unqualified call is accepted, matching upstream a7b7afb0 (#599).
+// unqualified call is accepted.
 contract C {
     function setValue(x: uint256) public {
         setValue(x);

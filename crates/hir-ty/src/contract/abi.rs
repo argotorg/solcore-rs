@@ -48,8 +48,7 @@ impl<'db> AbiAdtEvidence<'db> {
 /// ABI parameter or tuple component.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, salsa::SalsaValue)]
 pub struct AbiParam {
-    /// Parameter name. Outputs and tuple components use the empty name,
-    /// matching the reference ABI emitter.
+    /// Parameter name. Outputs and tuple components use the empty name.
     pub name: String,
     /// Canonical ABI type.
     pub ty: AbiType,

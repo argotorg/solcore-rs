@@ -256,7 +256,7 @@ impl<'db> Emitter<'db> {
         }
     }
 
-    /// Mirrors the reference std's `storage<mapping(k => v)>: CanStore`
+    /// Mirrors std's `storage<mapping(k => v)>: CanStore`
     /// instance, whose `load`/`store` bodies are `unimplemented()`: touching a
     /// whole mapping field as a value compiles, but reverts at runtime with
     /// the std `Unimplemented` error, nominally yielding the field's base
@@ -398,8 +398,8 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                 if let ExprKind::Var(name) = &lhs.kind
                     && let Some(slot) = self.mapping_field(name.as_str()).map(|field| field.slot)
                 {
-                    // A whole mapping field as an assignment target: the
-                    // reference compiles this via `CanStore.store`, which
+                    // A whole mapping field as an assignment target goes
+                    // through `CanStore.store`, which
                     // evaluates the rhs and then hits an `unimplemented()`
                     // runtime trap.
                     self.mapping_value_helper_used = true;
@@ -597,8 +597,8 @@ impl<'a, 'db> StorageLowerer<'a, 'db> {
                     }
                 } else if let Some(slot) = self.mapping_field(name.as_str()).map(|field| field.slot)
                 {
-                    // A whole mapping field read as a value: the reference
-                    // compiles this via `CanStore.load`, which is an
+                    // A whole mapping field read as a value goes through
+                    // `CanStore.load`, which is an
                     // `unimplemented()` runtime trap returning the base slot.
                     self.mapping_value_helper_used = true;
                     Expr {

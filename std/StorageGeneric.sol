@@ -239,7 +239,7 @@ impl CanStore<storage<memory<string>>, memory<string>> {
 // infer the stored type from the slot type.
 //
 // Instead, DeriveGeneric emits a concrete, per-type storage(T):CanStore(T)
-// instance (see Solcore.Desugarer.DeriveGeneric) where the data type is fixed
+// instance (see `derived_storage.rs` in hir-ty) where the data type is fixed
 // in the instance head; it delegates to the structural CanStore instances above
 // via the type's Generic representation. StorageSize is likewise derived
 // per-type for the field layout.

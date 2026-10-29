@@ -611,8 +611,8 @@ impl<'db> Driver<'db> {
     }
 
     /// Solves a synthesized class-method call in the lexical module that
-    /// generated it. Contract field access is definition-side source code in
-    /// upstream Solcore, so consumer-only or merely reachable instances must
+    /// generated it. Contract field access is definition-side source code, so
+    /// consumer-only or merely reachable instances must
     /// not change the selected evidence.
     pub(super) fn solve_class_method_pred_in_module(
         &mut self,

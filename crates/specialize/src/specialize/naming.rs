@@ -2,7 +2,7 @@ pub(super) use hir::nameres::{ident_text, type_var_bindings};
 
 use super::*;
 
-/// Reference-style specialization name: `base$word` or
+/// Specialization name: `base$word` or
 /// `base$FooLword_boolJ`.
 pub fn specialize_name<'db>(db: &'db dyn Db, base: &str, tys: &[Ty<'db>]) -> String {
     let mut mangler = NameMangler::new();

@@ -212,8 +212,8 @@ function out_of_bounds() returns (()) {
 // ------------------------------------------------------------------
 // High-level revert helper
 // ------------------------------------------------------------------
-// EmitHull has special handling for `revertLit("...")` after MastEval has
-// constant-folded the argument to a string literal.
+// Hull emission has special handling for `revertLit("...")` after comptime
+// evaluation has constant-folded the argument to a string literal.
 function revertLit(comptime s: string) returns (()) {
     unimplemented(); // Sanity check if folding ignores it.
     return;
@@ -246,9 +246,9 @@ enum Error {
 }
 
 // A string literal can be used as an Error: `require(cond, "message")` reverts
-// with the message.  The literal is materialized into memory(string) here; MastEval
-// erases the comptime-only parameter by cloning this method per literal, so
-// the materializer sees a literal rather than a parameter.
+// with the message.  The literal is materialized into memory(string) here; the
+// specializer erases the comptime-only parameter by cloning this method per
+// literal, so the materializer sees a literal rather than a parameter.
 impl Str<Error> {
     function fromString(s: string) returns (Error) {
         return Error.Msg(Str.fromString(s));
@@ -641,8 +641,8 @@ default impl<a> Num<a> where a: Add, a: Sub, a: Bounded, a: Eq, a: Ord, a: Typed
 // --- Word Arithmetic & Logic ---
 // TODO: make these checked
 
-// These are intended to be folded by MastEval when their arguments are
-// statically known word values.
+// These are intended to be folded by comptime evaluation when their arguments
+// are statically known word values.
 function eqWord(x: word, y: word) returns (bool) {
     return tobool(eq(x, y));
 }
@@ -1436,8 +1436,8 @@ impl Add<string> {
 // ------------------------------------------------------------------
 // Compile-time string literal builtins
 // ------------------------------------------------------------------
-// These are intended to be folded by MastEval when their arguments are
-// statically known string literals.
+// These are intended to be folded by comptime evaluation when their arguments
+// are statically known string literals.
 
 function concatLit(comptime a: string, comptime b: string) returns (string) {
     unimplemented(); // Sanity check if folding ignores it.

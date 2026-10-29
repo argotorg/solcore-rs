@@ -379,7 +379,7 @@ fn function_summaries(db: &TestDb, output: &SpecializeOutput<'_>) -> Vec<String>
 }
 
 #[test]
-fn naming_matches_reference_mangling() {
+fn naming_matches_expected_mangling() {
     let db = TestDb::default();
     let word = Ty::builtin(&db, BuiltinTyCtor::Word);
     let pair = Ty::named(
@@ -1716,7 +1716,7 @@ contract C {
 }
 
 #[test]
-fn specializes_reference_constructor_and_dispatch_collision_regressions() {
+fn specializes_historical_constructor_and_dispatch_collision_regressions() {
     let repo = repo_root();
     let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples/dispatch");
     for fixture in ["miniERC20.sol", "weth9.sol"] {
@@ -3055,7 +3055,7 @@ contract C {
 }
 
 #[test]
-fn specializes_curated_typecheck_parity_corpus_files() {
+fn specializes_curated_corpus_files() {
     let repo = repo_root();
     let corpus = repo.join("crates/parser/tests/fixtures/corpus/ok/test/examples");
     for fixture in [

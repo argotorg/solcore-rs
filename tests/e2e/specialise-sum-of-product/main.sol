@@ -1,24 +1,20 @@
-// Regression test: specializer sum-of-product bug (specMatch substitution leak).
+// Regression test: specializing a sum-of-product class instance.
 //
 // A binary class method over the primitive `sum(f, g)` whose two sides have
 // DIFFERENT shapes: the inl side carries a product (word, word), the inr side
 // carries a plain word. Specializing the instance at sum((word, word), word)
-// used to leak a substitution binding from one match alternative into the
-// sibling alternative's nested `match`, mistyping its scrutinee. The frontend
-// (sol-core) accepted the program, but `yule` then rejected the emitted .hull:
+// must keep each match alternative's substitution separate. If a binding from
+// the `inl` alternative leaks into the `inr` alternative's nested `match`, it
+// collapses sum(f, g) to sum(g, g) and mistypes the scrutinee, so the emitted
+// Hull no longer type-checks:
 //
 //   Type mismatch
 //     expected: sum(word, word)
 //     actual:   sum(pair(word, word), word)
 //
-// Root cause: match specialization did not scope its substitution (a global
-// accumulator) across match alternatives. While specializing the `inl` branch,
-// a binding leaked into the `inr` branch's nested `match`, collapsing
-// sum(f, g) to sum(g, g). The fix resets spSubst around each alternative.
-//
 // This isolates the SPECIALIZER: no #[derive], no Eq universe instances. The
 // class and its instances are defined locally and exercised directly, so the
-// program must now lower end-to-end and return the expected value.
+// program must lower end-to-end and return the expected value.
 
 import * from std;
 import * from std.dispatch;
@@ -85,7 +81,7 @@ impl<f, g> Total<sum<f, g>> where f: Total, g: Total {
 // #[scenario("SpecialiseSumOfProduct")]
 // constructor()
 // #[deploy(0x) -> success]
-// #[raw(0xb74af5a9, label = "probe()(uint256) -> 6 : Total over sum((word,word),word) on inl((1,2)) = (1+1)+(2+2). Regression for the specMatch substitution-leak bug (yule used to reject the hull).") -> success(0x0000000000000000000000000000000000000000000000000000000000000006)]
+// #[raw(0xb74af5a9, label = "probe()(uint256) -> 6 : Total over sum((word,word),word) on inl((1,2)) = (1+1)+(2+2). Regression for a substitution leak between match alternatives.") -> success(0x0000000000000000000000000000000000000000000000000000000000000006)]
 contract SpecialiseSumOfProduct {
     constructor() {}
 

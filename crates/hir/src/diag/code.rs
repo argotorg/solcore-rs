@@ -491,7 +491,7 @@ impl DiagnosticCode {
         ),
         DiagnosticCodeAlias::new(
             Self::TYPECK_WRONG_ARITY,
-            "SC0203 covers ordinary arity mismatches and reference-compatible mutual data errors.",
+            "SC0203 covers ordinary arity mismatches and mutually recursive data errors.",
         ),
         DiagnosticCodeAlias::new(
             Self::TYPECK_INCOMPLETE_METHOD_SIGNATURE,

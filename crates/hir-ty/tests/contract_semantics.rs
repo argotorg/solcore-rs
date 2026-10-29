@@ -538,8 +538,8 @@ fn dispatch_surface_tracks_public_private_constructor_and_fallback(fixture: Fixt
     assert_eq!(surface.methods[0].outputs[1].ty.to_string(), "bool");
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/abi_json_matches_reference_public_function_shape", glob: "main.sol")]
-fn abi_json_matches_reference_public_function_shape(fixture: Fixture<&str>) {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/abi_json_public_function_shape", glob: "main.sol")]
+fn abi_json_public_function_shape(fixture: Fixture<&str>) {
     let db = TestDb::default();
     let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "Sample");
@@ -565,8 +565,8 @@ fn abi_json_matches_reference_public_function_shape(fixture: Fixture<&str>) {
     assert_eq!(abi, expected);
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/abi_json_matches_reference_constructor_payable_and_tuple_outputs", glob: "main.sol")]
-fn abi_json_matches_reference_constructor_payable_and_tuple_outputs(fixture: Fixture<&str>) {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/abi_json_constructor_payable_and_tuple_outputs", glob: "main.sol")]
+fn abi_json_constructor_payable_and_tuple_outputs(fixture: Fixture<&str>) {
     let db = TestDb::default();
     let module = parse_module(&db, fixture.content());
     let contract = contract_named(&db, module, "Token");
@@ -622,8 +622,8 @@ fn constructor_and_fallback_abi_lowering_normalizes_aliases(fixture: Fixture<&st
     );
 }
 
-#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/dispatch_signature_spelling_matches_reference_sigstring_shape", glob: "main.sol")]
-fn dispatch_signature_spelling_matches_reference_sigstring_shape(fixture: Fixture<&str>) {
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/contract_semantics/dispatch_signature_spelling_sigstring_shape", glob: "main.sol")]
+fn dispatch_signature_spelling_sigstring_shape(fixture: Fixture<&str>) {
     let (mut db, key) = db_with_main(fixture.content());
     insert_module_source(
         &mut db,

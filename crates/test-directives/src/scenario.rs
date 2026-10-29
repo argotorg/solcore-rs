@@ -5,7 +5,7 @@ use super::{
     comment_text, encode_hex, parse_hex_bytes,
 };
 
-/// Raw scenarios retain the upstream execution environment, regardless of metadata.
+/// Raw scenarios keep the execution environment they were recorded for, regardless of metadata.
 pub const RAW_E2E_TARGET_EVM_VERSION: &str = "osaka";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

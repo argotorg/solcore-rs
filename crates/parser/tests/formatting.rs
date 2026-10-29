@@ -173,7 +173,7 @@ fn formatting_parser_fixtures(fixture: Fixture<&str>) {
 }
 
 #[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/corpus/ok", glob: "**/*.sol")]
-fn formatting_reference_corpus(fixture: Fixture<&str>) {
+fn formatting_historical_corpus(fixture: Fixture<&str>) {
     assert_stable(fixture.content());
 }
 

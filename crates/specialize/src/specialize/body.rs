@@ -2398,8 +2398,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
         span: Span<'db>,
     ) -> Option<MonoExpr<'db>> {
         // The backend helper operates on raw words. Preserve arbitrary
-        // (including non-identity) Typedef representations at both edges,
-        // matching the reference IndexAccess implementation.
+        // (including non-identity) Typedef representations at both edges.
         let base = self.expr(base)?;
         let base = self.typedef_rep(base, span)?;
         let index = self.expr(index)?;
@@ -2548,7 +2547,7 @@ impl<'a, 'db> BodyCtx<'a, 'db> {
 
     /// Resolves a synthesized contract-field call against the canonical class
     /// that is visible in the source module. Unlike operator lowering, these
-    /// calls come from the upstream-generated FieldAccess instances and must
+    /// calls come from the compiler-generated FieldAccess instances and must
     /// not consider unrelated reachable classes that happen to share a name.
     fn resolved_contract_field_class_call(
         &mut self,

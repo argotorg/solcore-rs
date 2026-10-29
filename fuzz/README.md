@@ -32,6 +32,6 @@ host's Slurm artifact/metadata handling and gives every target a separate
 shared corpus at `/data/fuzz-corpora/solcore-rs/<target>/`.
 
 The initial byte-stream targets intentionally have no local-import bundle
-format.  Add imports, incremental edits, and differential outcomes as separate
-structured targets; mixing them into the raw target would turn most executions
-into missing-file diagnostics and dilute coverage.
+format.  Add imports and incremental edits as separate structured targets;
+mixing them into the raw target would turn most executions into missing-file
+diagnostics and dilute coverage.

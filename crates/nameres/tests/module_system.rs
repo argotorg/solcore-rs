@@ -1090,17 +1090,17 @@ fn parse_broken_module_diagnostics_publish_only_parse_errors() {
 }
 
 #[test]
-fn imports_corpus_matches_reference_expectations() {
+fn imports_corpus_matches_expectations() {
     std::thread::Builder::new()
         .name("imports-corpus-validation".to_owned())
         .stack_size(64 * 1024 * 1024)
-        .spawn(imports_corpus_matches_reference_expectations_impl)
+        .spawn(imports_corpus_matches_expectations_impl)
         .expect("spawn corpus validation")
         .join()
         .expect("corpus validation thread");
 }
 
-fn imports_corpus_matches_reference_expectations_impl() {
+fn imports_corpus_matches_expectations_impl() {
     let root = parser_corpus_imports_dir();
     let mut external_roots = BTreeMap::new();
     external_roots.insert("extlib".to_owned(), root.join("extlib"));
@@ -1109,7 +1109,6 @@ fn imports_corpus_matches_reference_expectations_impl() {
     let mut expected_pass_passing = 0usize;
     let mut expected_fail_total = 0usize;
     let mut expected_fail_failing = 0usize;
-    let mut divergences = Vec::new();
     let mut mismatches = Vec::new();
 
     for case in IMPORT_CORPUS_CASES {
@@ -1131,34 +1130,26 @@ fn imports_corpus_matches_reference_expectations_impl() {
         }
 
         if actual_failed != expected_failed {
-            if let Some(divergence) = known_divergence(case.path) {
-                divergences.push(format!("{}: {}", case.path, divergence.reason));
-            } else {
-                mismatches.push(format!(
-                    "{} expected {} but got {} diagnostics: {:?}",
-                    case.path,
-                    if expected_failed {
-                        "failure"
-                    } else {
-                        "success"
-                    },
-                    diagnostics.len(),
-                    diagnostics
-                        .iter()
-                        .filter_map(|diagnostic| diagnostic.code.as_deref())
-                        .collect::<Vec<_>>()
-                ));
-            }
+            mismatches.push(format!(
+                "{} expected {} but got {} diagnostics: {:?}",
+                case.path,
+                if expected_failed {
+                    "failure"
+                } else {
+                    "success"
+                },
+                diagnostics.len(),
+                diagnostics
+                    .iter()
+                    .filter_map(|diagnostic| diagnostic.code.as_deref())
+                    .collect::<Vec<_>>()
+            ));
         }
     }
 
     println!(
-        "imports corpus scoreboard: {expected_pass_passing}/{expected_pass_total} expected-pass passing; {expected_fail_failing}/{expected_fail_total} expected-fail failing; {} known divergences",
-        divergences.len()
+        "imports corpus scoreboard: {expected_pass_passing}/{expected_pass_total} expected-pass passing; {expected_fail_failing}/{expected_fail_total} expected-fail failing"
     );
-    for divergence in &divergences {
-        println!("known divergence: {divergence}");
-    }
 
     assert!(
         mismatches.is_empty(),
@@ -1474,40 +1465,9 @@ fn repo_root() -> PathBuf {
 #[derive(Clone, Copy)]
 struct ImportCorpusCase {
     path: &'static str,
+    /// Whether name resolution alone reports diagnostics for this entry.
     expected_failure: bool,
 }
-
-#[derive(Clone, Copy)]
-struct KnownDivergence {
-    path: &'static str,
-    reason: &'static str,
-}
-
-fn known_divergence(path: &str) -> Option<KnownDivergence> {
-    KNOWN_DIVERGENCES
-        .iter()
-        .copied()
-        .find(|divergence| divergence.path == path)
-}
-
-const KNOWN_DIVERGENCES: &[KnownDivergence] = &[
-    KnownDivergence {
-        path: "hidden_ctor_nonexhaustive_fail.sol",
-        reason: "reference fails later exhaustiveness checking for partial constructor visibility; Rust nameres records partial-data metadata but does not run exhaustiveness",
-    },
-    KnownDivergence {
-        path: "symlink_identity_fail.sol",
-        reason: "reference rejects distinct module identities for equivalent helper sources; Rust nameres does not canonicalize/symlink-check type identity in this pass",
-    },
-    KnownDivergence {
-        path: "private_bad_main.sol",
-        reason: "reference type-checks private helper bodies and rejects the unexported broken function; Rust nameres intentionally reports only name-resolution diagnostics",
-    },
-    KnownDivergence {
-        path: "pragma_scope_main.sol",
-        reason: "reference fails pragma-scoped typeclass/termination validation; Rust nameres does not implement that semantic check",
-    },
-];
 
 const IMPORT_CORPUS_CASES: &[ImportCorpusCase] = &[
     ImportCorpusCase {
@@ -1818,9 +1778,10 @@ const IMPORT_CORPUS_CASES: &[ImportCorpusCase] = &[
         path: "hidden_ctor_pattern_fail.sol",
         expected_failure: true,
     },
+    // Name resolution accepts this file; type checking rejects it (SC0223).
     ImportCorpusCase {
         path: "hidden_ctor_nonexhaustive_fail.sol",
-        expected_failure: true,
+        expected_failure: false,
     },
     ImportCorpusCase {
         path: "hidden_ctor_wildcard_ok.sol",
@@ -1858,17 +1819,20 @@ const IMPORT_CORPUS_CASES: &[ImportCorpusCase] = &[
         path: "external_lib_missing_fail.sol",
         expected_failure: true,
     },
+    // Name resolution accepts this file; type checking rejects it (SC0201).
     ImportCorpusCase {
         path: "symlink_identity_fail.sol",
-        expected_failure: true,
+        expected_failure: false,
     },
+    // Name resolution accepts this file; type checking rejects it (SC0201).
     ImportCorpusCase {
         path: "private_bad_main.sol",
-        expected_failure: true,
+        expected_failure: false,
     },
+    // Name resolution accepts this file; type checking rejects it (SC0212).
     ImportCorpusCase {
         path: "pragma_scope_main.sol",
-        expected_failure: true,
+        expected_failure: false,
     },
     ImportCorpusCase {
         path: "selfcycle.sol",
