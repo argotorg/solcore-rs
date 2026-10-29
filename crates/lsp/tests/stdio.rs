@@ -400,6 +400,35 @@ fn workspace_folder_changes_update_symbols(fixture: Fixture<&str>) {
     });
 }
 
+#[dir_test(dir: "$CARGO_MANIFEST_DIR/tests/fixtures/native/workspace_symbols/solidity_files", glob: "primary/main.sol.txt")]
+fn workspace_indexing_skips_files_without_pragma_solcore(fixture: Fixture<&str>) {
+    run_fixture(fixture, |client| {
+        expect_result(
+            "initial diagnostics",
+            &client.open("primary/main.sol")?,
+            &json!([]),
+        )?;
+        let solcore = client.request("workspace/symbol", json!({ "query": "solcoreValue" }))?;
+        expect_result(
+            "Solcore symbols",
+            &solcore,
+            &json!([{
+                "name": "solcoreValue", "kind": 12,
+                "location": {
+                    "uri": client.workspace.uri("primary/lib.sol"),
+                    "range": { "start": { "line": 3, "character": 9 }, "end": { "line": 3, "character": 21 } }
+                }
+            }]),
+        )?;
+        let solidity = client.request("workspace/symbol", json!({ "query": "solidityOnly" }))?;
+        expect_result(
+            "symbols from a file without the pragma",
+            &solidity,
+            &json!([]),
+        )
+    });
+}
+
 fn expect_error_diagnostic(diagnostics: &Value, message: &str) -> Result<(), String> {
     if !diagnostics.as_array().is_some_and(|diagnostics| {
         diagnostics.iter().any(|diagnostic| {

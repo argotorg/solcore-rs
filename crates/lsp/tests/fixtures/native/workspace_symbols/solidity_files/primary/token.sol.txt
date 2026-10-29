@@ -1,0 +1,4 @@
+// A Solidity-style file: same extension, no `pragma solcore;`.
+contract SolidityToken {
+    function solidityOnly() public returns (uint256) { return 1; }
+}
