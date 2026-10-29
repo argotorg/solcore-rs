@@ -16,9 +16,9 @@ platform, [build from source](#build-and-test).
 
 ### macOS and Linux
 
-1. Open [GitHub Releases](https://github.com/argotorg/solcore-rs/releases) and
-   download `SHA256SUMS` and the `solcore-v<VERSION>-<TARGET>.tar.gz` archive
-   for your machine. Only targets attached to that release are available.
+1. Choose a [release](https://github.com/argotorg/solcore-rs/releases) version
+   and the target for your machine. Only targets attached to that release are
+   available.
 
    | Platform | Target |
    | --- | --- |
@@ -27,19 +27,27 @@ platform, [build from source](#build-and-test).
    | Linux, x86-64 | `x86_64-unknown-linux-gnu` |
    | Linux, ARM64 | `aarch64-unknown-linux-gnu` |
 
-2. In the directory containing both downloads, set the downloaded version and
-   target, then verify the archive. For example, on Apple Silicon macOS:
+2. Download `SHA256SUMS` and the archive into a new temporary directory, then
+   verify the archive. For example, on Apple Silicon macOS:
 
    ```sh
    version=0.1.0
    target=aarch64-apple-darwin
    release="solcore-v${version}-${target}"
    archive="${release}.tar.gz"
+   url="https://github.com/argotorg/solcore-rs/releases/download/v${version}"
+
+   cd "$(mktemp -d)"
+   curl -fLO "$url/SHA256SUMS"
+   curl -fLO "$url/$archive"
    awk -v file="$archive" '$2 == file' SHA256SUMS | shasum -a 256 --check
    ```
 
    On Linux, use `sha256sum --check` instead of `shasum -a 256 --check`.
-   Continue only if verification reports `OK` for the downloaded archive.
+   Continue only if verification reports `OK` for the downloaded archive, and
+   run the next step in the same terminal. Use `curl` rather than a web browser:
+   macOS quarantines browser downloads, and Gatekeeper blocks the extracted
+   executables because they are not yet notarized.
 
 3. Extract the entire archive and add its directory to `PATH`:
 
