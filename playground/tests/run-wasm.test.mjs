@@ -147,7 +147,7 @@ test(`${backend}: browser WASM test reruns leave manual contract state untouched
 });
 
 test(`${backend}: Composition exports each Yul object and runs the selected vault`, async () => {
-  const files = await Promise.all(['Vaults.sol', 'context.sol', 'engine.sol'].map(async path => ({
+  const files = await Promise.all(['Vaults.sol', 'engine.sol'].map(async path => ({
     path, content: await readFile(new URL(`../src/examples/composition/${path}`, import.meta.url), 'utf8'),
   })));
   const input = { files, entry: 'Vaults.sol', options };

@@ -1,7 +1,6 @@
 import * from std;
 import * from std.dispatch;
 import { Option, contains } from option;
-import { sender } from context;
 
 // A token either has an owner or does not exist: unset mapping entries
 // read back as Option.None.
@@ -16,7 +15,7 @@ contract MiniNFT {
     function mint() public returns (uint256) {
         let id = nextId;
         nextId = nextId + uint256(1);
-        let to = sender();
+        let to = msgSender();
         owners[id] = Option.Some(to);
         balances[to] = balances[to] + uint256(1);
         return id;
@@ -35,13 +34,13 @@ contract MiniNFT {
     }
 
     function approve(to: address, id: uint256) public {
-        require(sender() == ownerOf(id), "not the owner");
+        require(msgSender() == ownerOf(id), "not the owner");
         approvals[id] = Option.Some(to);
     }
 
     function transfer(to: address, id: uint256) public {
         let owner = ownerOf(id);
-        let from = sender();
+        let from = msgSender();
         require(from == owner || contains(approvals[id], from), "not authorized");
         approvals[id] = Option.None;
         owners[id] = Option.Some(to);

@@ -1,7 +1,6 @@
 import * from std;
 import * from std.Generic;
 import * from std.StorageGeneric;
-import { sender } from context;
 
 // Ownable is exported without its constructor and fields: other modules
 // create and read it only through the functions below.
@@ -22,7 +21,7 @@ function ownerOf(state: Ownable) returns (address) {
 
 // Reverts unless the caller is the owner.
 function requireOwner(state: Ownable) {
-    require(sender() == state.owner, "not the owner");
+    require(msgSender() == state.owner, "not the owner");
 }
 
 // Returns the state with `to` as the owner. Reverts unless the caller is

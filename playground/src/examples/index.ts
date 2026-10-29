@@ -7,21 +7,17 @@ import optionOption from "./option/option.sol?raw";
 import patternMatchingEscrow from "./pattern-matching/Escrow.sol?raw";
 import miniNftMiniNFT from "./mini-nft/MiniNFT.sol?raw";
 import miniNftOption from "./mini-nft/option.sol?raw";
-import miniNftContext from "./mini-nft/context.sol?raw";
 import compositionVaults from "./composition/Vaults.sol?raw";
 import compositionEngine from "./composition/engine.sol?raw";
-import compositionContext from "./composition/context.sol?raw";
 import invariantsAmm from "./invariants/Amm.sol?raw";
 import invariantsPool from "./invariants/pool.sol?raw";
 import extensionsToken from "./extensions/Token.sol?raw";
 import extensionsErc20core from "./extensions/erc20core.sol?raw";
 import extensionsPausable from "./extensions/pausable.sol?raw";
 import extensionsCapped from "./extensions/capped.sol?raw";
-import extensionsContext from "./extensions/context.sol?raw";
 import extensionsOwnable from "./extensions/ownable.sol?raw";
 import reentrancyVault from "./reentrancy/Vault.sol?raw";
 import reentrancyReentrancy from "./reentrancy/reentrancy.sol?raw";
-import reentrancyContext from "./reentrancy/context.sol?raw";
 import comptimeAnswer from "./comptime/Answer.sol?raw";
 
 export interface ExampleFile {
@@ -101,7 +97,6 @@ export const examples: PlaygroundExample[] = [
     files: [
       { path: "MiniNFT.sol", content: miniNftMiniNFT },
       { path: "option.sol", content: miniNftOption },
-      { path: "context.sol", content: miniNftContext },
     ],
   },
   {
@@ -112,7 +107,6 @@ export const examples: PlaygroundExample[] = [
     files: [
       { path: "Vaults.sol", content: compositionVaults },
       { path: "engine.sol", content: compositionEngine },
-      { path: "context.sol", content: compositionContext },
     ],
   },
   {
@@ -136,7 +130,6 @@ export const examples: PlaygroundExample[] = [
       { path: "pausable.sol", content: extensionsPausable },
       { path: "capped.sol", content: extensionsCapped },
       { path: "ownable.sol", content: extensionsOwnable },
-      { path: "context.sol", content: extensionsContext },
     ],
   },
   {
@@ -147,7 +140,6 @@ export const examples: PlaygroundExample[] = [
     files: [
       { path: "Vault.sol", content: reentrancyVault },
       { path: "reentrancy.sol", content: reentrancyReentrancy },
-      { path: "context.sol", content: reentrancyContext },
     ],
   },
   {

@@ -4,7 +4,6 @@ import * from std.Generic;
 import * from std.StorageGeneric;
 import { Standard, Premium, quote } from pricing;
 import { Booking, seatsOf, costOf } from booking;
-import { sender } from context;
 
 enum Sale {
     Open,
@@ -24,7 +23,7 @@ contract TicketOffice {
     bookings: mapping(address => Booking);
 
     constructor() {
-        organizer = sender();
+        organizer = msgSender();
         sale = Sale.Open;
     }
 
@@ -65,11 +64,11 @@ contract TicketOffice {
     }
 
     function mySeats() public returns (uint256) {
-        return seatsOf(bookings[sender()]);
+        return seatsOf(bookings[msgSender()]);
     }
 
     function myQuote() public returns (uint256) {
-        return costOf(bookings[sender()]);
+        return costOf(bookings[msgSender()]);
     }
 
     function cancel() public returns (uint256) {
@@ -90,7 +89,7 @@ contract TicketOffice {
     }
 
     function close() public {
-        require(sender() == organizer, "organizer only");
+        require(msgSender() == organizer, "organizer only");
         require(isOpen(), "already closed");
         sale = Sale.Closed;
     }

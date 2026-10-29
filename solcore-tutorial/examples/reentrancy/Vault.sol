@@ -1,6 +1,5 @@
 import * from std;
 import * from std.dispatch;
-import { sender } from context;
 import { withWriteLock, withReadLock } from reentrancy;
 
 // The lock id for the balances state, hash-derived so copies of this
@@ -15,14 +14,14 @@ contract Vault {
 
     function deposit(amount: uint256) public {
         withWriteLock(balancesLock(), lam () -> () {
-                balances[sender()] = balances[sender()] + amount;
+                balances[msgSender()] = balances[msgSender()] + amount;
             });
     }
 
     function withdraw(amount: uint256) public returns (uint256) {
         return withWriteLock(balancesLock(), lam () -> uint256 {
-                require(balances[sender()] >= amount, "insufficient balance");
-                balances[sender()] = balances[sender()] - amount;
+                require(balances[msgSender()] >= amount, "insufficient balance");
+                balances[msgSender()] = balances[msgSender()] - amount;
                 return amount;
             });
     }
@@ -51,7 +50,7 @@ contract Vault {
     // reentrancy case.
     function readDuringWrite() public returns (uint256) {
         return withWriteLock(balancesLock(), lam () -> uint256 {
-                return balanceOf(sender());
+                return balanceOf(msgSender());
             });
     }
 }

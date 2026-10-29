@@ -1,39 +1,26 @@
 import * from std;
-import { sload, sstore } from std.opcodes;
-import { Option } from option;
-import { TransferHook } from hooks;
+import * from std.Generic;
+import * from std.StorageGeneric;
 
-export { isPaused, setPaused, requireNotPaused, Pausable(*) };
+// Pausable is exported without its constructor and fields: other modules
+// create and read it only through the functions below.
+export { Pausable, pauseState, isPaused, requireNotPaused };
 
-// Pause flag owned by this module at an ERC-7201 namespaced slot.
-
-function pausedSlot() returns (word) {
-    return Typedef.rep(erc7201("token.pausable"));
+// Whether the contract is paused. A storage field that was never assigned
+// reads as not paused.
+struct Pausable {
+    paused: bool;
 }
 
-function isPaused() returns (bool) {
-    return sload(pausedSlot()) != 0;
+function pauseState(flag: bool) returns (Pausable) {
+    return Pausable(flag);
 }
 
-function setPaused(flag: bool) {
-    if (flag) {
-        sstore(pausedSlot(), 1);
-    } else {
-        sstore(pausedSlot(), 0);
-    }
+function isPaused(state: Pausable) returns (bool) {
+    return state.paused;
 }
 
-function requireNotPaused() {
-    require(!isPaused(), "paused");
-}
-
-// Transfer hook: no balance may change while paused.
-enum Pausable {
-    Pausable
-}
-
-impl TransferHook<Pausable> {
-    function on(hook: Pausable, from: Option<address>, to: Option<address>, amount: uint256) {
-        requireNotPaused();
-    }
+// Reverts while paused.
+function requireNotPaused(state: Pausable) {
+    require(!state.paused, "paused");
 }
