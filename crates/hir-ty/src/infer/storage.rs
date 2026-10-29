@@ -81,7 +81,7 @@ impl<'db> InferCtx<'db> {
         let rhs_ty = self.infer_expr_expected(body, rhs, Some(expected_rhs.clone()));
         self.unify_expr(body, rhs, expected_rhs, rhs_ty.clone());
         if uses_assign {
-            // The reference lowers a field write through `Assign.assign`.
+            // A field write lowers through `Assign.assign`.
             // A specific Assign instance may intentionally accept a value
             // different from the field's ordinary CanStore load type.
             self.push_assign_obligation(lhs_ty, rhs_ty.clone(), ObligationSource::Scheme);

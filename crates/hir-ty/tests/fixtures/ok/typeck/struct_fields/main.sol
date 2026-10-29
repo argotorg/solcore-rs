@@ -2,7 +2,7 @@
 //
 // A `struct` is represented internally as a single-constructor product; the
 // field names drive dot access `p.x`, which lowers to a generated positional
-// projection function (see Desugarer.StructProjection). This test exercises
+// projection function. This test exercises
 // construction, single-level and nested field reads, and structs passed to and
 // returned from functions — all through the full pipeline (no execution
 // fixture needed; compiling is the assertion).

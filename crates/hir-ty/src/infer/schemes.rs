@@ -381,7 +381,7 @@ fn function_scheme_in_module<'db>(
 /// return pieces with the generalized type inferred from its body when that
 /// inference is clean. Complete-signature diagnostics are owned by
 /// `TypeckDiagnosticCollector` through `SignatureRequirement`; current
-/// reference-aligned diagnostics reject incomplete top-level and contract
+/// diagnostics reject incomplete top-level and contract
 /// function signatures before this fallback is user-visible.
 pub fn lower_normalized_function_with_inferred_signature<'db>(
     db: &'db dyn Db,

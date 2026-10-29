@@ -342,7 +342,7 @@ impl EvmHarness {
         Ok(())
     }
 
-    /// Executes an upstream-compatible raw calldata/returndata vector.
+    /// Executes a raw calldata/returndata vector.
     ///
     /// Every entry is one real transaction. Its trace supplies the returndata
     /// while its receipt supplies the status, so the observed output and the

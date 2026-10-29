@@ -249,7 +249,7 @@ impl<'db> InferCtx<'db> {
         let mut deferred = FxHashMap::<usize, FxHashMap<TyVid<'db>, InferTy<'db>>>::default();
         let mut scheduled: Vec<usize> = (0..pending.len()).collect();
 
-        // Improvement rounds, mirroring the reference's `toHnfs` fixpoint:
+        // Improvement rounds iterate to a fixpoint:
         // solving one obligation can pin goal metavariables of a sibling via
         // class-argument unification (improvement). A deferred obligation
         // records each inference-variable handle and its resolved value, then

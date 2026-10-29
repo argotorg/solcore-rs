@@ -1,13 +1,13 @@
 import * from std;
 import * from std.dispatch;
 
-// Regression test for a yule backend bug, independent of the storage/Generic
-// work: matching a sum constructor whose payload is a product of arity >= 3.
+// Regression test for the backend, independent of the storage/Generic work:
+// matching a sum constructor whose payload is a product of arity >= 3.
 //
-// On `match`, the scrutinee's location is flattened, and the constructor payload
-// used to be bound as a flat slot sequence. Destructuring the inner product then
-// did EFst on a >2-element sequence and crashed yule with "EFst: type mismatch".
-// (A 2-field payload happened to work, since a flat 2-seq is a valid pair.)
+// On `match`, the scrutinee's location is flattened. Binding the constructor
+// payload as a flat slot sequence breaks destructuring of the inner product,
+// because taking the first component of a >2-element sequence is ill-typed.
+// (A 2-field payload happens to work, since a flat 2-seq is a valid pair.)
 //
 // No storage and no Generic derivation involved — just constructing and matching
 // an ordinary algebraic data type.

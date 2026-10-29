@@ -158,8 +158,8 @@ impl<'db> InferCtx<'db> {
                 rhs,
             } if self.is_storage_index_expr(body, *lhs) => {
                 let lhs_ty = self.infer_expr(body, *lhs);
-                // The reference elaborates `m[k] += v` to `m[k] = m[k] + v`
-                // through Add.add, but our indexed compound assignment still
+                // `m[k] += v` means `m[k] = m[k] + v` through Add.add, but
+                // our indexed compound assignment still
                 // lowers to raw word add/sub. Gate the element type to word or
                 // the std word-backed numeric newtypes, where the instance
                 // semantics coincide with the raw lowering; anything else

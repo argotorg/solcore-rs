@@ -322,8 +322,8 @@ pub fn module_diagnostics<'db>(db: &'db dyn Db, module: ModuleId<'db>) -> Vec<An
     let mut diagnostics = parse_diagnostics(db, file).to_vec();
     let has_parse_errors = !diagnostics.is_empty();
     if has_parse_errors {
-        // A parse-broken file has incomplete recovered HIR. The reference
-        // compiler stops before nameres in this state, so we publish only parse
+        // A parse-broken file has incomplete recovered HIR. Diagnostics stop
+        // before nameres in this state, so we publish only parse
         // diagnostics here while still allowing resolution queries to run for
         // editor features.
         sort_dedup_query_diagnostics(db, &mut diagnostics);

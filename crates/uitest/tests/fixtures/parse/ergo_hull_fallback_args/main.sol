@@ -1,4 +1,4 @@
-// Mirrors reference corpus test/examples/cases/fallback-with-args.sol
+// Mirrors historical corpus test/examples/cases/fallback-with-args.sol
 // (expected failure there): fallback must take no arguments.
 import * from std;
 import * from std.dispatch;

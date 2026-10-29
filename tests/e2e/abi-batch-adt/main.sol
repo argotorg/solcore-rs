@@ -22,10 +22,10 @@ import * from std.ABIGeneric;
 // the element's inner offsets (the memory(bytes) leaf) resolve relative to the
 // element — so both the static Queue path and the dynamic Execute path decode.
 //
-// This is currently registered via runDispatchTest, which compiles the contract
-// through the whole pipeline. A runtime .json fixture (exercising the decode on
-// real calldata) needs the exact solcore-generated selector for the nested-ADT
-// signature, which has to be captured from a local sol-core run.
+// The raw scenario at the end of this file compiles the contract through the
+// whole pipeline and exercises the decode on real calldata: `queueSigner`
+// receives one Queue and one Execute element and returns the queued signer and
+// contract.
 
 enum Operation {
     AddSigner(address),

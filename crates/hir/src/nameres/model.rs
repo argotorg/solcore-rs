@@ -691,8 +691,8 @@ pub struct ModuleResolutionMap<'db> {
 /// Parser recovery can leave `Error` HIR nodes and can also lose declarations.
 /// When a source file already has parse diagnostics, callers should still build
 /// resolution maps for editor features, but must suppress all nameres
-/// diagnostics. This matches the reference behavior of stopping after parse
-/// errors and avoids showing cascades from an incomplete recovered HIR. We also
+/// diagnostics. Reporting stops at parse errors, which avoids showing cascades
+/// from an incomplete recovered HIR. We also
 /// suppress `SC0108` duplicate diagnostics in this mode because recovery can
 /// distort item boundaries, so even structure-like checks are not guaranteed to
 /// be sound.

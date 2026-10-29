@@ -46,7 +46,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     self.ty(*ty);
                 }
                 if let Some(init) = init {
-                    // Reference semantics: a let initializer is evaluated in
+                    // A let initializer is evaluated in
                     // the pre-binder scope, so the new local is inserted after
                     // the initializer has been resolved.
                     self.expr(body, *init);
@@ -259,7 +259,7 @@ impl<'db, 'a> BodyResolver<'db, 'a> {
                     res
                 } else if let Some(res) = self.same_name_constructor_resolution(leaf) {
                     // A constructor sharing its type's name may be referenced
-                    // without a qualifier, mirroring the reference resolver.
+                    // without a qualifier.
                     res
                 } else if self.has_user_constructor_leaf(leaf) {
                     // Any other in-scope constructor must be written qualified;

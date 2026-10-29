@@ -475,7 +475,7 @@ impl<'db> ComptimeChecker<'db> {
             .as_ref()
             .and_then(|resolution| self.callable_sig_for_resolution(resolution))
         {
-            // Frontend C3 follows the reference CTDeferred model: do not inspect
+            // Frontend C3 defers these checks: do not inspect
             // function or instance bodies here. Purity/runtime checks are carried
             // by comptime obligations for selected-evidence specialization.
             let skip_runtime_arg_diagnostics = sig

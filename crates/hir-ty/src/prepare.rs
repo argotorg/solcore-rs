@@ -231,8 +231,8 @@ impl<'db> GeneratedOriginMap<'db> {
 /// signatures, but never calls body inference,
 /// module type checking, or specialization. That one-way dependency avoids
 /// `typeck -> prepare -> typeck` query cycles. Generated contract entries use
-/// the same unqualified standard-library names as the reference compiler and
-/// therefore rely on the source module's explicit imports.
+/// unqualified standard-library names and therefore rely on the source
+/// module's explicit imports.
 #[salsa::tracked(returns(clone))]
 pub fn prepare_module<'db>(db: &'db dyn Db, source: Module<'db>) -> PreparedModule<'db> {
     let module_def = source.def_id_value(db);

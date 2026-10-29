@@ -8,8 +8,8 @@ use super::{
 };
 use crate::Db;
 
-/// Renders an ABI JSON document mirroring the reference `contractAbiJson`
-/// behavior: explicit constructors and user-defined fallbacks are included,
+/// Renders an ABI JSON document: explicit constructors and user-defined
+/// fallbacks are included,
 /// while the implicit runtime defaults remain a dispatch-surface detail.
 pub fn contract_abi_json<'db>(
     db: &'db dyn Db,

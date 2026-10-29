@@ -338,7 +338,7 @@ fn adt_named<'db>(db: &'db dyn Db, def: DefId<'db>, name: &str) -> Option<()> {
 }
 
 /// Adds the concrete `T:StorageSize` and
-/// `storage<T>: CanStore<T>` clauses emitted by upstream DeriveGeneric.
+/// `storage<T>: CanStore<T>` clauses emitted by DeriveGeneric.
 pub(super) fn push_derived_storage_clauses<'db>(
     db: &'db dyn Db,
     clauses: &mut Vec<ProgramClause<'db>>,
@@ -347,8 +347,8 @@ pub(super) fn push_derived_storage_clauses<'db>(
     source: DerivedStorageClauseSource<'db>,
 ) {
     let adt = info.adt.def_id_value(db);
-    // A recursive representation has no bounded slot footprint. Upstream
-    // treats this as a per-type skip rather than a derivation-time error.
+    // A recursive representation has no bounded slot footprint. Treat this
+    // as a per-type skip rather than a derivation-time error.
     if ty_mentions_adt(db, plan.rep, adt) {
         return;
     }

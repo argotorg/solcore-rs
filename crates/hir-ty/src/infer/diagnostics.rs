@@ -116,12 +116,11 @@ pub enum TypeckDiagnostic {
         /// Callee information for call-like arity errors.
         callee: Option<CalleeDiagnostic>,
     },
-    /// `SC0203`: mutually recursive data declarations are rejected by the
-    /// reference frontend.
+    /// `SC0203`: mutually recursive data declarations are rejected.
     MutualRecursiveData {
         /// Source span for one cross-recursive type reference.
         span: LabelSpan,
-        /// Referenced type that would be unavailable in the reference order.
+        /// Referenced type that is unavailable in declaration order.
         ty: String,
     },
     /// `SC0204`: a SAIL variable referenced by Yul is not word-typed.
@@ -297,9 +296,9 @@ pub enum TypeckDiagnostic {
     },
     /// `SC0244`: an instance omits one or more required methods.
     ///
-    /// Reference `SC0220` is the incomplete-signature diagnostic. Older
-    /// solcore-rs used `SC0220` for incomplete instances; keep the local
-    /// mapping explicit so the registry does not collide again.
+    /// `SC0220` is the incomplete-signature diagnostic. Older solcore-rs used
+    /// `SC0220` for incomplete instances; keep this mapping explicit so the
+    /// registry does not collide again.
     IncompleteInstance {
         /// Source span for the instance declaration.
         span: LabelSpan,
@@ -312,7 +311,7 @@ pub enum TypeckDiagnostic {
     UnknownInstanceMethod {
         /// Source span for the extra method name.
         span: LabelSpan,
-        /// Qualified method name as the reference reports it.
+        /// Qualified method name as reported in the diagnostic.
         name: String,
         /// Span of the class definition that declares the valid methods.
         class_span: Option<LabelSpan>,
@@ -1676,7 +1675,7 @@ fn builtin_type_expected_arity(ty: hir_nameres::BuiltinType) -> Option<usize> {
         | hir_nameres::BuiltinType::String
         | hir_nameres::BuiltinType::Unit
         | hir_nameres::BuiltinType::Integer => Some(0),
-        // The reference `kindCheck` explicitly exempts `pair`.
+        // The kind check explicitly exempts `pair`.
         hir_nameres::BuiltinType::Pair => None,
         hir_nameres::BuiltinType::Sum => Some(2),
     }
