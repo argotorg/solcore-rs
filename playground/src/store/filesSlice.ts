@@ -6,6 +6,9 @@ import { isBrowser } from "./isBrowser";
 import { projectSource, workspaceStorage } from "./session";
 import type { WorkspaceState } from "./workspace";
 
+// Every Solcore source file must start with this declaration.
+const NEW_SOURCE_FILE = "pragma solcore;\n\n";
+
 function normalizePath(path: string): string {
   const normalized = path.trim().replace(/\\/g, "/").replace(/^\/+/, "");
   return normalized.length > 0 ? normalized : "untitled.sol";
@@ -278,7 +281,7 @@ export function createFilesSlice(set: StoreApi<WorkspaceState>["setState"], get:
           ...state.files,
           [filePath]: {
             path: filePath,
-            content: "",
+            content: filePath.endsWith(".sol") ? NEW_SOURCE_FILE : "",
           },
         },
         order: [...state.order, filePath],
