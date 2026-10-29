@@ -3,6 +3,11 @@
 This package provides `.sol` file detection, syntax highlighting, indentation
 settings, and helpers for starting the compiler-integrated language server.
 
+A `.sol` buffer gets `filetype=solcore` only when it starts with
+`pragma solcore;` (comments may precede it). Other `.sol` files keep the
+built-in Solidity detection. A new file becomes `solcore` when it is written
+with the pragma.
+
 ## Install
 
 Download and extract the `vim-solcore` editor archive from GitHub Releases into
