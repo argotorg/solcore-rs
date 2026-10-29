@@ -3,6 +3,12 @@
 Syntax highlighting and LSP support for Solcore `.sol` files. The extension
 starts the language server bundled in the compiler with `solcore lsp`.
 
+A `.sol` file is Solcore only when it starts with `pragma solcore;` (comments may
+precede it). Other `.sol` files are switched to the `solidity` language when a
+Solidity extension is installed, or to plain text otherwise, so the Solcore
+server never runs on Solidity code. Saving a file after adding the pragma
+switches it to Solcore.
+
 ## Install
 
 Install the native compiler release first, keeping `std/` beside `solcore`.

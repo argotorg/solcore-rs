@@ -17,7 +17,8 @@
     "package": "vsce package --no-git-tag-version"
   },
   "activationEvents": [
-    "onLanguage:solcore"
+    "onLanguage:solcore",
+    "onLanguage:solidity"
   ],
   "extensionKind": [
     "workspace"

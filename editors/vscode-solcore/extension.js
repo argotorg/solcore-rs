@@ -2,6 +2,7 @@
 
 const vscode = require("vscode");
 const { LanguageClient, TransportKind } = require("vscode-languageclient/node");
+const { declaresPragmaSolcore } = require("./pragma");
 const { resolveServer } = require("./server-command");
 
 let client;
@@ -106,13 +107,42 @@ function scheduleClientReplacement(outputChannel, fileWatcher) {
   return lifecycle;
 }
 
+function isSolFile(document) {
+  return document.uri.scheme === "file" && document.uri.path.endsWith(".sol");
+}
+
+// A `.sol` file is Solcore exactly when it declares `pragma solcore;`. Other
+// `.sol` files are Solidity: hand them to a Solidity extension when one is
+// installed, and never start the Solcore server for them.
+async function syncLanguage(document) {
+  if (!isSolFile(document)) return;
+  const solcore = declaresPragmaSolcore(document.getText());
+  if (solcore === (document.languageId === "solcore")) return;
+  let language = "solcore";
+  if (!solcore) {
+    const languages = await vscode.languages.getLanguages();
+    language = languages.includes("solidity") ? "solidity" : "plaintext";
+  }
+  await vscode.languages.setTextDocumentLanguage(document, language);
+}
+
 function activate(context) {
   const outputChannel = vscode.window.createOutputChannel("Solcore Language Server");
   const fileWatcher = vscode.workspace.createFileSystemWatcher("**/*.sol");
+  const syncDocumentLanguage = (document) => {
+    syncLanguage(document).catch((error) => {
+      outputChannel.appendLine(
+        `Failed to update the language of ${document.uri.path}: ${errorMessage(error)}`,
+      );
+    });
+  };
 
   context.subscriptions.push(outputChannel, fileWatcher);
+  vscode.workspace.textDocuments.forEach(syncDocumentLanguage);
   void scheduleClientReplacement(outputChannel, fileWatcher);
   context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument(syncDocumentLanguage),
+    vscode.workspace.onDidSaveTextDocument(syncDocumentLanguage),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("solcore.path") || event.affectsConfiguration("solcore.lsp.serverPath")) {
         void scheduleClientReplacement(outputChannel, fileWatcher);
