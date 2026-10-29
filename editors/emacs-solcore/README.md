@@ -3,7 +3,9 @@
 This directory contains Emacs support for Solcore `.sol` files:
 
 - `solcore-mode.el` provides a `prog-mode`-derived major mode.
-- `.sol` files are added to `auto-mode-alist`.
+- `.sol` files that start with `pragma solcore;` (after comments) open in
+  `solcore-mode` through `magic-mode-alist`. Other `.sol` files are Solidity
+  and are left to other modes, such as a Solidity mode.
 - Syntax highlighting uses Emacs font-lock for Solcore keywords, declarations,
   primitive types, constants, numbers, operators, and function calls.
 - Optional LSP registration is provided for both `lsp-mode` and Eglot.
@@ -25,9 +27,12 @@ With `use-package`:
 
 ```elisp
 (use-package solcore-mode
-  :load-path "/path/to/solcore-rs/editors/emacs-solcore"
-  :mode ("\\.sol\\'" . solcore-mode))
+  :load-path "/path/to/solcore-rs/editors/emacs-solcore")
 ```
+
+Do not map `\\.sol\\'` to `solcore-mode` in `auto-mode-alist`; that would also
+open Solidity files as Solcore. After adding the pragma to a new file, run
+`M-x normal-mode` to switch the buffer to `solcore-mode`.
 
 ## LSP server command
 
