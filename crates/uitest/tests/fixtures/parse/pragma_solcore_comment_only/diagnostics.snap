@@ -1,0 +1,12 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/pragma_solcore_comment_only/main.sol
+---
+error[SC0002]: missing `pragma solcore;`
+ --> /main/main.sol:1:1
+  |
+1 | // A file that declares nothing still needs the pragma.
+  | ^ expected `pragma solcore;`
+  |
+  = help: every Solcore source file must begin with `pragma solcore;`

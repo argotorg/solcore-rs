@@ -94,7 +94,10 @@ editor packages, GitHub Releases and playground deployment without hosted CI.
 ## Language and standard library
 
 The Rust compiler and its regression tests define the supported Solcore
-language. Sources use the canonical `.sol` syntax. The ten library sources
+language. Sources use the canonical `.sol` syntax, and every source file must
+begin with `pragma solcore;` (comments may precede it). The pragma marks the file
+as Solcore rather than Solidity, which shares the extension; the compiler rejects
+files without it (`SC0002`). The ten library sources
 in [`std/`](std/) are maintained with this compiler; see the standard library's
 [README](std/README.md) for its maintenance and verification policy.
 

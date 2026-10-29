@@ -28,7 +28,7 @@ pub struct ImportEdit {
 ///
 /// When the target already has a safe explicit `{...} from` import, the name is
 /// appended to that selector. Otherwise a separate selective import is placed
-/// after the existing import block, or after leading pragmas/header comments.
+/// after the existing import block, or after the leading pragmas.
 /// Malformed source, stale parse metadata, and text that cannot be represented
 /// safely as import syntax produce no edit.
 pub fn plan_import_edit<'db>(
@@ -406,16 +406,12 @@ fn plan_new_import_declaration(
             _ => break,
         }
     }
-    if let Some(pragma) = last_leading_pragma {
-        let end = absolute_span_end(db, pragma.span(db), source.len())?;
-        return insert_after_declaration_line(source, end, declaration, line_ending);
-    }
-
-    if let Some(comment_end) = leading_header_comment_end(source) {
-        return insert_after_declaration_line(source, comment_end, declaration, line_ending);
-    }
-
-    Some(insertion(0, format!("{declaration}{line_ending}")))
+    // Without imports, the declaration follows the leading pragmas. A file that
+    // lacks its mandatory `pragma solcore;` has a parse diagnostic and gets no
+    // edit, so there is always a pragma here.
+    let pragma = last_leading_pragma?;
+    let end = absolute_span_end(db, pragma.span(db), source.len())?;
+    insert_after_declaration_line(source, end, declaration, line_ending)
 }
 
 fn absolute_span_end(
@@ -494,32 +490,6 @@ fn safe_end_of_line(source: &str, mut index: usize) -> Option<LineInsertion> {
             return Some(LineInsertion::AtNextLine(index + 1));
         }
         return Some(LineInsertion::BeforeSameLineCode(index));
-    }
-}
-
-fn leading_header_comment_end(source: &str) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut index = 0usize;
-    let mut last_comment_end = None;
-    loop {
-        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
-            index += 1;
-        }
-        if bytes
-            .get(index..)
-            .is_some_and(|tail| tail.starts_with(b"//"))
-        {
-            index = skip_line_comment(bytes, index);
-            last_comment_end = Some(index);
-        } else if bytes
-            .get(index..)
-            .is_some_and(|tail| tail.starts_with(b"/*"))
-        {
-            index = skip_block_comment(bytes, index)?;
-            last_comment_end = Some(index);
-        } else {
-            return last_comment_end;
-        }
     }
 }
 
@@ -849,6 +819,12 @@ mod tests {
             apply(source, &edit),
             "pragma solcore;\nimport {value} from lib.math;\n"
         );
+    }
+
+    #[test]
+    fn source_without_pragma_solcore_gets_no_import() {
+        assert_eq!(plan("", "lib.math", "value"), None);
+        assert_eq!(plan("function main() { value; }\n", "lib", "value"), None);
     }
 
     #[test]

@@ -1,0 +1,14 @@
+---
+source: crates/test-utils/src/lib.rs
+expression: rendered
+input_file: crates/uitest/tests/fixtures/parse/pragma_solcore_missing/main.sol
+---
+error[SC0002]: missing `pragma solcore;`
+ --> /main/main.sol:1:1
+  |
+1 | import * from std;
+  | ^ expected `pragma solcore;` before this declaration
+2 |
+3 | function main() returns (word) {
+  |
+  = help: every Solcore source file must begin with `pragma solcore;`

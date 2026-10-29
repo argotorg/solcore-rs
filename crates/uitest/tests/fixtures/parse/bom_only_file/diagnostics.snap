@@ -8,3 +8,12 @@ error[SC0001]: invalid token `﻿`
   |
 1 | ﻿
   | ^ invalid token
+---
+
+error[SC0002]: missing `pragma solcore;`
+ --> /main/main.sol:1:1
+  |
+1 | ﻿
+  | ^ expected `pragma solcore;`
+  |
+  = help: every Solcore source file must begin with `pragma solcore;`

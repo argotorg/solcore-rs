@@ -55,6 +55,8 @@ impl DiagnosticCodeAlias {
 impl DiagnosticCode {
     /// Parser or lowering failed before semantic analysis.
     pub const PARSE_ERROR: &'static str = "SC0001";
+    /// A source file does not start with exactly one `pragma solcore;`.
+    pub const PRAGMA_SOLCORE: &'static str = "SC0002";
 
     pub const NAMERES_UNDEFINED_NAME: &'static str = "SC0101";
     pub const TYPECK_UNDEFINED_TYPE_VARIABLES: &'static str = "SC0102";
@@ -171,6 +173,7 @@ impl DiagnosticCode {
     /// only in [`Self::INTENTIONAL_DUPLICATES`].
     pub const ALL: &'static [DiagnosticCodeEntry] = &[
         DiagnosticCodeEntry::new("PARSE_ERROR", Self::PARSE_ERROR),
+        DiagnosticCodeEntry::new("PRAGMA_SOLCORE", Self::PRAGMA_SOLCORE),
         DiagnosticCodeEntry::new("NAMERES_UNDEFINED_NAME", Self::NAMERES_UNDEFINED_NAME),
         DiagnosticCodeEntry::new(
             "TYPECK_UNDEFINED_TYPE_VARIABLES",

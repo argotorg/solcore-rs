@@ -26,6 +26,9 @@ Gas used describes execution work; its exact value can change with the compiler 
 
 ## Read it
 
+`pragma solcore;` comes first in every Solcore source file.
+Solidity files also end in `.sol`; the pragma marks this file as Solcore, and the compiler rejects a file without it.
+
 `import * from std;` makes the standard library's exported names available, including `uint256`.
 `std.dispatch` supplies the support for calling public contract functions.
 Keep both imports in the contract examples that follow.
